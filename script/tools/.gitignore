@@ -1,0 +1,6 @@
+﻿# Local offline copies of wasm tooling (large binaries / archives)
+wasm-bindgen-*/wasm-bindgen.exe
+wasm-bindgen-*/wasm-bindgen-test-runner.exe
+wasm-bindgen-*/wasm2es6js.exe
+binaryen-version_*/
+*.tar.gz

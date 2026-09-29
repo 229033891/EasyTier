@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue';
-import { Button, Checkbox, InputText, Password, ProgressSpinner, useConfirm, useToast } from 'primevue';
+import { Button, Checkbox, InputText, Password, useConfirm, useToast } from 'primevue';
 import { tooltipDirective } from '../modules/tooltip';
 import { useI18n } from 'vue-i18n';
 import ApiClient, { UserInfo } from '../modules/api';
+import ListPageShell from './ListPageShell.vue';
+import FormField from './FormField.vue';
 
 const vTooltip = tooltipDirective;
 const { t } = useI18n();
@@ -155,19 +157,16 @@ onMounted(async () => {
         <h1 class="et-page-title">{{ t('web.main.user_list') }}</h1>
 
         <div class="user-create-form">
-            <div class="field">
-                <label for="new-username">{{ t('web.users.username') }}</label>
+            <FormField class="field" :label="t('web.users.username')" label-for="new-username">
                 <InputText id="new-username" v-model="newUsername" class="w-full" autocomplete="off" />
-            </div>
-            <div class="field">
-                <label for="new-password">{{ t('web.users.password') }}</label>
+            </FormField>
+            <FormField class="field" :label="t('web.users.password')" label-for="new-password">
                 <Password id="new-password" v-model="newPassword" class="w-full" toggleMask :feedback="false"
                     autocomplete="new-password" />
-            </div>
-            <div class="field field-admin">
-                <label for="new-is-admin">{{ t('web.users.is_admin') }}</label>
+            </FormField>
+            <FormField class="field field-admin" :label="t('web.users.is_admin')" label-for="new-is-admin">
                 <Checkbox inputId="new-is-admin" v-model="newIsAdmin" :binary="true" />
-            </div>
+            </FormField>
             <div class="field field-action">
                 <Button :label="t('web.users.create')" icon="pi pi-user-plus" :loading="creating"
                     @click="createUser" />
@@ -175,15 +174,13 @@ onMounted(async () => {
         </div>
 
         <div v-if="resetFor" class="user-create-form">
-            <div class="field">
-                <label>{{ t('web.users.reset_for') }}</label>
+            <FormField class="field" :label="t('web.users.reset_for')">
                 <div class="reset-target">{{ resetFor.username }}</div>
-            </div>
-            <div class="field">
-                <label for="reset-password">{{ t('web.users.new_password') }}</label>
+            </FormField>
+            <FormField class="field" :label="t('web.users.new_password')" label-for="reset-password">
                 <Password id="reset-password" v-model="resetPassword" class="w-full" toggleMask :feedback="false"
                     autocomplete="new-password" />
-            </div>
+            </FormField>
             <div class="field field-action">
                 <Button :label="t('web.users.reset_password')" icon="pi pi-key"
                     :loading="resettingId === resetFor.id" @click="submitReset" />
@@ -193,49 +190,40 @@ onMounted(async () => {
             </div>
         </div>
 
-        <div v-if="users === undefined" class="w-full flex justify-center py-8">
-            <ProgressSpinner />
-        </div>
-
-        <div v-else-if="users.length === 0" class="user-list-empty et-meta py-6 px-4">
-            {{ t('web.users.empty') }}
-        </div>
-
-        <div v-else class="user-list-table overflow-x-auto">
-            <table class="w-full">
-                <thead>
-                    <tr class="surface-ground text-left">
-                        <th class="px-3 py-2 font-semibold">{{ t('web.users.username') }}</th>
-                        <th class="px-3 py-2 font-semibold">{{ t('web.users.role') }}</th>
-                        <th class="px-3 py-2 font-semibold text-right">{{ t('web.users.actions') }}</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    <tr v-for="user in users" :key="user.id" class="border-t surface-border">
-                        <td class="px-3 py-2 font-medium">{{ user.username }}</td>
-                        <td class="px-3 py-2">
-                            <span :class="user.is_admin ? 'role-admin' : 'role-user'">
-                                {{ user.is_admin ? t('web.users.role_admin') : t('web.users.role_user') }}
-                            </span>
-                        </td>
-                        <td class="px-3 py-2">
-                            <div class="flex justify-end gap-1">
-                                <Button v-tooltip.top="t('web.users.reset_password')"
-                                    icon="pi pi-key" severity="secondary" rounded text
-                                    class="user-action-btn"
-                                    @click="startReset(user)"
-                                    :aria-label="t('web.users.reset_password')" />
-                                <Button v-tooltip.top="t('web.users.delete')"
-                                    icon="pi pi-trash" severity="danger" rounded text
-                                    class="user-action-btn"
-                                    @click="confirmDelete(user)"
-                                    :aria-label="t('web.users.delete')" />
-                            </div>
-                        </td>
-                    </tr>
-                </tbody>
-            </table>
-        </div>
+        <ListPageShell :loading="users === undefined" :empty="users?.length === 0">
+            <template #empty>{{ t('web.users.empty') }}</template>
+            <thead>
+                <tr class="surface-ground text-left">
+                    <th class="px-3 py-2 font-semibold">{{ t('web.users.username') }}</th>
+                    <th class="px-3 py-2 font-semibold">{{ t('web.users.role') }}</th>
+                    <th class="px-3 py-2 font-semibold text-right">{{ t('web.users.actions') }}</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr v-for="user in users" :key="user.id" class="border-t surface-border">
+                    <td class="px-3 py-2 font-medium">{{ user.username }}</td>
+                    <td class="px-3 py-2">
+                        <span :class="user.is_admin ? 'role-admin' : 'role-user'">
+                            {{ user.is_admin ? t('web.users.role_admin') : t('web.users.role_user') }}
+                        </span>
+                    </td>
+                    <td class="px-3 py-2">
+                        <div class="flex justify-end gap-1">
+                            <Button v-tooltip.top="t('web.users.reset_password')"
+                                icon="pi pi-key" severity="secondary" rounded text
+                                class="user-action-btn"
+                                @click="startReset(user)"
+                                :aria-label="t('web.users.reset_password')" />
+                            <Button v-tooltip.top="t('web.users.delete')"
+                                icon="pi pi-trash" severity="danger" rounded text
+                                class="user-action-btn"
+                                @click="confirmDelete(user)"
+                                :aria-label="t('web.users.delete')" />
+                        </div>
+                    </td>
+                </tr>
+            </tbody>
+        </ListPageShell>
     </div>
 </template>
 
@@ -259,7 +247,8 @@ onMounted(async () => {
     flex: 1 1 10rem;
 }
 
-.field label {
+/* label 位于 FormField 组件内部，需用 :deep 穿透 */
+:deep(.field label) {
     font-size: var(--et-fs-meta);
     color: var(--text-color-secondary, #64748b);
 }
@@ -280,18 +269,6 @@ onMounted(async () => {
     display: flex;
     align-items: center;
     font-weight: 600;
-}
-
-.user-list-table,
-.user-list-empty {
-    background: var(--surface-ground, #f8fafc);
-    border: var(--et-border);
-    border-radius: var(--et-radius);
-}
-
-.user-list-table th,
-.user-list-table td {
-    vertical-align: middle;
 }
 
 .role-admin {

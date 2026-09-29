@@ -7,6 +7,7 @@ import { I18nUtils } from 'easytier-frontend-lib';
 import { getInitialApiHost, cleanAndLoadApiHosts, saveApiHost } from "../modules/api-host"
 import { useI18n } from 'vue-i18n'
 import ApiClient, { Credential } from '../modules/api';
+import FormField from './FormField.vue';
 
 const { t } = useI18n()
 
@@ -98,20 +99,20 @@ onBeforeUnmount(() => {
                 <h2 class="text-2xl font-semibold text-center">{{ t('web.login.login') }}</h2>
             </template>
             <template #content>
-                <div class="p-field mb-4">
-                    <label for="api-host" class="block text-sm font-medium">{{ t('web.login.api_host') }}</label>
+                <FormField class="mb-4" :label="t('web.login.api_host')" label-for="api-host"
+                    label-class="block text-sm font-medium">
                     <AutoComplete id="api-host" v-model="apiHost" dropdown :suggestions="apiHostSuggestions"
                         @complete="apiHostSearch" class="w-full" />
-                </div>
+                </FormField>
                 <form @submit.prevent="onSubmit" class="space-y-4">
-                    <div class="p-field">
-                        <label for="username" class="block text-sm font-medium">{{ t('web.login.username') }}</label>
+                    <FormField :label="t('web.login.username')" label-for="username"
+                        label-class="block text-sm font-medium">
                         <InputText id="username" v-model="username" required class="w-full" />
-                    </div>
-                    <div class="p-field">
-                        <label for="password" class="block text-sm font-medium">{{ t('web.login.password') }}</label>
+                    </FormField>
+                    <FormField :label="t('web.login.password')" label-for="password"
+                        label-class="block text-sm font-medium">
                         <Password id="password" v-model="password" required toggleMask :feedback="false" />
-                    </div>
+                    </FormField>
                     <Button :label="t('web.login.login')" type="submit" class="w-full" />
                     <Button v-if="oidcEnabled" :label="t('web.login.sso_login')" type="button" class="w-full" severity="info"
                         @click="onSsoLogin" />

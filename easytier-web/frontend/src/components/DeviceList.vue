@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
+import { computed, ref, watch } from 'vue';
 import { Button, ProgressSpinner, useToast, InputSwitch, Dropdown, Toolbar } from 'primevue';
 import { tooltipDirective } from '../modules/tooltip';
 import { useRouter } from 'vue-router';
@@ -7,6 +7,7 @@ import { Utils } from 'easytier-frontend-lib';
 import DeviceDetails from './DeviceDetails.vue';
 import { useI18n } from 'vue-i18n'
 import ApiClient from '../modules/api';
+import { usePollingList } from '../modules/usePollingList';
 
 const { t } = useI18n()
 
@@ -29,37 +30,19 @@ watch(showDetailedView, (newValue) => {
 
 const api = props.api;
 
-const deviceList = ref<Array<Utils.DeviceInfo> | undefined>(undefined);
-
 const router = useRouter();
 const toast = useToast();
 
-const loadDevices = async () => {
+const loadDevices = async (): Promise<Array<Utils.DeviceInfo>> => {
     const resp = await api?.list_machines();
-    let devices: Array<Utils.DeviceInfo> = [];
+    const devices: Array<Utils.DeviceInfo> = [];
     for (const device of (resp || [])) {
         devices.push(Utils.buildDeviceInfo(device));
     }
-    console.debug("device list", deviceList.value);
-    deviceList.value = devices;
+    return devices;
 };
 
-const periodFunc = new Utils.PeriodicTask(async () => {
-    try {
-        await loadDevices();
-    } catch (e) {
-        toast.add({ severity: 'error', summary: t('web.device.load_list_failed'), detail: String(e), life: 2000 });
-        console.error(e);
-    }
-}, 1000);
-
-onMounted(async () => {
-    periodFunc.start();
-});
-
-onUnmounted(() => {
-    periodFunc.stop();
-});
+const { data: deviceList } = usePollingList<Array<Utils.DeviceInfo>>({ fetcher: loadDevices });
 
 /** 打开设备管理全页：status=查看/启停；config=编辑/新建 */
 const handleDeviceManagement = (device: Utils.DeviceInfo, mode: 'status' | 'config') => {
@@ -127,6 +110,19 @@ const sortDevices = (devices: Array<Utils.DeviceInfo> | undefined) => {
 const sortedDeviceList = computed(() => {
     return sortDevices(deviceList.value);
 });
+
+/** 位置各段（国家 / 地区 / 城市），空值已过滤 */
+const locationParts = (device: Utils.DeviceInfo): string[] => {
+    const loc = device.location;
+    if (!loc) return [];
+    return [loc.country, loc.region, loc.city].filter((part): part is string => !!part);
+};
+
+/** 位置文案：无位置信息时回落到未知 */
+const locationText = (device: Utils.DeviceInfo): string => {
+    const parts = locationParts(device);
+    return parts.length ? parts.join(' · ') : t('web.device.unknown_location');
+};
 
 </script>
 
@@ -497,21 +493,14 @@ const sortedDeviceList = computed(() => {
 
                         <div class="flex justify-between items-center">
                             <div class="text-sm truncate card-subtitle max-w-[60%] flex items-center gap-2"
-                                :title="device.location ? `${device.location.country}${device.location.region ? ' · ' + device.location.region : ''}${device.location.city ? ' · ' + device.location.city : ''}` : t('web.device.unknown_location')">
+                                :title="locationText(device)">
                                 <i class="pi pi-map-marker location-icon"></i>
                                 <span class="location-text">
-                                    <template v-if="device.location">
-                                        {{ device.location.country }}
-                                        <template v-if="device.location.region">
-                                            <span class="location-separator">·</span>
-                                            {{ device.location.region }}
-                                        </template>
-                                        <template v-if="device.location.city">
-                                            <span class="location-separator">·</span>
-                                            {{ device.location.city }}
-                                        </template>
+                                    <template v-for="(part, index) in locationParts(device)" :key="index">
+                                        <span v-if="index > 0" class="location-separator">·</span>
+                                        {{ part }}
                                     </template>
-                                    <template v-else>
+                                    <template v-if="!locationParts(device).length">
                                         {{ t('web.device.unknown_location') }}
                                     </template>
                                 </span>

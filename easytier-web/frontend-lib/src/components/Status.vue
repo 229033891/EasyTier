@@ -512,17 +512,19 @@ const eventLogContent = computed(() => {
             <div class="rounded border border-surface-200 dark:border-surface-700">
               <button type="button"
                 class="flex w-full items-center justify-between gap-2 px-3 py-2 text-left cursor-pointer select-none touch-manipulation"
+                :aria-expanded="!nodeDetailsCollapsed" aria-controls="node-details-body"
                 @click="nodeDetailsCollapsed = !nodeDetailsCollapsed">
                 <span class="text-sm font-medium">{{ t('node_info_details') }}</span>
                 <i class="pi text-sm"
                   :class="nodeDetailsCollapsed ? 'pi-chevron-down' : 'pi-chevron-up'"></i>
               </button>
-              <div v-show="!nodeDetailsCollapsed" class="flex flex-col gap-2 border-t border-surface-200 dark:border-surface-700 p-2 max-h-72 overflow-auto">
+              <div id="node-details-body" v-show="!nodeDetailsCollapsed" class="flex flex-col gap-2 border-t border-surface-200 dark:border-surface-700 p-2 max-h-72 overflow-auto">
                 <div v-for="group in myNodeInfoGroups" :key="group.key"
                   class="rounded border border-surface-200 dark:border-surface-700 bg-surface-50/60 dark:bg-surface-800/40 px-3 py-2">
                   <div class="mb-1.5 flex items-center justify-between gap-2">
                     <button type="button" class="flex min-w-0 items-center gap-1 text-left"
                       :class="isGroupCollapsible(group.key) ? 'cursor-pointer select-none touch-manipulation' : 'cursor-default'"
+                      :aria-expanded="isGroupCollapsible(group.key) ? !isGroupBodyCollapsed(group.key) : undefined"
                       @click="toggleGroupBody(group.key)">
                       <i v-if="isGroupCollapsible(group.key)" class="pi text-xs text-surface-500"
                         :class="isGroupBodyCollapsed(group.key) ? 'pi-chevron-right' : 'pi-chevron-down'"></i>

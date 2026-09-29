@@ -1,16 +1,17 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue';
-import { Button, ProgressSpinner, useToast } from 'primevue';
+import { computed, ref } from 'vue';
+import { Button } from 'primevue';
 import { tooltipDirective } from '../modules/tooltip';
 import { useRouter } from 'vue-router';
 import { Utils } from 'easytier-frontend-lib';
 import { useI18n } from 'vue-i18n';
 import ApiClient from '../modules/api';
+import { usePollingList } from '../modules/usePollingList';
+import ListPageShell from './ListPageShell.vue';
 
 const vTooltip = tooltipDirective;
 const { t } = useI18n();
 const router = useRouter();
-const toast = useToast();
 
 const props = defineProps({
     api: ApiClient,
@@ -23,7 +24,6 @@ interface NetworkRow {
     network_name: string;
 }
 
-const deviceList = ref<Array<Utils.DeviceInfo> | undefined>(undefined);
 const networkNameByKey = ref<Record<string, string>>({});
 const lastMetaSignature = ref('');
 
@@ -74,24 +74,17 @@ const refreshNetworkMetas = async (devices: Utils.DeviceInfo[]) => {
     networkNameByKey.value = next;
 };
 
-const loadDevices = async () => {
+const loadDevices = async (): Promise<Array<Utils.DeviceInfo>> => {
     const resp = await props.api?.list_machines();
     const devices: Array<Utils.DeviceInfo> = [];
     for (const device of (resp || [])) {
         devices.push(Utils.buildDeviceInfo(device));
     }
-    deviceList.value = devices;
     void refreshNetworkMetas(devices);
+    return devices;
 };
 
-const periodFunc = new Utils.PeriodicTask(async () => {
-    try {
-        await loadDevices();
-    } catch (e) {
-        toast.add({ severity: 'error', summary: t('web.device.load_list_failed'), detail: String(e), life: 2000 });
-        console.error(e);
-    }
-}, 1000);
+const { data: deviceList } = usePollingList<Array<Utils.DeviceInfo>>({ fetcher: loadDevices });
 
 const openNetworkRow = (row: NetworkRow, mode: 'status' | 'config') => {
     router.push({
@@ -103,90 +96,61 @@ const openNetworkRow = (row: NetworkRow, mode: 'status' | 'config') => {
         query: { mode },
     });
 };
-
-onMounted(() => {
-    periodFunc.start();
-});
-
-onUnmounted(() => {
-    periodFunc.stop();
-});
 </script>
 
 <template>
     <div class="et-page">
         <h1 class="et-page-title">{{ t('web.main.network_list') }}</h1>
 
-        <div v-if="deviceList === undefined" class="w-full flex justify-center py-8">
-            <ProgressSpinner />
-        </div>
-
-        <div v-else-if="networkRows.length === 0" class="network-list-empty et-meta py-6 px-4">
-            {{ t('web.device.no_networks') }}
-        </div>
-
-        <div v-else class="network-list-table overflow-x-auto">
-                <table class="w-full">
-                    <thead>
-                        <tr class="surface-ground text-left">
-                            <th class="px-3 py-2 font-semibold">{{ t('web.device.network_name') }}</th>
-                            <th class="px-3 py-2 font-semibold">{{ t('web.device.belonging_device') }}</th>
-                            <th class="px-3 py-2 font-semibold">{{ t('web.device.status') }}</th>
-                            <th class="px-3 py-2 font-semibold text-right">{{ t('web.device.management') }}</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        <tr v-for="row in networkRows" :key="`${row.machine_id}-${row.instance_id}`"
-                            class="border-t surface-border">
-                            <td class="px-3 py-2">
-                                <div class="font-medium truncate max-w-[16rem]" :title="row.network_name">
-                                    {{ row.network_name }}
-                                </div>
-                                <div class="et-meta truncate max-w-[16rem]" :title="row.instance_id">
-                                    {{ row.instance_id }}
-                                </div>
-                            </td>
-                            <td class="px-3 py-2 truncate max-w-[10rem]" :title="row.hostname">{{ row.hostname }}</td>
-                            <td class="px-3 py-2">
-                                <span class="inline-flex items-center gap-1 status-running">
-                                    <i class="pi pi-circle-fill text-[0.45rem]"></i>
-                                    {{ t('network_running') }}
-                                </span>
-                            </td>
-                            <td class="px-3 py-2">
-                                <div class="flex justify-end gap-2">
-                                    <Button v-tooltip.top="t('web.device.open_network_status')"
-                                        icon="pi pi-chart-line" severity="info" rounded text
-                                        class="network-action-btn"
-                                        @click="openNetworkRow(row, 'status')"
-                                        :aria-label="t('web.device.open_network_status')" />
-                                    <Button v-tooltip.top="t('web.device.open_network_config')"
-                                        icon="pi pi-cog" severity="secondary" rounded text
-                                        class="network-action-btn"
-                                        @click="openNetworkRow(row, 'config')"
-                                        :aria-label="t('web.device.open_network_config')" />
-                                </div>
-                            </td>
-                        </tr>
-                    </tbody>
-                </table>
-        </div>
+        <ListPageShell :loading="deviceList === undefined" :empty="networkRows.length === 0">
+            <template #empty>{{ t('web.device.no_networks') }}</template>
+            <thead>
+                <tr class="surface-ground text-left">
+                    <th class="px-3 py-2 font-semibold">{{ t('web.device.network_name') }}</th>
+                    <th class="px-3 py-2 font-semibold">{{ t('web.device.belonging_device') }}</th>
+                    <th class="px-3 py-2 font-semibold">{{ t('web.device.status') }}</th>
+                    <th class="px-3 py-2 font-semibold text-right">{{ t('web.device.management') }}</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr v-for="row in networkRows" :key="`${row.machine_id}-${row.instance_id}`"
+                    class="border-t surface-border">
+                    <td class="px-3 py-2">
+                        <div class="font-medium truncate max-w-[16rem]" :title="row.network_name">
+                            {{ row.network_name }}
+                        </div>
+                        <div class="et-meta truncate max-w-[16rem]" :title="row.instance_id">
+                            {{ row.instance_id }}
+                        </div>
+                    </td>
+                    <td class="px-3 py-2 truncate max-w-[10rem]" :title="row.hostname">{{ row.hostname }}</td>
+                    <td class="px-3 py-2">
+                        <span class="inline-flex items-center gap-1 status-running">
+                            <i class="pi pi-circle-fill text-[0.45rem]"></i>
+                            {{ t('network_running') }}
+                        </span>
+                    </td>
+                    <td class="px-3 py-2">
+                        <div class="flex justify-end gap-2">
+                            <Button v-tooltip.top="t('web.device.open_network_status')"
+                                icon="pi pi-chart-line" severity="info" rounded text
+                                class="network-action-btn"
+                                @click="openNetworkRow(row, 'status')"
+                                :aria-label="t('web.device.open_network_status')" />
+                            <Button v-tooltip.top="t('web.device.open_network_config')"
+                                icon="pi pi-cog" severity="secondary" rounded text
+                                class="network-action-btn"
+                                @click="openNetworkRow(row, 'config')"
+                                :aria-label="t('web.device.open_network_config')" />
+                        </div>
+                    </td>
+                </tr>
+            </tbody>
+        </ListPageShell>
     </div>
 </template>
 
 <style scoped>
-.network-list-table,
-.network-list-empty {
-    background: var(--surface-ground, #f8fafc);
-    border: var(--et-border);
-    border-radius: var(--et-radius);
-}
-
-.network-list-table th,
-.network-list-table td {
-    vertical-align: middle;
-}
-
 .status-running {
     color: var(--green-700, #15803d);
 }

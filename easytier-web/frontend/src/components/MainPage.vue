@@ -99,9 +99,49 @@ const goNav = (name: string) => {
 
 const isManagementPage = computed(() => route.name === 'deviceManagement');
 
+/** 侧栏导航项：dashboard / deviceList / networkList 常显，userList 仅管理员 */
+const navItems = computed(() => {
+    const items = [
+        { name: 'dashboard', icon: 'pi pi-chart-pie', label: t('web.main.dashboard') },
+        { name: 'deviceList', icon: 'pi pi-server', label: t('web.main.device_list') },
+        { name: 'networkList', icon: 'pi pi-sitemap', label: t('web.main.network_list') },
+    ];
+    if (isAdmin.value) {
+        items.push({ name: 'userList', icon: 'pi pi-users', label: t('web.main.user_list') });
+    }
+    return items;
+});
+
+/** 折叠态：图标居中；展开态：左对齐 + 间距 */
+const sidebarButtonClass = computed(() =>
+    sidebarCollapsed.value ? 'sm:justify-center sm:pl-0' : 'justify-start gap-x-3 pl-1.5'
+);
+
+/**
+ * 顶栏是 sticky（.top-navbar 覆盖了 Tailwind 的 .fixed），会占据文档流。
+ * 把实测高度写入 --et-navbar-h，供内容区高度与侧栏内边距使用，
+ * 避免按 fixed 顶栏估算导致的双倍占位 / 底部溢出。
+ */
+const navRef = ref<HTMLElement>();
+let navResizeObserver: ResizeObserver | undefined;
+
+const syncNavbarHeight = () => {
+    const h = navRef.value?.offsetHeight;
+    if (h) {
+        document.documentElement.style.setProperty('--et-navbar-h', `${h}px`);
+    }
+};
+
 onMounted(async () => {
     await nextTick();
     document.addEventListener('click', handleClickOutside);
+    syncNavbarHeight();
+    if (typeof ResizeObserver !== 'undefined' && navRef.value) {
+        navResizeObserver = new ResizeObserver(syncNavbarHeight);
+        navResizeObserver.observe(navRef.value);
+    } else {
+        window.addEventListener('resize', syncNavbarHeight);
+    }
     try {
         const me = await api.value?.get_me();
         isAdmin.value = !!me?.is_admin;
@@ -116,12 +156,14 @@ onMounted(async () => {
 
 onUnmounted(() => {
     document.removeEventListener('click', handleClickOutside);
+    navResizeObserver?.disconnect();
+    window.removeEventListener('resize', syncNavbarHeight);
 });
 
 </script>
 
 <template>
-    <nav
+    <nav ref="navRef"
         class="fixed top-0 z-50 w-full bg-white border-b border-gray-200 dark:bg-gray-800 dark:border-gray-700 top-navbar">
         <div class="px-3 py-2 lg:px-5 lg:pl-3">
             <div class="flex items-center justify-between">
@@ -166,7 +208,7 @@ onUnmounted(() => {
     </div>
 
     <aside ref="sidebarRef" id="logo-sidebar"
-            class="fixed top-0 left-0 z-40 h-screen pt-14 transition-all duration-200 bg-white border-r border-gray-200 dark:bg-gray-800 dark:border-gray-700"
+            class="fixed top-0 left-0 z-40 h-screen transition-all duration-200 bg-white border-r border-gray-200 dark:bg-gray-800 dark:border-gray-700"
         :class="[
             forceShowSideBar ? 'translate-x-0' : '-translate-x-full',
             'sm:translate-x-0',
@@ -176,44 +218,14 @@ onUnmounted(() => {
         :aria-label="t('web.main.sidebar')">
         <div class="h-full px-2 pb-4 overflow-y-auto bg-white dark:bg-gray-800">
             <ul class="space-y-2 font-medium">
-                <li>
+                <li v-for="item in navItems" :key="item.name">
                     <Button variant="text"
                         class="w-full sidebar-button"
-                        :class="sidebarCollapsed ? 'sm:justify-center sm:pl-0' : 'justify-start gap-x-3 pl-1.5'"
-                        severity="contrast" @click="goNav('dashboard')"
-                        v-tooltip.right="sidebarCollapsed ? t('web.main.dashboard') : undefined">
-                        <i class="pi pi-chart-pie text-xl"></i>
-                        <span class="mb-0.5" :class="{ 'sm:hidden': sidebarCollapsed }">{{ t('web.main.dashboard') }}</span>
-                    </Button>
-                </li>
-                <li>
-                    <Button variant="text"
-                        class="w-full sidebar-button"
-                        :class="sidebarCollapsed ? 'sm:justify-center sm:pl-0' : 'justify-start gap-x-3 pl-1.5'"
-                        severity="contrast" @click="goNav('deviceList')"
-                        v-tooltip.right="sidebarCollapsed ? t('web.main.device_list') : undefined">
-                        <i class="pi pi-server text-xl"></i>
-                        <span class="mb-0.5" :class="{ 'sm:hidden': sidebarCollapsed }">{{ t('web.main.device_list') }}</span>
-                    </Button>
-                </li>
-                <li>
-                    <Button variant="text"
-                        class="w-full sidebar-button"
-                        :class="sidebarCollapsed ? 'sm:justify-center sm:pl-0' : 'justify-start gap-x-3 pl-1.5'"
-                        severity="contrast" @click="goNav('networkList')"
-                        v-tooltip.right="sidebarCollapsed ? t('web.main.network_list') : undefined">
-                        <i class="pi pi-sitemap text-xl"></i>
-                        <span class="mb-0.5" :class="{ 'sm:hidden': sidebarCollapsed }">{{ t('web.main.network_list') }}</span>
-                    </Button>
-                </li>
-                <li v-if="isAdmin">
-                    <Button variant="text"
-                        class="w-full sidebar-button"
-                        :class="sidebarCollapsed ? 'sm:justify-center sm:pl-0' : 'justify-start gap-x-3 pl-1.5'"
-                        severity="contrast" @click="goNav('userList')"
-                        v-tooltip.right="sidebarCollapsed ? t('web.main.user_list') : undefined">
-                        <i class="pi pi-users text-xl"></i>
-                        <span class="mb-0.5" :class="{ 'sm:hidden': sidebarCollapsed }">{{ t('web.main.user_list') }}</span>
+                        :class="sidebarButtonClass"
+                        severity="contrast" @click="goNav(item.name)"
+                        v-tooltip.right="sidebarCollapsed ? item.label : undefined">
+                        <i :class="[item.icon, 'text-xl']"></i>
+                        <span class="mb-0.5" :class="{ 'sm:hidden': sidebarCollapsed }">{{ item.label }}</span>
                     </Button>
                 </li>
             </ul>
@@ -223,8 +235,7 @@ onUnmounted(() => {
     <div class="et-main-content transition-all duration-200"
         :class="[sidebarCollapsed ? 'sm:ml-16' : 'sm:ml-64', { 'et-main-content--mgmt': isManagementPage }]">
         <RouterView v-slot="{ Component }">
-            <component v-if="isManagementPage" :is="Component" :api="api" />
-            <div v-else class="et-main-panel">
+            <div :class="{ 'et-main-panel': !isManagementPage }">
                 <component :is="Component" :api="api" />
             </div>
         </RouterView>
@@ -237,14 +248,43 @@ onUnmounted(() => {
     justify-content: left;
 }
 
+/* 侧栏为 fixed，需让位给顶栏：用实测顶栏高度对齐其底边 */
+#logo-sidebar {
+    padding-top: var(--et-navbar-h, 3.5rem);
+}
+
 .et-main-content {
     padding: 0 0.75rem 0.75rem;
-    padding-top: calc(3.25rem + env(safe-area-inset-top, 0px));
+    /* 顶栏是 sticky（.top-navbar），已占据文档流，无需再预留高度 */
+    padding-top: env(safe-area-inset-top, 0px);
 }
 
 .et-main-content--mgmt {
-    padding-top: calc(3.25rem + env(safe-area-inset-top, 0px));
-    padding-bottom: 0.5rem;
+    box-sizing: border-box;
+    /* 顶栏为 sticky 且占据文档流，需扣掉其高度，否则底部溢出（按钮栏被挤出视口） */
+    height: calc(100dvh - var(--et-navbar-h, 3.0625rem));
+    max-height: calc(100dvh - var(--et-navbar-h, 3.0625rem));
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    padding-top: env(safe-area-inset-top, 0px);
+    padding-bottom: 0.25rem;
+}
+
+/* 管理页：外层仅作透传容器，内层路由组件占满高度 */
+.et-main-content--mgmt > * {
+    flex: 1 1 auto;
+    min-height: 0;
+    height: 100%;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+}
+
+.et-main-content--mgmt > * > * {
+    flex: 1 1 auto;
+    min-height: 0;
 }
 
 .et-main-panel {

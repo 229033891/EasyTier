@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Button, ConfirmDialog, ConfirmPopup, Divider, Menu, Message, Select, Tag, useConfirm, useToast, type VirtualScrollerLazyEvent } from 'primevue';
+import { Button, ConfirmDialog, ConfirmPopup, Menu, Message, Select, Tag, useConfirm, useToast, type VirtualScrollerLazyEvent } from 'primevue';
 import { computed, onMounted, onUnmounted, Ref, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import * as Api from '../modules/api';
@@ -750,44 +750,45 @@ onUnmounted(() => {
             </div>
         </div>
 
-        <!-- Main Content Area -->
+        <!-- 配置工具栏固定在顶栏下方，不随表单滚动 -->
+        <div v-if="showConfigPanel" class="network-toolbar">
+            <div class="config-toolbar">
+                <div class="toolbar-zone">
+                    <span class="toolbar-zone-label">{{ t('web.device_management.toolbar_config_files') }}</span>
+                    <div class="toolbar-zone-actions">
+                        <Button class="config-toolbar-btn" @click="showConfigEditDialog = true" icon="pi pi-file-edit"
+                            :label="t('web.device_management.edit_as_file')" iconPos="left" severity="secondary" />
+                        <Button class="config-toolbar-btn" @click="importConfig" icon="pi pi-upload"
+                            :label="t('web.device_management.import_config')" iconPos="left" severity="secondary" />
+                        <Button v-if="selectedInstanceId" class="config-toolbar-btn" @click="exportConfig" icon="pi pi-download"
+                            :label="t('web.device_management.export_config')" iconPos="left" severity="secondary" />
+                        <Button v-if="canSaveConfig" class="config-toolbar-btn" @click="saveNetworkConfig"
+                            :disabled="!currentNetworkConfig || savingConfig"
+                            icon="pi pi-save" :label="t('web.device_management.save_config')" iconPos="left"
+                            severity="success" />
+                    </div>
+                </div>
+                <div class="toolbar-zone toolbar-zone--network">
+                    <span class="toolbar-zone-label">{{ t('web.device_management.toolbar_network') }}</span>
+                    <div class="toolbar-zone-actions">
+                        <Button class="config-toolbar-btn" @click="newNetwork" icon="pi pi-plus"
+                            :label="t('web.device_management.add_network')" iconPos="left" severity="success" />
+                        <Button v-if="selectedInstanceId && currentNetworkControl.deletable.value"
+                            class="config-toolbar-btn" @click="confirmDeleteNetwork" icon="pi pi-trash"
+                            :label="t('web.device_management.delete_network')" iconPos="left" severity="danger"
+                            outlined />
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 仅中间表单/状态区滚动 -->
         <div class="network-content">
             <Message v-if="showStatusDisabledPanel" severity="warn" class="mb-0">
                 {{ t('web.device_management.network_disabled_hint') }}
             </Message>
 
             <template v-else-if="showConfigPanel">
-                <div class="config-toolbar">
-                    <div class="toolbar-zone">
-                        <span class="toolbar-zone-label">{{ t('web.device_management.toolbar_config_files') }}</span>
-                        <div class="toolbar-zone-actions">
-                            <Button class="config-toolbar-btn" @click="showConfigEditDialog = true" icon="pi pi-file-edit"
-                                :label="t('web.device_management.edit_as_file')" iconPos="left" severity="secondary" />
-                            <Button class="config-toolbar-btn" @click="importConfig" icon="pi pi-upload"
-                                :label="t('web.device_management.import_config')" iconPos="left" severity="secondary" />
-                            <Button v-if="selectedInstanceId" class="config-toolbar-btn" @click="exportConfig" icon="pi pi-download"
-                                :label="t('web.device_management.export_config')" iconPos="left" severity="secondary" />
-                            <Button v-if="canSaveConfig" class="config-toolbar-btn" @click="saveNetworkConfig"
-                                :disabled="!currentNetworkConfig || savingConfig"
-                                icon="pi pi-save" :label="t('web.device_management.save_config')" iconPos="left"
-                                severity="success" />
-                        </div>
-                    </div>
-                    <div class="toolbar-zone toolbar-zone--network">
-                        <span class="toolbar-zone-label">{{ t('web.device_management.toolbar_network') }}</span>
-                        <div class="toolbar-zone-actions">
-                            <Button class="config-toolbar-btn" @click="newNetwork" icon="pi pi-plus"
-                                :label="t('web.device_management.add_network')" iconPos="left" severity="success" />
-                            <Button v-if="selectedInstanceId && currentNetworkControl.deletable.value"
-                                class="config-toolbar-btn" @click="confirmDeleteNetwork" icon="pi pi-trash"
-                                :label="t('web.device_management.delete_network')" iconPos="left" severity="danger"
-                                outlined />
-                        </div>
-                    </div>
-                </div>
-
-                <Divider />
-
                 <Config :cur-network="currentNetworkConfig" :config-invalid="!currentNetworkConfig"
                     :hide-run-button="true" @run-network="saveAndRunNewNetwork"></Config>
             </template>
@@ -801,11 +802,11 @@ onUnmounted(() => {
                 </Message>
             </template>
 
-            <div v-else class="empty-state flex flex-col items-center py-12">
-                <i class="pi pi-sitemap text-5xl text-secondary mb-4 opacity-50"></i>
-                <div class="text-xl text-center font-medium mb-3">{{ t('web.device_management.no_network_selected') }}
+            <div v-else class="empty-state flex flex-col items-center py-6">
+                <i class="pi pi-sitemap text-4xl text-secondary mb-3 opacity-50"></i>
+                <div class="text-lg text-center font-medium mb-2">{{ t('web.device_management.no_network_selected') }}
                 </div>
-                <p class="text-secondary text-center mb-6 max-w-md">
+                <p class="text-secondary text-center mb-4 max-w-md">
                     {{ isStatusMode
                         ? t('web.device_management.select_network_for_status')
                         : t('web.device_management.select_existing_network_or_create_new') }}
@@ -857,38 +858,49 @@ onUnmounted(() => {
     display: flex;
     flex-direction: column;
     min-height: 0;
-    gap: 0.35rem;
+    gap: 0.25rem;
+    overflow: hidden;
 }
 
 .device-management--page {
-    max-height: calc(100vh - 3.5rem);
+    height: 100%;
+    max-height: 100%;
+    overflow: hidden;
 }
 
 .network-header {
     flex-shrink: 0;
-    position: sticky;
-    top: 0;
     z-index: 20;
     background: var(--surface-card, #ffffff) !important;
     border: var(--et-border, 1px solid var(--surface-border, #e5e7eb));
     border-radius: var(--et-radius, 0.5rem);
     box-shadow: none;
-    padding: 0.4rem 0.75rem 0.5rem !important;
+    padding: 0.35rem 0.65rem 0.4rem !important;
     margin: 0 !important;
 }
 
 .network-page-title {
-    margin: 0 0 0.25rem;
+    margin: 0 0 0.15rem;
     font-size: var(--et-fs-page-title, 1.25rem);
     font-weight: 700;
-    line-height: 1.3;
+    line-height: 1.25;
+}
+
+.network-toolbar {
+    flex-shrink: 0;
+    z-index: 20;
+    background: var(--surface-card, #ffffff) !important;
+    border: var(--et-border, 1px solid var(--surface-border, #e5e7eb));
+    border-radius: var(--et-radius, 0.5rem);
+    padding: 0.4rem 0.65rem 0.45rem;
+    margin: 0;
 }
 
 .network-content {
-    flex: 1;
+    flex: 1 1 auto;
     overflow-y: auto;
     min-height: 0;
-    padding: var(--et-pad-card, 0.75rem 1rem) !important;
+    padding: 0.5rem 0.65rem !important;
     background: var(--surface-card, #ffffff) !important;
     border: var(--et-border, 1px solid var(--surface-border, #e5e7eb));
     border-radius: var(--et-radius, 0.5rem);
@@ -897,11 +909,9 @@ onUnmounted(() => {
 
 .network-sticky-footer {
     flex-shrink: 0;
-    position: sticky;
-    bottom: 0;
     z-index: 20;
     margin-top: 0;
-    padding: var(--et-pad-card, 0.75rem 1rem);
+    padding: 0.45rem 0.65rem;
     background: var(--surface-card, #ffffff);
     border: var(--et-border, 1px solid var(--surface-border, #e5e7eb));
     border-radius: var(--et-radius, 0.5rem);
@@ -910,7 +920,7 @@ onUnmounted(() => {
     flex-wrap: wrap;
     align-items: center;
     justify-content: space-between;
-    gap: 0.75rem;
+    gap: 0.5rem;
 }
 
 .network-status-actions {
@@ -921,7 +931,7 @@ onUnmounted(() => {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
-    gap: 0.75rem;
+    gap: 0.5rem;
 }
 
 .footer-zone--primary {
@@ -971,14 +981,14 @@ onUnmounted(() => {
     display: flex;
     flex-wrap: wrap;
     align-items: flex-end;
-    gap: 1rem 1.5rem;
-    margin-bottom: 0.25rem;
+    gap: 0.65rem 1.25rem;
+    margin: 0;
 }
 
 .toolbar-zone {
     display: flex;
     flex-direction: column;
-    gap: 0.35rem;
+    gap: 0.25rem;
     min-width: 0;
 }
 
@@ -993,11 +1003,11 @@ onUnmounted(() => {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
-    gap: 0.5rem;
+    gap: 0.4rem;
 }
 
 .toolbar-zone--network {
-    padding-left: 1rem;
+    padding-left: 0.85rem;
     border-left: 1px solid var(--surface-border, #e5e7eb);
 }
 
@@ -1074,7 +1084,7 @@ onUnmounted(() => {
 /* 网络选择相关样式 */
 .network-label {
     display: block;
-    margin: 0 0 0.2rem;
+    margin: 0 0 0.1rem;
     font-size: var(--et-fs-meta, 0.75rem);
     font-weight: 600;
     color: var(--text-color-secondary, #64748b);
@@ -1112,6 +1122,7 @@ onUnmounted(() => {
     }
 
     .network-header,
+    .network-toolbar,
     .network-content,
     .network-sticky-footer {
         background: var(--surface-card, #1e293b) !important;
@@ -1122,19 +1133,15 @@ onUnmounted(() => {
 
 /* Responsive design for mobile devices */
 @media (max-width: 768px) {
-    .device-management--page {
-        max-height: calc(100vh - 6.5rem);
-    }
-
-    .network-header {
-        padding: 0.75rem;
+    .network-header,
+    .network-toolbar {
+        padding: 0.5rem 0.6rem;
     }
 
     .network-content {
-        padding: 0.75rem;
+        padding: 0.5rem 0.6rem !important;
     }
 
-    /* 在小屏幕上缩短网络标签文本 */
     .network-label {
         font-size: 0.9rem;
     }

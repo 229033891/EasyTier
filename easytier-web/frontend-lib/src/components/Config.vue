@@ -675,22 +675,22 @@ function removeVpnPortalClient(index: number) {
 .config-panels {
   display: flex;
   flex-direction: column;
-  gap: 0.5rem;
+  gap: 0.35rem;
 }
 
 .config-panels :deep(.p-divider) {
-  margin: 0.35rem 0;
+  margin: 0.2rem 0;
 }
 
 .config-panels :deep(.p-panel .p-panel-header) {
-  padding: 0.65rem 0.85rem;
+  padding: 0.5rem 0.7rem;
   font-size: 0.9375rem;
   font-weight: 600;
-  line-height: 1.35;
+  line-height: 1.3;
 }
 
 .config-panels :deep(.p-panel .p-panel-content) {
-  padding: 0.75rem;
+  padding: 0.55rem 0.7rem;
 }
 
 .config-panels :deep(.p-panel .p-panel-header .p-panel-title),
