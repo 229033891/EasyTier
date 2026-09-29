@@ -52,3 +52,8 @@
   max-width: 32rem;
   line-height: 1.5;
 }
+
+/* 可折叠 Panel：标题区整块可点时加大触摸目标（与 Config / AclRuleDialog 的 pt 配套） */
+.p-panel-header.cursor-pointer {
+  min-height: 2.75rem;
+}

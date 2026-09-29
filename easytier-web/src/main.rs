@@ -167,6 +167,25 @@ struct Cli {
     #[command(flatten)]
     feature_flags: FeatureFlags,
 
+    /// Reset a user's password and exit (does not start the server).
+    /// Use the same plaintext the user would type on the login page.
+    #[arg(
+        long,
+        env = "ET_RESET_PASSWORD_USER",
+        requires = "new_password",
+        help = t!("cli.reset_password_user").to_string()
+    )]
+    reset_password_user: Option<String>,
+
+    #[arg(
+        long,
+        env = "ET_NEW_PASSWORD",
+        hide_env_values = true,
+        requires = "reset_password_user",
+        help = t!("cli.new_password").to_string()
+    )]
+    new_password: Option<String>,
+
     #[command(flatten)]
     oidc: restful::oidc::OidcOptions,
 
@@ -201,15 +220,6 @@ pub struct WebhookOptions {
 
 #[derive(Debug, Clone, Default, clap::Args)]
 pub struct FeatureFlags {
-    /// Whether user registration via the web UI is disabled.
-    #[arg(
-        long,
-        env = "ET_DISABLE_REGISTRATION",
-        default_value = "false",
-        help = t!("cli.disable_registration").to_string()
-    )]
-    pub disable_registration: bool,
-
     /// Whether to auto-create users when they connect via heartbeat with an unknown token.
     #[arg(
         long,
@@ -312,6 +322,25 @@ async fn main() {
         "easytier-web starting"
     );
 
+    // let db = db::Db::new(":memory:").await.unwrap();
+    let db = db::Db::new(cli.db.clone()).await.unwrap();
+
+    if let (Some(username), Some(password)) = (&cli.reset_password_user, &cli.new_password) {
+        match db
+            .set_user_password_by_username(username, db::hash_web_login_password(password))
+            .await
+        {
+            Ok(()) => {
+                println!("Password updated for user '{username}'.");
+                return;
+            }
+            Err(e) => {
+                eprintln!("Failed to reset password for '{username}': {e}");
+                std::process::exit(1);
+            }
+        }
+    }
+
     // Validate OIDC configuration: check split-deploy specific requirements
     // Basic OIDC parameter validation is handled in OidcConfig::from_params
     if cli.oidc.any_param_provided() {
@@ -338,8 +367,6 @@ async fn main() {
         }
     }
 
-    // let db = db::Db::new(":memory:").await.unwrap();
-    let db = db::Db::new(cli.db).await.unwrap();
     let feature_flags = Arc::new(cli.feature_flags);
     let webhook_config = Arc::new(webhook::WebhookConfig::new(
         cli.webhook.webhook_url,

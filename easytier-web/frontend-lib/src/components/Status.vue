@@ -3,10 +3,10 @@ import { useTimeAgo } from '@vueuse/core'
 import { NetworkInstance, VpnPortalClientState, type TunnelInfo, type NodeInfo, type PeerRoutePair, type VpnPortalClientInfo, type VpnPortalInfo } from '../types/network'
 import type { RemoteClient } from '../modules/api'
 import { useI18n } from 'vue-i18n';
-import { computed, onMounted, onUnmounted, ref } from 'vue';
+import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue';
 import { ipv4InetToString, ipv4ToString, ipv6ToString } from '../modules/utils';
 import { latencyMs, lossRate, numericValue, peerConns } from '../modules/statusDisplay';
-import { Badge, DataTable, Column, Tag, Chip, Button, Dialog, ScrollPanel, Timeline, Divider, Card, } from 'primevue';
+import { Badge, DataTable, Column, Tag, Chip, Button, ScrollPanel, Timeline, Card, Panel, } from 'primevue';
 import NetworkChart from './NetworkChart.vue';
 
 const props = defineProps<{
@@ -142,6 +142,12 @@ interface Chip {
   icon: string
 }
 
+interface ChipGroup {
+  key: string
+  titleKey: string
+  chips: Chip[]
+}
+
 // udp nat type
 enum NatType {
   // has NAT; but own a single public IP, port is not changed
@@ -170,89 +176,91 @@ const udpNatTypeStrMap = {
   [NatType.SymmetricEasyDec]: 'Symmetric Easy Dec',
 }
 
-const myNodeInfoChips = computed(() => {
+/** 按类型分区；顺序：Peer ID → Virtual IP → UDP NAT → Local IP → Public IP → Listener */
+const myNodeInfoGroups = computed(() => {
+  const groups: ChipGroup[] = []
   if (!props.curNetworkInst)
-    return []
+    return groups
 
-  const chips: Array<Chip> = []
   const my_node_info = props.curNetworkInst.detail?.my_node_info
   if (!my_node_info)
-    return chips
+    return groups
 
-  // peer id
-  chips.push({
-    label: `Peer ID: ${my_node_info.peer_id}`,
-    icon: '',
-  } as Chip)
+  const chip = (label: string): Chip => ({ label, icon: '' })
 
-  // TUN Device Name
+  groups.push({
+    key: 'peer_id',
+    titleKey: 'node_info_group_peer_id',
+    chips: [chip(String(my_node_info.peer_id))],
+  })
+
   const dev_name = props.curNetworkInst.detail?.dev_name
   if (dev_name) {
-    chips.push({
-      label: `TUN Device Name: ${dev_name}`,
-      icon: '',
-    } as Chip)
+    groups.push({
+      key: 'tun',
+      titleKey: 'node_info_group_tun_device',
+      chips: [chip(dev_name)],
+    })
   }
 
-  // virtual ipv4
-  chips.push({
-    label: `Virtual IPv4: ${ipv4InetToString(my_node_info.virtual_ipv4)}`,
-    icon: '',
-  } as Chip)
+  groups.push({
+    key: 'virtual_ip',
+    titleKey: 'node_info_group_virtual_ip',
+    chips: [chip(ipv4InetToString(my_node_info.virtual_ipv4))],
+  })
 
-  // local ipv4s
-  const local_ipv4s = my_node_info.ips?.interface_ipv4s
-  for (const [idx, ip] of local_ipv4s?.entries() ?? []) {
-    chips.push({
-      label: `Local IPv4 ${idx}: ${ipv4ToString(ip)}`,
-      icon: '',
-    } as Chip)
-  }
-
-  // local ipv6s
-  const local_ipv6s = my_node_info.ips?.interface_ipv6s
-  for (const [idx, ip] of local_ipv6s?.entries() ?? []) {
-    chips.push({
-      label: `Local IPv6 ${idx}: ${ipv6ToString(ip)}`,
-      icon: '',
-    } as Chip)
-  }
-
-  // public ip
-  const public_ip = my_node_info.ips?.public_ipv4
-  if (public_ip) {
-    chips.push({
-      label: `Public IP: ${ipv4ToString(public_ip)}`,
-      icon: '',
-    } as Chip)
-  }
-
-  const public_ipv6 = my_node_info.ips?.public_ipv6
-  if (public_ipv6) {
-    chips.push({
-      label: `Public IPv6: ${ipv6ToString(public_ipv6)}`,
-      icon: '',
-    } as Chip)
-  }
-
-  // listeners:
-  const listeners = my_node_info.listeners
-  for (const [idx, listener] of listeners?.entries() ?? []) {
-    chips.push({
-      label: `Listener ${idx}: ${listener.url}`,
-      icon: '',
-    } as Chip)
-  }
-
-  const udpNatType: NatType = my_node_info.stun_info?.udp_nat_type
+  const udpNatType: NatType | undefined = my_node_info.stun_info?.udp_nat_type
   if (udpNatType !== undefined) {
-    chips.push({
-      label: `UDP NAT Type: ${udpNatTypeStrMap[udpNatType]}`,
-      icon: '',
-    } as Chip)
+    groups.push({
+      key: 'udp_nat',
+      titleKey: 'node_info_group_udp_nat_type',
+      chips: [chip(udpNatTypeStrMap[udpNatType] ?? String(udpNatType))],
+    })
   }
 
-  return chips
+  const localChips: Chip[] = []
+  for (const [idx, ip] of my_node_info.ips?.interface_ipv4s?.entries() ?? []) {
+    localChips.push(chip(`IPv4 ${idx}: ${ipv4ToString(ip)}`))
+  }
+  for (const [idx, ip] of my_node_info.ips?.interface_ipv6s?.entries() ?? []) {
+    localChips.push(chip(`IPv6 ${idx}: ${ipv6ToString(ip)}`))
+  }
+  if (localChips.length) {
+    groups.push({
+      key: 'local_ip',
+      titleKey: 'node_info_group_local_ip',
+      chips: localChips,
+    })
+  }
+
+  const publicChips: Chip[] = []
+  if (my_node_info.ips?.public_ipv4) {
+    publicChips.push(chip(`IPv4: ${ipv4ToString(my_node_info.ips.public_ipv4)}`))
+  }
+  if (my_node_info.ips?.public_ipv6) {
+    publicChips.push(chip(`IPv6: ${ipv6ToString(my_node_info.ips.public_ipv6)}`))
+  }
+  if (publicChips.length) {
+    groups.push({
+      key: 'public_ip',
+      titleKey: 'node_info_group_public_ip',
+      chips: publicChips,
+    })
+  }
+
+  const listenerChips: Chip[] = []
+  for (const [idx, listener] of my_node_info.listeners?.entries() ?? []) {
+    listenerChips.push(chip(`${idx}: ${listener.url}`))
+  }
+  if (listenerChips.length) {
+    groups.push({
+      key: 'listener',
+      titleKey: 'node_info_group_listener',
+      chips: listenerChips,
+    })
+  }
+
+  return groups
 })
 
 function globalSumCommon(field: string) {
@@ -307,8 +315,78 @@ let prevRxSum = 0
 const txRate = ref('0')
 const rxRate = ref('0')
 
-// 控制节点详细信息chips的显示/隐藏
-const showNodeDetails = ref(false)
+/** 可折叠 Panel：节点默认展开（仅图表）；Peer/详情/VPN/事件默认收起 */
+const panelCollapsed = reactive({
+  myNode: false,
+  peer: true,
+  vpnPortal: true,
+  eventLog: true,
+})
+
+/** My Node 内「节点详情」默认收起，避免首屏堆叠 */
+const nodeDetailsCollapsed = ref(true)
+
+/** Local IP / Listener 等大组默认收起 */
+const groupBodyCollapsed = reactive<Record<string, boolean>>({
+  local_ip: true,
+  listener: true,
+})
+
+function isGroupCollapsible(key: string) {
+  return key === 'local_ip' || key === 'listener'
+}
+
+function isGroupBodyCollapsed(key: string) {
+  if (!isGroupCollapsible(key))
+    return false
+  return groupBodyCollapsed[key] !== false
+}
+
+function toggleGroupBody(key: string) {
+  if (!isGroupCollapsible(key))
+    return
+  groupBodyCollapsed[key] = !isGroupBodyCollapsed(key)
+}
+
+async function copyGroupChips(group: { titleKey: string; chips: Chip[] }) {
+  const text = group.chips.map(c => c.label).join('\n')
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text)
+    } else {
+      const textarea = document.createElement('textarea')
+      textarea.value = text
+      textarea.style.position = 'fixed'
+      textarea.style.opacity = '0'
+      document.body.appendChild(textarea)
+      textarea.select()
+      document.execCommand('copy')
+      textarea.remove()
+    }
+  } catch (e) {
+    console.error('Failed to copy node info group', e)
+  }
+}
+
+function onToggleablePanelHeaderClick(
+  key: keyof typeof panelCollapsed,
+  event: Event,
+) {
+  const target = event.target as HTMLElement | null
+  if (target?.closest('button, a, input, textarea, select, [role="button"]')) {
+    return
+  }
+  panelCollapsed[key] = !panelCollapsed[key]
+}
+
+function panelHeaderPt(key: keyof typeof panelCollapsed) {
+  return {
+    header: {
+      class: 'cursor-pointer select-none touch-manipulation',
+      onClick: (event: Event) => onToggleablePanelHeaderClick(key, event),
+    },
+  }
+}
 
 onMounted(() => {
   rateIntervalId = window.setInterval(() => {
@@ -326,22 +404,17 @@ onUnmounted(() => {
   clearInterval(rateIntervalId)
 })
 
-const dialogVisible = ref(false)
-const dialogContent = ref<any>('')
-const dialogHeader = ref('event_log')
 const vpnPortalInfo = ref<VpnPortalInfo>()
 const vpnPortalClients = computed(() => vpnPortalInfo.value?.clients ?? [])
 const vpnPortalLoading = ref(false)
 const vpnPortalError = ref('')
 const copiedVpnPortalClient = ref('')
 
-async function showVpnPortalConfig() {
+async function loadVpnPortalConfig() {
   const instanceId = props.curNetworkInst?.instance_id
   if (!instanceId)
     return
 
-  dialogHeader.value = 'vpn_portal_config'
-  dialogVisible.value = true
   vpnPortalInfo.value = undefined
   vpnPortalError.value = ''
   copiedVpnPortalClient.value = ''
@@ -355,6 +428,11 @@ async function showVpnPortalConfig() {
     vpnPortalLoading.value = false
   }
 }
+
+watch(() => panelCollapsed.vpnPortal, (collapsed) => {
+  if (!collapsed)
+    void loadVpnPortalConfig()
+})
 
 function vpnPortalStateKey(state: VpnPortalClientState | string): string {
   const normalized = typeof state === 'string'
@@ -391,79 +469,24 @@ async function copyVpnPortalClientConfig(client: VpnPortalClientInfo) {
   }
 }
 
-function showEventLogs() {
+const eventLogContent = computed(() => {
   const detail = props.curNetworkInst?.detail
-  if (!detail)
-    return
-
-  dialogContent.value = detail.events?.map((event: string) => JSON.parse(event)) ?? []
-  dialogHeader.value = 'event_log'
-  dialogVisible.value = true
-}
+  if (!detail?.events)
+    return []
+  const items: any[] = []
+  for (const event of detail.events) {
+    try {
+      items.push(JSON.parse(event))
+    } catch {
+      // 单条损坏时跳过，避免整页白屏
+    }
+  }
+  return items
+})
 </script>
 
 <template>
   <div class="frontend-lib">
-    <Dialog v-model:visible="dialogVisible" modal :header="t(dialogHeader)" class="w-full h-auto max-h-full"
-      :baseZIndex="2000">
-      <ScrollPanel v-if="dialogHeader === 'vpn_portal_config'" class="max-h-[75vh] pr-3">
-        <div v-if="vpnPortalLoading" class="py-8 text-center text-surface-500">
-          {{ t('web.device_management.loading_network_status') }}
-        </div>
-        <div v-else-if="vpnPortalError" class="py-4 text-red-500">
-          {{ vpnPortalError }}
-        </div>
-        <div v-else-if="!vpnPortalInfo || ((!vpnPortalInfo.vpn_type || vpnPortalInfo.vpn_type === 'null') && vpnPortalClients.length === 0)"
-          class="py-4 text-surface-500">
-          {{ t('vpn_portal_not_configured') }}
-        </div>
-        <div v-else class="flex flex-col gap-4">
-          <div class="flex flex-wrap gap-x-6 gap-y-2 text-sm">
-            <span v-if="vpnPortalInfo.vpn_type"><strong>{{ t('vpn_portal_type') }}:</strong>
-              {{ vpnPortalInfo.vpn_type }}</span>
-            <span v-if="vpnPortalInfo.listener"><strong>{{ t('vpn_portal_listener') }}:</strong>
-              {{ vpnPortalInfo.listener }}</span>
-          </div>
-
-          <div v-for="client in vpnPortalClients" :key="client.name"
-            class="rounded border border-surface-200 dark:border-surface-700 p-4">
-            <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
-              <div class="font-semibold">{{ client.name }} · {{ client.virtual_ip }}</div>
-              <Tag :severity="vpnPortalStateSeverity(client.state)"
-                :value="t(vpnPortalStateKey(client.state))" />
-            </div>
-            <div class="mb-3 grid gap-x-6 gap-y-1 text-sm sm:grid-cols-2">
-              <span v-if="client.groups.length"><strong>{{ t('vpn_portal_client_groups') }}:</strong>
-                {{ client.groups.join(', ') }}</span>
-              <span v-if="client.peer_id !== undefined"><strong>{{ t('vpn_portal_peer_id') }}:</strong>
-                {{ client.peer_id }}</span>
-              <span v-if="client.endpoint"><strong>{{ t('vpn_portal_endpoint') }}:</strong>
-                {{ client.endpoint }}</span>
-              <span v-if="client.tunnel_ip"><strong>{{ t('vpn_portal_tunnel_ip') }}:</strong>
-                {{ client.tunnel_ip }}</span>
-              <span v-if="client.error" class="text-red-500 sm:col-span-2">{{ client.error }}</span>
-            </div>
-            <div class="mb-2 flex items-center justify-between gap-3">
-              <label class="font-medium">{{ t('vpn_portal_client_config') }}</label>
-              <Button size="small" severity="secondary" icon="pi pi-copy"
-                :label="copiedVpnPortalClient === client.name ? t('config_copied') : t('vpn_portal_copy_client_config')"
-                @click="copyVpnPortalClientConfig(client)" />
-            </div>
-            <pre class="max-w-full overflow-x-auto whitespace-pre-wrap break-all rounded bg-surface-100 p-3 text-xs dark:bg-surface-800">{{ client.client_config }}</pre>
-          </div>
-        </div>
-      </ScrollPanel>
-      <Timeline v-else :value="dialogContent">
-        <template #opposite="slotProps">
-          <small class="text-surface-500 dark:text-surface-400">{{ useTimeAgo(Date.parse(slotProps.item.time))
-          }}</small>
-        </template>
-        <template #content="slotProps">
-          <HumanEvent :event="slotProps.item.event" />
-        </template>
-      </Timeline>
-    </Dialog>
-
     <Card v-if="curNetworkInst?.error_msg">
       <template #title>
         Run Network Error
@@ -478,56 +501,60 @@ function showEventLogs() {
     </Card>
 
     <template v-else>
-      <Card>
-        <template #title>
-          {{ t('my_node_info') }}
-        </template>
-        <template #content>
-          <div class="flex w-full flex-col gap-y-5">
-            <div class="gap-4">
-              <!-- 网络流量图表 -->
-              <div class="w-full">
-                <NetworkChart :upload-rate="txRate" :download-rate="rxRate" />
+      <div class="status-panels flex flex-col gap-2">
+        <Panel v-model:collapsed="panelCollapsed.myNode" :header="t('my_node_info')" toggleable
+          :pt="panelHeaderPt('myNode')">
+          <div class="flex w-full flex-col gap-y-4">
+            <div class="w-full">
+              <NetworkChart :upload-rate="txRate" :download-rate="rxRate" />
+            </div>
+
+            <div class="rounded border border-surface-200 dark:border-surface-700">
+              <button type="button"
+                class="flex w-full items-center justify-between gap-2 px-3 py-2 text-left cursor-pointer select-none touch-manipulation"
+                @click="nodeDetailsCollapsed = !nodeDetailsCollapsed">
+                <span class="text-sm font-medium">{{ t('node_info_details') }}</span>
+                <i class="pi text-sm"
+                  :class="nodeDetailsCollapsed ? 'pi-chevron-down' : 'pi-chevron-up'"></i>
+              </button>
+              <div v-show="!nodeDetailsCollapsed" class="flex flex-col gap-2 border-t border-surface-200 dark:border-surface-700 p-2 max-h-72 overflow-auto">
+                <div v-for="group in myNodeInfoGroups" :key="group.key"
+                  class="rounded border border-surface-200 dark:border-surface-700 bg-surface-50/60 dark:bg-surface-800/40 px-3 py-2">
+                  <div class="mb-1.5 flex items-center justify-between gap-2">
+                    <button type="button" class="flex min-w-0 items-center gap-1 text-left"
+                      :class="isGroupCollapsible(group.key) ? 'cursor-pointer select-none touch-manipulation' : 'cursor-default'"
+                      @click="toggleGroupBody(group.key)">
+                      <i v-if="isGroupCollapsible(group.key)" class="pi text-xs text-surface-500"
+                        :class="isGroupBodyCollapsed(group.key) ? 'pi-chevron-right' : 'pi-chevron-down'"></i>
+                      <span class="text-xs font-semibold uppercase tracking-wide text-surface-500 truncate">
+                        {{ t(group.titleKey) }}
+                        <span v-if="isGroupCollapsible(group.key)" class="normal-case font-normal">
+                          ({{ group.chips.length }})
+                        </span>
+                      </span>
+                    </button>
+                    <Button v-if="group.chips.length" size="small" text rounded icon="pi pi-copy"
+                      :aria-label="t('node_info_copy_group')" v-tooltip="t('node_info_copy_group')"
+                      @click="copyGroupChips(group)" />
+                  </div>
+                  <div v-show="!isGroupBodyCollapsed(group.key)" class="flex flex-row flex-wrap gap-2">
+                    <Chip v-for="(chip, i) in group.chips" :key="i" :label="chip.label" :icon="chip.icon"
+                      class="text-sm" />
+                  </div>
+                </div>
               </div>
             </div>
-
-            <!-- 展开/收起节点详细信息的divider按钮 -->
-            <div class="w-full">
-              <Button @click="showNodeDetails = !showNodeDetails"
-                :icon="showNodeDetails ? 'pi pi-chevron-up' : 'pi pi-chevron-down'"
-                :label="showNodeDetails ? t('hide_node_details') : t('show_node_details')" severity="secondary" outlined
-                class="w-full justify-center" size="small" />
-            </div>
-
-            <!-- 节点详细信息chips，根据showNodeDetails状态显示/隐藏 -->
-            <div v-show="showNodeDetails" class="flex flex-row items-center flex-wrap w-full max-h-40 overflow-scroll">
-              <Chip v-for="(chip, i) in myNodeInfoChips" :key="i" :label="chip.label" :icon="chip.icon"
-                class="mr-2 mt-2 text-sm" />
-            </div>
-
-            <div v-if="myNodeInfo" class="m-0 flex flex-row justify-center gap-x-5 text-sm">
-              <Button severity="info" :label="t('show_vpn_portal_config')" @click="showVpnPortalConfig" />
-              <Button severity="info" :label="t('show_event_log')" @click="showEventLogs" />
-            </div>
           </div>
-        </template>
-      </Card>
+        </Panel>
 
-      <Divider />
-
-      <Card>
-        <template #title>
-          <div class="flex items-center gap-3">
+        <Panel v-model:collapsed="panelCollapsed.peer" toggleable :pt="panelHeaderPt('peer')">
+          <template #header>
             <div class="flex items-center gap-2">
               <span>{{ t('peer_info') }}</span>
-            </div>
-            <div class="flex items-center gap-1">
               <Badge :value="peerCount" severity="info"
-                class="text-lg font-semibold px-2 py-1 rounded-full bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200" />
+                class="text-xs font-semibold px-2 py-0.5 rounded-full" />
             </div>
-          </div>
-        </template>
-        <template #content>
+          </template>
           <DataTable :value="peerRouteInfos" column-resize-mode="fit" table-class="w-full">
             <Column :field="ipFormat" :header="t('virtual_ipv4')" />
             <Column :header="t('hostname')">
@@ -560,13 +587,96 @@ function showEventLogs() {
               </template>
             </Column>
           </DataTable>
-        </template>
-      </Card>
+        </Panel>
+
+        <Panel v-if="myNodeInfo" v-model:collapsed="panelCollapsed.vpnPortal" :header="t('vpn_portal_config')"
+          toggleable :pt="panelHeaderPt('vpnPortal')">
+          <ScrollPanel class="max-h-[50vh] pr-3">
+            <div v-if="vpnPortalLoading" class="py-8 text-center text-surface-500">
+              {{ t('web.device_management.loading_network_status') }}
+            </div>
+            <div v-else-if="vpnPortalError" class="py-4 text-red-500">
+              {{ vpnPortalError }}
+            </div>
+            <div
+              v-else-if="!vpnPortalInfo || ((!vpnPortalInfo.vpn_type || vpnPortalInfo.vpn_type === 'null') && vpnPortalClients.length === 0)"
+              class="py-4 text-surface-500">
+              {{ t('vpn_portal_not_configured') }}
+            </div>
+            <div v-else class="flex flex-col gap-4">
+              <div class="flex flex-wrap gap-x-6 gap-y-2 text-sm">
+                <span v-if="vpnPortalInfo.vpn_type"><strong>{{ t('vpn_portal_type') }}:</strong>
+                  {{ vpnPortalInfo.vpn_type }}</span>
+                <span v-if="vpnPortalInfo.listener"><strong>{{ t('vpn_portal_listener') }}:</strong>
+                  {{ vpnPortalInfo.listener }}</span>
+              </div>
+
+              <div v-for="client in vpnPortalClients" :key="client.name"
+                class="rounded border border-surface-200 dark:border-surface-700 p-4">
+                <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
+                  <div class="font-semibold">{{ client.name }} · {{ client.virtual_ip }}</div>
+                  <Tag :severity="vpnPortalStateSeverity(client.state)" :value="t(vpnPortalStateKey(client.state))" />
+                </div>
+                <div class="mb-3 grid gap-x-6 gap-y-1 text-sm sm:grid-cols-2">
+                  <span v-if="client.groups.length"><strong>{{ t('vpn_portal_client_groups') }}:</strong>
+                    {{ client.groups.join(', ') }}</span>
+                  <span v-if="client.peer_id !== undefined"><strong>{{ t('vpn_portal_peer_id') }}:</strong>
+                    {{ client.peer_id }}</span>
+                  <span v-if="client.endpoint"><strong>{{ t('vpn_portal_endpoint') }}:</strong>
+                    {{ client.endpoint }}</span>
+                  <span v-if="client.tunnel_ip"><strong>{{ t('vpn_portal_tunnel_ip') }}:</strong>
+                    {{ client.tunnel_ip }}</span>
+                  <span v-if="client.error" class="text-red-500 sm:col-span-2">{{ client.error }}</span>
+                </div>
+                <div class="mb-2 flex items-center justify-between gap-3">
+                  <label class="font-medium">{{ t('vpn_portal_client_config') }}</label>
+                  <Button size="small" severity="secondary" icon="pi pi-copy"
+                    :label="copiedVpnPortalClient === client.name ? t('config_copied') : t('vpn_portal_copy_client_config')"
+                    @click="copyVpnPortalClientConfig(client)" />
+                </div>
+                <pre
+                  class="max-w-full overflow-x-auto whitespace-pre-wrap break-all rounded bg-surface-100 p-3 text-xs dark:bg-surface-800">{{ client.client_config }}</pre>
+              </div>
+            </div>
+          </ScrollPanel>
+        </Panel>
+
+        <Panel v-if="myNodeInfo" v-model:collapsed="panelCollapsed.eventLog" :header="t('event_log')" toggleable
+          :pt="panelHeaderPt('eventLog')">
+          <Timeline v-if="eventLogContent.length" :value="eventLogContent">
+            <template #opposite="slotProps">
+              <small class="text-surface-500 dark:text-surface-400">{{ useTimeAgo(Date.parse(slotProps.item.time))
+              }}</small>
+            </template>
+            <template #content="slotProps">
+              <HumanEvent :event="slotProps.item.event" />
+            </template>
+          </Timeline>
+          <div v-else class="py-4 text-surface-500 text-sm">—</div>
+        </Panel>
+      </div>
     </template>
   </div>
 </template>
 
 <style lang="postcss" scoped>
+.status-panels :deep(.p-panel .p-panel-header) {
+  padding: 0.65rem 0.85rem;
+  font-size: 0.9375rem;
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.status-panels :deep(.p-panel .p-panel-content) {
+  padding: 0.75rem;
+}
+
+.status-panels :deep(.p-panel .p-panel-header .p-panel-title),
+.status-panels :deep(.p-panel .p-panel-header span) {
+  font-size: 0.9375rem;
+  font-weight: 600;
+}
+
 .p-timeline :deep(.p-timeline-event-opposite) {
   @apply flex-none;
 }

@@ -53,14 +53,32 @@ pub struct Credentials {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct RegisterNewUser {
-    pub credentials: Credentials,
-    pub captcha: String,
+pub struct AdminCreateUser {
+    pub username: String,
+    pub password: String,
+    /// When true, join both `admins` and `users` groups.
+    #[serde(default)]
+    pub is_admin: bool,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ChangePassword {
     pub new_password: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct UserInfo {
+    pub id: i32,
+    pub username: String,
+    pub groups: Vec<String>,
+    pub is_admin: bool,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct MeResponse {
+    pub id: i32,
+    pub username: String,
+    pub is_admin: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -77,11 +95,125 @@ impl Backend {
         &self.db
     }
 
-    pub async fn register_new_user(&self, new_user: &RegisterNewUser) -> anyhow::Result<()> {
-        let hashed_password = password_auth::generate_hash(new_user.credentials.password.as_str());
-        self.db
-            .create_user_and_join_users_group(&new_user.credentials.username, hashed_password)
+    pub async fn user_group_names(&self, user_id: i32) -> Result<Vec<String>, Error> {
+        use entity::{groups, users_groups};
+
+        #[derive(FromQueryResult)]
+        struct GroupNameRow {
+            name: String,
+        }
+
+        let rows = groups::Entity::find()
+            .column_as(groups::Column::Name, "name")
+            .join(JoinType::InnerJoin, groups::Relation::UsersGroups.def())
+            .filter(users_groups::Column::UserId.eq(user_id))
+            .into_model::<GroupNameRow>()
+            .all(self.db.orm_db())
             .await?;
+
+        Ok(rows.into_iter().map(|r| r.name).collect())
+    }
+
+    pub async fn user_is_admin(&self, user: &User) -> Result<bool, Error> {
+        let groups = self.user_group_names(user.db_user.id).await?;
+        Ok(groups.iter().any(|g| g == "admins"))
+    }
+
+    pub async fn create_user_by_admin(&self, req: &AdminCreateUser) -> anyhow::Result<UserInfo> {
+        let username = req.username.trim();
+        if username.is_empty() {
+            anyhow::bail!("Username is required");
+        }
+        if req.password.is_empty() {
+            anyhow::bail!("Password is required");
+        }
+
+        let hashed_password = password_auth::generate_hash(req.password.as_str());
+        let groups: &[&str] = if req.is_admin {
+            &["users", "admins"]
+        } else {
+            &["users"]
+        };
+
+        let db_user = self
+            .db
+            .create_user_and_join_groups(username, hashed_password, groups)
+            .await?;
+
+        Ok(UserInfo {
+            id: db_user.id,
+            username: db_user.username,
+            groups: groups.iter().map(|s| (*s).to_string()).collect(),
+            is_admin: req.is_admin,
+        })
+    }
+
+    pub async fn list_users(&self) -> Result<Vec<UserInfo>, Error> {
+        use entity::{groups, users, users_groups};
+        use sea_orm::QueryOrder;
+        use std::collections::BTreeMap;
+
+        #[derive(FromQueryResult)]
+        struct UserGroupRow {
+            id: i32,
+            username: String,
+            group_name: Option<String>,
+        }
+
+        let rows = users::Entity::find()
+            .column_as(users::Column::Id, "id")
+            .column_as(users::Column::Username, "username")
+            .column_as(groups::Column::Name, "group_name")
+            .join(JoinType::LeftJoin, users::Relation::UsersGroups.def())
+            .join(
+                JoinType::LeftJoin,
+                users_groups::Relation::Groups.def(),
+            )
+            .order_by_asc(users::Column::Id)
+            .into_model::<UserGroupRow>()
+            .all(self.db.orm_db())
+            .await?;
+
+        let mut map: BTreeMap<i32, UserInfo> = BTreeMap::new();
+        for row in rows {
+            let entry = map.entry(row.id).or_insert_with(|| UserInfo {
+                id: row.id,
+                username: row.username.clone(),
+                groups: Vec::new(),
+                is_admin: false,
+            });
+            if let Some(name) = row.group_name {
+                if name == "admins" {
+                    entry.is_admin = true;
+                }
+                if !entry.groups.contains(&name) {
+                    entry.groups.push(name);
+                }
+            }
+        }
+
+        Ok(map.into_values().collect())
+    }
+
+    pub async fn delete_user(&self, user_id: i32, actor_id: i32) -> anyhow::Result<()> {
+        if user_id == actor_id {
+            anyhow::bail!("Cannot delete your own account");
+        }
+
+        let users = self.list_users().await?;
+        let target = users
+            .iter()
+            .find(|u| u.id == user_id)
+            .ok_or_else(|| anyhow::anyhow!("User not found"))?;
+
+        if target.is_admin {
+            let admin_count = users.iter().filter(|u| u.is_admin).count();
+            if admin_count <= 1 {
+                anyhow::bail!("Cannot delete the last admin");
+            }
+        }
+
+        self.db.delete_user_by_id(user_id).await?;
         Ok(())
     }
 
@@ -211,9 +343,10 @@ impl AuthzBackend for Backend {
 
     async fn get_group_permissions(
         &self,
-        _user: &Self::User,
+        user: &Self::User,
     ) -> Result<HashSet<Self::Permission>, Self::Error> {
         let permissions = entity::users::Entity::find()
+            .filter(entity::users::Column::Id.eq(user.db_user.id))
             .column_as(entity::permissions::Column::Name, "name")
             .join(
                 JoinType::LeftJoin,

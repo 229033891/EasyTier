@@ -2933,6 +2933,7 @@ dependencies = [
  "image",
  "imageproc",
  "maxminddb",
+ "md5",
  "mimalloc",
  "openidconnect",
  "password-auth",

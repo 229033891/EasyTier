@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
-import { Button, Drawer, ProgressSpinner, useToast, InputSwitch, Popover, Dropdown, Toolbar } from 'primevue';
-import Tooltip from 'primevue/tooltip';
-import { useRoute, useRouter } from 'vue-router';
+import { Button, ProgressSpinner, useToast, InputSwitch, Dropdown, Toolbar } from 'primevue';
+import { tooltipDirective } from '../modules/tooltip';
+import { useRouter } from 'vue-router';
 import { Utils } from 'easytier-frontend-lib';
 import DeviceDetails from './DeviceDetails.vue';
 import { useI18n } from 'vue-i18n'
@@ -13,14 +13,12 @@ const { t } = useI18n()
 declare const window: Window & typeof globalThis;
 
 // 注册 Tooltip 指令
-const vTooltip = Tooltip;
+const vTooltip = tooltipDirective;
 
 const props = defineProps({
     api: ApiClient,
 });
 
-const detailPopover = ref();
-const selectedDevice = ref<Utils.DeviceInfo | null>(null);
 // 从 localStorage 读取显示详情状态，默认为 false
 const showDetailedView = ref(localStorage.getItem('deviceList.showDetailedView') === 'true');
 
@@ -33,9 +31,6 @@ const api = props.api;
 
 const deviceList = ref<Array<Utils.DeviceInfo> | undefined>(undefined);
 
-const selectedDeviceId = computed<string | undefined>(() => route.params.deviceId as string);
-
-const route = useRoute();
 const router = useRouter();
 const toast = useToast();
 
@@ -53,71 +48,39 @@ const periodFunc = new Utils.PeriodicTask(async () => {
     try {
         await loadDevices();
     } catch (e) {
-        toast.add({ severity: 'error', summary: 'Load Device List Failed', detail: e, life: 2000 });
+        toast.add({ severity: 'error', summary: t('web.device.load_list_failed'), detail: String(e), life: 2000 });
         console.error(e);
     }
 }, 1000);
 
 onMounted(async () => {
     periodFunc.start();
-    // 初始化屏幕尺寸相关变量
-    handleResize();
-    window.addEventListener('resize', handleResize);
 });
 
 onUnmounted(() => {
     periodFunc.stop();
-    window.removeEventListener('resize', handleResize);
 });
 
-const deviceManageVisible = computed<boolean>({
-    get: () => !!selectedDeviceId.value,
-    set: (value) => {
-        if (!value) {
-            router.push({ name: 'deviceList', params: { deviceId: undefined } });
-        }
-    }
-});
-
-const selectedDeviceHostname = computed<string | undefined>(() => {
-    return deviceList.value?.find((device) => device.machine_id === selectedDeviceId.value)?.hostname;
-});
-
-// 处理设备管理
-const handleDeviceManagement = (device: Utils.DeviceInfo) => {
+/** 打开设备管理全页：status=查看/启停；config=编辑/新建 */
+const handleDeviceManagement = (device: Utils.DeviceInfo, mode: 'status' | 'config') => {
     const instanceId = device.running_network_instances?.[0];
+    if (mode === 'status' && !instanceId) {
+        toast.add({
+            severity: 'info',
+            summary: t('web.device.open_network_status'),
+            detail: t('web.device.no_running_network_hint'),
+            life: 3500,
+        });
+    }
     router.push({
         name: 'deviceManagement',
         params: {
             deviceId: device.machine_id,
             instanceId: instanceId
-        }
+        },
+        query: { mode },
     });
 };
-
-// 显示设备详情
-const showDeviceDetails = (device: Utils.DeviceInfo, event: Event) => {
-    selectedDevice.value = device;
-    detailPopover.value.toggle(event);
-};
-
-// 检查是否为桌面设备
-const isDesktop = ref(false);
-// 检查是否为多卡片视图（一行可以放置多个卡片）
-const isMultiCardView = ref(false);
-
-// 抽屉布局相关
-const drawerWidth = computed(() => {
-    return isDesktop.value ? 'w-3/5 min-w-96' : 'w-full';
-});
-
-const drawerPosition = computed(() => {
-    return isDesktop.value ? 'right' : 'bottom';
-});
-
-const drawerHeight = computed(() => {
-    return isDesktop.value ? undefined : '100%';
-});
 
 // 排序相关
 const sortOptions = ref([
@@ -165,13 +128,6 @@ const sortedDeviceList = computed(() => {
     return sortDevices(deviceList.value);
 });
 
-// 保存resize事件处理函数的引用，以便正确移除
-const handleResize = () => {
-    isDesktop.value = window.innerWidth >= 768;
-    // 当容器宽度足够放置两个或更多卡片时，视为多卡片视图
-    isMultiCardView.value = window.innerWidth >= 650;
-};
-
 </script>
 
 <style scoped>
@@ -182,7 +138,6 @@ const handleResize = () => {
     gap: 1rem;
     width: 100%;
     position: relative;
-    /* 确保子元素的绝对定位相对于此容器 */
 }
 
 /* 设备卡片样式 */
@@ -191,7 +146,7 @@ const handleResize = () => {
     border-radius: 0.5rem;
     background: var(--surface-card, white);
     box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1);
-    transition: transform 0.2s ease, box-shadow 0.2s ease, background-color 0.3s ease;
+    transition: box-shadow 0.2s ease, background-color 0.3s ease, border-color 0.2s ease;
     display: flex;
     flex-direction: column;
     position: relative;
@@ -199,116 +154,23 @@ const handleResize = () => {
 }
 
 .device-card:hover {
-    transform: translateY(-2px);
+    /* 不用 translateY，避免与 tooltip 抢焦点导致闪烁 */
     box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+    border-color: var(--primary-color, #3b82f6);
 }
 
 .card-header {
-    padding: 0.75rem;
+    padding: var(--et-pad-card);
     display: flex;
     flex-direction: column;
     position: relative;
     color: var(--text-color, #1f2937);
 }
 
-.device-details-popover {
-    min-width: 280px;
-    max-width: 350px;
-    padding: 0.3rem;
-}
-
-/* Popover 样式 */
-:deep(.device-popover.p-popover) {
-    min-width: 320px;
-    border-radius: 0.5rem;
-    box-shadow: var(--card-shadow, 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05));
-    border: 1px solid var(--surface-border, #e5e7eb);
-    overflow: hidden;
-}
-
-:deep(.device-popover .p-popover-content) {
-    padding: 0;
-    background-color: var(--surface-card, #ffffff);
-    color: var(--text-color, #334155);
-}
-
-:deep(.device-popover .p-popover-arrow) {
-    background-color: var(--surface-card, #ffffff);
-    border-color: var(--surface-border, #e5e7eb);
-}
-
-:deep(.device-popover .p-popover-header) {
-    background-color: var(--surface-section, #f8fafc);
-    border-bottom: 1px solid var(--surface-border, #e2e8f0);
-}
-
-:deep(.device-popover .p-popover-header-close) {
-    color: var(--text-color-secondary, #64748b);
-}
-
-:deep(.device-popover .p-popover-header-close:hover) {
-    background-color: var(--surface-hover, rgba(0, 0, 0, 0.04));
-    color: var(--text-color, #334155);
-    border-radius: 50%;
-}
-
-@media (prefers-color-scheme: dark) {
-    :deep(.device-popover.p-popover) {
-        box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.5), 0 4px 6px -2px rgba(0, 0, 0, 0.25);
-        border-color: var(--surface-border, #334155);
-    }
-
-    :deep(.device-popover .p-popover-content) {
-        background-color: var(--surface-card, #1e293b);
-        color: var(--text-color, #f1f5f9);
-    }
-
-    :deep(.device-popover .p-popover-arrow) {
-        background-color: var(--surface-card, #1e293b);
-        border-color: var(--surface-border, #334155);
-    }
-
-    :deep(.device-popover .p-popover-header) {
-        background-color: var(--surface-section, #0f172a);
-        border-bottom: 1px solid var(--surface-border, #1e293b);
-    }
-
-    :deep(.device-popover .p-popover-header-close) {
-        color: var(--text-color-secondary, #94a3b8);
-    }
-
-    :deep(.device-popover .p-popover-header-close:hover) {
-        background-color: var(--surface-hover, rgba(255, 255, 255, 0.1));
-        color: var(--text-color, #f1f5f9);
-    }
-
-    .popover-header {
-        background-color: var(--surface-section, #0f172a);
-        color: var(--text-color, #f1f5f9);
-        border-bottom: 1px solid var(--surface-border, #334155);
-    }
-}
-
-.popover-header {
-    display: flex;
-    align-items: center;
-    background-color: var(--surface-section, #f8fafc);
-    padding: 0.75rem 1rem;
-    border-bottom: 1px solid var(--surface-border, #e2e8f0);
-    color: var(--text-color, #334155);
-}
-
-/* 卡片内详情样式 */
 .card-details {
     background-color: var(--surface-ground, #f9fafb);
 }
 
-/* 卡片内详情内容的特定样式 */
-:deep(.card-details-content) {
-    padding: 0.15rem 0.1rem;
-}
-
-/* 卡片中的紧凑详情内容 */
 :deep(.card-details-content) {
     padding: 0.15rem 0.1rem;
 }
@@ -343,29 +205,6 @@ const handleResize = () => {
     }
 }
 
-@media (prefers-color-scheme: dark) {
-    :deep(.card-details-content .detail-item) {
-        border-bottom: 1px solid var(--surface-border, #334155);
-    }
-
-    :deep(.card-details-content .detail-item:last-child) {
-        border-bottom: none;
-    }
-
-    :deep(.card-details-content .detail-item:hover) {
-        background-color: var(--surface-hover, rgba(30, 41, 59, 0.4));
-    }
-
-    :deep(.card-details-content .detail-label) {
-        color: var(--text-color, #e2e8f0);
-    }
-
-    :deep(.card-details-content .detail-value) {
-        color: var(--text-color-secondary, #cbd5e1);
-    }
-}
-
-/* 确保卡片在暗黑模式下有足够的对比度 */
 :deep(.device-card) {
     background-color: var(--surface-card, white);
     border-color: var(--surface-border, #e5e7eb);
@@ -384,39 +223,18 @@ const handleResize = () => {
 }
 
 .version-badge {
-    background-color: var(--primary-color, #3b82f6);
+    background-color: var(--primary-color, #0ea5e9);
     color: #ffffff;
     padding: 0.1rem 0.4rem;
     border-radius: 0.75rem;
     font-weight: 500;
     letter-spacing: 0.02em;
-    font-size: 0.65rem;
-}
-
-.sort-controls {
-    background-color: var(--surface-card);
-    border-radius: 0.5rem;
-    padding: 0.25rem 0.5rem;
-    box-shadow: var(--card-shadow, 0 1px 3px rgba(0, 0, 0, 0.05));
-    transition: all 0.2s;
-}
-
-.sort-controls:hover {
-    box-shadow: var(--card-shadow, 0 2px 5px rgba(0, 0, 0, 0.1));
-}
-
-.sort-label {
-    font-weight: 500;
-    color: var(--text-color-secondary);
+    font-size: var(--et-fs-meta);
 }
 
 .sort-dropdown {
     min-width: 6rem;
     max-width: 9rem;
-}
-
-.sort-icon {
-    font-size: 0.8rem;
 }
 
 .sort-direction-btn {
@@ -425,17 +243,7 @@ const handleResize = () => {
     height: 2.5rem !important;
 }
 
-/* 暗黑模式样式适配 */
 @media (prefers-color-scheme: dark) {
-    .sort-controls {
-        background-color: var(--surface-card, #1e293b);
-        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
-    }
-
-    .sort-controls:hover {
-        box-shadow: 0 2px 5px rgba(0, 0, 0, 0.25);
-    }
-
     :deep(.device-card) {
         background-color: var(--surface-card, #1e293b);
         border-color: var(--surface-border, #334155);
@@ -455,7 +263,7 @@ const handleResize = () => {
     }
 
     .version-badge {
-        background-color: var(--primary-color, #4f46e5);
+        background-color: var(--primary-color, #0ea5e9);
     }
 
     :deep(.card-details) {
@@ -464,82 +272,12 @@ const handleResize = () => {
     }
 }
 
-/* Popover 详情内容的特定样式 */
-:deep(.popover-details-content) {
-    padding: 0.25rem 0.2rem;
-    max-width: 320px;
-}
-
-/* Popover 中的紧凑详情内容 */
-:deep(.popover-details-content) {
-    padding: 0.25rem 0.2rem;
-    max-width: 320px;
-}
-
-:deep(.popover-details-content .detail-label) {
-    font-size: 0.8rem;
-}
-
-:deep(.popover-details-content .detail-value) {
-    font-size: 0.8rem;
-}
-
-:deep(.popover-details-content .machine-id-value) {
-    font-size: 0.7rem;
-}
-
-@media (prefers-color-scheme: dark) {
-    :deep(.popover-details-content .detail-item) {
-        border-bottom: 1px solid var(--surface-border, #334155);
-    }
-
-    :deep(.popover-details-content .detail-item:last-child) {
-        border-bottom: none;
-    }
-
-    :deep(.popover-details-content .detail-item:hover) {
-        background-color: var(--surface-hover, rgba(30, 41, 59, 0.4));
-    }
-
-    :deep(.popover-details-content .detail-label) {
-        color: var(--text-color, #e2e8f0);
-    }
-
-    :deep(.popover-details-content .detail-value) {
-        color: var(--text-color-secondary, #cbd5e1);
-    }
-}
-
-@media (prefers-color-scheme: dark) {
-    :deep(.popover-details-content .detail-item) {
-        border-bottom: 1px solid var(--surface-border, #334155);
-    }
-
-    :deep(.popover-details-content .detail-item:last-child) {
-        border-bottom: none;
-    }
-
-    :deep(.popover-details-content .detail-item:hover) {
-        background-color: var(--surface-hover, rgba(30, 41, 59, 0.4));
-    }
-
-    :deep(.popover-details-content .detail-label) {
-        color: var(--text-color, #e2e8f0);
-    }
-
-    :deep(.popover-details-content .detail-value) {
-        color: var(--text-color-secondary, #cbd5e1);
-    }
-}
-
-/* 移动端卡片样式 */
 @media (max-width: 768px) {
     .card-container {
         grid-template-columns: 1fr;
     }
 }
 
-/* 动画效果 */
 @keyframes fadeIn {
     from {
         opacity: 0;
@@ -556,82 +294,6 @@ const handleResize = () => {
     animation: fadeIn 0.3s ease-out;
 }
 
-/* 抽屉响应式样式 */
-:deep(.p-drawer) {
-    transition: all 0.3s ease;
-}
-
-:deep(.p-drawer.p-drawer-bottom) {
-    border-top-left-radius: 1rem;
-    border-top-right-radius: 1rem;
-    box-shadow: 0 -4px 6px -1px rgba(0, 0, 0, 0.1);
-}
-
-:deep(.p-drawer.p-drawer-bottom .p-drawer-header) {
-    padding-top: 1rem;
-    border-top-left-radius: 1rem;
-    border-top-right-radius: 1rem;
-}
-
-:deep(.p-drawer.p-drawer-bottom .p-drawer-content) {
-    padding-bottom: 2rem;
-    border-top-left-radius: 1rem;
-    border-top-right-radius: 1rem;
-}
-
-/* 底部抽屉的拖动指示器 */
-:deep(.p-drawer.p-drawer-bottom .p-drawer-header::before) {
-    content: "";
-    position: absolute;
-    top: 0.5rem;
-    left: 50%;
-    transform: translateX(-50%);
-    width: 4rem;
-    height: 4px;
-    background-color: var(--surface-border);
-    border-radius: 2px;
-    opacity: 0.8;
-}
-
-@media (prefers-color-scheme: dark) {
-    :deep(.p-drawer.p-drawer-bottom) {
-        box-shadow: 0 -4px 12px -1px rgba(0, 0, 0, 0.3);
-    }
-}
-
-.drawer-fab-close-btn {
-    /* 适配移动和桌面端，防止被内容遮挡 */
-    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.18);
-    transition: box-shadow 0.2s;
-}
-
-.drawer-fab-close-btn:hover {
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.22);
-}
-
-/* 排序控件在小屏幕下单独一行 */
-.sort-controls-row {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-}
-
-@media (max-width: 640px) {
-    .sort-controls-row {
-        flex-direction: column;
-        align-items: stretch;
-        gap: 0.5rem;
-        width: 100%;
-        margin-top: 0.5rem;
-    }
-
-    .sort-controls {
-        width: 100%;
-        justify-content: flex-start;
-    }
-}
-
-/* 工具栏样式优化 */
 :deep(.p-dropdown) {
     background: transparent;
     border: 1px solid var(--surface-border);
@@ -642,25 +304,111 @@ const handleResize = () => {
     border-color: var(--primary-color);
 }
 
-:deep(.p-dropdown-panel) {
-    .p-dropdown-items .p-dropdown-item {
-        padding: 0.75rem 1rem;
+:deep(.p-button.p-button-icon-only.sort-direction-btn) {
+    width: var(--et-btn);
+    height: var(--et-btn);
+}
+
+.device-card-actions {
+    flex-shrink: 0;
+    align-items: center;
+}
+
+/* 数量徽章与两个操作按钮：同尺寸、同圆形、同悬停 */
+.device-count-badge,
+.device-card-actions :deep(.device-action-btn.p-button) {
+    width: var(--et-btn-sm) !important;
+    height: var(--et-btn-sm) !important;
+    min-width: var(--et-btn-sm) !important;
+    padding: 0 !important;
+    box-sizing: border-box;
+    border-radius: 9999px !important;
+    border: 1px solid transparent !important;
+    display: inline-flex !important;
+    align-items: center;
+    justify-content: center;
+    line-height: 1;
+    font-size: var(--et-fs-meta);
+    font-weight: 600;
+    cursor: default;
+    transition: background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+    box-shadow: none !important;
+}
+
+.device-card-actions :deep(.device-action-btn.p-button) {
+    cursor: pointer;
+}
+
+.device-card-actions :deep(.device-action-btn .p-button-icon) {
+    font-size: 0.875rem;
+    line-height: 1;
+    margin: 0 !important;
+}
+
+/* 默认态：统一浅底 */
+.device-count-badge {
+    background: var(--blue-50, #eff6ff) !important;
+    color: var(--blue-700, #1d4ed8) !important;
+}
+
+.device-card-actions :deep(.device-action-btn.p-button-info),
+.device-card-actions :deep(.device-action-btn.p-button-info .p-button-icon) {
+    background: var(--blue-50, #eff6ff) !important;
+    color: var(--blue-700, #1d4ed8) !important;
+    border-color: transparent !important;
+}
+
+.device-card-actions :deep(.device-action-btn.p-button-secondary),
+.device-card-actions :deep(.device-action-btn.p-button-secondary .p-button-icon) {
+    background: var(--surface-100, #f3f4f6) !important;
+    color: var(--text-color-secondary, #4b5563) !important;
+    border-color: transparent !important;
+}
+
+/* 悬停态：统一加深底色，无位移、无额外阴影跳动 */
+.device-count-badge:hover,
+.device-card-actions :deep(.device-action-btn.p-button:hover),
+.device-card-actions :deep(.device-action-btn.p-button:hover .p-button-icon) {
+    background: var(--surface-200, #e5e7eb) !important;
+    color: var(--text-color, #1f2937) !important;
+}
+
+.device-card-actions :deep(.device-action-btn.p-button:focus-visible),
+.device-count-badge:focus-visible {
+    outline: 2px solid var(--primary-color, #3b82f6);
+    outline-offset: 2px;
+}
+
+.device-card-actions :deep(.device-action-btn.p-button:active) {
+    background: var(--surface-300, #d1d5db) !important;
+}
+
+@media (prefers-color-scheme: dark) {
+    .device-count-badge {
+        background: rgba(59, 130, 246, 0.18) !important;
+        color: var(--blue-300, #93c5fd) !important;
+    }
+
+    .device-card-actions :deep(.device-action-btn.p-button-info),
+    .device-card-actions :deep(.device-action-btn.p-button-info .p-button-icon) {
+        background: rgba(59, 130, 246, 0.18) !important;
+        color: var(--blue-300, #93c5fd) !important;
+    }
+
+    .device-card-actions :deep(.device-action-btn.p-button-secondary),
+    .device-card-actions :deep(.device-action-btn.p-button-secondary .p-button-icon) {
+        background: var(--surface-hover, rgba(255, 255, 255, 0.08)) !important;
+        color: var(--text-color-secondary, #cbd5e1) !important;
+    }
+
+    .device-count-badge:hover,
+    .device-card-actions :deep(.device-action-btn.p-button:hover),
+    .device-card-actions :deep(.device-action-btn.p-button:hover .p-button-icon) {
+        background: var(--surface-hover, rgba(255, 255, 255, 0.14)) !important;
+        color: var(--text-color, #f1f5f9) !important;
     }
 }
 
-:deep(.p-inputswitch) {
-    .p-inputswitch-slider {
-        background: var(--surface-200);
-    }
-}
-
-/* 确保所有按钮大小一致 */
-:deep(.p-button.p-button-icon-only) {
-    width: 2.5rem;
-    height: 2.5rem;
-}
-
-/* 位置样式 */
 .location-icon {
     color: var(--pink-500);
     font-size: 0.9rem;
@@ -693,13 +441,10 @@ const handleResize = () => {
 </style>
 
 <template>
-    <div class="flex flex-col gap-4">
-        <!-- 标题和工具栏 -->
-        <div class="text-xl font-bold">
-            <h1>{{ t('web.device.list') }}</h1>
-        </div>
+    <div class="et-page">
+        <h1 class="et-page-title">{{ t('web.device.list') }}</h1>
 
-        <Toolbar class="mb-4 p-3 gap-4 surface-0 border-1 surface-border rounded-md">
+        <Toolbar class="device-list-toolbar p-3 gap-4 surface-0 border-1 surface-border rounded-md">
             <template #start>
                 <div class="flex items-center gap-2">
                     <label for="sort-by" class="text-sm text-500 hidden sm:block">{{ t('web.device.sort_by') }}：</label>
@@ -725,14 +470,11 @@ const handleResize = () => {
                 </div>
             </template>
             <template #end>
-                <div class="flex items-center gap-3">
-                    <div class="hidden sm:block border-r-1 surface-border h-4 mr-2"></div>
                     <div class="flex items-center gap-2">
                         <label for="detailed-view" class="text-sm text-500 hidden sm:block">{{
                             t('web.device.show_detailed_view') }}</label>
                         <InputSwitch id="detailed-view" v-model="showDetailedView" />
                     </div>
-                </div>
             </template>
         </Toolbar>
 
@@ -740,28 +482,20 @@ const handleResize = () => {
             <ProgressSpinner />
         </div>
 
-        <div v-if="deviceList !== undefined">
-            <!-- 卡片视图 (适用于所有屏幕尺寸) -->
-            <div class="card-container">
+        <div v-else class="card-container">
                 <div v-for="device in sortedDeviceList" :key="device.machine_id" class="device-card">
-                    <!-- 卡片头部 -->
                     <div class="card-header">
-                        <!-- 上部区域：设备名称和版本徽章 -->
                         <div class="flex justify-between items-center mb-2">
-                            <!-- 设备名称 -->
                             <div class="font-semibold truncate card-title" :title="device.hostname">{{ device.hostname
                             }}
                             </div>
 
-                            <!-- 版本徽章 -->
                             <div class="text-xs version-badge" v-tooltip="`EasyTier ${device.easytier_version}`">
                                 v{{ device.easytier_version.split('-')[0] }}
                             </div>
                         </div>
 
-                        <!-- 下部区域：IP地址和操作按钮 -->
                         <div class="flex justify-between items-center">
-                            <!-- IP地址和位置信息 -->
                             <div class="text-sm truncate card-subtitle max-w-[60%] flex items-center gap-2"
                                 :title="device.location ? `${device.location.country}${device.location.region ? ' · ' + device.location.region : ''}${device.location.city ? ' · ' + device.location.city : ''}` : t('web.device.unknown_location')">
                                 <i class="pi pi-map-marker location-icon"></i>
@@ -783,61 +517,34 @@ const handleResize = () => {
                                 </span>
                             </div>
 
-                            <!-- 操作按钮组 -->
-                            <div class="flex items-center space-x-2">
-                                <!-- 网络数量徽章 -->
-                                <span v-tooltip="t('web.device.network_count')"
-                                    class="inline-flex items-center justify-center w-6 h-6 text-xs font-medium bg-blue-100 text-blue-800 rounded-full">
+                            <div class="device-card-actions flex items-center gap-2">
+                                <!-- 运行中虚拟网数量（仅展示，悬停样式与按钮一致） -->
+                                <span
+                                    class="device-count-badge"
+                                    :title="t('web.device.network_count')"
+                                    :aria-label="`${t('web.device.network_count')}: ${device.running_network_count}`">
                                     {{ device.running_network_count }}
                                 </span>
 
-                                <!-- 详情按钮 -->
-                                <Button v-tooltip="t('web.device.show_detailed_view')" icon="pi pi-info-circle"
-                                    severity="info" text rounded class="w-9 h-9" v-if="!showDetailedView"
-                                    @click="showDeviceDetails(device, $event)" />
+                                <Button v-tooltip.top="{ value: t('web.device.open_network_status') }"
+                                    icon="pi pi-chart-line" severity="info" rounded text
+                                    class="device-action-btn"
+                                    @click="handleDeviceManagement(device, 'status')"
+                                    :aria-label="t('web.device.open_network_status')" />
 
-                                <!-- 设置按钮 -->
-                                <Button icon="pi pi-cog" @click="handleDeviceManagement(device)" severity="secondary"
-                                    rounded class="w-9 h-9" :title="`Manage ${device.hostname}`" />
+                                <Button v-tooltip.top="{ value: t('web.device.open_network_config') }"
+                                    icon="pi pi-cog" severity="secondary" rounded text
+                                    class="device-action-btn"
+                                    @click="handleDeviceManagement(device, 'config')"
+                                    :aria-label="t('web.device.open_network_config')" />
                             </div>
                         </div>
                     </div>
 
-                    <!-- 详情区域 - 当开启详情显示时展示 -->
-                    <div v-if="showDetailedView" class="card-details border-t border-gray-200 fade-in">
+                    <div v-if="showDetailedView" class="card-details border-t surface-border fade-in">
                         <DeviceDetails :device="device" containerClass="card-details-content" :compact="true" />
                     </div>
                 </div>
-            </div>
         </div>
-
-        <!-- 全局设备详情 Popover -->
-        <Popover ref="detailPopover" :showCloseIcon="true" :closeOnEscape="true" :autoHide="false" appendTo="body"
-            class="device-popover">
-            <template v-if="selectedDevice">
-                <div class="popover-header">
-                    <i class="pi pi-info-circle mr-2"></i>
-                    <span class="font-bold">设备详情</span>
-                </div>
-                <div class="device-details-popover">
-                    <DeviceDetails :device="selectedDevice" containerClass="popover-details-content" :compact="true" />
-                </div>
-            </template>
-        </Popover>
-
-        <Drawer v-model:visible="deviceManageVisible" :position="drawerPosition"
-            :header="`Manage ${selectedDeviceHostname}`" :baseZIndex=1000 class="" :class="drawerWidth"
-            :style="{ height: drawerHeight }">
-            <template #container="{ closeCallback }">
-                <div style="position: relative; height: 100%;" class="device-manage-drawer">
-                    <RouterView v-slot="{ Component }">
-                        <component :is="Component" :api="api" :deviceList="deviceList" @update="loadDevices" />
-                    </RouterView>
-                    <Button icon="pi pi-times" rounded severity="danger"
-                        class="fixed z-50 right-6 bottom-6 shadow-lg drawer-fab-close-btn"
-                        style="width: 3.2rem; height: 3.2rem; font-size: 1.5rem;" @click="closeCallback" />
-                </div>
-            </template>
-        </Drawer>
     </div>
 </template>

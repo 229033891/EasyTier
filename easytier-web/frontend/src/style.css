@@ -18,11 +18,35 @@
 }
 
 :root {
-  font-family: Inter, Avenir, Helvetica, Arial, sans-serif;
-  font-size: 0.9rem;
-  line-height: 24px;
-  font-weight: 400;
+  /* 排版 */
+  --et-font: Inter, "Segoe UI", Avenir, Helvetica, Arial, sans-serif;
+  --et-fs-page-title: 1.25rem;
+  --et-fs-section: 1rem;
+  --et-fs-body: 0.875rem;
+  --et-fs-meta: 0.75rem;
+  --et-lh: 1.5;
 
+  /* 间距 */
+  --et-space-1: 0.25rem;
+  --et-space-2: 0.5rem;
+  --et-space-3: 0.75rem;
+  --et-space-4: 1rem;
+  --et-gap-section: 1rem;
+  --et-pad-card: 0.75rem 1rem;
+
+  /* 边框 / 圆角 */
+  --et-border: 1px solid var(--surface-border, #e5e7eb);
+  --et-radius: 0.5rem;
+
+  /* 控件高度 */
+  --et-btn: 2.5rem;
+  --et-btn-sm: 2.25rem;
+  --et-btn-lg: 2.75rem;
+
+  font-family: var(--et-font);
+  font-size: var(--et-fs-body);
+  line-height: var(--et-lh);
+  font-weight: 400;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
@@ -30,23 +54,52 @@
   -webkit-text-size-adjust: 100%;
 }
 
-/* 顶部导航栏安全区适配（如有 .top-navbar 类） */
+.et-page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--et-gap-section);
+}
+
+.et-page-title {
+  margin: 0;
+  padding: 0;
+  font-size: var(--et-fs-page-title);
+  font-weight: 700;
+  line-height: 1.35;
+  color: var(--text-color, #1f2937);
+}
+
+.et-section-title {
+  margin: 0;
+  font-size: var(--et-fs-section);
+  font-weight: 600;
+  line-height: 1.35;
+  color: var(--text-color, #1f2937);
+}
+
+.et-panel {
+  background: var(--surface-card, #ffffff);
+  border: var(--et-border);
+  border-radius: var(--et-radius);
+  padding: var(--et-pad-card);
+}
+
+.et-meta {
+  font-size: var(--et-fs-meta);
+  color: var(--text-color-secondary, #64748b);
+}
+
+/* 顶部导航栏安全区适配 */
 .top-navbar {
   position: sticky;
   top: 0;
   z-index: 100;
   padding-top: env(safe-area-inset-top, 0px);
-  background: #fff;
+  background: var(--surface-card, #fff);
+  border-bottom: var(--et-border);
 }
 
-/* 全屏内容适配移动端浏览器可视区 */
 .fullscreen-content {
   height: 100dvh;
   min-height: 100vh;
-}
-
-/* 如导航栏类名不同，请将 .top-navbar 替换为实际类名 */
-
-.device-manage-drawer {
-  padding-top: env(safe-area-inset-top, 0px);
 }

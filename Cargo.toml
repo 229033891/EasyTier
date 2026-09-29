@@ -107,6 +107,12 @@ codegen-units = 1
 opt-level = 3
 strip = true
 
+# 本地迭代用：链接更快，体积/极致优化略弱于 release；正式发版仍用 --release
+[profile.release-fast]
+inherits = "release"
+lto = "thin"
+codegen-units = 8
+
 [profile.mini]
 inherits = "release"
 opt-level = "z"

@@ -126,6 +126,7 @@ export function DEFAULT_NETWORK_CONFIG(): NetworkConfig {
     no_tun: false,
     enable_exit_node: false,
     relay_all_peer_rpc: false,
+    disable_relay_data: false,
     need_p2p: false,
     multi_thread: true,
     proxy_forward_by_system: false,
@@ -315,6 +316,7 @@ export function normalizeNetworkConfig(config: NetworkConfig): NetworkConfig {
   normalized.exit_nodes ??= []
   normalized.mapped_listeners ??= []
   normalized.port_forwards ??= []
+  normalized.disable_relay_data ??= false
   if (normalized.vpn_portal_config) {
     normalized.vpn_portal_config.clients ??= []
     normalized.vpn_portal_config.clients.forEach((client) => {

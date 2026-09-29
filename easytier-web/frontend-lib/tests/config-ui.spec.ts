@@ -24,6 +24,7 @@ const CONFIG_FLAG_FIELDS = [
   'no_tun',
   'enable_exit_node',
   'relay_all_peer_rpc',
+  'disable_relay_data',
   'need_p2p',
   'multi_thread',
   'proxy_forward_by_system',

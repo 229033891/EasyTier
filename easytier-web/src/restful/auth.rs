@@ -9,10 +9,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::restful::users::Backend;
 
-use std::sync::Arc;
-
-use crate::FeatureFlags;
-
 use super::{
     AppStateInner,
     users::{AuthSession, Credentials},
@@ -35,8 +31,6 @@ pub fn router() -> Router<AppStateInner> {
         .merge(r)
         .route("/api/v1/auth/login", post(self::post::login))
         .route("/api/v1/auth/logout", get(self::get::logout))
-        .route("/api/v1/auth/captcha", get(self::get::get_captcha))
-        .route("/api/v1/auth/register", post(self::post::register))
 }
 
 mod put {
@@ -71,15 +65,10 @@ mod put {
 }
 
 mod post {
-    use axum::{Json, extract::Extension};
+    use axum::Json;
     use easytier::proto::common::Void;
 
-    use crate::restful::{
-        HttpHandleError,
-        captcha::extension::{CaptchaUtil, axum_tower_sessions::CaptchaAxumTowerSessionStaticExt},
-        other_error,
-        users::RegisterNewUser,
-    };
+    use crate::restful::{HttpHandleError, other_error};
 
     use super::*;
 
@@ -112,55 +101,12 @@ mod post {
 
         Ok(Void::default().into())
     }
-
-    pub async fn register(
-        Extension(feature_flags): Extension<Arc<FeatureFlags>>,
-        auth_session: AuthSession,
-        captcha_session: tower_sessions::Session,
-        Json(req): Json<RegisterNewUser>,
-    ) -> Result<Json<Void>, HttpHandleError> {
-        // Check if registration is disabled
-        if feature_flags.disable_registration {
-            tracing::warn!("Registration attempt blocked: registration is disabled");
-            return Err((
-                StatusCode::FORBIDDEN,
-                other_error("Registration is disabled").into(),
-            ));
-        }
-
-        // 调用CaptchaUtil的静态方法验证验证码是否正确
-        if !CaptchaUtil::ver(&req.captcha, &captcha_session).await {
-            return Err((
-                StatusCode::BAD_REQUEST,
-                other_error(format!("captcha verify error, input: {}", req.captcha)).into(),
-            ));
-        }
-
-        if let Err(e) = auth_session.backend.register_new_user(&req).await {
-            tracing::error!("Failed to register new user: {:?}", e);
-            return Err((
-                StatusCode::BAD_REQUEST,
-                other_error(format!("{:?}", e)).into(),
-            ));
-        }
-
-        Ok(Void::default().into())
-    }
 }
 
 mod get {
-    use crate::restful::{
-        HttpHandleError,
-        captcha::{
-            NewCaptcha as _,
-            builder::spec::SpecCaptcha,
-            extension::{CaptchaUtil, axum_tower_sessions::CaptchaAxumTowerSessionExt as _},
-        },
-        other_error,
-    };
-    use axum::{Json, response::Response};
+    use crate::restful::{HttpHandleError, other_error};
+    use axum::Json;
     use easytier::proto::common::Void;
-    use tower_sessions::Session;
 
     use super::*;
 
@@ -174,17 +120,6 @@ mod get {
                     Json::from(other_error(format!("{:?}", e))),
                 ))
             }
-        }
-    }
-
-    pub async fn get_captcha(session: Session) -> Result<Response, HttpHandleError> {
-        let mut captcha: CaptchaUtil<SpecCaptcha> = CaptchaUtil::with_size_and_len(127, 48, 4);
-        match captcha.out(&session).await {
-            Ok(response) => Ok(response),
-            Err(e) => Err((
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json::from(other_error(format!("{:?}", e))),
-            )),
         }
     }
 

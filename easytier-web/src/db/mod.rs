@@ -6,8 +6,8 @@ use easytier::common::config::{ConfigSource, NetworkConfig};
 use easytier_core::management::remote_client::{ListNetworkProps, Storage};
 use entity::user_running_network_configs;
 use sea_orm::{
-    ColumnTrait as _, DatabaseConnection, DbErr, EntityTrait, QueryFilter as _, Set,
-    SqlxSqliteConnector, TransactionTrait as _, sea_query::OnConflict,
+    ColumnTrait as _, DatabaseConnection, DbErr, EntityTrait, IntoActiveModel as _, QueryFilter as _,
+    Set, SqlxSqliteConnector, TransactionTrait as _, sea_query::OnConflict,
 };
 use sea_orm_migration::MigratorTrait as _;
 use sqlx::{Sqlite, SqlitePool, migrate::MigrateDatabase as _, types::chrono};
@@ -18,6 +18,11 @@ use uuid::Uuid;
 
 use crate::migrator;
 use async_trait::async_trait;
+
+pub fn hash_web_login_password(plaintext: &str) -> String {
+    let digest = md5::compute(plaintext.as_bytes());
+    password_auth::generate_hash(&format!("{:x}", digest))
+}
 
 pub type UserIdInDb = i32;
 
@@ -293,7 +298,22 @@ impl Db {
         username: &str,
         password_hash: String,
     ) -> Result<entity::users::Model, DbErr> {
+        self.create_user_and_join_groups(username, password_hash, &["users"])
+            .await
+    }
+
+    /// Create user and join the given groups (e.g. `users`, `admins`) in one transaction.
+    pub async fn create_user_and_join_groups(
+        &self,
+        username: &str,
+        password_hash: String,
+        group_names: &[&str],
+    ) -> Result<entity::users::Model, DbErr> {
         use entity::{groups, users, users_groups};
+
+        if group_names.is_empty() {
+            return Err(DbErr::Custom("At least one group is required".to_string()));
+        }
 
         let txn = self.orm_db().begin().await?;
 
@@ -309,22 +329,62 @@ impl Db {
             .await?
             .ok_or_else(|| DbErr::Custom("Failed to find newly created user".to_string()))?;
 
-        let users_group = groups::Entity::find()
-            .filter(groups::Column::Name.eq("users"))
-            .one(&txn)
-            .await?
-            .ok_or_else(|| DbErr::Custom("Users group not found".to_string()))?;
+        for name in group_names {
+            let group = groups::Entity::find()
+                .filter(groups::Column::Name.eq(*name))
+                .one(&txn)
+                .await?
+                .ok_or_else(|| DbErr::Custom(format!("Group '{name}' not found")))?;
 
-        let ug_active = users_groups::ActiveModel {
-            user_id: Set(new_user.id),
-            group_id: Set(users_group.id),
-            ..Default::default()
-        };
-        users_groups::Entity::insert(ug_active).exec(&txn).await?;
+            let ug_active = users_groups::ActiveModel {
+                user_id: Set(new_user.id),
+                group_id: Set(group.id),
+                ..Default::default()
+            };
+            users_groups::Entity::insert(ug_active).exec(&txn).await?;
+        }
 
         txn.commit().await?;
 
         Ok(new_user)
+    }
+
+    pub async fn delete_user_by_id(&self, user_id: i32) -> Result<(), DbErr> {
+        use entity::{users, users_groups};
+
+        let txn = self.orm_db().begin().await?;
+
+        users_groups::Entity::delete_many()
+            .filter(users_groups::Column::UserId.eq(user_id))
+            .exec(&txn)
+            .await?;
+
+        let result = users::Entity::delete_by_id(user_id).exec(&txn).await?;
+        if result.rows_affected == 0 {
+            return Err(DbErr::Custom("User not found".to_string()));
+        }
+
+        txn.commit().await?;
+        Ok(())
+    }
+
+    pub async fn set_user_password_by_username(
+        &self,
+        username: &str,
+        password_hash: String,
+    ) -> Result<(), DbErr> {
+        use entity::users;
+
+        let mut user = users::Entity::find()
+            .filter(users::Column::Username.eq(username))
+            .one(self.orm_db())
+            .await?
+            .ok_or_else(|| DbErr::Custom(format!("User '{username}' not found")))?
+            .into_active_model();
+        user.password = Set(password_hash);
+
+        users::Entity::update(user).exec(self.orm_db()).await?;
+        Ok(())
     }
 
     pub async fn auto_create_user(&self, username: &str) -> Result<entity::users::Model, DbErr> {

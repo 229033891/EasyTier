@@ -12,7 +12,7 @@ import {
   type VpnPortalClientConfig,
   type VpnPortalConfig,
 } from '../types/network'
-import { computed, ref, onMounted, onUnmounted, watch } from 'vue'
+import { computed, reactive, ref, onMounted, onUnmounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import AclManager from './acl/AclManager.vue'
 import UrlListInput from './UrlListInput.vue'
@@ -21,6 +21,8 @@ const props = defineProps<{
   actionLabel?: string
   configInvalid?: boolean
   hostname?: string
+  /** 由父级统一渲染底部操作区时隐藏内置「运行网络」按钮 */
+  hideRunButton?: boolean
 }>()
 
 defineEmits(['runNetwork'])
@@ -31,6 +33,35 @@ const curNetwork = defineModel('curNetwork', {
 })
 
 const { t } = useI18n()
+
+/** 可折叠 Panel：默认 Basic 展开，其余收起；整块标题栏可点（触摸友好） */
+const panelCollapsed = reactive({
+  basic: false,
+  advanced: true,
+  portForwards: true,
+  acl: true,
+})
+
+function onToggleablePanelHeaderClick(
+  key: keyof typeof panelCollapsed,
+  event: Event,
+) {
+  const target = event.target as HTMLElement | null
+  // 加减号按钮自身已会切换，避免冒泡再翻一次
+  if (target?.closest('button, a, input, textarea, select, [role="button"]')) {
+    return
+  }
+  panelCollapsed[key] = !panelCollapsed[key]
+}
+
+function panelHeaderPt(key: keyof typeof panelCollapsed) {
+  return {
+    header: {
+      class: 'cursor-pointer select-none touch-manipulation',
+      onClick: (event: Event) => onToggleablePanelHeaderClick(key, event),
+    },
+  }
+}
 
 const protos: { [proto: string]: number } = {
   tcp: 11010,
@@ -102,6 +133,7 @@ const bool_flags: BoolFlag[] = [
   { field: 'no_tun', help: 'no_tun_help' },
   { field: 'enable_exit_node', help: 'enable_exit_node_help' },
   { field: 'relay_all_peer_rpc', help: 'relay_all_peer_rpc_help' },
+  { field: 'disable_relay_data', help: 'disable_relay_data_help' },
   { field: 'need_p2p', help: 'need_p2p_help' },
   { field: 'multi_thread', help: 'multi_thread_help' },
   { field: 'proxy_forward_by_system', help: 'proxy_forward_by_system_help' },
@@ -256,8 +288,9 @@ function removeVpnPortalClient(index: number) {
   <div class="frontend-lib">
     <div class="flex flex-col h-full">
       <div class="flex flex-col">
-        <div class="w-full self-center ">
-          <Panel :header="t('basic_settings')">
+        <div class="config-panels w-full self-center">
+          <Panel v-model:collapsed="panelCollapsed.basic" :header="t('basic_settings')" toggleable
+            :pt="panelHeaderPt('basic')">
             <div class="flex flex-col gap-y-2">
               <div class="flex flex-row gap-x-9 flex-wrap">
                 <div class="flex flex-col gap-2 basis-5/12 grow">
@@ -312,7 +345,8 @@ function removeVpnPortalClient(index: number) {
 
           <Divider />
 
-          <Panel :header="t('advanced_settings')" toggleable collapsed>
+          <Panel v-model:collapsed="panelCollapsed.advanced" :header="t('advanced_settings')" toggleable
+            :pt="panelHeaderPt('advanced')">
             <div class="flex flex-col gap-y-2">
 
               <div class="flex flex-row gap-x-9 flex-wrap">
@@ -526,7 +560,8 @@ function removeVpnPortalClient(index: number) {
 
           <Divider />
 
-          <Panel :header="t('port_forwards')" toggleable collapsed>
+          <Panel v-model:collapsed="panelCollapsed.portForwards" :header="t('port_forwards')" toggleable
+            :pt="panelHeaderPt('portForwards')">
             <div ref="portForwardContainer" class="flex flex-col gap-y-2">
               <div class="flex flex-row gap-x-9 flex-wrap w-full">
                 <div class="flex flex-col gap-2 grow p-fluid">
@@ -615,7 +650,8 @@ function removeVpnPortalClient(index: number) {
 
           <Divider />
 
-          <Panel :header="t('acl.title')" toggleable collapsed>
+          <Panel v-model:collapsed="panelCollapsed.acl" :header="t('acl.title')" toggleable
+            :pt="panelHeaderPt('acl')">
             <div v-if="curNetwork.acl" class="flex flex-col gap-y-2">
               <AclManager v-model="curNetwork.acl" />
             </div>
@@ -625,12 +661,49 @@ function removeVpnPortalClient(index: number) {
             </div>
           </Panel>
 
-          <div class="flex pt-6 justify-center">
-            <Button :label="actionLabel || t('run_network')" icon="pi pi-arrow-right" icon-pos="right" :disabled="configInvalid"
-              @click="$emit('runNetwork', curNetwork)" />
+          <div v-if="!hideRunButton" class="config-run-actions flex justify-center gap-3 pt-3">
+            <Button class="network-footer-btn" :label="actionLabel || t('run_network')" icon="pi pi-arrow-right"
+              icon-pos="right" :disabled="configInvalid" @click="$emit('runNetwork', curNetwork)" />
           </div>
         </div>
       </div>
     </div>
   </div>
 </template>
+
+<style scoped>
+.config-panels {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.config-panels :deep(.p-divider) {
+  margin: 0.35rem 0;
+}
+
+.config-panels :deep(.p-panel .p-panel-header) {
+  padding: 0.65rem 0.85rem;
+  font-size: 0.9375rem;
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.config-panels :deep(.p-panel .p-panel-content) {
+  padding: 0.75rem;
+}
+
+.config-panels :deep(.p-panel .p-panel-header .p-panel-title),
+.config-panels :deep(.p-panel .p-panel-header span) {
+  font-size: 0.9375rem;
+  font-weight: 600;
+}
+
+.network-footer-btn {
+  min-width: 9rem;
+  height: 2.75rem !important;
+  padding: 0 1.1rem !important;
+  font-size: 0.9375rem !important;
+  font-weight: 600 !important;
+}
+</style>

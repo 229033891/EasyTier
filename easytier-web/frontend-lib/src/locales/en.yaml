@@ -110,6 +110,15 @@ close: Close
 save: Save
 config_saved: Configuration saved
 my_node_info: My Node Info
+node_info_group_peer_id: Peer ID
+node_info_group_tun_device: TUN Device
+node_info_group_virtual_ip: Virtual IP
+node_info_group_udp_nat_type: UDP NAT Type
+node_info_group_local_ip: Local IP
+node_info_group_public_ip: Public IP
+node_info_group_listener: Listener
+node_info_details: Node Details
+node_info_copy_group: Copy this group
 peer_count: Connected
 upload: Upload
 download: Download
@@ -190,6 +199,11 @@ relay_all_peer_rpc: Relay RPC Packets
 relay_all_peer_rpc_help: |
   Relay all peer rpc packets, even if the peer is not in the relay network whitelist.
   This can help peers not in relay network whitelist to establish p2p connection.
+
+disable_relay_data: Disable Relay Data
+disable_relay_data_help: |
+  Prevent other nodes from relaying data-plane traffic through this node.
+  This node can still communicate normally; when enabled, avoid_relay_data is advertised so peers prefer not to use it as a relay.
 
 need_p2p: Need P2P
 need_p2p_help: Ask other peers to proactively establish P2P connections to this node even when they enable lazy P2P.
@@ -341,14 +355,58 @@ web:
     dashboard: Dashboard
     device_list: Device List
     device_management: Device Management
+    device_count: Device Count
+    network_count: Network Count
+    network_list: Network List
+    user_list: User Management
     login_page: Login Page
     settings: Settings
     logout: Logout
     language: Language
     change_password: Change Password
+    sidebar: Sidebar
+    toggle_sidebar: Toggle Sidebar
+    collapse_sidebar: Collapse Sidebar
+    expand_sidebar: Expand Sidebar
+    user_menu: User Menu
+    logo_alt: EasyTier Logo
+
+  dashboard:
+    load_failed: Failed to load summary
+
+  users:
+    username: Username
+    password: Password
+    is_admin: Admin
+    role: Role
+    role_admin: Admin
+    role_user: User
+    actions: Actions
+    create: Create User
+    create_success: User created
+    create_failed: Failed to create user
+    username_password_required: Username and password are required
+    delete: Delete User
+    delete_confirm: Delete user "{username}"?
+    delete_success: User deleted
+    delete_failed: Failed to delete user
+    load_failed: Failed to load users
+    empty: No users
+    reset_password: Reset Password
+    reset_for: Reset user
+    new_password: New password
+    reset_success: Password reset
+    reset_failed: Failed to reset password
+    password_required: Please enter a new password
+    cancel: Cancel
 
   device:
     list: Device List
+    network_list: Network List
+    network_name: Network Name
+    no_networks: No running networks
+    belonging_device: Device
+    load_list_failed: Failed to load device list
     management: Device Management
     add: Add Device
     delete: Delete Device
@@ -362,6 +420,9 @@ web:
     sort_direction: Sort Direction
     show_detailed_view: Show Details
     hide_detailed_view: Hide Details
+    open_network_status: Network Status / Start-Stop
+    open_network_config: Edit / Create Network
+    no_running_network_hint: No running network on this device. You can still open Status to pick a stopped network, or switch to Config to create one.
     sort_by_hostname: Hostname
     sort_by_public_ip: Public IP
     sort_by_version: Version
@@ -375,7 +436,9 @@ web:
     version: Version
     machine_id: Machine ID
     unknown_location: Unknown Location
-    
+    network_count: Running Networks
+    back_to_list: Back to Device List
+
   device_management:
     edit_network: Edit Network
     export_config: Export Config
@@ -388,16 +451,41 @@ web:
     edit_as_file: Edit as File
     save_config: Save Config
     config_saved: Config Saved
+    save_failed: Failed to save config
     import_config: Import Config
     create_new: Create New Network
+    add_network: Add Network
     network_status: Network Status
     loading_network_status: Loading Network Status
     network_info_unavailable: Network status is unavailable
     network_configuration: Network Configuration
     loading_network_configuration: Loading Network Configuration
     no_network_selected: No Network Selected
-    select_existing_network_or_create_new: Select an existing network instance or create a new one to manage network settings
+    select_existing_network_or_create_new: Choose a network above, or click “Add Network”
+    select_network_for_status: Select a network instance to view status or start/stop it
+    network_disabled_hint: This network is disabled. You can start it here, or open Config to edit settings.
+    switch_to_config: Go to Config
+    switch_to_status: Go to Status
+    confirm_disable_network: Disable this network now?
+    confirm_start_network: Start this network now?
+    confirm_delete_network: Delete this network? This cannot be undone.
+    confirm_delete_network_header: Delete Network
     disable_network: Disable Network
+    toolbar_config_files: Config Files
+    toolbar_network: Network
+    toolbar_danger: Danger
+    select_network_for_status: Select a network instance to view status or start/stop it
+    network_disabled_hint: This network is disabled. You can start it here, or open Config to edit settings.
+    switch_to_config: Go to Config
+    switch_to_status: Go to Status
+    confirm_disable_network: Disable this network now?
+    confirm_start_network: Start this network now?
+    confirm_delete_network: Delete this network? This cannot be undone.
+    confirm_delete_network_header: Delete Network
+    disable_network: Disable Network
+    toolbar_config_files: Config Files
+    toolbar_danger: Danger
+    toolbar_save: Save
 
   network:
     title: Network

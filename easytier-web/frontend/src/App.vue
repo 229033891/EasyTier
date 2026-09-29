@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { I18nUtils } from 'easytier-frontend-lib'
 import { onMounted } from 'vue';
-import { Toast, DynamicDialog } from 'primevue';
+import { Toast, DynamicDialog, ConfirmDialog } from 'primevue';
 
 onMounted(async () => {
   await I18nUtils.loadLanguageAsync(localStorage.getItem('lang') || 'en')
@@ -13,14 +13,7 @@ onMounted(async () => {
 
 <template>
   <Toast position="bottom-right" />
+  <ConfirmDialog />
   <DynamicDialog />
-
   <RouterView />
 </template>
-
-<style scoped>
-button {
-  text-align: left;
-  justify-content: left;
-}
-</style>

@@ -16,24 +16,33 @@ export interface LoginResponse {
     message: string;
 }
 
-export interface RegisterResponse {
-    success: boolean;
-    message: string;
+export interface MeResponse {
+    id: number;
+    username: string;
+    is_admin: boolean;
 }
 
-// 定义请求体数据结构
+export interface UserInfo {
+    id: number;
+    username: string;
+    groups: string[];
+    is_admin: boolean;
+}
+
+export interface AdminCreateUserRequest {
+    username: string;
+    password: string;
+    is_admin?: boolean;
+}
+
 export interface Credential {
     username: string;
     password: string;
 }
 
-export interface RegisterData {
-    credentials: Credential;
-    captcha: string;
-}
-
 export interface Summary {
     device_count: number;
+    network_count: number;
 }
 
 export interface ListNetworkInstanceIdResponse {
@@ -105,19 +114,29 @@ export class ApiClient {
         });
     }
 
-    // 注册
-    public async register(data: RegisterData): Promise<RegisterResponse> {
-        try {
-            data.credentials.password = Md5.hashStr(data.credentials.password);
-            const response = await this.client.post<RegisterResponse>('/auth/register', data);
-            console.log("register response:", response);
-            return { success: true, message: 'Register success', };
-        } catch (error) {
-            if (error instanceof AxiosError) {
-                return { success: false, message: 'Failed to register, error: ' + JSON.stringify(error.response?.data), };
-            }
-            return { success: false, message: 'Unknown error, error: ' + error, };
-        }
+    public async get_me(): Promise<MeResponse> {
+        return await this.client.get<any, MeResponse>('/auth/me');
+    }
+
+    public async list_users(): Promise<UserInfo[]> {
+        return await this.client.get<any, UserInfo[]>('/users');
+    }
+
+    public async create_user(data: AdminCreateUserRequest): Promise<UserInfo> {
+        const payload = {
+            username: data.username,
+            password: Md5.hashStr(data.password),
+            is_admin: !!data.is_admin,
+        };
+        return await this.client.post<any, UserInfo>('/users', payload);
+    }
+
+    public async delete_user(id: number): Promise<void> {
+        await this.client.delete(`/users/${id}`);
+    }
+
+    public async reset_user_password(id: number, new_password: string): Promise<void> {
+        await this.client.put(`/users/${id}/password`, { new_password: Md5.hashStr(new_password) });
     }
 
     // 登录
@@ -172,10 +191,6 @@ export class ApiClient {
     public async get_summary(): Promise<Summary> {
         const response = await this.client.get<any, Summary>('/summary');
         return response;
-    }
-
-    public captcha_url() {
-        return this.client.defaults.baseURL + '/auth/captcha';
     }
 
     public async getOidcConfig(): Promise<OidcConfigResponse> {

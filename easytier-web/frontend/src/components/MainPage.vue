@@ -1,13 +1,16 @@
 <script setup lang="ts">
 import { I18nUtils } from 'easytier-frontend-lib'
-import { computed, onMounted, ref, onUnmounted, nextTick } from 'vue';
+import { computed, onMounted, ref, onUnmounted, nextTick, watch } from 'vue';
 import { Button, TieredMenu } from 'primevue';
+import { tooltipDirective } from '../modules/tooltip';
 import { useRoute, useRouter } from 'vue-router';
 import { useDialog } from 'primevue/usedialog';
 import ChangePassword from './ChangePassword.vue';
 import Icon from '../assets/easytier.png'
 import { useI18n } from 'vue-i18n'
 import ApiClient from '../modules/api';
+
+const vTooltip = tooltipDirective;
 
 const { t } = useI18n()
 const route = useRoute();
@@ -22,16 +25,17 @@ const api = computed<ApiClient | undefined>(() => {
     }
 });
 
+const isAdmin = ref(false);
+
 const dialog = useDialog();
 
 const userMenu = ref();
-const userMenuItems = ref([
+const userMenuItems = computed(() => [
     {
         label: t('web.main.change_password'),
         icon: 'pi pi-key',
         command: () => {
-            console.log('File');
-            let ret = dialog.open(ChangePassword, {
+            dialog.open(ChangePassword, {
                 props: {
                     modal: true,
                 },
@@ -39,8 +43,6 @@ const userMenuItems = ref([
                     api: api.value,
                 }
             });
-
-            console.log("return", ret)
         },
     },
     {
@@ -57,41 +59,59 @@ const userMenuItems = ref([
     },
 ])
 
+/** 移动端：抽屉显隐 */
 const forceShowSideBar = ref(false)
+/** 桌面端：折叠为图标栏 */
+const sidebarCollapsed = ref(localStorage.getItem('easytier-web.sidebarCollapsed') === 'true')
+watch(sidebarCollapsed, (v) => {
+    localStorage.setItem('easytier-web.sidebarCollapsed', String(v));
+});
+
 const sidebarRef = ref<HTMLElement>()
 const toggleButtonRef = ref<HTMLElement>()
 
-// 处理点击外部区域关闭侧边栏
 const handleClickOutside = (event: Event) => {
     const target = event.target as HTMLElement;
-
-    // 如果侧边栏是隐藏的，不需要处理
     if (!forceShowSideBar.value) return;
-
-    // 检查点击是否在侧边栏内部或切换按钮上
     const isClickInsideSidebar = sidebarRef.value?.contains(target);
     const isClickOnToggleButton = toggleButtonRef.value?.contains(target);
-
-    // 如果点击在侧边栏外部且不在切换按钮上，则关闭侧边栏
     if (!isClickInsideSidebar && !isClickOnToggleButton) {
         forceShowSideBar.value = false;
     }
 };
 
-// 切换侧边栏显示状态
-const toggleSidebar = () => {
+const toggleMobileSidebar = () => {
     forceShowSideBar.value = !forceShowSideBar.value;
 };
 
-// 点击背景遮罩关闭侧边栏
+const toggleDesktopCollapse = () => {
+    sidebarCollapsed.value = !sidebarCollapsed.value;
+};
+
 const closeSidebar = () => {
     forceShowSideBar.value = false;
 };
 
+const goNav = (name: string) => {
+    router.push({ name });
+    forceShowSideBar.value = false;
+};
+
+const isManagementPage = computed(() => route.name === 'deviceManagement');
+
 onMounted(async () => {
-    // 等待 DOM 渲染完成后添加事件监听器
     await nextTick();
     document.addEventListener('click', handleClickOutside);
+    try {
+        const me = await api.value?.get_me();
+        isAdmin.value = !!me?.is_admin;
+        if (route.name === 'userList' && !isAdmin.value) {
+            router.replace({ name: 'dashboard' });
+        }
+    } catch (e) {
+        console.error('load me failed', e);
+        isAdmin.value = false;
+    }
 });
 
 onUnmounted(() => {
@@ -100,81 +120,112 @@ onUnmounted(() => {
 
 </script>
 
-<!-- https://flowbite.com/docs/components/sidebar/#sidebar-with-navbar -->
 <template>
     <nav
         class="fixed top-0 z-50 w-full bg-white border-b border-gray-200 dark:bg-gray-800 dark:border-gray-700 top-navbar">
         <div class="px-3 py-3 lg:px-5 lg:pl-3">
             <div class="flex items-center justify-between">
-                <div class="flex items-center justify-start rtl:justify-end">
-                    <div class="sm:hidden">
-                        <Button ref="toggleButtonRef" type="button" aria-haspopup="true" icon="pi pi-list"
-                            variant="text" size="large" severity="contrast" @click="toggleSidebar" />
+                <div class="flex items-center justify-start rtl:justify-end gap-1">
+                    <!-- 移动端：打开/关闭抽屉 -->
+                    <div class="sm:hidden" ref="toggleButtonRef">
+                        <Button type="button" aria-haspopup="true" icon="pi pi-bars"
+                            variant="text" size="large" severity="contrast"
+                            :aria-label="t('web.main.toggle_sidebar')"
+                            v-tooltip.bottom="t('web.main.toggle_sidebar')"
+                            @click="toggleMobileSidebar" />
                     </div>
-                    <a href="https://easytier.top" class="flex ms-2 md:me-24">
-                        <img :src="Icon" class="h-9 me-3" alt="FlowBite Logo" />
+                    <!-- 桌面端：折叠/展开侧栏 -->
+                    <div class="hidden sm:block">
+                        <Button type="button"
+                            :icon="sidebarCollapsed ? 'pi pi-angle-right' : 'pi pi-angle-left'"
+                            variant="text" size="large" severity="contrast"
+                            :aria-label="sidebarCollapsed ? t('web.main.expand_sidebar') : t('web.main.collapse_sidebar')"
+                            v-tooltip.bottom="sidebarCollapsed ? t('web.main.expand_sidebar') : t('web.main.collapse_sidebar')"
+                            @click="toggleDesktopCollapse" />
+                    </div>
+                    <a href="https://easytier.top" class="flex ms-1 md:me-24">
+                        <img :src="Icon" class="h-9 me-3" :alt="t('web.main.logo_alt')" />
                         <span
                             class="self-center text-xl font-semibold sm:text-2xl whitespace-nowrap dark:text-white">EasyTier</span>
                     </a>
                 </div>
-                <div class="flex items-center">
-                    <div class="language-switch">
-                        <Button icon="pi pi-language" @click="I18nUtils.toggleLanguage" rounded severity="contrast" />
-                    </div>
-
-                    <div class="flex items-center ms-3">
-                        <div>
-                            <Button type="button" @click="userMenu.toggle($event)" aria-haspopup="true"
-                                aria-controls="user-menu" icon="pi pi-user" raised rounded />
-                            <TieredMenu ref="userMenu" id="user-menu" :model="userMenuItems" popup />
-                        </div>
-                    </div>
+                <div class="flex items-center gap-3">
+                    <Button icon="pi pi-language" @click="I18nUtils.toggleLanguage" rounded severity="contrast"
+                        :aria-label="t('web.main.language')"
+                        v-tooltip.bottom="t('web.main.language')" />
+                    <Button type="button" @click="userMenu.toggle($event)" aria-haspopup="true"
+                        aria-controls="user-menu" icon="pi pi-user" raised rounded
+                        :aria-label="t('web.main.user_menu')" />
+                    <TieredMenu ref="userMenu" id="user-menu" :model="userMenuItems" popup />
                 </div>
             </div>
         </div>
     </nav>
 
-    <!-- 背景遮罩 - 只在侧边栏显示时显示 -->
     <div v-if="forceShowSideBar" class="fixed inset-0 z-30 bg-black bg-opacity-50 sm:hidden" @click="closeSidebar">
     </div>
 
     <aside ref="sidebarRef" id="logo-sidebar"
-        class="fixed top-1 left-0 z-40 w-64 h-screen pt-20 transition-transform bg-white border-r border-gray-201 sm:translate-x-0 dark:bg-gray-800 dark:border-gray-700"
-        :class="{ '-translate-x-full': !forceShowSideBar }" aria-label="Sidebar">
-        <div class="h-full px-3 pb-4 overflow-y-auto bg-white dark:bg-gray-800">
+        class="fixed top-1 left-0 z-40 h-screen pt-20 transition-all duration-200 bg-white border-r border-gray-200 dark:bg-gray-800 dark:border-gray-700"
+        :class="[
+            forceShowSideBar ? 'translate-x-0' : '-translate-x-full',
+            'sm:translate-x-0',
+            sidebarCollapsed ? 'sm:w-16' : 'sm:w-64',
+            'w-64',
+        ]"
+        :aria-label="t('web.main.sidebar')">
+        <div class="h-full px-2 pb-4 overflow-y-auto bg-white dark:bg-gray-800">
             <ul class="space-y-2 font-medium">
                 <li>
-                    <Button variant="text" class="w-full justify-start gap-x-3 pl-1.5 sidebar-button"
-                        severity="contrast" @click="router.push({ name: 'dashboard' })">
+                    <Button variant="text"
+                        class="w-full sidebar-button"
+                        :class="sidebarCollapsed ? 'sm:justify-center sm:pl-0' : 'justify-start gap-x-3 pl-1.5'"
+                        severity="contrast" @click="goNav('dashboard')"
+                        v-tooltip.right="sidebarCollapsed ? t('web.main.dashboard') : undefined">
                         <i class="pi pi-chart-pie text-xl"></i>
-                        <span class="mb-0.5">{{ t('web.main.dashboard') }}</span>
+                        <span class="mb-0.5" :class="{ 'sm:hidden': sidebarCollapsed }">{{ t('web.main.dashboard') }}</span>
                     </Button>
                 </li>
                 <li>
-                    <Button variant="text" class="w-full justify-start gap-x-3 pl-1.5 sidebar-button"
-                        severity="contrast" @click="router.push({ name: 'deviceList' })">
+                    <Button variant="text"
+                        class="w-full sidebar-button"
+                        :class="sidebarCollapsed ? 'sm:justify-center sm:pl-0' : 'justify-start gap-x-3 pl-1.5'"
+                        severity="contrast" @click="goNav('deviceList')"
+                        v-tooltip.right="sidebarCollapsed ? t('web.main.device_list') : undefined">
                         <i class="pi pi-server text-xl"></i>
-                        <span class="mb-0.5">{{ t('web.main.device_list') }}</span>
+                        <span class="mb-0.5" :class="{ 'sm:hidden': sidebarCollapsed }">{{ t('web.main.device_list') }}</span>
                     </Button>
                 </li>
                 <li>
-                    <Button variant="text" class="w-full justify-start gap-x-3 pl-1.5 sidebar-button"
-                        severity="contrast" @click="router.push({ name: 'login' })">
-                        <i class="pi pi-sign-in text-xl"></i>
-                        <span class="mb-0.5">{{ t('web.main.login_page') }}</span>
+                    <Button variant="text"
+                        class="w-full sidebar-button"
+                        :class="sidebarCollapsed ? 'sm:justify-center sm:pl-0' : 'justify-start gap-x-3 pl-1.5'"
+                        severity="contrast" @click="goNav('networkList')"
+                        v-tooltip.right="sidebarCollapsed ? t('web.main.network_list') : undefined">
+                        <i class="pi pi-sitemap text-xl"></i>
+                        <span class="mb-0.5" :class="{ 'sm:hidden': sidebarCollapsed }">{{ t('web.main.network_list') }}</span>
+                    </Button>
+                </li>
+                <li v-if="isAdmin">
+                    <Button variant="text"
+                        class="w-full sidebar-button"
+                        :class="sidebarCollapsed ? 'sm:justify-center sm:pl-0' : 'justify-start gap-x-3 pl-1.5'"
+                        severity="contrast" @click="goNav('userList')"
+                        v-tooltip.right="sidebarCollapsed ? t('web.main.user_list') : undefined">
+                        <i class="pi pi-users text-xl"></i>
+                        <span class="mb-0.5" :class="{ 'sm:hidden': sidebarCollapsed }">{{ t('web.main.user_list') }}</span>
                     </Button>
                 </li>
             </ul>
         </div>
     </aside>
 
-    <div class="p-4 sm:ml-64">
-        <div class="p-4 border-2 border-gray-200 border-dashed rounded-lg dark:border-gray-700">
-            <div class="grid grid-cols-1 gap-4">
-                <RouterView v-slot="{ Component }">
-                    <component :is="Component" :api="api" />
-                </RouterView>
-            </div>
+    <div class="et-main-content transition-all duration-200"
+        :class="[sidebarCollapsed ? 'sm:ml-16' : 'sm:ml-64', { 'et-main-content--mgmt': isManagementPage }]">
+        <div class="et-main-panel" :class="{ 'et-main-panel--mgmt': isManagementPage }">
+            <RouterView v-slot="{ Component }">
+                <component :is="Component" :api="api" />
+            </RouterView>
         </div>
     </div>
 </template>
@@ -183,5 +234,32 @@ onUnmounted(() => {
 .sidebar-button {
     text-align: left;
     justify-content: left;
+}
+
+.et-main-content {
+    padding: 0 0.75rem 0.75rem;
+    padding-top: calc(3.75rem + env(safe-area-inset-top, 0px));
+}
+
+.et-main-content--mgmt {
+    padding-top: calc(3.5rem + env(safe-area-inset-top, 0px));
+    padding-bottom: 0.5rem;
+}
+
+.et-main-panel {
+    background: var(--surface-card, #ffffff);
+    border: var(--et-border);
+    border-radius: var(--et-radius);
+    padding: 0.5rem 0.75rem 0.75rem;
+}
+
+.et-main-panel--mgmt {
+    padding: 0.35rem 0.75rem 0.5rem;
+}
+
+@media (prefers-color-scheme: dark) {
+    .et-main-panel {
+        background: var(--surface-card, #1e293b);
+    }
 }
 </style>

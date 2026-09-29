@@ -1,19 +1,21 @@
 <script setup lang="ts">
 import { NetworkTypes, Utils, Api, RemoteManagement } from 'easytier-frontend-lib';
-import { computed } from 'vue';
+import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
+import { ProgressSpinner, useToast } from 'primevue';
+import { useI18n } from 'vue-i18n';
 import ApiClient from '../modules/api';
-
 
 const props = defineProps<{
     api: ApiClient;
-    deviceList: Array<Utils.DeviceInfo> | undefined;
 }>();
 
-const emits = defineEmits(['update']);
-
+const { t } = useI18n();
 const route = useRoute();
 const router = useRouter();
+const toast = useToast();
+
+const deviceList = ref<Array<Utils.DeviceInfo> | undefined>(undefined);
 
 const deviceId = computed<string>(() => {
     return route.params.deviceId as string;
@@ -24,7 +26,27 @@ const instanceId = computed<string>(() => {
 });
 
 const deviceInfo = computed<Utils.DeviceInfo | undefined | null>(() => {
-    return deviceId.value ? props.deviceList?.find((device) => device.machine_id === deviceId.value) : null;
+    return deviceId.value ? deviceList.value?.find((device) => device.machine_id === deviceId.value) : null;
+});
+
+/** 设备列表双入口：status | config；缺省时不传（兼容旧链接） */
+const managementMode = computed(() => {
+    const mode = route.query.mode;
+    if (mode === 'status' || mode === 'config') {
+        return mode;
+    }
+    return undefined;
+});
+
+const pageTitle = computed(() => {
+    const host = deviceInfo.value?.hostname ?? deviceId.value ?? '';
+    if (managementMode.value === 'config') {
+        return `${t('web.device.open_network_config')} · ${host}`;
+    }
+    if (managementMode.value === 'status') {
+        return `${t('web.device.open_network_status')} · ${host}`;
+    }
+    return `${t('web.device.management')} · ${host}`;
 });
 
 const selectedInstanceId = computed({
@@ -32,8 +54,11 @@ const selectedInstanceId = computed({
         return instanceId.value;
     },
     set(value: string) {
-        console.log("selectedInstanceId", value);
-        router.push({ name: 'deviceManagement', params: { deviceId: deviceId.value, instanceId: value } });
+        router.push({
+            name: 'deviceManagement',
+            params: { deviceId: deviceId.value, instanceId: value },
+            query: managementMode.value ? { mode: managementMode.value } : {},
+        });
     }
 });
 
@@ -45,123 +70,67 @@ const newConfigGenerator = () => {
     return config;
 }
 
+const switchManagementMode = (mode: 'status' | 'config') => {
+    router.push({
+        name: 'deviceManagement',
+        params: {
+            deviceId: deviceId.value,
+            instanceId: instanceId.value,
+        },
+        query: { mode },
+    });
+}
+
+const backToList = () => {
+    router.push({ name: 'deviceList' });
+}
+
+const loadDevices = async () => {
+    const resp = await props.api?.list_machines();
+    const devices: Array<Utils.DeviceInfo> = [];
+    for (const device of (resp || [])) {
+        devices.push(Utils.buildDeviceInfo(device));
+    }
+    deviceList.value = devices;
+};
+
+const periodFunc = new Utils.PeriodicTask(async () => {
+    try {
+        await loadDevices();
+    } catch (e) {
+        toast.add({ severity: 'error', summary: t('web.device.load_list_failed'), detail: String(e), life: 2000 });
+        console.error(e);
+    }
+}, 3000);
+
+onMounted(() => {
+    periodFunc.start();
+});
+
+onUnmounted(() => {
+    periodFunc.stop();
+});
+
 </script>
 
 <template>
-    <RemoteManagement :api="remoteClient" v-model:instance-id="selectedInstanceId"
-        :new-config-generator="newConfigGenerator" />
+    <div class="device-management-page et-page">
+        <h1 class="et-page-title">{{ pageTitle }}</h1>
+        <div v-if="deviceList === undefined" class="w-full flex justify-center py-8">
+            <ProgressSpinner />
+        </div>
+        <RemoteManagement v-else :api="remoteClient" v-model:instance-id="selectedInstanceId"
+            :new-config-generator="newConfigGenerator" :full-page="true"
+            :drawer-close="backToList"
+            :leave-button-label="t('web.device.back_to_list')"
+            leave-button-icon="pi pi-arrow-left"
+            :mode="managementMode" @switch-mode="switchManagementMode" />
+    </div>
 </template>
 
 <style scoped>
-.device-management {
-    height: 100%;
-    display: flex;
-    flex-direction: column;
-}
-
-.network-content {
-    flex: 1;
-    overflow-y: auto;
-}
-
-/* 按钮样式 */
-.button-container {
+.device-management-page {
+    width: 100%;
     gap: 0.5rem;
-}
-
-.create-button {
-    font-weight: 600;
-    min-width: 3rem;
-}
-
-/* 菜单样式定制 */
-:deep(.p-menu) {
-    min-width: 12rem;
-    box-shadow: 0 0.5rem 1rem rgba(0, 0, 0, 0.15);
-    padding: 0.25rem;
-}
-
-:deep(.p-menu .p-menuitem) {
-    border-radius: 0.25rem;
-}
-
-:deep(.p-menu .p-menuitem-link) {
-    padding: 0.65rem 1rem;
-    font-size: 0.9rem;
-}
-
-:deep(.p-menu .p-menuitem-icon) {
-    margin-right: 0.75rem;
-}
-
-:deep(.p-menu .p-menuitem.p-error .p-menuitem-text,
-    .p-menu .p-menuitem.p-error .p-menuitem-icon) {
-    color: var(--red-500);
-}
-
-:deep(.p-menu .p-menuitem:hover.p-error .p-menuitem-link) {
-    background-color: var(--red-50);
-}
-
-/* 按钮图标样式 */
-:deep(.p-button-icon-only) {
-    width: 2.5rem !important;
-    padding: 0.5rem !important;
-}
-
-:deep(.p-button-icon-only .p-button-icon) {
-    font-size: 1rem;
-}
-
-/* 网络选择相关样式 */
-.network-label {
-    white-space: nowrap;
-}
-
-:deep(.network-select-container) {
-    max-width: 100%;
-}
-
-/* Dark mode adaptations */
-:deep(.bg-surface-50) {
-    background-color: var(--surface-50, #f8fafc);
-}
-
-:deep(.bg-surface-0) {
-    background-color: var(--surface-card, #ffffff);
-}
-
-:deep(.text-primary) {
-    color: var(--primary-color, #3b82f6);
-}
-
-:deep(.text-secondary) {
-    color: var(--text-color-secondary, #64748b);
-}
-
-@media (prefers-color-scheme: dark) {
-    :deep(.bg-surface-50) {
-        background-color: var(--surface-ground, #0f172a);
-    }
-
-    :deep(.bg-surface-0) {
-        background-color: var(--surface-card, #1e293b);
-    }
-}
-
-/* Responsive design for mobile devices */
-@media (max-width: 768px) {
-    .network-header {
-        padding: 0.75rem;
-    }
-
-    .network-content {
-        padding: 0.75rem;
-    }
-
-    /* 在小屏幕上缩短网络标签文本 */
-    .network-label {
-        font-size: 0.9rem;
-    }
 }
 </style>

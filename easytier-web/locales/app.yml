@@ -46,9 +46,12 @@ cli:
   heartbeat_timeout_ms:
     en: "Config-server heartbeat RPC timeout in milliseconds, default is 15000"
     zh-CN: "配置服务心跳 RPC 超时时间，单位毫秒，默认为 15000"
-  disable_registration:
-    en: "Disable user registration"
-    zh-CN: "禁用用户注册"
+  reset_password_user:
+    en: "Reset this user's password and exit (does not start the server). Requires --new-password. Example: --reset-password-user admin --new-password YourNewPass"
+    zh-CN: "重置该用户密码后退出（不启动服务）。需同时指定 --new-password。示例：--reset-password-user admin --new-password YourNewPass"
+  new_password:
+    en: "New password used with --reset-password-user (same plaintext as the login page)"
+    zh-CN: "与 --reset-password-user 一起使用的新密码（与登录页填写的明文相同）"
   oidc_issuer_url:
     en: "The OIDC issuer URL for single sign-on authentication"
     zh-CN: "OIDC 签发者 URL，用于单点登录认证"

@@ -2,12 +2,14 @@
 import { Card, useToast } from 'primevue';
 import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { Utils } from 'easytier-frontend-lib';
+import { useI18n } from 'vue-i18n';
 import ApiClient, { Summary } from '../modules/api';
 
 const props = defineProps({
     api: ApiClient,
 });
 
+const { t } = useI18n();
 const toast = useToast();
 
 const summary = ref<Summary | undefined>(undefined);
@@ -21,7 +23,7 @@ const periodFunc = new Utils.PeriodicTask(async () => {
     try {
         await loadSummary();
     } catch (e) {
-        toast.add({ severity: 'error', summary: 'Load Summary Failed', detail: e, life: 2000 });
+        toast.add({ severity: 'error', summary: t('web.dashboard.load_failed'), detail: String(e), life: 2000 });
         console.error(e);
     }
 }, 1000);
@@ -34,33 +36,55 @@ onUnmounted(() => {
     periodFunc.stop();
 });
 
-const deviceCount = computed<number | undefined>(
-    () => {
-        return summary.value?.device_count;
-    },
-);
+const deviceCount = computed<number | undefined>(() => summary.value?.device_count);
+const networkCount = computed<number | undefined>(() => summary.value?.network_count);
 
 </script>
 
 <template>
-    <div class="grid grid-cols-3 gap-4">
-        <Card class="h-full">
-            <template #title>Device Count</template>
-            <template #content>
-                <div class="w-full flex justify-center text-7xl font-bold text-green-800 mt-4">
-                    {{ deviceCount }}
-                </div>
-            </template>
-        </Card>
-        <div class="flex items-center justify-center rounded bg-gray-50 dark:bg-gray-800">
-            <p class="text-2xl text-gray-400 dark:text-gray-500">
-                <!-- <svg class="w-3.5 h-3.5" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" fill="none"
-                    viewBox="0 0 18 18">
-                    <path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                        d="M9 1v16M1 9h16" />
-                </svg> -->
-            </p>
+    <div class="et-page">
+        <h1 class="et-page-title">{{ t('web.main.dashboard') }}</h1>
+
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+            <Card class="h-full summary-card">
+                <template #title>
+                    <span class="et-section-title">{{ t('web.main.device_count') }}</span>
+                </template>
+                <template #content>
+                    <div class="summary-value">
+                        {{ deviceCount ?? '—' }}
+                    </div>
+                </template>
+            </Card>
+            <Card class="h-full summary-card">
+                <template #title>
+                    <span class="et-section-title">{{ t('web.main.network_count') }}</span>
+                </template>
+                <template #content>
+                    <div class="summary-value">
+                        {{ networkCount ?? '—' }}
+                    </div>
+                </template>
+            </Card>
         </div>
     </div>
-
 </template>
+
+<style scoped>
+.summary-card {
+    min-height: 8.5rem;
+    border: var(--et-border);
+    border-radius: var(--et-radius);
+}
+
+.summary-value {
+    width: 100%;
+    display: flex;
+    justify-content: center;
+    margin-top: var(--et-space-3);
+    font-size: 3rem;
+    line-height: 1;
+    font-weight: 700;
+    color: var(--primary-color, #0ea5e9);
+}
+</style>

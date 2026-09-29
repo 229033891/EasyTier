@@ -1,3 +1,4 @@
+mod admin_users;
 mod auth;
 pub(crate) mod captcha;
 mod network;
@@ -59,6 +60,7 @@ struct ListSessionJsonResp(Vec<StorageToken>);
 #[derive(Debug, serde::Deserialize, serde::Serialize)]
 struct GetSummaryJsonResp {
     device_count: u32,
+    network_count: u32,
 }
 
 #[derive(Debug, serde::Deserialize, serde::Serialize)]
@@ -152,9 +154,16 @@ impl RestfulServer {
         };
 
         let machines = client_mgr.list_machine_by_user_id(user.id()).await;
+        let mut network_count = 0u32;
+        for client_url in machines.iter() {
+            if let Some(session) = client_mgr.get_heartbeat_requests(client_url).await {
+                network_count += session.running_network_instances.len() as u32;
+            }
+        }
 
         Ok(GetSummaryJsonResp {
             device_count: machines.len() as u32,
+            network_count,
         }
         .into())
     }
@@ -273,7 +282,8 @@ impl RestfulServer {
             .merge(NetworkApi::build_route())
             .merge(rpc::router())
             .route_layer(login_required!(Backend))
-            .merge(auth::router().layer(Extension(self.feature_flags.clone())))
+            .merge(auth::router())
+            .merge(admin_users::router())
             .merge(oidc::router())
             .with_state(self.client_mgr.clone())
             .route(

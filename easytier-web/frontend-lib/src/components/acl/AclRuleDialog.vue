@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { AutoComplete, Button, Checkbox, Dialog, InputNumber, InputText, MultiSelect, Panel, SelectButton, ToggleButton } from 'primevue';
-import { computed, ref, watch } from 'vue';
+import { computed, reactive, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { AclAction, AclProtocol, AclRule, ensureAclRuleLists } from '../../types/network';
 
@@ -14,6 +14,32 @@ const emit = defineEmits(['update:visible', 'save'])
 const rule = defineModel<AclRule>('rule', { required: true })
 
 const { t } = useI18n()
+
+/** 整块标题栏可点展开/折叠（触摸友好）；加减号自身已切换，需跳过以免翻两次 */
+const panelCollapsed = reactive({
+  rules: false,
+  advanced: true,
+})
+
+function onToggleablePanelHeaderClick(
+  key: keyof typeof panelCollapsed,
+  event: Event,
+) {
+  const target = event.target as HTMLElement | null
+  if (target?.closest('button, a, input, textarea, select, [role="button"]')) {
+    return
+  }
+  panelCollapsed[key] = !panelCollapsed[key]
+}
+
+function panelHeaderPt(key: keyof typeof panelCollapsed) {
+  return {
+    header: {
+      class: 'cursor-pointer select-none touch-manipulation',
+      onClick: (event: Event) => onToggleablePanelHeaderClick(key, event),
+    },
+  }
+}
 
 const protocolOptions = [
   { label: () => t('acl.any'), value: AclProtocol.Any },
@@ -82,7 +108,8 @@ const genericSuggestions = ref<string[]>([])
         </div>
       </div>
 
-      <Panel :header="t('acl.rules')" toggleable>
+      <Panel v-model:collapsed="panelCollapsed.rules" :header="t('acl.rules')" toggleable
+        :pt="panelHeaderPt('rules')">
         <div class="flex flex-col gap-4">
           <div class="flex flex-col gap-2">
             <label class="font-bold">{{ t('acl.rule.src_ips') }}</label>
@@ -112,7 +139,8 @@ const genericSuggestions = ref<string[]>([])
         </div>
       </Panel>
 
-      <Panel :header="t('advanced_settings')" toggleable collapsed>
+      <Panel v-model:collapsed="panelCollapsed.advanced" :header="t('advanced_settings')" toggleable
+        :pt="panelHeaderPt('advanced')">
         <div class="flex flex-col gap-4">
           <div class="flex items-center gap-2">
             <Checkbox v-model="rule.stateful" :binary="true" inputId="rule-stateful" />

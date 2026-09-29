@@ -111,6 +111,15 @@ config_saved: 配置已保存
 
 use_latency_first: 延迟优先模式
 my_node_info: 当前节点信息
+node_info_group_peer_id: Peer ID
+node_info_group_tun_device: TUN 设备
+node_info_group_virtual_ip: Virtual IP
+node_info_group_udp_nat_type: UDP NAT Type
+node_info_group_local_ip: Local IP
+node_info_group_public_ip: Public IP
+node_info_group_listener: Listener
+node_info_details: 节点详情
+node_info_copy_group: 复制本组
 peer_count: 已连接
 upload: 上传
 download: 下载
@@ -191,6 +200,11 @@ relay_all_peer_rpc: 转发RPC包
 relay_all_peer_rpc_help: |
   允许转发所有对等节点的RPC数据包，即使对等节点不在转发网络白名单中。
   这可以帮助白名单外网络中的对等节点建立P2P连接。
+
+disable_relay_data: 禁止中转数据
+disable_relay_data_help: |
+  禁止其他节点通过本节点转发业务流量（数据面中继）。
+  本节点仍可正常通信；开启后会向网络宣告 avoid_relay_data，使其他节点尽量不选本节点作为中继。
 
 need_p2p: 需要 P2P
 need_p2p_help: 即使其他节点启用了 lazy p2p，也要求它们主动与当前节点建立 P2P 连接。
@@ -341,14 +355,58 @@ web:
     dashboard: 仪表盘
     device_list: 设备列表
     device_management: 设备管理
+    device_count: 设备数量
+    network_count: 网络数量
+    network_list: 网络列表
+    user_list: 用户管理
     login_page: 登录页面
     settings: 设置
     logout: 退出登录
     language: 语言
     change_password: 修改密码
+    sidebar: 侧边栏
+    toggle_sidebar: 打开/关闭侧边栏
+    collapse_sidebar: 折叠侧边栏
+    expand_sidebar: 展开侧边栏
+    user_menu: 用户菜单
+    logo_alt: EasyTier 标志
+
+  dashboard:
+    load_failed: 加载汇总失败
+
+  users:
+    username: 用户名
+    password: 密码
+    is_admin: 管理员
+    role: 角色
+    role_admin: 管理员
+    role_user: 普通用户
+    actions: 操作
+    create: 创建用户
+    create_success: 用户已创建
+    create_failed: 创建用户失败
+    username_password_required: 请填写用户名和密码
+    delete: 删除用户
+    delete_confirm: 确定删除用户「{username}」？
+    delete_success: 用户已删除
+    delete_failed: 删除用户失败
+    load_failed: 加载用户列表失败
+    empty: 暂无用户
+    reset_password: 重置密码
+    reset_for: 重置用户
+    new_password: 新密码
+    reset_success: 密码已重置
+    reset_failed: 重置密码失败
+    password_required: 请填写新密码
+    cancel: 取消
 
   device:
     list: 设备列表
+    network_list: 网络列表
+    network_name: 网络名称
+    no_networks: 暂无运行中的网络
+    belonging_device: 所属设备
+    load_list_failed: 加载设备列表失败
     management: 设备管理
     add: 添加设备
     delete: 删除设备
@@ -362,6 +420,9 @@ web:
     sort_direction: 排序方向
     show_detailed_view: 显示详情
     hide_detailed_view: 隐藏详情
+    open_network_status: 网络状态 / 启停
+    open_network_config: 编辑 / 创建网络
+    no_running_network_hint: 该设备当前没有运行中的虚拟网。可打开状态页选择已停用网络，或切换到配置页创建。
     sort_by_hostname: 主机名
     sort_by_public_ip: 公网IP
     sort_by_version: 版本
@@ -375,6 +436,8 @@ web:
     version: 版本
     machine_id: 机器ID
     unknown_location: 未知位置
+    network_count: 运行中网络数量
+    back_to_list: 返回设备列表
 
   device_management:
     edit_network: 编辑网络
@@ -388,16 +451,30 @@ web:
     edit_as_file: 编辑为文件
     save_config: 保存配置
     config_saved: 配置已保存
+    save_failed: 保存配置失败
     import_config: 导入配置
     create_new: 创建新网络
+    add_network: 添加网络
     network_status: 网络状态
     loading_network_status: 正在加载网络状态
     network_info_unavailable: 网络状态不可用
     network_configuration: 网络配置
     loading_network_configuration: 加载网络配置
     no_network_selected: 未选择网络
-    select_existing_network_or_create_new: 选择现有网络实例或创建新网络以管理网络设置
+    select_existing_network_or_create_new: 从上方选择已有网络，或点击「添加网络」
+    select_network_for_status: 请选择网络实例以查看状态或启停
+    network_disabled_hint: 该网络已禁用。可在此启动，或打开「配置」修改设置。
+    switch_to_config: 前往配置
+    switch_to_status: 前往状态
+    confirm_disable_network: 确定禁用该网络吗？
+    confirm_start_network: 确定启动该网络吗？
+    confirm_delete_network: 确定删除该网络吗？此操作不可恢复。
+    confirm_delete_network_header: 删除网络
     disable_network: 禁用网络
+    toolbar_config_files: 配置文件
+    toolbar_network: 网络
+    toolbar_danger: 危险操作
+    toolbar_save: 保存
 
   network:
     title: 网络
