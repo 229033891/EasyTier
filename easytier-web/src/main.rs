@@ -220,6 +220,15 @@ pub struct WebhookOptions {
 
 #[derive(Debug, Clone, Default, clap::Args)]
 pub struct FeatureFlags {
+    /// Deprecated no-op: public self-registration was removed; kept so old flags/env still parse.
+    #[arg(
+        long,
+        env = "ET_DISABLE_REGISTRATION",
+        default_value = "true",
+        hide = true
+    )]
+    pub disable_registration: bool,
+
     /// Whether to auto-create users when they connect via heartbeat with an unknown token.
     #[arg(
         long,

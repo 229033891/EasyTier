@@ -35,14 +35,21 @@ const onSubmit = async () => {
 const apiHost = ref<string>(getInitialApiHost())
 const apiHostSuggestions = ref<Array<string>>([])
 const apiHostSearch = async (event: { query: string }) => {
-    apiHostSuggestions.value = [];
-    let hosts = cleanAndLoadApiHosts();
+    const suggestions: string[] = [];
+    const hosts = cleanAndLoadApiHosts();
     if (event.query) {
-        apiHostSuggestions.value.push(event.query);
+        suggestions.push(event.query);
+    }
+    // 当前访问地址优先出现在下拉
+    if (!suggestions.includes(apiHost.value)) {
+        suggestions.push(apiHost.value);
     }
     hosts.forEach((host) => {
-        apiHostSuggestions.value.push(host.value);
+        if (!suggestions.includes(host.value)) {
+            suggestions.push(host.value);
+        }
     });
+    apiHostSuggestions.value = suggestions;
 }
 
 const oidcEnabled = ref(false);

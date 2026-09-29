@@ -4,8 +4,6 @@ use axum::{
     routing::{get, post, put},
 };
 use axum_login::login_required;
-use axum_messages::Message;
-use serde::{Deserialize, Serialize};
 
 use crate::restful::users::Backend;
 
@@ -13,11 +11,6 @@ use super::{
     AppStateInner,
     users::{AuthSession, Credentials},
 };
-
-#[derive(Debug, Deserialize, Serialize)]
-pub struct LoginResult {
-    messages: Vec<Message>,
-}
 
 pub fn router() -> Router<AppStateInner> {
     let r = Router::new()

@@ -155,45 +155,41 @@ onMounted(async () => {
         <h1 class="et-page-title">{{ t('web.main.user_list') }}</h1>
 
         <div class="user-create-form">
-            <div class="form-row">
-                <div class="field">
-                    <label for="new-username">{{ t('web.users.username') }}</label>
-                    <InputText id="new-username" v-model="newUsername" class="w-full" autocomplete="off" />
-                </div>
-                <div class="field">
-                    <label for="new-password">{{ t('web.users.password') }}</label>
-                    <Password id="new-password" v-model="newPassword" class="w-full" toggleMask :feedback="false"
-                        autocomplete="new-password" />
-                </div>
-                <div class="field field-admin">
-                    <label for="new-is-admin">{{ t('web.users.is_admin') }}</label>
-                    <Checkbox inputId="new-is-admin" v-model="newIsAdmin" :binary="true" />
-                </div>
-                <div class="field field-action">
-                    <Button :label="t('web.users.create')" icon="pi pi-user-plus" :loading="creating"
-                        @click="createUser" />
-                </div>
+            <div class="field">
+                <label for="new-username">{{ t('web.users.username') }}</label>
+                <InputText id="new-username" v-model="newUsername" class="w-full" autocomplete="off" />
+            </div>
+            <div class="field">
+                <label for="new-password">{{ t('web.users.password') }}</label>
+                <Password id="new-password" v-model="newPassword" class="w-full" toggleMask :feedback="false"
+                    autocomplete="new-password" />
+            </div>
+            <div class="field field-admin">
+                <label for="new-is-admin">{{ t('web.users.is_admin') }}</label>
+                <Checkbox inputId="new-is-admin" v-model="newIsAdmin" :binary="true" />
+            </div>
+            <div class="field field-action">
+                <Button :label="t('web.users.create')" icon="pi pi-user-plus" :loading="creating"
+                    @click="createUser" />
             </div>
         </div>
 
         <div v-if="resetFor" class="user-create-form">
-            <div class="form-row">
-                <div class="field">
-                    <label>{{ t('web.users.reset_for') }}</label>
-                    <div class="reset-target">{{ resetFor.username }}</div>
-                </div>
-                <div class="field">
-                    <label for="reset-password">{{ t('web.users.new_password') }}</label>
-                    <Password id="reset-password" v-model="resetPassword" class="w-full" toggleMask :feedback="false"
-                        autocomplete="new-password" />
-                </div>
-                <div class="field field-action">
-                    <Button :label="t('web.users.reset_password')" icon="pi pi-key"
-                        :loading="resettingId === resetFor.id" @click="submitReset" />
-                </div>
-                <div class="field field-action">
-                    <Button :label="t('web.users.cancel')" severity="secondary" outlined @click="cancelReset" />
-                </div>
+            <div class="field">
+                <label>{{ t('web.users.reset_for') }}</label>
+                <div class="reset-target">{{ resetFor.username }}</div>
+            </div>
+            <div class="field">
+                <label for="reset-password">{{ t('web.users.new_password') }}</label>
+                <Password id="reset-password" v-model="resetPassword" class="w-full" toggleMask :feedback="false"
+                    autocomplete="new-password" />
+            </div>
+            <div class="field field-action">
+                <Button :label="t('web.users.reset_password')" icon="pi pi-key"
+                    :loading="resettingId === resetFor.id" @click="submitReset" />
+            </div>
+            <div class="field field-action">
+                <Button :label="t('web.users.cancel')" severity="secondary" outlined @click="cancelReset" />
             </div>
         </div>
 
@@ -245,17 +241,14 @@ onMounted(async () => {
 
 <style scoped>
 .user-create-form {
-    background: var(--surface-ground, #f8fafc);
-    border: var(--et-border);
-    border-radius: var(--et-radius);
-    padding: var(--et-pad-card);
-}
-
-.form-row {
     display: flex;
     flex-wrap: wrap;
     gap: 0.75rem 1rem;
     align-items: flex-end;
+    background: var(--surface-ground, #f8fafc);
+    border: var(--et-border);
+    border-radius: var(--et-radius);
+    padding: var(--et-pad-card);
 }
 
 .field {

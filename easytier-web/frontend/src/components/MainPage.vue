@@ -123,7 +123,7 @@ onUnmounted(() => {
 <template>
     <nav
         class="fixed top-0 z-50 w-full bg-white border-b border-gray-200 dark:bg-gray-800 dark:border-gray-700 top-navbar">
-        <div class="px-3 py-3 lg:px-5 lg:pl-3">
+        <div class="px-3 py-2 lg:px-5 lg:pl-3">
             <div class="flex items-center justify-between">
                 <div class="flex items-center justify-start rtl:justify-end gap-1">
                     <!-- 移动端：打开/关闭抽屉 -->
@@ -144,7 +144,7 @@ onUnmounted(() => {
                             @click="toggleDesktopCollapse" />
                     </div>
                     <a href="https://easytier.top" class="flex ms-1 md:me-24">
-                        <img :src="Icon" class="h-9 me-3" :alt="t('web.main.logo_alt')" />
+                        <img :src="Icon" class="h-8 me-3" :alt="t('web.main.logo_alt')" />
                         <span
                             class="self-center text-xl font-semibold sm:text-2xl whitespace-nowrap dark:text-white">EasyTier</span>
                     </a>
@@ -166,7 +166,7 @@ onUnmounted(() => {
     </div>
 
     <aside ref="sidebarRef" id="logo-sidebar"
-        class="fixed top-1 left-0 z-40 h-screen pt-20 transition-all duration-200 bg-white border-r border-gray-200 dark:bg-gray-800 dark:border-gray-700"
+            class="fixed top-0 left-0 z-40 h-screen pt-14 transition-all duration-200 bg-white border-r border-gray-200 dark:bg-gray-800 dark:border-gray-700"
         :class="[
             forceShowSideBar ? 'translate-x-0' : '-translate-x-full',
             'sm:translate-x-0',
@@ -222,11 +222,12 @@ onUnmounted(() => {
 
     <div class="et-main-content transition-all duration-200"
         :class="[sidebarCollapsed ? 'sm:ml-16' : 'sm:ml-64', { 'et-main-content--mgmt': isManagementPage }]">
-        <div class="et-main-panel" :class="{ 'et-main-panel--mgmt': isManagementPage }">
-            <RouterView v-slot="{ Component }">
+        <RouterView v-slot="{ Component }">
+            <component v-if="isManagementPage" :is="Component" :api="api" />
+            <div v-else class="et-main-panel">
                 <component :is="Component" :api="api" />
-            </RouterView>
-        </div>
+            </div>
+        </RouterView>
     </div>
 </template>
 
@@ -238,11 +239,11 @@ onUnmounted(() => {
 
 .et-main-content {
     padding: 0 0.75rem 0.75rem;
-    padding-top: calc(3.75rem + env(safe-area-inset-top, 0px));
+    padding-top: calc(3.25rem + env(safe-area-inset-top, 0px));
 }
 
 .et-main-content--mgmt {
-    padding-top: calc(3.5rem + env(safe-area-inset-top, 0px));
+    padding-top: calc(3.25rem + env(safe-area-inset-top, 0px));
     padding-bottom: 0.5rem;
 }
 
@@ -251,10 +252,6 @@ onUnmounted(() => {
     border: var(--et-border);
     border-radius: var(--et-radius);
     padding: 0.5rem 0.75rem 0.75rem;
-}
-
-.et-main-panel--mgmt {
-    padding: 0.35rem 0.75rem 0.5rem;
 }
 
 @media (prefers-color-scheme: dark) {

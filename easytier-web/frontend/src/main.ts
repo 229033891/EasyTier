@@ -30,6 +30,11 @@ const routes = [
                 component: Login,
                 alias: 'login',
             },
+            {
+                name: 'register',
+                path: 'register',
+                redirect: { name: 'login' },
+            },
         ]
     },
     {

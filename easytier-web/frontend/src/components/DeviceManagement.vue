@@ -114,23 +114,14 @@ onUnmounted(() => {
 </script>
 
 <template>
-    <div class="device-management-page et-page">
-        <h1 class="et-page-title">{{ pageTitle }}</h1>
-        <div v-if="deviceList === undefined" class="w-full flex justify-center py-8">
-            <ProgressSpinner />
-        </div>
-        <RemoteManagement v-else :api="remoteClient" v-model:instance-id="selectedInstanceId"
-            :new-config-generator="newConfigGenerator" :full-page="true"
-            :drawer-close="backToList"
-            :leave-button-label="t('web.device.back_to_list')"
-            leave-button-icon="pi pi-arrow-left"
-            :mode="managementMode" @switch-mode="switchManagementMode" />
+    <div v-if="deviceList === undefined" class="w-full flex justify-center py-8">
+        <ProgressSpinner />
     </div>
+    <RemoteManagement v-else :api="remoteClient" v-model:instance-id="selectedInstanceId"
+        :new-config-generator="newConfigGenerator" :full-page="true"
+        :page-title="pageTitle"
+        :drawer-close="backToList"
+        :leave-button-label="t('web.device.back_to_list')"
+        leave-button-icon="pi pi-arrow-left"
+        :mode="managementMode" @switch-mode="switchManagementMode" />
 </template>
-
-<style scoped>
-.device-management-page {
-    width: 100%;
-    gap: 0.5rem;
-}
-</style>

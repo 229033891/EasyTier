@@ -10,7 +10,11 @@ let apiMeta: {
 // remove trailing slashes from the URL
 const cleanUrl = (url: string) => url.replace(/\/+$/, '');
 
-const defaultApiHost = cleanUrl(apiMeta?.api_host ?? `${location.origin}${location.pathname}`);
+/** 当前页面地址（一体包部署时通常就是 API 地址） */
+const currentPageApiHost = cleanUrl(location.origin);
+
+/** 启动参数 --api-host 注入值，其次当前访问 URL */
+const defaultApiHost = cleanUrl(apiMeta?.api_host || currentPageApiHost);
 
 const isValidHttpUrl = (s: string): boolean => {
     let url;
@@ -58,14 +62,14 @@ const saveApiHost = (host: string) => {
     localStorage.setItem('apiHosts', JSON.stringify(hosts));
 };
 
+/**
+ * 登录页默认显示：
+ * 1. 服务端注入的 --api-host（若有）
+ * 2. 否则当前浏览器访问地址（location.origin）
+ * 历史主机仍可通过下拉选择。
+ */
 const getInitialApiHost = (): string => {
-    const hosts = cleanAndLoadApiHosts();
-    if (hosts.length > 0) {
-        return hosts[0].value;
-    } else {
-        saveApiHost(defaultApiHost)
-        return defaultApiHost;
-    }
+    return defaultApiHost;
 };
 
 export { getInitialApiHost, cleanAndLoadApiHosts, saveApiHost }

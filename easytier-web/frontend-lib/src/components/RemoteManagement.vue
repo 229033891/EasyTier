@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Button, ConfirmDialog, ConfirmPopup, Divider, IftaLabel, Menu, Message, Select, Tag, useConfirm, useToast, type VirtualScrollerLazyEvent } from 'primevue';
+import { Button, ConfirmDialog, ConfirmPopup, Divider, Menu, Message, Select, Tag, useConfirm, useToast, type VirtualScrollerLazyEvent } from 'primevue';
 import { computed, onMounted, onUnmounted, Ref, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import * as Api from '../modules/api';
@@ -26,6 +26,8 @@ const props = defineProps<{
      * 不传则保持 GUI 原「状态+配置」合一行为。
      */
     mode?: 'status' | 'config';
+    /** 全页标题，放在网络选择栏内，避免页头再空出一截 */
+    pageTitle?: string;
 }>();
 
 const isStatusMode = computed(() => props.mode === 'status')
@@ -627,6 +629,10 @@ const showMoreActionsMenu = computed(() =>
     && actionMenu.value.some((item) => item.visible === undefined || (typeof item.visible === 'function' ? item.visible() : item.visible))
 );
 
+const showHeaderActions = computed(() =>
+    (isCombinedMode.value && isEditingNetwork.value) || showMoreActionsMenu.value
+);
+
 /** 底部主操作：按当前面板决定右侧按钮 */
 const stickyFooterPrimary = computed(() => {
     if (showStatusDisabledPanel.value) {
@@ -679,38 +685,32 @@ onUnmounted(() => {
 
         <!-- 网络选择和操作按钮始终在同一行（顶栏固定） -->
         <div class="network-header">
+            <h1 v-if="pageTitle" class="et-page-title network-page-title">{{ pageTitle }}</h1>
             <div class="flex flex-row justify-between items-center gap-2">
                 <!-- 网络选择 -->
                 <div class="flex-1 min-w-0">
-                    <IftaLabel class="w-full">
-                        <Select v-model="selectedInstanceId" :options="instanceList" optionLabel="uuid" class="w-full"
-                            inputId="dd-inst-id" :placeholder="t('web.device_management.select_network')"
-                            :pt="{ root: { class: 'network-select-container' } }" :virtualScrollerOptions="{
-                                lazy: true,
-                                onLazyLoad: onLazyLoadNetworkMetas,
-                                itemSize: 60,
-                                delay: 50
-                            }">
+                    <span class="network-label">{{ t('web.device_management.network') }}</span>
+                    <Select v-model="selectedInstanceId" :options="instanceList" optionLabel="uuid" class="w-full"
+                        inputId="dd-inst-id" :placeholder="t('web.device_management.select_network')"
+                        :pt="{ root: { class: 'network-select-container' } }" :virtualScrollerOptions="{
+                            lazy: true,
+                            onLazyLoad: onLazyLoadNetworkMetas,
+                            itemSize: 60,
+                            delay: 50
+                        }">
                             <template #value="slotProps">
-                                <div v-if="slotProps.value" class="flex items-center content-center min-w-0">
-                                    <div class="mr-4 flex-col min-w-0 flex-1">
-                                        <span class="truncate block">
-                                            &nbsp;
-                                            <span v-if="slotProps.value.meta">
-                                                {{ slotProps.value.meta.network_name }} ({{ slotProps.value.uuid }})
-                                            </span>
-                                            <span v-else>
-                                                {{ slotProps.value.uuid }}
-                                            </span>
+                                <div v-if="slotProps.value" class="flex items-center min-w-0 gap-2">
+                                    <span class="truncate block min-w-0 flex-1">
+                                        <span v-if="slotProps.value.meta">
+                                            {{ slotProps.value.meta.network_name }} ({{ slotProps.value.uuid }})
                                         </span>
-                                    </div>
-                                    <Tag class="my-auto leading-3 shrink-0"
+                                        <span v-else>{{ slotProps.value.uuid }}</span>
+                                    </span>
+                                    <Tag class="leading-3 shrink-0"
                                         :severity="isRunning(slotProps.value.uuid) ? 'success' : 'info'"
                                         :value="t(isRunning(slotProps.value.uuid) ? 'network_running' : 'network_stopped')" />
                                 </div>
-                                <span v-else>
-                                    {{ slotProps.placeholder }}
-                                </span>
+                                <span v-else>{{ slotProps.placeholder }}</span>
                             </template>
                             <template #option="slotProps">
                                 <div class="flex flex-col items-start content-center max-w-full">
@@ -729,13 +729,10 @@ onUnmounted(() => {
                                 </div>
                             </template>
                         </Select>
-                        <label class="network-label mr-2 font-medium" for="dd-inst-id">{{
-                            t('web.device_management.network') }}</label>
-                    </IftaLabel>
                 </div>
 
                 <!-- 顶栏：取消编辑 / 更多（创建网络改到配置工具栏） -->
-                <div class="flex gap-2 shrink-0 button-container items-center">
+                <div v-if="showHeaderActions" class="flex gap-2 shrink-0 button-container items-center">
                     <Button v-if="isCombinedMode && isEditingNetwork" @click="cancelEditNetwork" icon="pi pi-times"
                         :label="screenWidth > 640 ? t('web.device_management.cancel_edit') : undefined"
                         :class="['header-action-btn', screenWidth <= 640 ? 'p-button-icon-only' : '']"
@@ -754,15 +751,12 @@ onUnmounted(() => {
         </div>
 
         <!-- Main Content Area -->
-        <div class="network-content bg-surface-0 p-4 rounded-lg shadow-sm">
-            <!-- 状态模式：已禁用 → 启停，不进配置表单 -->
-            <div v-if="showStatusDisabledPanel" class="network-status-container">
-                <Message severity="warn" class="mb-0">{{ t('web.device_management.network_disabled_hint') }}</Message>
-            </div>
+        <div class="network-content">
+            <Message v-if="showStatusDisabledPanel" severity="warn" class="mb-0">
+                {{ t('web.device_management.network_disabled_hint') }}
+            </Message>
 
-            <!-- Network Creation / Edit Form -->
-            <div v-else-if="showConfigPanel" class="network-creation-container">
-                <!-- 配置工具区：文件操作 + 保存 | 危险操作 -->
+            <template v-else-if="showConfigPanel">
                 <div class="config-toolbar">
                     <div class="toolbar-zone">
                         <span class="toolbar-zone-label">{{ t('web.device_management.toolbar_config_files') }}</span>
@@ -796,21 +790,17 @@ onUnmounted(() => {
 
                 <Config :cur-network="currentNetworkConfig" :config-invalid="!currentNetworkConfig"
                     :hide-run-button="true" @run-network="saveAndRunNewNetwork"></Config>
-            </div>
+            </template>
 
-            <!-- Network Status (for running networks) -->
-            <div v-else-if="needShowNetworkStatus" class="network-status-container">
+            <template v-else-if="needShowNetworkStatus">
                 <Status v-if="curNetworkInfo && curNetworkInfo.error_msg === ''" v-bind:cur-network-inst="curNetworkInfo"
-                    :api="api"
-                    class="mb-0">
-                </Status>
+                    :api="api" class="mb-0" />
                 <Message v-else-if="curNetworkInfo?.error_msg" severity="error" class="mb-0">{{
                     curNetworkInfo.error_msg }}</Message>
                 <Message v-else severity="info" class="mb-0">{{ t('web.device_management.loading_network_status') }}
                 </Message>
-            </div>
+            </template>
 
-            <!-- Empty State -->
             <div v-else class="empty-state flex flex-col items-center py-12">
                 <i class="pi pi-sitemap text-5xl text-secondary mb-4 opacity-50"></i>
                 <div class="text-xl text-center font-medium mb-3">{{ t('web.device_management.no_network_selected') }}
@@ -820,44 +810,36 @@ onUnmounted(() => {
                         ? t('web.device_management.select_network_for_status')
                         : t('web.device_management.select_existing_network_or_create_new') }}
                 </p>
-                <div class="flex flex-wrap justify-center gap-3">
-                    <Button v-if="!isStatusMode" @click="newNetwork"
-                        :label="t('web.device_management.add_network')" icon="pi pi-plus" iconPos="left" />
-                    <Button v-if="isStatusMode" @click="requestSwitchMode('config')"
-                        :label="t('web.device_management.switch_to_config')" icon="pi pi-cog" iconPos="left"
-                        severity="secondary" />
-                </div>
+                <Button v-if="!isStatusMode" @click="newNetwork"
+                    :label="t('web.device_management.add_network')" icon="pi pi-plus" iconPos="left" />
+                <Button v-else @click="requestSwitchMode('config')"
+                    :label="t('web.device_management.switch_to_config')" icon="pi pi-cog" iconPos="left"
+                    severity="secondary" />
             </div>
         </div>
 
-        <!-- 固定底栏：模式切换 + 主操作；抽屉模式另显示关闭 -->
         <div v-if="showStickyFooter" class="network-sticky-footer">
-            <div class="network-footer-bar">
-                <div v-if="showLeaveInFooter" class="footer-zone footer-zone--leave">
-                    <Button @click="drawerClose" :label="leaveLabel" severity="secondary"
-                        :icon="leaveIcon" iconPos="left" class="network-footer-btn" />
-                </div>
-                <div class="footer-zone footer-zone--primary">
-                    <!-- 状态 ↔ 配置：放在运行/启停旁 -->
-                    <Button v-if="isConfigMode" icon="pi pi-chart-line" severity="secondary"
-                        :label="t('web.device_management.switch_to_status')" iconPos="left"
-                        class="network-footer-btn" @click="requestSwitchMode('status')" />
-                    <Button v-else-if="isStatusMode" icon="pi pi-cog" severity="secondary"
-                        :label="t('web.device_management.switch_to_config')" iconPos="left"
-                        class="network-footer-btn" @click="requestSwitchMode('config')" />
+            <Button v-if="showLeaveInFooter" @click="drawerClose" :label="leaveLabel" severity="secondary"
+                :icon="leaveIcon" iconPos="left" class="network-footer-btn" />
+            <div class="footer-zone footer-zone--primary">
+                <Button v-if="isConfigMode" icon="pi pi-chart-line" severity="secondary"
+                    :label="t('web.device_management.switch_to_status')" iconPos="left"
+                    class="network-footer-btn" @click="requestSwitchMode('status')" />
+                <Button v-else-if="isStatusMode" icon="pi pi-cog" severity="secondary"
+                    :label="t('web.device_management.switch_to_config')" iconPos="left"
+                    class="network-footer-btn" @click="requestSwitchMode('config')" />
 
-                    <Button v-if="stickyFooterPrimary === 'start'" @click="confirmStartNetwork($event)"
-                        :disabled="!currentNetworkControl.deletable.value" :label="t('web.network.start')"
-                        severity="success" icon="pi pi-play" iconPos="left" class="network-footer-btn" />
-                    <Button v-else-if="stickyFooterPrimary === 'run'"
-                        @click="saveAndRunNewNetwork(currentNetworkConfig!)" :disabled="!currentNetworkConfig"
-                        :label="t('run_network')" severity="success" icon="pi pi-arrow-right" iconPos="right"
-                        class="network-footer-btn" />
-                    <Button v-else-if="stickyFooterPrimary === 'stop'" @click="confirmStopNetwork($event)"
-                        :disabled="!currentNetworkControl.deletable.value"
-                        :label="t('web.device_management.disable_network')" severity="danger" icon="pi pi-power-off"
-                        iconPos="left" class="network-footer-btn" />
-                </div>
+                <Button v-if="stickyFooterPrimary === 'start'" @click="confirmStartNetwork($event)"
+                    :disabled="!currentNetworkControl.deletable.value" :label="t('web.network.start')"
+                    severity="success" icon="pi pi-play" iconPos="left" class="network-footer-btn" />
+                <Button v-else-if="stickyFooterPrimary === 'run'"
+                    @click="saveAndRunNewNetwork(currentNetworkConfig!)" :disabled="!currentNetworkConfig"
+                    :label="t('run_network')" severity="success" icon="pi pi-arrow-right" iconPos="right"
+                    class="network-footer-btn" />
+                <Button v-else-if="stickyFooterPrimary === 'stop'" @click="confirmStopNetwork($event)"
+                    :disabled="!currentNetworkControl.deletable.value"
+                    :label="t('web.device_management.disable_network')" severity="danger" icon="pi pi-power-off"
+                    iconPos="left" class="network-footer-btn" />
             </div>
         </div>
 
@@ -875,11 +857,11 @@ onUnmounted(() => {
     display: flex;
     flex-direction: column;
     min-height: 0;
-    gap: var(--et-space-2, 0.5rem);
+    gap: 0.35rem;
 }
 
 .device-management--page {
-    max-height: calc(100vh - 5.25rem);
+    max-height: calc(100vh - 3.5rem);
 }
 
 .network-header {
@@ -891,8 +873,15 @@ onUnmounted(() => {
     border: var(--et-border, 1px solid var(--surface-border, #e5e7eb));
     border-radius: var(--et-radius, 0.5rem);
     box-shadow: none;
-    padding: var(--et-pad-card, 0.75rem 1rem) !important;
-    margin-bottom: 0 !important;
+    padding: 0.4rem 0.75rem 0.5rem !important;
+    margin: 0 !important;
+}
+
+.network-page-title {
+    margin: 0 0 0.25rem;
+    font-size: var(--et-fs-page-title, 1.25rem);
+    font-weight: 700;
+    line-height: 1.3;
 }
 
 .network-content {
@@ -917,13 +906,6 @@ onUnmounted(() => {
     border: var(--et-border, 1px solid var(--surface-border, #e5e7eb));
     border-radius: var(--et-radius, 0.5rem);
     box-shadow: none;
-}
-
-.network-status-actions {
-    align-items: center;
-}
-
-.network-footer-bar {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
@@ -931,15 +913,15 @@ onUnmounted(() => {
     gap: 0.75rem;
 }
 
+.network-status-actions {
+    align-items: center;
+}
+
 .footer-zone {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
     gap: 0.75rem;
-}
-
-.footer-zone--leave {
-    justify-content: flex-start;
 }
 
 .footer-zone--primary {
@@ -1028,14 +1010,13 @@ onUnmounted(() => {
         width: 100%;
     }
 
-    .network-footer-bar {
+    .network-sticky-footer {
         flex-direction: column;
         align-items: stretch;
     }
 
     .footer-zone,
-    .footer-zone--primary,
-    .footer-zone--leave {
+    .footer-zone--primary {
         margin-left: 0;
         justify-content: stretch;
         width: 100%;
@@ -1092,6 +1073,11 @@ onUnmounted(() => {
 
 /* 网络选择相关样式 */
 .network-label {
+    display: block;
+    margin: 0 0 0.2rem;
+    font-size: var(--et-fs-meta, 0.75rem);
+    font-weight: 600;
+    color: var(--text-color-secondary, #64748b);
     white-space: nowrap;
 }
 
