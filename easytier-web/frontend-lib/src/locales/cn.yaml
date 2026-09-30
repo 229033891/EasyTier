@@ -426,6 +426,12 @@ status:
   local: 本机
   server: 服务器
   relay: 中继
+  p2p: 直连
+  peer_addr_via: "经 {addr}"
+  peer_addr_via_tip: "中转路径：本机到下一跳节点的隧道地址（非目标 peer 直连入口）"
+  route_path: "{path}"
+  route_path_ellipsis: "…(+{count})"
+  route_path_incomplete_tip: "协议仅提供下一跳与跳数，无法枚举全部中间节点名称"
 
 run_network: 运行网络
 run_network_tip: 保存当前配置并启动或应用该网络

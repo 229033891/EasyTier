@@ -425,6 +425,12 @@ status:
   local: Local
   server: Server
   relay: Relay
+  p2p: Direct
+  peer_addr_via: "via {addr}"
+  peer_addr_via_tip: "Relay path: tunnel address from this node to the next hop (not a direct peer endpoint)"
+  route_path: "{path}"
+  route_path_ellipsis: "…(+{count})"
+  route_path_incomplete_tip: "Only next-hop and hop count are available; intermediate node names cannot be listed"
 
 run_network: Run Network
 run_network_tip: Save the current config and start or apply this network

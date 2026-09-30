@@ -1,11 +1,11 @@
 <script setup lang="ts">
 import { useTimeAgo } from '@vueuse/core'
-import { NetworkInstance, VpnPortalClientState, type TunnelInfo, type NodeInfo, type PeerRoutePair, type VpnPortalClientInfo, type VpnPortalInfo } from '../types/network'
+import { NetworkInstance, VpnPortalClientState, type TunnelInfo, type NodeInfo, type PeerInfo, type PeerRoutePair, type VpnPortalClientInfo, type VpnPortalInfo } from '../types/network'
 import type { RemoteClient } from '../modules/api'
 import { useI18n } from 'vue-i18n';
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue';
 import { ipv4InetToString, ipv4ToString, ipv6ToString } from '../modules/utils';
-import { latencyMs, lossRate, numericValue, peerConns, peerRemoteAddr } from '../modules/statusDisplay';
+import { latencyMs, lossRate, numericValue, peerConns, resolvePeerRemoteAddr, resolveRoutePath, type RoutePeerLabel } from '../modules/statusDisplay';
 import { Badge, DataTable, Column, Tag, Chip, Button, ScrollPanel, Timeline, Card, Panel, } from 'primevue';
 import NetworkChart from './NetworkChart.vue';
 import PeerConnHistoryChart from './PeerConnHistoryChart.vue';
@@ -33,13 +33,59 @@ const peerRouteInfos = computed(() => {
   return []
 })
 
-function routeCost(info: any) {
-  if (info.route) {
-    const cost = info.route.cost
-    return cost ? cost === 1 ? 'p2p' : `relay(${cost})` : t('status.local')
+/** peer_id → 带直连隧道的 PeerInfo，供中转下一跳查隧道地址 */
+const peersById = computed(() => {
+  const map = new Map<number, PeerInfo>()
+  for (const pair of props.curNetworkInst?.detail?.peer_route_pairs || []) {
+    const peer = pair.peer
+    if (peer?.peer_id && peer.conns?.length)
+      map.set(peer.peer_id, peer)
   }
+  return map
+})
 
-  return '?'
+/** peer_id → 主机名/虚拟 IP，供中转路径展示 */
+const peersMetaById = computed(() => {
+  const map = new Map<number, RoutePeerLabel>()
+  for (const pair of props.curNetworkInst?.detail?.peer_route_pairs || []) {
+    const peerId = pair.route?.peer_id
+    if (!peerId)
+      continue
+    const ipv4 = pair.route?.ipv4_addr
+    map.set(peerId, {
+      peerId,
+      hostname: pair.route?.hostname,
+      ipv4: typeof ipv4 === 'string' ? ipv4 : (ipv4 ? ipv4InetToString(ipv4) : undefined),
+    })
+  }
+  return map
+})
+
+function peerAddrDisplay(info: PeerRoutePair) {
+  const resolved = resolvePeerRemoteAddr(info, peersById.value)
+  if (!resolved.text)
+    return { text: '', tip: undefined as string | undefined }
+  if (resolved.viaNextHop) {
+    return {
+      text: t('status.peer_addr_via', { addr: resolved.text }),
+      tip: `${t('status.peer_addr_via_tip')}\n${resolved.text}`,
+    }
+  }
+  return { text: resolved.text, tip: resolved.text }
+}
+
+function routeCostDisplay(info: PeerRoutePair) {
+  const me = props.curNetworkInst?.detail?.my_node_info
+  const path = resolveRoutePath(info, {
+    localLabel: me?.hostname || t('status.local'),
+    localText: t('status.local'),
+    p2pLabel: t('status.p2p'),
+    peersMetaById: peersMetaById.value,
+    viaPath: (p) => t('status.route_path', { path: p }),
+    ellipsisLabel: (count) => t('status.route_path_ellipsis', { count }),
+    incompleteTip: t('status.route_path_incomplete_tip'),
+  })
+  return path
 }
 
 function resolveObjPath(path: string, obj: any = globalThis, separator = '.') {
@@ -569,12 +615,18 @@ const eventLogContent = computed(() => {
                 </div>
               </template>
             </Column>
-            <Column :field="routeCost" :header="t('route_cost')" />
-            <Column :field="tunnelProto" :header="t('tunnel_proto')" />
-            <Column :field="peerRemoteAddr" :header="t('peer_addr')">
+            <Column :header="t('route_cost')">
               <template #body="slotProps">
-                <span class="peer-addr-cell" v-tooltip.top="peerRemoteAddr(slotProps.data) || undefined">
-                  {{ peerRemoteAddr(slotProps.data) }}
+                <span class="route-cost-cell" v-tooltip.top="routeCostDisplay(slotProps.data).tip">
+                  {{ routeCostDisplay(slotProps.data).text }}
+                </span>
+              </template>
+            </Column>
+            <Column :field="tunnelProto" :header="t('tunnel_proto')" />
+            <Column :header="t('peer_addr')">
+              <template #body="slotProps">
+                <span class="peer-addr-cell" v-tooltip.top="peerAddrDisplay(slotProps.data).tip">
+                  {{ peerAddrDisplay(slotProps.data).text }}
                 </span>
               </template>
             </Column>
@@ -776,9 +828,10 @@ const eventLogContent = computed(() => {
   padding: 0.35rem 0.6rem !important;
 }
 
-.peer-addr-cell {
+.peer-addr-cell,
+.route-cost-cell {
   display: inline-block;
-  max-width: 14rem;
+  max-width: 16rem;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

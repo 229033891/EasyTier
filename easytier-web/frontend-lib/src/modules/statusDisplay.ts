@@ -1,4 +1,4 @@
-import type { PeerRoutePair } from '../types/network'
+import type { PeerInfo, PeerRoutePair } from '../types/network'
 
 export function numericValue(value: unknown): number | undefined {
   if (typeof value === 'number')
@@ -63,10 +63,165 @@ export function latencyMs(info: PeerRoutePair) {
     minLatencyUs = Math.min(minLatencyUs ?? latencyUs, latencyUs)
   }
 
-  if (minLatencyUs === undefined)
-    return ''
+  if (minLatencyUs !== undefined)
+    return `${Math.ceil(minLatencyUs / 1000)}ms`
 
-  return `${Math.ceil(minLatencyUs / 1000)}ms`
+  // 中转无直连 tunnel：回退到路由表汇总的路径延迟（毫秒）
+  const pathLatency = numericValue(info.route?.path_latency_latency_first)
+    ?? numericValue(info.route?.path_latency)
+  if (pathLatency !== undefined && pathLatency > 0)
+    return `${Math.ceil(pathLatency)}ms`
+
+  return ''
+}
+
+export type RoutePeerLabel = {
+  peerId?: number
+  hostname?: string
+  ipv4?: string
+}
+
+export type RoutePathHop = {
+  kind: 'node' | 'ellipsis'
+  /** node: 展示名；ellipsis: 省略的中间跳数 */
+  label: string
+  peerId?: number
+}
+
+export type RoutePathResult = {
+  /** p2p | relay | local | unknown */
+  kind: 'p2p' | 'relay' | 'local' | 'unknown'
+  /** 跳数（边数）；local 为 0 */
+  cost: number
+  hops: RoutePathHop[]
+  /** 表格主文案 */
+  text: string
+  /** 悬停说明 */
+  tip?: string
+}
+
+function peerLabel(meta?: RoutePeerLabel | null, fallback = '?'): string {
+  const host = meta?.hostname?.trim()
+  if (host)
+    return host
+  const ip = meta?.ipv4?.trim()
+  if (ip)
+    return ip
+  if (meta?.peerId)
+    return `#${meta.peerId}`
+  return fallback
+}
+
+function nextHopPeerId(info: PeerRoutePair): number | undefined {
+  const route = info.route
+  if (!route)
+    return undefined
+
+  const latencyFirst = route.next_hop_peer_id_latency_first
+  if (typeof latencyFirst === 'number' && latencyFirst > 0)
+    return latencyFirst
+
+  const nextHop = route.next_hop_peer_id
+  if (typeof nextHop === 'number' && nextHop > 0)
+    return nextHop
+
+  return undefined
+}
+
+/**
+ * 路由路径展示。
+ * 协议只下发 next_hop + cost（跳数），完整拓扑不可得：
+ * - cost=1：直连
+ * - cost=2：本机 → 下一跳 → 目标（完整）
+ * - cost>2：本机 → 下一跳 → … → 目标（中间节点未知）
+ */
+export function resolveRoutePath(
+  info: PeerRoutePair,
+  opts?: {
+    localLabel?: string
+    peersMetaById?: Map<number, RoutePeerLabel>
+    /** i18n：经 {path} */
+    viaPath?: (path: string) => string
+    /** i18n：中间省略 */
+    ellipsisLabel?: (count: number) => string
+    /** i18n：路径不完整提示 */
+    incompleteTip?: string
+    p2pLabel?: string
+    localText?: string
+  },
+): RoutePathResult {
+  const cost = info.route?.cost
+  if (cost === undefined || cost === null || cost === 0) {
+    return {
+      kind: 'local',
+      cost: 0,
+      hops: [{ kind: 'node', label: opts?.localLabel || 'Local' }],
+      text: opts?.localText || 'Local',
+    }
+  }
+
+  if (cost === 1) {
+    return {
+      kind: 'p2p',
+      cost: 1,
+      hops: [],
+      text: opts?.p2pLabel || 'p2p',
+    }
+  }
+
+  const peersMetaById = opts?.peersMetaById
+  const localLabel = opts?.localLabel || 'Local'
+  const destId = info.route?.peer_id
+  const hopId = nextHopPeerId(info)
+
+  const fromMap = destId ? peersMetaById?.get(destId) : undefined
+  const destMeta: RoutePeerLabel = {
+    peerId: destId,
+    hostname: info.route?.hostname || fromMap?.hostname,
+    ipv4: (typeof info.route?.ipv4_addr === 'string' ? info.route.ipv4_addr : undefined)
+      || fromMap?.ipv4,
+  }
+
+  const nextMeta = hopId ? peersMetaById?.get(hopId) : undefined
+  const hops: RoutePathHop[] = [
+    { kind: 'node', label: localLabel },
+  ]
+
+  if (hopId && hopId !== destId) {
+    hops.push({
+      kind: 'node',
+      label: peerLabel(nextMeta, `#${hopId}`),
+      peerId: hopId,
+    })
+  }
+
+  const middleCount = Math.max(0, cost - 2)
+  if (middleCount > 0) {
+    hops.push({
+      kind: 'ellipsis',
+      label: opts?.ellipsisLabel?.(middleCount) || `…(+${middleCount})`,
+    })
+  }
+
+  hops.push({
+    kind: 'node',
+    label: peerLabel(destMeta),
+    peerId: destId,
+  })
+
+  const pathText = hops.map(h => h.label).join(' → ')
+  const text = opts?.viaPath?.(pathText) || pathText
+  const tip = middleCount > 0
+    ? [opts?.incompleteTip, pathText].filter(Boolean).join('\n')
+    : pathText
+
+  return {
+    kind: 'relay',
+    cost,
+    hops,
+    text,
+    tip,
+  }
 }
 
 /** 从 tunnel URL 提取 host:port（IPv6 带方括号） */
@@ -89,20 +244,73 @@ function formatTunnelHostPort(url?: string): string {
   }
 }
 
-/** 对端物理地址 IP:端口（默认连接优先，多连接去重后逗号拼接） */
-export function peerRemoteAddr(info: PeerRoutePair): string {
+function collectTunnelRemoteAddrs(peer?: PeerInfo | null, preferConnId?: string): string[] {
+  const conns = peer?.conns || []
+  if (!conns.length)
+    return []
+
+  const ordered = preferConnId
+    ? (() => {
+        const preferred = conns.find(conn => conn.conn_id === preferConnId)
+        return preferred ? [preferred, ...conns.filter(conn => conn !== preferred)] : conns
+      })()
+    : conns
+
   const addrs: string[] = []
   const seen = new Set<string>()
-
-  for (const conn of defaultConnFirst(info)) {
+  for (const conn of ordered) {
     const formatted = formatTunnelHostPort(conn.tunnel?.remote_addr?.url)
     if (!formatted || seen.has(formatted))
       continue
     seen.add(formatted)
     addrs.push(formatted)
   }
+  return addrs
+}
 
-  return addrs.join(', ')
+export type PeerRemoteAddrResult = {
+  /** 展示用地址，多连接逗号拼接 */
+  text: string
+  /** 是否来自中转下一跳（非目标 peer 直连） */
+  viaNextHop: boolean
+}
+
+/**
+ * 对端隧道层地址：
+ * - 直连：目标 peer 的 tunnel.remote_addr
+ * - 中转：本机到下一跳（中转节点）的 tunnel.remote_addr（目标 peer 无直连隧道）
+ */
+export function resolvePeerRemoteAddr(
+  info: PeerRoutePair,
+  peersById?: Map<number, PeerInfo>,
+): PeerRemoteAddrResult {
+  const direct = collectTunnelRemoteAddrs(info.peer, defaultConnId(info))
+  if (direct.length)
+    return { text: direct.join(', '), viaNextHop: false }
+
+  const cost = info.route?.cost
+  if (!cost || cost <= 1 || !peersById)
+    return { text: '', viaNextHop: false }
+
+  const hopId = nextHopPeerId(info)
+  if (!hopId)
+    return { text: '', viaNextHop: false }
+
+  // 下一跳若等于目标本身，不再标 via
+  if (hopId === info.route?.peer_id)
+    return { text: '', viaNextHop: false }
+
+  const hopPeer = peersById.get(hopId)
+  const hopAddrs = collectTunnelRemoteAddrs(hopPeer)
+  if (!hopAddrs.length)
+    return { text: '', viaNextHop: false }
+
+  return { text: hopAddrs.join(', '), viaNextHop: true }
+}
+
+/** 兼容旧调用：仅返回文本；中转场景请用 resolvePeerRemoteAddr */
+export function peerRemoteAddr(info: PeerRoutePair, peersById?: Map<number, PeerInfo>): string {
+  return resolvePeerRemoteAddr(info, peersById).text
 }
 
 export function lossRate(info: PeerRoutePair) {

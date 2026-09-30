@@ -5,13 +5,12 @@ import { Button } from 'primevue';
 import { useRoute, useRouter } from 'vue-router';
 import { useDialog } from 'primevue/usedialog';
 import ChangePassword from './ChangePassword.vue';
-import Icon from '../assets/easytier.png'
 import { useI18n } from 'vue-i18n'
 import ApiClient from '../modules/api';
 
 const vTooltip = tooltipDirective;
 
-const { t } = useI18n()
+const { t, locale } = useI18n()
 const route = useRoute();
 const router = useRouter();
 const api = computed<ApiClient | undefined>(() => {
@@ -25,17 +24,12 @@ const api = computed<ApiClient | undefined>(() => {
 });
 
 const isAdmin = ref(false);
+const username = ref('');
 
 const dialog = useDialog();
 
-/**
- * 账户操作直接作为侧栏条目，不再用 TieredMenu 弹层。
- *
- * 原因：PrimeVue 的 popup 菜单是按「页面坐标」定位的（targetRect.top + scrollTop），
- * 而侧栏是 position:fixed + translate-x-*（transform 会成为绝对/固定定位后代的包含块），
- * 弹层坐标会被当成相对侧栏解析，于是菜单跑到错位、看起来就像「不见了」。
- */
 const openChangePassword = () => {
+    closeUserMenu();
     dialog.open(ChangePassword, {
         props: {
             modal: true,
@@ -47,12 +41,18 @@ const openChangePassword = () => {
 };
 
 const doLogout = async () => {
+    closeUserMenu();
     try {
         await api.value?.logout();
     } catch (e) {
         console.error("logout failed", e);
     }
     router.push({ name: 'login' });
+};
+
+const setLanguage = async (lang: 'cn' | 'en') => {
+    await I18nUtils.loadLanguageAsync(lang);
+    closeUserMenu();
 };
 
 /** 移动端：抽屉显隐 */
@@ -65,9 +65,27 @@ watch(sidebarCollapsed, (v) => {
 
 const sidebarRef = ref<HTMLElement>()
 const toggleButtonRef = ref<HTMLElement>()
+const userTriggerRef = ref<HTMLElement>()
+const mobileUserTriggerRef = ref<HTMLElement>()
+const userMenuOpen = ref(false)
+const userMenuStyle = ref<Record<string, string>>({})
+
+const activeUserTrigger = () => {
+    if (typeof window !== 'undefined' && window.innerWidth < 640)
+        return mobileUserTriggerRef.value || userTriggerRef.value
+    return userTriggerRef.value || mobileUserTriggerRef.value
+}
 
 const handleClickOutside = (event: Event) => {
     const target = event.target as HTMLElement;
+    if (userMenuOpen.value) {
+        const inDesktop = userTriggerRef.value?.contains(target);
+        const inMobile = mobileUserTriggerRef.value?.contains(target);
+        const inMenu = target.closest?.('.sidebar-user-menu');
+        if (!inDesktop && !inMobile && !inMenu) {
+            closeUserMenu();
+        }
+    }
     if (!forceShowSideBar.value) return;
     const isClickInsideSidebar = sidebarRef.value?.contains(target);
     const isClickOnToggleButton = toggleButtonRef.value?.contains(target);
@@ -81,6 +99,7 @@ const toggleMobileSidebar = () => {
 };
 
 const toggleDesktopCollapse = () => {
+    closeUserMenu();
     sidebarCollapsed.value = !sidebarCollapsed.value;
 };
 
@@ -88,9 +107,42 @@ const closeSidebar = () => {
     forceShowSideBar.value = false;
 };
 
+const closeUserMenu = () => {
+    userMenuOpen.value = false;
+};
+
+const syncUserMenuPosition = () => {
+    const el = activeUserTrigger();
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    const menuWidth = 12.5 * 16; // ~12.5rem
+    let left = rect.left;
+    if (left + menuWidth > window.innerWidth - 8) {
+        left = Math.max(8, window.innerWidth - menuWidth - 8);
+    }
+    userMenuStyle.value = {
+        position: 'fixed',
+        top: `${Math.round(rect.bottom + 6)}px`,
+        left: `${Math.round(left)}px`,
+        minWidth: `${Math.max(rect.width, 180)}px`,
+        zIndex: '1200',
+    };
+};
+
+const toggleUserMenu = async () => {
+    if (userMenuOpen.value) {
+        closeUserMenu();
+        return;
+    }
+    userMenuOpen.value = true;
+    await nextTick();
+    syncUserMenuPosition();
+};
+
 const goNav = (name: string) => {
     router.push({ name });
     forceShowSideBar.value = false;
+    closeUserMenu();
 };
 
 const isManagementPage = computed(() => route.name === 'deviceManagement');
@@ -132,6 +184,9 @@ const sidebarButtonClass = computed(() =>
         : 'justify-start gap-x-3 pl-1.5'
 );
 
+const displayName = computed(() => username.value || t('web.users.username'));
+const currentLang = computed(() => (locale.value === 'cn' ? 'cn' : 'en'));
+
 const navRef = ref<HTMLElement>();
 let navResizeObserver: ResizeObserver | undefined;
 
@@ -151,15 +206,18 @@ const syncNavbarHeight = () => {
 onMounted(async () => {
     await nextTick();
     document.addEventListener('click', handleClickOutside);
+    window.addEventListener('resize', syncNavbarHeight);
+    window.addEventListener('resize', syncUserMenuPosition);
+    window.addEventListener('scroll', syncUserMenuPosition, true);
     syncNavbarHeight();
     if (typeof ResizeObserver !== 'undefined' && navRef.value) {
         navResizeObserver = new ResizeObserver(syncNavbarHeight);
         navResizeObserver.observe(navRef.value);
     }
-    window.addEventListener('resize', syncNavbarHeight);
     try {
         const me = await api.value?.get_me();
         isAdmin.value = !!me?.is_admin;
+        username.value = me?.username || '';
         if (route.name === 'userList' && !isAdmin.value) {
             router.replace({ name: 'dashboard' });
         }
@@ -173,16 +231,18 @@ onUnmounted(() => {
     document.removeEventListener('click', handleClickOutside);
     navResizeObserver?.disconnect();
     window.removeEventListener('resize', syncNavbarHeight);
+    window.removeEventListener('resize', syncUserMenuPosition);
+    window.removeEventListener('scroll', syncUserMenuPosition, true);
 });
 
 </script>
 
 <template>
-    <!-- 顶栏仅保留在移动端：只放抽屉开关 + 品牌，把纵向空间全部让给内容区 -->
+    <!-- 顶栏仅保留在移动端：抽屉开关 + 用户名菜单 -->
     <nav ref="navRef"
         class="sm:hidden fixed top-0 z-50 w-full top-navbar et-shell-surface">
         <div class="px-3 py-2">
-            <div class="flex items-center justify-start rtl:justify-end gap-1">
+            <div class="flex items-center justify-between gap-2">
                 <div ref="toggleButtonRef">
                     <Button type="button" aria-haspopup="true" icon="pi pi-bars"
                         variant="text" size="large" severity="contrast"
@@ -190,11 +250,11 @@ onUnmounted(() => {
                         v-tooltip.bottom="t('web.main.toggle_sidebar')"
                         @click="toggleMobileSidebar" />
                 </div>
-                <div class="flex ms-1 items-center">
-                    <img :src="Icon" class="h-8 me-3" :alt="t('web.main.logo_alt')" />
-                    <span
-                        class="self-center text-xl font-semibold whitespace-nowrap et-shell-text">EasyTier</span>
-                </div>
+                <button ref="mobileUserTriggerRef" type="button" class="sidebar-user-trigger sidebar-user-trigger--mobile"
+                    @click="toggleUserMenu">
+                    <span class="sidebar-user-name truncate">{{ displayName }}</span>
+                    <i class="pi pi-angle-down text-sm opacity-70" aria-hidden="true" />
+                </button>
             </div>
         </div>
     </nav>
@@ -211,13 +271,29 @@ onUnmounted(() => {
             'w-64',
         ]"
         :aria-label="t('web.main.sidebar')">
-        <!-- 品牌区：移动端顶栏已有品牌，这里只在桌面显示（纯展示，无外链） -->
+        <!-- 顶部：折叠 + 用户名菜单（移动端抽屉内也显示） -->
         <div
-            class="sidebar-brand hidden sm:flex shrink-0 items-center"
-            :class="sidebarCollapsed ? 'justify-center px-0' : 'px-3'">
-            <img :src="Icon" class="h-8 sidebar-brand-logo" :alt="t('web.main.logo_alt')" />
-            <span class="sidebar-brand-text ms-3 whitespace-nowrap"
-                :class="{ 'sm:hidden': sidebarCollapsed }">EasyTier</span>
+            class="sidebar-brand flex shrink-0 items-center gap-1"
+            :class="sidebarCollapsed ? 'justify-center px-1' : 'px-2'">
+            <Button type="button" variant="text" severity="contrast"
+                class="sidebar-collapse-btn hidden sm:inline-flex"
+                :icon="sidebarCollapsed ? 'pi pi-angle-double-right' : 'pi pi-angle-double-left'"
+                :aria-label="sidebarCollapsed ? t('web.main.expand_sidebar') : t('web.main.collapse_sidebar')"
+                v-tooltip.right="sidebarCollapsed ? t('web.main.expand_sidebar') : t('web.main.collapse_sidebar')"
+                @click="toggleDesktopCollapse" />
+
+            <button ref="userTriggerRef" type="button" class="sidebar-user-trigger"
+                :class="{ 'sidebar-user-trigger--collapsed': sidebarCollapsed }"
+                :aria-expanded="userMenuOpen"
+                aria-haspopup="menu"
+                v-tooltip.right="sidebarCollapsed ? displayName : undefined"
+                @click="toggleUserMenu">
+                <i v-if="sidebarCollapsed" class="pi pi-user sidebar-icon" aria-hidden="true" />
+                <template v-else>
+                    <span class="sidebar-user-name truncate">{{ displayName }}</span>
+                    <i class="pi pi-angle-down text-sm opacity-70 shrink-0" aria-hidden="true" />
+                </template>
+            </button>
         </div>
 
         <div class="sidebar-nav flex-1 min-h-0 overflow-y-auto px-2 py-2">
@@ -235,53 +311,33 @@ onUnmounted(() => {
                 </li>
             </ul>
         </div>
-
-        <!-- 底部固定区：语言 / 修改密码 / 登出 / 折叠 -->
-        <div class="sidebar-footer shrink-0 px-2 py-2">
-            <ul class="sidebar-nav-list">
-                <li>
-                    <Button variant="text" class="w-full sidebar-button" :class="sidebarButtonClass"
-                        severity="contrast" @click="I18nUtils.toggleLanguage"
-                        :aria-label="t('web.main.language')"
-                        v-tooltip.right="sidebarCollapsed ? t('web.main.language') : undefined">
-                        <i class="pi pi-globe sidebar-icon"></i>
-                        <span :class="{ 'sm:hidden': sidebarCollapsed }">{{ t('web.main.language')
-                        }}</span>
-                    </Button>
-                </li>
-                <li>
-                    <Button variant="text" class="w-full sidebar-button" :class="sidebarButtonClass"
-                        severity="contrast" @click="openChangePassword"
-                        :aria-label="t('web.main.change_password')"
-                        v-tooltip.right="sidebarCollapsed ? t('web.main.change_password') : undefined">
-                        <i class="pi pi-lock sidebar-icon"></i>
-                        <span :class="{ 'sm:hidden': sidebarCollapsed }">{{
-                            t('web.main.change_password') }}</span>
-                    </Button>
-                </li>
-                <li>
-                    <Button variant="text" class="w-full sidebar-button sidebar-logout" :class="sidebarButtonClass"
-                        severity="contrast" @click="doLogout" :aria-label="t('web.main.logout')"
-                        v-tooltip.right="sidebarCollapsed ? t('web.main.logout') : undefined">
-                        <i class="pi pi-sign-out sidebar-icon"></i>
-                        <span :class="{ 'sm:hidden': sidebarCollapsed }">{{ t('web.main.logout')
-                        }}</span>
-                    </Button>
-                </li>
-                <li class="hidden sm:block">
-                    <Button variant="text" class="w-full sidebar-button" :class="sidebarButtonClass"
-                        severity="contrast" @click="toggleDesktopCollapse"
-                        :aria-label="sidebarCollapsed ? t('web.main.expand_sidebar') : t('web.main.collapse_sidebar')"
-                        v-tooltip.right="sidebarCollapsed ? t('web.main.expand_sidebar') : t('web.main.collapse_sidebar')">
-                        <i :class="[sidebarCollapsed ? 'pi pi-angle-double-right' : 'pi pi-angle-double-left', 'sidebar-icon']"></i>
-                        <span :class="{ 'sm:hidden': sidebarCollapsed }">
-                            {{ sidebarCollapsed ? t('web.main.expand_sidebar') : t('web.main.collapse_sidebar') }}
-                        </span>
-                    </Button>
-                </li>
-            </ul>
-        </div>
     </aside>
+
+    <!-- 账户菜单挂到 body，避免侧栏 transform 导致定位错乱 -->
+    <Teleport to="body">
+        <div v-if="userMenuOpen" class="sidebar-user-menu" role="menu" :style="userMenuStyle">
+            <div class="sidebar-user-menu-section">
+                <div class="sidebar-user-menu-label">{{ t('web.main.language') }}</div>
+                <div class="sidebar-user-lang">
+                    <button type="button" class="sidebar-user-lang-btn"
+                        :class="{ 'is-active': currentLang === 'cn' }"
+                        @click="setLanguage('cn')">中文</button>
+                    <button type="button" class="sidebar-user-lang-btn"
+                        :class="{ 'is-active': currentLang === 'en' }"
+                        @click="setLanguage('en')">English</button>
+                </div>
+            </div>
+            <button type="button" class="sidebar-user-menu-item" role="menuitem" @click="openChangePassword">
+                <i class="pi pi-lock" aria-hidden="true" />
+                <span>{{ t('web.main.change_password') }}</span>
+            </button>
+            <button type="button" class="sidebar-user-menu-item sidebar-user-menu-item--danger" role="menuitem"
+                @click="doLogout">
+                <i class="pi pi-sign-out" aria-hidden="true" />
+                <span>{{ t('web.main.logout') }}</span>
+            </button>
+        </div>
+    </Teleport>
 
     <div class="et-main-content"
         :class="[sidebarCollapsed ? 'sm:ml-16' : 'sm:ml-64', { 'et-main-content--mgmt': isManagementPage }]">
@@ -321,10 +377,6 @@ onUnmounted(() => {
     padding: 0;
     list-style: none;
     font-weight: 500;
-}
-
-.sidebar-footer {
-    border-top: 1px solid var(--et-border-color, var(--surface-border, #e2e8f0));
 }
 
 /* 侧栏条目：只保留文字对齐。
@@ -388,27 +440,58 @@ onUnmounted(() => {
     }
 }
 
-/* 底栏登出 hover 才显红，避免常驻大红 */
-.sidebar-logout:hover,
-.sidebar-logout:hover .sidebar-icon {
-    color: var(--p-red-500, #ef4444) !important;
-}
-
-/* 侧栏顶部品牌条：桌面端顶栏已移除，这里承担品牌展示 */
 .sidebar-brand {
     height: 3.5rem;
     border-bottom: 1px solid var(--et-border-color, var(--surface-border, #e2e8f0));
 }
 
-.sidebar-brand-logo {
-    flex-shrink: 0;
+.sidebar-collapse-btn {
+    width: 2.25rem !important;
+    height: 2.25rem !important;
+    min-width: 2.25rem !important;
+    padding: 0 !important;
+    color: var(--text-color-secondary, #64748b) !important;
 }
 
-.sidebar-brand-text {
+.sidebar-user-trigger {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    min-width: 0;
+    flex: 1 1 auto;
+    height: 2.25rem;
+    padding: 0 0.55rem;
+    border: none;
+    border-radius: calc(var(--et-radius, 0.75rem) - 0.25rem);
+    background: transparent;
     color: var(--text-color, #1e293b);
-    font-size: 1.125rem;
+    font-size: 0.95rem;
     font-weight: 700;
     letter-spacing: -0.02em;
+    cursor: pointer;
+    text-align: left;
+}
+
+.sidebar-user-trigger--mobile {
+    flex: 0 1 auto;
+    max-width: 60%;
+}
+
+.sidebar-user-trigger--collapsed {
+    flex: 0 0 auto;
+    width: 2.25rem;
+    justify-content: center;
+    padding: 0;
+}
+
+@media (hover: hover) {
+    .sidebar-user-trigger:hover {
+        background: color-mix(in srgb, var(--text-color, #1e293b) 5%, transparent);
+    }
+}
+
+.sidebar-user-name {
+    min-width: 0;
 }
 
 /* 侧栏为 fixed，需让位给顶栏：用实测顶栏高度对齐其底边。
@@ -475,5 +558,81 @@ onUnmounted(() => {
         padding-left: 0;
         padding-right: 0;
     }
+}
+</style>
+
+<!-- 账户菜单 teleport 到 body，需非 scoped 才能稳定命中 -->
+<style>
+.sidebar-user-menu {
+    padding: 0.4rem;
+    border: 1px solid var(--et-border-color, #e2e8f0);
+    border-radius: var(--et-radius, 0.75rem);
+    background: var(--surface-card, #ffffff);
+    box-shadow: 0 12px 28px rgba(15, 23, 42, 0.14);
+}
+
+.sidebar-user-menu-section {
+    padding: 0.45rem 0.55rem 0.55rem;
+    margin-bottom: 0.25rem;
+    border-bottom: 1px solid var(--et-border-color, #e2e8f0);
+}
+
+.sidebar-user-menu-label {
+    margin-bottom: 0.35rem;
+    color: var(--text-color-secondary, #64748b);
+    font-size: var(--et-fs-meta, 0.75rem);
+    font-weight: 600;
+}
+
+.sidebar-user-lang {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.35rem;
+}
+
+.sidebar-user-lang-btn {
+    height: 2rem;
+    border: 1px solid var(--et-border-color, #e2e8f0);
+    border-radius: calc(var(--et-radius, 0.75rem) - 0.35rem);
+    background: var(--surface-50, #f8fafc);
+    color: var(--text-color, #1e293b);
+    font-size: 0.8125rem;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.sidebar-user-lang-btn.is-active {
+    border-color: color-mix(in srgb, var(--primary-color, #0ea5e9) 45%, var(--et-border-color, #e2e8f0));
+    background: color-mix(in srgb, var(--primary-color, #0ea5e9) 12%, transparent);
+    color: var(--primary-color, #0284c7);
+}
+
+.sidebar-user-menu-item {
+    display: flex;
+    align-items: center;
+    gap: 0.55rem;
+    width: 100%;
+    min-height: 2.35rem;
+    padding: 0 0.65rem;
+    border: none;
+    border-radius: calc(var(--et-radius, 0.75rem) - 0.35rem);
+    background: transparent;
+    color: var(--text-color, #1e293b);
+    font-size: 0.875rem;
+    font-weight: 500;
+    cursor: pointer;
+    text-align: left;
+}
+
+.sidebar-user-menu-item:hover {
+    background: color-mix(in srgb, var(--text-color, #1e293b) 5%, transparent);
+}
+
+.sidebar-user-menu-item--danger {
+    color: var(--et-danger, #ef4444);
+}
+
+.sidebar-user-menu-item--danger:hover {
+    background: color-mix(in srgb, var(--et-danger, #ef4444) 8%, transparent);
 }
 </style>

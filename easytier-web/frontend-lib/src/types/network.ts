@@ -447,12 +447,16 @@ export interface Route {
   ipv4_addr: Ipv4Inet | string | null
   next_hop_peer_id: number
   cost: number
+  path_latency?: number
   proxy_cidrs: string[]
   hostname: string
   stun_info?: StunInfo
   feature_flag?: PeerFeatureFlag
   inst_id: string
   version: string
+  next_hop_peer_id_latency_first?: number
+  cost_latency_first?: number
+  path_latency_latency_first?: number
 }
 
 export interface PeerInfo {
