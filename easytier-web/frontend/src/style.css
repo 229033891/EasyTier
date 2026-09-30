@@ -116,20 +116,20 @@ select {
   font-weight: 700;
   letter-spacing: -0.02em;
   line-height: 1.35;
-  color: var(--text-color, #1f2937);
+  color: var(--text-color, #1e293b);
 }
 
 .et-page-header {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 1rem;
-  padding: 0.25rem 0.125rem 0;
+  gap: var(--et-space-4);
+  padding: var(--et-space-1) 0.125rem 0;
 }
 
 .et-page-header .et-page-title {
   position: relative;
-  padding-left: 0.75rem;
+  padding-left: var(--et-space-3);
 }
 
 .et-page-header .et-page-title::before {
@@ -148,7 +148,7 @@ select {
   font-size: var(--et-fs-section);
   font-weight: 600;
   line-height: 1.35;
-  color: var(--text-color, #1f2937);
+  color: var(--text-color, #1e293b);
 }
 
 .et-panel {
@@ -205,4 +205,10 @@ select {
   border-radius: var(--et-radius, 0.75rem) !important;
   box-shadow: 0 12px 28px rgba(15, 23, 42, 0.14) !important;
   opacity: 1 !important;
+}
+
+/* ConfirmDialog 宽度兜底（详细样式在 frontend-lib） */
+.et-confirm-dialog.p-dialog,
+.p-confirmdialog .p-dialog {
+  width: min(24rem, calc(100vw - 2rem));
 }

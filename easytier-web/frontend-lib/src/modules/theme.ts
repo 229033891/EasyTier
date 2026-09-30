@@ -43,6 +43,35 @@ export const EasyTierPreset = definePreset(Aura, {
                 background: '{content.background}',
             },
         },
+        dialog: {
+            root: {
+                borderRadius: '0.75rem',
+                borderColor: '{content.border.color}',
+                background: '{content.background}',
+                shadow: '0 18px 44px rgba(15, 23, 42, 0.18)',
+            },
+            header: {
+                padding: '1rem 1.15rem 0.5rem',
+            },
+            title: {
+                fontWeight: '700',
+            },
+            content: {
+                padding: '0.35rem 1.15rem 1rem',
+            },
+            footer: {
+                padding: '0 1.15rem 1.1rem',
+                gap: '0.5rem',
+            },
+        },
+        confirmdialog: {
+            content: {
+                gap: '0.75rem',
+            },
+            icon: {
+                size: '1.25rem',
+            },
+        },
     },
 })
 

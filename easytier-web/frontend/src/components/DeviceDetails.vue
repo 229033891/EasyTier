@@ -52,17 +52,17 @@ defineProps<{
 .device-details {
   display: grid;
   grid-template-columns: 1fr;
-  gap: 0.75rem;
+  gap: var(--et-space-3);
 }
 
 /* 标准布局的详情项样式 */
 .detail-item {
   position: relative;
-  border-bottom: 1px solid var(--surface-border, #e9ecef);
-  padding-bottom: 0.75rem;
+  border-bottom: 1px solid var(--surface-border, #e2e8f0);
+  padding-bottom: var(--et-space-3);
   /* 只过渡悬停真正会变的属性，不用 transition: all */
   transition: background-color 0.2s ease;
-  border-radius: 0.25rem;
+  border-radius: calc(var(--et-radius) - 0.5rem);
 }
 
 /* 只读信息行的悬停高亮，用于帮助视线横向对齐；触屏上没有「悬停」，直接跳过 */
@@ -78,8 +78,8 @@ defineProps<{
 
 .detail-label {
   font-weight: 600;
-  color: var(--text-color, #334155);
-  font-size: 0.95rem;
+  color: var(--text-color, #1e293b);
+  font-size: var(--et-fs-body);
   margin-bottom: 0.375rem;
   display: flex;
   align-items: center;
@@ -108,15 +108,15 @@ defineProps<{
   height: 4px;
   border-radius: 50%;
   background-color: var(--primary-color, var(--et-primary, #0ea5e9));
-  margin-right: 0.5rem;
+  margin-right: var(--et-space-2);
 }
 
 .detail-value {
-  color: var(--text-color-secondary, #475569);
+  color: var(--text-color-secondary, #64748b);
   word-break: break-all;
-  padding-left: 1rem;
+  padding-left: var(--et-space-4);
   line-height: 1.4;
-  font-size: 0.95rem;
+  font-size: var(--et-fs-body);
 }
 
 /* 紧凑布局的标签和值样式 */
@@ -129,6 +129,7 @@ defineProps<{
 .compact .detail-value {
   padding-left: 0.3rem;
   line-height: 1.2;
+  font-size: var(--et-fs-meta);
 }
 
 /* 字段色点：统一语义 token，避免散落 hex */
@@ -159,12 +160,12 @@ defineProps<{
 /* 机器ID特殊样式 */
 .machine-id-value {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  font-size: 0.95rem;
-  background-color: var(--surface-ground, #f1f5f9);
-  color: var(--text-color, #1f2937);
-  padding: 0.25rem 0.5rem;
-  border-radius: 0.25rem;
-  border: 1px solid var(--surface-border, #e2e8f0);
+  font-size: var(--et-fs-meta);
+  background-color: var(--surface-ground, #f8fafc);
+  color: var(--text-color, #1e293b);
+  padding: var(--et-space-1) var(--et-space-2);
+  border-radius: calc(var(--et-radius) - 0.5rem);
+  border: var(--et-border);
   display: inline-block;
   max-width: 100%;
   overflow: hidden;
@@ -173,9 +174,9 @@ defineProps<{
 
 /* 紧凑布局下的机器ID样式 */
 .compact .machine-id-value {
-  font-size: 0.75rem;
+  font-size: var(--et-fs-meta);
   padding: 0.15rem 0.3rem;
-  border-radius: 0.2rem;
+  border-radius: calc(var(--et-radius) - 0.55rem);
 }
 
 /* 暗黑模式适配 */

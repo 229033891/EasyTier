@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Button, ConfirmDialog, ConfirmPopup, Menu, Message, Select, Tag, useConfirm, useToast, type VirtualScrollerLazyEvent } from 'primevue';
+import { Button, Menu, Message, Select, Tag, useConfirm, useToast, type VirtualScrollerLazyEvent } from 'primevue';
 import { computed, onMounted, onUnmounted, Ref, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import * as Api from '../modules/api';
@@ -337,10 +337,10 @@ const stopNetwork = async () => {
     await loadNetworkInstanceIds();
 }
 
-const confirmStopNetwork = (event: Event) => {
+const confirmStopNetwork = (_event?: Event) => {
     confirm.require({
-        target: event.currentTarget as HTMLElement,
         message: t('web.device_management.confirm_disable_network'),
+        header: t('web.device_management.disable_network'),
         icon: 'pi pi-exclamation-triangle',
         rejectProps: {
             label: t('web.common.cancel'),
@@ -377,10 +377,10 @@ const startNetwork = async () => {
     }
 }
 
-const confirmStartNetwork = (event: Event) => {
+const confirmStartNetwork = (_event?: Event) => {
     confirm.require({
-        target: event.currentTarget as HTMLElement,
         message: t('web.device_management.confirm_start_network'),
+        header: t('web.network.start'),
         icon: 'pi pi-info-circle',
         rejectProps: {
             label: t('web.common.cancel'),
@@ -994,9 +994,6 @@ onUnmounted(() => {
             </div>
         </div>
 
-        <ConfirmPopup />
-        <ConfirmDialog />
-
         <ConfigEditDialog v-model:visible="showConfigEditDialog" :cur-network="currentNetworkConfig"
             :generate-config="generateConfig" :save-config="syncTomlConfig" />
     </div>
@@ -1246,17 +1243,16 @@ onUnmounted(() => {
     border: none !important;
 }
 
-:deep(.network-status-tag.p-tag-success) {
-    background: rgba(255, 255, 255, 0.22) !important;
+/* ???????????Tag ?????????????? */
+:deep(.network-instance-select--running .network-status-tag.p-tag),
+:deep(.network-instance-select--stopped .network-status-tag.p-tag) {
+    background: transparent !important;
+    background-color: transparent !important;
     color: #ffffff !important;
+    padding-inline: 0.15rem !important;
 }
 
-:deep(.network-status-tag.p-tag-danger) {
-    background: rgba(255, 255, 255, 0.22) !important;
-    color: #ffffff !important;
-}
-
-/* ?????? Tag??????? */
+/* ????????????????? */
 :deep(.p-select-overlay .network-status-tag.p-tag-success),
 :deep(.network-select-overlay .network-status-tag.p-tag-success) {
     background: #10b981 !important;
@@ -1300,7 +1296,7 @@ onUnmounted(() => {
 
 .toolbar-zone--network {
     padding-left: 0.85rem;
-    border-left: 1px solid var(--surface-border, #e5e7eb);
+    border-left: 1px solid var(--surface-border, #e2e8f0);
 }
 
 /*
@@ -1326,7 +1322,7 @@ onUnmounted(() => {
 
     .toolbar-zone--network {
         padding-top: 0.5rem;
-        border-top: 1px solid var(--surface-border, #e5e7eb);
+        border-top: 1px solid var(--surface-border, #e2e8f0);
     }
 
     .toolbar-zone-actions {

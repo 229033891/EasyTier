@@ -206,8 +206,10 @@ const onProtoChange = (newProto: string) => {
             </div>
         </div>
 
-        <Dialog v-model:visible="editing" modal :header="placeholder" :style="{ width: '90vw', maxWidth: '500px' }">
-            <div class="flex flex-col gap-4 py-4">
+        <Dialog v-model:visible="editing" modal :header="placeholder"
+            class="et-dialog"
+            :style="{ width: '90vw', maxWidth: '500px' }">
+            <div class="flex flex-col gap-4">
                 <div class="flex flex-col gap-2">
                     <label>{{ t('tunnel_proto') }}</label>
                     <AutoComplete :model-value="internalValue.proto" :suggestions="filteredProtos" dropdown fluid

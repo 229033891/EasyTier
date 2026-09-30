@@ -172,8 +172,8 @@ onBeforeUnmount(() => {
 }
 
 .login-card {
-    border: 1px solid var(--et-border-color, #e2e8f0) !important;
-    border-radius: 1rem !important;
+    border: var(--et-border) !important;
+    border-radius: var(--et-radius) !important;
     background: var(--surface-card, #ffffff) !important;
     box-shadow:
         0 1px 2px rgba(15, 23, 42, 0.04),
@@ -191,7 +191,7 @@ onBeforeUnmount(() => {
 .login-logo {
     width: 3rem;
     height: 3rem;
-    border-radius: 0.75rem;
+    border-radius: var(--et-radius);
     box-shadow: 0 6px 16px color-mix(in srgb, var(--primary-color, #0ea5e9) 22%, transparent);
 }
 
@@ -201,8 +201,8 @@ onBeforeUnmount(() => {
 
 .login-brand-name {
     margin: 0;
-    color: var(--text-color, #0f172a);
-    font-size: 1.55rem;
+    color: var(--text-color, #1e293b);
+    font-size: 1.5rem;
     font-weight: 750;
     letter-spacing: -0.03em;
     line-height: 1.15;
@@ -219,7 +219,7 @@ onBeforeUnmount(() => {
 .login-form {
     display: flex;
     flex-direction: column;
-    gap: 1rem;
+    gap: var(--et-space-4);
     padding: 0 1.35rem 1.5rem;
 }
 
@@ -235,7 +235,7 @@ onBeforeUnmount(() => {
     display: block;
     margin-bottom: 0.4rem;
     color: var(--text-color, #1e293b);
-    font-size: 0.8125rem;
+    font-size: var(--et-fs-meta);
     font-weight: 600;
 }
 

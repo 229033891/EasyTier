@@ -99,7 +99,7 @@ const networkCount = computed<number | undefined>(() => summary.value?.network_c
 .summary-heading {
     display: flex;
     align-items: center;
-    gap: 0.625rem;
+    gap: var(--et-space-3);
 }
 
 .summary-icon {
@@ -108,7 +108,7 @@ const networkCount = computed<number | undefined>(() => summary.value?.network_c
     justify-content: center;
     width: 2rem;
     height: 2rem;
-    border-radius: 0.625rem;
+    border-radius: calc(var(--et-radius) - 0.125rem);
 }
 
 .summary-icon--device {
@@ -124,8 +124,8 @@ const networkCount = computed<number | undefined>(() => summary.value?.network_c
 .summary-value {
     width: 100%;
     display: flex;
-    justify-content: flex-end;
-    padding-right: 0.25rem;
+    justify-content: center;
+    padding-right: 0;
     margin-top: 1.25rem;
     font-size: 3rem;
     line-height: 1;

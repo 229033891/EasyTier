@@ -59,7 +59,7 @@ const handleDeviceManagement = (device: Utils.DeviceInfo, mode: 'status' | 'conf
             deviceId: device.machine_id,
             instanceId: instanceId
         },
-        query: { mode },
+        query: { mode, from: 'deviceList' },
     });
 };
 
@@ -129,17 +129,17 @@ const locationText = (device: Utils.DeviceInfo): string => {
 .card-container {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
-    gap: 1rem;
+    gap: var(--et-gap-section);
     width: 100%;
     position: relative;
 }
 
 /* 设备卡片样式 */
 .device-card {
-    border: 1px solid var(--et-border-color, #e2e8f0);
-    border-radius: var(--et-radius, 0.75rem);
+    border: var(--et-border);
+    border-radius: var(--et-radius);
     background: var(--surface-card, #ffffff);
-    box-shadow: var(--et-shadow-card, none);
+    box-shadow: var(--et-shadow-card);
     transition: box-shadow 0.2s ease, background-color 0.3s ease, border-color 0.2s ease;
     display: flex;
     flex-direction: column;
@@ -161,23 +161,23 @@ const locationText = (device: Utils.DeviceInfo): string => {
     display: flex;
     flex-direction: column;
     position: relative;
-    color: var(--text-color, #1f2937);
+    color: var(--text-color, #1e293b);
 }
 
 .card-details {
-    background-color: var(--surface-ground, #f9fafb);
+    background-color: var(--surface-ground, #f8fafc);
 }
 
 :deep(.card-details-content) {
-    padding: 0.15rem 0.1rem;
+    padding: var(--et-space-1);
 }
 
 :deep(.card-details-content .detail-label) {
-    font-size: 0.9rem;
+    font-size: var(--et-fs-body);
 }
 
 :deep(.card-details-content .detail-value) {
-    font-size: 0.85rem;
+    font-size: var(--et-fs-meta);
 }
 
 @media (prefers-color-scheme: dark) {
@@ -204,17 +204,10 @@ const locationText = (device: Utils.DeviceInfo): string => {
     }
 }
 
-:deep(.device-card) {
-    background-color: var(--surface-card, white);
-    border-color: var(--surface-border, #e5e7eb);
-}
-
-:deep(.card-header) {
-    color: var(--text-color, #1f2937);
-}
-
 .card-title {
-    color: var(--text-color, #1f2937);
+    color: var(--text-color, #1e293b);
+    font-size: var(--et-fs-section);
+    font-weight: 600;
 }
 
 .card-subtitle {
@@ -222,10 +215,10 @@ const locationText = (device: Utils.DeviceInfo): string => {
 }
 
 .version-badge {
-    background-color: var(--primary-color, #0ea5e9);
+    background-color: var(--primary-color, var(--et-primary, #0ea5e9));
     color: #ffffff;
     padding: 0.1rem 0.4rem;
-    border-radius: 0.75rem;
+    border-radius: 999px;
     font-weight: 500;
     letter-spacing: 0.02em;
     font-size: var(--et-fs-meta);
@@ -243,13 +236,13 @@ const locationText = (device: Utils.DeviceInfo): string => {
 }
 
 @media (prefers-color-scheme: dark) {
-    :deep(.device-card) {
+    .device-card {
         background-color: var(--surface-card, #1e293b);
         border-color: var(--surface-border, #334155);
         box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.3);
     }
 
-    :deep(.card-header) {
+    .card-header {
         color: var(--text-color, #f1f5f9);
     }
 
@@ -262,10 +255,10 @@ const locationText = (device: Utils.DeviceInfo): string => {
     }
 
     .version-badge {
-        background-color: var(--primary-color, #0ea5e9);
+        background-color: var(--primary-color, var(--et-primary, #0ea5e9));
     }
 
-    :deep(.card-details) {
+    .card-details {
         background-color: var(--surface-ground, #0f172a);
         border-top: 1px solid var(--surface-border, #334155);
     }
@@ -295,7 +288,7 @@ const locationText = (device: Utils.DeviceInfo): string => {
 
 :deep(.p-dropdown) {
     background: transparent;
-    border: 1px solid var(--et-border-color, #e2e8f0);
+    border: var(--et-border);
     /* 不用 transition: all —— 只过渡实际会变的属性（悬停改边框色、聚焦加 ring） */
     transition: border-color 0.2s ease, box-shadow 0.2s ease, background-color 0.2s ease;
 }
@@ -322,16 +315,16 @@ const locationText = (device: Utils.DeviceInfo): string => {
 
 .location-icon {
     color: var(--primary-color, var(--et-primary, #0ea5e9));
-    font-size: 0.9rem;
+    font-size: var(--et-fs-body);
 }
 
 .location-text {
-    font-size: 0.875rem;
+    font-size: var(--et-fs-body);
     line-height: 1.25rem;
     opacity: 0.9;
     display: inline-flex;
     align-items: center;
-    gap: 0.25rem;
+    gap: var(--et-space-1);
 }
 
 .location-separator {

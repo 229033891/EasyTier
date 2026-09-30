@@ -108,8 +108,10 @@ function saveGroup() {
     </div>
 
     <!-- Group Identity Dialog -->
-    <Dialog v-model:visible="showGroupDialog" modal :header="t('acl.groups')" :style="{ width: '400px' }">
-      <div v-if="editingGroup" class="flex flex-col gap-4 pt-2">
+    <Dialog v-model:visible="showGroupDialog" modal :header="t('acl.groups')"
+      class="et-dialog"
+      :style="{ width: '90vw', maxWidth: '400px' }">
+      <div v-if="editingGroup" class="flex flex-col gap-4">
         <div class="flex flex-col gap-2">
           <label class="font-bold">{{ t('acl.group.name') }}</label>
           <InputText v-model="editingGroup.group_name" fluid />

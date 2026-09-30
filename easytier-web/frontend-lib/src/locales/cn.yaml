@@ -585,6 +585,8 @@ web:
     network_count: 运行中网络数量
     back_to_list: 返回设备列表
     back_to_list_tip: 返回设备列表，不保存未提交的修改
+    back_to_network_list: 返回网络列表
+    back_to_network_list_tip: 返回网络列表，不保存未提交的修改
 
   device_management:
     edit_network: 编辑网络

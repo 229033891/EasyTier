@@ -68,7 +68,7 @@ const changePassword = async () => {
     margin: 0;
     padding: 1.1rem 1.25rem 0.35rem;
     color: var(--text-color, #1e293b);
-    font-size: 1.15rem;
+    font-size: var(--et-fs-page-title);
     font-weight: 700;
     letter-spacing: -0.02em;
 }
@@ -76,14 +76,14 @@ const changePassword = async () => {
 .change-password-form {
     display: flex;
     flex-direction: column;
-    gap: 1rem;
-    padding: 0.5rem 1.25rem 1.25rem;
+    gap: var(--et-space-4);
+    padding: var(--et-space-2) 1.25rem 1.25rem;
 }
 
 .change-password-actions {
     display: flex;
     justify-content: flex-end;
-    gap: 0.5rem;
+    gap: var(--et-space-2);
 }
 
 :deep(.p-card-body),

@@ -75,6 +75,7 @@ const genericSuggestions = ref<string[]>([])
 
 <template>
   <Dialog :visible="visible" @update:visible="emit('update:visible', $event)" modal :header="t('acl.edit_rule')"
+    class="et-dialog"
     :style="{ width: '90vw', maxWidth: '600px' }">
     <div class="flex flex-col gap-4">
       <div class="flex flex-row gap-4 items-center">

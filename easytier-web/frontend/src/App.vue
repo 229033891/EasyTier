@@ -13,7 +13,7 @@ onMounted(async () => {
 
 <template>
   <Toast position="bottom-right" class="et-toast" />
-  <ConfirmDialog />
+  <ConfirmDialog class="et-confirm-dialog" />
   <DynamicDialog />
   <RouterView />
 </template>

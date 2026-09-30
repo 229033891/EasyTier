@@ -109,6 +109,18 @@ const navItems = computed(() => {
 });
 
 /**
+ * 管理全页不属于侧栏路由名：按来源高亮设备/网络列表。
+ * query.from=networkList → 网络列表；其余（含缺省）→ 设备列表。
+ */
+const isNavActive = (name: string) => {
+    if (route.name === name) return true;
+    if (route.name !== 'deviceManagement') return false;
+    if (name === 'networkList') return route.query.from === 'networkList';
+    if (name === 'deviceList') return route.query.from !== 'networkList';
+    return false;
+};
+
+/**
  * 折叠态：桌面居中图标；展开态：左对齐 + 间距。
  *
  * 移动端抽屉始终是展开样式（w-64），所以折叠分支也要先给 `justify-start`，
@@ -213,9 +225,9 @@ onUnmounted(() => {
                 <li v-for="item in navItems" :key="item.name">
                     <Button variant="text"
                         class="w-full sidebar-button"
-                        :class="[sidebarButtonClass, { 'sidebar-button--active': route.name === item.name }]"
+                        :class="[sidebarButtonClass, { 'sidebar-button--active': isNavActive(item.name) }]"
                         severity="contrast" @click="goNav(item.name)"
-                        :aria-current="route.name === item.name ? 'page' : undefined"
+                        :aria-current="isNavActive(item.name) ? 'page' : undefined"
                         v-tooltip.right="sidebarCollapsed ? item.label : undefined">
                         <i :class="[item.icon, 'sidebar-icon']"></i>
                         <span :class="{ 'sm:hidden': sidebarCollapsed }">{{ item.label }}</span>
@@ -322,9 +334,10 @@ onUnmounted(() => {
 .sidebar-button {
     position: relative;
     min-height: 2.5rem;
-    border-radius: 0.625rem !important;
-    color: var(--text-color, #334155) !important;
+    border-radius: calc(var(--et-radius, 0.75rem) - 0.125rem) !important;
+    color: var(--text-color-secondary, #64748b) !important;
     text-align: left;
+    font-size: var(--et-fs-body, 0.875rem);
     font-weight: 500;
     transition: background-color 0.18s ease, color 0.18s ease;
 }
@@ -335,20 +348,25 @@ onUnmounted(() => {
     line-height: 1;
     text-align: center;
     color: inherit;
-    opacity: 0.88;
+    opacity: 0.92;
 }
 
 @media (hover: hover) {
     .sidebar-button:hover:not(:disabled) {
-        background: color-mix(in srgb, var(--text-color, #0f172a) 5%, transparent) !important;
-        color: var(--text-color, #0f172a) !important;
+        background: color-mix(in srgb, var(--text-color, #1e293b) 5%, transparent) !important;
+        color: var(--text-color, #1e293b) !important;
     }
 }
 
 .sidebar-button--active,
 .sidebar-button--active:hover {
-    background: color-mix(in srgb, var(--primary-color, var(--et-primary, #0ea5e9)) 12%, transparent) !important;
+    background: color-mix(in srgb, var(--primary-color, var(--et-primary, #0ea5e9)) 14%, transparent) !important;
     color: var(--primary-color, var(--et-primary-emphasis, #0284c7)) !important;
+    font-weight: 600;
+}
+
+.sidebar-button--active .sidebar-icon {
+    opacity: 1;
 }
 
 /* 选中指示条：圆角胶囊贴在按钮内侧，避免 inset shadow 与圆角打架 */
@@ -387,7 +405,7 @@ onUnmounted(() => {
 }
 
 .sidebar-brand-text {
-    color: var(--text-color, #0f172a);
+    color: var(--text-color, #1e293b);
     font-size: 1.125rem;
     font-weight: 700;
     letter-spacing: -0.02em;

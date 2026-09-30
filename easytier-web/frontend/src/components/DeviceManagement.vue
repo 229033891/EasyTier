@@ -38,6 +38,17 @@ const managementMode = computed(() => {
     return undefined;
 });
 
+/** 进入来源：用于侧栏高亮与返回列表 */
+const managementFrom = computed(() => {
+    return route.query.from === 'networkList' ? 'networkList' : 'deviceList';
+});
+
+const managementQuery = computed(() => {
+    const q: Record<string, string> = { from: managementFrom.value };
+    if (managementMode.value) q.mode = managementMode.value;
+    return q;
+});
+
 const pageTitle = computed(() => {
     const host = deviceInfo.value?.hostname ?? deviceId.value ?? '';
     if (managementMode.value === 'config') {
@@ -57,7 +68,7 @@ const selectedInstanceId = computed({
         router.push({
             name: 'deviceManagement',
             params: { deviceId: deviceId.value, instanceId: value },
-            query: managementMode.value ? { mode: managementMode.value } : {},
+            query: managementQuery.value,
         });
     }
 });
@@ -77,12 +88,12 @@ const switchManagementMode = (mode: 'status' | 'config') => {
             deviceId: deviceId.value,
             instanceId: instanceId.value,
         },
-        query: { mode },
+        query: { ...managementQuery.value, mode },
     });
 }
 
 const backToList = () => {
-    router.push({ name: 'deviceList' });
+    router.push({ name: managementFrom.value });
 }
 
 const loadDevices = async () => {
@@ -121,8 +132,8 @@ onUnmounted(() => {
         :new-config-generator="newConfigGenerator" :full-page="true"
         :page-title="pageTitle"
         :drawer-close="backToList"
-        :leave-button-label="t('web.device.back_to_list')"
-        :leave-button-tooltip="t('web.device.back_to_list_tip')"
+        :leave-button-label="managementFrom === 'networkList' ? t('web.device.back_to_network_list') : t('web.device.back_to_list')"
+        :leave-button-tooltip="managementFrom === 'networkList' ? t('web.device.back_to_network_list_tip') : t('web.device.back_to_list_tip')"
         leave-button-icon="pi pi-arrow-left"
         :mode="managementMode" @switch-mode="switchManagementMode" />
 </template>

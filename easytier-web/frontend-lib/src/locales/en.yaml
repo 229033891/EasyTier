@@ -584,6 +584,8 @@ web:
     network_count: Running Networks
     back_to_list: Back to Device List
     back_to_list_tip: Return to the device list without saving unsaved changes
+    back_to_network_list: Back to Network List
+    back_to_network_list_tip: Return to the network list without saving unsaved changes
 
   device_management:
     edit_network: Edit Network

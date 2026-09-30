@@ -727,6 +727,7 @@ function removeVpnPortalClient(index: number) {
                   </div>
 
                   <Dialog v-model:visible="editingPortForward" modal :header="t('edit_port_forward')"
+                    class="et-dialog"
                     :style="{ width: '90vw', maxWidth: '600px' }">
                     <div v-if="editingPortForwardData" class="flex flex-col gap-4">
                       <SelectButton v-model="editingPortForwardData.proto" :options="portForwardProtocolOptions"

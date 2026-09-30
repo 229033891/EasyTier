@@ -510,25 +510,130 @@
   padding: 0.7rem 0.85rem !important;
 }
 
-.p-confirmdialog .p-dialog,
-.p-dialog.p-confirmdialog {
+/* 通用 Dialog / Confirm / DynamicDialog：与卡片视觉对齐 */
+.p-dialog-mask {
+  background: rgba(15, 23, 42, 0.42) !important;
+  backdrop-filter: blur(2px);
+}
+
+.p-dialog {
   border-radius: var(--et-radius, 0.75rem) !important;
   border: 1px solid var(--et-border-color, #e2e8f0) !important;
-  box-shadow: 0 18px 40px rgba(15, 23, 42, 0.16) !important;
+  background: var(--surface-card, #ffffff) !important;
+  color: var(--text-color, #1e293b) !important;
+  box-shadow: 0 18px 44px rgba(15, 23, 42, 0.18) !important;
   overflow: hidden;
 }
 
-.p-confirmdialog .p-dialog-header {
-  padding: 1rem 1.15rem 0.35rem !important;
+.p-dialog .p-dialog-header {
+  padding: 1rem 1.15rem 0.5rem !important;
+  border-bottom: none !important;
+  background: transparent !important;
+  color: var(--text-color, #1e293b) !important;
 }
 
-.p-confirmdialog .p-dialog-content {
+.p-dialog .p-dialog-title {
+  font-size: var(--et-fs-section, 1rem) !important;
+  font-weight: 700 !important;
+  letter-spacing: -0.02em;
+  line-height: 1.35;
+}
+
+.p-dialog .p-dialog-header-actions .p-dialog-close-button,
+.p-dialog .p-dialog-header-icon {
+  width: 2rem !important;
+  height: 2rem !important;
+  border-radius: calc(var(--et-radius, 0.75rem) - 0.25rem) !important;
+  color: var(--text-color-secondary, #64748b) !important;
+}
+
+.p-dialog .p-dialog-content {
   padding: 0.35rem 1.15rem 1rem !important;
+  background: transparent !important;
+  color: var(--text-color, #1e293b) !important;
 }
 
-.p-confirmdialog .p-dialog-footer {
-  padding: 0 1.15rem 1rem !important;
+.p-dialog .p-dialog-footer {
+  padding: 0 1.15rem 1.1rem !important;
   gap: 0.5rem !important;
+  border-top: none !important;
+  background: transparent !important;
+  justify-content: flex-end !important;
+}
+
+.p-dialog .p-dialog-footer .p-button {
+  min-height: var(--et-btn, 2.5rem) !important;
+  min-width: 5.5rem;
+  border-radius: calc(var(--et-radius, 0.75rem) - 0.125rem) !important;
+  font-weight: 600 !important;
+}
+
+/* ConfirmDialog：图标 + 文案横排，避免挤成一团 */
+.p-confirmdialog .p-dialog {
+  width: min(24rem, calc(100vw - 2rem)) !important;
+}
+
+.p-confirmdialog .p-confirmdialog-message,
+.p-confirmdialog .p-dialog-content {
+  display: flex !important;
+  align-items: flex-start !important;
+  gap: 0.75rem !important;
+  font-size: var(--et-fs-body, 0.875rem) !important;
+  line-height: 1.5 !important;
+  color: var(--text-color, #1e293b) !important;
+}
+
+.p-confirmdialog .p-confirmdialog-icon,
+.p-confirmdialog .p-dialog-content > .p-icon,
+.p-confirmdialog .p-dialog-content > .pi {
+  flex-shrink: 0;
+  margin-top: 0.1rem;
+  font-size: 1.25rem !important;
+  color: var(--primary-color, var(--et-primary, #0ea5e9)) !important;
+}
+
+.p-confirmdialog .p-confirmdialog-icon.pi-exclamation-triangle,
+.p-confirmdialog .pi-exclamation-triangle {
+  color: var(--et-warn, #f59e0b) !important;
+}
+
+.p-confirmdialog .p-confirmdialog-icon.pi-info-circle,
+.p-confirmdialog .pi-info-circle {
+  color: var(--primary-color, var(--et-primary, #0ea5e9)) !important;
+}
+
+/* DynamicDialog 内自带卡片时，去掉外层多余内边距 */
+.p-dialog:has(.change-password) {
+  border: none !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+.p-dialog:has(.change-password) .p-dialog-header {
+  display: none !important;
+}
+
+.p-dialog:has(.change-password) .p-dialog-content {
+  padding: 0 !important;
+}
+
+@media (prefers-color-scheme: dark) {
+  .p-dialog-mask {
+    background: rgba(2, 6, 23, 0.62) !important;
+  }
+
+  .p-dialog {
+    background: var(--surface-card, #1e293b) !important;
+    border-color: var(--surface-border, #334155) !important;
+    color: var(--text-color, #f1f5f9) !important;
+  }
+
+  .p-dialog .p-dialog-header,
+  .p-dialog .p-dialog-title,
+  .p-dialog .p-dialog-content,
+  .p-confirmdialog .p-confirmdialog-message {
+    color: var(--text-color, #f1f5f9) !important;
+  }
 }
 
 /* Select / 下拉浮层：强制不透明，避免透出底层内容 */

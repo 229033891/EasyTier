@@ -124,7 +124,15 @@ const confirmDelete = (user: UserInfo) => {
         message: t('web.users.delete_confirm', { username: user.username }),
         header: t('web.users.delete'),
         icon: 'pi pi-exclamation-triangle',
-        acceptClass: 'p-button-danger',
+        rejectProps: {
+            label: t('web.common.cancel'),
+            severity: 'secondary',
+            outlined: true,
+        },
+        acceptProps: {
+            label: t('web.users.delete'),
+            severity: 'danger',
+        },
         accept: async () => {
             try {
                 await props.api.delete_user(user.id);
@@ -256,8 +264,8 @@ onMounted(async () => {
     display: flex;
     flex-wrap: wrap;
     align-items: flex-end;
-    gap: 0.75rem 1rem;
-    padding: 0.875rem 1rem;
+    gap: var(--et-space-3) var(--et-space-4);
+    padding: var(--et-pad-card);
     background: var(--surface-card, #ffffff);
     border: var(--et-border);
     border-radius: var(--et-radius);
@@ -297,10 +305,10 @@ onMounted(async () => {
 .admin-check {
     display: inline-flex;
     align-items: center;
-    gap: 0.5rem;
+    gap: var(--et-space-2);
     min-height: var(--et-btn, 2.5rem);
     margin: 0;
-    font-size: 0.875rem;
+    font-size: var(--et-fs-body);
     color: var(--text-color, #1e293b);
     cursor: pointer;
     white-space: nowrap;

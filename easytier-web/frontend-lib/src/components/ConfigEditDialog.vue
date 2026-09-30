@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onMounted, ref, watch } from 'vue';
 import { NetworkConfig } from '../types/network';
-import { Divider, Button, Dialog, Textarea } from 'primevue'
+import { Button, Dialog, Textarea } from 'primevue'
 import { useI18n } from 'vue-i18n'
 
 const { t } = useI18n()
@@ -88,17 +88,41 @@ watch(tomlConfig, (newValue) => {
 
 </script>
 <template>
-    <Dialog v-model:visible="visible" modal :header="t('config_file')" :style="{ width: '70%' }">
+    <Dialog v-model:visible="visible" modal :header="t('config_file')"
+        class="et-dialog et-dialog--wide"
+        :style="{ width: 'min(70vw, 56rem)', maxWidth: 'calc(100vw - 2rem)' }">
         <pre v-if="errorMessage"
-            class="mb-2 p-2 rounded text-sm overflow-auto bg-red-100 text-red-700 max-h-40">{{ errorMessage }}</pre>
-        <div class="flex w-full" style="max-height: 60vh; overflow-y: auto;">
+            class="et-dialog-error mb-3">{{ errorMessage }}</pre>
+        <div class="et-dialog-scroll">
             <Textarea v-model="tomlConfig" class="w-full h-full font-mono flex flex-col resize-none" :rows="tomlConfigRows"
                 spellcheck="false" :readonly="props.readonly"></Textarea>
         </div>
-        <Divider />
-        <div class="flex gap-2 justify-end">
+        <template #footer>
             <Button type="button" severity="secondary" outlined :label="t('close')" @click="visible = false" />
             <Button v-if="!props.readonly" type="button" :label="t('save')" @click="handleConfigSave" />
-        </div>
+        </template>
     </Dialog>
 </template>
+
+<style scoped>
+.et-dialog-scroll {
+    max-height: 60vh;
+    overflow-y: auto;
+    width: 100%;
+}
+
+.et-dialog-error {
+    margin: 0 0 0.75rem;
+    padding: 0.65rem 0.75rem;
+    border-radius: calc(var(--et-radius, 0.75rem) - 0.25rem);
+    border: 1px solid #fca5a5;
+    background: #fef2f2;
+    color: #991b1b;
+    font-size: var(--et-fs-meta, 0.75rem);
+    line-height: 1.45;
+    overflow: auto;
+    max-height: 10rem;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+</style>

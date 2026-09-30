@@ -92,7 +92,7 @@ const openNetworkRow = (row: NetworkRow, mode: 'status' | 'config') => {
             deviceId: row.machine_id,
             instanceId: row.instance_id,
         },
-        query: { mode },
+        query: { mode, from: 'networkList' },
     });
 };
 </script>
