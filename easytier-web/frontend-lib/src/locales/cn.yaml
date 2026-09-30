@@ -18,6 +18,10 @@ network_secret: 网络密码
 public_server_url: 公共服务器地址
 peer_urls: 对等节点地址
 proxy_cidrs: 子网代理CIDR
+proxy_cidrs_help: |-
+  子网代理 CIDR：填本机要代理出去的网段，对端就能通过虚拟网访问这些地址。
+  格式：CIDR，例如：10.0.0.0/24，可填多个。
+  注意：需要开启「无 TUN 模式」或使用手动路由（Manual Routes）时，请确认对端已有相应回包路由，否则流量不通。
 vpn_portal_wireguard_listen: WireGuard 监听地址
 vpn_portal_wireguard_listen_placeholder: 例如：0.0.0.0:22022
 vpn_portal_wireguard_private_key: WireGuard 服务端私钥
@@ -389,6 +393,7 @@ port_forwards_help: "将本地端口转发到虚拟网络中的远程端口。�
 port_forwards_bind_addr: "绑定地址，如：0.0.0.0"
 port_forwards_dst_addr: "目标地址，如：10.126.126.1"
 port_forwards_add_btn: "添加"
+port_forwards_add_tip: 添加一条本地端口到虚拟网络的转发规则
 edit_port_forward: "编辑端口转发"
 
 mtu: MTU
@@ -422,6 +427,7 @@ status:
   relay: 中继
 
 run_network: 运行网络
+run_network_tip: 保存当前配置并启动或应用该网络
 stop_network: 停止网络
 network_running: 运行中
 network_stopped: 已停止
@@ -525,6 +531,7 @@ web:
     delete_confirm: 确定删除用户「{username}」？
     delete_success: 用户已删除
     delete_failed: 删除用户失败
+    delete_admin_forbidden: 管理员账户禁止删除
     load_failed: 加载用户列表失败
     empty: 暂无用户
     reset_password: 重置密码
@@ -576,24 +583,31 @@ web:
     unknown_location: 未知位置
     network_count: 运行中网络数量
     back_to_list: 返回设备列表
+    back_to_list_tip: 返回设备列表，不保存未提交的修改
 
   device_management:
     edit_network: 编辑网络
     export_config: 导出配置
+    export_config_tip: 将当前网络配置导出为本地文件
     delete_network: 删除网络
+    delete_network_tip: 从设备上永久删除当前网络配置
     network: 网络
     select_network: 选择网络
     create_network: 创建网络
     cancel_edit: 取消编辑
     more_actions: 更多操作
     edit_as_file: 编辑为文件
+    edit_as_file_tip: 以文本方式直接编辑完整配置文件
     save_config: 保存配置
+    save_config_tip: 将当前修改保存到设备，不会立即启动网络
     config_saved: 配置已保存
     save_failed: 保存配置失败
     start_failed: 启动网络失败
     import_config: 导入配置
+    import_config_tip: 从本地文件导入并覆盖当前网络配置
     create_new: 创建新网络
     add_network: 添加网络
+    add_network_tip: 新建一条空白网络配置并进入编辑
     network_status: 网络状态
     loading_network_status: 正在加载网络状态
     network_info_unavailable: 网络状态不可用
@@ -604,12 +618,16 @@ web:
     select_network_for_status: 请选择网络实例以查看状态或启停
     network_disabled_hint: 该网络已禁用。可在此启动，或打开「配置」修改设置。
     switch_to_config: 前往配置
+    switch_to_config_tip: 切换到配置页，编辑网络参数
     switch_to_status: 前往状态
+    switch_to_status_tip: 切换到状态页，查看节点与连接信息
     confirm_disable_network: 确定禁用该网络吗？
     confirm_start_network: 确定启动该网络吗？
     confirm_delete_network: 确定删除该网络吗？此操作不可恢复。
     confirm_delete_network_header: 删除网络
     disable_network: 禁用网络
+    disable_network_tip: 停止并禁用当前正在运行的网络
+    start_network_tip: 启动当前已保存的网络配置
     toolbar_config_files: 配置文件
     toolbar_network: 网络
     toolbar_danger: 危险操作
@@ -708,6 +726,7 @@ acl:
   title: 访问控制
   help: 访问控制列表，用于限制节点间的通信。
   enabled: 启用 ACL
+  enabled_tip: 开启访问控制，配置节点间的通信规则
   default_action: 默认动作
   chains: 规则链
   inbound: 入站

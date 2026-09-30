@@ -19,7 +19,7 @@ import Dashboard from './components/Dashboard.vue'
 import UserList from './components/UserList.vue'
 import DialogService from 'primevue/dialogservice';
 import ToastService from 'primevue/toastservice';
-import { tooltipDirective } from './modules/tooltip'
+import { tooltipDirective } from 'easytier-frontend-lib'
 
 const routes = [
     {
@@ -135,5 +135,6 @@ app.use(DialogService as any)
 app.use(router)
 app.use(ConfirmationService as any)
 app.use(EasytierFrontendLib)
+// 再次注册，确保覆盖 lib 安装顺序下的任何旧指令，且与 GUI/web 使用同一实现
 app.directive('tooltip', tooltipDirective)
 app.mount('#app')

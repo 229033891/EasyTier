@@ -207,10 +207,7 @@ impl Backend {
             .ok_or_else(|| anyhow::anyhow!("User not found"))?;
 
         if target.is_admin {
-            let admin_count = users.iter().filter(|u| u.is_admin).count();
-            if admin_count <= 1 {
-                anyhow::bail!("Cannot delete the last admin");
-            }
+            anyhow::bail!("Cannot delete admin accounts");
         }
 
         self.db.delete_user_by_id(user_id).await?;

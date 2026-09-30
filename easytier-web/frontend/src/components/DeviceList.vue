@@ -1,9 +1,8 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
 import { Button, ProgressSpinner, useToast, InputSwitch, Dropdown, Toolbar } from 'primevue';
-import { tooltipDirective } from '../modules/tooltip';
+import { Utils, tooltipDirective } from 'easytier-frontend-lib';
 import { useRouter } from 'vue-router';
-import { Utils } from 'easytier-frontend-lib';
 import DeviceDetails from './DeviceDetails.vue';
 import { useI18n } from 'vue-i18n'
 import ApiClient from '../modules/api';
@@ -13,7 +12,6 @@ const { t } = useI18n()
 
 declare const window: Window & typeof globalThis;
 
-// 注册 Tooltip 指令
 const vTooltip = tooltipDirective;
 
 const props = defineProps({
@@ -518,18 +516,18 @@ const locationText = (device: Utils.DeviceInfo): string => {
                 <div v-for="device in sortedDeviceList" :key="device.machine_id" class="device-card">
                     <div class="card-header">
                         <div class="flex justify-between items-center mb-2">
-                            <div class="font-semibold truncate card-title" :title="device.hostname">{{ device.hostname
-                            }}
+                            <div class="font-semibold truncate card-title"
+                                v-tooltip.top="device.hostname">{{ device.hostname }}
                             </div>
 
-                            <div class="text-xs version-badge" v-tooltip="`EasyTier ${device.easytier_version}`">
+                            <div class="text-xs version-badge" v-tooltip.top="`EasyTier ${device.easytier_version}`">
                                 v{{ device.easytier_version.split('-')[0] }}
                             </div>
                         </div>
 
                         <div class="flex justify-between items-center">
                             <div class="text-sm truncate card-subtitle max-w-[60%] flex items-center gap-2"
-                                :title="locationText(device)">
+                                v-tooltip.top="locationText(device)">
                                 <i class="pi pi-map-marker location-icon"></i>
                                 <span class="location-text">
                                     <template v-for="(part, index) in locationParts(device)" :key="index">
@@ -543,21 +541,21 @@ const locationText = (device: Utils.DeviceInfo): string => {
                             </div>
 
                             <div class="device-card-actions flex items-center gap-2">
-                                <!-- 运行中虚拟网数量（仅展示，悬停样式与按钮一致） -->
+                                <!-- 运行中虚拟网数量（悬停样式与按钮一致） -->
                                 <span
                                     class="device-count-badge"
-                                    :title="t('web.device.network_count')"
+                                    v-tooltip.top="t('web.device.network_count')"
                                     :aria-label="`${t('web.device.network_count')}: ${device.running_network_count}`">
                                     {{ device.running_network_count }}
                                 </span>
 
-                                <Button v-tooltip.top="{ value: t('web.device.open_network_status') }"
+                                <Button v-tooltip.top="t('web.device.open_network_status')"
                                     icon="pi pi-chart-line" severity="info" rounded text
                                     class="device-action-btn"
                                     @click="handleDeviceManagement(device, 'status')"
                                     :aria-label="t('web.device.open_network_status')" />
 
-                                <Button v-tooltip.top="{ value: t('web.device.open_network_config') }"
+                                <Button v-tooltip.top="t('web.device.open_network_config')"
                                     icon="pi pi-cog" severity="secondary" rounded text
                                     class="device-action-btn"
                                     @click="handleDeviceManagement(device, 'config')"

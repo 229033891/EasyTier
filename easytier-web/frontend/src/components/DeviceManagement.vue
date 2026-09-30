@@ -122,6 +122,7 @@ onUnmounted(() => {
         :page-title="pageTitle"
         :drawer-close="backToList"
         :leave-button-label="t('web.device.back_to_list')"
+        :leave-button-tooltip="t('web.device.back_to_list_tip')"
         leave-button-icon="pi pi-arrow-left"
         :mode="managementMode" @switch-mode="switchManagementMode" />
 </template>

@@ -123,6 +123,11 @@ export class PeriodicTask {
     _runTaskHelper(nextInterval: number) {
         this.timer = setTimeout(async () => {
             if (this.task) {
+                // 页面切到后台时不发请求，避免隐藏标签页积压请求、回到前台时集中爆发
+                if (typeof document !== 'undefined' && document.hidden) {
+                    this._runTaskHelper(this.interval);
+                    return;
+                }
                 await this.task();
                 this._runTaskHelper(this.interval);
             }

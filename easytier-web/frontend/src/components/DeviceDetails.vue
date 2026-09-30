@@ -41,7 +41,7 @@ defineProps<{
     <div class="detail-item machine-id">
       <div class="detail-label">{{ t('web.device.machine_id') }}</div>
       <div class="detail-value">
-        <span class="machine-id-value" :title="device.machine_id">{{ device.machine_id }}</span>
+        <span class="machine-id-value" v-tooltip.top="device.machine_id">{{ device.machine_id }}</span>
       </div>
     </div>
   </div>

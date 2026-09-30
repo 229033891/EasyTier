@@ -17,6 +17,8 @@ const props = defineProps<{
     drawerClose?: () => void;
     /** 离开按钮文案，默认 t('close') */
     leaveButtonLabel?: string;
+    /** 离开按钮悬停说明 */
+    leaveButtonTooltip?: string;
     /** 离开按钮图标，默认 pi-times */
     leaveButtonIcon?: string;
     /** Web 独立全页管理（用页头返回，底栏不再放返回） */
@@ -35,6 +37,7 @@ const isConfigMode = computed(() => props.mode === 'config')
 /** GUI 等未指定 mode 时的兼容模式 */
 const isCombinedMode = computed(() => !props.mode)
 const leaveLabel = computed(() => props.leaveButtonLabel || t('close'))
+const leaveTooltip = computed(() => props.leaveButtonTooltip || leaveLabel.value)
 const leaveIcon = computed(() => props.leaveButtonIcon || 'pi pi-times')
 /** 有离开回调时底栏显示返回/关闭（全页与抽屉均用底栏，不再用页头箭头） */
 const showLeaveInFooter = computed(() => !!props.drawerClose)
@@ -859,26 +862,32 @@ onUnmounted(() => {
                     <span class="toolbar-zone-label">{{ t('web.device_management.toolbar_config_files') }}</span>
                     <div class="toolbar-zone-actions">
                         <Button class="config-toolbar-btn" @click="showConfigEditDialog = true" icon="pi pi-file-edit"
-                            :label="t('web.device_management.edit_as_file')" iconPos="left" severity="secondary" />
+                            :label="t('web.device_management.edit_as_file')" iconPos="left" severity="secondary"
+                            v-tooltip.bottom="t('web.device_management.edit_as_file_tip')" />
                         <Button class="config-toolbar-btn" @click="importConfig" icon="pi pi-upload"
-                            :label="t('web.device_management.import_config')" iconPos="left" severity="secondary" />
+                            :label="t('web.device_management.import_config')" iconPos="left" severity="secondary"
+                            v-tooltip.bottom="t('web.device_management.import_config_tip')" />
                         <Button v-if="selectedInstanceId" class="config-toolbar-btn" @click="exportConfig" icon="pi pi-download"
-                            :label="t('web.device_management.export_config')" iconPos="left" severity="secondary" />
+                            :label="t('web.device_management.export_config')" iconPos="left" severity="secondary"
+                            v-tooltip.bottom="t('web.device_management.export_config_tip')" />
                         <Button v-if="canSaveConfig" class="config-toolbar-btn" @click="saveNetworkConfig"
                             :disabled="!currentNetworkConfig || savingConfig"
                             icon="pi pi-save" :label="t('web.device_management.save_config')" iconPos="left"
-                            severity="success" />
+                            severity="success"
+                            v-tooltip.bottom="t('web.device_management.save_config_tip')" />
                     </div>
                 </div>
                 <div class="toolbar-zone toolbar-zone--network">
                     <span class="toolbar-zone-label">{{ t('web.device_management.toolbar_network') }}</span>
                     <div class="toolbar-zone-actions">
                         <Button class="config-toolbar-btn" @click="newNetwork" icon="pi pi-plus"
-                            :label="t('web.device_management.add_network')" iconPos="left" severity="success" />
+                            :label="t('web.device_management.add_network')" iconPos="left" severity="success"
+                            v-tooltip.bottom="t('web.device_management.add_network_tip')" />
                         <Button v-if="selectedInstanceId && currentNetworkControl.deletable.value"
                             class="config-toolbar-btn" @click="confirmDeleteNetwork" icon="pi pi-trash"
                             :label="t('web.device_management.delete_network')" iconPos="left" severity="danger"
-                            outlined />
+                            outlined
+                            v-tooltip.bottom="t('web.device_management.delete_network_tip')" />
                     </div>
                 </div>
             </div>
@@ -917,35 +926,43 @@ onUnmounted(() => {
                         : t('web.device_management.select_existing_network_or_create_new') }}
                 </p>
                 <Button v-if="!isStatusMode" @click="newNetwork"
-                    :label="t('web.device_management.add_network')" icon="pi pi-plus" iconPos="left" />
+                    :label="t('web.device_management.add_network')" icon="pi pi-plus" iconPos="left"
+                    v-tooltip.top="t('web.device_management.add_network_tip')" />
                 <Button v-else @click="requestSwitchMode('config')"
                     :label="t('web.device_management.switch_to_config')" icon="pi pi-cog" iconPos="left"
-                    severity="secondary" />
+                    severity="secondary"
+                    v-tooltip.top="t('web.device_management.switch_to_config_tip')" />
             </div>
         </div>
 
         <div v-if="showStickyFooter" class="network-sticky-footer">
             <Button v-if="showLeaveInFooter" @click="drawerClose" :label="leaveLabel" severity="secondary"
-                :icon="leaveIcon" iconPos="left" class="network-footer-btn" />
+                :icon="leaveIcon" iconPos="left" class="network-footer-btn"
+                v-tooltip.top="leaveTooltip" />
             <div class="footer-zone footer-zone--primary">
                 <Button v-if="isConfigMode" icon="pi pi-chart-line" severity="secondary"
                     :label="t('web.device_management.switch_to_status')" iconPos="left"
-                    class="network-footer-btn" @click="requestSwitchMode('status')" />
+                    class="network-footer-btn" @click="requestSwitchMode('status')"
+                    v-tooltip.top="t('web.device_management.switch_to_status_tip')" />
                 <Button v-else-if="isStatusMode" icon="pi pi-cog" severity="secondary"
                     :label="t('web.device_management.switch_to_config')" iconPos="left"
-                    class="network-footer-btn" @click="requestSwitchMode('config')" />
+                    class="network-footer-btn" @click="requestSwitchMode('config')"
+                    v-tooltip.top="t('web.device_management.switch_to_config_tip')" />
 
                 <Button v-if="stickyFooterPrimary === 'start'" @click="confirmStartNetwork($event)"
                     :disabled="!currentNetworkControl.deletable.value" :label="t('web.network.start')"
-                    severity="success" icon="pi pi-play" iconPos="left" class="network-footer-btn" />
+                    severity="success" icon="pi pi-play" iconPos="left" class="network-footer-btn"
+                    v-tooltip.top="t('web.device_management.start_network_tip')" />
                 <Button v-else-if="stickyFooterPrimary === 'run'"
                     @click="saveAndRunNewNetwork(currentNetworkConfig!)" :disabled="!currentNetworkConfig"
                     :label="t('run_network')" severity="success" icon="pi pi-arrow-right" iconPos="right"
-                    class="network-footer-btn" />
+                    class="network-footer-btn"
+                    v-tooltip.top="t('run_network_tip')" />
                 <Button v-else-if="stickyFooterPrimary === 'stop'" @click="confirmStopNetwork($event)"
                     :disabled="!currentNetworkControl.deletable.value"
                     :label="t('web.device_management.disable_network')" severity="danger" icon="pi pi-power-off"
-                    iconPos="left" class="network-footer-btn" />
+                    iconPos="left" class="network-footer-btn"
+                    v-tooltip.top="t('web.device_management.disable_network_tip')" />
             </div>
         </div>
 

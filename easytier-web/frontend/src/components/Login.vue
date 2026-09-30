@@ -3,15 +3,12 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { Card, InputText, Password, Button, AutoComplete } from 'primevue';
 import { useRouter } from 'vue-router';
 import { useToast } from 'primevue/usetoast';
-import { I18nUtils } from 'easytier-frontend-lib';
 import { getInitialApiHost, cleanAndLoadApiHosts, saveApiHost } from "../modules/api-host"
 import { useI18n } from 'vue-i18n'
 import ApiClient, { Credential } from '../modules/api';
 import FormField from './FormField.vue';
-import { tooltipDirective } from '../modules/tooltip';
 import Icon from '../assets/easytier.png';
 
-const vTooltip = tooltipDirective;
 const { t } = useI18n()
 
 const api = computed<ApiClient>(() => new ApiClient(apiHost.value));
@@ -135,11 +132,6 @@ onBeforeUnmount(() => {
                     <Button v-if="oidcEnabled" :label="t('web.login.sso_login')" type="button" class="w-full" severity="info"
                         @click="onSsoLogin" />
                 </form>
-
-                <Button icon="pi pi-language" type="button" class="rounded-full absolute top-4 right-4 z-10"
-                    severity="contrast" @click="I18nUtils.toggleLanguage"
-                    :aria-label="t('web.main.language')"
-                    v-tooltip.bottom="t('web.main.language')" />
             </template>
         </Card>
     </div>

@@ -1,9 +1,8 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue';
 import { Button } from 'primevue';
-import { tooltipDirective } from '../modules/tooltip';
+import { Utils, tooltipDirective } from 'easytier-frontend-lib';
 import { useRouter } from 'vue-router';
-import { Utils } from 'easytier-frontend-lib';
 import { useI18n } from 'vue-i18n';
 import ApiClient from '../modules/api';
 import { usePollingList } from '../modules/usePollingList';
@@ -118,14 +117,14 @@ const openNetworkRow = (row: NetworkRow, mode: 'status' | 'config') => {
                 <tr v-for="row in networkRows" :key="`${row.machine_id}-${row.instance_id}`"
                     class="border-t surface-border">
                     <td class="px-3 py-2">
-                        <div class="font-medium truncate max-w-[16rem]" :title="row.network_name">
+                        <div class="font-medium truncate max-w-[16rem]" v-tooltip.top="row.network_name">
                             {{ row.network_name }}
                         </div>
-                        <div class="et-meta truncate max-w-[16rem]" :title="row.instance_id">
+                        <div class="et-meta truncate max-w-[16rem]" v-tooltip.top="row.instance_id">
                             {{ row.instance_id }}
                         </div>
                     </td>
-                    <td class="px-3 py-2 truncate max-w-[10rem]" :title="row.hostname">{{ row.hostname }}</td>
+                    <td class="px-3 py-2 truncate max-w-[10rem]" v-tooltip.top="row.hostname">{{ row.hostname }}</td>
                     <td class="px-3 py-2">
                         <span class="inline-flex items-center gap-1 status-running">
                             <i class="pi pi-circle-fill text-[0.45rem]"></i>

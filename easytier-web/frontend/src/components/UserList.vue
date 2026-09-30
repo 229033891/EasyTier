@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue';
 import { Button, Checkbox, InputText, Password, useConfirm, useToast } from 'primevue';
-import { tooltipDirective } from '../modules/tooltip';
+import { tooltipDirective } from 'easytier-frontend-lib';
 import { useI18n } from 'vue-i18n';
 import ApiClient, { UserInfo } from '../modules/api';
 import ListPageShell from './ListPageShell.vue';
@@ -111,6 +111,15 @@ const submitReset = async () => {
 };
 
 const confirmDelete = (user: UserInfo) => {
+    if (user.is_admin) {
+        toast.add({
+            severity: 'warn',
+            summary: t('web.users.delete_failed'),
+            detail: t('web.users.delete_admin_forbidden'),
+            life: 2500,
+        });
+        return;
+    }
     confirm.require({
         message: t('web.users.delete_confirm', { username: user.username }),
         header: t('web.users.delete'),
@@ -170,8 +179,8 @@ onMounted(async () => {
                 <Checkbox inputId="new-is-admin" v-model="newIsAdmin" :binary="true" />
             </FormField>
             <div class="field field-action">
-                <Button :label="t('web.users.create')" icon="pi pi-user-plus" :loading="creating"
-                    @click="createUser" />
+                <Button class="user-form-btn" :label="t('web.users.create')" icon="pi pi-user-plus"
+                    :loading="creating" @click="createUser" />
             </div>
         </div>
 
@@ -183,12 +192,11 @@ onMounted(async () => {
                 <Password id="reset-password" v-model="resetPassword" class="w-full" toggleMask :feedback="false"
                     autocomplete="new-password" />
             </FormField>
-            <div class="field field-action">
-                <Button :label="t('web.users.reset_password')" icon="pi pi-key"
+            <div class="field field-action field-actions">
+                <Button class="user-form-btn" :label="t('web.users.reset_password')" icon="pi pi-key"
                     :loading="resettingId === resetFor.id" @click="submitReset" />
-            </div>
-            <div class="field field-action">
-                <Button :label="t('web.users.cancel')" severity="secondary" outlined @click="cancelReset" />
+                <Button class="user-form-btn" :label="t('web.users.cancel')" severity="secondary" outlined
+                    @click="cancelReset" />
             </div>
         </div>
 
@@ -216,11 +224,17 @@ onMounted(async () => {
                                 class="user-action-btn"
                                 @click="startReset(user)"
                                 :aria-label="t('web.users.reset_password')" />
-                            <Button v-tooltip.top="t('web.users.delete')"
+                            <Button v-if="!user.is_admin"
+                                v-tooltip.top="t('web.users.delete')"
                                 icon="pi pi-trash" severity="danger" rounded text
                                 class="user-action-btn"
                                 @click="confirmDelete(user)"
                                 :aria-label="t('web.users.delete')" />
+                            <Button v-else
+                                v-tooltip.top="t('web.users.delete_admin_forbidden')"
+                                icon="pi pi-trash" severity="secondary" rounded text
+                                class="user-action-btn" disabled
+                                :aria-label="t('web.users.delete_admin_forbidden')" />
                         </div>
                     </td>
                 </tr>
@@ -262,10 +276,25 @@ onMounted(async () => {
 
 .field-action {
     min-width: 0;
+    justify-content: flex-end;
 }
 
-.field-action :deep(.p-button) {
-    min-height: var(--et-btn);
+.field-actions {
+    grid-column: 3 / -1;
+    display: flex;
+    flex-direction: row;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.user-form-btn {
+    width: var(--et-btn-w, 10rem) !important;
+    min-width: var(--et-btn-w, 10rem) !important;
+    height: var(--et-btn, 2.5rem) !important;
+    min-height: var(--et-btn, 2.5rem) !important;
+    justify-content: center;
     white-space: nowrap;
 }
 
@@ -299,11 +328,25 @@ onMounted(async () => {
     .field-action {
         min-width: 0;
     }
+
+    .field-actions {
+        grid-column: 1 / -1;
+    }
 }
 
 @media (max-width: 480px) {
     .user-create-form {
         grid-template-columns: 1fr;
+    }
+
+    .user-form-btn {
+        width: 100% !important;
+        min-width: 0 !important;
+    }
+
+    .field-actions {
+        flex-direction: column;
+        align-items: stretch;
     }
 }
 

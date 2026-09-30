@@ -18,6 +18,10 @@ network_secret: Network Secret
 public_server_url: Public Server URL
 peer_urls: Peer URLs
 proxy_cidrs: Subnet Proxy CIDRs
+proxy_cidrs_help: |-
+  Subnet proxy CIDRs: the local subnets this host will proxy, so peers can reach them through the virtual network.
+  Format: CIDR, e.g. 10.0.0.0/24. Multiple entries allowed.
+  Note: when using No TUN Mode or manual routes, make sure the peer has a matching return route, otherwise traffic won't flow.
 vpn_portal_wireguard_listen: WireGuard Listen Address
 vpn_portal_wireguard_listen_placeholder: "Example: 0.0.0.0:22022"
 vpn_portal_wireguard_private_key: WireGuard Server Private Key
@@ -388,6 +392,7 @@ port_forwards_help: "forward local port to remote port in virtual network. e.g.:
 port_forwards_bind_addr: "Bind address, e.g.: 0.0.0.0"
 port_forwards_dst_addr: "Destination address, e.g.: 10.126.126.1"
 port_forwards_add_btn: "Add"
+port_forwards_add_tip: Add a rule that forwards a local port into the virtual network
 edit_port_forward: "Edit Port Forward"
 
 mtu: MTU
@@ -421,6 +426,7 @@ status:
   relay: Relay
 
 run_network: Run Network
+run_network_tip: Save the current config and start or apply this network
 stop_network: Stop Network
 network_running: running
 network_stopped: stopped
@@ -524,6 +530,7 @@ web:
     delete_confirm: Delete user "{username}"?
     delete_success: User deleted
     delete_failed: Failed to delete user
+    delete_admin_forbidden: Administrator accounts cannot be deleted
     load_failed: Failed to load users
     empty: No users
     reset_password: Reset Password
@@ -575,24 +582,31 @@ web:
     unknown_location: Unknown Location
     network_count: Running Networks
     back_to_list: Back to Device List
+    back_to_list_tip: Return to the device list without saving unsaved changes
 
   device_management:
     edit_network: Edit Network
     export_config: Export Config
+    export_config_tip: Export the current network config to a local file
     delete_network: Delete Network
+    delete_network_tip: Permanently delete this network config from the device
     network: Network
     select_network: Select Network
     create_network: Create Network
     cancel_edit: Cancel Edit
     more_actions: More Actions
     edit_as_file: Edit as File
+    edit_as_file_tip: Edit the full configuration as plain text
     save_config: Save Config
+    save_config_tip: Save changes to the device without starting the network
     config_saved: Config Saved
     save_failed: Failed to save config
     start_failed: Failed to start network
     import_config: Import Config
+    import_config_tip: Import a local file and overwrite the current network config
     create_new: Create New Network
     add_network: Add Network
+    add_network_tip: Create a blank network config and open the editor
     network_status: Network Status
     loading_network_status: Loading Network Status
     network_info_unavailable: Network status is unavailable
@@ -603,12 +617,16 @@ web:
     select_network_for_status: Select a network instance to view status or start/stop it
     network_disabled_hint: This network is disabled. You can start it here, or open Config to edit settings.
     switch_to_config: Go to Config
+    switch_to_config_tip: Switch to the config page to edit network settings
     switch_to_status: Go to Status
+    switch_to_status_tip: Switch to the status page to view peers and connections
     confirm_disable_network: Disable this network now?
     confirm_start_network: Start this network now?
     confirm_delete_network: Delete this network? This cannot be undone.
     confirm_delete_network_header: Delete Network
     disable_network: Disable Network
+    disable_network_tip: Stop and disable the currently running network
+    start_network_tip: Start the currently saved network config
     toolbar_config_files: Config Files
     toolbar_network: Network
     toolbar_danger: Danger
@@ -707,6 +725,7 @@ acl:
   title: Access Control (ACL)
   help: Access control list to restrict communication between nodes.
   enabled: Enable ACL
+  enabled_tip: Enable access control and configure rules between nodes
   default_action: Default Action
   chains: Rule Chains
   inbound: Inbound

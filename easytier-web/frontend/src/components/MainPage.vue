@@ -1,8 +1,7 @@
 <script setup lang="ts">
-import { I18nUtils } from 'easytier-frontend-lib'
+import { I18nUtils, tooltipDirective } from 'easytier-frontend-lib'
 import { computed, onMounted, ref, onUnmounted, nextTick, watch } from 'vue';
 import { Button } from 'primevue';
-import { tooltipDirective } from '../modules/tooltip';
 import { useRoute, useRouter } from 'vue-router';
 import { useDialog } from 'primevue/usedialog';
 import ChangePassword from './ChangePassword.vue';
@@ -179,11 +178,11 @@ onUnmounted(() => {
                         v-tooltip.bottom="t('web.main.toggle_sidebar')"
                         @click="toggleMobileSidebar" />
                 </div>
-                <a href="https://easytier.top" class="flex ms-1">
+                <div class="flex ms-1 items-center">
                     <img :src="Icon" class="h-8 me-3" :alt="t('web.main.logo_alt')" />
                     <span
                         class="self-center text-xl font-semibold whitespace-nowrap dark:text-white">EasyTier</span>
-                </a>
+                </div>
             </div>
         </div>
     </nav>
@@ -200,14 +199,14 @@ onUnmounted(() => {
             'w-64',
         ]"
         :aria-label="t('web.main.sidebar')">
-        <!-- 品牌区：移动端顶栏已有品牌，这里只在桌面显示 -->
-        <a href="https://easytier.top"
+        <!-- 品牌区：移动端顶栏已有品牌，这里只在桌面显示（纯展示，无外链） -->
+        <div
             class="sidebar-brand hidden sm:flex shrink-0 items-center border-b border-gray-200 dark:border-gray-700"
             :class="sidebarCollapsed ? 'justify-center px-0' : 'px-3'">
             <img :src="Icon" class="h-8" :alt="t('web.main.logo_alt')" />
             <span class="sidebar-brand-text ms-3 text-xl font-semibold whitespace-nowrap dark:text-white"
                 :class="{ 'sm:hidden': sidebarCollapsed }">EasyTier</span>
-        </a>
+        </div>
 
         <div class="flex-1 min-h-0 overflow-y-auto px-2 py-3 bg-white dark:bg-gray-800">
             <ul class="space-y-2 font-medium">
@@ -262,7 +261,7 @@ onUnmounted(() => {
                         severity="contrast" @click="toggleDesktopCollapse"
                         :aria-label="sidebarCollapsed ? t('web.main.expand_sidebar') : t('web.main.collapse_sidebar')"
                         v-tooltip.right="sidebarCollapsed ? t('web.main.expand_sidebar') : t('web.main.collapse_sidebar')">
-                        <i :class="[sidebarCollapsed ? 'pi pi-angles-right' : 'pi pi-angles-left', 'text-xl opacity-80']"></i>
+                        <i :class="[sidebarCollapsed ? 'pi pi-angle-double-right' : 'pi pi-angle-double-left', 'text-xl opacity-80']"></i>
                         <span class="mb-0.5" :class="{ 'sm:hidden': sidebarCollapsed }">
                             {{ sidebarCollapsed ? t('web.main.expand_sidebar') : t('web.main.collapse_sidebar') }}
                         </span>

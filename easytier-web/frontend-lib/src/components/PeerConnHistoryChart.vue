@@ -9,7 +9,7 @@
         :allow-empty="false" class="peer-history-range" />
 
       <Button size="small" text rounded icon="pi pi-refresh" :loading="loading"
-        :aria-label="t('web.common.refresh')" v-tooltip="t('web.common.refresh')" @click="load()" />
+        :aria-label="t('web.common.refresh')" v-tooltip.top="t('web.common.refresh')" @click="load()" />
 
       <span v-if="selectedPeer" class="text-xs text-surface-500 truncate">
         {{ selectedPeer.remote_addr }}<template v-if="selectedPeer.tunnel_type"> ·

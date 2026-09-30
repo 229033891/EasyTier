@@ -235,11 +235,19 @@ const myNodeInfoGroups = computed(() => {
   }
 
   const publicChips: Chip[] = []
+  // 公网 IP 附带侦听端口，便于直接作为对端接入地址使用；优先取 UDP 侦听端口
+  const listenerUrls = my_node_info.listeners ?? []
+  const publicPort = (() => {
+    const pick = listenerUrls.find(l => l.url?.startsWith('udp:')) ?? listenerUrls[0]
+    const m = pick?.url?.match(/:(\d+)(?:[/?#]|$)/)
+    return m?.[1] ?? ''
+  })()
+  const withPort = (ip: string) => (publicPort ? `${ip}:${publicPort}` : ip)
   if (my_node_info.ips?.public_ipv4) {
-    publicChips.push(chip(`IPv4: ${ipv4ToString(my_node_info.ips.public_ipv4)}`))
+    publicChips.push(chip(`IPv4: ${withPort(ipv4ToString(my_node_info.ips.public_ipv4))}`))
   }
   if (my_node_info.ips?.public_ipv6) {
-    publicChips.push(chip(`IPv6: ${ipv6ToString(my_node_info.ips.public_ipv6)}`))
+    publicChips.push(chip(`IPv6: ${withPort(ipv6ToString(my_node_info.ips.public_ipv6))}`))
   }
   if (publicChips.length) {
     groups.push({
@@ -527,10 +535,10 @@ const eventLogContent = computed(() => {
               <!-- 内容多时自动换行（不横向滚动），分组高度随之增加 -->
               <div class="node-info-group-chips">
                 <Chip v-for="(chip, i) in group.chips" :key="i" :label="chip.label" :icon="chip.icon"
-                  class="node-info-chip" :title="chip.label" />
+                  class="node-info-chip" v-tooltip.top="chip.label" />
               </div>
               <Button v-if="group.chips.length" size="small" text rounded icon="pi pi-copy"
-                :aria-label="t('node_info_copy_group')" v-tooltip="t('node_info_copy_group')"
+                :aria-label="t('node_info_copy_group')" v-tooltip.top="t('node_info_copy_group')"
                 @click="copyGroupChips(group)" />
             </div>
           </div>
@@ -549,11 +557,11 @@ const eventLogContent = computed(() => {
             <Column :header="t('hostname')">
               <template #body="slotProps">
                 <div v-if="!slotProps.data.route.cost || !isPublicServerRoute(slotProps.data)"
-                  v-tooltip="slotProps.data.route.hostname">
+                  v-tooltip.top="slotProps.data.route.hostname">
                   {{
                     slotProps.data.route.hostname }}
                 </div>
-                <div v-else v-tooltip="slotProps.data.route.hostname" class="space-x-1">
+                <div v-else v-tooltip.top="slotProps.data.route.hostname" class="space-x-1">
                   <Tag v-if="isPublicServerRoute(slotProps.data)" severity="info" value="Info">
                     {{ t('status.server') }}
                   </Tag>

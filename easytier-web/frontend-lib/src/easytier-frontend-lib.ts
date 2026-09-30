@@ -11,8 +11,7 @@ import HumanEvent from './components/HumanEvent.vue';
 
 // do not use primevue tooltip, it has serious memory leak issue
 // https://github.com/primefaces/primevue/issues/5856
-// import Tooltip from 'primevue/tooltip';
-import { vTooltip } from 'floating-vue';
+import { tooltipDirective, tooltipDefaults, normalizeTooltipValue } from './modules/tooltip';
 
 import * as Api from './modules/api';
 import * as Utils from './modules/utils';
@@ -45,8 +44,20 @@ export default {
         app.component('Status', Status);
         app.component('HumanEvent', HumanEvent);
         app.component('RemoteManagement', RemoteManagement);
-        app.directive('tooltip', vTooltip as any);
+        app.directive('tooltip', tooltipDirective);
     }
 };
 
-export { Config, ConfigEditDialog, RemoteManagement, Status, I18nUtils, NetworkTypes, Api, Utils };
+export {
+    Config,
+    ConfigEditDialog,
+    RemoteManagement,
+    Status,
+    I18nUtils,
+    NetworkTypes,
+    Api,
+    Utils,
+    tooltipDirective,
+    tooltipDefaults,
+    normalizeTooltipValue,
+};
