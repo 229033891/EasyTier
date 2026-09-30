@@ -163,6 +163,27 @@ select {
   color: var(--text-color-secondary, #64748b);
 }
 
+/* 输入框占位符：浅灰，与已填内容区分 */
+:where(input, textarea)::placeholder {
+  color: var(--text-color-secondary, #94a3b8);
+  opacity: 1;
+}
+
+.p-inputtext::placeholder,
+.p-inputnumber-input::placeholder,
+.p-password-input::placeholder,
+.p-autocomplete-input::placeholder {
+  color: var(--text-color-secondary, #94a3b8) !important;
+  opacity: 1 !important;
+}
+
+.p-placeholder,
+.p-select .p-placeholder,
+.p-multiselect .p-placeholder,
+.p-autocomplete .p-placeholder {
+  color: var(--text-color-secondary, #94a3b8) !important;
+}
+
 /* 顶部导航栏安全区适配 */
 .top-navbar {
   position: sticky;

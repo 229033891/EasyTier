@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { v4 as uuidv4 } from 'uuid'
-import { AutoComplete, Button, Checkbox, Dialog, InputNumber, InputText, MultiSelect, Panel, Password, Select, SelectButton, ToggleButton } from 'primevue'
+import { AutoComplete, Button, Checkbox, Dialog, InputNumber, InputText, MultiSelect, Panel, Password, Select, SelectButton, ToggleButton, useConfirm, useToast } from 'primevue'
 import InputGroup from 'primevue/inputgroup'
 import InputGroupAddon from 'primevue/inputgroupaddon'
 import {
@@ -34,6 +34,75 @@ const curNetwork = defineModel('curNetwork', {
 })
 
 const { t } = useI18n()
+const toast = useToast()
+const confirm = useConfirm()
+
+const NETWORK_SECRET_ALPHABET =
+  'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$%^&*-_=+'
+
+/** 均匀取样，避免 `byte % alphabet.length` 的模偏差 */
+function randomSecret(length = 24): string {
+  const alphabet = NETWORK_SECRET_ALPHABET
+  const maxUnbiased = Math.floor(256 / alphabet.length) * alphabet.length
+  const out: string[] = []
+  while (out.length < length) {
+    const bytes = new Uint8Array(length - out.length)
+    crypto.getRandomValues(bytes)
+    for (const b of bytes) {
+      if (b >= maxUnbiased) continue
+      out.push(alphabet[b % alphabet.length])
+      if (out.length >= length) break
+    }
+  }
+  return out.join('')
+}
+
+async function applyGeneratedNetworkSecret() {
+  const secret = randomSecret()
+  curNetwork.value.network_secret = secret
+  try {
+    if (!navigator.clipboard?.writeText) {
+      throw new Error('clipboard unavailable')
+    }
+    await navigator.clipboard.writeText(secret)
+    toast.add({
+      severity: 'success',
+      summary: t('network_secret_generated'),
+      life: 2500,
+    })
+  } catch {
+    toast.add({
+      severity: 'warn',
+      summary: t('network_secret_copy_failed'),
+      life: 3000,
+    })
+  }
+}
+
+/** 生成高强度网络密码并复制；若已有密码则先确认覆盖 */
+function generateAndCopyNetworkSecret() {
+  if (curNetwork.value.network_secret?.trim()) {
+    confirm.require({
+      message: t('network_secret_overwrite_confirm'),
+      header: t('network_secret_overwrite_header'),
+      icon: 'pi pi-exclamation-triangle',
+      rejectProps: {
+        label: t('web.common.cancel'),
+        severity: 'secondary',
+        outlined: true,
+      },
+      acceptProps: {
+        label: t('network_secret_generate'),
+        severity: 'warning',
+      },
+      accept: () => {
+        void applyGeneratedNetworkSecret()
+      },
+    })
+    return
+  }
+  void applyGeneratedNetworkSecret()
+}
 
 /** 可折叠 Panel：默认 Basic 展开，其余收起；整块标题栏可点（触摸友好） */
 const panelCollapsed = reactive({
@@ -357,8 +426,17 @@ function removeVpnPortalClient(index: number) {
                 </div>
                 <div class="flex flex-col gap-2 basis-5/12 grow">
                   <label for="network_secret">{{ t('network_secret') }}</label>
-                  <Password id="network_secret" v-model="curNetwork.network_secret"
-                    aria-describedby="network_secret-help" toggleMask :feedback="false" fluid />
+                  <InputGroup class="network-secret-group">
+                    <Password id="network_secret" v-model="curNetwork.network_secret"
+                      aria-describedby="network_secret-help" toggleMask :feedback="false" fluid />
+                    <InputGroupAddon>
+                      <Button type="button" icon="pi pi-key" severity="secondary" text
+                        class="network-secret-generate-btn"
+                        :aria-label="t('network_secret_generate')"
+                        v-tooltip.top="t('network_secret_generate')"
+                        @click="generateAndCopyNetworkSecret" />
+                    </InputGroupAddon>
+                  </InputGroup>
                 </div>
               </div>
 
@@ -937,13 +1015,60 @@ function removeVpnPortalClient(index: number) {
   min-height: 2.35rem;
 }
 
+.config-panels :deep(.p-inputtext::placeholder),
+.config-panels :deep(.p-inputnumber-input::placeholder),
+.config-panels :deep(.p-password-input::placeholder),
+.config-panels :deep(.p-autocomplete-input::placeholder) {
+  color: var(--text-color-secondary, #94a3b8) !important;
+  opacity: 1 !important;
+}
+
+.config-panels :deep(.p-placeholder) {
+  color: var(--text-color-secondary, #94a3b8) !important;
+}
+
 .advanced-flag-item .config-help-tip {
   margin-left: 0.4rem;
+}
+
+.network-secret-group :deep(.p-password),
+.network-secret-group :deep(.p-password-input) {
+  width: 100%;
+}
+
+.network-secret-generate-btn {
+  width: 2.35rem !important;
+  min-width: 2.35rem !important;
+  height: 2.35rem !important;
+  padding: 0 !important;
 }
 
 @media (max-width: 760px) {
   .advanced-flag-groups {
     grid-template-columns: 1fr;
+  }
+
+  /* 窄屏：开关项双列，避免单列过长 */
+  .advanced-flags-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.35rem 0.5rem;
+  }
+
+  .advanced-flag-item {
+    min-height: 2rem;
+    padding: 0.25rem 0.4rem;
+  }
+
+  .advanced-flag-item label {
+    margin-left: 0.35rem;
+    font-size: 0.75rem;
+  }
+
+  .advanced-flag-item .config-help-tip {
+    margin-left: 0.2rem;
+    width: 0.95rem;
+    height: 0.95rem;
+    font-size: 0.85rem;
   }
 }
 

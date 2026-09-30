@@ -115,7 +115,7 @@ export function DEFAULT_NETWORK_CONFIG(): NetworkConfig {
       'udp://0.0.0.0:11010',
       'wg://0.0.0.0:11011',
     ],
-    latency_first: false,
+    latency_first: true,
     dev_name: '',
 
     use_smoltcp: false,
@@ -123,7 +123,7 @@ export function DEFAULT_NETWORK_CONFIG(): NetworkConfig {
     ipv6_public_addr_auto: false,
     ipv6_public_addr_provider: false,
     ipv6_public_addr_prefix: '',
-    enable_kcp_proxy: false,
+    enable_kcp_proxy: true,
     disable_kcp_input: false,
     enable_quic_proxy: false,
     disable_quic_input: false,

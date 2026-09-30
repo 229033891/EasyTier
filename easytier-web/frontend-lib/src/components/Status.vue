@@ -596,7 +596,8 @@ const eventLogContent = computed(() => {
                 class="text-xs font-semibold px-2 py-0.5 rounded-full" />
             </div>
           </template>
-          <DataTable :value="peerRouteInfos" column-resize-mode="fit" table-class="w-full">
+          <div class="peer-table-scroll">
+          <DataTable :value="peerRouteInfos" column-resize-mode="expand" table-class="peer-route-table">
             <Column :field="ipFormat" :header="t('virtual_ipv4')" />
             <Column :header="t('hostname')">
               <template #body="slotProps">
@@ -622,7 +623,8 @@ const eventLogContent = computed(() => {
                 </span>
               </template>
             </Column>
-            <Column :field="tunnelProto" :header="t('tunnel_proto')" />
+            <Column :field="tunnelProto" :header="t('tunnel_proto')"
+              header-class="peer-col-secondary" body-class="peer-col-secondary" />
             <Column :header="t('peer_addr')">
               <template #body="slotProps">
                 <span class="peer-addr-cell" v-tooltip.top="peerAddrDisplay(slotProps.data).tip">
@@ -631,16 +633,22 @@ const eventLogContent = computed(() => {
               </template>
             </Column>
             <Column :field="latencyMs" :header="t('latency')" />
-            <Column :field="txBytes" :header="t('upload_bytes')" />
-            <Column :field="rxBytes" :header="t('download_bytes')" />
-            <Column :field="lossRate" :header="t('loss_rate')" />
-            <Column :field="natType" :header="t('nat_type')" />
-            <Column :header="t('status.version')">
+            <Column :field="txBytes" :header="t('upload_bytes')"
+              header-class="peer-col-secondary" body-class="peer-col-secondary" />
+            <Column :field="rxBytes" :header="t('download_bytes')"
+              header-class="peer-col-secondary" body-class="peer-col-secondary" />
+            <Column :field="lossRate" :header="t('loss_rate')"
+              header-class="peer-col-secondary" body-class="peer-col-secondary" />
+            <Column :field="natType" :header="t('nat_type')"
+              header-class="peer-col-secondary" body-class="peer-col-secondary" />
+            <Column :header="t('status.version')"
+              header-class="peer-col-secondary" body-class="peer-col-secondary">
               <template #body="slotProps">
                 <span>{{ version(slotProps.data) }}</span>
               </template>
             </Column>
           </DataTable>
+          </div>
         </Panel>
 
         <Panel v-if="api.get_peer_conn_history" v-model:collapsed="panelCollapsed.peerHistory"
@@ -837,6 +845,48 @@ const eventLogContent = computed(() => {
   white-space: nowrap;
   vertical-align: bottom;
   font-variant-numeric: tabular-nums;
+}
+
+.peer-table-scroll {
+  width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.peer-table-scroll :deep(.peer-route-table) {
+  min-width: 36rem;
+}
+
+@media (max-width: 640px) {
+  .peer-table-scroll :deep(.peer-col-secondary) {
+    display: none !important;
+  }
+
+  .peer-table-scroll :deep(.peer-route-table) {
+    min-width: 22rem;
+  }
+
+  .peer-addr-cell,
+  .route-cost-cell {
+    max-width: 8rem;
+  }
+
+  /* 事件时间线：窄屏改为时间在内容上方，避免对侧栏挤压正文 */
+  .status-panels :deep(.p-timeline-event) {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.15rem;
+  }
+
+  .status-panels :deep(.p-timeline-event-opposite) {
+    flex: 0 0 auto !important;
+    padding: 0 !important;
+    text-align: left;
+  }
+
+  .status-panels :deep(.p-timeline-event-separator) {
+    display: none;
+  }
 }
 
 .p-timeline :deep(.p-timeline-event-opposite) {

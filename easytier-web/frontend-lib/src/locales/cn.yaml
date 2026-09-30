@@ -15,6 +15,11 @@ virtual_ipv4: 虚拟IPv4地址
 virtual_ipv4_dhcp: DHCP
 network_name: 网络名称
 network_secret: 网络密码
+network_secret_generate: 生成强密码并复制
+network_secret_generated: 已生成强密码并复制到剪贴板
+network_secret_copy_failed: 密码已生成，但复制到剪贴板失败
+network_secret_overwrite_confirm: 当前已有网络密码，确定要用新生成的强密码覆盖吗？
+network_secret_overwrite_header: 覆盖网络密码
 public_server_url: 公共服务器地址
 peer_urls: 对等节点地址
 proxy_cidrs: 子网代理CIDR

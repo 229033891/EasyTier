@@ -3,13 +3,13 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { Card, InputText, Password, Button, AutoComplete } from 'primevue';
 import { useRouter } from 'vue-router';
 import { useToast } from 'primevue/usetoast';
+import { I18nUtils } from 'easytier-frontend-lib';
 import { getInitialApiHost, cleanAndLoadApiHosts, saveApiHost } from "../modules/api-host"
 import { useI18n } from 'vue-i18n'
 import ApiClient, { Credential } from '../modules/api';
 import FormField from './FormField.vue';
-import Icon from '../assets/easytier.png';
 
-const { t } = useI18n()
+const { t, locale } = useI18n()
 
 const api = computed<ApiClient>(() => new ApiClient(apiHost.value));
 const router = useRouter();
@@ -18,6 +18,13 @@ const toast = useToast();
 const username = ref('');
 const password = ref('');
 const submitting = ref(false);
+const currentLang = computed(() => (locale.value === 'cn' ? 'cn' : 'en'));
+/** 圆形按钮展示「切换目标」语言：当前中文则显示 EN，反之显示 中 */
+const langToggleLabel = computed(() => (currentLang.value === 'cn' ? 'EN' : '中'));
+
+const toggleLanguage = async () => {
+    await I18nUtils.loadLanguageAsync(currentLang.value === 'cn' ? 'en' : 'cn');
+};
 
 const onSubmit = async () => {
     if (submitting.value) return;
@@ -114,11 +121,13 @@ onBeforeUnmount(() => {
             <Card class="login-card">
                 <template #header>
                     <div class="login-brand">
-                        <img :src="Icon" :alt="t('web.main.logo_alt')" class="login-logo" />
-                        <div class="login-brand-text">
-                            <div class="login-brand-name">EasyTier</div>
-                            <p class="login-brand-sub">{{ t('web.login.login') }}</p>
-                        </div>
+                        <div class="login-brand-name">ET</div>
+                        <button type="button" class="login-lang-toggle"
+                            :aria-label="t('web.main.language')"
+                            :title="t('web.main.language')"
+                            @click="toggleLanguage">
+                            {{ langToggleLabel }}
+                        </button>
                     </div>
                 </template>
                 <template #content>
@@ -158,7 +167,7 @@ onBeforeUnmount(() => {
     display: flex;
     align-items: center;
     justify-content: center;
-    padding: 1.25rem;
+    padding: max(1.25rem, env(safe-area-inset-top)) max(1.25rem, env(safe-area-inset-right)) max(1.25rem, env(safe-area-inset-bottom)) max(1.25rem, env(safe-area-inset-left));
     box-sizing: border-box;
     background:
         radial-gradient(ellipse 70% 55% at 12% 8%, color-mix(in srgb, var(--primary-color, #0ea5e9) 16%, transparent), transparent 58%),
@@ -182,38 +191,56 @@ onBeforeUnmount(() => {
 }
 
 .login-brand {
+    position: relative;
     display: flex;
     align-items: center;
-    gap: 0.9rem;
-    padding: 1.35rem 1.35rem 0.85rem;
+    justify-content: center;
+    min-height: 3.25rem;
+    padding: 1.25rem 3.5rem 0.75rem;
 }
 
-.login-logo {
-    width: 3rem;
-    height: 3rem;
-    border-radius: var(--et-radius);
-    box-shadow: 0 6px 16px color-mix(in srgb, var(--primary-color, #0ea5e9) 22%, transparent);
+.login-lang-toggle {
+    position: absolute;
+    top: 50%;
+    right: 1.35rem;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 2.5rem;
+    height: 2.5rem;
+    margin-top: -1.25rem;
+    flex-shrink: 0;
+    border: 1px solid color-mix(in srgb, var(--primary-color, #0ea5e9) 35%, var(--et-border-color, #e2e8f0));
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--primary-color, #0ea5e9) 10%, transparent);
+    color: var(--primary-color, #0284c7);
+    font-size: 0.8125rem;
+    font-weight: 700;
+    letter-spacing: 0.01em;
+    line-height: 1;
+    cursor: pointer;
+    transition: background-color 0.15s ease, border-color 0.15s ease, transform 0.15s ease;
 }
 
-.login-brand-text {
-    min-width: 0;
+@media (hover: hover) {
+    .login-lang-toggle:hover {
+        background: color-mix(in srgb, var(--primary-color, #0ea5e9) 18%, transparent);
+        border-color: color-mix(in srgb, var(--primary-color, #0ea5e9) 55%, var(--et-border-color, #e2e8f0));
+    }
+}
+
+.login-lang-toggle:active {
+    transform: scale(0.96);
 }
 
 .login-brand-name {
     margin: 0;
     color: var(--text-color, #1e293b);
-    font-size: 1.5rem;
+    font-size: 1.75rem;
     font-weight: 750;
     letter-spacing: -0.03em;
     line-height: 1.15;
-}
-
-.login-brand-sub {
-    margin: 0.2rem 0 0;
-    color: var(--text-color-secondary, #64748b);
-    font-size: var(--et-fs-body, 0.875rem);
-    font-weight: 500;
-    line-height: 1.35;
+    text-align: center;
 }
 
 .login-form {

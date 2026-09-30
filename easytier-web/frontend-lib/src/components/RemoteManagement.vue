@@ -1035,6 +1035,9 @@ onUnmounted(() => {
     line-height: 1.3;
     letter-spacing: -0.02em;
     color: var(--text-color, #1e293b);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .network-page-title::before {
@@ -1318,6 +1321,15 @@ onUnmounted(() => {
         width: 100%;
         padding-left: 0;
         border-left: none;
+    }
+
+    .network-page-title {
+        font-size: 1.05rem;
+        margin-bottom: 0.4rem;
+    }
+
+    .network-header {
+        padding: 0.6rem 0.7rem !important;
     }
 
     .toolbar-zone--network {

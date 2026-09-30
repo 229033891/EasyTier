@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { I18nUtils, tooltipDirective } from 'easytier-frontend-lib'
+import { tooltipDirective } from 'easytier-frontend-lib'
 import { computed, onMounted, ref, onUnmounted, nextTick, watch } from 'vue';
 import { Button } from 'primevue';
 import { useRoute, useRouter } from 'vue-router';
@@ -10,7 +10,7 @@ import ApiClient from '../modules/api';
 
 const vTooltip = tooltipDirective;
 
-const { t, locale } = useI18n()
+const { t } = useI18n()
 const route = useRoute();
 const router = useRouter();
 const api = computed<ApiClient | undefined>(() => {
@@ -48,11 +48,6 @@ const doLogout = async () => {
         console.error("logout failed", e);
     }
     router.push({ name: 'login' });
-};
-
-const setLanguage = async (lang: 'cn' | 'en') => {
-    await I18nUtils.loadLanguageAsync(lang);
-    closeUserMenu();
 };
 
 /** 移动端：抽屉显隐 */
@@ -115,16 +110,15 @@ const syncUserMenuPosition = () => {
     const el = activeUserTrigger();
     if (!el) return;
     const rect = el.getBoundingClientRect();
-    const menuWidth = 12.5 * 16; // ~12.5rem
-    let left = rect.left;
-    if (left + menuWidth > window.innerWidth - 8) {
-        left = Math.max(8, window.innerWidth - menuWidth - 8);
-    }
+    const menuWidth = Math.max(rect.width, 9.5 * 16);
+    // 尽量居中对齐触发按钮，保证顶部小三角对准用户名
+    let left = rect.left + rect.width / 2 - menuWidth / 2;
+    left = Math.min(Math.max(8, left), window.innerWidth - menuWidth - 8);
     userMenuStyle.value = {
         position: 'fixed',
-        top: `${Math.round(rect.bottom + 6)}px`,
+        top: `${Math.round(rect.bottom + 8)}px`,
         left: `${Math.round(left)}px`,
-        minWidth: `${Math.max(rect.width, 180)}px`,
+        width: `${Math.round(menuWidth)}px`,
         zIndex: '1200',
     };
 };
@@ -185,7 +179,6 @@ const sidebarButtonClass = computed(() =>
 );
 
 const displayName = computed(() => username.value || t('web.users.username'));
-const currentLang = computed(() => (locale.value === 'cn' ? 'cn' : 'en'));
 
 const navRef = ref<HTMLElement>();
 let navResizeObserver: ResizeObserver | undefined;
@@ -251,9 +244,9 @@ onUnmounted(() => {
                         @click="toggleMobileSidebar" />
                 </div>
                 <button ref="mobileUserTriggerRef" type="button" class="sidebar-user-trigger sidebar-user-trigger--mobile"
+                    :class="{ 'is-open': userMenuOpen }"
                     @click="toggleUserMenu">
                     <span class="sidebar-user-name truncate">{{ displayName }}</span>
-                    <i class="pi pi-angle-down text-sm opacity-70" aria-hidden="true" />
                 </button>
             </div>
         </div>
@@ -271,29 +264,37 @@ onUnmounted(() => {
             'w-64',
         ]"
         :aria-label="t('web.main.sidebar')">
-        <!-- 顶部：折叠 + 用户名菜单（移动端抽屉内也显示） -->
+        <!-- 顶部：桌面折叠 + 用户名；移动端抽屉内只显示品牌，用户名在顶栏 -->
         <div
             class="sidebar-brand flex shrink-0 items-center gap-1"
             :class="sidebarCollapsed ? 'justify-center px-1' : 'px-2'">
-            <Button type="button" variant="text" severity="contrast"
-                class="sidebar-collapse-btn hidden sm:inline-flex"
-                :icon="sidebarCollapsed ? 'pi pi-angle-double-right' : 'pi pi-angle-double-left'"
+            <button type="button"
+                class="sidebar-collapse-btn"
+                :class="{ 'is-collapsed': sidebarCollapsed }"
                 :aria-label="sidebarCollapsed ? t('web.main.expand_sidebar') : t('web.main.collapse_sidebar')"
                 v-tooltip.right="sidebarCollapsed ? t('web.main.expand_sidebar') : t('web.main.collapse_sidebar')"
-                @click="toggleDesktopCollapse" />
-
-            <button ref="userTriggerRef" type="button" class="sidebar-user-trigger"
-                :class="{ 'sidebar-user-trigger--collapsed': sidebarCollapsed }"
+                @click="toggleDesktopCollapse">
+                <span class="sidebar-collapse-icon" aria-hidden="true">
+                    <span class="sidebar-collapse-bar"></span>
+                    <span class="sidebar-collapse-bar sidebar-collapse-bar--mid"></span>
+                    <span class="sidebar-collapse-bar"></span>
+                </span>
+            </button>
+            <button ref="userTriggerRef" type="button" class="sidebar-user-trigger sidebar-user-trigger--desktop"
+                :class="{
+                    'sidebar-user-trigger--collapsed': sidebarCollapsed,
+                    'is-open': userMenuOpen,
+                }"
                 :aria-expanded="userMenuOpen"
                 aria-haspopup="menu"
                 v-tooltip.right="sidebarCollapsed ? displayName : undefined"
                 @click="toggleUserMenu">
-                <i v-if="sidebarCollapsed" class="pi pi-user sidebar-icon" aria-hidden="true" />
-                <template v-else>
-                    <span class="sidebar-user-name truncate">{{ displayName }}</span>
-                    <i class="pi pi-angle-down text-sm opacity-70 shrink-0" aria-hidden="true" />
-                </template>
+                <span class="sidebar-user-name truncate">
+                    {{ sidebarCollapsed ? displayName.slice(0, 1).toUpperCase() : displayName }}
+                </span>
             </button>
+
+            <div class="sidebar-brand-mobile">EasyTier</div>
         </div>
 
         <div class="sidebar-nav flex-1 min-h-0 overflow-y-auto px-2 py-2">
@@ -316,24 +317,14 @@ onUnmounted(() => {
     <!-- 账户菜单挂到 body，避免侧栏 transform 导致定位错乱 -->
     <Teleport to="body">
         <div v-if="userMenuOpen" class="sidebar-user-menu" role="menu" :style="userMenuStyle">
-            <div class="sidebar-user-menu-section">
-                <div class="sidebar-user-menu-label">{{ t('web.main.language') }}</div>
-                <div class="sidebar-user-lang">
-                    <button type="button" class="sidebar-user-lang-btn"
-                        :class="{ 'is-active': currentLang === 'cn' }"
-                        @click="setLanguage('cn')">中文</button>
-                    <button type="button" class="sidebar-user-lang-btn"
-                        :class="{ 'is-active': currentLang === 'en' }"
-                        @click="setLanguage('en')">English</button>
-                </div>
-            </div>
             <button type="button" class="sidebar-user-menu-item" role="menuitem" @click="openChangePassword">
-                <i class="pi pi-lock" aria-hidden="true" />
+                <i class="pi pi-user" aria-hidden="true" />
                 <span>{{ t('web.main.change_password') }}</span>
             </button>
-            <button type="button" class="sidebar-user-menu-item sidebar-user-menu-item--danger" role="menuitem"
+            <div class="sidebar-user-menu-divider" role="separator"></div>
+            <button type="button" class="sidebar-user-menu-item" role="menuitem"
                 @click="doLogout">
-                <i class="pi pi-sign-out" aria-hidden="true" />
+                <i class="pi pi-power-off" aria-hidden="true" />
                 <span>{{ t('web.main.logout') }}</span>
             </button>
         </div>
@@ -367,6 +358,7 @@ onUnmounted(() => {
 .top-navbar.et-shell-surface {
     background: var(--surface-card, #ffffff);
     border-bottom: 1px solid var(--et-border-color, var(--surface-border, #e2e8f0));
+    padding-top: env(safe-area-inset-top);
 }
 
 .sidebar-nav-list {
@@ -445,31 +437,130 @@ onUnmounted(() => {
     border-bottom: 1px solid var(--et-border-color, var(--surface-border, #e2e8f0));
 }
 
+.sidebar-brand-mobile {
+    display: flex;
+    align-items: center;
+    min-width: 0;
+    flex: 1 1 auto;
+    padding: 0 0.55rem;
+    font-size: 1rem;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    color: var(--text-color, #1e293b);
+}
+
+.sidebar-user-trigger--desktop {
+    display: none;
+}
+
+@media (min-width: 640px) {
+    .sidebar-brand-mobile {
+        display: none;
+    }
+
+    .sidebar-user-trigger--desktop {
+        display: inline-flex;
+    }
+}
+
 .sidebar-collapse-btn {
-    width: 2.25rem !important;
-    height: 2.25rem !important;
-    min-width: 2.25rem !important;
-    padding: 0 !important;
-    color: var(--text-color-secondary, #64748b) !important;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    width: 2rem;
+    height: 2rem;
+    min-width: 2rem;
+    padding: 0;
+    border-radius: 999px;
+    border: 1.5px solid color-mix(in srgb, var(--primary-color, #0ea5e9) 75%, #7dd3fc);
+    background: #0b1220;
+    color: color-mix(in srgb, var(--primary-color, #0ea5e9) 85%, #7dd3fc);
+    cursor: pointer;
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--primary-color, #0ea5e9) 18%, transparent);
+    transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease;
+}
+
+@media (min-width: 640px) {
+    .sidebar-collapse-btn {
+        display: inline-flex;
+    }
+}
+
+.sidebar-collapse-icon {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 0.18rem;
+    width: 0.85rem;
+    height: 0.72rem;
+    transition: transform 0.2s ease;
+}
+
+/* 展开态：箭头朝左表示可折叠；折叠态保持朝右表示可展开 */
+.sidebar-collapse-btn:not(.is-collapsed) .sidebar-collapse-icon {
+    transform: scaleX(-1);
+}
+
+.sidebar-collapse-bar {
+    display: block;
+    width: 100%;
+    height: 1.5px;
+    border-radius: 999px;
+    background: currentColor;
+}
+
+.sidebar-collapse-bar--mid {
+    position: relative;
+    width: 62%;
+}
+
+.sidebar-collapse-bar--mid::after {
+    content: "";
+    position: absolute;
+    right: -0.28rem;
+    top: 50%;
+    width: 0;
+    height: 0;
+    border-style: solid;
+    border-width: 0.22rem 0 0.22rem 0.28rem;
+    border-color: transparent transparent transparent currentColor;
+    transform: translateY(-50%);
+}
+
+@media (hover: hover) {
+    .sidebar-collapse-btn:hover {
+        border-color: var(--primary-color, #38bdf8);
+        box-shadow: 0 0 0 2px color-mix(in srgb, var(--primary-color, #0ea5e9) 28%, transparent);
+        transform: scale(1.04);
+    }
+}
+
+.sidebar-collapse-btn:active {
+    transform: scale(0.96);
 }
 
 .sidebar-user-trigger {
     display: inline-flex;
     align-items: center;
-    gap: 0.4rem;
+    justify-content: center;
+    gap: 0.35rem;
     min-width: 0;
     flex: 1 1 auto;
-    height: 2.25rem;
-    padding: 0 0.55rem;
+    max-width: 100%;
+    height: 2rem;
+    padding: 0 0.9rem;
     border: none;
-    border-radius: calc(var(--et-radius, 0.75rem) - 0.25rem);
-    background: transparent;
-    color: var(--text-color, #1e293b);
-    font-size: 0.95rem;
+    border-radius: 999px;
+    background: var(--primary-color, var(--et-primary, #0ea5e9));
+    color: #ffffff;
+    font-size: 0.875rem;
     font-weight: 700;
-    letter-spacing: -0.02em;
+    letter-spacing: -0.01em;
     cursor: pointer;
-    text-align: left;
+    text-align: center;
+    box-shadow: 0 1px 2px color-mix(in srgb, var(--primary-color, #0ea5e9) 28%, transparent);
+    transition: background-color 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease;
 }
 
 .sidebar-user-trigger--mobile {
@@ -479,19 +570,31 @@ onUnmounted(() => {
 
 .sidebar-user-trigger--collapsed {
     flex: 0 0 auto;
-    width: 2.25rem;
-    justify-content: center;
+    width: 2rem;
+    height: 2rem;
     padding: 0;
 }
 
 @media (hover: hover) {
     .sidebar-user-trigger:hover {
-        background: color-mix(in srgb, var(--text-color, #1e293b) 5%, transparent);
+        background: var(--primary-600, var(--et-primary-emphasis, #0284c7));
+        box-shadow: 0 2px 8px color-mix(in srgb, var(--primary-color, #0ea5e9) 35%, transparent);
     }
+}
+
+.sidebar-user-trigger.is-open {
+    background: var(--primary-600, var(--et-primary-emphasis, #0284c7));
+}
+
+.sidebar-user-trigger:active {
+    transform: scale(0.98);
 }
 
 .sidebar-user-name {
     min-width: 0;
+    width: 100%;
+    color: inherit;
+    text-align: center;
 }
 
 /* 侧栏为 fixed，需让位给顶栏：用实测顶栏高度对齐其底边。
@@ -550,8 +653,9 @@ onUnmounted(() => {
 
 @media (max-width: 640px) {
     .et-main-content {
-        padding-left: 0.75rem;
-        padding-right: 0.75rem;
+        padding-left: max(0.75rem, env(safe-area-inset-left));
+        padding-right: max(0.75rem, env(safe-area-inset-right));
+        padding-bottom: max(0.5rem, env(safe-area-inset-bottom));
     }
 
     .et-main-panel {
@@ -564,47 +668,34 @@ onUnmounted(() => {
 <!-- 账户菜单 teleport 到 body，需非 scoped 才能稳定命中 -->
 <style>
 .sidebar-user-menu {
-    padding: 0.4rem;
-    border: 1px solid var(--et-border-color, #e2e8f0);
-    border-radius: var(--et-radius, 0.75rem);
-    background: var(--surface-card, #ffffff);
-    box-shadow: 0 12px 28px rgba(15, 23, 42, 0.14);
+    position: relative;
+    min-width: 9.5rem;
+    padding: 0.4rem 0.35rem;
+    margin-top: 0.35rem;
+    border: none;
+    border-radius: 0.65rem;
+    background: #2f3542;
+    box-shadow: 0 10px 28px rgba(15, 23, 42, 0.28);
+    color: #ffffff;
 }
 
-.sidebar-user-menu-section {
-    padding: 0.45rem 0.55rem 0.55rem;
-    margin-bottom: 0.25rem;
-    border-bottom: 1px solid var(--et-border-color, #e2e8f0);
+.sidebar-user-menu::before {
+    content: "";
+    position: absolute;
+    top: -0.35rem;
+    left: 50%;
+    width: 0;
+    height: 0;
+    border-style: solid;
+    border-width: 0 0.4rem 0.4rem 0.4rem;
+    border-color: transparent transparent #2f3542 transparent;
+    transform: translateX(-50%);
 }
 
-.sidebar-user-menu-label {
-    margin-bottom: 0.35rem;
-    color: var(--text-color-secondary, #64748b);
-    font-size: var(--et-fs-meta, 0.75rem);
-    font-weight: 600;
-}
-
-.sidebar-user-lang {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 0.35rem;
-}
-
-.sidebar-user-lang-btn {
-    height: 2rem;
-    border: 1px solid var(--et-border-color, #e2e8f0);
-    border-radius: calc(var(--et-radius, 0.75rem) - 0.35rem);
-    background: var(--surface-50, #f8fafc);
-    color: var(--text-color, #1e293b);
-    font-size: 0.8125rem;
-    font-weight: 600;
-    cursor: pointer;
-}
-
-.sidebar-user-lang-btn.is-active {
-    border-color: color-mix(in srgb, var(--primary-color, #0ea5e9) 45%, var(--et-border-color, #e2e8f0));
-    background: color-mix(in srgb, var(--primary-color, #0ea5e9) 12%, transparent);
-    color: var(--primary-color, #0284c7);
+.sidebar-user-menu-divider {
+    height: 1px;
+    margin: 0.2rem 0.55rem;
+    background: rgba(255, 255, 255, 0.12);
 }
 
 .sidebar-user-menu-item {
@@ -612,27 +703,26 @@ onUnmounted(() => {
     align-items: center;
     gap: 0.55rem;
     width: 100%;
-    min-height: 2.35rem;
-    padding: 0 0.65rem;
+    min-height: 2.15rem;
+    padding: 0 0.7rem;
     border: none;
-    border-radius: calc(var(--et-radius, 0.75rem) - 0.35rem);
+    border-radius: 0.4rem;
     background: transparent;
-    color: var(--text-color, #1e293b);
-    font-size: 0.875rem;
+    color: #ffffff;
+    font-size: 0.8125rem;
     font-weight: 500;
     cursor: pointer;
     text-align: left;
 }
 
+.sidebar-user-menu-item i {
+    width: 1rem;
+    font-size: 0.9rem;
+    text-align: center;
+    opacity: 0.92;
+}
+
 .sidebar-user-menu-item:hover {
-    background: color-mix(in srgb, var(--text-color, #1e293b) 5%, transparent);
-}
-
-.sidebar-user-menu-item--danger {
-    color: var(--et-danger, #ef4444);
-}
-
-.sidebar-user-menu-item--danger:hover {
-    background: color-mix(in srgb, var(--et-danger, #ef4444) 8%, transparent);
+    background: rgba(255, 255, 255, 0.08);
 }
 </style>

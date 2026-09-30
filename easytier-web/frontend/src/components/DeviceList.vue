@@ -230,9 +230,13 @@ const locationText = (device: Utils.DeviceInfo): string => {
 }
 
 .sort-direction-btn {
-    font-size: 1rem;
-    width: 2.5rem !important;
-    height: 2.5rem !important;
+    font-size: 0.875rem;
+}
+
+:deep(.p-button.p-button-icon-only.sort-direction-btn) {
+    width: 2rem !important;
+    height: 2rem !important;
+    min-width: 2rem !important;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -299,11 +303,6 @@ const locationText = (device: Utils.DeviceInfo): string => {
     }
 }
 
-:deep(.p-button.p-button-icon-only.sort-direction-btn) {
-    width: var(--et-btn);
-    height: var(--et-btn);
-}
-
 .device-card-actions {
     flex-shrink: 0;
     align-items: center;
@@ -311,6 +310,16 @@ const locationText = (device: Utils.DeviceInfo): string => {
 
 .device-count-badge {
     cursor: default;
+    background: color-mix(in srgb, #10b981 12%, #ffffff) !important;
+    color: #047857 !important;
+    border-color: color-mix(in srgb, #10b981 28%, transparent) !important;
+}
+
+@media (prefers-color-scheme: dark) {
+    .device-count-badge {
+        background: color-mix(in srgb, #10b981 22%, transparent) !important;
+        color: #34d399 !important;
+    }
 }
 
 .location-icon {
@@ -376,6 +385,17 @@ const locationText = (device: Utils.DeviceInfo): string => {
     .device-list-toolbar {
         flex-direction: column;
         align-items: stretch;
+    }
+
+    .device-list-toolbar-group {
+        width: 100%;
+    }
+
+    .device-list-toolbar-group .sort-dropdown {
+        flex: 1 1 auto;
+        max-width: none;
+        min-width: 0;
+        width: 100%;
     }
 
     .detailed-view-btn {

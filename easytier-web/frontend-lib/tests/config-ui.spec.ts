@@ -8,6 +8,15 @@ import {
   type NetworkConfig,
 } from '../src/types/network'
 
+vi.mock('primevue', async () => {
+  const actual = await vi.importActual<typeof import('primevue')>('primevue')
+  return {
+    ...actual,
+    useToast: () => ({ add: vi.fn() }),
+    useConfirm: () => ({ require: vi.fn() }),
+  }
+})
+
 const CONFIG_FLAG_FIELDS = [
   'latency_first',
   'use_smoltcp',

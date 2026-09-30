@@ -58,8 +58,15 @@ defineProps<{
 }
 
 .et-list-table table {
-    min-width: 38rem;
+    width: 100%;
+    min-width: 0;
     border-collapse: collapse;
+}
+
+@media (min-width: 640px) {
+    .et-list-table table {
+        min-width: 38rem;
+    }
 }
 
 .et-list-table th,

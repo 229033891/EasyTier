@@ -175,7 +175,10 @@ const refreshNetworkMetas = async (devices: Utils.DeviceInfo[]) => {
     const now = Date.now();
     const signatureChanged = signature !== lastMetaSignature.value;
     const ttlExpired = now - lastMetaFetchAt.value >= META_TTL_MS;
-    if (!signatureChanged && !ttlExpired) {
+    const activeKeys = activeInstanceKeys(devices);
+    const missingVip = activeKeys.some((key) => !virtualIpByKey.value[key]);
+    // 缺 VIP 时不受 TTL 限制，避免首次拉取失败后卡住至下个 TTL
+    if (!signatureChanged && !ttlExpired && !missingVip) {
         return;
     }
 
@@ -185,8 +188,6 @@ const refreshNetworkMetas = async (devices: Utils.DeviceInfo[]) => {
     }
 
     metaFetchInFlight = true;
-    const activeKeys = activeInstanceKeys(devices);
-    const missingVip = activeKeys.some((key) => !virtualIpByKey.value[key]);
     // 仅缺 VIP 时显示加载态；后台 TTL 刷新有缓存则不闪 spinner
     metaLoading.value = missingVip;
 
@@ -264,66 +265,130 @@ const openNetworkRow = (row: NetworkRow, mode: 'status' | 'config') => {
             <h1 class="et-page-title">{{ t('web.main.network_list') }}</h1>
         </div>
 
-        <ListPageShell :loading="deviceList === undefined" :empty="networkRows.length === 0">
-            <template #empty>{{ t('web.device.no_networks') }}</template>
-            <thead>
-                <tr class="bg-surface-50 text-left">
-                    <th class="px-3 py-2 font-semibold">{{ t('web.device.network_name') }}</th>
-                    <th class="px-3 py-2 font-semibold">{{ t('web.device.belonging_device') }}</th>
-                    <th class="px-3 py-2 font-semibold">{{ t('web.device.connection_addr') }}</th>
-                    <th class="px-3 py-2 font-semibold">{{ t('virtual_ipv4') }}</th>
-                    <th class="px-3 py-2 font-semibold">{{ t('web.device.status') }}</th>
-                    <th class="px-3 py-2 font-semibold text-right">{{ t('web.device.management') }}</th>
-                </tr>
-            </thead>
-            <tbody>
-                <tr v-for="row in networkRows" :key="`${row.machine_id}-${row.instance_id}`"
-                    class="border-t border-surface">
-                    <td class="px-3 py-2">
-                        <div class="font-medium truncate max-w-[16rem]" v-tooltip.top="row.network_name">
-                            {{ row.network_name }}
+        <!-- 桌面：表格 -->
+        <div class="network-list-desktop">
+            <ListPageShell :loading="deviceList === undefined" :empty="networkRows.length === 0">
+                <template #empty>{{ t('web.device.no_networks') }}</template>
+                <thead>
+                    <tr class="bg-surface-50 text-left">
+                        <th class="px-3 py-2 font-semibold">{{ t('web.device.network_name') }}</th>
+                        <th class="px-3 py-2 font-semibold">{{ t('web.device.belonging_device') }}</th>
+                        <th class="px-3 py-2 font-semibold">{{ t('web.device.connection_addr') }}</th>
+                        <th class="px-3 py-2 font-semibold">{{ t('virtual_ipv4') }}</th>
+                        <th class="px-3 py-2 font-semibold">{{ t('web.device.status') }}</th>
+                        <th class="px-3 py-2 font-semibold text-right">{{ t('web.device.management') }}</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr v-for="row in networkRows" :key="`${row.machine_id}-${row.instance_id}`"
+                        class="border-t border-surface">
+                        <td class="px-3 py-2">
+                            <div class="font-medium truncate max-w-[16rem]" v-tooltip.top="row.network_name">
+                                {{ row.network_name }}
+                            </div>
+                            <div class="et-meta truncate max-w-[16rem]" v-tooltip.top="row.instance_id">
+                                {{ row.instance_id }}
+                            </div>
+                        </td>
+                        <td class="px-3 py-2 truncate max-w-[10rem]" v-tooltip.top="row.hostname">{{ row.hostname }}</td>
+                        <td class="px-3 py-2 truncate max-w-[14rem]"
+                            v-tooltip.top="row.connection_addr_raw || undefined">
+                            {{ row.connection_addr || '—' }}
+                        </td>
+                        <td class="px-3 py-2 truncate max-w-[12rem]">
+                            <span v-if="row.virtual_ip" v-tooltip.top="row.virtual_ip">{{ row.virtual_ip }}</span>
+                            <span v-else-if="metaLoading" class="inline-flex items-center gap-1 et-meta">
+                                <ProgressSpinner style="width: 0.85rem; height: 0.85rem"
+                                    strokeWidth="6" aria-hidden="true" />
+                                <span class="sr-only">{{ t('web.device_management.loading_network_status') }}</span>
+                            </span>
+                            <span v-else class="et-meta">—</span>
+                        </td>
+                        <td class="px-3 py-2">
+                            <span class="inline-flex items-center gap-1 status-running">
+                                <i class="pi pi-circle-fill text-[0.45rem]"></i>
+                                {{ t('network_running') }}
+                            </span>
+                        </td>
+                        <td class="px-3 py-2">
+                            <div class="flex justify-end gap-2">
+                                <Button v-tooltip.top="t('web.device.open_network_status')"
+                                    icon="pi pi-chart-line" severity="info" rounded text
+                                    class="et-icon-action-btn"
+                                    @click="openNetworkRow(row, 'status')"
+                                    :aria-label="t('web.device.open_network_status')" />
+                                <Button v-tooltip.top="t('web.device.open_network_config')"
+                                    icon="pi pi-cog" severity="secondary" rounded text
+                                    class="et-icon-action-btn"
+                                    @click="openNetworkRow(row, 'config')"
+                                    :aria-label="t('web.device.open_network_config')" />
+                            </div>
+                        </td>
+                    </tr>
+                </tbody>
+            </ListPageShell>
+        </div>
+
+        <!-- 移动：卡片，避免六列宽表横滑 -->
+        <div class="network-list-mobile">
+            <div v-if="deviceList === undefined" class="w-full flex justify-center py-8">
+                <ProgressSpinner />
+            </div>
+            <div v-else-if="networkRows.length === 0" class="et-list-empty et-meta py-10 px-4">
+                <i class="pi pi-inbox text-2xl" aria-hidden="true"></i>
+                <span>{{ t('web.device.no_networks') }}</span>
+            </div>
+            <div v-else class="network-card-list">
+                <article v-for="row in networkRows" :key="`m-${row.machine_id}-${row.instance_id}`"
+                    class="network-card">
+                    <div class="network-card-head">
+                        <div class="min-w-0 flex-1">
+                            <div class="network-card-title truncate" v-tooltip.top="row.network_name">
+                                {{ row.network_name }}
+                            </div>
+                            <div class="et-meta truncate" v-tooltip.top="row.instance_id">{{ row.instance_id }}</div>
                         </div>
-                        <div class="et-meta truncate max-w-[16rem]" v-tooltip.top="row.instance_id">
-                            {{ row.instance_id }}
-                        </div>
-                    </td>
-                    <td class="px-3 py-2 truncate max-w-[10rem]" v-tooltip.top="row.hostname">{{ row.hostname }}</td>
-                    <td class="px-3 py-2 truncate max-w-[14rem]"
-                        v-tooltip.top="row.connection_addr_raw || undefined">
-                        {{ row.connection_addr || '—' }}
-                    </td>
-                    <td class="px-3 py-2 truncate max-w-[12rem]">
-                        <span v-if="row.virtual_ip" v-tooltip.top="row.virtual_ip">{{ row.virtual_ip }}</span>
-                        <span v-else-if="metaLoading" class="inline-flex items-center gap-1 et-meta">
-                            <ProgressSpinner style="width: 0.85rem; height: 0.85rem"
-                                strokeWidth="6" aria-hidden="true" />
-                            <span class="sr-only">{{ t('web.device_management.loading_network_status') }}</span>
-                        </span>
-                        <span v-else class="et-meta">—</span>
-                    </td>
-                    <td class="px-3 py-2">
-                        <span class="inline-flex items-center gap-1 status-running">
+                        <span class="inline-flex items-center gap-1 status-running shrink-0">
                             <i class="pi pi-circle-fill text-[0.45rem]"></i>
                             {{ t('network_running') }}
                         </span>
-                    </td>
-                    <td class="px-3 py-2">
-                        <div class="flex justify-end gap-2">
-                            <Button v-tooltip.top="t('web.device.open_network_status')"
-                                icon="pi pi-chart-line" severity="info" rounded text
-                                class="et-icon-action-btn"
-                                @click="openNetworkRow(row, 'status')"
-                                :aria-label="t('web.device.open_network_status')" />
-                            <Button v-tooltip.top="t('web.device.open_network_config')"
-                                icon="pi pi-cog" severity="secondary" rounded text
-                                class="et-icon-action-btn"
-                                @click="openNetworkRow(row, 'config')"
-                                :aria-label="t('web.device.open_network_config')" />
+                    </div>
+                    <dl class="network-card-meta">
+                        <div>
+                            <dt>{{ t('web.device.belonging_device') }}</dt>
+                            <dd class="truncate" v-tooltip.top="row.hostname">{{ row.hostname || '—' }}</dd>
                         </div>
-                    </td>
-                </tr>
-            </tbody>
-        </ListPageShell>
+                        <div>
+                            <dt>{{ t('web.device.connection_addr') }}</dt>
+                            <dd class="truncate" v-tooltip.top="row.connection_addr_raw || undefined">
+                                {{ row.connection_addr || '—' }}
+                            </dd>
+                        </div>
+                        <div>
+                            <dt>{{ t('virtual_ipv4') }}</dt>
+                            <dd>
+                                <span v-if="row.virtual_ip">{{ row.virtual_ip }}</span>
+                                <span v-else-if="metaLoading" class="inline-flex items-center gap-1 et-meta">
+                                    <ProgressSpinner style="width: 0.85rem; height: 0.85rem"
+                                        strokeWidth="6" aria-hidden="true" />
+                                </span>
+                                <span v-else class="et-meta">—</span>
+                            </dd>
+                        </div>
+                    </dl>
+                    <div class="network-card-actions">
+                        <Button :label="t('web.device.page_title_status')"
+                            icon="pi pi-chart-line" severity="info" outlined size="small"
+                            class="network-card-btn"
+                            @click="openNetworkRow(row, 'status')" />
+                        <Button :label="t('web.device.page_title_config')"
+                            icon="pi pi-cog" severity="secondary" outlined size="small"
+                            class="network-card-btn"
+                            @click="openNetworkRow(row, 'config')" />
+                    </div>
+                </article>
+            </div>
+        </div>
     </div>
 </template>
 
@@ -348,5 +413,105 @@ const openNetworkRow = (row: NetworkRow, mode: 'status' | 'config') => {
     clip: rect(0, 0, 0, 0);
     white-space: nowrap;
     border: 0;
+}
+
+.network-list-mobile {
+    display: none;
+}
+
+.network-card-list {
+    display: flex;
+    flex-direction: column;
+    gap: var(--et-space-3, 0.75rem);
+}
+
+.network-card {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+    padding: var(--et-pad-card, 0.9rem);
+    background: var(--surface-card, #ffffff);
+    border: var(--et-border);
+    border-radius: var(--et-radius);
+    box-shadow: var(--et-shadow-card, 0 1px 2px rgba(15, 23, 42, 0.03));
+}
+
+.network-card-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 0.75rem;
+}
+
+.network-card-title {
+    font-weight: 600;
+    color: var(--text-color, #1e293b);
+}
+
+.network-card-meta {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 0.45rem 0.75rem;
+    margin: 0;
+}
+
+.network-card-meta > div {
+    display: grid;
+    grid-template-columns: 5.5rem 1fr;
+    gap: 0.5rem;
+    align-items: baseline;
+    min-width: 0;
+}
+
+.network-card-meta dt {
+    margin: 0;
+    color: var(--text-color-secondary, #64748b);
+    font-size: var(--et-fs-meta, 0.75rem);
+    font-weight: 600;
+}
+
+.network-card-meta dd {
+    margin: 0;
+    min-width: 0;
+    font-size: 0.875rem;
+    color: var(--text-color, #1e293b);
+}
+
+.network-card-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.5rem;
+}
+
+.network-card-btn {
+    width: 100%;
+}
+
+.et-list-empty {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    min-height: 10rem;
+    text-align: center;
+    background: var(--surface-card, #ffffff);
+    border: var(--et-border);
+    border-radius: var(--et-radius);
+}
+
+.et-list-empty i {
+    color: var(--primary-color, #0ea5e9);
+    opacity: 0.72;
+}
+
+@media (max-width: 639px) {
+    .network-list-desktop {
+        display: none;
+    }
+
+    .network-list-mobile {
+        display: block;
+    }
 }
 </style>

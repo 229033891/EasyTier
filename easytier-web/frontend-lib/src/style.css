@@ -102,6 +102,30 @@
   line-height: 1.5;
 }
 
+/*
+ * 占位符与已填内容区分：浅灰次要色，避免与真实输入值同色。
+ * 覆盖浏览器默认 opacity（Firefox）以及 Aura 未单独降权时的继承色。
+ */
+:where(input, textarea)::placeholder {
+  color: var(--text-color-secondary, #94a3b8);
+  opacity: 1;
+}
+
+.p-inputtext::placeholder,
+.p-inputnumber-input::placeholder,
+.p-password-input::placeholder,
+.p-autocomplete-input::placeholder {
+  color: var(--text-color-secondary, #94a3b8) !important;
+  opacity: 1 !important;
+}
+
+.p-placeholder,
+.p-select .p-placeholder,
+.p-multiselect .p-placeholder,
+.p-autocomplete .p-placeholder {
+  color: var(--text-color-secondary, #94a3b8) !important;
+}
+
 /* 遗留 PrimeFlex 类名：模板里仍有 surface-border / border-1，补成有效样式 */
 .surface-border {
   border-color: var(--surface-border, #e2e8f0);
@@ -749,6 +773,7 @@
   border-color: var(--et-border-color, #e2e8f0) !important;
 }
 
+.et-icon-action--success,
 .et-icon-action-btn.p-button-success {
   background: color-mix(in srgb, #10b981 12%, #ffffff) !important;
   color: #047857 !important;
@@ -804,6 +829,12 @@
   .et-icon-action-btn.p-button-secondary {
     background: var(--surface-100, #334155) !important;
     color: var(--text-color-secondary, #94a3b8) !important;
+  }
+
+  .et-icon-action--success,
+  .et-icon-action-btn.p-button-success {
+    background: color-mix(in srgb, #10b981 22%, transparent) !important;
+    color: #34d399 !important;
   }
 }
 
