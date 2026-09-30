@@ -2,9 +2,11 @@
 
 pub mod prelude;
 
+pub mod devices;
 pub mod groups;
 pub mod groups_permissions;
 pub mod managed_config_revisions;
+pub mod networks;
 pub mod peer_conn_history;
 pub mod permissions;
 pub mod tower_sessions;

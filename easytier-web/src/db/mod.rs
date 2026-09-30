@@ -159,6 +159,70 @@ async fn read_config_source(
     .map_err(sqlx_db_error)
 }
 
+fn network_secret_digest(network_name: &str, network_secret: &str) -> String {
+    let digest = md5::compute(format!("{network_name}\n{network_secret}").as_bytes());
+    format!("{:x}", digest)
+}
+
+fn extract_network_identity(network_config_json: &str) -> (String, String) {
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(network_config_json) else {
+        return (String::new(), String::new());
+    };
+    let network_name = value
+        .get("network_name")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let network_secret = value
+        .get("network_secret")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    (network_name, network_secret)
+}
+
+async fn upsert_network_credential_tx(
+    transaction: &mut sqlx::Transaction<'_, Sqlite>,
+    user_id: UserIdInDb,
+    network_name: &str,
+    network_secret: &str,
+) -> Result<(), DbErr> {
+    if network_name.is_empty() {
+        return Ok(());
+    }
+    let now = chrono::Local::now().fixed_offset();
+    let digest = network_secret_digest(network_name, network_secret);
+    // 空密码只登记名称，不覆盖已有凭证，避免「保存时 secret 为空」把目录密码冲掉
+    sqlx::query(
+        r#"
+        INSERT INTO networks (
+            user_id, network_name, network_secret, network_secret_digest,
+            create_time, update_time
+        ) VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT(user_id, network_name) DO UPDATE SET
+            network_secret = CASE
+                WHEN excluded.network_secret != '' THEN excluded.network_secret
+                ELSE networks.network_secret
+            END,
+            network_secret_digest = CASE
+                WHEN excluded.network_secret != '' THEN excluded.network_secret_digest
+                ELSE networks.network_secret_digest
+            END,
+            update_time = excluded.update_time
+        "#,
+    )
+    .bind(user_id)
+    .bind(network_name)
+    .bind(network_secret)
+    .bind(digest)
+    .bind(now)
+    .bind(now)
+    .execute(&mut **transaction)
+    .await
+    .map_err(sqlx_db_error)?;
+    Ok(())
+}
+
 async fn upsert_network_config(
     transaction: &mut sqlx::Transaction<'_, Sqlite>,
     user_id: UserIdInDb,
@@ -169,13 +233,15 @@ async fn upsert_network_config(
     web_only_update: bool,
 ) -> Result<bool, DbErr> {
     let now = chrono::Local::now().fixed_offset();
+    let (network_name, network_secret) = extract_network_identity(network_config);
     let mut query = r#"
         INSERT INTO user_running_network_configs (
             user_id, device_id, network_instance_id, network_config,
-            source, disabled, create_time, update_time
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            network_name, source, disabled, create_time, update_time
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(user_id, device_id, network_instance_id) DO UPDATE SET
             network_config = excluded.network_config,
+            network_name = excluded.network_name,
             source = excluded.source,
             disabled = excluded.disabled,
             update_time = excluded.update_time
@@ -189,6 +255,7 @@ async fn upsert_network_config(
         .bind(device_id.to_string())
         .bind(instance_id.to_string())
         .bind(network_config)
+        .bind(&network_name)
         .bind(source.as_str())
         .bind(false)
         .bind(now)
@@ -196,6 +263,9 @@ async fn upsert_network_config(
         .execute(&mut **transaction)
         .await
         .map_err(sqlx_db_error)?;
+    if result.rows_affected() > 0 {
+        upsert_network_credential_tx(transaction, user_id, &network_name, &network_secret).await?;
+    }
     Ok(result.rows_affected() > 0)
 }
 
@@ -682,6 +752,105 @@ impl Db {
         transaction.commit().await.map_err(sqlx_db_error)?;
         Ok(())
     }
+
+    /// Upsert device archive row from heartbeat / list activity.
+    pub async fn upsert_device(
+        &self,
+        user_id: UserIdInDb,
+        device_id: Uuid,
+        hostname: &str,
+        easytier_version: &str,
+        client_url: &str,
+        last_seen_at: i64,
+    ) -> Result<(), DbErr> {
+        let now = chrono::Local::now().fixed_offset();
+        sqlx::query(
+            r#"
+            INSERT INTO devices (
+                user_id, device_id, hostname, last_easytier_version,
+                last_client_url, last_seen_at, create_time, update_time
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(user_id, device_id) DO UPDATE SET
+                hostname = excluded.hostname,
+                last_easytier_version = excluded.last_easytier_version,
+                last_client_url = excluded.last_client_url,
+                last_seen_at = excluded.last_seen_at,
+                update_time = excluded.update_time
+            "#,
+        )
+        .bind(user_id)
+        .bind(device_id.to_string())
+        .bind(hostname)
+        .bind(easytier_version)
+        .bind(client_url)
+        .bind(last_seen_at)
+        .bind(now)
+        .bind(now)
+        .execute(&self.db)
+        .await
+        .map_err(sqlx_db_error)?;
+        Ok(())
+    }
+
+    /// Upsert a user-scoped network credential (by network_name).
+    pub async fn upsert_network_credential(
+        &self,
+        user_id: UserIdInDb,
+        network_name: &str,
+        network_secret: &str,
+    ) -> Result<(), DbErr> {
+        let mut transaction = self
+            .db
+            .begin_with("BEGIN IMMEDIATE")
+            .await
+            .map_err(sqlx_db_error)?;
+        upsert_network_credential_tx(&mut transaction, user_id, network_name, network_secret)
+            .await?;
+        transaction.commit().await.map_err(sqlx_db_error)?;
+        Ok(())
+    }
+
+    /// Find network credentials for a user by exact network_name.
+    pub async fn find_networks_by_name(
+        &self,
+        user_id: UserIdInDb,
+        network_name: &str,
+    ) -> Result<Option<entity::networks::Model>, DbErr> {
+        use entity::networks as n;
+        n::Entity::find()
+            .filter(n::Column::UserId.eq(user_id))
+            .filter(n::Column::NetworkName.eq(network_name))
+            .one(self.orm_db())
+            .await
+    }
+
+    /// List all network credentials for a user (newest first).
+    pub async fn list_user_networks(
+        &self,
+        user_id: UserIdInDb,
+    ) -> Result<Vec<entity::networks::Model>, DbErr> {
+        use entity::networks as n;
+        use sea_orm::QueryOrder as _;
+        n::Entity::find()
+            .filter(n::Column::UserId.eq(user_id))
+            .order_by_desc(n::Column::UpdateTime)
+            .all(self.orm_db())
+            .await
+    }
+
+    /// List device archive rows for a user (newest seen first).
+    pub async fn list_user_devices(
+        &self,
+        user_id: UserIdInDb,
+    ) -> Result<Vec<entity::devices::Model>, DbErr> {
+        use entity::devices as d;
+        use sea_orm::QueryOrder as _;
+        d::Entity::find()
+            .filter(d::Column::UserId.eq(user_id))
+            .order_by_desc(d::Column::LastSeenAt)
+            .all(self.orm_db())
+            .await
+    }
 }
 
 #[async_trait]
@@ -875,11 +1044,19 @@ mod tests {
             .unwrap();
         println!("{:?}", result);
         assert_eq!(result.network_config, network_config_json);
+        assert_eq!(result.network_name, "test_config");
         assert_eq!(result.get_network_config_source(), ConfigSource::User);
+        let network = db
+            .find_networks_by_name(user_id, "test_config")
+            .await
+            .unwrap()
+            .expect("network credential should be upserted");
+        assert_eq!(network.network_name, "test_config");
 
         // overwrite the config
         let network_config = NetworkConfig {
             network_name: Some("test_config2".to_string()),
+            network_secret: Some("secret-2".to_string()),
             ..Default::default()
         };
         let network_config_json = serde_json::to_string(&network_config).unwrap();
@@ -900,7 +1077,14 @@ mod tests {
             .unwrap();
         println!("device: {}, {:?}", device_id, result2);
         assert_eq!(result2.network_config, network_config_json);
+        assert_eq!(result2.network_name, "test_config2");
         assert_eq!(result2.get_network_config_source(), ConfigSource::Web);
+        let network2 = db
+            .find_networks_by_name(user_id, "test_config2")
+            .await
+            .unwrap()
+            .expect("updated network credential");
+        assert_eq!(network2.network_secret, "secret-2");
         assert_eq!(
             result2.get_runtime_network_config_source(),
             ConfigSource::Web
@@ -1107,5 +1291,39 @@ mod tests {
                 .as_deref(),
             Some("rev-user")
         );
+    }
+
+    #[tokio::test]
+    async fn upsert_device_archive_and_list() {
+        let db = Db::memory_db().await;
+        let user_id = db.auto_create_user("device-archive-user").await.unwrap().id;
+        let device_id = uuid::Uuid::new_v4();
+
+        db.upsert_device(
+            user_id,
+            device_id,
+            "host-a",
+            "2.6.4",
+            "udp://127.0.0.1:22020",
+            1_700_000_000,
+        )
+        .await
+        .unwrap();
+        db.upsert_device(
+            user_id,
+            device_id,
+            "host-b",
+            "2.6.5",
+            "udp://127.0.0.1:22021",
+            1_700_000_100,
+        )
+        .await
+        .unwrap();
+
+        let devices = db.list_user_devices(user_id).await.unwrap();
+        assert_eq!(devices.len(), 1);
+        assert_eq!(devices[0].hostname, "host-b");
+        assert_eq!(devices[0].last_easytier_version, "2.6.5");
+        assert_eq!(devices[0].last_seen_at, 1_700_000_100);
     }
 }

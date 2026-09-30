@@ -713,7 +713,7 @@ impl SessionRpcService {
         req: HeartbeatRequest,
         machine_id: uuid::Uuid,
     ) -> rpc_types::error::Result<HeartbeatResponse> {
-        let (notify, runtime_notify) = {
+        let (notify, runtime_notify, device_upsert) = {
             let mut data = self.data.write().await;
             Self::ensure_session_identity_locked(&mut data, &req, machine_id)
                 .map_err(rpc_types::error::Error::from)?;
@@ -735,6 +735,19 @@ impl SessionRpcService {
                     .then(|| Self::mark_webhook_validation_dirty_locked(&mut data))
             });
             let authorized = data.auth_state.is_authorized();
+            let device_upsert = if authorized {
+                data.storage_token.clone().map(|storage_token| {
+                    let report_time = Self::heartbeat_report_timestamp(&runtime_req);
+                    (
+                        storage_token,
+                        runtime_req.hostname.clone(),
+                        runtime_req.easytier_version.clone(),
+                        report_time,
+                    )
+                })
+            } else {
+                None
+            };
             if let Some(storage_token) = data.storage_token.clone() {
                 let report_time = Self::heartbeat_report_timestamp(&runtime_req);
                 storage.update_session_client(
@@ -746,8 +759,25 @@ impl SessionRpcService {
             }
             let runtime_notify = (authorized && data.storage_token.is_some())
                 .then(|| (data.notifier.clone(), runtime_req));
-            (notify, runtime_notify)
+            (notify, runtime_notify, device_upsert)
         };
+
+        if let Some((storage_token, hostname, version, report_time)) = device_upsert {
+            if let Err(e) = storage
+                .db()
+                .upsert_device(
+                    storage_token.user_id,
+                    storage_token.machine_id,
+                    &hostname,
+                    &version,
+                    storage_token.client_url.as_str(),
+                    report_time,
+                )
+                .await
+            {
+                tracing::warn!(?e, "failed to upsert device archive from webhook heartbeat");
+            }
+        }
 
         if let Some((notifier, runtime_req)) = runtime_notify {
             let _ = notifier.send(runtime_req);
@@ -854,7 +884,21 @@ impl SessionRpcService {
         };
 
         let report_time = Self::heartbeat_report_timestamp(&runtime_req);
-        storage.update_session_client(storage_token, report_time, true, session_epoch);
+        storage.update_session_client(storage_token.clone(), report_time, true, session_epoch);
+        if let Err(e) = storage
+            .db()
+            .upsert_device(
+                storage_token.user_id,
+                storage_token.machine_id,
+                &runtime_req.hostname,
+                &runtime_req.easytier_version,
+                storage_token.client_url.as_str(),
+                report_time,
+            )
+            .await
+        {
+            tracing::warn!(?e, "failed to upsert device archive from heartbeat");
+        }
         let _ = notifier.send(runtime_req);
         if let Some(notify) = validation_notify {
             notify.notify_one();

@@ -32,6 +32,13 @@ musl_gcc
 # log
 easytier-panic.log
 
+# local sqlite (easytier-web)
+/et.db
+/et.db-*
+/et-dev.db
+/et-dev.db-*
+/et.db.bak-*
+
 # web
 node_modules
 easytier-web/frontend-lib/src/generated/

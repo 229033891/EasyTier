@@ -163,7 +163,7 @@ function Start-EasytierWebDev {
     Set-EasytierWritableTemp
 
     $frontendDir = Join-Path $RepoRoot 'easytier-web\frontend'
-    $dbPath = Join-Path $RepoRoot 'et-dev.db'
+    $dbPath = Join-Path $RepoRoot 'et.db'
     $apiUrl = 'http://localhost:11211'
     $webHint = 'http://localhost:5173'
     $etTemp = $env:TEMP
