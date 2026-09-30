@@ -23,7 +23,7 @@ defineProps<{
       <div class="detail-value">{{ device.hostname }}</div>
     </div>
     <div class="detail-item public-ip">
-      <div class="detail-label">{{ t('web.device.public_ip') }}</div>
+      <div class="detail-label">{{ t('web.device.connection_addr') }}</div>
       <div class="detail-value">{{ device.public_ip }}</div>
     </div>
     <div class="detail-item running-networks">

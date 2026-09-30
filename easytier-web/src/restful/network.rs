@@ -538,8 +538,9 @@ impl NetworkApi {
                 delete(Self::handle_remove_network_instance).put(Self::handle_update_network_state),
             )
             .route(
+                // POST preferred for JSON body (inst_ids); GET kept for older clients.
                 "/api/v1/machines/{machine-id}/networks/info",
-                get(Self::handle_collect_network_info),
+                get(Self::handle_collect_network_info).post(Self::handle_collect_network_info),
             )
             .route(
                 "/api/v1/machines/{machine-id}/networks/info/{inst-id}",

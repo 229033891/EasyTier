@@ -62,6 +62,25 @@ export function UuidToStr(uuid: UUID | null | undefined): string {
     return uint32ToUuid(uuid.part1 ?? 0, uuid.part2 ?? 0, uuid.part3 ?? 0, uuid.part4 ?? 0);
 }
 
+/** Format machine client_url for list display (host:port); full URL stays in tooltip. */
+export function formatClientUrl(clientUrl: string | null | undefined): string {
+    if (!clientUrl) {
+        return '';
+    }
+    try {
+        const u = new URL(clientUrl);
+        if (u.hostname && u.port) {
+            return `${u.hostname}:${u.port}`;
+        }
+        if (u.hostname) {
+            return u.hostname;
+        }
+    } catch {
+        // fall through
+    }
+    return clientUrl;
+}
+
 export function StrToUuid(uuid: string): UUID {
     const hex = uuid.replace(/-/g, '');
     if (!/^[0-9a-fA-F]{32}$/.test(hex)) {

@@ -92,6 +92,8 @@ export interface RemoteClient {
     validate_config(config: NetworkConfig): Promise<ValidateConfigResponse>;
     run_network(config: NetworkConfig, save: boolean): Promise<undefined>;
     get_network_info(inst_id: string): Promise<NetworkInstanceRunningInfo | undefined>;
+    /** Batch collect running info for multiple instances (one RPC round-trip). */
+    get_network_infos?(inst_ids: string[]): Promise<Record<string, NetworkInstanceRunningInfo | undefined>>;
     get_vpn_portal_info(inst_id: string): Promise<VpnPortalInfo | undefined>;
     add_vpn_portal_client(inst_id: string, client: { name: string, virtual_ip: string, groups: string[] }): Promise<undefined>;
     remove_vpn_portal_client(inst_id: string, name: string): Promise<undefined>;
