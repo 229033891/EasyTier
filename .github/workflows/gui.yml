@@ -67,10 +67,7 @@ jobs:
       fail-fast: true
       matrix:
         include:
-          - TARGET: x86_64-unknown-linux-musl
-            OS: ubuntu-24.04
-            GUI_TARGET: x86_64-unknown-linux-gnu
-            ARTIFACT_NAME: linux-x86_64
+          # Windows (x86_64): easytier-gui.exe, GUI 内置 core
           - TARGET: x86_64-pc-windows-msvc
             OS: windows-latest
             GUI_TARGET: x86_64-pc-windows-msvc
@@ -207,6 +204,12 @@ jobs:
             xcrun stapler validate "$dmg"
           done
 
+      - name: Build web console (embed, 自建控制台用)
+        if: ${{ contains(matrix.GUI_TARGET, 'windows') }}
+        run: |
+          cargo build --release --target $TARGET --package=easytier-web --features=embed
+          mv ./target/$TARGET/release/easytier-web.exe ./target/$TARGET/release/easytier-web-embed.exe
+
       - name: Collect artifact
         run: |
           mkdir -p ./artifacts/objects/
@@ -220,6 +223,7 @@ jobs:
           # copy gui bundle, gui is built without specific target
           if [[ $GUI_TARGET =~ windows ]]; then
               mv ./target/$GUI_TARGET/release/bundle/nsis/*.exe ./artifacts/objects/
+              cp ./target/$GUI_TARGET/release/easytier-web-embed.exe ./artifacts/objects/
           elif [[ $GUI_TARGET =~ darwin ]]; then
               mv ./target/$GUI_TARGET/release/bundle/dmg/*.dmg ./artifacts/objects/
           elif [[ $GUI_TARGET =~ linux ]]; then

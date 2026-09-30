@@ -15,6 +15,11 @@ on:
         description: 'The run id of EasyTier-Mobile Action in EasyTier repo'
         type: number
         required: true
+      openwrt_run_id:
+        description: 'The run id of EasyTier-OpenWrt Action in EasyTier repo'
+        type: number
+        required: false
+        default: 0
       version:
         description: 'Version for this release'
         type: string
@@ -61,6 +66,15 @@ jobs:
           repo: ${{ github.repository }}
           path: release_assets_nozip
 
+      - name: Download OpenWrt Artifact
+        if: ${{ inputs.openwrt_run_id > 0 }}
+        uses: dawidd6/action-download-artifact@v11
+        with:
+          github_token: ${{secrets.GITHUB_TOKEN}}
+          run_id: ${{ inputs.openwrt_run_id }}
+          repo: ${{ github.repository }}
+          path: release_assets
+
       - name: Zip release assets
         env:
           VERSION: ${{ inputs.version }}
@@ -74,14 +88,11 @@ jobs:
           ls -l -R ./
           chmod -R 755 .
           for x in `ls`; do
-            if [ "$x" = "Easytier-Magisk" ]; then
-              # for Easytier-Magisk, make sure files are in the root of the zip
-              cd $x;
-              zip -r ../../zipped_assets/$x-${VERSION}.zip .;
-              cd ..;
-            else
-              zip -r ../zipped_assets/$x-${VERSION}.zip $x;
+            # openwrt-bins 是 OpenWrt 打包用的中间产物 (裸二进制), 不发版
+            if [ "$x" = "openwrt-bins" ]; then
+              continue
             fi
+            zip -r ../zipped_assets/$x-${VERSION}.zip $x;
           done
 
       - name: Release
