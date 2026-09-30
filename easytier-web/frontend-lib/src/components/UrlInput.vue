@@ -197,11 +197,11 @@ const onProtoChange = (newProto: string) => {
         </InputGroup>
 
         <div
-            class="url-input-compact flex justify-between items-center p-2 border rounded w-full min-w-0 overflow-hidden">
-            <span class="truncate mr-2 min-w-0 flex-1 overflow-hidden">{{ url }}</span>
+            class="url-input-compact flex justify-between items-center p-2 border border-surface rounded-lg w-full min-w-0 overflow-hidden bg-surface-0">
+            <span class="truncate mr-2 min-w-0 flex-1 overflow-hidden text-color">{{ url }}</span>
             <div class="flex items-center shrink-0">
-                <Button icon="pi pi-pencil" class="p-button-sm p-button-text" :aria-label="t('web.common.edit')"
-                    @click="editing = true" />
+                <Button icon="pi pi-pencil" severity="secondary" rounded text class="et-icon-action-btn"
+                    :aria-label="t('web.common.edit')" @click="editing = true" />
                 <slot name="actions"></slot>
             </div>
         </div>

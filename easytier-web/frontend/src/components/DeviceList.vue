@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
-import { Button, ProgressSpinner, useToast, InputSwitch, Dropdown, Toolbar } from 'primevue';
+import { Button, ProgressSpinner, useToast, Dropdown } from 'primevue';
 import { Utils, tooltipDirective } from 'easytier-frontend-lib';
 import { useRouter } from 'vue-router';
 import DeviceDetails from './DeviceDetails.vue';
@@ -136,10 +136,10 @@ const locationText = (device: Utils.DeviceInfo): string => {
 
 /* 设备卡片样式 */
 .device-card {
-    border: 1px solid var(--surface-border, #e5e7eb);
-    border-radius: 0.5rem;
-    background: var(--surface-card, white);
-    box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1);
+    border: 1px solid var(--et-border-color, #e2e8f0);
+    border-radius: var(--et-radius, 0.75rem);
+    background: var(--surface-card, #ffffff);
+    box-shadow: var(--et-shadow-card, none);
     transition: box-shadow 0.2s ease, background-color 0.3s ease, border-color 0.2s ease;
     display: flex;
     flex-direction: column;
@@ -295,7 +295,7 @@ const locationText = (device: Utils.DeviceInfo): string => {
 
 :deep(.p-dropdown) {
     background: transparent;
-    border: 1px solid var(--surface-border);
+    border: 1px solid var(--et-border-color, #e2e8f0);
     /* 不用 transition: all —— 只过渡实际会变的属性（悬停改边框色、聚焦加 ring） */
     transition: border-color 0.2s ease, box-shadow 0.2s ease, background-color 0.2s ease;
 }
@@ -349,25 +349,45 @@ const locationText = (device: Utils.DeviceInfo): string => {
         color: var(--primary-color, var(--et-primary, #0ea5e9));
     }
 }
+/* 工具条：轻量一行，不做卡片壳 */
 .device-list-toolbar {
-    background: var(--surface-card, #ffffff) !important;
-    border: var(--et-border) !important;
-    border-radius: var(--et-radius) !important;
-    box-shadow: var(--et-shadow-card);
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem 1.25rem;
+    padding: 0.125rem 0.125rem 0.25rem;
+}
+
+.device-list-toolbar-group {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    min-width: 0;
+}
+
+.device-list-toolbar label {
+    color: var(--text-color-secondary, #64748b);
+    white-space: nowrap;
+}
+
+.detailed-view-btn {
+    min-height: var(--et-btn-sm, 2.25rem) !important;
+    height: var(--et-btn-sm, 2.25rem) !important;
+    padding-inline: 0.85rem !important;
+    font-weight: 600;
+    white-space: nowrap;
 }
 
 @media (max-width: 540px) {
     .device-list-toolbar {
+        flex-direction: column;
         align-items: stretch;
     }
 
-    .device-list-toolbar :deep(.p-toolbar-start),
-    .device-list-toolbar :deep(.p-toolbar-end) {
+    .detailed-view-btn {
         width: 100%;
-    }
-
-    .device-list-toolbar :deep(.p-toolbar-end) {
-        justify-content: flex-start;
+        justify-content: center;
     }
 }
 </style>
@@ -378,39 +398,42 @@ const locationText = (device: Utils.DeviceInfo): string => {
             <h1 class="et-page-title">{{ t('web.device.list') }}</h1>
         </div>
 
-        <Toolbar class="device-list-toolbar p-3 gap-4 surface-0 border-1 surface-border rounded-md">
-            <template #start>
-                <div class="flex items-center gap-2">
-                    <label for="sort-by" class="text-sm text-500 hidden sm:block">{{ t('web.device.sort_by') }}：</label>
-                    <Dropdown id="sort-by" v-model="selectedSortOption" :options="sortOptions" optionLabel="name"
-                        class="sort-dropdown text-sm !min-w-[120px] sm:!min-w-[140px]" panelClass="text-sm">
-                        <template #value="slotProps">
-                            <div class="flex items-center gap-2">
-                                <i :class="[slotProps.value.icon, 'text-600']"></i>
-                                <span class="text-600">{{ slotProps.value.name() }}</span>
-                            </div>
-                        </template>
-                        <template #option="slotProps">
-                            <div class="flex items-center gap-2">
-                                <i :class="[slotProps.option.icon, 'text-600']"></i>
-                                <span>{{ slotProps.option.name() }}</span>
-                            </div>
-                        </template>
-                    </Dropdown>
-                    <Button :icon="ascending ? 'pi pi-sort-amount-up' : 'pi pi-sort-amount-down'" severity="secondary"
-                        text rounded class="sort-direction-btn min-w-[2.5rem] h-[2.5rem]"
-                        v-tooltip.top="ascending ? t('web.device.sort_direction_asc') : t('web.device.sort_direction_desc')"
-                        @click="toggleSortDirection" />
-                </div>
-            </template>
-            <template #end>
-                    <div class="flex items-center gap-2">
-                        <label for="detailed-view" class="text-sm text-500 hidden sm:block">{{
-                            t('web.device.show_detailed_view') }}</label>
-                        <InputSwitch id="detailed-view" v-model="showDetailedView" />
-                    </div>
-            </template>
-        </Toolbar>
+        <div class="device-list-toolbar">
+            <div class="device-list-toolbar-group">
+                <label for="sort-by" class="text-sm hidden sm:block">{{ t('web.device.sort_by') }}</label>
+                <Dropdown id="sort-by" v-model="selectedSortOption" :options="sortOptions" optionLabel="name"
+                    class="sort-dropdown text-sm !min-w-[120px] sm:!min-w-[140px]" panelClass="text-sm">
+                    <template #value="slotProps">
+                        <div class="flex items-center gap-2">
+                            <i :class="[slotProps.value.icon, 'text-muted-color']"></i>
+                            <span class="text-color">{{ slotProps.value.name() }}</span>
+                        </div>
+                    </template>
+                    <template #option="slotProps">
+                        <div class="flex items-center gap-2">
+                            <i :class="[slotProps.option.icon, 'text-muted-color']"></i>
+                            <span>{{ slotProps.option.name() }}</span>
+                        </div>
+                    </template>
+                </Dropdown>
+                <Button :icon="ascending ? 'pi pi-sort-amount-up' : 'pi pi-sort-amount-down'" severity="secondary"
+                    text rounded class="et-icon-action-btn sort-direction-btn"
+                    v-tooltip.top="ascending ? t('web.device.sort_direction_asc') : t('web.device.sort_direction_desc')"
+                    @click="toggleSortDirection" />
+            </div>
+            <div class="device-list-toolbar-group">
+                <Button
+                    class="detailed-view-btn"
+                    :icon="showDetailedView ? 'pi pi-eye-slash' : 'pi pi-eye'"
+                    :label="showDetailedView ? t('web.device.hide_detailed_view') : t('web.device.show_detailed_view')"
+                    :severity="showDetailedView ? 'info' : 'secondary'"
+                    :outlined="!showDetailedView"
+                    size="small"
+                    :aria-pressed="showDetailedView"
+                    @click="showDetailedView = !showDetailedView"
+                />
+            </div>
+        </div>
 
         <div v-if="deviceList === undefined" class="w-full flex justify-center">
             <ProgressSpinner />
@@ -468,7 +491,7 @@ const locationText = (device: Utils.DeviceInfo): string => {
                         </div>
                     </div>
 
-                    <div v-if="showDetailedView" class="card-details border-t surface-border fade-in">
+                    <div v-if="showDetailedView" class="card-details border-t border-surface fade-in">
                         <DeviceDetails :device="device" containerClass="card-details-content" :compact="true" />
                     </div>
                 </div>

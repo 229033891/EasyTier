@@ -50,24 +50,29 @@
 
 ### 2.0 Windows 一键脚本（推荐本地打包）
 
-仓库提供交互式脚本，**前台运行**，日志直接打在控制台，方便观察进度：
+仓库提供三个固定入口（**前台运行**，日志打在控制台）：
 
 ```bat
-script\build-easytier-web.cmd
+script\easytier-web-debug.cmd      REM 调试：cargo run API + Vite（不打 exe）
+script\easytier-web-fast.cmd       REM 日常打包：release-fast + embed
+script\easytier-web-release.cmd    REM 正式包：--release + embed
 ```
 
-或：
+或直接调 PowerShell：
 
 ```powershell
-.\script\build-easytier-web.ps1 -Interactive
+.\script\build-easytier-web.ps1 -Dev
+.\script\build-easytier-web.ps1 -Profile Fast
+.\script\build-easytier-web.ps1 -Profile Release
+.\script\build-easytier-web.ps1 -Interactive   # 仍可用交互菜单
 ```
 
 **建议约定：**
 
 1. **先备齐本地依赖，再开始编**（见 [2.0.1](#201-构建前先备齐本地依赖)）。不要指望构建过程中边编边从 GitHub 拉取工具链——网络不稳时会卡很久或直接失败。
 2. **用前台窗口跑**（双击 cmd / 在已打开的终端里跑），不要后台静默执行，便于对照阶段输出判断卡在哪一步。
-3. **依赖已齐 + 选 `Fast`（release-fast）时，正常大约 5 分钟可完成**（含前端 + embed）。首次全量或选 `Release`（全量 LTO）会更久。
-4. 前端 `dist` 已是最新时，菜单里可选「跳过前端」，只重编 Rust，通常更快。
+3. **依赖已齐 + Fast（release-fast）时，正常大约 5 分钟可完成**（含前端 + embed）。首次全量或 Release（全量 LTO）会更久。
+4. 前端 `dist` 已是最新时，可用 `.\script\build-easytier-web.ps1 -SkipFrontend -Profile Fast` 只重编 Rust。
 
 产物（`Fast`）：`target\release-fast\easytier-web-embed.exe`  
 产物（`Release`）：`target\release\easytier-web-embed.exe`
@@ -222,13 +227,13 @@ chmod +x ./easytier-web-embed
 | 只有 Windows 开发机，要 Linux 包 | 用 CI 打 Linux musl，或在 Linux 机器/容器里编 |
 | 要不要安装 Rust 到生产机 | **不要**；生产机只跑编译好的二进制 |
 | 卡在 Installing wasm-bindgen / 下载 binaryen | 先按 [2.0.1](#201-构建前先备齐本地依赖) 放到本地，再前台重跑脚本 |
-| `7z is needed to unpack libraries` | 安装 7-Zip，或确认 `C:\Program Files\7-Zip\7z.exe` 存在后用 `script\build-easytier-web.cmd`（会自动加 PATH） |
+| `7z is needed to unpack libraries` | 安装 7-Zip，或确认 `C:\Program Files\7-Zip\7z.exe` 存在后用 `script\easytier-web-fast.cmd`（会自动加 PATH） |
 | 构建要多久 | 依赖齐 + `release-fast`：**大约 5 分钟**；全量 `--release` 或首次冷编译更久 |
 
 ---
 
 ## 7. 一句话
 
-**改 `easytier-web` 后：先备齐本地依赖，再用 `script\build-easytier-web.cmd` 前台构建（日常选 Fast）；或手动先 pnpm 编前端，再 `cargo build --profile release-fast -p easytier-web --features embed`。依赖齐时约 5 分钟完成。把 embed 二进制拷到目标机，配合原有 `et.db` 启动即可。双平台正式包优先走现有 CI。**
+**改 `easytier-web` 后：先备齐本地依赖，再用 `script\easytier-web-fast.cmd` 前台构建（日常）；正式包用 `script\easytier-web-release.cmd`。或手动先 pnpm 编前端，再 `cargo build --profile release-fast -p easytier-web --features embed`。依赖齐时约 5 分钟完成。把 embed 二进制拷到目标机，配合原有 `et.db` 启动即可。双平台正式包优先走现有 CI。**
 
 **但注意：不要一上来就编 exe —— 先问用户是否需要生成产物、要哪个平台，得到确认后再动手，避免浪费大量编译时间（见第 0 节）。**

@@ -116,7 +116,7 @@ function onRowReorder(event: any) {
   <div class="flex flex-col gap-6">
     <!-- Chain Metadata Section -->
     <div
-      class="grid grid-cols-1 md:grid-cols-2 gap-4 p-4 bg-gray-50 rounded-lg border border-gray-200 dark:bg-gray-900 dark:border-gray-700">
+      class="grid grid-cols-1 md:grid-cols-2 gap-4 p-4 bg-surface-50 rounded-xl border border-surface dark:bg-surface-900">
       <div class="flex flex-col gap-2">
         <label class="font-bold text-sm">{{ t('acl.chain.name') }}</label>
         <InputText v-model="chain.name" size="small" />
@@ -126,7 +126,7 @@ function onRowReorder(event: any) {
         <InputText v-model="chain.description" size="small" />
       </div>
 
-      <div class="flex items-center gap-6 col-span-full border-t pt-2 mt-2 dark:border-gray-700">
+      <div class="flex items-center gap-6 col-span-full border-t border-surface pt-2 mt-2">
         <div class="flex items-center gap-2">
           <label class="font-bold text-sm">{{ t('acl.rule.enabled') }}</label>
           <ToggleButton v-model="chain.enabled" on-icon="pi pi-check" off-icon="pi pi-times"
@@ -163,39 +163,39 @@ function onRowReorder(event: any) {
           <div class="flex flex-col gap-2 py-1">
             <div class="flex items-center gap-2">
               <span
-                class="px-2 py-0.5 bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400 rounded-md text-[10px] font-bold uppercase tracking-wider">
+                class="px-2 py-0.5 rounded-md text-[10px] font-bold uppercase tracking-wider bg-primary/10 text-primary">
                 {{ getProtocolLabel(data.protocol) }}
               </span>
             </div>
 
             <div class="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-3">
               <div class="flex items-center gap-1.5 min-w-0">
-                <span class="text-[10px] font-bold text-gray-400 uppercase w-7">Src</span>
+                <span class="text-[10px] font-bold text-muted-color uppercase w-7">Src</span>
                 <div class="flex flex-wrap gap-1 items-center overflow-hidden">
                   <span v-for="ip in data.source_ips" :key="ip"
                     class="font-mono text-xs bg-surface-100 dark:bg-surface-800 px-1.5 py-0.5 rounded">{{ ip }}</span>
                   <span v-for="grp in data.source_groups" :key="grp"
-                    class="text-xs font-bold text-purple-600 dark:text-purple-400">@{{ grp }}</span>
-                  <span v-if="data.source_ports.length" class="text-xs text-blue-600 dark:text-blue-400 font-mono">:{{
+                    class="text-xs font-bold text-primary">@{{ grp }}</span>
+                  <span v-if="data.source_ports.length" class="text-xs text-primary font-mono">:{{
                     data.source_ports.join(',') }}</span>
-                  <span v-if="!data.source_ips.length && !data.source_groups.length" class="text-gray-400">*</span>
+                  <span v-if="!data.source_ips.length && !data.source_groups.length" class="text-muted-color">*</span>
                 </div>
               </div>
 
-              <i class="pi pi-arrow-right hidden sm:block text-gray-300 text-xs"></i>
+              <i class="pi pi-arrow-right hidden sm:block text-muted-color text-xs"></i>
               <Divider layout="horizontal" class="sm:hidden my-1" />
 
               <div class="flex items-center gap-1.5 min-w-0">
-                <span class="text-[10px] font-bold text-gray-400 uppercase w-7">Dst</span>
+                <span class="text-[10px] font-bold text-muted-color uppercase w-7">Dst</span>
                 <div class="flex flex-wrap gap-1 items-center overflow-hidden">
                   <span v-for="ip in data.destination_ips" :key="ip"
                     class="font-mono text-xs bg-surface-100 dark:bg-surface-800 px-1.5 py-0.5 rounded">{{ ip }}</span>
                   <span v-for="grp in data.destination_groups" :key="grp"
-                    class="text-xs font-bold text-purple-600 dark:text-purple-400">@{{ grp }}</span>
-                  <span v-if="data.ports.length" class="text-xs text-blue-600 dark:text-blue-400 font-mono">:{{
+                    class="text-xs font-bold text-primary">@{{ grp }}</span>
+                  <span v-if="data.ports.length" class="text-xs text-primary font-mono">:{{
                     data.ports.join(',') }}</span>
                   <span v-if="!data.destination_ips.length && !data.destination_groups.length"
-                    class="text-gray-400">*</span>
+                    class="text-muted-color">*</span>
                 </div>
               </div>
             </div>
@@ -212,8 +212,10 @@ function onRowReorder(event: any) {
       <Column :header="t('web.common.edit')">
         <template #body="{ index }">
           <div class="flex gap-2">
-            <Button icon="pi pi-pencil" text rounded @click="editRule(index)" />
-            <Button icon="pi pi-trash" severity="danger" text rounded @click="deleteRule(index)" />
+            <Button icon="pi pi-pencil" severity="secondary" rounded text class="et-icon-action-btn"
+              @click="editRule(index)" />
+            <Button icon="pi pi-trash" severity="danger" rounded text class="et-icon-action-btn"
+              @click="deleteRule(index)" />
           </div>
         </template>
       </Column>

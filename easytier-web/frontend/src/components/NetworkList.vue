@@ -106,7 +106,7 @@ const openNetworkRow = (row: NetworkRow, mode: 'status' | 'config') => {
         <ListPageShell :loading="deviceList === undefined" :empty="networkRows.length === 0">
             <template #empty>{{ t('web.device.no_networks') }}</template>
             <thead>
-                <tr class="surface-ground text-left">
+                <tr class="bg-surface-50 text-left">
                     <th class="px-3 py-2 font-semibold">{{ t('web.device.network_name') }}</th>
                     <th class="px-3 py-2 font-semibold">{{ t('web.device.belonging_device') }}</th>
                     <th class="px-3 py-2 font-semibold">{{ t('web.device.status') }}</th>
@@ -115,7 +115,7 @@ const openNetworkRow = (row: NetworkRow, mode: 'status' | 'config') => {
             </thead>
             <tbody>
                 <tr v-for="row in networkRows" :key="`${row.machine_id}-${row.instance_id}`"
-                    class="border-t surface-border">
+                    class="border-t border-surface">
                     <td class="px-3 py-2">
                         <div class="font-medium truncate max-w-[16rem]" v-tooltip.top="row.network_name">
                             {{ row.network_name }}

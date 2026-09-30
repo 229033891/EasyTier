@@ -17,19 +17,26 @@ const toast = useToast();
 
 const username = ref('');
 const password = ref('');
+const submitting = ref(false);
 
 const onSubmit = async () => {
-    saveApiHost(apiHost.value);
-    const credential: Credential = { username: username.value, password: password.value, };
-    let ret = await api.value?.login(credential);
-    if (ret.success) {
-        localStorage.setItem('apiHost', btoa(apiHost.value));
-        router.push({
-            name: 'dashboard',
-            params: { apiHost: btoa(apiHost.value) },
-        });
-    } else {
-        toast.add({ severity: 'error', summary: 'Login Failed', detail: ret.message, life: 2000 });
+    if (submitting.value) return;
+    submitting.value = true;
+    try {
+        saveApiHost(apiHost.value);
+        const credential: Credential = { username: username.value, password: password.value, };
+        let ret = await api.value?.login(credential);
+        if (ret.success) {
+            localStorage.setItem('apiHost', btoa(apiHost.value));
+            router.push({
+                name: 'dashboard',
+                params: { apiHost: btoa(apiHost.value) },
+            });
+        } else {
+            toast.add({ severity: 'error', summary: 'Login Failed', detail: ret.message, life: 2000 });
+        }
+    } finally {
+        submitting.value = false;
     }
 };
 
@@ -102,89 +109,179 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-    <div class="login-page flex items-center justify-center min-h-screen p-4">
-        <Card class="login-card w-full max-w-md p-6">
-            <template #header>
-                <div class="login-brand">
-                    <img :src="Icon" :alt="t('web.main.logo_alt')" />
-                    <div>
-                        <div class="login-brand-name">EasyTier</div>
-                        <h2 class="login-title">{{ t('web.login.login') }}</h2>
+    <div class="login-page">
+        <div class="login-shell">
+            <Card class="login-card">
+                <template #header>
+                    <div class="login-brand">
+                        <img :src="Icon" :alt="t('web.main.logo_alt')" class="login-logo" />
+                        <div class="login-brand-text">
+                            <div class="login-brand-name">EasyTier</div>
+                            <p class="login-brand-sub">{{ t('web.login.login') }}</p>
+                        </div>
                     </div>
-                </div>
-            </template>
-            <template #content>
-                <FormField class="mb-4" :label="t('web.login.api_host')" label-for="api-host"
-                    label-class="block text-sm font-medium">
-                    <AutoComplete id="api-host" v-model="apiHost" dropdown :suggestions="apiHostSuggestions"
-                        @complete="apiHostSearch" class="w-full" />
-                </FormField>
-                <form @submit.prevent="onSubmit" class="space-y-4">
-                    <FormField :label="t('web.login.username')" label-for="username"
-                        label-class="block text-sm font-medium">
-                        <InputText id="username" v-model="username" required class="w-full" />
-                    </FormField>
-                    <FormField :label="t('web.login.password')" label-for="password"
-                        label-class="block text-sm font-medium">
-                        <Password id="password" v-model="password" required toggleMask :feedback="false" />
-                    </FormField>
-                    <Button :label="t('web.login.login')" type="submit" class="w-full" />
-                    <Button v-if="oidcEnabled" :label="t('web.login.sso_login')" type="button" class="w-full" severity="info"
-                        @click="onSsoLogin" />
-                </form>
-            </template>
-        </Card>
+                </template>
+                <template #content>
+                    <div class="login-form">
+                        <FormField class="login-field" :label="t('web.login.api_host')" label-for="api-host">
+                            <AutoComplete id="api-host" v-model="apiHost" dropdown :suggestions="apiHostSuggestions"
+                                @complete="apiHostSearch" class="w-full login-control" />
+                        </FormField>
+                        <form class="login-form-stack" @submit.prevent="onSubmit">
+                            <FormField class="login-field" :label="t('web.login.username')" label-for="username">
+                                <InputText id="username" v-model="username" required autocomplete="username"
+                                    class="w-full login-control" />
+                            </FormField>
+                            <FormField class="login-field" :label="t('web.login.password')" label-for="password">
+                                <Password id="password" v-model="password" required toggleMask :feedback="false"
+                                    input-class="w-full" class="w-full login-control"
+                                    :input-props="{ autocomplete: 'current-password' }" />
+                            </FormField>
+                            <div class="login-actions">
+                                <Button :label="t('web.login.login')" type="submit" class="w-full login-submit"
+                                    :loading="submitting" />
+                                <Button v-if="oidcEnabled" :label="t('web.login.sso_login')" type="button"
+                                    class="w-full login-sso" severity="secondary" outlined @click="onSsoLogin" />
+                            </div>
+                        </form>
+                    </div>
+                </template>
+            </Card>
+        </div>
     </div>
 </template>
 
 <style scoped>
 .login-page {
+    min-height: 100dvh;
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 1.25rem;
+    box-sizing: border-box;
     background:
-        radial-gradient(circle at 15% 10%, color-mix(in srgb, var(--primary-color, #0ea5e9) 11%, transparent), transparent 32%),
-        var(--surface-ground, #f6f8fb);
+        radial-gradient(ellipse 70% 55% at 12% 8%, color-mix(in srgb, var(--primary-color, #0ea5e9) 16%, transparent), transparent 58%),
+        radial-gradient(ellipse 55% 45% at 88% 92%, color-mix(in srgb, var(--primary-color, #0ea5e9) 10%, transparent), transparent 55%),
+        linear-gradient(180deg, #f8fbff 0%, var(--surface-ground, #f6f8fb) 100%);
+}
+
+.login-shell {
+    width: 100%;
+    max-width: 26rem;
 }
 
 .login-card {
-    position: relative;
-    border: var(--et-border);
-    border-radius: 1rem;
-    box-shadow: 0 18px 50px rgba(15, 23, 42, 0.1);
+    border: 1px solid var(--et-border-color, #e2e8f0) !important;
+    border-radius: 1rem !important;
+    background: var(--surface-card, #ffffff) !important;
+    box-shadow:
+        0 1px 2px rgba(15, 23, 42, 0.04),
+        0 18px 40px rgba(15, 23, 42, 0.08);
+    overflow: hidden;
 }
 
 .login-brand {
     display: flex;
     align-items: center;
-    gap: 0.75rem;
-    padding: 0.25rem 0 1.25rem;
+    gap: 0.9rem;
+    padding: 1.35rem 1.35rem 0.85rem;
 }
 
-.login-brand img {
-    width: 2.75rem;
-    height: 2.75rem;
+.login-logo {
+    width: 3rem;
+    height: 3rem;
+    border-radius: 0.75rem;
+    box-shadow: 0 6px 16px color-mix(in srgb, var(--primary-color, #0ea5e9) 22%, transparent);
+}
+
+.login-brand-text {
+    min-width: 0;
 }
 
 .login-brand-name {
+    margin: 0;
+    color: var(--text-color, #0f172a);
+    font-size: 1.55rem;
+    font-weight: 750;
+    letter-spacing: -0.03em;
+    line-height: 1.15;
+}
+
+.login-brand-sub {
+    margin: 0.2rem 0 0;
     color: var(--text-color-secondary, #64748b);
-    font-size: var(--et-fs-meta);
-    font-weight: 600;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
+    font-size: var(--et-fs-body, 0.875rem);
+    font-weight: 500;
+    line-height: 1.35;
 }
 
-.login-title {
-    margin: 0.1rem 0 0;
+.login-form {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+    padding: 0 1.35rem 1.5rem;
+}
+
+.login-form-stack,
+.login-actions {
+    display: flex;
+    flex-direction: column;
+    gap: 0.9rem;
+}
+
+.login-field :deep(label),
+.login-field :deep(.form-field-label) {
+    display: block;
+    margin-bottom: 0.4rem;
     color: var(--text-color, #1e293b);
-    font-size: 1.5rem;
-    font-weight: 700;
-    line-height: 1.25;
-}
-
-:deep(.p-card-content) {
-    padding-top: 0.25rem;
-}
-
-:deep(.p-button.w-full) {
-    min-height: var(--et-btn);
+    font-size: 0.8125rem;
     font-weight: 600;
+}
+
+:deep(.p-card-body),
+:deep(.p-card-content) {
+    padding: 0 !important;
+}
+
+:deep(.p-card-header) {
+    padding: 0 !important;
+}
+
+:deep(.login-control.p-inputtext),
+:deep(.login-control .p-inputtext),
+:deep(.login-control.p-autocomplete),
+:deep(.login-control.p-password),
+:deep(.login-control .p-password-input) {
+    width: 100%;
+    min-height: 2.6rem;
+}
+
+:deep(.login-control.p-password) {
+    display: block;
+}
+
+:deep(.login-control.p-password .p-password-input) {
+    width: 100%;
+}
+
+:deep(.login-submit.p-button) {
+    min-height: var(--et-btn-lg, 2.75rem) !important;
+    border-radius: var(--et-radius, 0.75rem) !important;
+    font-weight: 700 !important;
+}
+
+:deep(.login-sso.p-button) {
+    min-height: var(--et-btn, 2.5rem) !important;
+    border-radius: var(--et-radius, 0.75rem) !important;
+    font-weight: 600 !important;
+    background: var(--surface-0, #ffffff) !important;
+    border: 1px solid var(--et-border-color, #e2e8f0) !important;
+    color: var(--text-color, #1e293b) !important;
+}
+
+:deep(.login-sso.p-button:hover:not(:disabled)) {
+    background: var(--surface-hover, #f1f5f9) !important;
+    border-color: color-mix(in srgb, var(--primary-color, #0ea5e9) 35%, var(--et-border-color, #e2e8f0)) !important;
 }
 </style>

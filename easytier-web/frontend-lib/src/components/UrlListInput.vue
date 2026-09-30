@@ -25,7 +25,8 @@ const removeUrl = (index: number) => {
         <div v-for="(_, index) in list" :key="index" class="flex gap-2 items-center w-full">
             <UrlInput v-model="list[index]" :protos="protos" :placeholder="placeholder">
                 <template #actions>
-                    <Button icon="pi pi-trash" severity="danger" text rounded @click="removeUrl(index)" />
+                    <Button icon="pi pi-trash" severity="danger" text rounded class="et-icon-action-btn"
+                        @click="removeUrl(index)" />
                 </template>
             </UrlInput>
         </div>
@@ -41,22 +42,26 @@ const removeUrl = (index: number) => {
 /*
  * 悬停样式统一放进 @media (hover: hover)：
  * 触屏设备上 :hover 会「粘住」——点一下之后一直保持高亮，直到点别处，看起来像选中态。
- * transition 只列真正变化的属性，不用 transition: all（会连带动画化无关属性，也影响性能）。
  */
 .url-add-dropzone {
-    transition: border-color 0.2s ease, background-color 0.2s ease;
+    transition: border-color 0.2s ease, background-color 0.2s ease, color 0.2s ease;
+    border-color: var(--et-border-color, #cbd5e1) !important;
+    color: var(--text-color-secondary, #64748b) !important;
+    border-radius: var(--et-radius, 0.75rem) !important;
 }
 
 @media (hover: hover) {
     .url-add-dropzone:hover {
-        border-color: var(--primary-color, var(--et-primary, #0ea5e9));
-        background-color: var(--surface-50, #f8fafc);
+        border-color: var(--primary-color, #0ea5e9) !important;
+        background: color-mix(in srgb, var(--primary-color, #0ea5e9) 8%, #ffffff);
+        color: var(--primary-color, #0ea5e9) !important;
     }
 }
 
 @media (hover: hover) and (prefers-color-scheme: dark) {
     .url-add-dropzone:hover {
-        background-color: var(--surface-800, #1e293b);
+        background: color-mix(in srgb, var(--primary-color, #0ea5e9) 14%, #0f172a);
+        color: var(--primary-color, #0ea5e9) !important;
     }
 }
 </style>

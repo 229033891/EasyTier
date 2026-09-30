@@ -97,8 +97,8 @@ watch(tomlConfig, (newValue) => {
         </div>
         <Divider />
         <div class="flex gap-2 justify-end">
+            <Button type="button" severity="secondary" outlined :label="t('close')" @click="visible = false" />
             <Button v-if="!props.readonly" type="button" :label="t('save')" @click="handleConfigSave" />
-            <Button type="button" :label="t('close')" @click="visible = false" />
         </div>
     </Dialog>
 </template>

@@ -195,21 +195,21 @@ onUnmounted(() => {
         :class="[
             forceShowSideBar ? 'translate-x-0' : '-translate-x-full',
             'sm:translate-x-0',
-            sidebarCollapsed ? 'sm:w-16' : 'sm:w-64',
+            sidebarCollapsed ? 'sm:w-16 sidebar--collapsed' : 'sm:w-64',
             'w-64',
         ]"
         :aria-label="t('web.main.sidebar')">
         <!-- 品牌区：移动端顶栏已有品牌，这里只在桌面显示（纯展示，无外链） -->
         <div
-            class="sidebar-brand hidden sm:flex shrink-0 items-center et-shell-border-b"
+            class="sidebar-brand hidden sm:flex shrink-0 items-center"
             :class="sidebarCollapsed ? 'justify-center px-0' : 'px-3'">
-            <img :src="Icon" class="h-8" :alt="t('web.main.logo_alt')" />
-            <span class="sidebar-brand-text ms-3 text-xl font-semibold whitespace-nowrap et-shell-text"
+            <img :src="Icon" class="h-8 sidebar-brand-logo" :alt="t('web.main.logo_alt')" />
+            <span class="sidebar-brand-text ms-3 whitespace-nowrap"
                 :class="{ 'sm:hidden': sidebarCollapsed }">EasyTier</span>
         </div>
 
-        <div class="flex-1 min-h-0 overflow-y-auto px-2 py-3 et-shell-surface">
-            <ul class="space-y-2 font-medium">
+        <div class="sidebar-nav flex-1 min-h-0 overflow-y-auto px-2 py-2">
+            <ul class="sidebar-nav-list">
                 <li v-for="item in navItems" :key="item.name">
                     <Button variant="text"
                         class="w-full sidebar-button"
@@ -217,23 +217,23 @@ onUnmounted(() => {
                         severity="contrast" @click="goNav(item.name)"
                         :aria-current="route.name === item.name ? 'page' : undefined"
                         v-tooltip.right="sidebarCollapsed ? item.label : undefined">
-                        <i :class="[item.icon, 'text-xl']"></i>
-                        <span class="mb-0.5" :class="{ 'sm:hidden': sidebarCollapsed }">{{ item.label }}</span>
+                        <i :class="[item.icon, 'sidebar-icon']"></i>
+                        <span :class="{ 'sm:hidden': sidebarCollapsed }">{{ item.label }}</span>
                     </Button>
                 </li>
             </ul>
         </div>
 
         <!-- 底部固定区：语言 / 修改密码 / 登出 / 折叠 -->
-        <div class="shrink-0 et-shell-border-t px-2 py-2 et-shell-surface">
-            <ul class="space-y-2 font-medium">
+        <div class="sidebar-footer shrink-0 px-2 py-2">
+            <ul class="sidebar-nav-list">
                 <li>
                     <Button variant="text" class="w-full sidebar-button" :class="sidebarButtonClass"
                         severity="contrast" @click="I18nUtils.toggleLanguage"
                         :aria-label="t('web.main.language')"
                         v-tooltip.right="sidebarCollapsed ? t('web.main.language') : undefined">
-                        <i class="pi pi-globe text-xl opacity-80"></i>
-                        <span class="mb-0.5" :class="{ 'sm:hidden': sidebarCollapsed }">{{ t('web.main.language')
+                        <i class="pi pi-globe sidebar-icon"></i>
+                        <span :class="{ 'sm:hidden': sidebarCollapsed }">{{ t('web.main.language')
                         }}</span>
                     </Button>
                 </li>
@@ -242,8 +242,8 @@ onUnmounted(() => {
                         severity="contrast" @click="openChangePassword"
                         :aria-label="t('web.main.change_password')"
                         v-tooltip.right="sidebarCollapsed ? t('web.main.change_password') : undefined">
-                        <i class="pi pi-lock text-xl opacity-80"></i>
-                        <span class="mb-0.5" :class="{ 'sm:hidden': sidebarCollapsed }">{{
+                        <i class="pi pi-lock sidebar-icon"></i>
+                        <span :class="{ 'sm:hidden': sidebarCollapsed }">{{
                             t('web.main.change_password') }}</span>
                     </Button>
                 </li>
@@ -251,8 +251,8 @@ onUnmounted(() => {
                     <Button variant="text" class="w-full sidebar-button sidebar-logout" :class="sidebarButtonClass"
                         severity="contrast" @click="doLogout" :aria-label="t('web.main.logout')"
                         v-tooltip.right="sidebarCollapsed ? t('web.main.logout') : undefined">
-                        <i class="pi pi-sign-out text-xl opacity-80"></i>
-                        <span class="mb-0.5" :class="{ 'sm:hidden': sidebarCollapsed }">{{ t('web.main.logout')
+                        <i class="pi pi-sign-out sidebar-icon"></i>
+                        <span :class="{ 'sm:hidden': sidebarCollapsed }">{{ t('web.main.logout')
                         }}</span>
                     </Button>
                 </li>
@@ -261,8 +261,8 @@ onUnmounted(() => {
                         severity="contrast" @click="toggleDesktopCollapse"
                         :aria-label="sidebarCollapsed ? t('web.main.expand_sidebar') : t('web.main.collapse_sidebar')"
                         v-tooltip.right="sidebarCollapsed ? t('web.main.expand_sidebar') : t('web.main.collapse_sidebar')">
-                        <i :class="[sidebarCollapsed ? 'pi pi-angle-double-right' : 'pi pi-angle-double-left', 'text-xl opacity-80']"></i>
-                        <span class="mb-0.5" :class="{ 'sm:hidden': sidebarCollapsed }">
+                        <i :class="[sidebarCollapsed ? 'pi pi-angle-double-right' : 'pi pi-angle-double-left', 'sidebar-icon']"></i>
+                        <span :class="{ 'sm:hidden': sidebarCollapsed }">
                             {{ sidebarCollapsed ? t('web.main.expand_sidebar') : t('web.main.collapse_sidebar') }}
                         </span>
                     </Button>
@@ -282,9 +282,9 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
-/* 壳层（侧栏/顶栏）统一走 surface token，避免 Tailwind gray 与内容区脱节 */
+/* 壳层：侧栏略偏冷灰，与内容区白卡片拉开层次 */
 .et-shell-surface {
-    background: var(--surface-card, #ffffff);
+    background: var(--surface-50, #f8fafc);
 }
 
 .et-shell-text {
@@ -292,19 +292,27 @@ onUnmounted(() => {
 }
 
 .et-shell-border-r {
-    border-right: 1px solid var(--surface-border, #e2e8f0);
-}
-
-.et-shell-border-b {
-    border-bottom: 1px solid var(--surface-border, #e2e8f0);
-}
-
-.et-shell-border-t {
-    border-top: 1px solid var(--surface-border, #e2e8f0);
+    border-right: 1px solid var(--et-border-color, var(--surface-border, #e2e8f0));
+    box-shadow: 1px 0 0 rgba(15, 23, 42, 0.02);
 }
 
 .top-navbar.et-shell-surface {
-    border-bottom: 1px solid var(--surface-border, #e2e8f0);
+    background: var(--surface-card, #ffffff);
+    border-bottom: 1px solid var(--et-border-color, var(--surface-border, #e2e8f0));
+}
+
+.sidebar-nav-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    font-weight: 500;
+}
+
+.sidebar-footer {
+    border-top: 1px solid var(--et-border-color, var(--surface-border, #e2e8f0));
 }
 
 /* 侧栏条目：只保留文字对齐。
@@ -312,42 +320,77 @@ onUnmounted(() => {
    Tailwind 的 sm:justify-center (0,1,0)，折叠态图标就没法居中了。
    对齐完全交给 sidebarButtonClass 里的工具类。 */
 .sidebar-button {
-    min-height: 2.75rem;
+    position: relative;
+    min-height: 2.5rem;
     border-radius: 0.625rem !important;
-    color: var(--text-color-secondary, #64748b) !important;
+    color: var(--text-color, #334155) !important;
     text-align: left;
+    font-weight: 500;
     transition: background-color 0.18s ease, color 0.18s ease;
+}
+
+.sidebar-icon {
+    width: 1.25rem;
+    font-size: 1.05rem;
+    line-height: 1;
+    text-align: center;
+    color: inherit;
+    opacity: 0.88;
 }
 
 @media (hover: hover) {
     .sidebar-button:hover:not(:disabled) {
-        background: var(--surface-hover, #f1f5f9) !important;
-        color: var(--text-color, #1e293b) !important;
+        background: color-mix(in srgb, var(--text-color, #0f172a) 5%, transparent) !important;
+        color: var(--text-color, #0f172a) !important;
     }
 }
 
 .sidebar-button--active,
 .sidebar-button--active:hover {
-    background: color-mix(in srgb, var(--primary-color, var(--et-primary, #0ea5e9)) 11%, transparent) !important;
+    background: color-mix(in srgb, var(--primary-color, var(--et-primary, #0ea5e9)) 12%, transparent) !important;
     color: var(--primary-color, var(--et-primary-emphasis, #0284c7)) !important;
-    box-shadow: inset 3px 0 0 var(--primary-color, var(--et-primary, #0ea5e9));
 }
 
-.sidebar-button i {
-    width: 1.25rem;
-    line-height: 1;
-    text-align: center;
+/* 选中指示条：圆角胶囊贴在按钮内侧，避免 inset shadow 与圆角打架 */
+.sidebar-button--active::before {
+    content: "";
+    position: absolute;
+    left: 0.2rem;
+    top: 0.55rem;
+    bottom: 0.55rem;
+    width: 0.2rem;
+    border-radius: 999px;
+    background: var(--primary-color, var(--et-primary, #0ea5e9));
 }
 
-/* 底栏图标统一降 20% 不透明度，和上方导航粗细拉齐；登出 hover 才显红，避免常驻大红 */
+/* 折叠态图标居中，指示条会挡图标，桌面折叠时隐藏 */
+@media (min-width: 640px) {
+    .sidebar--collapsed .sidebar-button--active::before {
+        display: none;
+    }
+}
+
+/* 底栏登出 hover 才显红，避免常驻大红 */
 .sidebar-logout:hover,
-.sidebar-logout:hover i {
+.sidebar-logout:hover .sidebar-icon {
     color: var(--p-red-500, #ef4444) !important;
 }
 
 /* 侧栏顶部品牌条：桌面端顶栏已移除，这里承担品牌展示 */
 .sidebar-brand {
     height: 3.5rem;
+    border-bottom: 1px solid var(--et-border-color, var(--surface-border, #e2e8f0));
+}
+
+.sidebar-brand-logo {
+    flex-shrink: 0;
+}
+
+.sidebar-brand-text {
+    color: var(--text-color, #0f172a);
+    font-size: 1.125rem;
+    font-weight: 700;
+    letter-spacing: -0.02em;
 }
 
 /* 侧栏为 fixed，需让位给顶栏：用实测顶栏高度对齐其底边。

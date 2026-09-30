@@ -93,13 +93,13 @@ const tabs = computed(() => {
             <div class="flex items-center gap-2 whitespace-nowrap">
               {{ tab.label }}
               <Button v-if="tab.type === 'chain'" icon="pi pi-times" severity="danger" text rounded size="small"
-                class="w-6 h-6 p-0" @click.stop="removeChain(tab.index)" />
+                class="et-icon-action-btn w-6 h-6 p-0" @click.stop="removeChain(tab.index)" />
             </div>
           </Tab>
         </TabList>
         <div
           class="flex-shrink-0 flex items-center px-2 bg-surface-0 dark:bg-surface-900 border-l border-surface-100 dark:border-surface-800">
-          <Button icon="pi pi-plus" text rounded size="small" class="w-8 h-8 p-0"
+          <Button icon="pi pi-plus" severity="secondary" text rounded size="small" class="et-icon-action-btn w-8 h-8 p-0"
             @click="(event) => menu.toggle(event)" />
           <Menu ref="menu" :model="addMenuModel" :popup="true" />
         </div>
@@ -113,9 +113,12 @@ const tabs = computed(() => {
             <div class="text-xl font-bold mb-2">{{ t('acl.chains') }}</div>
             <p class="text-surface-500 mb-8 text-center max-w-sm px-4">{{ t('acl.help') }}</p>
             <div class="flex flex-wrap gap-3 justify-center">
-              <Button :label="t('acl.inbound')" icon="pi pi-arrow-down-left" @click="addChain(AclChainType.Inbound)" />
-              <Button :label="t('acl.outbound')" icon="pi pi-arrow-up-right" @click="addChain(AclChainType.Outbound)" />
-              <Button :label="t('acl.forward')" icon="pi pi-directions" @click="addChain(AclChainType.Forward)" />
+              <Button :label="t('acl.inbound')" icon="pi pi-arrow-down-left" severity="secondary" outlined
+                @click="addChain(AclChainType.Inbound)" />
+              <Button :label="t('acl.outbound')" icon="pi pi-arrow-up-right" severity="secondary" outlined
+                @click="addChain(AclChainType.Outbound)" />
+              <Button :label="t('acl.forward')" icon="pi pi-directions" severity="info" outlined
+                @click="addChain(AclChainType.Forward)" />
             </div>
           </div>
 

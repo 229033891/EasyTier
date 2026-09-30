@@ -18,6 +18,32 @@ export const EasyTierPreset = definePreset(Aura, {
             950: '{sky.950}',
         },
     },
+    components: {
+        panel: {
+            root: {
+                borderColor: '{content.border.color}',
+                borderRadius: '0.75rem',
+            },
+            header: {
+                borderWidth: '0',
+                padding: '0.65rem 0.9rem',
+            },
+            content: {
+                padding: '0.75rem 0.9rem',
+            },
+        },
+        fieldset: {
+            root: {
+                borderColor: '{content.border.color}',
+                borderRadius: '0.75rem',
+            },
+            legend: {
+                borderColor: '{content.border.color}',
+                borderRadius: '0.5rem',
+                background: '{content.background}',
+            },
+        },
+    },
 })
 
 /** CSS / 组件回退用的品牌主色（与 sky-500 一致） */

@@ -8,8 +8,9 @@
       <SelectButton v-model="hours" :options="rangeOptions" option-label="label" option-value="value"
         :allow-empty="false" class="peer-history-range" />
 
-      <Button size="small" text rounded icon="pi pi-refresh" :loading="loading"
-        :aria-label="t('web.common.refresh')" v-tooltip.top="t('web.common.refresh')" @click="load()" />
+      <Button size="small" severity="secondary" text rounded icon="pi pi-refresh" class="et-icon-action-btn"
+        :loading="loading" :aria-label="t('web.common.refresh')" v-tooltip.top="t('web.common.refresh')"
+        @click="load()" />
 
       <span v-if="selectedPeer" class="text-xs text-surface-500 truncate">
         {{ selectedPeer.remote_addr }}<template v-if="selectedPeer.tunnel_type"> ·
@@ -225,8 +226,8 @@ function initCharts() {
           {
             label: t('download'),
             data: rxRate.value,
-            borderColor: 'rgb(59, 130, 246)',
-            backgroundColor: 'rgba(59, 130, 246, 0.1)',
+            borderColor: 'rgb(14, 165, 233)',
+            backgroundColor: 'rgba(14, 165, 233, 0.1)',
             borderWidth: 2,
             fill: true,
             tension: 0.35,

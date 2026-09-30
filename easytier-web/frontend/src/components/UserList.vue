@@ -168,72 +168,80 @@ onMounted(async () => {
         </div>
 
         <div class="user-create-form">
-            <FormField class="field" :label="t('web.users.username')" label-for="new-username">
+            <FormField class="field field-grow" :label="t('web.users.username')" label-for="new-username">
                 <InputText id="new-username" v-model="newUsername" class="w-full" autocomplete="off" />
             </FormField>
-            <FormField class="field" :label="t('web.users.password')" label-for="new-password">
+            <FormField class="field field-grow" :label="t('web.users.password')" label-for="new-password">
                 <Password id="new-password" v-model="newPassword" class="w-full" toggleMask :feedback="false"
                     autocomplete="new-password" />
             </FormField>
-            <FormField class="field field-admin" :label="t('web.users.is_admin')" label-for="new-is-admin">
-                <Checkbox inputId="new-is-admin" v-model="newIsAdmin" :binary="true" />
-            </FormField>
+            <div class="field field-admin">
+                <span class="field-admin-spacer" aria-hidden="true">&nbsp;</span>
+                <label for="new-is-admin" class="admin-check">
+                    <Checkbox inputId="new-is-admin" v-model="newIsAdmin" :binary="true" />
+                    <span>{{ t('web.users.is_admin') }}</span>
+                </label>
+            </div>
             <div class="field field-action">
+                <span class="field-admin-spacer" aria-hidden="true">&nbsp;</span>
                 <Button class="user-form-btn" :label="t('web.users.create')" icon="pi pi-user-plus"
                     :loading="creating" @click="createUser" />
             </div>
         </div>
 
-        <div v-if="resetFor" class="user-create-form">
-            <FormField class="field" :label="t('web.users.reset_for')">
+        <div v-if="resetFor" class="user-create-form user-reset-form">
+            <FormField class="field field-grow" :label="t('web.users.reset_for')">
                 <div class="reset-target">{{ resetFor.username }}</div>
             </FormField>
-            <FormField class="field" :label="t('web.users.new_password')" label-for="reset-password">
+            <FormField class="field field-grow" :label="t('web.users.new_password')" label-for="reset-password">
                 <Password id="reset-password" v-model="resetPassword" class="w-full" toggleMask :feedback="false"
                     autocomplete="new-password" />
             </FormField>
             <div class="field field-action field-actions">
-                <Button class="user-form-btn" :label="t('web.users.reset_password')" icon="pi pi-key"
-                    :loading="resettingId === resetFor.id" @click="submitReset" />
-                <Button class="user-form-btn" :label="t('web.users.cancel')" severity="secondary" outlined
-                    @click="cancelReset" />
+                <span class="field-admin-spacer" aria-hidden="true">&nbsp;</span>
+                <div class="field-actions-row">
+                    <Button class="user-form-btn" :label="t('web.users.reset_password')" icon="pi pi-key"
+                        :loading="resettingId === resetFor.id" @click="submitReset" />
+                    <Button class="user-form-btn" :label="t('web.users.cancel')" severity="secondary" outlined
+                        @click="cancelReset" />
+                </div>
             </div>
         </div>
 
         <ListPageShell :loading="users === undefined" :empty="users?.length === 0">
             <template #empty>{{ t('web.users.empty') }}</template>
             <thead>
-                <tr class="surface-ground text-left">
+                <tr class="bg-surface-50 text-left">
                     <th class="px-3 py-2 font-semibold">{{ t('web.users.username') }}</th>
                     <th class="px-3 py-2 font-semibold">{{ t('web.users.role') }}</th>
                     <th class="px-3 py-2 font-semibold text-right">{{ t('web.users.actions') }}</th>
                 </tr>
             </thead>
             <tbody>
-                <tr v-for="user in users" :key="user.id" class="border-t surface-border">
+                <tr v-for="user in users" :key="user.id" class="border-t border-surface">
                     <td class="px-3 py-2 font-medium">{{ user.username }}</td>
                     <td class="px-3 py-2">
-                        <span :class="user.is_admin ? 'role-admin' : 'role-user'">
+                        <span class="role-badge" :class="user.is_admin ? 'role-admin' : 'role-user'">
                             {{ user.is_admin ? t('web.users.role_admin') : t('web.users.role_user') }}
                         </span>
                     </td>
                     <td class="px-3 py-2">
-                        <div class="flex justify-end gap-1">
+                        <div class="flex justify-end gap-2">
                             <Button v-tooltip.top="t('web.users.reset_password')"
                                 icon="pi pi-key" severity="secondary" rounded text
-                                class="user-action-btn"
+                                class="et-icon-action-btn"
                                 @click="startReset(user)"
                                 :aria-label="t('web.users.reset_password')" />
                             <Button v-if="!user.is_admin"
                                 v-tooltip.top="t('web.users.delete')"
                                 icon="pi pi-trash" severity="danger" rounded text
-                                class="user-action-btn"
+                                class="et-icon-action-btn"
                                 @click="confirmDelete(user)"
                                 :aria-label="t('web.users.delete')" />
                             <Button v-else
                                 v-tooltip.top="t('web.users.delete_admin_forbidden')"
                                 icon="pi pi-trash" severity="secondary" rounded text
-                                class="user-action-btn" disabled
+                                class="et-icon-action-btn" disabled
                                 :aria-label="t('web.users.delete_admin_forbidden')" />
                         </div>
                     </td>
@@ -245,14 +253,14 @@ onMounted(async () => {
 
 <style scoped>
 .user-create-form {
-    display: grid;
-    grid-template-columns: minmax(12rem, 1.2fr) minmax(12rem, 1.2fr) auto auto;
-    gap: 0.875rem 1rem;
-    align-items: end;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    gap: 0.75rem 1rem;
+    padding: 0.875rem 1rem;
     background: var(--surface-card, #ffffff);
     border: var(--et-border);
     border-radius: var(--et-radius);
-    padding: var(--et-pad-card);
     box-shadow: var(--et-shadow-card);
 }
 
@@ -263,29 +271,55 @@ onMounted(async () => {
     min-width: 0;
 }
 
+.field-grow {
+    flex: 1 1 12rem;
+    max-width: 18rem;
+}
+
 /* label 位于 FormField 组件内部，需用 :deep 穿透 */
-:deep(.field label) {
+:deep(.field label),
+.field-admin-spacer {
     font-size: var(--et-fs-meta);
+    line-height: 1.25;
     color: var(--text-color-secondary, #64748b);
 }
 
+.field-admin-spacer {
+    display: block;
+    visibility: hidden;
+    user-select: none;
+}
+
 .field-admin {
-    min-width: 8rem;
-    align-items: flex-start;
+    flex: 0 0 auto;
+}
+
+.admin-check {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    min-height: var(--et-btn, 2.5rem);
+    margin: 0;
+    font-size: 0.875rem;
+    color: var(--text-color, #1e293b);
+    cursor: pointer;
+    white-space: nowrap;
 }
 
 .field-action {
-    min-width: 0;
-    justify-content: flex-end;
+    flex: 0 0 auto;
+    margin-left: auto;
 }
 
 .field-actions {
-    grid-column: 3 / -1;
+    margin-left: auto;
+}
+
+.field-actions-row {
     display: flex;
-    flex-direction: row;
     flex-wrap: wrap;
-    justify-content: flex-end;
     align-items: center;
+    justify-content: flex-end;
     gap: 0.5rem;
 }
 
@@ -305,38 +339,40 @@ onMounted(async () => {
     font-weight: 600;
 }
 
+.role-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.15rem 0.55rem;
+    border-radius: 999px;
+    font-size: var(--et-fs-meta);
+    font-weight: 600;
+    line-height: 1.4;
+}
+
 .role-admin {
     color: var(--primary-color, #0ea5e9);
-    font-weight: 600;
+    background: color-mix(in srgb, var(--primary-color, #0ea5e9) 12%, transparent);
 }
 
 .role-user {
     color: var(--text-color-secondary, #64748b);
+    background: var(--surface-100, #f1f5f9);
 }
 
-.user-action-btn {
-    width: var(--et-btn-sm) !important;
-    height: var(--et-btn-sm) !important;
-}
-
-@media (max-width: 760px) {
-    .user-create-form {
-        grid-template-columns: 1fr 1fr;
+@media (max-width: 640px) {
+    .field-grow {
+        flex: 1 1 100%;
+        max-width: none;
     }
 
-    .field-admin,
-    .field-action {
-        min-width: 0;
-    }
-
+    .field-action,
     .field-actions {
-        grid-column: 1 / -1;
+        margin-left: 0;
+        width: 100%;
     }
-}
 
-@media (max-width: 480px) {
-    .user-create-form {
-        grid-template-columns: 1fr;
+    .field-admin-spacer {
+        display: none;
     }
 
     .user-form-btn {
@@ -344,7 +380,7 @@ onMounted(async () => {
         min-width: 0 !important;
     }
 
-    .field-actions {
+    .field-actions-row {
         flex-direction: column;
         align-items: stretch;
     }

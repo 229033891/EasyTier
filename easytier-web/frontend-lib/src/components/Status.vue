@@ -498,8 +498,7 @@ const eventLogContent = computed(() => {
 </script>
 
 <template>
-  <div class="frontend-lib">
-    <Card v-if="curNetworkInst?.error_msg">
+  <Card v-if="curNetworkInst?.error_msg">
       <template #title>
         Run Network Error
       </template>
@@ -512,8 +511,7 @@ const eventLogContent = computed(() => {
       </template>
     </Card>
 
-    <template v-else>
-      <div class="status-panels flex flex-col gap-2">
+  <div v-else class="status-panels flex flex-col gap-2">
         <Panel v-model:collapsed="panelCollapsed.myNode" :header="t('my_node_info')" toggleable
           :pt="panelHeaderPt('myNode')">
           <div class="w-full">
@@ -537,9 +535,9 @@ const eventLogContent = computed(() => {
                 <Chip v-for="(chip, i) in group.chips" :key="i" :label="chip.label" :icon="chip.icon"
                   class="node-info-chip" v-tooltip.top="chip.label" />
               </div>
-              <Button v-if="group.chips.length" size="small" text rounded icon="pi pi-copy"
-                :aria-label="t('node_info_copy_group')" v-tooltip.top="t('node_info_copy_group')"
-                @click="copyGroupChips(group)" />
+              <Button v-if="group.chips.length" size="small" severity="secondary" text rounded icon="pi pi-copy"
+                class="et-icon-action-btn" :aria-label="t('node_info_copy_group')"
+                v-tooltip.top="t('node_info_copy_group')" @click="copyGroupChips(group)" />
             </div>
           </div>
         </Panel>
@@ -640,7 +638,7 @@ const eventLogContent = computed(() => {
                 </div>
                 <div class="mb-2 flex items-center justify-between gap-3">
                   <label class="font-medium">{{ t('vpn_portal_client_config') }}</label>
-                  <Button size="small" severity="secondary" icon="pi pi-copy"
+                  <Button size="small" severity="secondary" outlined icon="pi pi-copy"
                     :label="copiedVpnPortalClient === client.name ? t('config_copied') : t('vpn_portal_copy_client_config')"
                     @click="copyVpnPortalClientConfig(client)" />
                 </div>
@@ -664,32 +662,42 @@ const eventLogContent = computed(() => {
           </Timeline>
           <div v-else class="py-4 text-surface-500 text-sm">—</div>
         </Panel>
-      </div>
-    </template>
   </div>
 </template>
 
 <style lang="postcss" scoped>
 /* 面板列表：整体收紧面板间距 */
 .status-panels {
-  gap: 0.25rem;
+  gap: 0.5rem;
+}
+
+.status-panels :deep(.p-panel) {
+  border: 1px solid var(--et-border-color, #e2e8f0);
+  border-radius: var(--et-radius, 0.75rem);
+  background: var(--surface-card, #ffffff);
+  box-shadow: none;
+  overflow: hidden;
 }
 
 /* 面板标题栏：折叠态更矮（覆盖 PrimeVue 默认与全局触摸目标高度） */
 .status-panels :deep(.p-panel .p-panel-header) {
-  padding: 0.25rem 0.65rem !important;
-  min-height: 1.9rem !important;
+  padding: 0.35rem 0.75rem !important;
+  min-height: 2rem !important;
   font-size: 0.875rem;
   font-weight: 600;
   line-height: 1.2;
+  background: transparent;
+  border: none;
 }
 
 .status-panels :deep(.p-panel .p-panel-header.cursor-pointer) {
-  min-height: 1.9rem !important;
+  min-height: 2rem !important;
 }
 
 .status-panels :deep(.p-panel .p-panel-content) {
-  padding: 0.5rem 0.7rem !important;
+  padding: 0.55rem 0.75rem !important;
+  border: none;
+  background: transparent;
 }
 
 .status-panels :deep(.p-panel .p-panel-header .p-panel-title),
@@ -705,8 +713,8 @@ const eventLogContent = computed(() => {
 }
 
 .node-info-group {
-  border: 1px solid var(--surface-border, #e5e7eb);
-  border-radius: 0.375rem;
+  border: 1px solid var(--et-border-color, #e2e8f0);
+  border-radius: calc(var(--et-radius, 0.75rem) - 0.25rem);
   background: var(--surface-50, #f8fafc);
   padding: 0.3rem 0.5rem 0.4rem;
 }

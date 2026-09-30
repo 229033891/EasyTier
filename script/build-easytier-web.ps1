@@ -11,6 +11,9 @@
     Fast     = cargo --profile release-fast  (daily / local, default)
     Release  = cargo --release               (production)
 
+.PARAMETER Dev
+    Debug mode: cargo run (API) + Vite frontend in two windows; no package exe.
+
 .PARAMETER SkipFrontend
     Skip pnpm install/build; only compile Rust (frontend/dist must already exist for embed).
 
@@ -24,11 +27,12 @@
     Optional directory to copy the final binary into (created if missing).
 
 .PARAMETER Interactive
-    Prompt for Profile / frontend / embed / OutDir (used by build-easytier-web.cmd).
+    Prompt for Profile / frontend / embed / OutDir.
 
 .EXAMPLE
     .\script\build-easytier-web.ps1
     .\script\build-easytier-web.ps1 -Profile Release
+    .\script\build-easytier-web.ps1 -Dev
     .\script\build-easytier-web.ps1 -SkipFrontend -Profile Fast
     .\script\build-easytier-web.ps1 -Profile Release -OutDir D:\deploy\easytier-web
     .\script\build-easytier-web.ps1 -Interactive
@@ -36,6 +40,8 @@
 param(
     [ValidateSet('Fast', 'Release')]
     [string]$Profile = 'Fast',
+
+    [switch]$Dev,
 
     [switch]$SkipFrontend,
     [switch]$SkipInstall,
@@ -134,6 +140,114 @@ Set-Location $RepoRoot
 $CargoBin = Join-Path $env:USERPROFILE '.cargo\bin'
 if (Test-Path $CargoBin) {
     $env:Path = "$CargoBin;" + $env:Path
+}
+
+function Set-EasytierWritableTemp {
+    <#
+      Some environments set TEMP to a restricted folder (e.g. ...\Temp\2).
+      esbuild then fails with "Access is denied" when deleting its work dir.
+    #>
+    $etTemp = Join-Path $RepoRoot '.workbuddy-ai\tmp\esbuild-temp'
+    New-Item -ItemType Directory -Force -Path $etTemp | Out-Null
+    $env:TEMP = $etTemp
+    $env:TMP = $etTemp
+}
+
+function Start-EasytierWebDev {
+    <#
+      Debug: cargo run (debug API) + Vite frontend; no embed exe.
+    #>
+    Assert-Command cargo
+    Assert-Command pnpm
+    Ensure-WindowsBuildPrereqs
+    Set-EasytierWritableTemp
+
+    $frontendDir = Join-Path $RepoRoot 'easytier-web\frontend'
+    $dbPath = Join-Path $RepoRoot 'et-dev.db'
+    $apiUrl = 'http://localhost:11211'
+    $webHint = 'http://localhost:5173'
+    $etTemp = $env:TEMP
+
+    $needInstall = -not (Test-Path (Join-Path $RepoRoot 'node_modules')) `
+        -or -not (Test-Path (Join-Path $frontendDir 'node_modules'))
+    if ($SkipInstall -and -not $needInstall) {
+        Write-Host 'Skip pnpm install (-SkipInstall)' -ForegroundColor DarkGray
+    }
+    else {
+        if ($SkipInstall -and $needInstall) {
+            Write-Warning 'node_modules missing; running pnpm install despite -SkipInstall'
+        }
+        Write-Step 'pnpm -r install'
+        pnpm -r install
+        if ($LASTEXITCODE -ne 0) { throw "pnpm install failed (exit $LASTEXITCODE)" }
+    }
+
+    $backendCmd = @"
+`$Host.UI.RawUI.WindowTitle = 'EasyTier-web API (debug)'
+Set-Location '$RepoRoot'
+Write-Host 'EasyTier-web backend - cargo run (debug, no embed)' -ForegroundColor Cyan
+Write-Host '  DB:  $dbPath'
+Write-Host '  API: $apiUrl'
+Write-Host ''
+cargo run -p easytier-web -- --db `"$dbPath`" --console-log-level debug
+Write-Host ''
+Write-Host 'Backend exited. Press Enter to close.' -ForegroundColor Yellow
+Read-Host | Out-Null
+"@
+
+    $frontendCmd = @"
+`$Host.UI.RawUI.WindowTitle = 'EasyTier-web frontend (Vite)'
+Set-Location '$frontendDir'
+`$env:TEMP = '$etTemp'
+`$env:TMP = '$etTemp'
+Write-Host 'EasyTier-web frontend - pnpm dev (Vite)' -ForegroundColor Cyan
+Write-Host '  proxy /api -> $apiUrl'
+Write-Host '  waiting for API port 11211 (cargo may still be compiling) ...'
+`$deadline = (Get-Date).AddMinutes(8)
+do {
+  `$ok = `$false
+  try {
+    `$tcp = New-Object System.Net.Sockets.TcpClient
+    `$tcp.Connect('127.0.0.1', 11211)
+    `$tcp.Close()
+    `$ok = `$true
+  } catch {
+    Start-Sleep -Seconds 2
+  }
+} while (-not `$ok -and (Get-Date) -lt `$deadline)
+if (-not `$ok) {
+  Write-Host '  WARNING: API port not open yet; Vite will start anyway (proxy errors until backend is up).' -ForegroundColor Yellow
+} else {
+  Write-Host '  API port is open.' -ForegroundColor Green
+}
+Write-Host '  open the Local URL printed by Vite'
+Write-Host '  typical URL: $webHint'
+Write-Host ''
+pnpm dev
+Write-Host ''
+Write-Host 'Frontend exited. Press Enter to close.' -ForegroundColor Yellow
+Read-Host | Out-Null
+"@
+
+    Write-Step 'Start backend window (cargo run -p easytier-web)'
+    Start-Process -FilePath 'powershell.exe' -ArgumentList @(
+        '-NoProfile', '-ExecutionPolicy', 'Bypass', '-NoExit', '-Command', $backendCmd
+    ) | Out-Null
+
+    Write-Step 'Start frontend window (waits for API, then pnpm dev)'
+    Start-Process -FilePath 'powershell.exe' -ArgumentList @(
+        '-NoProfile', '-ExecutionPolicy', 'Bypass', '-NoExit', '-Command', $frontendCmd
+    ) | Out-Null
+
+    Write-Host ''
+    Write-Host 'Debug mode started (two new windows).' -ForegroundColor Green
+    Write-Host "  API:  $apiUrl"
+    Write-Host "  Web:  $webHint  (use the port Vite prints)"
+    Write-Host "  DB:   $dbPath"
+    Write-Host ''
+    Write-Host 'Wait for cargo compile + Vite Local URL, then open the frontend in a browser.'
+    Write-Host 'Close those two windows to stop. This launcher will exit.'
+    Write-Host ''
 }
 
 function Ensure-WindowsBuildPrereqs {
@@ -466,10 +580,15 @@ Manual setup (then re-run this script):
      $vendorArchive
      OR extract so this exists:
      $vendorExe
-  3) Re-run build-easytier-web.cmd
+  3) Re-run script\easytier-web-fast.cmd (or easytier-web-release.cmd)
 
 wasm-pack will reuse PATH/vendor and will not re-download.
 "@
+}
+
+if ($Dev) {
+    Start-EasytierWebDev
+    exit 0
 }
 
 Write-Host "EasyTier Web build"
@@ -482,6 +601,7 @@ Write-Host "  Frontend:$(-not $SkipFrontend)"
 if (-not $SkipFrontend) {
     Assert-Command pnpm
     Assert-Command wasm-pack
+    Set-EasytierWritableTemp
 
     Write-Step 'Ensure local wasm-bindgen (avoid re-download)'
     Ensure-WasmBindgenLocal

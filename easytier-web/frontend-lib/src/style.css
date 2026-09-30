@@ -28,7 +28,24 @@
   --et-gap-section: 1rem;
   --et-pad-card: 1rem 1.125rem;
 
-  --et-border: 1px solid color-mix(in srgb, var(--surface-border, #e2e8f0) 78%, transparent);
+  /*
+   * PrimeFlex / PrimeVue3 遗留 token → PrimeVue4 语义变量。
+   * 未定义时 var(--surface-border) 会整段失效，边框回落到 preflight 的 currentColor（纯黑）。
+   */
+  --surface-border: var(--p-content-border-color, #e2e8f0);
+  --surface-card: var(--p-content-background, #ffffff);
+  --surface-ground: var(--p-surface-50, #f8fafc);
+  --surface-hover: var(--p-content-hover-background, #f1f5f9);
+  --surface-0: var(--p-surface-0, #ffffff);
+  --surface-50: var(--p-surface-50, #f8fafc);
+  --surface-100: var(--p-surface-100, #f1f5f9);
+  --surface-200: var(--p-surface-200, #e2e8f0);
+  --text-color: var(--p-text-color, #1e293b);
+  --text-color-secondary: var(--p-text-muted-color, #64748b);
+  --primary-color: var(--p-primary-color, #0ea5e9);
+
+  --et-border-color: var(--surface-border, #e2e8f0);
+  --et-border: 1px solid var(--et-border-color);
   --et-radius: 0.75rem;
   --et-shadow-card: 0 1px 2px rgba(15, 23, 42, 0.03), 0 8px 24px rgba(15, 23, 42, 0.04);
 
@@ -85,6 +102,500 @@
   line-height: 1.5;
 }
 
+/* 遗留 PrimeFlex 类名：模板里仍有 surface-border / border-1，补成有效样式 */
+.surface-border {
+  border-color: var(--surface-border, #e2e8f0);
+}
+
+.border-1 {
+  border-width: 1px;
+}
+
+.surface-0 {
+  background: var(--surface-0, #ffffff);
+}
+
+.surface-ground {
+  background: var(--surface-ground, #f8fafc);
+}
+
+/* Panel：浅灰描边 + 圆角，避免主题未注入时落到 currentColor 黑框 */
+.p-panel {
+  border: 1px solid var(--p-panel-border-color, var(--surface-border, #e2e8f0)) !important;
+  border-radius: var(--et-radius, 0.75rem);
+  background: var(--p-panel-background, var(--surface-card, #ffffff));
+  box-shadow: none !important;
+  overflow: hidden;
+}
+
+.p-panel .p-panel-header,
+.p-panel .p-panel-content,
+.p-panel .p-panel-footer {
+  border-color: transparent;
+  background: transparent;
+}
+
+/* Fieldset：同样避免图例/外框落到 currentColor 黑框 */
+.p-fieldset {
+  border: 1px solid var(--p-fieldset-border-color, var(--surface-border, #e2e8f0)) !important;
+  border-radius: var(--et-radius, 0.75rem);
+  background: var(--p-fieldset-background, var(--surface-card, #ffffff));
+}
+
+.p-fieldset .p-fieldset-legend {
+  border: 1px solid var(--surface-border, #e2e8f0);
+  border-radius: calc(var(--et-radius, 0.75rem) - 0.25rem);
+  background: var(--surface-card, #ffffff);
+  color: var(--text-color, #1e293b);
+  padding: 0.35rem 0.65rem;
+}
+
+/* Divider：默认也会落到 currentColor 黑线 */
+.p-divider.p-divider-horizontal:before {
+  border-top-color: var(--surface-border, #e2e8f0) !important;
+}
+
+.p-divider.p-divider-vertical:before {
+  border-left-color: var(--surface-border, #e2e8f0) !important;
+}
+
+/*
+ * 表单控件统一描边/圆角/焦点态。
+ * Aura 默认边框过淡时，在白底上看起来像「没边框」；这里统一到 EasyTier token。
+ */
+.p-inputtext,
+.p-password .p-password-input,
+.p-inputnumber .p-inputnumber-input,
+.p-select,
+.p-multiselect,
+.p-autocomplete .p-autocomplete-input,
+.p-textarea {
+  border: 1px solid var(--et-border-color, #e2e8f0) !important;
+  border-radius: calc(var(--et-radius, 0.75rem) - 0.125rem) !important;
+  background: var(--surface-0, #ffffff) !important;
+  color: var(--text-color, #1e293b) !important;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, background-color 0.15s ease;
+}
+
+.p-inputtext:enabled:hover,
+.p-password:not(.p-disabled) .p-password-input:hover,
+.p-inputnumber:not(.p-disabled) .p-inputnumber-input:hover,
+.p-select:not(.p-disabled):hover,
+.p-multiselect:not(.p-disabled):hover,
+.p-autocomplete:not(.p-disabled) .p-autocomplete-input:hover,
+.p-textarea:enabled:hover {
+  border-color: color-mix(in srgb, var(--primary-color, #0ea5e9) 35%, var(--et-border-color, #e2e8f0)) !important;
+}
+
+.p-inputtext:enabled:focus,
+.p-password:not(.p-disabled) .p-password-input:focus,
+.p-inputnumber:not(.p-disabled) .p-inputnumber-input:focus,
+.p-select:not(.p-disabled).p-focus,
+.p-multiselect:not(.p-disabled).p-focus,
+.p-autocomplete:not(.p-disabled).p-focus .p-autocomplete-input,
+.p-textarea:enabled:focus {
+  border-color: var(--primary-color, #0ea5e9) !important;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary-color, #0ea5e9) 18%, transparent) !important;
+  outline: none !important;
+}
+
+.p-inputtext:disabled,
+.p-password.p-disabled .p-password-input,
+.p-inputnumber.p-disabled .p-inputnumber-input,
+.p-select.p-disabled,
+.p-textarea:disabled {
+  background: var(--surface-50, #f8fafc) !important;
+  color: var(--text-color-secondary, #64748b) !important;
+  opacity: 1 !important;
+}
+
+.p-inputgroup .p-inputgroupaddon {
+  border: 1px solid var(--et-border-color, #e2e8f0) !important;
+  background: var(--surface-50, #f8fafc) !important;
+  color: var(--text-color-secondary, #64748b) !important;
+}
+
+.p-inputgroup .p-inputtext,
+.p-inputgroup .p-inputnumber,
+.p-inputgroup .p-select,
+.p-inputgroup .p-autocomplete {
+  border-radius: 0 !important;
+}
+
+.p-inputgroup > :first-child,
+.p-inputgroup > :first-child .p-inputtext,
+.p-inputgroup > :first-child .p-password-input,
+.p-inputgroup > :first-child .p-inputnumber-input {
+  border-top-left-radius: calc(var(--et-radius, 0.75rem) - 0.125rem) !important;
+  border-bottom-left-radius: calc(var(--et-radius, 0.75rem) - 0.125rem) !important;
+}
+
+.p-inputgroup > :last-child,
+.p-inputgroup > :last-child .p-inputtext,
+.p-inputgroup > :last-child .p-password-input,
+.p-inputgroup > :last-child .p-inputnumber-input {
+  border-top-right-radius: calc(var(--et-radius, 0.75rem) - 0.125rem) !important;
+  border-bottom-right-radius: calc(var(--et-radius, 0.75rem) - 0.125rem) !important;
+}
+
+/* Checkbox：加大可点区域，勾选态走品牌色 */
+.p-checkbox {
+  width: 1.15rem;
+  height: 1.15rem;
+}
+
+.p-checkbox .p-checkbox-box {
+  width: 1.15rem !important;
+  height: 1.15rem !important;
+  border: 1.5px solid var(--et-border-color, #cbd5e1) !important;
+  border-radius: 0.3rem !important;
+  background: var(--surface-0, #ffffff) !important;
+}
+
+.p-checkbox:not(.p-disabled):hover .p-checkbox-box {
+  border-color: var(--primary-color, #0ea5e9) !important;
+}
+
+.p-checkbox.p-checkbox-checked .p-checkbox-box,
+.p-checkbox.p-highlight .p-checkbox-box {
+  background: var(--primary-color, #0ea5e9) !important;
+  border-color: var(--primary-color, #0ea5e9) !important;
+}
+
+.p-selectbutton .p-togglebutton,
+.p-togglebutton {
+  border: 1px solid var(--et-border-color, #e2e8f0) !important;
+  border-radius: calc(var(--et-radius, 0.75rem) - 0.25rem) !important;
+}
+
+.p-selectbutton .p-togglebutton.p-togglebutton-checked,
+.p-togglebutton.p-togglebutton-checked {
+  background: color-mix(in srgb, var(--primary-color, #0ea5e9) 12%, #ffffff) !important;
+  border-color: color-mix(in srgb, var(--primary-color, #0ea5e9) 45%, var(--et-border-color, #e2e8f0)) !important;
+  color: var(--primary-color, #0ea5e9) !important;
+}
+
+/*
+ * 全站按钮配色：按 severity 上浅色底 + 描边，避免「白底灰字」看不出可点。
+ * 侧栏导航 .sidebar-button 除外（保持文字按钮）。
+ */
+.p-button:not(.sidebar-button) {
+  border-radius: var(--et-radius, 0.75rem) !important;
+  font-weight: 600 !important;
+}
+
+.p-button:not(.p-button-outlined):not(.p-button-text):not(.p-button-link):not(.p-button-secondary):not(.p-button-success):not(.p-button-info):not(.p-button-warn):not(.p-button-danger):not(.p-button-help):not(.p-button-contrast):not(.sidebar-button) {
+  background: var(--primary-color, #0ea5e9) !important;
+  border: 1px solid var(--primary-color, #0ea5e9) !important;
+  color: #ffffff !important;
+}
+
+.p-button:not(.p-button-outlined):not(.p-button-text):not(.p-button-link):not(.p-button-secondary):not(.p-button-success):not(.p-button-info):not(.p-button-warn):not(.p-button-danger):not(.p-button-help):not(.p-button-contrast):not(.sidebar-button):hover:not(:disabled) {
+  background: var(--et-primary-emphasis, #0284c7) !important;
+  border-color: var(--et-primary-emphasis, #0284c7) !important;
+}
+
+.p-button.p-button-secondary:not(.p-button-text):not(.p-button-link):not(.sidebar-button),
+.p-button-outlined.p-button-secondary:not(.sidebar-button) {
+  background: color-mix(in srgb, var(--primary-color, #0ea5e9) 10%, #ffffff) !important;
+  border: 1px solid color-mix(in srgb, var(--primary-color, #0ea5e9) 28%, var(--et-border-color, #e2e8f0)) !important;
+  color: var(--primary-color, #0284c7) !important;
+}
+
+.p-button.p-button-secondary:not(.p-button-text):not(.p-button-link):not(.sidebar-button):hover:not(:disabled),
+.p-button-outlined.p-button-secondary:not(.sidebar-button):hover:not(:disabled) {
+  background: color-mix(in srgb, var(--primary-color, #0ea5e9) 16%, #ffffff) !important;
+}
+
+.p-button.p-button-success:not(.p-button-text):not(.p-button-link),
+.p-button-outlined.p-button-success {
+  background: color-mix(in srgb, #10b981 14%, #ffffff) !important;
+  border: 1px solid color-mix(in srgb, #10b981 40%, #e2e8f0) !important;
+  color: #047857 !important;
+}
+
+.p-button.p-button-success:not(.p-button-text):not(.p-button-link):hover:not(:disabled),
+.p-button-outlined.p-button-success:hover:not(:disabled) {
+  background: color-mix(in srgb, #10b981 22%, #ffffff) !important;
+}
+
+.p-button.p-button-info:not(.p-button-text):not(.p-button-link),
+.p-button-outlined.p-button-info {
+  background: color-mix(in srgb, var(--primary-color, #0ea5e9) 14%, #ffffff) !important;
+  border: 1px solid color-mix(in srgb, var(--primary-color, #0ea5e9) 38%, #e2e8f0) !important;
+  color: var(--primary-color, #0284c7) !important;
+}
+
+.p-button.p-button-info:not(.p-button-text):not(.p-button-link):hover:not(:disabled),
+.p-button-outlined.p-button-info:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--primary-color, #0ea5e9) 22%, #ffffff) !important;
+}
+
+.p-button.p-button-warn:not(.p-button-text):not(.p-button-link),
+.p-button-outlined.p-button-warn {
+  background: color-mix(in srgb, #f59e0b 16%, #ffffff) !important;
+  border: 1px solid color-mix(in srgb, #f59e0b 42%, #e2e8f0) !important;
+  color: #b45309 !important;
+}
+
+.p-button.p-button-danger:not(.p-button-text):not(.p-button-link),
+.p-button-outlined.p-button-danger {
+  background: color-mix(in srgb, #ef4444 12%, #ffffff) !important;
+  border: 1px solid color-mix(in srgb, #ef4444 38%, #e2e8f0) !important;
+  color: #b91c1c !important;
+}
+
+.p-button.p-button-danger:not(.p-button-text):not(.p-button-link):hover:not(:disabled),
+.p-button-outlined.p-button-danger:hover:not(:disabled) {
+  background: color-mix(in srgb, #ef4444 20%, #ffffff) !important;
+}
+
+/* text / 圆形图标按钮：同样给语义底色 */
+.p-button.p-button-text:not(.sidebar-button):not(.p-button-secondary):not(.p-button-success):not(.p-button-info):not(.p-button-warn):not(.p-button-danger):not(.p-button-contrast) {
+  background: color-mix(in srgb, var(--primary-color, #0ea5e9) 10%, #ffffff) !important;
+  color: var(--primary-color, #0284c7) !important;
+}
+
+.p-button.p-button-text.p-button-secondary:not(.sidebar-button) {
+  background: var(--surface-100, #f1f5f9) !important;
+  color: var(--text-color-secondary, #64748b) !important;
+}
+
+.p-button.p-button-text.p-button-info {
+  background: color-mix(in srgb, var(--primary-color, #0ea5e9) 12%, #ffffff) !important;
+  color: var(--primary-color, #0284c7) !important;
+}
+
+.p-button.p-button-text.p-button-success {
+  background: color-mix(in srgb, #10b981 12%, #ffffff) !important;
+  color: #047857 !important;
+}
+
+.p-button.p-button-text.p-button-danger {
+  background: color-mix(in srgb, #ef4444 12%, #ffffff) !important;
+  color: #b91c1c !important;
+}
+
+.p-button.p-button-text.p-button-warn {
+  background: color-mix(in srgb, #f59e0b 14%, #ffffff) !important;
+  color: #b45309 !important;
+}
+
+/*
+ * Toast / Message / Confirm 统一提示样式：
+ * 不透明底色 + 语义色边框/图标，避免白底黑框透出页面内容。
+ */
+.p-toast {
+  opacity: 1 !important;
+  max-width: min(24rem, calc(100vw - 2rem));
+}
+
+.p-toast .p-toast-message {
+  margin: 0 0 0.65rem !important;
+  border-radius: var(--et-radius, 0.75rem) !important;
+  border-width: 1px !important;
+  border-style: solid !important;
+  box-shadow: 0 12px 28px rgba(15, 23, 42, 0.14) !important;
+  backdrop-filter: none !important;
+  opacity: 1 !important;
+  overflow: hidden;
+}
+
+.p-toast .p-toast-message-content {
+  align-items: flex-start !important;
+  gap: 0.65rem !important;
+  padding: 0.85rem 0.95rem !important;
+}
+
+.p-toast .p-toast-summary {
+  font-size: 0.9rem !important;
+  font-weight: 700 !important;
+  line-height: 1.35 !important;
+}
+
+.p-toast .p-toast-detail {
+  margin-top: 0.2rem !important;
+  font-size: 0.8125rem !important;
+  line-height: 1.45 !important;
+  opacity: 0.92;
+  word-break: break-word;
+}
+
+.p-toast .p-toast-message-icon {
+  font-size: 1.1rem !important;
+  margin-top: 0.1rem;
+}
+
+.p-toast .p-toast-close-button {
+  width: 1.75rem !important;
+  height: 1.75rem !important;
+  border-radius: 9999px !important;
+  margin: -0.15rem -0.2rem 0 0.35rem !important;
+}
+
+.p-toast-message-error,
+.p-message.p-message-error {
+  background: #fef2f2 !important;
+  border-color: #fca5a5 !important;
+  color: #991b1b !important;
+}
+
+.p-toast-message-error .p-toast-summary,
+.p-toast-message-error .p-toast-detail,
+.p-toast-message-error .p-toast-message-icon,
+.p-message.p-message-error .p-message-text,
+.p-message.p-message-error .p-message-icon {
+  color: #991b1b !important;
+}
+
+.p-toast-message-success,
+.p-message.p-message-success {
+  background: #ecfdf5 !important;
+  border-color: #6ee7b7 !important;
+  color: #065f46 !important;
+}
+
+.p-toast-message-success .p-toast-summary,
+.p-toast-message-success .p-toast-detail,
+.p-toast-message-success .p-toast-message-icon,
+.p-message.p-message-success .p-message-text,
+.p-message.p-message-success .p-message-icon {
+  color: #065f46 !important;
+}
+
+.p-toast-message-warn,
+.p-toast-message-warnning,
+.p-message.p-message-warn {
+  background: #fffbeb !important;
+  border-color: #fcd34d !important;
+  color: #92400e !important;
+}
+
+.p-toast-message-warn .p-toast-summary,
+.p-toast-message-warn .p-toast-detail,
+.p-toast-message-warn .p-toast-message-icon,
+.p-message.p-message-warn .p-message-text,
+.p-message.p-message-warn .p-message-icon {
+  color: #92400e !important;
+}
+
+.p-toast-message-info,
+.p-message.p-message-info {
+  background: #f0f9ff !important;
+  border-color: #7dd3fc !important;
+  color: #075985 !important;
+}
+
+.p-toast-message-info .p-toast-summary,
+.p-toast-message-info .p-toast-detail,
+.p-toast-message-info .p-toast-message-icon,
+.p-message.p-message-info .p-message-text,
+.p-message.p-message-info .p-message-icon {
+  color: #075985 !important;
+}
+
+.p-toast .p-toast-close-button:hover {
+  background: color-mix(in srgb, currentColor 12%, transparent) !important;
+}
+
+.p-message {
+  border-radius: var(--et-radius, 0.75rem) !important;
+  border-width: 1px !important;
+  border-style: solid !important;
+  box-shadow: none !important;
+}
+
+.p-message .p-message-content {
+  gap: 0.55rem !important;
+  padding: 0.7rem 0.85rem !important;
+}
+
+.p-confirmdialog .p-dialog,
+.p-dialog.p-confirmdialog {
+  border-radius: var(--et-radius, 0.75rem) !important;
+  border: 1px solid var(--et-border-color, #e2e8f0) !important;
+  box-shadow: 0 18px 40px rgba(15, 23, 42, 0.16) !important;
+  overflow: hidden;
+}
+
+.p-confirmdialog .p-dialog-header {
+  padding: 1rem 1.15rem 0.35rem !important;
+}
+
+.p-confirmdialog .p-dialog-content {
+  padding: 0.35rem 1.15rem 1rem !important;
+}
+
+.p-confirmdialog .p-dialog-footer {
+  padding: 0 1.15rem 1rem !important;
+  gap: 0.5rem !important;
+}
+
+/* Select / 下拉浮层：强制不透明，避免透出底层内容 */
+.p-select-overlay,
+.p-autocomplete-overlay,
+.p-multiselect-overlay,
+.p-datepicker-panel,
+.p-popover,
+.p-menu.p-component,
+.p-tieredmenu-overlay,
+.p-dropdown-panel {
+  background: #ffffff !important;
+  background-color: #ffffff !important;
+  opacity: 1 !important;
+  border: 1px solid var(--et-border-color, #e2e8f0) !important;
+  box-shadow: 0 12px 32px rgba(15, 23, 42, 0.14) !important;
+}
+
+.p-select-overlay .p-select-list,
+.p-select-overlay .p-select-list-container,
+.p-select-overlay .p-virtualscroller,
+.p-autocomplete-overlay .p-autocomplete-list,
+.p-multiselect-overlay .p-multiselect-list {
+  background: #ffffff !important;
+  background-color: #ffffff !important;
+}
+
+.p-select-option,
+.p-autocomplete-option,
+.p-multiselect-option {
+  background-color: transparent;
+}
+
+.p-select-option.p-focus,
+.p-select-option.p-select-option-selected,
+.p-autocomplete-option.p-focus,
+.p-multiselect-option.p-focus {
+  background: color-mix(in srgb, var(--primary-color, #0ea5e9) 10%, #ffffff) !important;
+}
+
+@media (prefers-color-scheme: dark) {
+  .p-select-overlay,
+  .p-autocomplete-overlay,
+  .p-multiselect-overlay,
+  .p-datepicker-panel,
+  .p-popover,
+  .p-menu.p-component,
+  .p-tieredmenu-overlay,
+  .p-dropdown-panel,
+  .p-select-overlay .p-select-list,
+  .p-select-overlay .p-select-list-container,
+  .p-select-overlay .p-virtualscroller,
+  .p-autocomplete-overlay .p-autocomplete-list,
+  .p-multiselect-overlay .p-multiselect-list {
+    background: #1e293b !important;
+    background-color: #1e293b !important;
+    border-color: #334155 !important;
+  }
+}
+
+.p-select-overlay.network-select-overlay,
+.network-select-overlay.p-select-overlay {
+  background: #ffffff !important;
+  background-color: #ffffff !important;
+  opacity: 1 !important;
+}
+
 /* 可折叠 Panel：标题区整块可点时保留足够的触摸目标（与 Config / AclRuleDialog 的 pt 配套） */
 .p-panel-header.cursor-pointer {
   min-height: 2.5rem;
@@ -121,22 +632,53 @@
 
 .et-icon-action--primary,
 .et-icon-action-btn.p-button-info {
-  background: color-mix(in srgb, var(--primary-color, var(--et-primary)) 12%, transparent) !important;
+  background: color-mix(in srgb, var(--primary-color, var(--et-primary)) 12%, #ffffff) !important;
   color: var(--primary-color, var(--et-primary)) !important;
+  border-color: color-mix(in srgb, var(--primary-color, var(--et-primary)) 22%, transparent) !important;
 }
 
 .et-icon-action--muted,
 .et-icon-action-btn.p-button-secondary {
   background: var(--surface-100, #f1f5f9) !important;
   color: var(--text-color-secondary, #64748b) !important;
+  border-color: var(--et-border-color, #e2e8f0) !important;
+}
+
+.et-icon-action-btn.p-button-success {
+  background: color-mix(in srgb, #10b981 12%, #ffffff) !important;
+  color: #047857 !important;
+  border-color: color-mix(in srgb, #10b981 28%, transparent) !important;
+}
+
+.et-icon-action-btn.p-button-danger {
+  background: color-mix(in srgb, #ef4444 12%, #ffffff) !important;
+  color: #b91c1c !important;
+  border-color: color-mix(in srgb, #ef4444 28%, transparent) !important;
 }
 
 @media (hover: hover) {
   .et-icon-action:hover,
   .et-icon-action-btn.p-button:hover:not(:disabled),
   .et-icon-action-btn.p-button:hover:not(:disabled) .p-button-icon {
+    filter: brightness(0.97);
+  }
+
+  .et-icon-action-btn.p-button-secondary:hover:not(:disabled),
+  .et-icon-action-btn.p-button-secondary:hover:not(:disabled) .p-button-icon {
     background: var(--surface-200, #e2e8f0) !important;
     color: var(--text-color, #1e293b) !important;
+  }
+
+  .et-icon-action-btn.p-button-info:hover:not(:disabled),
+  .et-icon-action-btn.p-button-info:hover:not(:disabled) .p-button-icon {
+    background: color-mix(in srgb, var(--primary-color, var(--et-primary)) 18%, #ffffff) !important;
+    color: var(--primary-color, var(--et-primary)) !important;
+  }
+
+  .et-icon-action-btn.p-button-danger:hover:not(:disabled),
+  .et-icon-action-btn.p-button-danger:hover:not(:disabled) .p-button-icon {
+    background: color-mix(in srgb, #ef4444 20%, #ffffff) !important;
+    color: #b91c1c !important;
   }
 }
 

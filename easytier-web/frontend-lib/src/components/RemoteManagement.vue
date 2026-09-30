@@ -13,33 +13,33 @@ const props = defineProps<{
     api: Api.RemoteClient;
     newConfigGenerator?: () => NetworkTypes.NetworkConfig;
     pauseAutoRefresh?: boolean;
-    /** Web Drawer / GUI 抽屉关闭；全页模式用页头返回，勿与之重复 */
+    /** Web Drawer / GUI ???????????????????? */
     drawerClose?: () => void;
-    /** 离开按钮文案，默认 t('close') */
+    /** ????????? t('close') */
     leaveButtonLabel?: string;
-    /** 离开按钮悬停说明 */
+    /** ???????? */
     leaveButtonTooltip?: string;
-    /** 离开按钮图标，默认 pi-times */
+    /** ????????? pi-times */
     leaveButtonIcon?: string;
-    /** Web 独立全页管理（用页头返回，底栏不再放返回） */
+    /** Web ????????????????????? */
     fullPage?: boolean;
     /**
-     * Web 设备列表分流：status=查看/启停；config=编辑/新建。
-     * 不传则保持 GUI 原「状态+配置」合一行为。
+     * Web ???????status=??/???config=??/???
+     * ????? GUI ????+????????
      */
     mode?: 'status' | 'config';
-    /** 全页标题，放在网络选择栏内，避免页头再空出一截 */
+    /** ??????????????????????? */
     pageTitle?: string;
 }>();
 
 const isStatusMode = computed(() => props.mode === 'status')
 const isConfigMode = computed(() => props.mode === 'config')
-/** GUI 等未指定 mode 时的兼容模式 */
+/** GUI ???? mode ?????? */
 const isCombinedMode = computed(() => !props.mode)
 const leaveLabel = computed(() => props.leaveButtonLabel || t('close'))
 const leaveTooltip = computed(() => props.leaveButtonTooltip || leaveLabel.value)
 const leaveIcon = computed(() => props.leaveButtonIcon || 'pi pi-times')
-/** 有离开回调时底栏显示返回/关闭（全页与抽屉均用底栏，不再用页头箭头） */
+/** ????????????/????????????????????? */
 const showLeaveInFooter = computed(() => !!props.drawerClose)
 
 const instanceId = defineModel('instanceId', {
@@ -140,12 +140,12 @@ const currentNetworkControl = {
     })
 }
 
-/** 配置页常显保存：有配置且可编辑（运行中也可只存盘不重跑） */
+/** ???????????????????????????? */
 const canSaveConfig = computed(() => {
     if (!currentNetworkConfig.value) {
         return false;
     }
-    // 元数据尚未加载或加载失败时拒绝操作，避免把未知权限当成可写。
+    // ??????????????????????????????
     if (!currentNetworkMeta.value || networkMetaLoadFailed.value[currentNetworkConfig.value.instance_id]) {
         return false;
     }
@@ -189,7 +189,7 @@ watch(instanceList, async (newVal) => {
             }
         });
     }
-    // 打开 Drawer 未带 instanceId 时，优先选中运行中实例，否则选第一个
+    // ?? Drawer ?? instanceId ??????????????????
     const currentExists = !!instanceId.value && newVal?.some(item => item.uuid === instanceId.value);
     if (newVal?.length && (!instanceId.value || !currentExists)) {
         const running = newVal.find(item => isRunning(item.uuid));
@@ -207,6 +207,17 @@ const selectedInstanceId = computed({
         instanceId.value = value ? value.uuid : undefined;
     }
 });
+
+/** ??????????????????? */
+const selectedNetworkRunning = computed(() => {
+    const id = selectedInstanceId.value?.uuid;
+    return !!id && isRunning(id);
+});
+const selectedNetworkStopped = computed(() => {
+    const id = selectedInstanceId.value?.uuid;
+    return !!id && !isRunning(id);
+});
+
 watch(selectedInstanceId, async (newVal, oldVal) => {
     try {
         if (newVal?.uuid !== oldVal?.uuid && (networkIsDisabled.value || isEditingNetwork.value)) {
@@ -248,7 +259,7 @@ const needShowNetworkStatus = computed(() => {
     return true;
 })
 
-/** 配置编辑面板：配置模式 / 合一模式的编辑与禁用态 */
+/** ??????????? / ??????????? */
 const showConfigPanel = computed(() => {
     if (isStatusMode.value) {
         return false;
@@ -256,11 +267,11 @@ const showConfigPanel = computed(() => {
     if (isEditingNetwork.value || networkIsDisabled.value) {
         return true;
     }
-    // 配置模式已选中实例时由表单占位（ensureConfigModeEditing 会拉配置）
+    // ????????????????ensureConfigModeEditing ?????
     return isConfigMode.value && !!selectedInstanceId.value;
 })
 
-/** 状态模式：已禁用虚拟网时显示启停，不进配置表单 */
+/** ??????????????????????? */
 const showStatusDisabledPanel = computed(() => {
     return isStatusMode.value && !!selectedInstanceId.value && networkIsDisabled.value;
 })
@@ -344,7 +355,7 @@ const confirmStopNetwork = (event: Event) => {
     });
 }
 
-/** 状态模式：启用已禁用的虚拟网 */
+/** ?????????????? */
 const startNetwork = async () => {
     if (!selectedInstanceId.value) {
         return;
@@ -388,7 +399,7 @@ const requestSwitchMode = (mode: 'status' | 'config') => {
     emits('switchMode', mode);
 }
 
-/** 配置模式：选中运行中实例时自动进入编辑表单 */
+/** ????????????????????? */
 const ensureConfigModeEditing = async () => {
     if (!isConfigMode.value || !selectedInstanceId.value || networkIsDisabled.value) {
         return;
@@ -492,7 +503,7 @@ const saveAndRunNewNetwork = async (config?: NetworkTypes.NetworkConfig) => {
 
     emits('update');
     if (isConfigMode.value) {
-        // 配置模式保存/运行后仍留在配置表单
+        // ??????/??????????
         isEditingNetwork.value = true;
     } else {
         isEditingNetwork.value = false;
@@ -706,19 +717,19 @@ const syncTomlConfig = async (tomlConfig: string): Promise<void> => {
     currentNetworkConfig.value = config;
 }
 
-// 响应式屏幕宽度
+// ???????
 const screenWidth = ref(window.innerWidth);
 const updateScreenWidth = () => {
     screenWidth.value = window.innerWidth;
 };
 
-// 菜单：仅保留「编辑」等不适合常显的操作；导出/删除已平铺到配置工具栏
+// ??????????????????????/???????????
 const menuRef = ref();
 const actionMenu: Ref<MenuItem[]> = ref([
     {
         label: () => t('web.device_management.edit_network'),
         icon: 'pi pi-pencil',
-        // 状态模式不提供编辑；配置模式已在表单中则隐藏
+        // ??????????????????????
         visible: () =>
             !isStatusMode.value
             && !isEditingNetwork.value
@@ -739,7 +750,7 @@ const showHeaderActions = computed(() =>
     (isCombinedMode.value && isEditingNetwork.value) || showMoreActionsMenu.value
 );
 
-/** 底部主操作：按当前面板决定右侧按钮 */
+/** ????????????????? */
 const stickyFooterPrimary = computed(() => {
     if (showStatusDisabledPanel.value) {
         return 'start' as const;
@@ -771,14 +782,14 @@ let periodFunc = new Utils.PeriodicTask(async () => {
 onMounted(async () => {
     periodFunc.start();
 
-    // 添加屏幕尺寸监听
+    // ????????
     window.addEventListener('resize', updateScreenWidth);
 });
 
 onUnmounted(() => {
     periodFunc.stop();
 
-    // 移除屏幕尺寸监听
+    // ????????
     window.removeEventListener('resize', updateScreenWidth);
 });
 
@@ -789,15 +800,29 @@ onUnmounted(() => {
     <div class="device-management" :class="{ 'device-management--page': fullPage || !!drawerClose }">
         <input type="file" @change="handleFileUpload" class="hidden" accept="application/toml" ref="configFile" />
 
-        <!-- 网络选择和操作按钮始终在同一行（顶栏固定） -->
+        <!-- ????????????????????? -->
         <div class="network-header">
             <h1 v-if="pageTitle" class="et-page-title network-page-title">{{ pageTitle }}</h1>
-            <div class="flex flex-row justify-between items-center gap-2">
-                <!-- 网络选择 -->
+            <div class="network-header-main flex flex-row justify-between items-center gap-2">
+                <!-- ?????? -->
                 <div class="flex-1 min-w-0">
-                    <Select v-model="selectedInstanceId" :options="instanceList" optionLabel="uuid" class="w-full"
+                    <Select v-model="selectedInstanceId" :options="instanceList" optionLabel="uuid"
+                        class="w-full network-instance-select"
                         inputId="dd-inst-id" :placeholder="t('web.device_management.select_network')"
-                        :pt="{ root: { class: 'network-select-container' } }" :virtualScrollerOptions="{
+                        overlay-class="network-select-overlay"
+                        :pt="{
+                            root: {
+                                class: [
+                                    'network-select-container',
+                                    {
+                                        'network-instance-select--running': selectedNetworkRunning,
+                                        'network-instance-select--stopped': selectedNetworkStopped,
+                                    },
+                                ],
+                            },
+                            overlay: { class: 'network-select-overlay' },
+                        }"
+                        :virtualScrollerOptions="{
                             lazy: true,
                             onLazyLoad: onLazyLoadNetworkMetas,
                             itemSize: 60,
@@ -805,14 +830,14 @@ onUnmounted(() => {
                         }">
                             <template #value="slotProps">
                                 <div v-if="slotProps.value" class="flex items-center min-w-0 gap-2">
-                                    <span class="truncate block min-w-0 flex-1">
+                                    <span class="truncate block min-w-0 flex-1 network-instance-label">
                                         <span v-if="slotProps.value.meta">
                                             {{ slotProps.value.meta.network_name }} ({{ slotProps.value.uuid }})
                                         </span>
                                         <span v-else>{{ slotProps.value.uuid }}</span>
                                     </span>
-                                    <Tag class="leading-3 shrink-0"
-                                        :severity="isRunning(slotProps.value.uuid) ? 'success' : 'info'"
+                                    <Tag class="network-status-tag leading-3 shrink-0"
+                                        :severity="isRunning(slotProps.value.uuid) ? 'success' : 'danger'"
                                         :value="t(isRunning(slotProps.value.uuid) ? 'network_running' : 'network_stopped')" />
                                 </div>
                                 <span v-else>{{ slotProps.placeholder }}</span>
@@ -824,11 +849,11 @@ onUnmounted(() => {
                                             <span class="truncate block">{{ t('network_name') }}: {{
                                                 slotProps.option.meta?.network_name ?? slotProps.option.uuid }}</span>
                                         </div>
-                                        <Tag class="my-auto leading-3 shrink-0"
-                                            :severity="isRunning(slotProps.option.uuid) ? 'success' : 'info'"
+                                        <Tag class="network-status-tag my-auto leading-3 shrink-0"
+                                            :severity="isRunning(slotProps.option.uuid) ? 'success' : 'danger'"
                                             :value="t(isRunning(slotProps.option.uuid) ? 'network_running' : 'network_stopped')" />
                                     </div>
-                                    <div class="max-w-full overflow-hidden text-ellipsis text-gray-500">
+                                    <div class="max-w-full overflow-hidden text-ellipsis text-muted-color">
                                         {{ slotProps.option.uuid }}
                                     </div>
                                 </div>
@@ -836,26 +861,26 @@ onUnmounted(() => {
                         </Select>
                 </div>
 
-                <!-- 顶栏：取消编辑 / 更多（创建网络改到配置工具栏） -->
+                <!-- ???? / ???? -->
                 <div v-if="showHeaderActions" class="flex gap-2 shrink-0 button-container items-center">
                     <Button v-if="isCombinedMode && isEditingNetwork" @click="cancelEditNetwork" icon="pi pi-times"
                         :label="screenWidth > 640 ? t('web.device_management.cancel_edit') : undefined"
                         :class="['header-action-btn', screenWidth <= 640 ? 'p-button-icon-only' : '']"
                         v-tooltip.bottom="screenWidth <= 640 ? t('web.device_management.cancel_edit') : undefined"
-                        severity="secondary" />
+                        severity="secondary" outlined />
 
-                    <!-- More actions menu（仅 GUI 合一模式的「编辑」入口） -->
+                    <!-- More actions menu?GUI ??? -->
                     <Menu ref="menuRef" :model="actionMenu" :popup="true" />
                     <Button v-if="showMoreActionsMenu"
                         icon="pi pi-ellipsis-v"
-                        class="header-action-btn header-action-btn--icon" severity="secondary"
+                        class="header-action-btn header-action-btn--icon" severity="secondary" outlined
                         @click="menuRef.toggle($event)" :aria-label="t('web.device_management.more_actions')"
                         v-tooltip.bottom="t('web.device_management.more_actions')" />
                 </div>
             </div>
         </div>
 
-        <!-- 配置工具栏固定在顶栏下方，不随表单滚动 -->
+        <!-- ??????????????????? -->
         <div v-if="showConfigPanel" class="network-toolbar">
             <div class="config-toolbar">
                 <div class="toolbar-zone">
@@ -863,12 +888,15 @@ onUnmounted(() => {
                     <div class="toolbar-zone-actions">
                         <Button class="config-toolbar-btn" @click="showConfigEditDialog = true" icon="pi pi-file-edit"
                             :label="t('web.device_management.edit_as_file')" iconPos="left" severity="secondary"
+                            outlined
                             v-tooltip.bottom="t('web.device_management.edit_as_file_tip')" />
                         <Button class="config-toolbar-btn" @click="importConfig" icon="pi pi-upload"
                             :label="t('web.device_management.import_config')" iconPos="left" severity="secondary"
+                            outlined
                             v-tooltip.bottom="t('web.device_management.import_config_tip')" />
                         <Button v-if="selectedInstanceId" class="config-toolbar-btn" @click="exportConfig" icon="pi pi-download"
                             :label="t('web.device_management.export_config')" iconPos="left" severity="secondary"
+                            outlined
                             v-tooltip.bottom="t('web.device_management.export_config_tip')" />
                         <Button v-if="canSaveConfig" class="config-toolbar-btn" @click="saveNetworkConfig"
                             :disabled="!currentNetworkConfig || savingConfig"
@@ -893,7 +921,7 @@ onUnmounted(() => {
             </div>
         </div>
 
-        <!-- 仅中间表单/状态区滚动 -->
+        <!-- ?????/????? -->
         <div class="network-content">
             <Message v-if="showStatusDisabledPanel" severity="warn" class="mb-0">
                 {{ t('web.device_management.network_disabled_hint') }}
@@ -937,16 +965,16 @@ onUnmounted(() => {
 
         <div v-if="showStickyFooter" class="network-sticky-footer">
             <Button v-if="showLeaveInFooter" @click="drawerClose" :label="leaveLabel" severity="secondary"
-                :icon="leaveIcon" iconPos="left" class="network-footer-btn"
+                :icon="leaveIcon" iconPos="left" class="network-footer-btn network-footer-btn--muted"
                 v-tooltip.top="leaveTooltip" />
             <div class="footer-zone footer-zone--primary">
                 <Button v-if="isConfigMode" icon="pi pi-chart-line" severity="secondary"
                     :label="t('web.device_management.switch_to_status')" iconPos="left"
-                    class="network-footer-btn" @click="requestSwitchMode('status')"
+                    class="network-footer-btn network-footer-btn--accent" @click="requestSwitchMode('status')"
                     v-tooltip.top="t('web.device_management.switch_to_status_tip')" />
                 <Button v-else-if="isStatusMode" icon="pi pi-cog" severity="secondary"
                     :label="t('web.device_management.switch_to_config')" iconPos="left"
-                    class="network-footer-btn" @click="requestSwitchMode('config')"
+                    class="network-footer-btn network-footer-btn--accent" @click="requestSwitchMode('config')"
                     v-tooltip.top="t('web.device_management.switch_to_config_tip')" />
 
                 <Button v-if="stickyFooterPrimary === 'start'" @click="confirmStartNetwork($event)"
@@ -961,7 +989,7 @@ onUnmounted(() => {
                 <Button v-else-if="stickyFooterPrimary === 'stop'" @click="confirmStopNetwork($event)"
                     :disabled="!currentNetworkControl.deletable.value"
                     :label="t('web.device_management.disable_network')" severity="danger" icon="pi pi-power-off"
-                    iconPos="left" class="network-footer-btn"
+                    iconPos="left" class="network-footer-btn network-footer-btn--danger"
                     v-tooltip.top="t('web.device_management.disable_network_tip')" />
             </div>
         </div>
@@ -994,27 +1022,51 @@ onUnmounted(() => {
     flex-shrink: 0;
     z-index: 20;
     background: var(--surface-card, #ffffff) !important;
-    border: var(--et-border, 1px solid var(--surface-border, #e5e7eb));
+    border: 1px solid var(--et-border-color, #e2e8f0);
     border-radius: var(--et-radius, 0.75rem);
-    box-shadow: var(--et-shadow-card, 0 1px 2px rgba(15, 23, 42, 0.03));
-    padding: 0.5rem 0.75rem 0.6rem !important;
+    box-shadow: var(--et-shadow-card, none);
+    padding: 0.75rem 1rem !important;
     margin: 0 !important;
 }
 
 .network-page-title {
-    margin: 0 0 0.1rem;
+    position: relative;
+    margin: 0 0 0.55rem;
+    padding-left: 0.75rem;
     font-size: var(--et-fs-page-title, 1.25rem);
     font-weight: 700;
-    line-height: 1.25;
+    line-height: 1.3;
+    letter-spacing: -0.02em;
+    color: var(--text-color, #1e293b);
+}
+
+.network-page-title::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 0.2rem;
+    bottom: 0.2rem;
+    width: 0.25rem;
+    border-radius: 999px;
+    background: var(--primary-color, var(--et-primary, #0ea5e9));
+}
+
+.network-header-main {
+    min-width: 0;
+}
+
+.network-instance-label {
+    font-size: var(--et-fs-body, 0.875rem);
+    color: var(--text-color-secondary, #64748b);
 }
 
 .network-toolbar {
     flex-shrink: 0;
     z-index: 20;
     background: var(--surface-card, #ffffff) !important;
-    border: var(--et-border, 1px solid var(--surface-border, #e5e7eb));
+    border: 1px solid var(--et-border-color, #e2e8f0);
     border-radius: var(--et-radius, 0.75rem);
-    padding: 0.35rem 0.6rem 0.4rem;
+    padding: 0.5rem 0.75rem;
     margin: 0;
 }
 
@@ -1022,22 +1074,22 @@ onUnmounted(() => {
     flex: 1 1 auto;
     overflow-y: auto;
     min-height: 0;
-    padding: 0.4rem 0.6rem !important;
+    padding: 0.65rem 0.75rem !important;
     background: var(--surface-card, #ffffff) !important;
-    border: var(--et-border, 1px solid var(--surface-border, #e5e7eb));
+    border: 1px solid var(--et-border-color, #e2e8f0);
     border-radius: var(--et-radius, 0.75rem);
-    box-shadow: var(--et-shadow-card, 0 1px 2px rgba(15, 23, 42, 0.03)) !important;
+    box-shadow: var(--et-shadow-card, none) !important;
 }
 
 .network-sticky-footer {
     flex-shrink: 0;
     z-index: 20;
     margin-top: 0;
-    padding: 0.4rem 0.6rem;
+    padding: 0.55rem 0.75rem;
     background: var(--surface-card, #ffffff);
-    border: var(--et-border, 1px solid var(--surface-border, #e5e7eb));
+    border: 1px solid var(--et-border-color, #e2e8f0);
     border-radius: var(--et-radius, 0.75rem);
-    box-shadow: var(--et-shadow-card, 0 1px 2px rgba(15, 23, 42, 0.03));
+    box-shadow: var(--et-shadow-card, none);
     display: flex;
     flex-wrap: wrap;
     align-items: center;
@@ -1057,7 +1109,7 @@ onUnmounted(() => {
     margin-left: auto;
 }
 
-/* 底栏按钮：同高、同宽（固定宽度，避免文案长短把按钮拉歪） */
+/* ????????????????? */
 :deep(.network-footer-btn.p-button) {
     width: var(--et-btn-w, 10rem);
     min-width: var(--et-btn-w, 10rem);
@@ -1068,6 +1120,52 @@ onUnmounted(() => {
     border-radius: var(--et-radius, 0.75rem) !important;
     box-sizing: border-box;
     justify-content: center;
+}
+
+:deep(.network-footer-btn--muted.p-button),
+:deep(.network-footer-btn.p-button.p-button-secondary) {
+    background: var(--surface-100, #f1f5f9) !important;
+    border: 1px solid var(--et-border-color, #e2e8f0) !important;
+    color: var(--text-color, #1e293b) !important;
+}
+
+:deep(.network-footer-btn--muted.p-button:hover:not(:disabled)),
+:deep(.network-footer-btn.p-button.p-button-secondary:hover:not(:disabled)) {
+    background: var(--surface-200, #e2e8f0) !important;
+    border-color: color-mix(in srgb, var(--primary-color, #0ea5e9) 35%, var(--et-border-color, #e2e8f0)) !important;
+    color: var(--text-color, #1e293b) !important;
+}
+
+:deep(.network-footer-btn--accent.p-button) {
+    background: color-mix(in srgb, var(--primary-color, #0ea5e9) 12%, #ffffff) !important;
+    border: 1px solid color-mix(in srgb, var(--primary-color, #0ea5e9) 32%, var(--et-border-color, #e2e8f0)) !important;
+    color: var(--primary-color, #0284c7) !important;
+}
+
+:deep(.network-footer-btn--accent.p-button:hover:not(:disabled)) {
+    background: color-mix(in srgb, var(--primary-color, #0ea5e9) 18%, #ffffff) !important;
+}
+
+:deep(.network-footer-btn--danger.p-button),
+:deep(.network-footer-btn.p-button-danger) {
+    background: color-mix(in srgb, #ef4444 12%, #ffffff) !important;
+    border: 1px solid color-mix(in srgb, #ef4444 35%, #e2e8f0) !important;
+    color: #b91c1c !important;
+}
+
+:deep(.network-footer-btn--danger.p-button:hover:not(:disabled)),
+:deep(.network-footer-btn.p-button-danger:hover:not(:disabled)) {
+    background: color-mix(in srgb, #ef4444 20%, #ffffff) !important;
+}
+
+:deep(.network-footer-btn.p-button-success) {
+    background: color-mix(in srgb, #10b981 14%, #ffffff) !important;
+    border: 1px solid color-mix(in srgb, #10b981 38%, #e2e8f0) !important;
+    color: #047857 !important;
+}
+
+:deep(.network-footer-btn.p-button-success:hover:not(:disabled)) {
+    background: color-mix(in srgb, #10b981 22%, #ffffff) !important;
 }
 
 :deep(.header-action-btn.p-button) {
@@ -1097,6 +1195,78 @@ onUnmounted(() => {
     border-radius: var(--et-radius, 0.75rem) !important;
     box-sizing: border-box;
     justify-content: center;
+}
+
+:deep(.network-select-container.p-select),
+:deep(.network-instance-select.p-select) {
+    border: 1px solid var(--et-border-color, #e2e8f0) !important;
+    border-radius: calc(var(--et-radius, 0.75rem) - 0.125rem) !important;
+    background: #ffffff !important;
+    background-color: #ffffff !important;
+    transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+:deep(.network-select-container.p-select:not(.p-disabled):hover),
+:deep(.network-instance-select.p-select:not(.p-disabled):hover) {
+    border-color: color-mix(in srgb, var(--primary-color, #0ea5e9) 40%, var(--et-border-color, #e2e8f0)) !important;
+}
+
+/* ?????????=???????=??? */
+:deep(.network-instance-select--running.p-select),
+:deep(.network-instance-select.network-instance-select--running) {
+    background: #10b981 !important;
+    background-color: #10b981 !important;
+    border-color: #059669 !important;
+    color: #ffffff !important;
+}
+
+:deep(.network-instance-select--stopped.p-select),
+:deep(.network-instance-select.network-instance-select--stopped) {
+    background: #ef4444 !important;
+    background-color: #ef4444 !important;
+    border-color: #dc2626 !important;
+    color: #ffffff !important;
+}
+
+:deep(.network-instance-select--running .network-instance-label),
+:deep(.network-instance-select--stopped .network-instance-label),
+:deep(.network-instance-select--running .p-select-dropdown),
+:deep(.network-instance-select--stopped .p-select-dropdown),
+:deep(.network-instance-select--running .p-select-dropdown-icon),
+:deep(.network-instance-select--stopped .p-select-dropdown-icon),
+:deep(.network-instance-select--running .p-select-label),
+:deep(.network-instance-select--stopped .p-select-label) {
+    color: #ffffff !important;
+}
+
+:deep(.network-status-tag.p-tag) {
+    font-weight: 700 !important;
+    letter-spacing: 0.02em;
+    padding: 0.2rem 0.55rem !important;
+    border: none !important;
+}
+
+:deep(.network-status-tag.p-tag-success) {
+    background: rgba(255, 255, 255, 0.22) !important;
+    color: #ffffff !important;
+}
+
+:deep(.network-status-tag.p-tag-danger) {
+    background: rgba(255, 255, 255, 0.22) !important;
+    color: #ffffff !important;
+}
+
+/* ?????? Tag??????? */
+:deep(.p-select-overlay .network-status-tag.p-tag-success),
+:deep(.network-select-overlay .network-status-tag.p-tag-success) {
+    background: #10b981 !important;
+    color: #ffffff !important;
+}
+
+:deep(.p-select-overlay .network-status-tag.p-tag-danger),
+:deep(.network-select-overlay .network-status-tag.p-tag-danger) {
+    background: #ef4444 !important;
+    color: #ffffff !important;
 }
 
 .config-toolbar {
@@ -1134,17 +1304,17 @@ onUnmounted(() => {
 }
 
 /*
- * 移动端（≤640px）：一行一个按钮太浪费纵向空间，改成「每组一行铺满」的网格。
+ * ?????640px??????????????????????????????
  *
- * 一行能放几个，由最长文案 `编辑为文件`（5 个汉字）决定：
- *   手机内容区宽 ≈ 屏宽 − 45px（et-main-content 0.75rem×2 + 卡片 0.6rem×2 + 边框）
- *   360px 屏 → 约 315px 可用
- *   · 带图标：5×14(字) + 16(图标) + 8(间距) + 16(内边距) ≈ 110px → 315/110 = 2.9，一行最多 2~3 个
- *   · 去图标 + 13px 字：5×13 + 8(内边距) ≈ 73px → 315/73 = 4.3，一行放得下 4 个
- * 所以移动端去掉图标、字号降到 0.8125rem，换取一行 4 个。
+ * ???????????? `?????`?5 ???????
+ *   ?????? ? ?? ? 45px?et-main-content 0.75rem?2 + ?? 0.6rem?2 + ???
+ *   360px ? ? ? 315px ??
+ *   ? ????5?14(?) + 16(??) + 8(??) + 16(???) ? 110px ? 315/110 = 2.9????? 2~3 ?
+ *   ? ??? + 13px ??5?13 + 8(???) ? 73px ? 315/73 = 4.3?????? 4 ?
+ * ?????????????? 0.8125rem????? 4 ??
  *
- * 分组后的行数：配置文件组 3~4 个 → 一行放完；网络组 1~2 个 → 一行放完；底栏 3 个 → 一行 3 个。
- * 用 auto-fit + minmax(0, 1fr) 让每组把整行等分，宽度不受文案长短影响，也不会出现 3+1 的残缺行。
+ * ???????????? 3~4 ? ? ???????? 1~2 ? ? ??????? 3 ? ? ?? 3 ??
+ * ? auto-fit + minmax(0, 1fr) ????????????????????????? 3+1 ?????
  */
 @media (max-width: 640px) {
     .toolbar-zone,
@@ -1162,7 +1332,7 @@ onUnmounted(() => {
     .toolbar-zone-actions {
         display: grid;
         grid-template-columns: repeat(auto-fit, minmax(0, 1fr));
-        /* 有文案折行时让同一行按钮等高，避免参差不齐 */
+        /* ????????????????????? */
         align-items: stretch;
         gap: 0.3rem;
     }
@@ -1174,7 +1344,7 @@ onUnmounted(() => {
         gap: 0.3rem;
     }
 
-    /* 让底栏主操作区里的按钮直接成为网格项，和「返回」共占一行 */
+    /* ???????????????????????????? */
     .footer-zone,
     .footer-zone--primary {
         display: contents;
@@ -1184,12 +1354,12 @@ onUnmounted(() => {
     :deep(.config-toolbar-btn.p-button) {
         min-width: 0;
         width: 100%;
-        /* 窄屏文案可能折行，配合 auto 高度避免被裁掉 */
+        /* ??????????? auto ??????? */
         height: auto !important;
         min-height: var(--et-btn, 2.5rem) !important;
         padding: 0.3rem !important;
-        /* 12px：360px 屏下 4 列每列 75.1px，最长文案「编辑为文件」需 69.6px，留 5.5px 余量不折行。
-           13px 时需 74.6px，只差 0.1px，太贴边。 */
+        /* 12px?360px ?? 4 ??? 75.1px????????????? 69.6px?? 5.5px ??????
+           13px ?? 74.6px??? 0.1px????? */
         font-size: 0.75rem !important;
     }
 
@@ -1205,13 +1375,13 @@ onUnmounted(() => {
     }
 }
 
-/* 按钮样式 */
+/* ???? */
 .button-container {
     gap: 0.5rem;
     align-items: center;
 }
 
-/* 菜单样式定制 */
+/* ?????? */
 :deep(.p-menu) {
     min-width: 12rem;
     box-shadow: 0 0.5rem 1rem rgba(0, 0, 0, 0.15);
@@ -1231,13 +1401,13 @@ onUnmounted(() => {
     margin-right: 0.75rem;
 }
 
-/* 仅顶栏纯图标按钮，避免覆盖底栏带文字按钮 */
+/* ???????????????????? */
 :deep(.header-action-btn.p-button-icon-only .p-button-icon) {
     font-size: 1rem;
     margin: 0;
 }
 
-/* 网络选择相关样式 */
+/* ???????? */
 :deep(.network-select-container) {
     max-width: 100%;
 }
@@ -1279,9 +1449,9 @@ onUnmounted(() => {
 }
 
 /*
- * 平板 / 窄窗口（641–768px）：按钮统一收窄到 8.5rem，刚好容纳最长文案「返回设备列表」，
- * 一行能放下 4 个工具栏按钮。
- * 必须限定 min-width: 641px —— 否则它会在 ≤640px 也命中，把下面网格布局的 min-width: 0 盖掉。
+ * ?? / ????641?768px????????? 8.5rem??????????????????
+ * ????? 4 ???????
+ * ???? min-width: 641px ?? ????? ?640px ???????????? min-width: 0 ???
  */
 @media (min-width: 641px) and (max-width: 768px) {
     .network-header,

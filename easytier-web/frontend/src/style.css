@@ -34,8 +34,25 @@
   --et-gap-section: 1rem;
   --et-pad-card: 1rem 1.125rem;
 
+  /*
+   * PrimeFlex / PrimeVue3 遗留 token → PrimeVue4 语义变量。
+   * 与 frontend-lib 对齐，避免边框落到 currentColor（纯黑）。
+   */
+  --surface-border: var(--p-content-border-color, #e2e8f0);
+  --surface-card: var(--p-content-background, #ffffff);
+  --surface-ground: var(--p-surface-50, #f8fafc);
+  --surface-hover: var(--p-content-hover-background, #f1f5f9);
+  --surface-0: var(--p-surface-0, #ffffff);
+  --surface-50: var(--p-surface-50, #f8fafc);
+  --surface-100: var(--p-surface-100, #f1f5f9);
+  --surface-200: var(--p-surface-200, #e2e8f0);
+  --text-color: var(--p-text-color, #1e293b);
+  --text-color-secondary: var(--p-text-muted-color, #64748b);
+  --primary-color: var(--p-primary-color, #0ea5e9);
+
   /* 边框 / 圆角 / 阴影 */
-  --et-border: 1px solid color-mix(in srgb, var(--surface-border, #e2e8f0) 78%, transparent);
+  --et-border-color: var(--surface-border, #e2e8f0);
+  --et-border: 1px solid var(--et-border-color);
   --et-radius: 0.75rem;
   --et-shadow-card: 0 1px 2px rgba(15, 23, 42, 0.03), 0 8px 24px rgba(15, 23, 42, 0.04);
 
@@ -175,4 +192,17 @@ select {
 .p-tooltip-text {
   white-space: pre-line;
   line-height: 1.5;
+}
+
+/* Toast 兜底（与 frontend-lib 全局提示样式对齐） */
+.et-toast.p-toast,
+.p-toast {
+  opacity: 1 !important;
+}
+
+.et-toast .p-toast-message,
+.p-toast .p-toast-message {
+  border-radius: var(--et-radius, 0.75rem) !important;
+  box-shadow: 0 12px 28px rgba(15, 23, 42, 0.14) !important;
+  opacity: 1 !important;
 }

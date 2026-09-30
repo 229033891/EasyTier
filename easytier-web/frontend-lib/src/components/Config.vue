@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { v4 as uuidv4 } from 'uuid'
-import { AutoComplete, Button, Checkbox, Dialog, Divider, InputNumber, InputText, MultiSelect, Panel, Password, Select, SelectButton, ToggleButton } from 'primevue'
+import { AutoComplete, Button, Checkbox, Dialog, InputNumber, InputText, MultiSelect, Panel, Password, Select, SelectButton, ToggleButton } from 'primevue'
 import InputGroup from 'primevue/inputgroup'
 import InputGroupAddon from 'primevue/inputgroupaddon'
 import {
@@ -322,10 +322,8 @@ function removeVpnPortalClient(index: number) {
 </script>
 
 <template>
-  <div class="frontend-lib">
-    <div class="flex flex-col h-full">
-      <div class="flex flex-col">
-        <div class="config-panels w-full self-center">
+  <div class="flex flex-col h-full">
+      <div class="config-panels w-full self-center">
           <Panel v-model:collapsed="panelCollapsed.basic" :header="t('basic_settings')" toggleable
             :pt="panelHeaderPt('basic')">
             <div class="flex flex-col gap-y-2">
@@ -379,8 +377,6 @@ function removeVpnPortalClient(index: number) {
               </div>
             </div>
           </Panel>
-
-          <Divider />
 
           <Panel v-model:collapsed="panelCollapsed.advanced" :header="t('advanced_settings')" toggleable
             :pt="panelHeaderPt('advanced')">
@@ -532,7 +528,7 @@ function removeVpnPortalClient(index: number) {
                   <div class="flex items-center justify-between gap-3">
                     <label>{{ t('vpn_portal_clients') }}</label>
                     <Button icon="pi pi-plus" :label="t('vpn_portal_add_client')" severity="secondary" size="small"
-                      :disabled="vpnPortalConfig.clients.length >= 64"
+                      outlined :disabled="vpnPortalConfig.clients.length >= 64"
                       @click="addVpnPortalClient" />
                   </div>
 
@@ -558,7 +554,7 @@ function removeVpnPortalClient(index: number) {
                         :options="vpnPortalGroupOptions" appendTo="self" filter fluid
                         :placeholder="t('vpn_portal_client_groups_placeholder')" />
                     </div>
-                    <Button icon="pi pi-trash" severity="danger" text rounded
+                    <Button icon="pi pi-trash" severity="danger" text rounded class="et-icon-action-btn"
                       :aria-label="t('vpn_portal_remove_client')" @click="removeVpnPortalClient(index)" />
                   </div>
                 </div>
@@ -672,8 +668,6 @@ function removeVpnPortalClient(index: number) {
             </div>
           </Panel>
 
-          <Divider />
-
           <Panel v-model:collapsed="panelCollapsed.portForwards" :header="t('port_forwards')" toggleable
             :pt="panelHeaderPt('portForwards')">
             <div ref="portForwardContainer" class="flex flex-col gap-y-2">
@@ -707,18 +701,20 @@ function removeVpnPortalClient(index: number) {
                         </InputGroup>
                       </div>
                       <div class="flex gap-1 items-center" style="flex-grow: 1;">
-                        <Button icon="pi pi-pencil" text rounded @click="openPortForwardEditor(index)" />
-                        <Button icon="pi pi-trash" severity="danger" text rounded
+                        <Button icon="pi pi-pencil" severity="secondary" text rounded class="et-icon-action-btn"
+                          @click="openPortForwardEditor(index)" />
+                        <Button icon="pi pi-trash" severity="danger" text rounded class="et-icon-action-btn"
                           @click="removeRow(index, curNetwork.port_forwards)" />
                       </div>
                     </div>
                     <!-- Small screen view -->
-                    <div v-else class="flex justify-between items-center p-2 border-b">
+                    <div v-else class="flex justify-between items-center p-2 border-b border-surface">
                       <span>{{ row.proto }}://{{ row.bind_ip }}:{{ row.bind_port }}/{{ row.dst_ip }}:{{
                         row.dst_port }}</span>
                       <div class="flex gap-1">
-                        <Button icon="pi pi-pencil" text rounded @click="openPortForwardEditor(index)" />
-                        <Button icon="pi pi-trash" severity="danger" text rounded
+                        <Button icon="pi pi-pencil" severity="secondary" text rounded class="et-icon-action-btn"
+                          @click="openPortForwardEditor(index)" />
+                        <Button icon="pi pi-trash" severity="danger" text rounded class="et-icon-action-btn"
                           @click="removeRow(index, curNetwork.port_forwards)" />
                       </div>
                     </div>
@@ -754,8 +750,8 @@ function removeVpnPortalClient(index: number) {
                       </InputGroup>
                     </div>
                     <template #footer>
-                      <Button :label="t('web.common.cancel')" icon="pi pi-times" @click="editingPortForward = false"
-                        text />
+                      <Button :label="t('web.common.cancel')" icon="pi pi-times" severity="secondary" outlined
+                        @click="editingPortForward = false" />
                       <Button :label="t('web.common.save')" icon="pi pi-save" @click="savePortForward" />
                     </template>
                   </Dialog>
@@ -763,8 +759,6 @@ function removeVpnPortalClient(index: number) {
               </div>
             </div>
           </Panel>
-
-          <Divider />
 
           <Panel v-model:collapsed="panelCollapsed.acl" :header="t('acl.title')" toggleable
             :pt="panelHeaderPt('acl')">
@@ -782,9 +776,7 @@ function removeVpnPortalClient(index: number) {
             <Button class="network-footer-btn" :label="actionLabel || t('run_network')" icon="pi pi-arrow-right"
               icon-pos="right" :disabled="configInvalid" @click="$emit('runNetwork', curNetwork)" />
           </div>
-        </div>
       </div>
-    </div>
   </div>
 </template>
 
@@ -792,28 +784,36 @@ function removeVpnPortalClient(index: number) {
 .config-panels {
   display: flex;
   flex-direction: column;
-  gap: 0.25rem;
+  gap: 0.5rem;
 }
 
-.config-panels :deep(.p-divider) {
-  margin: 0.2rem 0;
+.config-panels :deep(.p-panel) {
+  border: 1px solid var(--et-border-color, #e2e8f0);
+  border-radius: var(--et-radius, 0.75rem);
+  background: var(--surface-card, #ffffff);
+  box-shadow: none;
+  overflow: hidden;
 }
 
 /* 面板标题栏紧凑化（与 Status.vue 保持一致） */
 .config-panels :deep(.p-panel .p-panel-header) {
-  padding: 0.25rem 0.65rem !important;
-  min-height: 1.9rem !important;
+  padding: 0.35rem 0.75rem !important;
+  min-height: 2rem !important;
   font-size: 0.875rem;
   font-weight: 600;
   line-height: 1.2;
+  background: transparent;
+  border: none;
 }
 
 .config-panels :deep(.p-panel .p-panel-header.cursor-pointer) {
-  min-height: 1.9rem !important;
+  min-height: 2rem !important;
 }
 
 .config-panels :deep(.p-panel .p-panel-content) {
-  padding: 0.5rem 0.7rem !important;
+  padding: 0.55rem 0.75rem !important;
+  border: none;
+  background: transparent;
 }
 
 .config-panels :deep(.p-panel .p-panel-header .p-panel-title),
@@ -858,8 +858,8 @@ function removeVpnPortalClient(index: number) {
 .advanced-flag-group {
   min-width: 0;
   padding: 0.75rem;
-  border: 1px solid var(--surface-border, #e2e8f0);
-  border-radius: 0.625rem;
+  border: 1px solid var(--et-border-color, #e2e8f0);
+  border-radius: calc(var(--et-radius, 0.75rem) - 0.125rem);
   background: var(--surface-50, #f8fafc);
 }
 
@@ -887,23 +887,53 @@ function removeVpnPortalClient(index: number) {
   display: flex;
   align-items: center;
   min-width: 0;
-  min-height: 2rem;
-  padding: 0.2rem 0.35rem;
-  border-radius: 0.4rem;
-  transition: background-color 0.15s ease;
+  min-height: 2.15rem;
+  padding: 0.3rem 0.5rem;
+  border: 1px solid transparent;
+  border-radius: 0.5rem;
+  background: var(--surface-0, #ffffff);
+  transition: background-color 0.15s ease, border-color 0.15s ease;
+}
+
+.advanced-flag-item:has(.p-checkbox-checked),
+.advanced-flag-item:has(.p-highlight) {
+  border-color: color-mix(in srgb, var(--primary-color, #0ea5e9) 28%, var(--et-border-color, #e2e8f0));
+  background: color-mix(in srgb, var(--primary-color, #0ea5e9) 7%, #ffffff);
 }
 
 @media (hover: hover) {
   .advanced-flag-item:hover {
     background: var(--surface-hover, #eef2f7);
+    border-color: var(--et-border-color, #e2e8f0);
+  }
+
+  .advanced-flag-item:has(.p-checkbox-checked):hover,
+  .advanced-flag-item:has(.p-highlight):hover {
+    background: color-mix(in srgb, var(--primary-color, #0ea5e9) 11%, #ffffff);
   }
 }
 
 .advanced-flag-item label {
   min-width: 0;
-  margin-left: 0.5rem;
+  margin-left: 0.55rem;
   line-height: 1.3;
   cursor: pointer;
+  color: var(--text-color, #1e293b);
+  font-size: 0.8125rem;
+}
+
+.config-panels :deep(label) {
+  color: var(--text-color, #1e293b);
+  font-size: 0.8125rem;
+  font-weight: 500;
+}
+
+.config-panels :deep(.p-inputtext),
+.config-panels :deep(.p-password),
+.config-panels :deep(.p-inputnumber),
+.config-panels :deep(.p-select),
+.config-panels :deep(.p-autocomplete) {
+  min-height: 2.35rem;
 }
 
 .advanced-flag-item .config-help-tip {

@@ -1,15 +1,14 @@
 <template>
-  <div
-    class="network-chart-card bg-gradient-to-br from-blue-50 to-indigo-100 dark:from-blue-900/20 dark:to-indigo-800/20 rounded-xl p-4 border border-blue-200 dark:border-blue-700 shadow-md">
+  <div class="network-chart-card">
     <div class="flex items-center justify-center mb-3">
       <div class="flex gap-2 text-sm">
         <span class="flex items-center gap-1 w-32">
-          <div class="w-2 h-2 bg-green-500 rounded-full"></div>
-          <span class="text-green-600 dark:text-green-400 truncate">{{ t('upload') }}: {{ currentUpload }}/s</span>
+          <div class="w-2 h-2 rounded-full bg-emerald-500"></div>
+          <span class="truncate text-emerald-600 dark:text-emerald-400">{{ t('upload') }}: {{ currentUpload }}/s</span>
         </span>
         <span class="flex items-center gap-1 w-32">
-          <div class="w-2 h-2 bg-blue-500 rounded-full"></div>
-          <span class="text-blue-600 dark:text-blue-400 truncate">{{ t('download') }}: {{ currentDownload }}/s</span>
+          <div class="w-2 h-2 rounded-full" style="background: var(--primary-color, #0ea5e9)"></div>
+          <span class="truncate" style="color: var(--primary-color, #0ea5e9)">{{ t('download') }}: {{ currentDownload }}/s</span>
         </span>
       </div>
     </div>
@@ -20,20 +19,32 @@
 </template>
 
 <style scoped>
-/*
- * 原来用 hover:shadow-lg transition-all duration-300：
- * - transition: all 会连带动画化无关属性，改成只过渡 box-shadow
- * - 300ms 偏长（交互反馈一般 150~200ms）
- * - hover 放进 @media (hover: hover)，避免触屏点一下后阴影「粘住」
- * 注意这张卡片本身不可点击，悬停只做「聚焦提示」，不提供可点击的错觉。
- */
 .network-chart-card {
-  transition: box-shadow 0.2s ease;
+  border: 1px solid color-mix(in srgb, var(--primary-color, #0ea5e9) 22%, var(--et-border-color, #e2e8f0));
+  border-radius: var(--et-radius, 0.75rem);
+  padding: 1rem;
+  background: linear-gradient(
+    145deg,
+    color-mix(in srgb, var(--primary-color, #0ea5e9) 8%, #ffffff) 0%,
+    color-mix(in srgb, var(--primary-color, #0ea5e9) 14%, #f8fafc) 100%
+  );
+  box-shadow: none;
+  transition: box-shadow 0.2s ease, border-color 0.2s ease;
 }
 
 @media (hover: hover) {
   .network-chart-card:hover {
-    box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -4px rgba(0, 0, 0, 0.1);
+    box-shadow: 0 8px 20px rgba(15, 23, 42, 0.06);
+  }
+}
+
+@media (prefers-color-scheme: dark) {
+  .network-chart-card {
+    background: linear-gradient(
+      145deg,
+      color-mix(in srgb, var(--primary-color, #0ea5e9) 16%, #0f172a) 0%,
+      color-mix(in srgb, var(--primary-color, #0ea5e9) 10%, #1e293b) 100%
+    );
   }
 }
 </style>
@@ -189,8 +200,8 @@ function initChart() {
         {
           label: t('download'),
           data: downloadHistory,
-          borderColor: 'rgb(59, 130, 246)',
-          backgroundColor: 'rgba(59, 130, 246, 0.1)',
+          borderColor: 'rgb(14, 165, 233)',
+          backgroundColor: 'rgba(14, 165, 233, 0.1)',
           borderWidth: 2,
           fill: true,
           tension: 0.4,

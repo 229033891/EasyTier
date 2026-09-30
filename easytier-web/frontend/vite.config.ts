@@ -11,6 +11,11 @@ export default defineConfig({
   base: WEB_BASE_URL,
   plugins: [vue(), ViteYaml(),/* viteSingleFile() */],
   server: {
+    // frontend-lib rebuild rewrites dist/ in place; watching it causes brief
+    // "Failed to load url ... dist/..." storms. Refresh once after lib build.
+    watch: {
+      ignored: ['**/easytier-web/frontend-lib/dist/**'],
+    },
     proxy: {
       "/api": {
         target: API_BASE_URL,

@@ -173,7 +173,7 @@ const genericSuggestions = ref<string[]>([])
     </div>
 
     <template #footer>
-      <Button :label="t('web.common.cancel')" icon="pi pi-times" @click="close" text />
+      <Button :label="t('web.common.cancel')" icon="pi pi-times" severity="secondary" outlined @click="close" />
       <Button :label="t('web.common.save')" icon="pi pi-save" @click="save" />
     </template>
   </Dialog>

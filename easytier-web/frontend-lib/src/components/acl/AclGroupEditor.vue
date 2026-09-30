@@ -76,7 +76,7 @@ function saveGroup() {
       <div class="flex justify-between items-center">
         <div class="flex flex-col">
           <label class="font-bold text-lg">{{ t('acl.group.declares') }}</label>
-          <small class="text-gray-500">{{ t('acl.group.help') }}</small>
+          <small class="text-muted-color">{{ t('acl.group.help') }}</small>
         </div>
         <Button icon="pi pi-plus" :label="t('web.common.add')" severity="success" @click="addGroup" />
       </div>
@@ -91,8 +91,10 @@ function saveGroup() {
         <Column :header="t('web.common.edit')" headerStyle="width: 8rem">
           <template #body="{ index }">
             <div class="flex gap-2">
-              <Button icon="pi pi-pencil" text rounded @click="editGroup(index)" />
-              <Button icon="pi pi-trash" severity="danger" text rounded @click="deleteGroup(index)" />
+              <Button icon="pi pi-pencil" severity="secondary" text rounded class="et-icon-action-btn"
+                @click="editGroup(index)" />
+              <Button icon="pi pi-trash" severity="danger" text rounded class="et-icon-action-btn"
+                @click="deleteGroup(index)" />
             </div>
           </template>
         </Column>
@@ -118,7 +120,8 @@ function saveGroup() {
         </div>
       </div>
       <template #footer>
-        <Button :label="t('web.common.cancel')" icon="pi pi-times" @click="showGroupDialog = false" text />
+        <Button :label="t('web.common.cancel')" icon="pi pi-times" severity="secondary" outlined
+          @click="showGroupDialog = false" />
         <Button :label="t('web.common.save')" icon="pi pi-save" @click="saveGroup" />
       </template>
     </Dialog>
