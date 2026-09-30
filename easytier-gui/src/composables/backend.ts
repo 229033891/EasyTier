@@ -1,11 +1,11 @@
 import { invoke } from '@tauri-apps/api/core'
 import { Api, NetworkTypes } from 'easytier-frontend-lib'
-import { GetNetworkMetasResponse } from 'node_modules/easytier-frontend-lib/dist/modules/api'
 import { type ConfigSource, normalizeConfigSource } from './config_source'
 
 type NetworkConfig = NetworkTypes.NetworkConfig
 type ValidateConfigResponse = Api.ValidateConfigResponse
 type ListNetworkInstanceIdResponse = Api.ListNetworkInstanceIdResponse
+type GetNetworkMetasResponse = Api.GetNetworkMetasResponse
 interface ServiceOptions {
   config_dir: string
   rpc_portal: string

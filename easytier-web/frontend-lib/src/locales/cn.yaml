@@ -161,6 +161,7 @@ history_sampling_hint: 每 60 秒采样一次，保留 7 天；流量为相邻�
 hostname: 主机名
 route_cost: 路由
 tunnel_proto: 协议
+peer_addr: 对端地址
 latency: 延迟
 upload_bytes: 上传
 download_bytes: 下载

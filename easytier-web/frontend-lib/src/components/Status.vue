@@ -5,7 +5,7 @@ import type { RemoteClient } from '../modules/api'
 import { useI18n } from 'vue-i18n';
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue';
 import { ipv4InetToString, ipv4ToString, ipv6ToString } from '../modules/utils';
-import { latencyMs, lossRate, numericValue, peerConns } from '../modules/statusDisplay';
+import { latencyMs, lossRate, numericValue, peerConns, peerRemoteAddr } from '../modules/statusDisplay';
 import { Badge, DataTable, Column, Tag, Chip, Button, ScrollPanel, Timeline, Card, Panel, } from 'primevue';
 import NetworkChart from './NetworkChart.vue';
 import PeerConnHistoryChart from './PeerConnHistoryChart.vue';
@@ -573,6 +573,13 @@ const eventLogContent = computed(() => {
             </Column>
             <Column :field="routeCost" :header="t('route_cost')" />
             <Column :field="tunnelProto" :header="t('tunnel_proto')" />
+            <Column :field="peerRemoteAddr" :header="t('peer_addr')">
+              <template #body="slotProps">
+                <span class="peer-addr-cell" v-tooltip.top="peerRemoteAddr(slotProps.data) || undefined">
+                  {{ peerRemoteAddr(slotProps.data) }}
+                </span>
+              </template>
+            </Column>
             <Column :field="latencyMs" :header="t('latency')" />
             <Column :field="txBytes" :header="t('upload_bytes')" />
             <Column :field="rxBytes" :header="t('download_bytes')" />
@@ -759,6 +766,16 @@ const eventLogContent = computed(() => {
 
 .status-panels :deep(.p-datatable .p-datatable-tbody > tr > td) {
   padding: 0.35rem 0.6rem !important;
+}
+
+.peer-addr-cell {
+  display: inline-block;
+  max-width: 14rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: bottom;
+  font-variant-numeric: tabular-nums;
 }
 
 .p-timeline :deep(.p-timeline-event-opposite) {

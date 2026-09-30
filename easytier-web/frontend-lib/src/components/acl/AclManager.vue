@@ -98,7 +98,7 @@ const tabs = computed(() => {
           </Tab>
         </TabList>
         <div
-          class="flex-shrink-0 flex items-center px-2 bg-white dark:bg-gray-900 border-l border-surface-100 dark:border-surface-800">
+          class="flex-shrink-0 flex items-center px-2 bg-surface-0 dark:bg-surface-900 border-l border-surface-100 dark:border-surface-800">
           <Button icon="pi pi-plus" text rounded size="small" class="w-8 h-8 p-0"
             @click="(event) => menu.toggle(event)" />
           <Menu ref="menu" :model="addMenuModel" :popup="true" />

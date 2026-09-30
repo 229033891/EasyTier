@@ -18,7 +18,7 @@
 }
 
 :root {
-  /* EasyTier 视觉基线：蓝色品牌色 + 更柔和的中性色 */
+  /* EasyTier 视觉基线：sky 品牌色 + 柔和中性色（与 frontend-lib 对齐） */
   --et-font: Inter, "Segoe UI", Avenir, Helvetica, Arial, sans-serif;
   --et-fs-page-title: 1.375rem;
   --et-fs-section: 1rem;
@@ -44,6 +44,14 @@
   --et-btn-sm: 2.25rem;
   --et-btn-lg: 2.75rem;
   --et-btn-w: 10rem;
+
+  /* 品牌色回退（与 EasyTierPreset sky 一致） */
+  --et-primary: #0ea5e9;
+  --et-primary-emphasis: #0284c7;
+  --et-success: #10b981;
+  --et-warn: #f59e0b;
+  --et-danger: #ef4444;
+  --et-muted: #64748b;
 
   font-family: var(--et-font);
   font-size: var(--et-fs-body);
@@ -115,7 +123,7 @@ select {
   bottom: 0.2rem;
   width: 0.25rem;
   border-radius: 999px;
-  background: var(--primary-color, #0ea5e9);
+  background: var(--primary-color, var(--et-primary, #0ea5e9));
 }
 
 .et-section-title {

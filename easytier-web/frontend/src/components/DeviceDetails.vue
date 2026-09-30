@@ -107,7 +107,7 @@ defineProps<{
   width: 4px;
   height: 4px;
   border-radius: 50%;
-  background-color: #3b82f6;
+  background-color: var(--primary-color, var(--et-primary, #0ea5e9));
   margin-right: 0.5rem;
 }
 
@@ -131,35 +131,29 @@ defineProps<{
   line-height: 1.2;
 }
 
-/* 特定字段的样式 */
+/* 字段色点：统一语义 token，避免散落 hex */
 .hostname .detail-label::before {
-  background-color: #3b82f6;
-  /* 蓝色 */
+  background-color: var(--primary-color, var(--et-primary, #0ea5e9));
 }
 
 .public-ip .detail-label::before {
-  background-color: #10b981;
-  /* 绿色 */
+  background-color: var(--et-success, #10b981);
 }
 
 .running-networks .detail-label::before {
-  background-color: #f59e0b;
-  /* 橙色 */
+  background-color: var(--et-warn, #f59e0b);
 }
 
 .last-report .detail-label::before {
-  background-color: #8b5cf6;
-  /* 紫色 */
+  background-color: var(--et-primary-emphasis, #0284c7);
 }
 
 .version .detail-label::before {
-  background-color: #ec4899;
-  /* 粉色 */
+  background-color: var(--primary-color, var(--et-primary, #0ea5e9));
 }
 
 .machine-id .detail-label::before {
-  background-color: #6b7280;
-  /* 灰色 */
+  background-color: var(--et-muted, #64748b);
 }
 
 /* 机器ID特殊样式 */

@@ -725,8 +725,8 @@ function removeVpnPortalClient(index: number) {
                   </div>
 
                   <div class="flex justify-start mt-4">
-                    <Button icon="pi pi-plus" :label="t('port_forwards_add_btn')" severity="success"
-                      v-tooltip.top="t('port_forwards_add_tip')"
+                    <Button class="et-panel-action-btn" icon="pi pi-plus" :label="t('port_forwards_add_btn')"
+                      severity="success" v-tooltip.top="t('port_forwards_add_tip')"
                       @click="addPortForward" />
                   </div>
 
@@ -772,7 +772,7 @@ function removeVpnPortalClient(index: number) {
               <AclManager v-model="curNetwork.acl" />
             </div>
             <div v-else class="flex justify-start">
-              <Button :label="t('acl.enabled')"
+              <Button class="et-panel-action-btn" :label="t('acl.enabled')" severity="success"
                 v-tooltip.top="t('acl.enabled_tip')"
                 @click="curNetwork.acl = { acl_v1: { chains: [], group: { declares: [], members: [] } } }" />
             </div>
@@ -824,11 +824,14 @@ function removeVpnPortalClient(index: number) {
 }
 
 .network-footer-btn {
+  width: var(--et-btn-w, 10rem);
   min-width: var(--et-btn-w, 10rem);
-  height: 2.75rem !important;
-  padding: 0 1.1rem !important;
-  font-size: 0.9375rem !important;
+  height: var(--et-btn, 2.5rem) !important;
+  padding: 0 0.9rem !important;
+  font-size: var(--et-fs-body, 0.875rem) !important;
   font-weight: 600 !important;
+  justify-content: center;
+  box-sizing: border-box;
 }
 
 /* 高级开关按使用场景分组，避免 28 个选项堆成一片 */
@@ -871,7 +874,7 @@ function removeVpnPortalClient(index: number) {
 }
 
 .advanced-group-title i {
-  color: var(--primary-color, #0ea5e9);
+  color: var(--primary-color, var(--et-primary, #0ea5e9));
 }
 
 .advanced-flags-grid {

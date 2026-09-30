@@ -135,12 +135,12 @@ const openNetworkRow = (row: NetworkRow, mode: 'status' | 'config') => {
                         <div class="flex justify-end gap-2">
                             <Button v-tooltip.top="t('web.device.open_network_status')"
                                 icon="pi pi-chart-line" severity="info" rounded text
-                                class="network-action-btn"
+                                class="et-icon-action-btn"
                                 @click="openNetworkRow(row, 'status')"
                                 :aria-label="t('web.device.open_network_status')" />
                             <Button v-tooltip.top="t('web.device.open_network_config')"
                                 icon="pi pi-cog" severity="secondary" rounded text
-                                class="network-action-btn"
+                                class="et-icon-action-btn"
                                 @click="openNetworkRow(row, 'config')"
                                 :aria-label="t('web.device.open_network_config')" />
                         </div>
@@ -153,17 +153,12 @@ const openNetworkRow = (row: NetworkRow, mode: 'status' | 'config') => {
 
 <style scoped>
 .status-running {
-    color: var(--green-700, #15803d);
-}
-
-.network-action-btn {
-    width: var(--et-btn-sm) !important;
-    height: var(--et-btn-sm) !important;
+    color: var(--et-success, #10b981);
 }
 
 @media (prefers-color-scheme: dark) {
     .status-running {
-        color: var(--green-400, #4ade80);
+        color: var(--et-success, #34d399);
     }
 }
 </style>

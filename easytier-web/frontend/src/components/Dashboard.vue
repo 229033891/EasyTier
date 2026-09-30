@@ -112,13 +112,13 @@ const networkCount = computed<number | undefined>(() => summary.value?.network_c
 }
 
 .summary-icon--device {
-    color: var(--primary-color, #0284c7);
-    background: color-mix(in srgb, var(--primary-color, #0ea5e9) 12%, transparent);
+    color: var(--primary-color, var(--et-primary-emphasis, #0284c7));
+    background: color-mix(in srgb, var(--primary-color, var(--et-primary, #0ea5e9)) 12%, transparent);
 }
 
 .summary-icon--network {
-    color: var(--p-violet-600, #7c3aed);
-    background: color-mix(in srgb, #8b5cf6 12%, transparent);
+    color: var(--primary-color, var(--et-primary, #0ea5e9));
+    background: color-mix(in srgb, var(--primary-color, var(--et-primary, #0ea5e9)) 12%, transparent);
 }
 
 .summary-value {

@@ -13,9 +13,41 @@
 }
 
 :root {
-  font-family: var(--et-font, Inter, "Segoe UI", Avenir, Helvetica, Arial, sans-serif);
-  font-size: 14px;
-  line-height: 1.5;
+  /* EasyTier 视觉基线（web / GUI / lib 共用） */
+  --et-font: Inter, "Segoe UI", Avenir, Helvetica, Arial, sans-serif;
+  --et-fs-page-title: 1.375rem;
+  --et-fs-section: 1rem;
+  --et-fs-body: 0.875rem;
+  --et-fs-meta: 0.75rem;
+  --et-lh: 1.5;
+
+  --et-space-1: 0.25rem;
+  --et-space-2: 0.5rem;
+  --et-space-3: 0.75rem;
+  --et-space-4: 1rem;
+  --et-gap-section: 1rem;
+  --et-pad-card: 1rem 1.125rem;
+
+  --et-border: 1px solid color-mix(in srgb, var(--surface-border, #e2e8f0) 78%, transparent);
+  --et-radius: 0.75rem;
+  --et-shadow-card: 0 1px 2px rgba(15, 23, 42, 0.03), 0 8px 24px rgba(15, 23, 42, 0.04);
+
+  --et-btn: 2.5rem;
+  --et-btn-sm: 2.25rem;
+  --et-btn-lg: 2.75rem;
+  --et-btn-w: 10rem;
+
+  /* 品牌主色回退（与 EasyTierPreset sky-500 对齐） */
+  --et-primary: #0ea5e9;
+  --et-primary-emphasis: #0284c7;
+  --et-success: #10b981;
+  --et-warn: #f59e0b;
+  --et-danger: #ef4444;
+  --et-muted: #64748b;
+
+  font-family: var(--et-font);
+  font-size: var(--et-fs-body, 14px);
+  line-height: var(--et-lh, 1.5);
   font-weight: 400;
 
   font-synthesis: none;
@@ -28,7 +60,7 @@
 .card {
   background: var(--surface-card);
   padding: 2rem;
-  border-radius: 10px;
+  border-radius: var(--et-radius);
   margin-bottom: 1rem;
 }
 
@@ -44,7 +76,7 @@
 
 ::-webkit-scrollbar-thumb {
   border-radius: 4px;
-  background-color: #0000005d;
+  background-color: color-mix(in srgb, var(--text-color, #000) 36%, transparent);
 }
 
 .v-popper__inner {
@@ -56,4 +88,84 @@
 /* 可折叠 Panel：标题区整块可点时保留足够的触摸目标（与 Config / AclRuleDialog 的 pt 配套） */
 .p-panel-header.cursor-pointer {
   min-height: 2.5rem;
+}
+
+/*
+ * 列表/卡片圆形图标操作按钮（设备列表、网络列表共用）
+ * 主色统一走 --primary-color / --et-primary，不再用独立 blue-* 色板。
+ */
+.et-icon-action-btn.p-button,
+.et-icon-action {
+  width: var(--et-btn-sm) !important;
+  height: var(--et-btn-sm) !important;
+  min-width: var(--et-btn-sm) !important;
+  padding: 0 !important;
+  box-sizing: border-box;
+  border-radius: 9999px !important;
+  border: 1px solid transparent !important;
+  display: inline-flex !important;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+  font-size: var(--et-fs-meta);
+  font-weight: 600;
+  box-shadow: none !important;
+  transition: background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+
+.et-icon-action-btn.p-button .p-button-icon {
+  font-size: 0.875rem;
+  line-height: 1;
+  margin: 0 !important;
+}
+
+.et-icon-action--primary,
+.et-icon-action-btn.p-button-info {
+  background: color-mix(in srgb, var(--primary-color, var(--et-primary)) 12%, transparent) !important;
+  color: var(--primary-color, var(--et-primary)) !important;
+}
+
+.et-icon-action--muted,
+.et-icon-action-btn.p-button-secondary {
+  background: var(--surface-100, #f1f5f9) !important;
+  color: var(--text-color-secondary, #64748b) !important;
+}
+
+@media (hover: hover) {
+  .et-icon-action:hover,
+  .et-icon-action-btn.p-button:hover:not(:disabled),
+  .et-icon-action-btn.p-button:hover:not(:disabled) .p-button-icon {
+    background: var(--surface-200, #e2e8f0) !important;
+    color: var(--text-color, #1e293b) !important;
+  }
+}
+
+.et-icon-action-btn.p-button:focus-visible,
+.et-icon-action:focus-visible {
+  outline: 2px solid var(--primary-color, var(--et-primary));
+  outline-offset: 2px;
+}
+
+@media (prefers-color-scheme: dark) {
+  .et-icon-action--primary,
+  .et-icon-action-btn.p-button-info {
+    background: color-mix(in srgb, var(--primary-color, var(--et-primary)) 22%, transparent) !important;
+    color: var(--primary-color, var(--et-primary)) !important;
+  }
+
+  .et-icon-action--muted,
+  .et-icon-action-btn.p-button-secondary {
+    background: var(--surface-100, #334155) !important;
+    color: var(--text-color-secondary, #94a3b8) !important;
+  }
+}
+
+/* 配置面板内主操作（添加端口转发、启用 ACL 等）：同宽同高 */
+.et-panel-action-btn.p-button {
+  width: var(--et-btn-w, 10rem) !important;
+  min-width: var(--et-btn-w, 10rem) !important;
+  height: var(--et-btn, 2.5rem) !important;
+  min-height: var(--et-btn, 2.5rem) !important;
+  justify-content: center;
+  box-sizing: border-box;
 }

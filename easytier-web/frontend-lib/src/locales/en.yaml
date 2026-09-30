@@ -159,6 +159,7 @@ history_no_data: No history yet (samples accumulate while the network is running
 history_sampling_hint: Sampled every 60s, kept for 7 days. Traffic is the average rate between samples.
 route_cost: Route Cost
 tunnel_proto: Protocol
+peer_addr: Peer Address
 hostname: Hostname
 latency: Latency
 upload_bytes: Upload

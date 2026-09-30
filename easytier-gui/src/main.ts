@@ -1,15 +1,11 @@
-import Aura from '@primeuix/themes/aura';
-import PrimeVue from 'primevue/config';
+import EasyTierFrontendLib, { I18nUtils } from 'easytier-frontend-lib'
+import { createRouter, createWebHistory } from 'vue-router/auto'
+import { routes } from 'vue-router/auto-routes'
+import App from '~/App.vue'
 
-import EasyTierFrontendLib, { I18nUtils } from 'easytier-frontend-lib';
-import { createRouter, createWebHistory } from 'vue-router/auto';
-import { routes } from 'vue-router/auto-routes';
-import App from '~/App.vue';
-
-import 'easytier-frontend-lib/style.css';
-import { ConfirmationService, DialogService, ToastService } from 'primevue';
-import '~/styles.css';
-
+import 'easytier-frontend-lib/style.css'
+import { ConfirmationService, DialogService, ToastService } from 'primevue'
+import '~/styles.css'
 
 if (import.meta.env.PROD) {
   document.addEventListener('keydown', (event) => {
@@ -39,21 +35,8 @@ async function main() {
 
   app.use(router)
   app.use(createPinia())
+  // 主题 / PrimeVue / tooltip 由 frontend-lib 统一安装（EasyTierPreset）
   app.use(EasyTierFrontendLib)
-  // app.use(i18n, { useScope: 'global' })
-  app.use(PrimeVue, {
-    theme: {
-      preset: Aura,
-      options: {
-        prefix: 'p',
-        darkModeSelector: 'system',
-        cssLayer: {
-          name: 'primevue',
-          order: 'tailwind-base, primevue, tailwind-utilities',
-        },
-      },
-    },
-  })
   app.use(ToastService)
   app.use(DialogService)
   app.use(ConfirmationService)

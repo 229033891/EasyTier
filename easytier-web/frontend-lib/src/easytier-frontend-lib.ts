@@ -1,17 +1,16 @@
 import './style.css'
 
 import type { App } from 'vue';
-import { Config, Status, ConfigEditDialog, RemoteManagement } from "./components";
-import Aura from '@primeuix/themes/aura';
+import { Config, Status, ConfigEditDialog, RemoteManagement, HumanEvent } from "./components";
 import PrimeVue from 'primevue/config'
 
 import I18nUtils from './modules/i18n'
 import * as NetworkTypes from './types/network'
-import HumanEvent from './components/HumanEvent.vue';
 
 // do not use primevue tooltip, it has serious memory leak issue
 // https://github.com/primefaces/primevue/issues/5856
 import { tooltipDirective, tooltipDefaults, normalizeTooltipValue } from './modules/tooltip';
+import { EasyTierPreset, ET_PRIMARY, ET_PRIMARY_EMPHASIS } from './modules/theme';
 
 import * as Api from './modules/api';
 import * as Utils from './modules/utils';
@@ -21,7 +20,7 @@ export default {
         app.use(I18nUtils.i18n, { useScope: 'global' })
         app.use(PrimeVue, {
             theme: {
-                preset: Aura,
+                preset: EasyTierPreset,
                 options: {
                     prefix: 'p',
                     darkModeSelector: 'system',
@@ -53,6 +52,7 @@ export {
     ConfigEditDialog,
     RemoteManagement,
     Status,
+    HumanEvent,
     I18nUtils,
     NetworkTypes,
     Api,
@@ -60,4 +60,7 @@ export {
     tooltipDirective,
     tooltipDefaults,
     normalizeTooltipValue,
+    EasyTierPreset,
+    ET_PRIMARY,
+    ET_PRIMARY_EMPHASIS,
 };

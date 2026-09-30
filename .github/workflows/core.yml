@@ -74,6 +74,9 @@ jobs:
           token: ${{ github.token }}
           build-filter: './easytier-web/*'
 
+      - name: Test frontend-lib
+        run: pnpm --filter easytier-frontend-lib test:config-ui
+
       - name: Archive artifact
         uses: actions/upload-artifact@v5
         with:

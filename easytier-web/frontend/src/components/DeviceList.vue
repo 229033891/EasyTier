@@ -152,7 +152,7 @@ const locationText = (device: Utils.DeviceInfo): string => {
     .device-card:hover {
         /* 不用 translateY，避免与 tooltip 抢焦点导致闪烁 */
         box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
-        border-color: var(--primary-color, #3b82f6);
+        border-color: var(--primary-color, var(--et-primary, #0ea5e9));
     }
 }
 
@@ -316,108 +316,12 @@ const locationText = (device: Utils.DeviceInfo): string => {
     align-items: center;
 }
 
-/* 数量徽章与两个操作按钮：同尺寸、同圆形、同悬停 */
-.device-count-badge,
-.device-card-actions :deep(.device-action-btn.p-button) {
-    width: var(--et-btn-sm) !important;
-    height: var(--et-btn-sm) !important;
-    min-width: var(--et-btn-sm) !important;
-    padding: 0 !important;
-    box-sizing: border-box;
-    border-radius: 9999px !important;
-    border: 1px solid transparent !important;
-    display: inline-flex !important;
-    align-items: center;
-    justify-content: center;
-    line-height: 1;
-    font-size: var(--et-fs-meta);
-    font-weight: 600;
-    cursor: default;
-    transition: background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
-    box-shadow: none !important;
-}
-
-.device-card-actions :deep(.device-action-btn.p-button) {
-    cursor: pointer;
-}
-
-.device-card-actions :deep(.device-action-btn .p-button-icon) {
-    font-size: 0.875rem;
-    line-height: 1;
-    margin: 0 !important;
-}
-
-/* 默认态：统一浅底 */
 .device-count-badge {
-    background: var(--blue-50, #eff6ff) !important;
-    color: var(--blue-700, #1d4ed8) !important;
-}
-
-.device-card-actions :deep(.device-action-btn.p-button-info),
-.device-card-actions :deep(.device-action-btn.p-button-info .p-button-icon) {
-    background: var(--blue-50, #eff6ff) !important;
-    color: var(--blue-700, #1d4ed8) !important;
-    border-color: transparent !important;
-}
-
-.device-card-actions :deep(.device-action-btn.p-button-secondary),
-.device-card-actions :deep(.device-action-btn.p-button-secondary .p-button-icon) {
-    background: var(--surface-100, #f3f4f6) !important;
-    color: var(--text-color-secondary, #4b5563) !important;
-    border-color: transparent !important;
-}
-
-/* 悬停态：统一加深底色，无位移、无额外阴影跳动。
-   @media (hover: hover) 避免触屏点完「粘住」；:not(:disabled) 让禁用按钮不响应悬停。 */
-@media (hover: hover) {
-    .device-count-badge:hover,
-    .device-card-actions :deep(.device-action-btn.p-button:hover:not(:disabled)),
-    .device-card-actions :deep(.device-action-btn.p-button:hover:not(:disabled) .p-button-icon) {
-        background: var(--surface-200, #e5e7eb) !important;
-        color: var(--text-color, #1f2937) !important;
-    }
-}
-
-.device-card-actions :deep(.device-action-btn.p-button:focus-visible),
-.device-count-badge:focus-visible {
-    outline: 2px solid var(--primary-color, #3b82f6);
-    outline-offset: 2px;
-}
-
-.device-card-actions :deep(.device-action-btn.p-button:active) {
-    background: var(--surface-300, #d1d5db) !important;
-}
-
-@media (prefers-color-scheme: dark) {
-    .device-count-badge {
-        background: rgba(59, 130, 246, 0.18) !important;
-        color: var(--blue-300, #93c5fd) !important;
-    }
-
-    .device-card-actions :deep(.device-action-btn.p-button-info),
-    .device-card-actions :deep(.device-action-btn.p-button-info .p-button-icon) {
-        background: rgba(59, 130, 246, 0.18) !important;
-        color: var(--blue-300, #93c5fd) !important;
-    }
-
-    .device-card-actions :deep(.device-action-btn.p-button-secondary),
-    .device-card-actions :deep(.device-action-btn.p-button-secondary .p-button-icon) {
-        background: var(--surface-hover, rgba(255, 255, 255, 0.08)) !important;
-        color: var(--text-color-secondary, #cbd5e1) !important;
-    }
-
-    @media (hover: hover) {
-        .device-count-badge:hover,
-        .device-card-actions :deep(.device-action-btn.p-button:hover:not(:disabled)),
-        .device-card-actions :deep(.device-action-btn.p-button:hover:not(:disabled) .p-button-icon) {
-            background: var(--surface-hover, rgba(255, 255, 255, 0.14)) !important;
-            color: var(--text-color, #f1f5f9) !important;
-        }
-    }
+    cursor: default;
 }
 
 .location-icon {
-    color: var(--pink-500);
+    color: var(--primary-color, var(--et-primary, #0ea5e9));
     font-size: 0.9rem;
 }
 
@@ -442,7 +346,7 @@ const locationText = (device: Utils.DeviceInfo): string => {
     }
 
     .location-icon {
-        color: var(--pink-400);
+        color: var(--primary-color, var(--et-primary, #0ea5e9));
     }
 }
 .device-list-toolbar {
@@ -543,7 +447,7 @@ const locationText = (device: Utils.DeviceInfo): string => {
                             <div class="device-card-actions flex items-center gap-2">
                                 <!-- 运行中虚拟网数量（悬停样式与按钮一致） -->
                                 <span
-                                    class="device-count-badge"
+                                    class="et-icon-action et-icon-action--primary device-count-badge"
                                     v-tooltip.top="t('web.device.network_count')"
                                     :aria-label="`${t('web.device.network_count')}: ${device.running_network_count}`">
                                     {{ device.running_network_count }}
@@ -551,13 +455,13 @@ const locationText = (device: Utils.DeviceInfo): string => {
 
                                 <Button v-tooltip.top="t('web.device.open_network_status')"
                                     icon="pi pi-chart-line" severity="info" rounded text
-                                    class="device-action-btn"
+                                    class="et-icon-action-btn device-action-btn"
                                     @click="handleDeviceManagement(device, 'status')"
                                     :aria-label="t('web.device.open_network_status')" />
 
                                 <Button v-tooltip.top="t('web.device.open_network_config')"
                                     icon="pi pi-cog" severity="secondary" rounded text
-                                    class="device-action-btn"
+                                    class="et-icon-action-btn device-action-btn"
                                     @click="handleDeviceManagement(device, 'config')"
                                     :aria-label="t('web.device.open_network_config')" />
                             </div>

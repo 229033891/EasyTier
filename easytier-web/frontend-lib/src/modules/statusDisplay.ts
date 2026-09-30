@@ -69,6 +69,42 @@ export function latencyMs(info: PeerRoutePair) {
   return `${Math.ceil(minLatencyUs / 1000)}ms`
 }
 
+/** 从 tunnel URL 提取 host:port（IPv6 带方括号） */
+function formatTunnelHostPort(url?: string): string {
+  if (!url)
+    return ''
+
+  try {
+    const normalized = url.includes('://') ? url : `tcp://${url}`
+    const parsed = new URL(normalized)
+    const host = parsed.hostname
+    if (!host)
+      return url.replace(/^[a-z0-9+]+:\/\//i, '')
+
+    const hostDisp = host.includes(':') ? `[${host}]` : host
+    return parsed.port ? `${hostDisp}:${parsed.port}` : hostDisp
+  }
+  catch {
+    return url.replace(/^[a-z0-9+]+:\/\//i, '')
+  }
+}
+
+/** 对端物理地址 IP:端口（默认连接优先，多连接去重后逗号拼接） */
+export function peerRemoteAddr(info: PeerRoutePair): string {
+  const addrs: string[] = []
+  const seen = new Set<string>()
+
+  for (const conn of defaultConnFirst(info)) {
+    const formatted = formatTunnelHostPort(conn.tunnel?.remote_addr?.url)
+    if (!formatted || seen.has(formatted))
+      continue
+    seen.add(formatted)
+    addrs.push(formatted)
+  }
+
+  return addrs.join(', ')
+}
+
 export function lossRate(info: PeerRoutePair) {
   for (const conn of defaultConnFirst(info)) {
     const loss = numericValue(conn.loss_rate)

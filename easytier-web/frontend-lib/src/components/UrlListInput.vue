@@ -49,7 +49,7 @@ const removeUrl = (index: number) => {
 
 @media (hover: hover) {
     .url-add-dropzone:hover {
-        border-color: var(--primary-color, #3b82f6);
+        border-color: var(--primary-color, var(--et-primary, #0ea5e9));
         background-color: var(--surface-50, #f8fafc);
     }
 }

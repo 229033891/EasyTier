@@ -995,7 +995,7 @@ onUnmounted(() => {
     z-index: 20;
     background: var(--surface-card, #ffffff) !important;
     border: var(--et-border, 1px solid var(--surface-border, #e5e7eb));
-    border-radius: var(--et-radius, 0.5rem);
+    border-radius: var(--et-radius, 0.75rem);
     box-shadow: var(--et-shadow-card, 0 1px 2px rgba(15, 23, 42, 0.03));
     padding: 0.5rem 0.75rem 0.6rem !important;
     margin: 0 !important;
@@ -1013,7 +1013,7 @@ onUnmounted(() => {
     z-index: 20;
     background: var(--surface-card, #ffffff) !important;
     border: var(--et-border, 1px solid var(--surface-border, #e5e7eb));
-    border-radius: var(--et-radius, 0.5rem);
+    border-radius: var(--et-radius, 0.75rem);
     padding: 0.35rem 0.6rem 0.4rem;
     margin: 0;
 }
@@ -1025,7 +1025,7 @@ onUnmounted(() => {
     padding: 0.4rem 0.6rem !important;
     background: var(--surface-card, #ffffff) !important;
     border: var(--et-border, 1px solid var(--surface-border, #e5e7eb));
-    border-radius: var(--et-radius, 0.5rem);
+    border-radius: var(--et-radius, 0.75rem);
     box-shadow: var(--et-shadow-card, 0 1px 2px rgba(15, 23, 42, 0.03)) !important;
 }
 
@@ -1036,7 +1036,7 @@ onUnmounted(() => {
     padding: 0.4rem 0.6rem;
     background: var(--surface-card, #ffffff);
     border: var(--et-border, 1px solid var(--surface-border, #e5e7eb));
-    border-radius: var(--et-radius, 0.5rem);
+    border-radius: var(--et-radius, 0.75rem);
     box-shadow: var(--et-shadow-card, 0 1px 2px rgba(15, 23, 42, 0.03));
     display: flex;
     flex-wrap: wrap;
@@ -1057,15 +1057,17 @@ onUnmounted(() => {
     margin-left: auto;
 }
 
-/* 底栏按钮：同高、同宽、同内边距 */
+/* 底栏按钮：同高、同宽（固定宽度，避免文案长短把按钮拉歪） */
 :deep(.network-footer-btn.p-button) {
-    min-width: clamp(0px, var(--et-btn-w, 10rem), 22vw);
+    width: var(--et-btn-w, 10rem);
+    min-width: var(--et-btn-w, 10rem);
     height: var(--et-btn, 2.5rem) !important;
     padding: 0 0.9rem !important;
     font-size: var(--et-fs-body, 0.875rem) !important;
     font-weight: 600 !important;
-    border-radius: var(--et-radius, 0.5rem) !important;
+    border-radius: var(--et-radius, 0.75rem) !important;
     box-sizing: border-box;
+    justify-content: center;
 }
 
 :deep(.header-action-btn.p-button) {
@@ -1074,7 +1076,7 @@ onUnmounted(() => {
     padding: 0 0.9rem !important;
     font-size: var(--et-fs-body, 0.875rem) !important;
     font-weight: 600 !important;
-    border-radius: var(--et-radius, 0.5rem) !important;
+    border-radius: var(--et-radius, 0.75rem) !important;
 }
 
 :deep(.header-action-btn--icon.p-button),
@@ -1087,12 +1089,14 @@ onUnmounted(() => {
 :deep(.config-toolbar-btn.p-button) {
     height: var(--et-btn, 2.5rem) !important;
     min-height: var(--et-btn, 2.5rem) !important;
-    min-width: clamp(0px, var(--et-btn-w, 10rem), 22vw);
+    width: var(--et-btn-w, 10rem);
+    min-width: var(--et-btn-w, 10rem);
     padding: 0 0.9rem !important;
     font-size: var(--et-fs-body, 0.875rem) !important;
     font-weight: 600 !important;
-    border-radius: var(--et-radius, 0.5rem) !important;
+    border-radius: var(--et-radius, 0.75rem) !important;
     box-sizing: border-box;
+    justify-content: center;
 }
 
 .config-toolbar {
@@ -1248,7 +1252,7 @@ onUnmounted(() => {
 }
 
 :deep(.text-primary) {
-    color: var(--primary-color, #3b82f6);
+    color: var(--primary-color, var(--et-primary, #0ea5e9));
 }
 
 :deep(.text-secondary) {

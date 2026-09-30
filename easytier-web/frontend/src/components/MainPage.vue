@@ -168,7 +168,7 @@ onUnmounted(() => {
 <template>
     <!-- 顶栏仅保留在移动端：只放抽屉开关 + 品牌，把纵向空间全部让给内容区 -->
     <nav ref="navRef"
-        class="sm:hidden fixed top-0 z-50 w-full bg-white border-b border-gray-200 dark:bg-gray-800 dark:border-gray-700 top-navbar">
+        class="sm:hidden fixed top-0 z-50 w-full top-navbar et-shell-surface">
         <div class="px-3 py-2">
             <div class="flex items-center justify-start rtl:justify-end gap-1">
                 <div ref="toggleButtonRef">
@@ -181,7 +181,7 @@ onUnmounted(() => {
                 <div class="flex ms-1 items-center">
                     <img :src="Icon" class="h-8 me-3" :alt="t('web.main.logo_alt')" />
                     <span
-                        class="self-center text-xl font-semibold whitespace-nowrap dark:text-white">EasyTier</span>
+                        class="self-center text-xl font-semibold whitespace-nowrap et-shell-text">EasyTier</span>
                 </div>
             </div>
         </div>
@@ -191,7 +191,7 @@ onUnmounted(() => {
     </div>
 
     <aside ref="sidebarRef" id="logo-sidebar"
-        class="fixed top-0 left-0 z-40 flex h-screen flex-col bg-white border-r border-gray-200 dark:bg-gray-800 dark:border-gray-700"
+        class="fixed top-0 left-0 z-40 flex h-screen flex-col et-shell-surface et-shell-border-r"
         :class="[
             forceShowSideBar ? 'translate-x-0' : '-translate-x-full',
             'sm:translate-x-0',
@@ -201,14 +201,14 @@ onUnmounted(() => {
         :aria-label="t('web.main.sidebar')">
         <!-- 品牌区：移动端顶栏已有品牌，这里只在桌面显示（纯展示，无外链） -->
         <div
-            class="sidebar-brand hidden sm:flex shrink-0 items-center border-b border-gray-200 dark:border-gray-700"
+            class="sidebar-brand hidden sm:flex shrink-0 items-center et-shell-border-b"
             :class="sidebarCollapsed ? 'justify-center px-0' : 'px-3'">
             <img :src="Icon" class="h-8" :alt="t('web.main.logo_alt')" />
-            <span class="sidebar-brand-text ms-3 text-xl font-semibold whitespace-nowrap dark:text-white"
+            <span class="sidebar-brand-text ms-3 text-xl font-semibold whitespace-nowrap et-shell-text"
                 :class="{ 'sm:hidden': sidebarCollapsed }">EasyTier</span>
         </div>
 
-        <div class="flex-1 min-h-0 overflow-y-auto px-2 py-3 bg-white dark:bg-gray-800">
+        <div class="flex-1 min-h-0 overflow-y-auto px-2 py-3 et-shell-surface">
             <ul class="space-y-2 font-medium">
                 <li v-for="item in navItems" :key="item.name">
                     <Button variant="text"
@@ -225,7 +225,7 @@ onUnmounted(() => {
         </div>
 
         <!-- 底部固定区：语言 / 修改密码 / 登出 / 折叠 -->
-        <div class="shrink-0 border-t border-gray-200 dark:border-gray-700 px-2 py-2 bg-white dark:bg-gray-800">
+        <div class="shrink-0 et-shell-border-t px-2 py-2 et-shell-surface">
             <ul class="space-y-2 font-medium">
                 <li>
                     <Button variant="text" class="w-full sidebar-button" :class="sidebarButtonClass"
@@ -282,6 +282,31 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
+/* 壳层（侧栏/顶栏）统一走 surface token，避免 Tailwind gray 与内容区脱节 */
+.et-shell-surface {
+    background: var(--surface-card, #ffffff);
+}
+
+.et-shell-text {
+    color: var(--text-color, #1e293b);
+}
+
+.et-shell-border-r {
+    border-right: 1px solid var(--surface-border, #e2e8f0);
+}
+
+.et-shell-border-b {
+    border-bottom: 1px solid var(--surface-border, #e2e8f0);
+}
+
+.et-shell-border-t {
+    border-top: 1px solid var(--surface-border, #e2e8f0);
+}
+
+.top-navbar.et-shell-surface {
+    border-bottom: 1px solid var(--surface-border, #e2e8f0);
+}
+
 /* 侧栏条目：只保留文字对齐。
    不要在这里写 justify-content —— scoped 规则特异性 (0,2,0) 会压过
    Tailwind 的 sm:justify-center (0,1,0)，折叠态图标就没法居中了。
@@ -303,9 +328,9 @@ onUnmounted(() => {
 
 .sidebar-button--active,
 .sidebar-button--active:hover {
-    background: color-mix(in srgb, var(--primary-color, #0ea5e9) 11%, transparent) !important;
-    color: var(--primary-color, #0284c7) !important;
-    box-shadow: inset 3px 0 0 var(--primary-color, #0ea5e9);
+    background: color-mix(in srgb, var(--primary-color, var(--et-primary, #0ea5e9)) 11%, transparent) !important;
+    color: var(--primary-color, var(--et-primary-emphasis, #0284c7)) !important;
+    box-shadow: inset 3px 0 0 var(--primary-color, var(--et-primary, #0ea5e9));
 }
 
 .sidebar-button i {
