@@ -60,12 +60,16 @@ defineProps<{
   position: relative;
   border-bottom: 1px solid var(--surface-border, #e9ecef);
   padding-bottom: 0.75rem;
-  transition: all 0.2s;
+  /* 只过渡悬停真正会变的属性，不用 transition: all */
+  transition: background-color 0.2s ease;
   border-radius: 0.25rem;
 }
 
-.detail-item:hover {
-  background-color: var(--surface-hover, rgba(245, 247, 250, 0.5));
+/* 只读信息行的悬停高亮，用于帮助视线横向对齐；触屏上没有「悬停」，直接跳过 */
+@media (hover: hover) {
+  .detail-item:hover {
+    background-color: var(--surface-hover, rgba(245, 247, 250, 0.5));
+  }
 }
 
 .detail-item:last-child {
@@ -190,8 +194,10 @@ defineProps<{
     border-bottom: none;
   }
 
-  .detail-item:hover {
-    background-color: var(--surface-hover, rgba(30, 41, 59, 0.4));
+  @media (hover: hover) {
+    .detail-item:hover {
+      background-color: var(--surface-hover, rgba(30, 41, 59, 0.4));
+    }
   }
 
   .detail-value {

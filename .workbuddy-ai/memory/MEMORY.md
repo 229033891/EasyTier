@@ -2,23 +2,25 @@
 
 ## easytier-web 打包 / 生成 exe 规则（强制）
 
-**生成可部署产物前必须先询问用户，得到明确确认后才允许编译。**
+**2026-09-30 用户两次明确表态：「你不需要管打包的事情」「不要你生成Exe文件。我会自行生成」。因此不要构建/打包，也不要追问「要不要现在构建」——exe 由用户自己出。** 下面几条继续有效：
 
 - 不要主动执行 `cargo build` / `cargo build --release` 生成 `easytier-web.exe` 或 embed 包。
 - 全量编译 + LTO 链接耗时很长（数分钟起），未经确认直接开编会浪费大量时间。
-- 正确顺序：
-  1. 先问用户**是否需要现在生成** exe / 可部署产物；
-  2. 问清**平台**（Windows / Linux）、**用途**（本地试跑 / 正式发版）、**是否要 embed 一体包**；
-  3. 用户明确同意后，再按 `docs/easytier-web-build-and-deploy.md` 构建；日常迭代优先 `release-fast`，不要默认 `--release`。
 - 仅改代码、排查问题、看类型或构建配置时，**不要顺手触发全量编译**。
-- 只有用户明确说「打包 / 生成 exe / 出可部署产物」时才编译。
+- 只有用户明确说「打包 / 生成 exe / 出可部署产物」时才编译；届时先问清平台、用途、是否要 embed 一体包，日常迭代优先 `release-fast`。
+- **例外：`cargo check` / `vue-tsc` / `vitest` 属于验证手段，不是打包产物，可以主动跑**（见下面「环境备注」）。
 
 详细步骤与说明见 `docs/easytier-web-build-and-deploy.md` 第 0 节。
 
 ## 环境备注
 
-- 本机沙箱默认拒绝写 `D:\EasyTier\target`，`cargo check/build` 会因无法写入 `target/debug/build/aws-lc-sys-*` 等而失败（aws-lc-sys 需 NASM/MSVC 实编）。这是沙箱限制，不是代码错误；需要真正编译时须放开该目录写权限。
-- cargo 路径：`C:\Users\Administrator\.cargo\bin\cargo.exe`（不在默认 PATH，需显式加入）。
+- **`cargo check` 现在可以跑**（2026-09-30 实测，此前记录的「沙箱拒绝写 target」已不成立）：`D:\EasyTier\target` 可写，`cargo check -p easytier-web --all-targets` 首次约 10 分钟（aws-lc-sys 等要实编），之后改 easytier-web 只需 8~20 秒。
+- **但 `cargo test` 跑不起来**：测试二进制能编译链接，启动时 `STATUS_DLL_NOT_FOUND (0xc0000135)`。已排除随包 DLL（只有运行时动态加载的 wintun/Packet）与系统 VC 运行库，属环境问题，同环境跑其它 crate 的测试也一样。
+- 需要 SQL 层验证时，可行办法是**用 Python `sqlite3` 从源码正则抽出建表/查询 SQL 直接跑**（绕开 Rust 编译与测试运行时），已验证有效。
+- cargo 路径：`C:\Users\Administrator\.cargo\bin\cargo.exe`（不在默认 PATH，需显式加入）。`rustfmt` 只装在 `1.95.0` 工具链上（不是 rust-toolchain.toml 指定的 `1.95`），要用 `rustup run 1.95.0 rustfmt --edition 2024 <file>`；它只能查语法，查不出类型错误。
+- **Rust 侧两个易踩的坑**：
+  1. `i64::div_ceil` 在 1.95 上仍属 unstable 的 `int_roundings`（只有无符号整数稳定了），要用 `(a + b - 1) / b`。
+  2. `DeleteMany::filter` 来自 `QueryFilter` trait，不是 inherent 方法；不 `use QueryFilter as _` 会解析到 `Iterator::filter` 报「is not an iterator」。而 `DatabaseConnection::query_all` 是 inherent，加 `ConnectionTrait` 反而报 unused import。
 
 ## 本机 Windows 构建前置依赖（已全部装好缓存，构建前加这些环境变量）
 

@@ -1,0 +1,44 @@
+
+[1m[7m[36m RUN [39m[27m[22m [36mv2.1.9 [39m[90mD:/EasyTier/easytier-web/frontend-lib[39m
+
+ [31m❯[39m tests/config-ui.spec.ts [2m([22m[2m0 test[22m[2m)[22m
+
+[31m⎯⎯⎯⎯⎯⎯[1m[7m Failed Suites 1 [27m[22m⎯⎯⎯⎯⎯⎯⎯[39m
+
+[31m[1m[7m FAIL [27m[22m[39m tests/config-ui.spec.ts[2m [ tests/config-ui.spec.ts ][22m
+[31m[1mSyntaxError[22m: [vue/compiler-sfc] Unexpected token (55:0)
+
+D:/EasyTier/easytier-web/frontend-lib/src/components/Config.vue
+52 |      return
+53 |    }
+54 |    panelCollapsed[key] = !panelCollapsed[key]
+   |                                               ^
+55 |  }
+   |  ^
+56 |  [39m
+  Plugin: [35mvite:vue[39m
+  File: [36mD:/EasyTier/easytier-web/frontend-lib/src/components/Config.vue[39m:55:0
+[33m  52 |      return
+  53 |    }
+  54 |    panelCollapsed[key] = !panelCollapsed[key]
+     |                       ^
+  55 |  }
+  56 |  [39m
+[90m [2m❯[22m constructor ../../node_modules/.pnpm/@babel+parser@7.28.4/node_modules/@babel/parser/lib/index.js:[2m367:19[22m[39m
+[90m [2m❯[22m TypeScriptParserMixin.raise ../../node_modules/.pnpm/@babel+parser@7.28.4/node_modules/@babel/parser/lib/index.js:[2m6630:19[22m[39m
+[90m [2m❯[22m TypeScriptParserMixin.unexpected ../../node_modules/.pnpm/@babel+parser@7.28.4/node_modules/@babel/parser/lib/index.js:[2m6650:16[22m[39m
+[90m [2m❯[22m TypeScriptParserMixin.parseExprAtom ../../node_modules/.pnpm/@babel+parser@7.28.4/node_modules/@babel/parser/lib/index.js:[2m11451:16[22m[39m
+[90m [2m❯[22m TypeScriptParserMixin.parseExprSubscripts ../../node_modules/.pnpm/@babel+parser@7.28.4/node_modules/@babel/parser/lib/index.js:[2m11085:23[22m[39m
+[90m [2m❯[22m TypeScriptParserMixin.parseUpdate ../../node_modules/.pnpm/@babel+parser@7.28.4/node_modules/@babel/parser/lib/index.js:[2m11070:21[22m[39m
+[90m [2m❯[22m TypeScriptParserMixin.parseMaybeUnary ../../node_modules/.pnpm/@babel+parser@7.28.4/node_modules/@babel/parser/lib/index.js:[2m11050:23[22m[39m
+[90m [2m❯[22m TypeScriptParserMixin.parseMaybeUnary ../../node_modules/.pnpm/@babel+parser@7.28.4/node_modules/@babel/parser/lib/index.js:[2m9857:18[22m[39m
+[90m [2m❯[22m TypeScriptParserMixin.parseMaybeUnaryOrPrivate ../../node_modules/.pnpm/@babel+parser@7.28.4/node_modules/@babel/parser/lib/index.js:[2m10903:61[22m[39m
+[90m [2m❯[22m TypeScriptParserMixin.parseExprOps ../../node_modules/.pnpm/@babel+parser@7.28.4/node_modules/@babel/parser/lib/index.js:[2m10908:23[22m[39m
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯[22m[39m
+
+[2m Test Files [22m [1m[31m1 failed[39m[22m[90m (1)[39m
+[2m      Tests [22m [2mno tests[22m
+[2m   Start at [22m 08:42:07
+[2m   Duration [22m 1.52s[2m (transform 98ms, setup 31ms, collect 0ms, tests 0ms, environment 523ms, prepare 406ms)[22m
+

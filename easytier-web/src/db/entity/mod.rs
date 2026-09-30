@@ -5,6 +5,7 @@ pub mod prelude;
 pub mod groups;
 pub mod groups_permissions;
 pub mod managed_config_revisions;
+pub mod peer_conn_history;
 pub mod permissions;
 pub mod tower_sessions;
 pub mod user_running_network_configs;

@@ -4,8 +4,8 @@ import Tooltip from 'primevue/tooltip'
 /** 悬停提示：出现稍缓、移开后多停留一会儿，不自动消失 */
 export const tooltipDefaults = {
     showDelay: 250,
-    hideDelay: 2000,
-    autoHide: true,
+    hideDelay: 400,
+    autoHide: false,
 }
 
 function mergeBinding(binding: DirectiveBinding): DirectiveBinding {
@@ -21,30 +21,43 @@ function mergeBinding(binding: DirectiveBinding): DirectiveBinding {
     }
 }
 
-function invoke(hook: string, el: HTMLElement, binding?: DirectiveBinding, vnode?: unknown) {
+function invoke(hook: string, el: HTMLElement, binding?: DirectiveBinding, vnode?: unknown, prevVnode?: unknown) {
     const fn = (Tooltip as Record<string, unknown>)[hook]
     if (typeof fn !== 'function') {
         return
     }
+    // PrimeVue BaseDirective hooks rely on being invoked as methods of the directive object.
     if (binding) {
-        fn(el, mergeBinding(binding), vnode)
+        ;(fn as Function).call(Tooltip, el, mergeBinding(binding), vnode, prevVnode)
     } else {
-        fn(el)
+        ;(fn as Function).call(Tooltip, el)
     }
 }
 
+/**
+ * Wrap PrimeVue Tooltip so string bindings work and lifecycle hooks (incl. created) are forwarded.
+ * Without `created`, BaseDirective never initializes `$pd` / instance state and hover may do nothing.
+ */
 export const tooltipDirective: Directive = {
-    beforeMount(el, binding, vnode) {
-        invoke('beforeMount', el, binding, vnode)
+    created(el, binding, vnode, prevVnode) {
+        invoke('created', el, binding, vnode, prevVnode)
     },
-    mounted(el, binding, vnode) {
-        invoke('mounted', el, binding, vnode)
+    beforeMount(el, binding, vnode, prevVnode) {
+        invoke('beforeMount', el, binding, vnode, prevVnode)
     },
-    updated(el, binding, vnode) {
-        invoke('updated', el, binding, vnode)
+    mounted(el, binding, vnode, prevVnode) {
+        invoke('mounted', el, binding, vnode, prevVnode)
     },
-    unmounted(el) {
-        invoke('unmounted', el)
-        invoke('beforeUnmount', el)
+    beforeUpdate(el, binding, vnode, prevVnode) {
+        invoke('beforeUpdate', el, binding, vnode, prevVnode)
+    },
+    updated(el, binding, vnode, prevVnode) {
+        invoke('updated', el, binding, vnode, prevVnode)
+    },
+    beforeUnmount(el, binding, vnode, prevVnode) {
+        invoke('beforeUnmount', el, binding, vnode, prevVnode)
+    },
+    unmounted(el, binding, vnode, prevVnode) {
+        invoke('unmounted', el, binding, vnode, prevVnode)
     },
 }

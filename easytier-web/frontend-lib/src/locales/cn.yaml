@@ -35,7 +35,7 @@ vpn_portal_remove_client: 删除客户端
 dev_name: TUN接口名称
 advanced_settings: 高级设置
 basic_settings: 基础设置
-listener_urls: 监听地址
+listener_urls: 本机监听地址
 rpc_port: RPC端口
 port: 端口
 path: 路径
@@ -47,8 +47,8 @@ detail: 详情
 add_new_network: 添加新网络
 add_peer_url: 添加节点
 add_initial_node: 添加初始节点
-add_listener_url: 添加监听地址
-add_mapped_listener: 添加监听映射
+add_listener_url: 添加本机监听
+add_mapped_listener: 添加公网地址
 del_cur_network: 删除当前网络
 select_network: 选择网络
 network_instances: 网络实例
@@ -143,6 +143,17 @@ vpn_portal_state_error: 错误
 show_event_log: 显示事件日志
 event_log: 事件日志
 peer_info: 节点信息
+peer_conn_history: 对端连接历史
+history_select_peer: 选择对端
+history_range_1h: 1 小时
+history_range_6h: 6 小时
+history_range_24h: 24 小时
+history_range_7d: 7 天
+history_latency: 延迟
+history_traffic: 流量
+history_loading: 正在加载历史数据
+history_no_data: 暂无历史数据（网络运行一段时间后才会积累采样）
+history_sampling_hint: 每 60 秒采样一次，保留 7 天；流量为相邻采样的平均速率
 hostname: 主机名
 route_cost: 路由
 tunnel_proto: 协议
@@ -153,53 +164,100 @@ loss_rate: 丢包率
 nat_type: NAT 类型
 
 flags_switch: 功能开关
+advanced_group_connectivity: 连接与路由
+advanced_group_transport: 传输与打洞
+advanced_group_system: 系统与网络
+advanced_group_security: 安全与隐私
 
 latency_first: 开启延迟优先模式
-latency_first_help: 忽略中转跳数，选择总延迟最低的路径
+latency_first_help: |-
+  默认按「中转跳数最少」选路；开启后改为按「总延迟最低」选路。
+  适合节点分散在不同地域、需要跨多跳中转的网络。
+  注意：需要各节点持续探测路径延迟，会略微增加控制面开销；同一网络内建议统一设置。
 
 use_smoltcp: 使用用户态协议栈
-use_smoltcp_help: 使用用户态 TCP/IP 协议栈，避免操作系统防火墙问题导致无法子网代理 / KCP代理。
+use_smoltcp_help: |-
+  用用户态 smoltcp 协议栈处理「子网代理」和「KCP 代理」的流量，绕开系统防火墙/路由表对这类流量的干扰。
+  适合子网代理不通、或系统防火墙策略较严的场景。
+  注意：用户态协议栈的吞吐低于内核转发，只在遇到问题时才建议开启。
 
 disable_ipv6: 禁用IPv6
-disable_ipv6_help: 禁用此节点的IPv6功能，仅使用IPv4进行网络通信。
+disable_ipv6_help: |-
+  本节点完全不使用 IPv6：不监听 IPv6，也不通过 IPv6 与其他节点通信，全部走 IPv4。
+  适合对端只支持 IPv4，或本机 IPv6 路由异常导致连不上时排查。
+  注意：需要和网络内其他节点的设置保持一致，否则可能连不上。
 
 ipv6_public_addr_auto: 自动获取公网 IPv6
-ipv6_public_addr_auto_help: 自动从共享了 IPv6 子网的对等节点获取一个公网 IPv6 地址。
+ipv6_public_addr_auto_help: |-
+  自动向「共享了公网 IPv6 子网」的对等节点申请一个公网 IPv6 地址。
+  适合本机没有公网 IPv6、但网络里有节点能提供的情况。
+  注意：网络里必须存在一台共享了公网 IPv6 子网的节点（该能力目前只能在 easytier-core 侧配置，且仅 Linux 支持），否则拿不到地址。
 
 enable_kcp_proxy: 启用 KCP 代理
-enable_kcp_proxy_help: 将 TCP 流量转为 KCP 流量，降低传输延迟，提升传输速度。
+enable_kcp_proxy_help: |-
+  把发往对端的 TCP 流量改用 KCP（基于 UDP）代理转发。
+  在 UDP 有丢包的链路上，能避开 TCP 重传导致的卡顿，明显降低延迟、提高吞吐。
+  注意：需要两端都能跑 KCP；若对端开了「禁用 KCP 输入」，会自动回退为原始 TCP。
 
 disable_kcp_input: 禁用 KCP 输入
-disable_kcp_input_help: 禁用 KCP 入站流量，其他开启 KCP 代理的节点仍然使用 TCP 连接到本节点。
+disable_kcp_input_help: |-
+  不接受别人用 KCP 代理过来的 TCP 流，本节点只收原始 TCP。
+  适合本节点 CPU 紧张，或链路本身不丢包（KCP 收益不大）时。
+  注意：开启 KCP 代理的对端访问本节点时会自动回退成原始 TCP，功能不受影响，只是失去 KCP 的收益。
 
 enable_quic_proxy: 启用 QUIC 代理
-enable_quic_proxy_help: 将 TCP 流量转为 QUIC 流量，降低传输延迟，提升传输速度。
+enable_quic_proxy_help: |-
+  把发往对端的 TCP 流量改用 QUIC（基于 UDP）代理转发。
+  用途与 KCP 代理类似，在丢包链路上降低延迟、提高吞吐；QUIC 的拥塞控制与多路复用更成熟。
+  注意：需要两端都支持 QUIC；若对端开了「禁用 QUIC 输入」，会自动回退为原始 TCP。
 
 disable_quic_input: 禁用 QUIC 输入
-disable_quic_input_help: 禁用 QUIC 入站流量，其他开启 QUIC 代理的节点仍然使用 TCP 连接到本节点。
+disable_quic_input_help: |-
+  不接受别人用 QUIC 代理过来的 TCP 流，本节点只收原始 TCP。
+  适合本节点 CPU 紧张，或链路不丢包（QUIC 收益不大）时。
+  注意：对端会自动回退成原始 TCP，功能不受影响。
 
 disable_p2p: 禁用 P2P
-disable_p2p_help: 禁用普通自动 P2P。开启 need-p2p 的节点仍可与当前节点建立 P2P。
+disable_p2p_help: |-
+  不再主动与其他节点建立直连（P2P），流量一律走中转；同时声明不希望别人主动连本节点。
+  适合让本节点只做中继/服务器，或需要严格限制直连关系的场景。
+  注意：标记了「需要 P2P」的节点例外，仍会与本节点建立直连。
 
 p2p_only: 仅 P2P
-p2p_only_help: 仅与已经建立P2P连接的对等节点通信，不通过其他节点中转。
+p2p_only_help: |-
+  只与已建立直连（P2P）的节点通信，完全不经过其他节点中转。
+  适合对端到端延迟敏感、且能确保直连可达的场景。
+  注意：无法直连的节点（例如双方都在对称 NAT 后且打洞失败）将完全无法通信，慎用。
 
 lazy_p2p: 延迟 P2P
-lazy_p2p_help: 仅在实际流量需要某个对等节点时才尝试建立 P2P。开启 need-p2p 的节点仍会被主动连接。
+lazy_p2p_help: |-
+  不预先为每个节点建直连，等真的要和它传数据时才去尝试打洞建连。
+  适合节点多、但实际只与少数节点通信的网络，可减少控制面开销和无效打洞。
+  注意：首次通信会多一次建连延迟；标记了「需要 P2P」的节点仍会被主动连接。
 
 bind_device: 仅使用物理网卡
-bind_device_help: 仅使用物理网卡，避免 EasyTier 通过其他虚拟网建立连接。
+bind_device_help: |-
+  建立连接时把底层套接字绑定到物理网卡，不走虚拟网卡。
+  典型场景：子网代理的网段和某个节点的网段冲突，导致流量在虚拟网里绕圈；绑定物理网卡后可正常通信。
+  注意：需要本机能识别出物理网卡，纯虚拟化/容器环境可能没有可用物理网卡。
 
 no_tun: 无 TUN 模式
-no_tun_help: 不使用 TUN 网卡，适合无管理员权限时使用。本节点仅允许被访问。访问其他节点需要使用 SOCK5
+no_tun_help: |-
+  不创建 TUN 虚拟网卡：本机不会获得虚拟 IP，也不能直接访问其他节点的虚拟 IP。
+  适合没有管理员权限（装不了 TUN 驱动）的机器 —— 此时其他节点仍能通过子网代理访问本机上的服务。
+  注意：本机要主动访问虚拟网内的地址，需要借助 SOCKS5 代理（见下方「socks5 服务器」）。
 
 enable_exit_node: 启用出口节点
-enable_exit_node_help: 允许此节点成为出口节点
+enable_exit_node_help: |-
+  允许本节点充当「出口节点」：其他节点可以把全部上网流量转发到本节点，由本节点代为出网。
+  适合本机有稳定公网出口，想让其他节点借用这条出口的场景。
+  注意：需要在客户端侧把本节点填进「出口节点列表」才会生效；转发他人流量会消耗本机带宽，请自行控制使用范围。
 
 relay_all_peer_rpc: 转发RPC包
-relay_all_peer_rpc_help: |
-  允许转发所有对等节点的RPC数据包，即使对等节点不在转发网络白名单中。
-  这可以帮助白名单外网络中的对等节点建立P2P连接。
+relay_all_peer_rpc_help: |-
+  转发所有对等节点的 RPC 控制包，即使该节点不在「网络白名单」中。
+  用于帮助白名单之外网络里的节点建立 P2P 连接。
+  注意：只影响控制面 RPC，不转发业务数据 —— 开了它不会让白名单外网络的业务流量通过本节点。
 
 disable_relay_data: 禁止中转数据
 disable_relay_data_help: |
@@ -207,39 +265,100 @@ disable_relay_data_help: |
   本节点仍可正常通信；开启后会向网络宣告 avoid_relay_data，使其他节点尽量不选本节点作为中继。
 
 need_p2p: 需要 P2P
-need_p2p_help: 即使其他节点启用了 lazy p2p，也要求它们主动与当前节点建立 P2P 连接。
+need_p2p_help: |-
+  对外声明：即使对方开启了「延迟 P2P」，也请主动与本节点建立直连。
+  适合本节点是对端经常访问的目标（例如服务器、子网代理出口），希望随时可直连。
+  注意：只在对方开启「延迟 P2P」时才有区别；对方完全禁用 P2P 时本条不生效。
 
 multi_thread: 启用多线程
-multi_thread_help: 使用多线程运行时
+multi_thread_help: |-
+  使用多线程 Tokio 运行时（默认单线程）。
+  适合节点数多、转发流量大的中继/服务器节点，能更好地利用多核。
+  注意：线程数由 easytier-core 侧的 multi-thread-count 决定（默认 2）；节点少时开启收益不明显，反而增加调度开销。
 
 proxy_forward_by_system: 系统转发
-proxy_forward_by_system_help: 通过系统内核转发子网代理数据包，禁用内置NAT
+proxy_forward_by_system_help: |-
+  子网代理的数据包交给系统内核转发（走系统路由/防火墙规则），不再使用 EasyTier 内置的用户态 NAT。
+  适合需要在内核层做策略路由，或内置 NAT 与现有防火墙冲突的场景。
+  注意：要求本机内核具备转发能力（Linux 需开启 ip_forward 并配置放行规则），配置不当会直接导致子网代理不通。
 
 disable_encryption: 禁用加密
-disable_encryption_help: 禁用对等节点通信的加密。注意：默认启用加密，若勾选此项则关闭，必须与对等节点设置一致。
+disable_encryption_help: |-
+  关闭节点间通信的加密（默认开启）。
+  适合在完全可信的内网里运行，换取一点 CPU 开销。
+  注意：必须与网络内其他节点设置一致 —— 一边加密一边不加密会直接连不通；公网环境不要关闭。
 
 disable_tcp_hole_punching: 禁用TCP打洞
-disable_tcp_hole_punching_help: 禁用TCP打洞功能
+disable_tcp_hole_punching_help: |-
+  不再尝试用 TCP 打洞建立直连。
+  适合 TCP 打洞在特定网络下反而导致连接不稳定，或与对端防火墙策略冲突时。
+  注意：关闭后 TCP 场景只能走中转，延迟通常更高；如果 UDP 打洞可用，一般不影响直连。
 
 disable_udp_hole_punching: 禁用UDP打洞
-disable_udp_hole_punching_help: 禁用UDP打洞功能
+disable_udp_hole_punching_help: |-
+  不再尝试用 UDP 打洞建立直连。
+  适合 UDP 被运营商限制/清洗、打洞只会白耗时间的网络。
+  注意：关闭后只能靠 TCP 打洞或走中转，P2P 成功率会下降。
 
 enable_udp_broadcast_relay: UDP 广播中继
 enable_udp_broadcast_relay_help: "仅 Windows：捕获物理网卡上的本机 UDP 广播包并转发给 EasyTier 对等节点，帮助局域网游戏发现房间。需要管理员权限。"
 
 disable_upnp: 禁用 UPnP
-disable_upnp_help: 禁用符合条件监听器的运行时 UPnP/NAT-PMP 端口映射；自动端口映射默认开启。
+disable_upnp_help: |-
+  关闭运行时的 UPnP / NAT-PMP 自动端口映射（默认开启）。
+  适合路由器不支持 UPnP，或不想让程序自动修改路由器端口映射的场景。
+  注意：关闭后如果本机在 NAT 后面，别人将无法直接连进来，只能由本机主动出连或依赖打洞；需要手动在路由器上做端口映射。
 
 disable_sym_hole_punching: 禁用对称NAT打洞
-disable_sym_hole_punching_help: 禁用对称NAT的打洞（生日攻击），将对称NAT视为锥形NAT处理
+disable_sym_hole_punching_help: |-
+  禁用针对对称 NAT（NAT4）的 UDP 打洞。该方式基于「生日攻击」枚举端口，可能被运营商判定为异常流量而封锁。
+  适合开启后出现被限速/断流，或环境不允许大量探测包的场景。
+  注意：禁用后对称 NAT 两侧基本无法直连，只能走中转。
 
 enable_magic_dns: 启用魔法DNS
-enable_magic_dns_help: |
-  启用魔法DNS，允许通过EasyTier的DNS服务器访问其他节点的虚拟IPv4地址， 如 node1.et.net。
+enable_magic_dns_help: |-
+  启用魔法 DNS：可以直接用「主机名.et.net」访问其他节点（例如 node1.et.net），无需记虚拟 IP。
+  适合经常按主机名访问节点的场景。
+  注意：会修改本机的 DNS 设置（需要相应权限）；域名后缀默认 et.net，可在 easytier-core 侧用 tld-dns-zone 调整。
 
 enable_private_mode: 启用私有模式
-enable_private_mode_help: |
-  启用私有模式，则不允许使用了与本网络不相同的网络名称和密码的节点通过本节点进行握手或中转。
+enable_private_mode_help: |-
+  私有模式：只有能确认「网络密码与本网络一致」的外部网络，才允许借道本节点握手或中转；密码不一致或缺失的一律拒绝。
+  适合想把自己网络与其他 EasyTier 网络严格隔离的场景。
+  注意：判定依赖网络密码，改密码时要全网同步，否则会出现节点之间互相拒绝。
+
+prefer_peer_relay: 优先对端中继
+prefer_peer_relay_help: |-
+  优先复用「已经在向目标转发数据的对端」，而不是再宣告一条到同一目标的直连边。
+  适合直连边很多、但大部分流量其实可以复用已有路径的网络，能减少控制面的路由信息量。
+  注意：只影响与已有凭据对端之间的路径选择，不改变总的中继行为。
+
+encryption_algorithm: 加密算法
+encryption_algorithm_help: |-
+  节点间数据加密使用的算法。可选：aes-gcm（默认）、aes-256-gcm、chacha20、xor。
+  xor 只是弱混淆、不是真正的加密，仅在极低端设备、或对端明确要求时才用。
+  注意：必须与网络内其他节点一致；开了「禁用加密」后此项无效。
+encryption_algorithm_placeholder: 留空为默认 aes-gcm
+
+data_compress_algo: 数据压缩
+data_compress_algo_help: |-
+  对转发的数据做压缩：none（不压缩，默认）或 zstd（压缩）。
+  带宽紧张且数据可压缩度高时，开 zstd 能省带宽；CPU 紧张或数据本身已加密/已压缩时收益很小。
+  注意：两端都要支持所选算法。
+
+socket_mark: SO_MARK（fwmark）
+socket_mark_help: |-
+  仅 Linux：给本节点所有底层出站套接字设置 SO_MARK（fwmark），方便用 `ip rule fwmark ...`、nftables 的 `meta mark`、iptables 的 `-m mark` 做策略路由或过滤。
+  留空 = 完全不设置 SO_MARK；填 0 = 显式设为 0（两者不是一回事，0 也是一个合法的 mark）。
+  注意：需要 CAP_NET_ADMIN 权限；FakeTCP 的实际载荷通过原始 TUN 写入，内核不会给它打标记。
+socket_mark_placeholder: 留空表示不设置
+
+ipv6_public_addr_provider: 共享公网 IPv6 子网
+ipv6_public_addr_provider_help: |-
+  把本节点的公网 IPv6 子网共享给其他节点，让它们也能获得公网 IPv6 地址（仅 Linux 支持）。
+  适合本机有公网 IPv6 前缀（例如 /64），想让网络内其他节点也拿到公网 IPv6 的场景。
+  注意：对端需要开启「自动获取公网 IPv6」；下面的前缀留空则从系统路由自动检测。
+ipv6_public_addr_prefix_placeholder: 留空则自动检测，例如：2001:db8:1234:5678::/64
 
 relay_network_whitelist: 网络白名单
 relay_network_whitelist_help: |
@@ -248,15 +367,23 @@ relay_network_whitelist_help: |
   例如：'*'（所有网络），'def*'（以def为前缀的网络），'net1 net2'（只允许net1和net2）
 
 manual_routes: 自定义路由
-manual_routes_help: 手动分配路由CIDR，将禁用子网代理和从对等节点传播的wireguard路由。例如：192.168.0.0/16
+manual_routes_help: |-
+  手动指定本节点的路由表（CIDR）。设置后，「子网代理」和从对等节点传播过来的 WireGuard 路由都会被禁用，改由这里手动控制。
+  适合路由需要精确控制，或自动传播的路由与本地网络冲突的场景。
+  注意：留空即恢复自动模式；填错会导致对应网段不通。例如：192.168.0.0/16
 
 socks5: socks5服务器
-socks5_help: |
-  启用 socks5 服务器，允许 socks5 客户端访问虚拟网络. 格式: <端口>，例如：1080
+socks5_help: |-
+  在本机开一个 SOCKS5 代理，客户端连上它就能访问虚拟网内的地址（常与「无 TUN 模式」搭配使用）。
+  格式：<端口>，例如：1080。
+  注意：留空表示不启用；对外暴露前请确认已限制来源，避免被当成开放代理。
 
 exit_nodes: 出口节点列表
-exit_nodes_help: 转发所有流量的出口节点，虚拟IPv4地址，优先级由列表顺序决定
-  
+exit_nodes_help: |-
+  出口节点列表：填对端的虚拟 IPv4 地址，本机所有上网流量都会转发给它出网。
+  优先级按列表顺序，靠前的优先使用。
+  注意：对端必须开启「允许此节点成为出口节点」，否则不生效；填错地址会导致完全断网，请先确认可达。
+
 port_forwards: 端口转发
 port_forwards_help: "将本地端口转发到虚拟网络中的远程端口。例如：udp://0.0.0.0:12345/10.126.126.1:23456，表示将本地UDP端口12345转发到虚拟网络中的10.126.126.1:23456。可以指定多个。"
 port_forwards_bind_addr: "绑定地址，如：0.0.0.0"
@@ -265,20 +392,28 @@ port_forwards_add_btn: "添加"
 edit_port_forward: "编辑端口转发"
 
 mtu: MTU
-mtu_help: |
-  TUN设备的MTU，默认为非加密时为1380，加密时为1360。范围：400-1380
+mtu_help: |-
+  TUN 虚拟网卡的 MTU（单个数据包的最大字节数）。默认：不加密 1380、加密 1360；可填范围 400–1380。
+  链路质量差、经常触发分片时调小（例如 1200）可以减少丢包；调大能提升大流量吞吐。
+  注意：留空使用默认值；设置过大会导致部分链路丢包甚至不通。
 mtu_placeholder: 留空为默认值1380
 
 instance_recv_bps_limit: 实例接收限速
-instance_recv_bps_limit_help: |
-  限制当前实例整体入站流量的总接收速率，单位为字节每秒。
+instance_recv_bps_limit_help: |-
+  限制本实例的入站总速率，单位是「字节/秒」（B/s）—— 注意不是 bit/s，1 MB/s ≈ 8 Mbps。
+  适合给中继/服务器节点限流，避免被单个实例占满带宽。
   留空表示不限速。
 instance_recv_bps_limit_placeholder: 留空表示不限速
 
-mapped_listeners: 监听映射
-mapped_listeners_help: |
-  手动指定监听器的公网地址，其他节点可以使用该地址连接到本节点。
+mapped_listeners: 公网宣告地址
+mapped_listeners_help: |-
+  告诉其他节点「用哪个公网地址能连到我」，用于 UPnP / STUN 自动探测不准或不可用的环境。
   例如：tcp://123.123.123.123:11223，可以指定多个。
+  注意：须与上方「本机监听」对应，且路由器已做好端口映射、地址真实可达，否则对端会连不上。
+
+listener_urls_help: |-
+  本机实际绑定并监听的地址（对内）。
+  例如：tcp://0.0.0.0:11010。需要被外网访问时，请再在下方填写「公网宣告地址」。
 
 status:
   version: 内核版本
@@ -422,6 +557,9 @@ web:
     hide_detailed_view: 隐藏详情
     open_network_status: 网络状态 / 启停
     open_network_config: 编辑 / 创建网络
+    # 全页管理标题（与上面按钮提示文案区分，标题更简洁）
+    page_title_status: 网络状态
+    page_title_config: 编辑网络
     no_running_network_hint: 该设备当前没有运行中的虚拟网。可打开状态页选择已停用网络，或切换到配置页创建。
     sort_by_hostname: 主机名
     sort_by_public_ip: 公网IP
@@ -452,6 +590,7 @@ web:
     save_config: 保存配置
     config_saved: 配置已保存
     save_failed: 保存配置失败
+    start_failed: 启动网络失败
     import_config: 导入配置
     create_new: 创建新网络
     add_network: 添加网络

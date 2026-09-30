@@ -52,6 +52,21 @@ const emits = defineEmits<{
 const toast = useToast();
 const confirm = useConfirm();
 
+function errorDetail(error: unknown): string {
+    const responseData = (error as { response?: { data?: unknown } } | null)?.response?.data;
+    if (typeof responseData === 'string') {
+        return responseData;
+    }
+    if (responseData !== undefined) {
+        try {
+            return JSON.stringify(responseData);
+        } catch {
+            return String(responseData);
+        }
+    }
+    return error instanceof Error ? error.message : String(error);
+}
+
 const configFile = ref();
 
 const curNetworkInfo = ref<NetworkTypes.NetworkInstance | null>(null);
@@ -62,11 +77,17 @@ const currentNetworkConfig = ref<NetworkTypes.NetworkConfig | undefined>(undefin
 
 const listInstanceIdResponse = ref<Api.ListNetworkInstanceIdResponse | undefined>(undefined);
 
-const isRunning = (instanceId: string) => {
-    return (listInstanceIdResponse.value?.running_inst_ids ?? []).map(Utils.UuidToStr).includes(instanceId);
-}
+const runningInstanceIds = computed(() => new Set(
+    (listInstanceIdResponse.value?.running_inst_ids ?? []).map(Utils.UuidToStr),
+));
+const disabledInstanceIds = computed(() => new Set(
+    (listInstanceIdResponse.value?.disabled_inst_ids ?? []).map(Utils.UuidToStr),
+));
+
+const isRunning = (instanceId: string) => runningInstanceIds.value.has(instanceId);
 
 const networkMetaCache = ref<Record<string, Api.NetworkMeta>>({});
+const networkMetaLoadFailed = ref<Record<string, boolean>>({});
 const loadNetworkMetas = async (instanceIds: string[]) => {
     const missingIds = instanceIds.filter(id => !networkMetaCache.value[id]);
 
@@ -74,8 +95,18 @@ const loadNetworkMetas = async (instanceIds: string[]) => {
 
     try {
         const response = await props.api.get_network_metas(missingIds);
-        Object.assign(networkMetaCache.value, response.metas ?? {});
+        const metas = response.metas ?? {};
+        Object.assign(networkMetaCache.value, metas);
+        updateInstanceList();
+        missingIds.forEach((id) => {
+            if (metas[id]) {
+                delete networkMetaLoadFailed.value[id];
+            }
+        });
     } catch (e) {
+        missingIds.forEach((id) => {
+            networkMetaLoadFailed.value[id] = true;
+        });
         console.error("Failed to load network metas", e);
     }
 };
@@ -93,13 +124,16 @@ const currentNetworkMeta = computed(() => {
 });
 const currentNetworkControl = {
     remoteSave: computed(() => {
-        return Api.ConfigFilePermission.isRemoveSaveable(currentNetworkMeta.value?.config_permission ?? 0);
+        const meta = currentNetworkMeta.value;
+        return !!meta && Api.ConfigFilePermission.isRemoveSaveable(meta.config_permission);
     }),
     editable: computed(() => {
-        return Api.ConfigFilePermission.isEditable(currentNetworkMeta.value?.config_permission ?? 0);
+        const meta = currentNetworkMeta.value;
+        return !!meta && Api.ConfigFilePermission.isEditable(meta.config_permission);
     }),
     deletable: computed(() => {
-        return Api.ConfigFilePermission.isDeletable(currentNetworkMeta.value?.config_permission ?? 0);
+        const meta = currentNetworkMeta.value;
+        return !!meta && Api.ConfigFilePermission.isDeletable(meta.config_permission);
     })
 }
 
@@ -108,9 +142,9 @@ const canSaveConfig = computed(() => {
     if (!currentNetworkConfig.value) {
         return false;
     }
-    // 新建/尚无 meta 时允许保存；已有权限则以 editable 为准
-    if (!currentNetworkMeta.value) {
-        return true;
+    // 元数据尚未加载或加载失败时拒绝操作，避免把未知权限当成可写。
+    if (!currentNetworkMeta.value || networkMetaLoadFailed.value[currentNetworkConfig.value.instance_id]) {
+        return false;
     }
     return currentNetworkControl.editable.value;
 });
@@ -118,6 +152,7 @@ const canSaveConfig = computed(() => {
 const savingConfig = ref(false);
 
 const instanceList = ref<Array<{ uuid: string; meta?: Api.NetworkMeta }>>([]);
+let instanceListSignature = '';
 const updateInstanceList = () => {
     let insts = new Set<string>();
     let t = listInstanceIdResponse.value;
@@ -133,12 +168,15 @@ const updateInstanceList = () => {
         };
     });
 
-    if (JSON.stringify(newList) !== JSON.stringify(instanceList.value)) {
+    const signature = newList
+        .map(({ uuid, meta }) => `${uuid}\u0000${meta?.network_name ?? ''}\u0000${meta?.config_permission ?? ''}`)
+        .join('\u0001');
+    if (signature !== instanceListSignature) {
+        instanceListSignature = signature;
         instanceList.value = newList;
     }
 }
 watch(listInstanceIdResponse, updateInstanceList, { deep: false });
-watch(networkMetaCache, updateInstanceList, { deep: true });
 watch(instanceList, async (newVal) => {
     if (newVal) {
         const instanceIds = new Set(newVal.map(item => item.uuid));
@@ -149,9 +187,12 @@ watch(instanceList, async (newVal) => {
         });
     }
     // 打开 Drawer 未带 instanceId 时，优先选中运行中实例，否则选第一个
-    if (newVal?.length && !instanceId.value) {
+    const currentExists = !!instanceId.value && newVal?.some(item => item.uuid === instanceId.value);
+    if (newVal?.length && (!instanceId.value || !currentExists)) {
         const running = newVal.find(item => isRunning(item.uuid));
         instanceId.value = (running ?? newVal[0]).uuid;
+    } else if (!newVal?.length && instanceId.value) {
+        instanceId.value = undefined;
     }
 });
 
@@ -160,19 +201,28 @@ const selectedInstanceId = computed({
         return instanceList.value.find((instance) => instance.uuid === instanceId.value);
     },
     set(value: any) {
-        console.log("set instanceId", value);
         instanceId.value = value ? value.uuid : undefined;
     }
 });
 watch(selectedInstanceId, async (newVal, oldVal) => {
-    if (newVal?.uuid !== oldVal?.uuid && (networkIsDisabled.value || isEditingNetwork.value)) {
-        await loadCurrentNetworkConfig();
-    } else {
-        await loadCurrentNetworkInfo();
-    }
+    try {
+        if (newVal?.uuid !== oldVal?.uuid && (networkIsDisabled.value || isEditingNetwork.value)) {
+            await loadCurrentNetworkConfig();
+        } else {
+            await loadCurrentNetworkInfo();
+        }
 
-    if (newVal?.uuid && !networkMetaCache.value[newVal.uuid]) {
-        await loadNetworkMetas([newVal.uuid]);
+        if (newVal?.uuid && !networkMetaCache.value[newVal.uuid]) {
+            await loadNetworkMetas([newVal.uuid]);
+        }
+    } catch (e) {
+        console.error('Failed to load selected network', e);
+        toast.add({
+            severity: 'error',
+            summary: t('web.common.error'),
+            detail: errorDetail(e),
+            life: 3000,
+        });
     }
 });
 
@@ -216,23 +266,52 @@ const networkIsDisabled = computed(() => {
     if (!selectedInstanceId.value) {
         return false;
     }
-    return (listInstanceIdResponse.value?.disabled_inst_ids ?? []).map(Utils.UuidToStr).includes(selectedInstanceId.value?.uuid);
+    return disabledInstanceIds.value.has(selectedInstanceId.value.uuid);
 });
 watch(networkIsDisabled, async (newVal, oldVal) => {
     if (newVal !== oldVal && newVal === true) {
-        await loadCurrentNetworkConfig();
+        try {
+            await loadCurrentNetworkConfig();
+        } catch (e) {
+            console.error('Failed to load disabled network config', e);
+            toast.add({
+                severity: 'error',
+                summary: t('web.common.error'),
+                detail: errorDetail(e),
+                life: 3000,
+            });
+        }
     }
 });
 
-const loadCurrentNetworkConfig = async () => {
-    currentNetworkConfig.value = undefined;
+let currentConfigLoad: { instanceId: string; promise: Promise<void> } | undefined;
 
-    if (!selectedInstanceId.value) {
+const loadCurrentNetworkConfig = async () => {
+    const selected = selectedInstanceId.value?.uuid;
+    if (!selected) {
+        currentNetworkConfig.value = undefined;
         return;
     }
 
-    let ret = await props.api.get_network_config(selectedInstanceId.value!.uuid);
-    currentNetworkConfig.value = ret;
+    if (currentConfigLoad?.instanceId === selected) {
+        return currentConfigLoad.promise;
+    }
+
+    currentNetworkConfig.value = undefined;
+    const promise = (async () => {
+        const ret = await props.api.get_network_config(selected);
+        if (selectedInstanceId.value?.uuid === selected) {
+            currentNetworkConfig.value = ret;
+        }
+    })();
+    currentConfigLoad = { instanceId: selected, promise };
+    try {
+        await promise;
+    } finally {
+        if (currentConfigLoad?.promise === promise) {
+            currentConfigLoad = undefined;
+        }
+    }
 }
 
 const stopNetwork = async () => {
@@ -277,9 +356,9 @@ const startNetwork = async () => {
         console.error(e);
         toast.add({
             severity: 'error',
-            summary: 'Error',
-            detail: 'Failed to start network, error: ' + JSON.stringify(e.response?.data ?? e),
-            life: 2000,
+            summary: t('web.common.error'),
+            detail: t('web.device_management.start_failed') + ': ' + errorDetail(e),
+            life: 3000,
         });
     }
 }
@@ -315,8 +394,10 @@ const ensureConfigModeEditing = async () => {
         return;
     }
     try {
-        currentNetworkConfig.value = await props.api.get_network_config(selectedInstanceId.value.uuid);
-        isEditingNetwork.value = true;
+        await loadCurrentNetworkConfig();
+        if (currentNetworkConfig.value?.instance_id === selectedInstanceId.value.uuid) {
+            isEditingNetwork.value = true;
+        }
     } catch (e) {
         console.error(e);
     }
@@ -402,7 +483,7 @@ const saveAndRunNewNetwork = async (config?: NetworkTypes.NetworkConfig) => {
         await loadCurrentNetworkInfo();
     } catch (e: any) {
         console.error(e);
-        toast.add({ severity: 'error', summary: 'Error', detail: 'Failed to run network, error: ' + JSON.stringify(e.response?.data ?? e), life: 2000 });
+        toast.add({ severity: 'error', summary: t('web.common.error'), detail: t('web.device_management.start_failed') + ': ' + errorDetail(e), life: 3000 });
         return;
     }
 
@@ -437,7 +518,7 @@ const saveNetworkConfig = async () => {
         toast.add({
             severity: 'error',
             summary: t('web.common.error'),
-            detail: t('web.device_management.save_failed') + ': ' + JSON.stringify(e.response?.data ?? e),
+            detail: t('web.device_management.save_failed') + ': ' + errorDetail(e),
             life: 3000,
         });
     } finally {
@@ -446,10 +527,21 @@ const saveNetworkConfig = async () => {
 }
 const newNetwork = async () => {
     const newNetworkConfig = props.newConfigGenerator?.() ?? NetworkTypes.DEFAULT_NETWORK_CONFIG();
-    await props.api.save_config(newNetworkConfig);
-    selectedInstanceId.value = { uuid: newNetworkConfig.instance_id };
-    currentNetworkConfig.value = newNetworkConfig;
-    await loadNetworkInstanceIds();
+    try {
+        await props.api.save_config(newNetworkConfig);
+        selectedInstanceId.value = { uuid: newNetworkConfig.instance_id };
+        currentNetworkConfig.value = newNetworkConfig;
+        isEditingNetwork.value = true;
+        await loadNetworkInstanceIds();
+    } catch (e) {
+        console.error(e);
+        toast.add({
+            severity: 'error',
+            summary: t('web.common.error'),
+            detail: t('web.device_management.save_failed') + ': ' + errorDetail(e),
+            life: 3000,
+        });
+    }
 }
 
 const cancelEditNetwork = () => {
@@ -463,13 +555,12 @@ const editNetwork = async () => {
     }
 
     try {
-        let ret = await props.api.get_network_config(instanceId.value!);
-        console.debug("editNetwork", ret);
+        const ret = await props.api.get_network_config(instanceId.value!);
         currentNetworkConfig.value = ret;
         isEditingNetwork.value = true; // Switch to editing mode instead
     } catch (e: any) {
         console.error(e);
-        toast.add({ severity: 'error', summary: 'Error', detail: 'Failed to edit network, error: ' + JSON.stringify(e.response.data), life: 2000 });
+        toast.add({ severity: 'error', summary: t('web.common.error'), detail: t('web.device_management.save_failed') + ': ' + errorDetail(e), life: 3000 });
         return;
     }
 }
@@ -520,16 +611,20 @@ const exportConfig = async () => {
         return;
     }
 
+    const targetInstanceId = instanceId.value;
     try {
-        const { instance_id, ...networkConfig } = await props.api.get_network_config(instanceId.value!);
+        const { instance_id, ...networkConfig } = await props.api.get_network_config(targetInstanceId);
         let { toml_config: tomlConfig, error } = await props.api.generate_config(networkConfig as NetworkTypes.NetworkConfig);
         if (error) {
             throw { response: { data: error } };
         }
-        exportTomlFile(tomlConfig ?? '', instanceId.value + '.toml');
+        if (instanceId.value !== targetInstanceId) {
+            return;
+        }
+        exportTomlFile(tomlConfig ?? '', targetInstanceId + '.toml');
     } catch (e: any) {
         console.error(e);
-        toast.add({ severity: 'error', summary: 'Error', detail: 'Failed to export network config, error: ' + JSON.stringify(e.response.data), life: 2000 });
+        toast.add({ severity: 'error', summary: t('web.common.error'), detail: t('web.device_management.export_config') + ': ' + errorDetail(e), life: 3000 });
         return;
     }
 }
@@ -542,6 +637,7 @@ const handleFileUpload = (event: Event) => {
     const files = (event.target as HTMLInputElement).files;
     const file = files ? files[0] : null;
     if (!file) return;
+    const targetInstanceId = currentNetworkConfig.value?.instance_id ?? instanceId.value;
     const reader = new FileReader();
     reader.onload = async (e) => {
         try {
@@ -554,8 +650,11 @@ const handleFileUpload = (event: Event) => {
 
             const config = resp.config;
             if (!config) return;
+            if (targetInstanceId && instanceId.value !== targetInstanceId) {
+                return;
+            }
 
-            config.instance_id = currentNetworkConfig.value?.instance_id ?? config?.instance_id;
+            config.instance_id = targetInstanceId ?? config.instance_id;
             currentNetworkConfig.value = config;
             toast.add({ severity: 'success', summary: 'Import Success', detail: "Config file import success", life: 2000 });
         } catch (error) {
@@ -588,6 +687,7 @@ const generateConfig = async (config: NetworkTypes.NetworkConfig): Promise<strin
 }
 
 const syncTomlConfig = async (tomlConfig: string): Promise<void> => {
+    const targetInstanceId = currentNetworkConfig.value?.instance_id ?? instanceId.value;
     let resp = await props.api.parse_config(tomlConfig);
     if (resp.error) {
         throw resp.error;
@@ -596,7 +696,10 @@ const syncTomlConfig = async (tomlConfig: string): Promise<void> => {
     if (!config) {
         throw new Error("Parsed config is empty");
     }
-    config.instance_id = currentNetworkConfig.value?.instance_id ?? config?.instance_id;
+    if (targetInstanceId && instanceId.value !== targetInstanceId) {
+        throw new Error('Network selection changed while importing configuration');
+    }
+    config.instance_id = targetInstanceId ?? config.instance_id;
     currentNetworkConfig.value = config;
 }
 
@@ -689,7 +792,6 @@ onUnmounted(() => {
             <div class="flex flex-row justify-between items-center gap-2">
                 <!-- 网络选择 -->
                 <div class="flex-1 min-w-0">
-                    <span class="network-label">{{ t('web.device_management.network') }}</span>
                     <Select v-model="selectedInstanceId" :options="instanceList" optionLabel="uuid" class="w-full"
                         inputId="dd-inst-id" :placeholder="t('web.device_management.select_network')"
                         :pt="{ root: { class: 'network-select-container' } }" :virtualScrollerOptions="{
@@ -788,10 +890,13 @@ onUnmounted(() => {
                 {{ t('web.device_management.network_disabled_hint') }}
             </Message>
 
-            <template v-else-if="showConfigPanel">
-                <Config :cur-network="currentNetworkConfig" :config-invalid="!currentNetworkConfig"
+            <template v-else-if="showConfigPanel && currentNetworkConfig">
+                <Config :cur-network="currentNetworkConfig" :config-invalid="false"
                     :hide-run-button="true" @run-network="saveAndRunNewNetwork"></Config>
             </template>
+            <Message v-else-if="showConfigPanel" severity="info" class="mb-0">
+                {{ t('web.device_management.loading_network_configuration') }}
+            </Message>
 
             <template v-else-if="needShowNetworkStatus">
                 <Status v-if="curNetworkInfo && curNetworkInfo.error_msg === ''" v-bind:cur-network-inst="curNetworkInfo"
@@ -874,13 +979,13 @@ onUnmounted(() => {
     background: var(--surface-card, #ffffff) !important;
     border: var(--et-border, 1px solid var(--surface-border, #e5e7eb));
     border-radius: var(--et-radius, 0.5rem);
-    box-shadow: none;
-    padding: 0.35rem 0.65rem 0.4rem !important;
+    box-shadow: var(--et-shadow-card, 0 1px 2px rgba(15, 23, 42, 0.03));
+    padding: 0.5rem 0.75rem 0.6rem !important;
     margin: 0 !important;
 }
 
 .network-page-title {
-    margin: 0 0 0.15rem;
+    margin: 0 0 0.1rem;
     font-size: var(--et-fs-page-title, 1.25rem);
     font-weight: 700;
     line-height: 1.25;
@@ -892,7 +997,7 @@ onUnmounted(() => {
     background: var(--surface-card, #ffffff) !important;
     border: var(--et-border, 1px solid var(--surface-border, #e5e7eb));
     border-radius: var(--et-radius, 0.5rem);
-    padding: 0.4rem 0.65rem 0.45rem;
+    padding: 0.35rem 0.6rem 0.4rem;
     margin: 0;
 }
 
@@ -900,31 +1005,27 @@ onUnmounted(() => {
     flex: 1 1 auto;
     overflow-y: auto;
     min-height: 0;
-    padding: 0.5rem 0.65rem !important;
+    padding: 0.4rem 0.6rem !important;
     background: var(--surface-card, #ffffff) !important;
     border: var(--et-border, 1px solid var(--surface-border, #e5e7eb));
     border-radius: var(--et-radius, 0.5rem);
-    box-shadow: none !important;
+    box-shadow: var(--et-shadow-card, 0 1px 2px rgba(15, 23, 42, 0.03)) !important;
 }
 
 .network-sticky-footer {
     flex-shrink: 0;
     z-index: 20;
     margin-top: 0;
-    padding: 0.45rem 0.65rem;
+    padding: 0.4rem 0.6rem;
     background: var(--surface-card, #ffffff);
     border: var(--et-border, 1px solid var(--surface-border, #e5e7eb));
     border-radius: var(--et-radius, 0.5rem);
-    box-shadow: none;
+    box-shadow: var(--et-shadow-card, 0 1px 2px rgba(15, 23, 42, 0.03));
     display: flex;
     flex-wrap: wrap;
     align-items: center;
     justify-content: space-between;
     gap: 0.5rem;
-}
-
-.network-status-actions {
-    align-items: center;
 }
 
 .footer-zone {
@@ -939,11 +1040,11 @@ onUnmounted(() => {
     margin-left: auto;
 }
 
-/* 底栏按钮：同高、同最小宽、同内边距 */
+/* 底栏按钮：同高、同宽、同内边距 */
 :deep(.network-footer-btn.p-button) {
-    min-width: 11.5rem;
+    min-width: clamp(0px, var(--et-btn-w, 10rem), 22vw);
     height: var(--et-btn, 2.5rem) !important;
-    padding: 0 1rem !important;
+    padding: 0 0.9rem !important;
     font-size: var(--et-fs-body, 0.875rem) !important;
     font-weight: 600 !important;
     border-radius: var(--et-radius, 0.5rem) !important;
@@ -969,7 +1070,7 @@ onUnmounted(() => {
 :deep(.config-toolbar-btn.p-button) {
     height: var(--et-btn, 2.5rem) !important;
     min-height: var(--et-btn, 2.5rem) !important;
-    min-width: 8.75rem;
+    min-width: clamp(0px, var(--et-btn-w, 10rem), 22vw);
     padding: 0 0.9rem !important;
     font-size: var(--et-fs-body, 0.875rem) !important;
     font-weight: 600 !important;
@@ -981,14 +1082,14 @@ onUnmounted(() => {
     display: flex;
     flex-wrap: wrap;
     align-items: flex-end;
-    gap: 0.65rem 1.25rem;
+    gap: 0.5rem 1rem;
     margin: 0;
 }
 
 .toolbar-zone {
     display: flex;
     flex-direction: column;
-    gap: 0.25rem;
+    gap: 0.2rem;
     min-width: 0;
 }
 
@@ -1011,32 +1112,75 @@ onUnmounted(() => {
     border-left: 1px solid var(--surface-border, #e5e7eb);
 }
 
+/*
+ * 移动端（≤640px）：一行一个按钮太浪费纵向空间，改成「每组一行铺满」的网格。
+ *
+ * 一行能放几个，由最长文案 `编辑为文件`（5 个汉字）决定：
+ *   手机内容区宽 ≈ 屏宽 − 45px（et-main-content 0.75rem×2 + 卡片 0.6rem×2 + 边框）
+ *   360px 屏 → 约 315px 可用
+ *   · 带图标：5×14(字) + 16(图标) + 8(间距) + 16(内边距) ≈ 110px → 315/110 = 2.9，一行最多 2~3 个
+ *   · 去图标 + 13px 字：5×13 + 8(内边距) ≈ 73px → 315/73 = 4.3，一行放得下 4 个
+ * 所以移动端去掉图标、字号降到 0.8125rem，换取一行 4 个。
+ *
+ * 分组后的行数：配置文件组 3~4 个 → 一行放完；网络组 1~2 个 → 一行放完；底栏 3 个 → 一行 3 个。
+ * 用 auto-fit + minmax(0, 1fr) 让每组把整行等分，宽度不受文案长短影响，也不会出现 3+1 的残缺行。
+ */
 @media (max-width: 640px) {
+    .toolbar-zone,
     .toolbar-zone--network {
+        width: 100%;
         padding-left: 0;
         border-left: none;
+    }
+
+    .toolbar-zone--network {
         padding-top: 0.5rem;
         border-top: 1px solid var(--surface-border, #e5e7eb);
-        width: 100%;
+    }
+
+    .toolbar-zone-actions {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(0, 1fr));
+        /* 有文案折行时让同一行按钮等高，避免参差不齐 */
+        align-items: stretch;
+        gap: 0.3rem;
     }
 
     .network-sticky-footer {
-        flex-direction: column;
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(0, 1fr));
         align-items: stretch;
+        gap: 0.3rem;
     }
 
+    /* 让底栏主操作区里的按钮直接成为网格项，和「返回」共占一行 */
     .footer-zone,
     .footer-zone--primary {
-        margin-left: 0;
-        justify-content: stretch;
-        width: 100%;
+        display: contents;
     }
 
     :deep(.network-footer-btn.p-button),
     :deep(.config-toolbar-btn.p-button) {
-        flex: 1 1 auto;
         min-width: 0;
         width: 100%;
+        /* 窄屏文案可能折行，配合 auto 高度避免被裁掉 */
+        height: auto !important;
+        min-height: var(--et-btn, 2.5rem) !important;
+        padding: 0.3rem !important;
+        /* 12px：360px 屏下 4 列每列 75.1px，最长文案「编辑为文件」需 69.6px，留 5.5px 余量不折行。
+           13px 时需 74.6px，只差 0.1px，太贴边。 */
+        font-size: 0.75rem !important;
+    }
+
+    :deep(.config-toolbar-btn.p-button .p-button-icon),
+    :deep(.network-footer-btn.p-button .p-button-icon) {
+        display: none;
+    }
+
+    :deep(.config-toolbar-btn.p-button .p-button-label),
+    :deep(.network-footer-btn.p-button .p-button-label) {
+        white-space: normal;
+        line-height: 1.15;
     }
 }
 
@@ -1066,15 +1210,6 @@ onUnmounted(() => {
     margin-right: 0.75rem;
 }
 
-:deep(.p-menu .p-menuitem.p-error .p-menuitem-text,
-    .p-menu .p-menuitem.p-error .p-menuitem-icon) {
-    color: var(--red-500);
-}
-
-:deep(.p-menu .p-menuitem:hover.p-error .p-menuitem-link) {
-    background-color: var(--red-50);
-}
-
 /* 仅顶栏纯图标按钮，避免覆盖底栏带文字按钮 */
 :deep(.header-action-btn.p-button-icon-only .p-button-icon) {
     font-size: 1rem;
@@ -1082,15 +1217,6 @@ onUnmounted(() => {
 }
 
 /* 网络选择相关样式 */
-.network-label {
-    display: block;
-    margin: 0 0 0.1rem;
-    font-size: var(--et-fs-meta, 0.75rem);
-    font-weight: 600;
-    color: var(--text-color-secondary, #64748b);
-    white-space: nowrap;
-}
-
 :deep(.network-select-container) {
     max-width: 100%;
 }
@@ -1131,8 +1257,12 @@ onUnmounted(() => {
     }
 }
 
-/* Responsive design for mobile devices */
-@media (max-width: 768px) {
+/*
+ * 平板 / 窄窗口（641–768px）：按钮统一收窄到 8.5rem，刚好容纳最长文案「返回设备列表」，
+ * 一行能放下 4 个工具栏按钮。
+ * 必须限定 min-width: 641px —— 否则它会在 ≤640px 也命中，把下面网格布局的 min-width: 0 盖掉。
+ */
+@media (min-width: 641px) and (max-width: 768px) {
     .network-header,
     .network-toolbar {
         padding: 0.5rem 0.6rem;
@@ -1142,12 +1272,9 @@ onUnmounted(() => {
         padding: 0.5rem 0.6rem !important;
     }
 
-    .network-label {
-        font-size: 0.9rem;
-    }
-
-    .network-footer-btn {
-        min-width: 7.5rem;
+    :deep(.network-footer-btn.p-button),
+    :deep(.config-toolbar-btn.p-button) {
+        min-width: 8.5rem;
     }
 }
 </style>

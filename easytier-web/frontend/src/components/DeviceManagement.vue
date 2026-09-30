@@ -41,10 +41,10 @@ const managementMode = computed(() => {
 const pageTitle = computed(() => {
     const host = deviceInfo.value?.hostname ?? deviceId.value ?? '';
     if (managementMode.value === 'config') {
-        return `${t('web.device.open_network_config')} · ${host}`;
+        return `${t('web.device.page_title_config')} · ${host}`;
     }
     if (managementMode.value === 'status') {
-        return `${t('web.device.open_network_status')} · ${host}`;
+        return `${t('web.device.page_title_status')} · ${host}`;
     }
     return `${t('web.device.management')} · ${host}`;
 });

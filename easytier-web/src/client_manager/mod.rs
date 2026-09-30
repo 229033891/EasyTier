@@ -395,7 +395,7 @@ impl ClientManager {
         s.data().read().await.location().cloned()
     }
 
-    fn db(&self) -> &Db {
+    pub fn db(&self) -> &Db {
         self.storage.db()
     }
 

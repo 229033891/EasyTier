@@ -22,6 +22,23 @@ vi.mock('primevue', () => {
       return () => h('div', slots.default?.())
     },
   })
+  const PanelStub = defineComponent({
+    props: {
+      header: String,
+      collapsed: Boolean,
+    },
+    emits: ['update:collapsed'],
+    setup(props, { emit, slots }) {
+      return () => h('section', [
+        h('button', {
+          type: 'button',
+          'data-label': props.header,
+          onClick: () => emit('update:collapsed', false),
+        }, props.header),
+        props.collapsed ? null : slots.default?.(),
+      ])
+    },
+  })
   const CardStub = defineComponent({
     setup(_, { slots }) {
       return () => h('div', [slots.title?.(), slots.content?.()])
@@ -44,9 +61,10 @@ vi.mock('primevue', () => {
     Card: CardStub,
     Chip: PassThrough,
     Column: PassThrough,
-    DataTable: PassThrough,
-    Dialog: PassThrough,
-    Divider: PassThrough,
+  DataTable: PassThrough,
+  Dialog: PassThrough,
+  Divider: PassThrough,
+  Panel: PanelStub,
     ScrollPanel: PassThrough,
     Tag: PassThrough,
     Timeline: PassThrough,
@@ -85,7 +103,7 @@ function runningInstance(): NetworkInstance {
 }
 
 describe('Status VPN Portal details', () => {
-  it('fetches client configs only when the user opens the dialog', async () => {
+  it('fetches portal details only when the user opens the panel', async () => {
     const getVpnPortalInfo = vi.fn(async () => ({
       vpn_type: 'wireguard',
       client_config: '',
@@ -116,7 +134,7 @@ describe('Status VPN Portal details', () => {
     try {
       expect(getVpnPortalInfo).not.toHaveBeenCalled()
 
-      await wrapper.find('button[data-label="show_vpn_portal_config"]').trigger('click')
+      await wrapper.find('button[data-label="vpn_portal_config"]').trigger('click')
       await flushPromises()
 
       expect(getVpnPortalInfo).toHaveBeenCalledOnce()
@@ -148,7 +166,7 @@ describe('Status VPN Portal details', () => {
     })
 
     try {
-      await wrapper.find('button[data-label="show_vpn_portal_config"]').trigger('click')
+      await wrapper.find('button[data-label="vpn_portal_config"]').trigger('click')
       await flushPromises()
 
       expect(wrapper.text()).toContain('vpn_portal_not_configured')

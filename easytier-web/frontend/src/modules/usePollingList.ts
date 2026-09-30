@@ -1,4 +1,4 @@
-import { onMounted, onUnmounted, ref, type Ref } from 'vue';
+import { onMounted, onUnmounted, ref, shallowRef } from 'vue';
 import { useToast } from 'primevue';
 import { Utils } from 'easytier-frontend-lib';
 import { useI18n } from 'vue-i18n';
@@ -22,7 +22,9 @@ export function usePollingList<T>(options: PollingListOptions<T>) {
     const { t } = useI18n();
     const toast = useToast();
 
-    const data = ref<T | undefined>(undefined) as Ref<T | undefined>;
+    // 列表页面只替换整批结果，不需要为每个设备/网络建立深层 Proxy。
+    // shallowRef 保持 data.value 的替换响应式，同时避免每秒递归代理整个列表。
+    const data = shallowRef<T | undefined>(undefined);
     const loading = ref(true);
 
     const load = async () => {

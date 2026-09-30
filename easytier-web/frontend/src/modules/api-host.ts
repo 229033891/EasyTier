@@ -4,17 +4,11 @@ interface ApiHost {
 }
 
 let apiMeta: {
-    api_host: string;
+    api_host?: string;
 } | undefined = (window as any).apiMeta;
 
 // remove trailing slashes from the URL
 const cleanUrl = (url: string) => url.replace(/\/+$/, '');
-
-/** 当前页面地址（一体包部署时通常就是 API 地址） */
-const currentPageApiHost = cleanUrl(location.origin);
-
-/** 启动参数 --api-host 注入值，其次当前访问 URL */
-const defaultApiHost = cleanUrl(apiMeta?.api_host || currentPageApiHost);
 
 const isValidHttpUrl = (s: string): boolean => {
     let url;
@@ -27,6 +21,25 @@ const isValidHttpUrl = (s: string): boolean => {
 
     return url.protocol === "http:" || url.protocol === "https:";
 };
+
+/**
+ * 当前页面地址（一体包部署时通常就是 API 地址）。
+ * file:// 等场景下 location.origin 是字符串 "null"，此时不给默认值，避免把 "null" 填进输入框。
+ */
+const currentPageApiHost = (() => {
+    const origin = location.origin;
+    if (!origin || origin === 'null' || !isValidHttpUrl(origin)) {
+        return '';
+    }
+    return cleanUrl(origin);
+})();
+
+/**
+ * 默认 API 主机：
+ * 1. 服务端 /api_meta.js 注入的 --api-host（若配置了）
+ * 2. 否则当前浏览器访问地址 location.origin
+ */
+const defaultApiHost = cleanUrl(apiMeta?.api_host || currentPageApiHost);
 
 const cleanAndLoadApiHosts = (): Array<ApiHost> => {
     const maxHosts = 10;

@@ -27,6 +27,7 @@ use mimalloc::MiMalloc;
 mod client_manager;
 mod db;
 mod migrator;
+mod peer_history;
 mod restful;
 mod webhook;
 
@@ -163,6 +164,22 @@ struct Cli {
         help = t!("cli.api_host").to_string()
     )]
     api_host: Option<url::Url>,
+
+    #[arg(
+        long,
+        env = "ET_PEER_HISTORY_INTERVAL_SECS",
+        default_value = "60",
+        help = t!("cli.peer_history_interval_secs").to_string(),
+    )]
+    peer_history_interval_secs: u64,
+
+    #[arg(
+        long,
+        env = "ET_PEER_HISTORY_RETENTION_DAYS",
+        default_value = "7",
+        help = t!("cli.peer_history_retention_days").to_string(),
+    )]
+    peer_history_retention_days: i64,
 
     #[command(flatten)]
     feature_flags: FeatureFlags,
@@ -414,6 +431,17 @@ async fn main() {
     }
 
     let mgr = Arc::new(mgr);
+
+    // 对端连接历史采样（延迟 / 流量趋势），默认 60s 采样、保留 7 天
+    let _peer_history_task = peer_history::spawn_peer_history_sampler(
+        mgr.clone(),
+        db.clone(),
+        peer_history::PeerHistoryOptions {
+            enabled: cli.peer_history_interval_secs > 0,
+            sample_interval: std::time::Duration::from_secs(cli.peer_history_interval_secs.max(1)),
+            retention_days: cli.peer_history_retention_days,
+        },
+    );
 
     #[cfg(feature = "embed")]
     let (web_router_restful, web_router_static) = if cli.no_web {

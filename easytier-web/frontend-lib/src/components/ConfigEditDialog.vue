@@ -30,49 +30,50 @@ const visible = defineModel('visible', {
     type: Boolean,
     default: false,
 })
-watch([visible, curNetwork], async ([newVisible, newCurNetwork]) => {
-    if (!newVisible) {
+let generateSequence = 0
+let saveInProgress = false
+
+async function refreshConfig(newVisible: boolean, config: NetworkConfig | undefined) {
+    const sequence = ++generateSequence
+    if (!newVisible || !config) {
         tomlConfig.value = '';
         return;
     }
-    if (!newCurNetwork) {
-        tomlConfig.value = '';
-        return;
-    }
-    const config = newCurNetwork;
+
+    const previousToml = tomlConfig.value;
     try {
         errorMessage.value = '';
-        tomlConfig.value = await props.generateConfig(config);
+        const generated = await props.generateConfig(config);
+        if (sequence !== generateSequence || !visible.value || curNetwork.value !== config || tomlConfig.value !== previousToml) {
+            return;
+        }
+        tomlConfig.value = generated;
     } catch (e) {
+        if (sequence !== generateSequence || !visible.value || curNetwork.value !== config) {
+            return;
+        }
         errorMessage.value = 'Failed to generate config: ' + (e instanceof Error ? e.message : String(e));
         tomlConfig.value = '';
     }
+}
+
+watch([visible, curNetwork], ([newVisible, newCurNetwork]) => {
+    void refreshConfig(newVisible, newCurNetwork);
 })
-onMounted(async () => {
-    if (!visible.value) {
-        return;
-    }
-    if (!curNetwork.value) {
-        tomlConfig.value = '';
-        return;
-    }
-    const config = curNetwork.value;
-    try {
-        tomlConfig.value = await props.generateConfig(config);
-        errorMessage.value = '';
-    } catch (e) {
-        errorMessage.value = 'Failed to generate config: ' + (e instanceof Error ? e.message : String(e));
-        tomlConfig.value = '';
-    }
+onMounted(() => {
+    void refreshConfig(visible.value, curNetwork.value);
 });
 
 const handleConfigSave = async () => {
-    if (props.readonly) return;
+    if (props.readonly || saveInProgress) return;
+    saveInProgress = true;
     try {
         await props.saveConfig(tomlConfig.value);
         visible.value = false;
     } catch (e) {
         errorMessage.value = 'Failed to save config: ' + (e instanceof Error ? e.message : String(e));
+    } finally {
+        saveInProgress = false;
     }
 };
 

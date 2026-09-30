@@ -18,9 +18,9 @@
 }
 
 :root {
-  /* 排版 */
+  /* EasyTier 视觉基线：蓝色品牌色 + 更柔和的中性色 */
   --et-font: Inter, "Segoe UI", Avenir, Helvetica, Arial, sans-serif;
-  --et-fs-page-title: 1.25rem;
+  --et-fs-page-title: 1.375rem;
   --et-fs-section: 1rem;
   --et-fs-body: 0.875rem;
   --et-fs-meta: 0.75rem;
@@ -32,16 +32,18 @@
   --et-space-3: 0.75rem;
   --et-space-4: 1rem;
   --et-gap-section: 1rem;
-  --et-pad-card: 0.75rem 1rem;
+  --et-pad-card: 1rem 1.125rem;
 
-  /* 边框 / 圆角 */
-  --et-border: 1px solid var(--surface-border, #e5e7eb);
-  --et-radius: 0.5rem;
+  /* 边框 / 圆角 / 阴影 */
+  --et-border: 1px solid color-mix(in srgb, var(--surface-border, #e2e8f0) 78%, transparent);
+  --et-radius: 0.75rem;
+  --et-shadow-card: 0 1px 2px rgba(15, 23, 42, 0.03), 0 8px 24px rgba(15, 23, 42, 0.04);
 
   /* 控件高度 */
   --et-btn: 2.5rem;
   --et-btn-sm: 2.25rem;
   --et-btn-lg: 2.75rem;
+  --et-btn-w: 10rem;
 
   font-family: var(--et-font);
   font-size: var(--et-fs-body);
@@ -54,10 +56,32 @@
   -webkit-text-size-adjust: 100%;
 }
 
+html,
+body,
+#app {
+  min-height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--surface-ground, #f6f8fb);
+  color: var(--text-color, #1e293b);
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
+
 .et-page {
   display: flex;
   flex-direction: column;
   gap: var(--et-gap-section);
+  width: 100%;
+  max-width: 1440px;
+  margin: 0 auto;
 }
 
 .et-page-title {
@@ -65,8 +89,33 @@
   padding: 0;
   font-size: var(--et-fs-page-title);
   font-weight: 700;
+  letter-spacing: -0.02em;
   line-height: 1.35;
   color: var(--text-color, #1f2937);
+}
+
+.et-page-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.25rem 0.125rem 0;
+}
+
+.et-page-header .et-page-title {
+  position: relative;
+  padding-left: 0.75rem;
+}
+
+.et-page-header .et-page-title::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0.2rem;
+  bottom: 0.2rem;
+  width: 0.25rem;
+  border-radius: 999px;
+  background: var(--primary-color, #0ea5e9);
 }
 
 .et-section-title {
@@ -102,4 +151,20 @@
 .fullscreen-content {
   height: 100dvh;
   min-height: 100vh;
+}
+
+/*
+ * PrimeVue Tooltip（web 端 v-tooltip 用的是它，见 main.ts 的 directive 覆盖顺序）。
+ * Aura 主题默认 maxWidth 只有 12.5rem，而且没有 white-space 规则 —— 配置项的多行说明
+ * 会被挤成一条很窄的长条，文案里的换行也会被当成空格吃掉。
+ * 这里放宽宽度并保留换行，多行说明（`|` / `|-` 块标量）才能按预期分行显示。
+ * 用 min() 兜住窄屏，避免 tooltip 比视口还宽。
+ */
+.p-tooltip {
+  max-width: min(24rem, calc(100vw - 2rem));
+}
+
+.p-tooltip-text {
+  white-space: pre-line;
+  line-height: 1.5;
 }

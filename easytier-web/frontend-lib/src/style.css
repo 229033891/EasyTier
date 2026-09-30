@@ -13,9 +13,9 @@
 }
 
 :root {
-  font-family: Inter, Avenir, Helvetica, Arial, sans-serif;
-  font-size: 12px;
-  line-height: 24px;
+  font-family: var(--et-font, Inter, "Segoe UI", Avenir, Helvetica, Arial, sans-serif);
+  font-size: 14px;
+  line-height: 1.5;
   font-weight: 400;
 
   font-synthesis: none;
@@ -53,7 +53,7 @@
   line-height: 1.5;
 }
 
-/* 可折叠 Panel：标题区整块可点时加大触摸目标（与 Config / AclRuleDialog 的 pt 配套） */
+/* 可折叠 Panel：标题区整块可点时保留足够的触摸目标（与 Config / AclRuleDialog 的 pt 配套） */
 .p-panel-header.cursor-pointer {
-  min-height: 2.75rem;
+  min-height: 2.5rem;
 }

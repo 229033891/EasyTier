@@ -8,7 +8,10 @@ import { getInitialApiHost, cleanAndLoadApiHosts, saveApiHost } from "../modules
 import { useI18n } from 'vue-i18n'
 import ApiClient, { Credential } from '../modules/api';
 import FormField from './FormField.vue';
+import { tooltipDirective } from '../modules/tooltip';
+import Icon from '../assets/easytier.png';
 
+const vTooltip = tooltipDirective;
 const { t } = useI18n()
 
 const api = computed<ApiClient>(() => new ApiClient(apiHost.value));
@@ -62,11 +65,20 @@ const checkOidcConfig = () => {
         const host = apiHost.value;
         if (host === lastCheckedHost.value) return;
 
-        const enabled = (await new ApiClient(host).getOidcConfig()).enabled;
-        if (apiHost.value !== host) return;
+        try {
+            const enabled = (await new ApiClient(host).getOidcConfig()).enabled;
+            if (apiHost.value !== host) return;
 
-        lastCheckedHost.value = host;
-        oidcEnabled.value = enabled;
+            lastCheckedHost.value = host;
+            oidcEnabled.value = enabled;
+        } catch (error) {
+            // A transient host/network error must not leave stale SSO state visible.
+            if (apiHost.value === host) {
+                lastCheckedHost.value = host;
+                oidcEnabled.value = false;
+            }
+            console.debug('OIDC config check failed', error);
+        }
     }, 300);
 };
 
@@ -93,10 +105,16 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-    <div class="flex items-center justify-center min-h-screen">
-        <Card class="w-full max-w-md p-6">
+    <div class="login-page flex items-center justify-center min-h-screen p-4">
+        <Card class="login-card w-full max-w-md p-6">
             <template #header>
-                <h2 class="text-2xl font-semibold text-center">{{ t('web.login.login') }}</h2>
+                <div class="login-brand">
+                    <img :src="Icon" :alt="t('web.main.logo_alt')" />
+                    <div>
+                        <div class="login-brand-name">EasyTier</div>
+                        <h2 class="login-title">{{ t('web.login.login') }}</h2>
+                    </div>
+                </div>
             </template>
             <template #content>
                 <FormField class="mb-4" :label="t('web.login.api_host')" label-for="api-host"
@@ -119,12 +137,62 @@ onBeforeUnmount(() => {
                 </form>
 
                 <Button icon="pi pi-language" type="button" class="rounded-full absolute top-4 right-4 z-10"
-                    style="box-shadow: 0 2px 8px rgba(0,0,0,0.08);" severity="contrast"
-                    @click="I18nUtils.toggleLanguage" :aria-label="t('web.main.language')"
-                    :v-tooltip="t('web.main.language')" />
+                    severity="contrast" @click="I18nUtils.toggleLanguage"
+                    :aria-label="t('web.main.language')"
+                    v-tooltip.bottom="t('web.main.language')" />
             </template>
         </Card>
     </div>
 </template>
 
-<style scoped></style>
+<style scoped>
+.login-page {
+    background:
+        radial-gradient(circle at 15% 10%, color-mix(in srgb, var(--primary-color, #0ea5e9) 11%, transparent), transparent 32%),
+        var(--surface-ground, #f6f8fb);
+}
+
+.login-card {
+    position: relative;
+    border: var(--et-border);
+    border-radius: 1rem;
+    box-shadow: 0 18px 50px rgba(15, 23, 42, 0.1);
+}
+
+.login-brand {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.25rem 0 1.25rem;
+}
+
+.login-brand img {
+    width: 2.75rem;
+    height: 2.75rem;
+}
+
+.login-brand-name {
+    color: var(--text-color-secondary, #64748b);
+    font-size: var(--et-fs-meta);
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+
+.login-title {
+    margin: 0.1rem 0 0;
+    color: var(--text-color, #1e293b);
+    font-size: 1.5rem;
+    font-weight: 700;
+    line-height: 1.25;
+}
+
+:deep(.p-card-content) {
+    padding-top: 0.25rem;
+}
+
+:deep(.p-button.w-full) {
+    min-height: var(--et-btn);
+    font-weight: 600;
+}
+</style>

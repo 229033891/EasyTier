@@ -46,6 +46,12 @@ cli:
   heartbeat_timeout_ms:
     en: "Config-server heartbeat RPC timeout in milliseconds, default is 15000"
     zh-CN: "配置服务心跳 RPC 超时时间，单位毫秒，默认为 15000"
+  peer_history_interval_secs:
+    en: "Interval in seconds for sampling peer connection latency/traffic into the history table, default is 60. Set to 0 to disable sampling"
+    zh-CN: "对端连接延迟/流量历史采样间隔（秒），默认为 60。设为 0 可关闭采样"
+  peer_history_retention_days:
+    en: "How many days of peer connection history to keep, default is 7"
+    zh-CN: "对端连接历史保留天数，默认为 7 天"
   reset_password_user:
     en: "Reset this user's password and exit (does not start the server). Requires --new-password. Example: --reset-password-user admin --new-password YourNewPass"
     zh-CN: "重置该用户密码后退出（不启动服务）。需同时指定 --new-password。示例：--reset-password-user admin --new-password YourNewPass"

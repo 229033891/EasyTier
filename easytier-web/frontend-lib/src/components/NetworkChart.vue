@@ -1,6 +1,6 @@
 <template>
   <div
-    class="bg-gradient-to-br from-blue-50 to-indigo-100 dark:from-blue-900/20 dark:to-indigo-800/20 rounded-xl p-4 border border-blue-200 dark:border-blue-700 shadow-md hover:shadow-lg transition-all duration-300">
+    class="network-chart-card bg-gradient-to-br from-blue-50 to-indigo-100 dark:from-blue-900/20 dark:to-indigo-800/20 rounded-xl p-4 border border-blue-200 dark:border-blue-700 shadow-md">
     <div class="flex items-center justify-center mb-3">
       <div class="flex gap-2 text-sm">
         <span class="flex items-center gap-1 w-32">
@@ -18,6 +18,25 @@
     </div>
   </div>
 </template>
+
+<style scoped>
+/*
+ * 原来用 hover:shadow-lg transition-all duration-300：
+ * - transition: all 会连带动画化无关属性，改成只过渡 box-shadow
+ * - 300ms 偏长（交互反馈一般 150~200ms）
+ * - hover 放进 @media (hover: hover)，避免触屏点一下后阴影「粘住」
+ * 注意这张卡片本身不可点击，悬停只做「聚焦提示」，不提供可点击的错觉。
+ */
+.network-chart-card {
+  transition: box-shadow 0.2s ease;
+}
+
+@media (hover: hover) {
+  .network-chart-card:hover {
+    box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -4px rgba(0, 0, 0, 0.1);
+  }
+}
+</style>
 
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, watch, nextTick } from 'vue'

@@ -43,11 +43,21 @@ const CONFIG_CHECKBOX_FIELDS = [
   ...CONFIG_FLAG_FIELDS.map((field) => [field, `#${field}`] as const),
 ] as const satisfies readonly (readonly [keyof NetworkConfig, string])[]
 
+/**
+ * 「高级设置」面板中三个布尔开关区（网络白名单 / 自定义路由 / SOCKS5）的渲染顺序。
+ * VPN Portal 当前是面板内第一个 ToggleButton，IPv6 公网地址提供者排在这三个开关之后。
+ */
 const CONFIG_TOGGLE_FIELDS = [
   'enable_relay_network_whitelist',
   'enable_manual_routes',
   'enable_socks5',
 ] as const satisfies readonly (keyof NetworkConfig)[]
+
+/** 非 VPN ToggleButton 在序列中的起始下标 */
+const CONFIG_TOGGLE_START_INDEX = 1
+
+/** 「VPN Portal」开关在 ToggleButton 序列中的下标 */
+const VPN_PORTAL_TOGGLE_INDEX = 0
 
 const CONFIG_UI_BOOLEAN_FIELDS = [
   ...CONFIG_CHECKBOX_FIELDS.map(([field]) => field),
@@ -268,6 +278,31 @@ const SelectButtonStub = defineComponent({
   },
 })
 
+const SelectStub = defineComponent({
+  name: 'Select',
+  props: {
+    modelValue: [String, Number],
+    id: String,
+    disabled: Boolean,
+    options: Array,
+  },
+  emits: ['update:modelValue'],
+  setup(props, { attrs, emit }) {
+    return () => h('select', {
+      ...attrs,
+      id: props.id,
+      disabled: props.disabled,
+      value: props.modelValue ?? '',
+      'data-stub': 'select',
+      onChange: (event: Event) => emit('update:modelValue', (event.target as HTMLSelectElement).value),
+    }, (props.options ?? []).map((option) => {
+      const { label, value } = (option ?? {}) as { label?: unknown, value?: unknown }
+      const optionValue = value ?? label ?? ''
+      return h('option', { value: String(optionValue) }, String(label ?? optionValue))
+    }))
+  },
+})
+
 const ButtonStub = defineComponent({
   name: 'Button',
   props: {
@@ -383,6 +418,7 @@ function mountConfig(config: NetworkConfig = makeConfig()) {
         MultiSelect: MultiSelectStub,
         Panel: PanelStub,
         Password: PasswordStub,
+        Select: SelectStub,
         SelectButton: SelectButtonStub,
         ToggleButton: ToggleButtonStub,
         UrlListInput: UrlListInputStub,
@@ -561,10 +597,10 @@ describe('Config.vue network config projection', () => {
     }
 
     const toggleButtons = wrapper.findAll('button[data-stub="toggle-button"]')
-    expect(toggleButtons).toHaveLength(CONFIG_TOGGLE_FIELDS.length + 1)
+    expect(toggleButtons).toHaveLength(CONFIG_TOGGLE_FIELDS.length + CONFIG_TOGGLE_START_INDEX + 1)
     for (const [index, field] of CONFIG_TOGGLE_FIELDS.entries()) {
       const value = originalFlagValues.get(field)
-      const toggle = toggleButtons[index + 1]
+      const toggle = toggleButtons[index + CONFIG_TOGGLE_START_INDEX]
       expect(toggle.attributes('aria-pressed'), `${field} should project into UI`)
         .toBe(String(value))
       await toggle.trigger('click')
@@ -584,7 +620,7 @@ describe('Config.vue network config projection', () => {
     const { curNetwork, wrapper } = mountConfig(config)
     await nextTick()
 
-    const portalToggle = wrapper.findAll('button[data-stub="toggle-button"]')[0]
+    const portalToggle = wrapper.findAll('button[data-stub="toggle-button"]')[VPN_PORTAL_TOGGLE_INDEX]
     expect(portalToggle.attributes('aria-pressed')).toBe('false')
 
     await portalToggle.trigger('click')

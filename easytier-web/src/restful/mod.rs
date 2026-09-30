@@ -3,6 +3,7 @@ mod auth;
 pub(crate) mod captcha;
 mod network;
 pub(crate) mod oidc;
+mod peer_history;
 mod rpc;
 mod users;
 
@@ -280,6 +281,7 @@ impl RestfulServer {
             .route("/api/v1/summary", get(Self::handle_get_summary))
             .route("/api/v1/sessions", get(Self::handle_list_all_sessions))
             .merge(NetworkApi::build_route())
+            .merge(peer_history::PeerHistoryApi::build_route())
             .merge(rpc::router())
             .route_layer(login_required!(Backend))
             .merge(auth::router())

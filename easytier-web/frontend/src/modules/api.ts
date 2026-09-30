@@ -198,7 +198,12 @@ export class ApiClient {
             const response = await this.client.get<any, OidcConfigResponse>('/auth/oidc/config');
             return response;
         } catch (error) {
-            return { enabled: false };
+            // Older servers may not expose the optional endpoint; other failures
+            // should remain visible instead of being mistaken for "SSO disabled".
+            if (error instanceof AxiosError && error.response?.status === 404) {
+                return { enabled: false };
+            }
+            throw error;
         }
     }
 
@@ -336,6 +341,13 @@ class WebRemoteClient implements Api.RemoteClient {
         const response = await this.client.post<any, Api.GetNetworkMetasResponse>(`/machines/${this.machine_id}/networks/metas`, {
             instance_ids: instance_ids
         });
+        return response;
+    }
+    async get_peer_conn_history(inst_id: string, hours: number): Promise<Api.PeerConnHistoryResponse | undefined> {
+        const response = await this.client.get<any, Api.PeerConnHistoryResponse>(
+            `/machines/${this.machine_id}/peer-history/${inst_id}`,
+            { params: { hours } },
+        );
         return response;
     }
 }

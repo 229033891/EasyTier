@@ -43,11 +43,17 @@ export type NetworkConfig = Omit<
   | 'instance_recv_bps_limit'
   | 'mtu'
   | 'networking_method'
+  | 'socket_mark'
 > & {
   instance_id: string
   mtu: number | null
   instance_recv_bps_limit: number | string | null
   networking_method: NetworkingMethod | string
+  /**
+   * Linux SO_MARK（fwmark）。null = 不设置，0 = 显式设为 0。
+   * 后端用 Option<u32> 区分这两者（`socket_mark.is_some()`），所以这里必须用 null 而不是 0 表示「未设置」。
+   */
+  socket_mark: number | null
 }
 
 export type NormalizedAclV1 = AclV1 & {
@@ -115,6 +121,8 @@ export function DEFAULT_NETWORK_CONFIG(): NetworkConfig {
     use_smoltcp: false,
     disable_ipv6: false,
     ipv6_public_addr_auto: false,
+    ipv6_public_addr_provider: false,
+    ipv6_public_addr_prefix: '',
     enable_kcp_proxy: false,
     disable_kcp_input: false,
     enable_quic_proxy: false,
@@ -131,6 +139,10 @@ export function DEFAULT_NETWORK_CONFIG(): NetworkConfig {
     multi_thread: true,
     proxy_forward_by_system: false,
     disable_encryption: false,
+    encryption_algorithm: 'aes-gcm',
+    data_compress_algo: CompressionAlgoPb.None,
+    prefer_peer_relay: false,
+    socket_mark: null,
     disable_tcp_hole_punching: false,
     disable_udp_hole_punching: false,
     disable_upnp: false,
@@ -306,6 +318,12 @@ export function normalizeNetworkConfig(config: NetworkConfig): NetworkConfig {
 
   applyNetworkingMethod(normalized, { fillPeerUrlsFromPeers: true })
   normalized.mtu = normalizeNumberForInput(normalized.mtu)
+  normalized.socket_mark = normalizeNumberForInput(normalized.socket_mark as number | null | undefined)
+  // 枚举/算法串归一到 canonical 默认值，避免下拉框显示空白。
+  // 0（Invalid）与 1（None）等价、'' 与 'aes-gcm' 等价，所以这么夹不会改变语义。
+  normalized.data_compress_algo =
+    (normalized.data_compress_algo ?? 0) < 1 ? CompressionAlgoPb.None : normalized.data_compress_algo
+  normalized.encryption_algorithm = normalized.encryption_algorithm || 'aes-gcm'
   normalized.instance_recv_bps_limit = normalizeUint64ForInput(
     normalized.instance_recv_bps_limit as any,
   )
@@ -335,6 +353,8 @@ export function toBackendNetworkConfig(config: NetworkConfig): NetworkConfig {
 
   applyNetworkingMethod(backend)
   backend.mtu = normalizeNumberForInput(config.mtu) ?? undefined
+  // null 必须转成 undefined（字段缺席），否则后端会把「未设置」当成「设为 0」处理
+  backend.socket_mark = normalizeNumberForInput(config.socket_mark) ?? undefined
   backend.instance_recv_bps_limit = toBackendUint64(config.instance_recv_bps_limit)
   if (config.acl === undefined || isAclEmpty(config.acl)) {
     backend.acl = undefined

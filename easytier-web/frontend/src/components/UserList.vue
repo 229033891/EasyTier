@@ -154,7 +154,9 @@ onMounted(async () => {
 
 <template>
     <div class="et-page">
-        <h1 class="et-page-title">{{ t('web.main.user_list') }}</h1>
+        <div class="et-page-header">
+            <h1 class="et-page-title">{{ t('web.main.user_list') }}</h1>
+        </div>
 
         <div class="user-create-form">
             <FormField class="field" :label="t('web.users.username')" label-for="new-username">
@@ -229,22 +231,22 @@ onMounted(async () => {
 
 <style scoped>
 .user-create-form {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.75rem 1rem;
-    align-items: flex-end;
-    background: var(--surface-ground, #f8fafc);
+    display: grid;
+    grid-template-columns: minmax(12rem, 1.2fr) minmax(12rem, 1.2fr) auto auto;
+    gap: 0.875rem 1rem;
+    align-items: end;
+    background: var(--surface-card, #ffffff);
     border: var(--et-border);
     border-radius: var(--et-radius);
     padding: var(--et-pad-card);
+    box-shadow: var(--et-shadow-card);
 }
 
 .field {
     display: flex;
     flex-direction: column;
     gap: 0.35rem;
-    min-width: 10rem;
-    flex: 1 1 10rem;
+    min-width: 0;
 }
 
 /* label 位于 FormField 组件内部，需用 :deep 穿透 */
@@ -254,14 +256,17 @@ onMounted(async () => {
 }
 
 .field-admin {
-    flex: 0 0 auto;
-    min-width: auto;
+    min-width: 8rem;
     align-items: flex-start;
 }
 
 .field-action {
-    flex: 0 0 auto;
-    min-width: auto;
+    min-width: 0;
+}
+
+.field-action :deep(.p-button) {
+    min-height: var(--et-btn);
+    white-space: nowrap;
 }
 
 .reset-target {
@@ -283,6 +288,23 @@ onMounted(async () => {
 .user-action-btn {
     width: var(--et-btn-sm) !important;
     height: var(--et-btn-sm) !important;
+}
+
+@media (max-width: 760px) {
+    .user-create-form {
+        grid-template-columns: 1fr 1fr;
+    }
+
+    .field-admin,
+    .field-action {
+        min-width: 0;
+    }
+}
+
+@media (max-width: 480px) {
+    .user-create-form {
+        grid-template-columns: 1fr;
+    }
 }
 
 :deep(.p-password) {

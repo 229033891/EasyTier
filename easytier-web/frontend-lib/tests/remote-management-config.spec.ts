@@ -109,6 +109,7 @@ vi.mock('primevue', async () => {
 
   return {
     Button: ButtonStub,
+    ConfirmDialog: PassThrough,
     ConfirmPopup: PassThrough,
     Divider: PassThrough,
     IftaLabel: PassThrough,
@@ -173,7 +174,7 @@ describe('RemoteManagement config save', () => {
       get_vpn_portal_info: vi.fn(),
       get_network_metas: vi.fn(async (instanceIds: string[]) => ({
         metas: Object.fromEntries(instanceIds.map((id) => [id, {
-          config_permission: 0xffffffff,
+          config_permission: 0,
           inst_id: INSTANCE_UUID,
           instance_name: 'mesh-save',
           network_name: 'mesh-save',

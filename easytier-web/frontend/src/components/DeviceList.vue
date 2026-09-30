@@ -149,10 +149,13 @@ const locationText = (device: Utils.DeviceInfo): string => {
     overflow: hidden;
 }
 
-.device-card:hover {
-    /* 不用 translateY，避免与 tooltip 抢焦点导致闪烁 */
-    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
-    border-color: var(--primary-color, #3b82f6);
+/* hover 放进 @media (hover: hover)：触屏点一下后不会「粘住」高亮 */
+@media (hover: hover) {
+    .device-card:hover {
+        /* 不用 translateY，避免与 tooltip 抢焦点导致闪烁 */
+        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+        border-color: var(--primary-color, #3b82f6);
+    }
 }
 
 .card-header {
@@ -188,8 +191,10 @@ const locationText = (device: Utils.DeviceInfo): string => {
         border-bottom: none;
     }
 
-    :deep(.card-details-content .detail-item:hover) {
-        background-color: var(--surface-hover, rgba(30, 41, 59, 0.4));
+    @media (hover: hover) {
+        :deep(.card-details-content .detail-item:hover) {
+            background-color: var(--surface-hover, rgba(30, 41, 59, 0.4));
+        }
     }
 
     :deep(.card-details-content .detail-label) {
@@ -293,11 +298,14 @@ const locationText = (device: Utils.DeviceInfo): string => {
 :deep(.p-dropdown) {
     background: transparent;
     border: 1px solid var(--surface-border);
-    transition: all 0.2s;
+    /* 不用 transition: all —— 只过渡实际会变的属性（悬停改边框色、聚焦加 ring） */
+    transition: border-color 0.2s ease, box-shadow 0.2s ease, background-color 0.2s ease;
 }
 
-:deep(.p-dropdown:hover) {
-    border-color: var(--primary-color);
+@media (hover: hover) {
+    :deep(.p-dropdown:hover) {
+        border-color: var(--primary-color);
+    }
 }
 
 :deep(.p-button.p-button-icon-only.sort-direction-btn) {
@@ -361,12 +369,15 @@ const locationText = (device: Utils.DeviceInfo): string => {
     border-color: transparent !important;
 }
 
-/* 悬停态：统一加深底色，无位移、无额外阴影跳动 */
-.device-count-badge:hover,
-.device-card-actions :deep(.device-action-btn.p-button:hover),
-.device-card-actions :deep(.device-action-btn.p-button:hover .p-button-icon) {
-    background: var(--surface-200, #e5e7eb) !important;
-    color: var(--text-color, #1f2937) !important;
+/* 悬停态：统一加深底色，无位移、无额外阴影跳动。
+   @media (hover: hover) 避免触屏点完「粘住」；:not(:disabled) 让禁用按钮不响应悬停。 */
+@media (hover: hover) {
+    .device-count-badge:hover,
+    .device-card-actions :deep(.device-action-btn.p-button:hover:not(:disabled)),
+    .device-card-actions :deep(.device-action-btn.p-button:hover:not(:disabled) .p-button-icon) {
+        background: var(--surface-200, #e5e7eb) !important;
+        color: var(--text-color, #1f2937) !important;
+    }
 }
 
 .device-card-actions :deep(.device-action-btn.p-button:focus-visible),
@@ -397,11 +408,13 @@ const locationText = (device: Utils.DeviceInfo): string => {
         color: var(--text-color-secondary, #cbd5e1) !important;
     }
 
-    .device-count-badge:hover,
-    .device-card-actions :deep(.device-action-btn.p-button:hover),
-    .device-card-actions :deep(.device-action-btn.p-button:hover .p-button-icon) {
-        background: var(--surface-hover, rgba(255, 255, 255, 0.14)) !important;
-        color: var(--text-color, #f1f5f9) !important;
+    @media (hover: hover) {
+        .device-count-badge:hover,
+        .device-card-actions :deep(.device-action-btn.p-button:hover:not(:disabled)),
+        .device-card-actions :deep(.device-action-btn.p-button:hover:not(:disabled) .p-button-icon) {
+            background: var(--surface-hover, rgba(255, 255, 255, 0.14)) !important;
+            color: var(--text-color, #f1f5f9) !important;
+        }
     }
 }
 
@@ -434,11 +447,34 @@ const locationText = (device: Utils.DeviceInfo): string => {
         color: var(--pink-400);
     }
 }
+.device-list-toolbar {
+    background: var(--surface-card, #ffffff) !important;
+    border: var(--et-border) !important;
+    border-radius: var(--et-radius) !important;
+    box-shadow: var(--et-shadow-card);
+}
+
+@media (max-width: 540px) {
+    .device-list-toolbar {
+        align-items: stretch;
+    }
+
+    .device-list-toolbar :deep(.p-toolbar-start),
+    .device-list-toolbar :deep(.p-toolbar-end) {
+        width: 100%;
+    }
+
+    .device-list-toolbar :deep(.p-toolbar-end) {
+        justify-content: flex-start;
+    }
+}
 </style>
 
 <template>
     <div class="et-page">
-        <h1 class="et-page-title">{{ t('web.device.list') }}</h1>
+        <div class="et-page-header">
+            <h1 class="et-page-title">{{ t('web.device.list') }}</h1>
+        </div>
 
         <Toolbar class="device-list-toolbar p-3 gap-4 surface-0 border-1 surface-border rounded-md">
             <template #start>

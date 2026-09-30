@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { v4 as uuidv4 } from 'uuid'
-import { AutoComplete, Button, Checkbox, Dialog, Divider, InputNumber, InputText, MultiSelect, Panel, Password, SelectButton, ToggleButton } from 'primevue'
+import { AutoComplete, Button, Checkbox, Dialog, Divider, InputNumber, InputText, MultiSelect, Panel, Password, Select, SelectButton, ToggleButton } from 'primevue'
 import InputGroup from 'primevue/inputgroup'
 import InputGroupAddon from 'primevue/inputgroupaddon'
 import {
   addRow,
+  CompressionAlgoPb,
   DEFAULT_NETWORK_CONFIG,
   NetworkConfig,
   normalizeNetworkConfig,
@@ -112,39 +113,73 @@ function searchWhitelistSuggestions(e: { query: string }) {
   whitelistSuggestions.value = ret
 }
 
+type AdvancedFlagGroup = 'connectivity' | 'transport' | 'system' | 'security'
+
 interface BoolFlag {
   field: keyof NetworkConfig
   help: string
+  group: AdvancedFlagGroup
 }
 
 const bool_flags: BoolFlag[] = [
-  { field: 'latency_first', help: 'latency_first_help' },
-  { field: 'use_smoltcp', help: 'use_smoltcp_help' },
-  { field: 'disable_ipv6', help: 'disable_ipv6_help' },
-  { field: 'ipv6_public_addr_auto', help: 'ipv6_public_addr_auto_help' },
-  { field: 'enable_kcp_proxy', help: 'enable_kcp_proxy_help' },
-  { field: 'disable_kcp_input', help: 'disable_kcp_input_help' },
-  { field: 'enable_quic_proxy', help: 'enable_quic_proxy_help' },
-  { field: 'disable_quic_input', help: 'disable_quic_input_help' },
-  { field: 'disable_p2p', help: 'disable_p2p_help' },
-  { field: 'p2p_only', help: 'p2p_only_help' },
-  { field: 'lazy_p2p', help: 'lazy_p2p_help' },
-  { field: 'bind_device', help: 'bind_device_help' },
-  { field: 'no_tun', help: 'no_tun_help' },
-  { field: 'enable_exit_node', help: 'enable_exit_node_help' },
-  { field: 'relay_all_peer_rpc', help: 'relay_all_peer_rpc_help' },
-  { field: 'disable_relay_data', help: 'disable_relay_data_help' },
-  { field: 'need_p2p', help: 'need_p2p_help' },
-  { field: 'multi_thread', help: 'multi_thread_help' },
-  { field: 'proxy_forward_by_system', help: 'proxy_forward_by_system_help' },
-  { field: 'disable_encryption', help: 'disable_encryption_help' },
-  { field: 'disable_tcp_hole_punching', help: 'disable_tcp_hole_punching_help' },
-  { field: 'disable_udp_hole_punching', help: 'disable_udp_hole_punching_help' },
-  { field: 'enable_udp_broadcast_relay', help: 'enable_udp_broadcast_relay_help' },
-  { field: 'disable_upnp', help: 'disable_upnp_help' },
-  { field: 'disable_sym_hole_punching', help: 'disable_sym_hole_punching_help' },
-  { field: 'enable_magic_dns', help: 'enable_magic_dns_help' },
-  { field: 'enable_private_mode', help: 'enable_private_mode_help' },
+  { field: 'latency_first', help: 'latency_first_help', group: 'connectivity' },
+  { field: 'disable_p2p', help: 'disable_p2p_help', group: 'connectivity' },
+  { field: 'p2p_only', help: 'p2p_only_help', group: 'connectivity' },
+  { field: 'lazy_p2p', help: 'lazy_p2p_help', group: 'connectivity' },
+  { field: 'need_p2p', help: 'need_p2p_help', group: 'connectivity' },
+  { field: 'enable_exit_node', help: 'enable_exit_node_help', group: 'connectivity' },
+  { field: 'relay_all_peer_rpc', help: 'relay_all_peer_rpc_help', group: 'connectivity' },
+  { field: 'disable_relay_data', help: 'disable_relay_data_help', group: 'connectivity' },
+  { field: 'prefer_peer_relay', help: 'prefer_peer_relay_help', group: 'connectivity' },
+  { field: 'use_smoltcp', help: 'use_smoltcp_help', group: 'transport' },
+  { field: 'enable_kcp_proxy', help: 'enable_kcp_proxy_help', group: 'transport' },
+  { field: 'disable_kcp_input', help: 'disable_kcp_input_help', group: 'transport' },
+  { field: 'enable_quic_proxy', help: 'enable_quic_proxy_help', group: 'transport' },
+  { field: 'disable_quic_input', help: 'disable_quic_input_help', group: 'transport' },
+  { field: 'disable_tcp_hole_punching', help: 'disable_tcp_hole_punching_help', group: 'transport' },
+  { field: 'disable_udp_hole_punching', help: 'disable_udp_hole_punching_help', group: 'transport' },
+  { field: 'disable_sym_hole_punching', help: 'disable_sym_hole_punching_help', group: 'transport' },
+  { field: 'disable_upnp', help: 'disable_upnp_help', group: 'transport' },
+  { field: 'enable_udp_broadcast_relay', help: 'enable_udp_broadcast_relay_help', group: 'transport' },
+  { field: 'disable_ipv6', help: 'disable_ipv6_help', group: 'system' },
+  { field: 'ipv6_public_addr_auto', help: 'ipv6_public_addr_auto_help', group: 'system' },
+  { field: 'bind_device', help: 'bind_device_help', group: 'system' },
+  { field: 'no_tun', help: 'no_tun_help', group: 'system' },
+  { field: 'multi_thread', help: 'multi_thread_help', group: 'system' },
+  { field: 'proxy_forward_by_system', help: 'proxy_forward_by_system_help', group: 'system' },
+  { field: 'enable_magic_dns', help: 'enable_magic_dns_help', group: 'system' },
+  { field: 'enable_private_mode', help: 'enable_private_mode_help', group: 'security' },
+  { field: 'disable_encryption', help: 'disable_encryption_help', group: 'security' },
+]
+
+const advancedFlagGroups = computed(() => {
+  const groupTitles: Array<{ key: AdvancedFlagGroup; titleKey: string; icon: string }> = [
+    { key: 'connectivity', titleKey: 'advanced_group_connectivity', icon: 'pi pi-share-alt' },
+    { key: 'transport', titleKey: 'advanced_group_transport', icon: 'pi pi-send' },
+    { key: 'system', titleKey: 'advanced_group_system', icon: 'pi pi-sliders-h' },
+    { key: 'security', titleKey: 'advanced_group_security', icon: 'pi pi-shield' },
+  ]
+  return groupTitles.map((group) => ({
+    ...group,
+    flags: bool_flags.filter((flag) => flag.group === group.key),
+  }))
+})
+
+/**
+ * 加密算法选项对齐 `EncryptionAlgorithm::from_str`（easytier-core/src/config/encryption.rs）：除下列名称外，后端还接受
+ * openssl-* 前缀别名（openssl-aes-gcm / openssl-aes-256-gcm / openssl-chacha20）；这里只列会原样回写的 canonical 名称。
+ */
+const encryptionAlgoOptions = [
+  { value: 'aes-gcm', label: 'aes-gcm' },
+  { value: 'aes-256-gcm', label: 'aes-256-gcm' },
+  { value: 'chacha20', label: 'chacha20' },
+  { value: 'xor', label: 'xor' },
+]
+
+/** CompressionAlgoPb 取值来自 proto：None = 1、Zstd = 2、Invalid = 0（前端不展示 Invalid，未设置时按 None 处理） */
+const dataCompressAlgoOptions = [
+  { value: CompressionAlgoPb.None, label: 'none' },
+  { value: CompressionAlgoPb.Zstd, label: 'zstd' },
 ]
 
 const portForwardProtocolOptions = ref(["tcp", "udp"]);
@@ -174,24 +209,26 @@ function savePortForward() {
 
 const portForwardContainer = ref<HTMLElement | null>(null);
 const isCompact = ref(false);
+let portForwardResizeObserver: ResizeObserver | undefined;
 
 const UINT64_MAX = (1n << 64n) - 1n
 
 onMounted(() => {
-  if (portForwardContainer.value) {
-    let resizeObserver = new ResizeObserver(entries => {
-      for (const entry of entries) {
-        isCompact.value = entry.contentRect.width < 540;
-      }
-    });
-    resizeObserver.observe(portForwardContainer.value);
-
-    onUnmounted(() => {
-      if (resizeObserver && portForwardContainer.value) {
-        resizeObserver.unobserve(portForwardContainer.value);
-      }
-    });
+  if (!portForwardContainer.value || typeof ResizeObserver === 'undefined') {
+    return
   }
+
+  portForwardResizeObserver = new ResizeObserver(entries => {
+    for (const entry of entries) {
+      isCompact.value = entry.contentRect.width < 540;
+    }
+  });
+  portForwardResizeObserver.observe(portForwardContainer.value);
+});
+
+onUnmounted(() => {
+  portForwardResizeObserver?.disconnect();
+  portForwardResizeObserver = undefined;
 });
 
 function syncNormalizedNetwork(network: NetworkConfig | undefined): void {
@@ -331,7 +368,7 @@ function removeVpnPortalClient(index: number) {
                 <div class="flex flex-col gap-2 basis-5/12 grow">
                   <div class="flex items-center">
                     <label for="initial_nodes">{{ t('initial_nodes') }}</label>
-                    <span class="pi pi-question-circle ml-2 self-center" v-tooltip="t('initial_nodes_help')"></span>
+                    <i class="pi pi-question-circle config-help-tip ml-2" v-tooltip.top="{ value: t('initial_nodes_help'), escape: false }" role="img"></i>
                   </div>
                   <div class="items-center flex flex-col p-fluid gap-y-2">
                     <UrlListInput id="initial_nodes" v-model="curNetwork.peer_urls" :protos="protos"
@@ -349,18 +386,24 @@ function removeVpnPortalClient(index: number) {
             :pt="panelHeaderPt('advanced')">
             <div class="flex flex-col gap-y-2">
 
-              <div class="flex flex-row gap-x-9 flex-wrap">
-                <div class="flex flex-col gap-2 basis-5/12 grow">
-                  <label> {{ t('flags_switch') }} </label>
-                  <div class="flex flex-row flex-wrap">
-
-                    <div class="basis-[20rem] flex items-center" v-for="flag in bool_flags">
-                      <Checkbox v-model="curNetwork[flag.field]" :input-id="flag.field" :binary="true" />
-                      <label :for="flag.field" class="ml-2"> {{ t(flag.field) }} </label>
-                      <span class="pi pi-question-circle ml-2 self-center" v-tooltip="t(flag.help)"></span>
+              <div class="advanced-flags-section">
+                <div class="advanced-flags-heading">{{ t('flags_switch') }}</div>
+                <div class="advanced-flag-groups">
+                  <section v-for="group in advancedFlagGroups" :key="group.key" class="advanced-flag-group">
+                    <h3 class="advanced-group-title">
+                      <i :class="group.icon" aria-hidden="true"></i>
+                      {{ t(group.titleKey) }}
+                    </h3>
+                    <div class="advanced-flags-grid">
+                      <div v-for="flag in group.flags" :key="flag.field" class="advanced-flag-item">
+                        <Checkbox v-model="curNetwork[flag.field]" :input-id="flag.field" :binary="true" />
+                        <label :for="flag.field">{{ t(flag.field) }}</label>
+                        <i class="pi pi-question-circle config-help-tip"
+                          v-tooltip.top="{ value: t(flag.help), escape: false }"
+                          :aria-label="t(flag.help)" role="img"></i>
+                      </div>
                     </div>
-
-                  </div>
+                  </section>
                 </div>
               </div>
 
@@ -381,7 +424,62 @@ function removeVpnPortalClient(index: number) {
                 </div>
               </div>
 
-              <div class="flex flex-row gap-x-9 flex-wrap ">
+              <div class="flex flex-row gap-x-9 flex-wrap">
+                <div class="flex flex-col gap-2 grow p-fluid">
+                  <div class="flex">
+                    <label for="listener_urls">{{ t('listener_urls') }}</label>
+                    <i class="pi pi-question-circle config-help-tip ml-2"
+                      v-tooltip.top="{ value: t('listener_urls_help'), escape: false }" role="img"></i>
+                  </div>
+                  <UrlListInput v-model="curNetwork.listener_urls" :protos="listenerProtos"
+                    :add-label="t('add_listener_url')" placeholder="0.0.0.0" />
+                </div>
+              </div>
+
+              <div class="flex flex-row gap-x-9 flex-wrap w-full">
+                <div class="flex flex-col gap-2 grow p-fluid">
+                  <div class="flex">
+                    <label for="mapped_listeners">{{ t('mapped_listeners') }}</label>
+                    <i class="pi pi-question-circle config-help-tip ml-2"
+                      v-tooltip.top="{ value: t('mapped_listeners_help'), escape: false }" role="img"></i>
+                  </div>
+                  <UrlListInput v-model="curNetwork.mapped_listeners" :protos="protos"
+                    :add-label="t('add_mapped_listener')" />
+                </div>
+              </div>
+
+              <div class="flex flex-row gap-x-9 flex-wrap">
+                <div class="flex flex-col gap-2 basis-5/12 grow">
+                  <label for="dev_name">{{ t('dev_name') }}</label>
+                  <InputText id="dev_name" v-model="curNetwork.dev_name" aria-describedby="dev_name-help" :format="true"
+                    :placeholder="t('dev_name_placeholder')" />
+                </div>
+              </div>
+
+              <div class="flex flex-row gap-x-9 flex-wrap">
+                <div class="flex flex-col gap-2 basis-5/12 grow">
+                  <div class="flex">
+                    <label for="mtu">{{ t('mtu') }}</label>
+                    <i class="pi pi-question-circle config-help-tip ml-2" v-tooltip.top="{ value: t('mtu_help'), escape: false }" role="img"></i>
+                  </div>
+                  <InputNumber id="mtu" v-model="curNetwork.mtu" aria-describedby="mtu-help" :format="false"
+                    :placeholder="t('mtu_placeholder')" :min="400" :max="1380" fluid />
+                </div>
+              </div>
+
+              <div class="flex flex-row gap-x-9 flex-wrap">
+                <div class="flex flex-col gap-2 basis-5/12 grow">
+                  <div class="flex">
+                    <label for="instance_recv_bps_limit">{{ t('instance_recv_bps_limit') }}</label>
+                    <i class="pi pi-question-circle config-help-tip ml-2" v-tooltip.top="{ value: t('instance_recv_bps_limit_help'), escape: false }" role="img"></i>
+                  </div>
+                  <InputText id="instance_recv_bps_limit" v-model="instanceRecvBpsLimitInput"
+                    aria-describedby="instance_recv_bps_limit-help" inputmode="numeric" pattern="[0-9]*"
+                    :placeholder="t('instance_recv_bps_limit_placeholder')" fluid />
+                </div>
+              </div>
+
+              <div class="flex flex-row gap-x-9 flex-wrap">
                 <div class="flex flex-col gap-2 grow">
                   <label>VPN Portal</label>
                   <ToggleButton v-model="vpnPortalEnabled" on-icon="pi pi-check" off-icon="pi pi-times"
@@ -439,51 +537,10 @@ function removeVpnPortalClient(index: number) {
               </div>
 
               <div class="flex flex-row gap-x-9 flex-wrap">
-                <div class="flex flex-col gap-2 grow p-fluid">
-                  <label for="listener_urls">{{ t('listener_urls') }}</label>
-                  <UrlListInput v-model="curNetwork.listener_urls" :protos="listenerProtos"
-                    :add-label="t('add_listener_url')" placeholder="0.0.0.0" />
-                </div>
-              </div>
-
-              <div class="flex flex-row gap-x-9 flex-wrap">
-                <div class="flex flex-col gap-2 basis-5/12 grow">
-                  <label for="dev_name">{{ t('dev_name') }}</label>
-                  <InputText id="dev_name" v-model="curNetwork.dev_name" aria-describedby="dev_name-help" :format="true"
-                    :placeholder="t('dev_name_placeholder')" />
-                </div>
-              </div>
-
-              <div class="flex flex-row gap-x-9 flex-wrap">
-                <div class="flex flex-col gap-2 basis-5/12 grow">
-                  <div class="flex">
-                    <label for="mtu">{{ t('mtu') }}</label>
-                    <span class="pi pi-question-circle ml-2 self-center" v-tooltip="t('mtu_help')"></span>
-                  </div>
-                  <InputNumber id="mtu" v-model="curNetwork.mtu" aria-describedby="mtu-help" :format="false"
-                    :placeholder="t('mtu_placeholder')" :min="400" :max="1380" fluid />
-                </div>
-              </div>
-
-              <div class="flex flex-row gap-x-9 flex-wrap">
-                <div class="flex flex-col gap-2 basis-5/12 grow">
-                  <div class="flex">
-                    <label for="instance_recv_bps_limit">{{ t('instance_recv_bps_limit') }}</label>
-                    <span class="pi pi-question-circle ml-2 self-center"
-                      v-tooltip="t('instance_recv_bps_limit_help')"></span>
-                  </div>
-                  <InputText id="instance_recv_bps_limit" v-model="instanceRecvBpsLimitInput"
-                    aria-describedby="instance_recv_bps_limit-help" inputmode="numeric" pattern="[0-9]*"
-                    :placeholder="t('instance_recv_bps_limit_placeholder')" fluid />
-                </div>
-              </div>
-
-              <div class="flex flex-row gap-x-9 flex-wrap">
                 <div class="flex flex-col gap-2 basis-5/12 grow">
                   <div class="flex">
                     <label for="relay_network_whitelist">{{ t('relay_network_whitelist') }}</label>
-                    <span class="pi pi-question-circle ml-2 self-center"
-                      v-tooltip="t('relay_network_whitelist_help')"></span>
+                    <i class="pi pi-question-circle config-help-tip ml-2" v-tooltip.top="{ value: t('relay_network_whitelist_help'), escape: false }" role="img"></i>
                   </div>
                   <ToggleButton v-model="curNetwork.enable_relay_network_whitelist" on-icon="pi pi-check"
                     off-icon="pi pi-times" :on-label="t('off_text')" :off-label="t('on_text')" class="w-48" />
@@ -501,7 +558,7 @@ function removeVpnPortalClient(index: number) {
                 <div class="flex flex-col gap-2 grow">
                   <div class="flex">
                     <label for="routes">{{ t('manual_routes') }}</label>
-                    <span class="pi pi-question-circle ml-2 self-center" v-tooltip="t('manual_routes_help')"></span>
+                    <i class="pi pi-question-circle config-help-tip ml-2" v-tooltip.top="{ value: t('manual_routes_help'), escape: false }" role="img"></i>
                   </div>
                   <ToggleButton v-model="curNetwork.enable_manual_routes" on-icon="pi pi-check" off-icon="pi pi-times"
                     :on-label="t('off_text')" :off-label="t('on_text')" class="w-48" />
@@ -519,7 +576,7 @@ function removeVpnPortalClient(index: number) {
                 <div class="flex flex-col gap-2 grow">
                   <div class="flex">
                     <label for="socks5_port">{{ t('socks5') }}</label>
-                    <span class="pi pi-question-circle ml-2 self-center" v-tooltip="t('socks5_help')"></span>
+                    <i class="pi pi-question-circle config-help-tip ml-2" v-tooltip.top="{ value: t('socks5_help'), escape: false }" role="img"></i>
                   </div>
                   <ToggleButton v-model="curNetwork.enable_socks5" on-icon="pi pi-check" off-icon="pi pi-times"
                     :on-label="t('off_text')" :off-label="t('on_text')" class="w-48" />
@@ -532,11 +589,29 @@ function removeVpnPortalClient(index: number) {
                 </div>
               </div>
 
+              <div class="flex flex-row gap-x-9 flex-wrap ">
+                <div class="flex flex-col gap-2 grow">
+                  <div class="flex">
+                    <label for="ipv6_public_addr_provider">{{ t('ipv6_public_addr_provider') }}</label>
+                    <i class="pi pi-question-circle config-help-tip ml-2" v-tooltip.top="{ value: t('ipv6_public_addr_provider_help'), escape: false }" role="img"></i>
+                  </div>
+                  <ToggleButton v-model="curNetwork.ipv6_public_addr_provider" on-icon="pi pi-check"
+                    off-icon="pi pi-times" :on-label="t('off_text')" :off-label="t('on_text')" class="w-48" />
+                  <div v-if="curNetwork.ipv6_public_addr_provider" class="items-center flex flex-row gap-x-4">
+                    <div class="min-w-64 w-full">
+                      <InputText id="ipv6_public_addr_prefix" v-model="curNetwork.ipv6_public_addr_prefix"
+                        :placeholder="t('ipv6_public_addr_prefix_placeholder')" fluid
+                        aria-describedby="ipv6_public_addr_prefix-help" />
+                    </div>
+                  </div>
+                </div>
+              </div>
+
               <div class="flex flex-row gap-x-9 flex-wrap w-full">
                 <div class="flex flex-col gap-2 grow p-fluid">
                   <div class="flex">
                     <label for="exit_nodes">{{ t('exit_nodes') }}</label>
-                    <span class="pi pi-question-circle ml-2 self-center" v-tooltip="t('exit_nodes_help')"></span>
+                    <i class="pi pi-question-circle config-help-tip ml-2" v-tooltip.top="{ value: t('exit_nodes_help'), escape: false }" role="img"></i>
                   </div>
                   <AutoComplete id="exit_nodes" v-model="curNetwork.exit_nodes"
                     :placeholder="t('chips_placeholder', ['192.168.8.8'])" class="w-full" multiple fluid
@@ -544,14 +619,36 @@ function removeVpnPortalClient(index: number) {
                 </div>
               </div>
 
-              <div class="flex flex-row gap-x-9 flex-wrap w-full">
-                <div class="flex flex-col gap-2 grow p-fluid">
+              <div class="flex flex-row gap-x-9 flex-wrap">
+                <div class="flex flex-col gap-2 basis-5/12 grow">
                   <div class="flex">
-                    <label for="mapped_listeners">{{ t('mapped_listeners') }}</label>
-                    <span class="pi pi-question-circle ml-2 self-center" v-tooltip="t('mapped_listeners_help')"></span>
+                    <label for="encryption_algorithm">{{ t('encryption_algorithm') }}</label>
+                    <i class="pi pi-question-circle config-help-tip ml-2" v-tooltip.top="{ value: t('encryption_algorithm_help'), escape: false }" role="img"></i>
                   </div>
-                  <UrlListInput v-model="curNetwork.mapped_listeners" :protos="protos"
-                    :add-label="t('add_mapped_listener')" />
+                  <Select id="encryption_algorithm" v-model="curNetwork.encryption_algorithm"
+                    :options="encryptionAlgoOptions" option-label="label" option-value="value" fluid
+                    :disabled="!!curNetwork.disable_encryption"
+                    :placeholder="t('encryption_algorithm_placeholder')" />
+                </div>
+
+                <div class="flex flex-col gap-2 basis-5/12 grow">
+                  <div class="flex">
+                    <label for="data_compress_algo">{{ t('data_compress_algo') }}</label>
+                    <i class="pi pi-question-circle config-help-tip ml-2" v-tooltip.top="{ value: t('data_compress_algo_help'), escape: false }" role="img"></i>
+                  </div>
+                  <Select id="data_compress_algo" v-model="curNetwork.data_compress_algo"
+                    :options="dataCompressAlgoOptions" option-label="label" option-value="value" fluid />
+                </div>
+              </div>
+
+              <div class="flex flex-row gap-x-9 flex-wrap">
+                <div class="flex flex-col gap-2 basis-5/12 grow">
+                  <div class="flex">
+                    <label for="socket_mark">{{ t('socket_mark') }}</label>
+                    <i class="pi pi-question-circle config-help-tip ml-2" v-tooltip.top="{ value: t('socket_mark_help'), escape: false }" role="img"></i>
+                  </div>
+                  <InputNumber id="socket_mark" v-model="curNetwork.socket_mark" :format="false" fluid
+                    :allow-empty="true" :min="0" :max="4294967295" :placeholder="t('socket_mark_placeholder')" />
                 </div>
               </div>
 
@@ -609,7 +706,7 @@ function removeVpnPortalClient(index: number) {
                     </div>
                   </div>
 
-                  <div class="flex justify-content-end mt-4">
+                  <div class="flex justify-start mt-4">
                     <Button icon="pi pi-plus" :label="t('port_forwards_add_btn')" severity="success"
                       @click="addPortForward" />
                   </div>
@@ -655,7 +752,7 @@ function removeVpnPortalClient(index: number) {
             <div v-if="curNetwork.acl" class="flex flex-col gap-y-2">
               <AclManager v-model="curNetwork.acl" />
             </div>
-            <div v-else class="flex justify-center p-4">
+            <div v-else class="flex justify-start p-4">
               <Button :label="t('acl.enabled')"
                 @click="curNetwork.acl = { acl_v1: { chains: [], group: { declares: [], members: [] } } }" />
             </div>
@@ -675,35 +772,150 @@ function removeVpnPortalClient(index: number) {
 .config-panels {
   display: flex;
   flex-direction: column;
-  gap: 0.35rem;
+  gap: 0.25rem;
 }
 
 .config-panels :deep(.p-divider) {
   margin: 0.2rem 0;
 }
 
+/* 面板标题栏紧凑化（与 Status.vue 保持一致） */
 .config-panels :deep(.p-panel .p-panel-header) {
-  padding: 0.5rem 0.7rem;
-  font-size: 0.9375rem;
+  padding: 0.25rem 0.65rem !important;
+  min-height: 1.9rem !important;
+  font-size: 0.875rem;
   font-weight: 600;
-  line-height: 1.3;
+  line-height: 1.2;
+}
+
+.config-panels :deep(.p-panel .p-panel-header.cursor-pointer) {
+  min-height: 1.9rem !important;
 }
 
 .config-panels :deep(.p-panel .p-panel-content) {
-  padding: 0.55rem 0.7rem;
+  padding: 0.5rem 0.7rem !important;
 }
 
 .config-panels :deep(.p-panel .p-panel-header .p-panel-title),
 .config-panels :deep(.p-panel .p-panel-header span) {
-  font-size: 0.9375rem;
+  font-size: 0.875rem;
   font-weight: 600;
+  line-height: 1.2;
 }
 
 .network-footer-btn {
-  min-width: 9rem;
+  min-width: var(--et-btn-w, 10rem);
   height: 2.75rem !important;
   padding: 0 1.1rem !important;
   font-size: 0.9375rem !important;
   font-weight: 600 !important;
+}
+
+/* 高级开关按使用场景分组，避免 28 个选项堆成一片 */
+.advanced-flags-section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.advanced-flags-heading {
+  color: var(--text-color-secondary, #64748b);
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.advanced-flag-groups {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+.advanced-flag-group {
+  min-width: 0;
+  padding: 0.75rem;
+  border: 1px solid var(--surface-border, #e2e8f0);
+  border-radius: 0.625rem;
+  background: var(--surface-50, #f8fafc);
+}
+
+.advanced-group-title {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  margin: 0 0 0.625rem;
+  color: var(--text-color, #1e293b);
+  font-size: 0.8125rem;
+  font-weight: 700;
+}
+
+.advanced-group-title i {
+  color: var(--primary-color, #0ea5e9);
+}
+
+.advanced-flags-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 14rem), 1fr));
+  gap: 0.4rem 0.75rem;
+}
+
+.advanced-flag-item {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  min-height: 2rem;
+  padding: 0.2rem 0.35rem;
+  border-radius: 0.4rem;
+  transition: background-color 0.15s ease;
+}
+
+@media (hover: hover) {
+  .advanced-flag-item:hover {
+    background: var(--surface-hover, #eef2f7);
+  }
+}
+
+.advanced-flag-item label {
+  min-width: 0;
+  margin-left: 0.5rem;
+  line-height: 1.3;
+  cursor: pointer;
+}
+
+.advanced-flag-item .config-help-tip {
+  margin-left: 0.4rem;
+}
+
+@media (max-width: 760px) {
+  .advanced-flag-groups {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (prefers-color-scheme: dark) {
+  .advanced-flag-group {
+    background: var(--surface-800, #1e293b);
+  }
+
+  @media (hover: hover) {
+    .advanced-flag-item:hover {
+      background: var(--surface-hover, rgba(255, 255, 255, 0.06));
+    }
+  }
+}
+
+/* 问号提示图标：内联对齐 + 固定尺寸，避免撑高所在行 */
+.config-help-tip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 1.1rem;
+  height: 1.1rem;
+  font-size: 0.95rem;
+  line-height: 1;
+  color: var(--text-color-secondary, #64748b);
+  cursor: help;
 }
 </style>

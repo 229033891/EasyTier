@@ -8,6 +8,7 @@ import { ipv4InetToString, ipv4ToString, ipv6ToString } from '../modules/utils';
 import { latencyMs, lossRate, numericValue, peerConns } from '../modules/statusDisplay';
 import { Badge, DataTable, Column, Tag, Chip, Button, ScrollPanel, Timeline, Card, Panel, } from 'primevue';
 import NetworkChart from './NetworkChart.vue';
+import PeerConnHistoryChart from './PeerConnHistoryChart.vue';
 
 const props = defineProps<{
   curNetworkInst: NetworkInstance | null,
@@ -85,12 +86,12 @@ function humanFileSize(bytes: number, si = false, dp = 1) {
 
 function txBytes(info: PeerRoutePair) {
   const tx = statsCommon(info, 'stats.tx_bytes')
-  return tx ? humanFileSize(tx) : ''
+  return tx == null ? '' : humanFileSize(tx)
 }
 
 function rxBytes(info: PeerRoutePair) {
   const rx = statsCommon(info, 'stats.rx_bytes')
-  return rx ? humanFileSize(rx) : ''
+  return rx == null ? '' : humanFileSize(rx)
 }
 
 function version(info: PeerRoutePair) {
@@ -310,43 +311,22 @@ const peerCount = computed(() => {
 // calculate tx/rx rate every 2 seconds
 let rateIntervalId = 0
 const rateInterval = 2000
-let prevTxSum = 0
-let prevRxSum = 0
-const txRate = ref('0')
-const rxRate = ref('0')
+let prevTxSum: number | undefined
+let prevRxSum: number | undefined
+const txRate = ref('0 B')
+const rxRate = ref('0 B')
 
-/** 可折叠 Panel：节点默认展开（仅图表）；Peer/详情/VPN/事件默认收起 */
+/** 可折叠 Panel：节点默认展开（仅图表）；详情/历史/Peer/VPN/事件默认收起 */
 const panelCollapsed = reactive({
   myNode: false,
+  nodeDetails: true,
   peer: true,
+  peerHistory: true,
   vpnPortal: true,
   eventLog: true,
 })
 
-/** My Node 内「节点详情」默认收起，避免首屏堆叠 */
-const nodeDetailsCollapsed = ref(true)
-
-/** Local IP / Listener 等大组默认收起 */
-const groupBodyCollapsed = reactive<Record<string, boolean>>({
-  local_ip: true,
-  listener: true,
-})
-
-function isGroupCollapsible(key: string) {
-  return key === 'local_ip' || key === 'listener'
-}
-
-function isGroupBodyCollapsed(key: string) {
-  if (!isGroupCollapsible(key))
-    return false
-  return groupBodyCollapsed[key] !== false
-}
-
-function toggleGroupBody(key: string) {
-  if (!isGroupCollapsible(key))
-    return
-  groupBodyCollapsed[key] = !isGroupBodyCollapsed(key)
-}
+/** 节点详情不再分组折叠：所有条目一次铺开，长内容允许换行，避免撑出横向滚动条。 */
 
 async function copyGroupChips(group: { titleKey: string; chips: Chip[] }) {
   const text = group.chips.map(c => c.label).join('\n')
@@ -391,12 +371,22 @@ function panelHeaderPt(key: keyof typeof panelCollapsed) {
 onMounted(() => {
   rateIntervalId = window.setInterval(() => {
     const curTxSum = txGlobalSum()
-    txRate.value = humanFileSize((curTxSum - prevTxSum) / (rateInterval / 1000))
-    prevTxSum = curTxSum
+    if (prevTxSum === undefined || curTxSum < prevTxSum) {
+      prevTxSum = curTxSum
+      txRate.value = '0 B'
+    } else {
+      txRate.value = humanFileSize((curTxSum - prevTxSum) / (rateInterval / 1000))
+      prevTxSum = curTxSum
+    }
 
     const curRxSum = rxGlobalSum()
-    rxRate.value = humanFileSize((curRxSum - prevRxSum) / (rateInterval / 1000))
-    prevRxSum = curRxSum
+    if (prevRxSum === undefined || curRxSum < prevRxSum) {
+      prevRxSum = curRxSum
+      rxRate.value = '0 B'
+    } else {
+      rxRate.value = humanFileSize((curRxSum - prevRxSum) / (rateInterval / 1000))
+      prevRxSum = curRxSum
+    }
   }, rateInterval)
 })
 
@@ -410,29 +400,43 @@ const vpnPortalLoading = ref(false)
 const vpnPortalError = ref('')
 const copiedVpnPortalClient = ref('')
 
+let vpnPortalLoadToken = 0
+
 async function loadVpnPortalConfig() {
   const instanceId = props.curNetworkInst?.instance_id
   if (!instanceId)
     return
 
+  const loadToken = ++vpnPortalLoadToken
   vpnPortalInfo.value = undefined
   vpnPortalError.value = ''
   copiedVpnPortalClient.value = ''
   vpnPortalLoading.value = true
   try {
-    vpnPortalInfo.value = await props.api.get_vpn_portal_info(instanceId)
+    const info = await props.api.get_vpn_portal_info(instanceId)
+    // 实例切换后，旧请求不能覆盖当前实例的状态。
+    if (loadToken === vpnPortalLoadToken && props.curNetworkInst?.instance_id === instanceId) {
+      vpnPortalInfo.value = info
+    }
   } catch (error) {
     console.error('Failed to load VPN Portal information', error)
-    vpnPortalError.value = t('vpn_portal_load_failed')
+    if (loadToken === vpnPortalLoadToken && props.curNetworkInst?.instance_id === instanceId) {
+      vpnPortalError.value = t('vpn_portal_load_failed')
+    }
   } finally {
-    vpnPortalLoading.value = false
+    if (loadToken === vpnPortalLoadToken) {
+      vpnPortalLoading.value = false
+    }
   }
 }
 
-watch(() => panelCollapsed.vpnPortal, (collapsed) => {
-  if (!collapsed)
-    void loadVpnPortalConfig()
-})
+watch(
+  [() => panelCollapsed.vpnPortal, () => props.curNetworkInst?.instance_id],
+  ([collapsed]) => {
+    if (!collapsed)
+      void loadVpnPortalConfig()
+  },
+)
 
 function vpnPortalStateKey(state: VpnPortalClientState | string): string {
   const normalized = typeof state === 'string'
@@ -504,47 +508,30 @@ const eventLogContent = computed(() => {
       <div class="status-panels flex flex-col gap-2">
         <Panel v-model:collapsed="panelCollapsed.myNode" :header="t('my_node_info')" toggleable
           :pt="panelHeaderPt('myNode')">
-          <div class="flex w-full flex-col gap-y-4">
-            <div class="w-full">
-              <NetworkChart :upload-rate="txRate" :download-rate="rxRate" />
-            </div>
+          <div class="w-full">
+            <NetworkChart :upload-rate="txRate" :download-rate="rxRate" />
+          </div>
+        </Panel>
 
-            <div class="rounded border border-surface-200 dark:border-surface-700">
-              <button type="button"
-                class="flex w-full items-center justify-between gap-2 px-3 py-2 text-left cursor-pointer select-none touch-manipulation"
-                :aria-expanded="!nodeDetailsCollapsed" aria-controls="node-details-body"
-                @click="nodeDetailsCollapsed = !nodeDetailsCollapsed">
-                <span class="text-sm font-medium">{{ t('node_info_details') }}</span>
-                <i class="pi text-sm"
-                  :class="nodeDetailsCollapsed ? 'pi-chevron-down' : 'pi-chevron-up'"></i>
-              </button>
-              <div id="node-details-body" v-show="!nodeDetailsCollapsed" class="flex flex-col gap-2 border-t border-surface-200 dark:border-surface-700 p-2 max-h-72 overflow-auto">
-                <div v-for="group in myNodeInfoGroups" :key="group.key"
-                  class="rounded border border-surface-200 dark:border-surface-700 bg-surface-50/60 dark:bg-surface-800/40 px-3 py-2">
-                  <div class="mb-1.5 flex items-center justify-between gap-2">
-                    <button type="button" class="flex min-w-0 items-center gap-1 text-left"
-                      :class="isGroupCollapsible(group.key) ? 'cursor-pointer select-none touch-manipulation' : 'cursor-default'"
-                      :aria-expanded="isGroupCollapsible(group.key) ? !isGroupBodyCollapsed(group.key) : undefined"
-                      @click="toggleGroupBody(group.key)">
-                      <i v-if="isGroupCollapsible(group.key)" class="pi text-xs text-surface-500"
-                        :class="isGroupBodyCollapsed(group.key) ? 'pi-chevron-right' : 'pi-chevron-down'"></i>
-                      <span class="text-xs font-semibold uppercase tracking-wide text-surface-500 truncate">
-                        {{ t(group.titleKey) }}
-                        <span v-if="isGroupCollapsible(group.key)" class="normal-case font-normal">
-                          ({{ group.chips.length }})
-                        </span>
-                      </span>
-                    </button>
-                    <Button v-if="group.chips.length" size="small" text rounded icon="pi pi-copy"
-                      :aria-label="t('node_info_copy_group')" v-tooltip="t('node_info_copy_group')"
-                      @click="copyGroupChips(group)" />
-                  </div>
-                  <div v-show="!isGroupBodyCollapsed(group.key)" class="flex flex-row flex-wrap gap-2">
-                    <Chip v-for="(chip, i) in group.chips" :key="i" :label="chip.label" :icon="chip.icon"
-                      class="text-sm" />
-                  </div>
-                </div>
+        <!-- 节点详情：与「节点信息」同级的一级面板，不再嵌在「当前节点信息」内 -->
+        <Panel v-if="myNodeInfo" v-model:collapsed="panelCollapsed.nodeDetails" :header="t('node_info_details')"
+          toggleable :pt="panelHeaderPt('nodeDetails')">
+          <div class="node-detail-groups flex flex-col gap-1.5 max-h-72 overflow-auto">
+            <div v-for="group in myNodeInfoGroups" :key="group.key" class="node-info-group">
+              <span class="node-info-group-title truncate">
+                {{ t(group.titleKey) }}
+                <span v-if="group.chips.length > 1" class="normal-case font-normal">
+                  ({{ group.chips.length }})
+                </span>
+              </span>
+              <!-- 内容多时自动换行（不横向滚动），分组高度随之增加 -->
+              <div class="node-info-group-chips">
+                <Chip v-for="(chip, i) in group.chips" :key="i" :label="chip.label" :icon="chip.icon"
+                  class="node-info-chip" :title="chip.label" />
               </div>
+              <Button v-if="group.chips.length" size="small" text rounded icon="pi pi-copy"
+                :aria-label="t('node_info_copy_group')" v-tooltip="t('node_info_copy_group')"
+                @click="copyGroupChips(group)" />
             </div>
           </div>
         </Panel>
@@ -589,6 +576,12 @@ const eventLogContent = computed(() => {
               </template>
             </Column>
           </DataTable>
+        </Panel>
+
+        <Panel v-if="api.get_peer_conn_history" v-model:collapsed="panelCollapsed.peerHistory"
+          :header="t('peer_conn_history')" toggleable :pt="panelHeaderPt('peerHistory')">
+          <PeerConnHistoryChart :api="api" :instance-id="curNetworkInst?.instance_id ?? ''"
+            :visible="!panelCollapsed.peerHistory" />
         </Panel>
 
         <Panel v-if="myNodeInfo" v-model:collapsed="panelCollapsed.vpnPortal" :header="t('vpn_portal_config')"
@@ -662,21 +655,102 @@ const eventLogContent = computed(() => {
 </template>
 
 <style lang="postcss" scoped>
+/* 面板列表：整体收紧面板间距 */
+.status-panels {
+  gap: 0.25rem;
+}
+
+/* 面板标题栏：折叠态更矮（覆盖 PrimeVue 默认与全局触摸目标高度） */
 .status-panels :deep(.p-panel .p-panel-header) {
-  padding: 0.65rem 0.85rem;
-  font-size: 0.9375rem;
+  padding: 0.25rem 0.65rem !important;
+  min-height: 1.9rem !important;
+  font-size: 0.875rem;
   font-weight: 600;
-  line-height: 1.35;
+  line-height: 1.2;
+}
+
+.status-panels :deep(.p-panel .p-panel-header.cursor-pointer) {
+  min-height: 1.9rem !important;
 }
 
 .status-panels :deep(.p-panel .p-panel-content) {
-  padding: 0.75rem;
+  padding: 0.5rem 0.7rem !important;
 }
 
 .status-panels :deep(.p-panel .p-panel-header .p-panel-title),
 .status-panels :deep(.p-panel .p-panel-header span) {
-  font-size: 0.9375rem;
+  font-size: 0.875rem;
   font-weight: 600;
+  line-height: 1.2;
+}
+
+/* 节点详情分组卡片 */
+.node-detail-groups {
+  padding-right: 0.1rem;
+}
+
+.node-info-group {
+  border: 1px solid var(--surface-border, #e5e7eb);
+  border-radius: 0.375rem;
+  background: var(--surface-50, #f8fafc);
+  padding: 0.3rem 0.5rem 0.4rem;
+}
+
+/* 一组：标题定宽（顶部对齐）+ chip 区自动换行（不横向滚动）+ 复制按钮 */
+.node-info-group {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  min-height: 1.6rem;
+}
+
+.node-info-group-title {
+  flex: 0 0 6.5rem;
+  min-width: 0;
+  padding-top: 0.15rem; /* 与换行的 chip 首行基线对齐 */
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--text-color-secondary, #64748b);
+}
+
+.node-info-group-chips {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.status-panels :deep(.node-info-chip.p-chip) {
+  flex: 0 1 auto;
+  min-width: 0;
+  padding: 0.05rem 0.4rem;
+  min-height: 1.25rem;
+  height: auto;
+  font-size: 0.75rem;
+  line-height: 1.2;
+  /* 允许文字在极窄屏换行，避免单个超长 chip 撑出横向滚动条 */
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+/* 窄屏把标题压窄一点，给 chip 区留出可见宽度 */
+@media (max-width: 640px) {
+  .node-info-group-title {
+    flex: 0 0 5rem;
+  }
+}
+
+/* 节点信息表格：行高紧凑（仅收紧内边距，不改字号） */
+.status-panels :deep(.p-datatable .p-datatable-thead > tr > th) {
+  padding: 0.4rem 0.6rem !important;
+}
+
+.status-panels :deep(.p-datatable .p-datatable-tbody > tr > td) {
+  padding: 0.35rem 0.6rem !important;
 }
 
 .p-timeline :deep(.p-timeline-event-opposite) {

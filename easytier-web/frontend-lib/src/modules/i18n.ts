@@ -22,14 +22,18 @@ export const availableLocales = Object.keys(localesMap)
 
 const loadedLanguages: string[] = []
 
+function normalizeLanguage(lang: string | null | undefined): string {
+  return lang && availableLocales.includes(lang) ? lang : 'en'
+}
+
 export function toggleLanguage() {
-  const currentLang = localStorage.getItem('lang') || 'en'
+  const currentLang = normalizeLanguage(localStorage.getItem('lang'))
   const newLang = currentLang === 'en' ? 'cn' : 'en'
-  loadLanguageAsync(newLang)
+  void loadLanguageAsync(newLang)
 }
 
 export function getCurrentLanguage() {
-  return localStorage.getItem('lang') || 'en'
+  return normalizeLanguage(localStorage.getItem('lang'))
 }
 
 function setI18nLanguage(lang: Locale) {
@@ -39,27 +43,20 @@ function setI18nLanguage(lang: Locale) {
 }
 
 export async function loadLanguageAsync(lang: string): Promise<Locale> {
+  const normalizedLang = normalizeLanguage(lang)
+
   // If the same language
-  if (i18n.global.locale.value === lang)
-    return setI18nLanguage(lang)
+  if (i18n.global.locale.value === normalizedLang)
+    return setI18nLanguage(normalizedLang)
 
   // If the language was already loaded
-  if (loadedLanguages.includes(lang))
-    return setI18nLanguage(lang)
+  if (loadedLanguages.includes(normalizedLang))
+    return setI18nLanguage(normalizedLang)
 
-  // If the language hasn't been loaded yet
-  let messages
-
-  try {
-    messages = localesMap[lang]
-  }
-  catch {
-    messages = localesMap.en
-  }
-
-  i18n.global.setLocaleMessage(lang, messages)
-  loadedLanguages.push(lang)
-  return setI18nLanguage(lang)
+  const messages = localesMap[normalizedLang]
+  i18n.global.setLocaleMessage(normalizedLang, messages)
+  loadedLanguages.push(normalizedLang)
+  return setI18nLanguage(normalizedLang)
 }
 
 export default {

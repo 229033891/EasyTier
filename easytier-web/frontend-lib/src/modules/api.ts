@@ -53,6 +53,41 @@ export interface GetNetworkMetasResponse {
     metas: Record<string, NetworkMeta>;
 }
 
+/** 对端连接历史：一个聚合桶 */
+export interface PeerConnHistoryPoint {
+    /** 桶起始时间（unix 秒） */
+    t: number;
+    /** 桶内平均延迟（微秒）；拿不到延迟时为 null */
+    latency_us: number | null;
+    /** 桶内平均丢包率；拿不到时为 null */
+    loss_rate: number | null;
+    /** 桶内累计计数器最大值（不是速率，速率需对相邻桶差分） */
+    rx_bytes: number;
+    tx_bytes: number;
+    /** 桶内样本数 */
+    samples: number;
+}
+
+/** 对端连接历史：一个对端 peer 的曲线 */
+export interface PeerConnHistorySeries {
+    peer_id: number;
+    hostname: string;
+    remote_addr: string;
+    tunnel_type: string;
+    /** 最近一次采样时间（unix 秒） */
+    last_seen: number;
+    points: Array<PeerConnHistoryPoint>;
+}
+
+export interface PeerConnHistoryResponse {
+    /** 聚合桶大小（秒） */
+    bucket_seconds: number;
+    /** 查询窗口起点 / 终点（unix 秒） */
+    from: number;
+    to: number;
+    peers: Array<PeerConnHistorySeries>;
+}
+
 export interface RemoteClient {
     validate_config(config: NetworkConfig): Promise<ValidateConfigResponse>;
     run_network(config: NetworkConfig, save: boolean): Promise<undefined>;
@@ -69,4 +104,11 @@ export interface RemoteClient {
     generate_config(config: NetworkConfig): Promise<GenerateConfigResponse>;
     parse_config(toml_config: string): Promise<ParseConfigResponse>;
     get_network_metas(instance_ids: string[]): Promise<GetNetworkMetasResponse>;
+    /**
+     * 对端连接历史（延迟 / 流量趋势）。
+     *
+     * 只有「配置服务器」形态的实现（web 控制台）才有历史表可查，
+     * GUI 直连内核时没有，因此这里是可选方法；UI 需自行判空后隐藏入口。
+     */
+    get_peer_conn_history?(inst_id: string, hours: number): Promise<PeerConnHistoryResponse | undefined>;
 }

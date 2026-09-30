@@ -1,0 +1,17 @@
+
+[1m[7m[36m RUN [39m[27m[22m [36mv2.1.9 [39m[90mD:/EasyTier/easytier-web/frontend-lib[39m
+
+Browserslist: browsers data (caniuse-lite) is 12 months old. Please run:
+  npx update-browserslist-db@latest
+  Why you should do it regularly: https://github.com/browserslist/update-db#readme
+[90mstdout[2m | tests/zz-debug-order.spec.ts[2m > [22m[2mdebug toggle order[2m > [22m[2mdumps toggle buttons in DOM order
+[22m[39mTOGGLES>> 0:true|VPN Portal  1:true|relay_network_whitelist  2:false|manual_routes  3:true|socks5  4:false|ipv6_public_addr_provider
+
+ [32m✓[39m tests/zz-debug-order.spec.ts [2m([22m[2m1 test[22m[2m)[22m[33m 482[2mms[22m[39m
+   [33m[2m✓[22m[39m debug toggle order[2m > [22mdumps toggle buttons in DOM order [33m481[2mms[22m[39m
+
+[2m Test Files [22m [1m[32m1 passed[39m[22m[90m (1)[39m
+[2m      Tests [22m [1m[32m1 passed[39m[22m[90m (1)[39m
+[2m   Start at [22m 08:46:51
+[2m   Duration [22m 4.37s[2m (transform 1.38s, setup 33ms, collect 2.57s, tests 482ms, environment 535ms, prepare 493ms)[22m
+

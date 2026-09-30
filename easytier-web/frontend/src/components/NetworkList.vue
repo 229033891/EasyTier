@@ -100,7 +100,9 @@ const openNetworkRow = (row: NetworkRow, mode: 'status' | 'config') => {
 
 <template>
     <div class="et-page">
-        <h1 class="et-page-title">{{ t('web.main.network_list') }}</h1>
+        <div class="et-page-header">
+            <h1 class="et-page-title">{{ t('web.main.network_list') }}</h1>
+        </div>
 
         <ListPageShell :loading="deviceList === undefined" :empty="networkRows.length === 0">
             <template #empty>{{ t('web.device.no_networks') }}</template>

@@ -121,7 +121,13 @@ app.use(PrimeVue,
                     order: 'tailwind-base, primevue, tailwind-utilities'
                 }
             }
-        }
+        },
+        zIndex: {
+            modal: 1100,
+            overlay: 1200,
+            menu: 1300,
+            tooltip: 1400,
+        },
     }
 )
 app.use(ToastService as any)
