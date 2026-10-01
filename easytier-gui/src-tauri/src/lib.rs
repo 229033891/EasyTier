@@ -475,6 +475,33 @@ async fn resolve_rpc_bind_url(url: &url::Url) -> Result<std::net::SocketAddr, St
         .ok_or_else(|| format!("RPC portal has no resolved address: {url}"))
 }
 
+/// Dropping StandAloneServer aborts its JoinSet asynchronously; the ring registry
+/// entry can briefly remain until the aborted task drops the listener.
+async fn bind_ring_tunnel_with_retry(
+    process_runtime: &easytier_core::process_runtime::CoreProcessRuntime,
+    ring_id: uuid::Uuid,
+) -> Result<BoxedTunnelListener, String> {
+    let mut last_error = None;
+    for attempt in 0..20 {
+        if attempt > 0 {
+            tokio::task::yield_now().await;
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+        match process_runtime.bind_ring_tunnel(ring_id) {
+            Ok(tunnel) => return Ok(tunnel),
+            Err(error) => {
+                let message = error.to_string();
+                let retryable = message.contains("already registered");
+                last_error = Some(message);
+                if !retryable {
+                    break;
+                }
+            }
+        }
+    }
+    Err(last_error.unwrap_or_else(|| "failed to bind ring RPC tunnel".to_string()))
+}
+
 #[tauri::command]
 async fn init_rpc_connection(
     _app: AppHandle,
@@ -517,28 +544,26 @@ async fn init_rpc_connection(
             (RpcServerKind::Ring, None, None)
         };
 
-        // If the previous client tunnel died, kind/bind alone still match and we would
-        // keep a half-dead ApiRpcServer — reconnect then fails forever. Force rebuild.
-        let previous_client_dead = client_manager_guard
+        // Only rebuild the RPC server when transport identity changes. If the GUI
+        // client tunnel dies but the server is still listening, recreate the client
+        // only — forcing a ring rebind races StandAloneServer's JoinSet abort and
+        // fails with "ring listener already registered".
+        let need_restart = rpc_server_guard
             .as_ref()
-            .map(|cm| !cm.rpc_manager.is_running())
+            .map(|x| x.kind != desired_kind || x.bind_url != bind_url)
             .unwrap_or(true);
-        let need_restart = previous_client_dead
-            || rpc_server_guard
-                .as_ref()
-                .map(|x| x.kind != desired_kind || x.bind_url != bind_url)
-                .unwrap_or(true);
 
         if need_restart {
             *rpc_server_guard = None;
-            // Drop the dead client before rebinding the ring so the old tunnel is gone.
+            // Drop the dead client before rebinding so the old tunnel is gone.
             *client_manager_guard = None;
 
             let tunnel: BoxedTunnelListener = match desired_kind {
-                RpcServerKind::Ring => instance_manager
-                    .process_runtime()
-                    .bind_ring_tunnel(*RPC_RING_UUID.deref())
-                    .map_err(|error| error.to_string())?,
+                RpcServerKind::Ring => bind_ring_tunnel_with_retry(
+                    instance_manager.process_runtime().as_ref(),
+                    *RPC_RING_UUID.deref(),
+                )
+                .await?,
                 RpcServerKind::Tcp => {
                     let bind_url = bind_url.as_ref().expect("tcp rpc must have bind url");
                     Box::new(runtime_rpc_listener(resolve_rpc_bind_url(bind_url).await?))
