@@ -185,7 +185,7 @@ easytier-core 节点 --(udp/tcp/ws)--->  easytier-web :22020 (默认配置服务
 - **Windows**：使用 CI 产出的 `.exe`（含 `easytier-web` / `easytier-web-embed`）。
 - **Linux**：使用 musl 等静态/准静态产物，便于多发行版部署。
 
-具体 target 矩阵以 `.github/workflows/core.yml` 为准，本文件不重复维护完整列表。
+具体 target 矩阵以 `.github/workflows/linux.yml` 为准，本文件不重复维护完整列表。
 
 ---
 

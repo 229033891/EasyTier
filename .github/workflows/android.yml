@@ -28,7 +28,7 @@ jobs:
         "pnpm-lock.yaml", "pnpm-workspace.yaml", "package.json", "easytier/**",
         "easytier-core/**", "easytier-proto/**", "easytier-rpc-build/**",
         "easytier-gui/**", "tauri-plugin-vpnservice/**",
-        "easytier-web/frontend-lib/**", ".github/workflows/mobile.yml",
+        "easytier-web/frontend-lib/**", ".github/workflows/android.yml",
         ".github/actions/**"]
     outputs:
       # Release builds must run even if they only change release metadata.

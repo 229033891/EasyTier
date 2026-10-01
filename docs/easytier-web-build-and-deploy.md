@@ -189,7 +189,7 @@ chmod +x ./easytier-web-embed
 
 ## 4. 用 CI 打 Win + Linux 双平台包（推荐发正式包时）
 
-仓库已有 `.github/workflows/core.yml`：
+仓库已有 `.github/workflows/linux.yml`：
 
 1. 先 build 前端 artifact  
 2. 再在 matrix 上编译，其中包含：
