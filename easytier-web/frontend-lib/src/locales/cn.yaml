@@ -519,6 +519,7 @@ web:
     network_count: 网络数量
     network_list: 网络列表
     user_list: 用户管理
+    config_tokens: 接入 Token
     login_page: 登录页面
     settings: 设置
     logout: 退出登录
@@ -560,6 +561,30 @@ web:
     reset_failed: 重置密码失败
     password_required: 请填写新密码
     cancel: 取消
+
+  config_tokens:
+    create_title: 新建接入 Token
+    hint: 客户端配置服务器地址为 udp://主机:端口/Token。例如 Token 为 admin 时使用 udp://127.0.0.1:22020/admin。可自定义或留空自动生成。
+    create: 创建
+    create_success: Token 已创建
+    create_failed: 创建 Token 失败
+    update_success: Token 已更新
+    update_failed: 更新 Token 失败
+    delete: 删除 Token
+    confirm_delete: 确定删除 Token「{token}」？删除后使用该 Token 的客户端将无法接入。
+    delete_success: Token 已删除
+    delete_failed: 删除 Token 失败
+    empty: 暂无 Token
+    user: 所属用户
+    user_required: 请选择用户
+    token: Token / Key
+    token_placeholder: 例如 admin（留空则自动生成）
+    label: 备注
+    label_placeholder: 可选备注
+    url_example: 客户端 URL 示例
+    copy: 复制
+    copied: 已复制
+    copy_failed: 复制失败
 
   device:
     list: 设备列表
@@ -731,11 +756,11 @@ mode:
 config-server:
   title: 配置服务器
   address: 配置服务器地址
-  address_placeholder: 例如：udp://127.0.0.1:22020/<config_token>
+  address_placeholder: 例如：udp://127.0.0.1:22020/admin
   description: |
     配置服务器地址，支持以下格式：
-    完整URL：udp://127.0.0.1:22020/<config_token>（路径为用户的 config_token，不再是用户名）
-    仅 token：et_xxxx（使用官方服务器）
+    完整URL：udp://127.0.0.1:22020/<token>（路径为接入 Token，可在 Web「接入 Token」页管理，例如 admin）
+    仅 token：admin（使用官方服务器）
     留空：不连接配置服务器
   secure_mode: 强制安全通道
   secure_mode_hint: 开启后要求配置服务器支持加密隧道；服务器不支持时会持续重试。

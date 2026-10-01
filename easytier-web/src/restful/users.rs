@@ -334,8 +334,22 @@ impl AuthnBackend for Backend {
             }
         }
 
+        let tokens = self
+            .db
+            .list_user_config_tokens(db_user.id)
+            .await
+            .unwrap_or_default()
+            .into_iter()
+            .map(|t| t.token)
+            .collect::<Vec<_>>();
+        let tokens = if tokens.is_empty() {
+            vec![db_user.config_token.clone()]
+        } else {
+            tokens
+        };
+
         Ok(Some(User {
-            tokens: vec![db_user.config_token.clone()],
+            tokens,
             db_user,
         }))
     }
@@ -347,8 +361,21 @@ impl AuthnBackend for Backend {
             .await?;
 
         if let Some(u) = user {
+            let tokens = self
+                .db
+                .list_user_config_tokens(u.id)
+                .await
+                .unwrap_or_default()
+                .into_iter()
+                .map(|t| t.token)
+                .collect::<Vec<_>>();
+            let tokens = if tokens.is_empty() {
+                vec![u.config_token.clone()]
+            } else {
+                tokens
+            };
             Ok(Some(User {
-                tokens: vec![u.config_token.clone()],
+                tokens,
                 db_user: u,
             }))
         } else {

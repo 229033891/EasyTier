@@ -12,6 +12,7 @@ import NetworkList from './components/NetworkList.vue'
 import DeviceManagement from './components/DeviceManagement.vue'
 import Dashboard from './components/Dashboard.vue'
 import UserList from './components/UserList.vue'
+import ConfigTokenList from './components/ConfigTokenList.vue'
 import DialogService from 'primevue/dialogservice'
 import ToastService from 'primevue/toastservice'
 
@@ -53,6 +54,11 @@ const routes = [
                 path: 'userList',
                 name: 'userList',
                 component: UserList,
+            },
+            {
+                path: 'configTokens',
+                name: 'configTokens',
+                component: ConfigTokenList,
             },
             {
                 // 独立全页管理（不再嵌在设备列表 Drawer 内）

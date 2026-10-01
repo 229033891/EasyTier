@@ -8,6 +8,7 @@ pub use super::networks::Entity as Networks;
 pub use super::peer_conn_history::Entity as PeerConnHistory;
 pub use super::permissions::Entity as Permissions;
 pub use super::tower_sessions::Entity as TowerSessions;
+pub use super::user_config_tokens::Entity as UserConfigTokens;
 pub use super::user_running_network_configs::Entity as UserRunningNetworkConfigs;
 pub use super::users::Entity as Users;
 pub use super::users_groups::Entity as UsersGroups;

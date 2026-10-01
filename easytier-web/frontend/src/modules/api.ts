@@ -30,6 +30,25 @@ export interface UserInfo {
     config_token?: string;
 }
 
+export interface ConfigTokenInfo {
+    id: number;
+    user_id: number;
+    username: string;
+    token: string;
+    label: string;
+}
+
+export interface CreateConfigTokenRequest {
+    user_id: number;
+    token?: string;
+    label?: string;
+}
+
+export interface UpdateConfigTokenRequest {
+    token?: string;
+    label?: string;
+}
+
 export interface AdminCreateUserRequest {
     username: string;
     password: string;
@@ -138,6 +157,22 @@ export class ApiClient {
 
     public async reset_user_password(id: number, new_password: string): Promise<void> {
         await this.client.put(`/users/${id}/password`, { new_password });
+    }
+
+    public async list_config_tokens(): Promise<ConfigTokenInfo[]> {
+        return await this.client.get<any, ConfigTokenInfo[]>('/admin/config-tokens');
+    }
+
+    public async create_config_token(data: CreateConfigTokenRequest): Promise<ConfigTokenInfo> {
+        return await this.client.post<any, ConfigTokenInfo>('/admin/config-tokens', data);
+    }
+
+    public async update_config_token(id: number, data: UpdateConfigTokenRequest): Promise<ConfigTokenInfo> {
+        return await this.client.put<any, ConfigTokenInfo>(`/admin/config-tokens/${id}`, data);
+    }
+
+    public async delete_config_token(id: number): Promise<void> {
+        await this.client.delete(`/admin/config-tokens/${id}`);
     }
 
     // 登录

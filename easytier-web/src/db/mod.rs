@@ -6,8 +6,9 @@ use easytier::common::config::{ConfigSource, NetworkConfig};
 use easytier_core::management::remote_client::{ListNetworkProps, Storage};
 use entity::user_running_network_configs;
 use sea_orm::{
-    ColumnTrait as _, DatabaseConnection, DbErr, EntityTrait, IntoActiveModel as _, QueryFilter as _,
-    Set, SqlxSqliteConnector, TransactionTrait as _, sea_query::OnConflict,
+    ActiveModelTrait as _, ColumnTrait as _, DatabaseConnection, DbErr, EntityTrait,
+    IntoActiveModel as _, QueryFilter as _, Set, SqlxSqliteConnector, TransactionTrait as _,
+    sea_query::OnConflict,
 };
 use sea_orm_migration::MigratorTrait as _;
 use sqlx::{Sqlite, SqlitePool, migrate::MigrateDatabase as _, types::chrono};
@@ -26,6 +27,21 @@ pub fn hash_web_login_password(plaintext: &str) -> String {
 
 pub fn generate_config_token() -> String {
     format!("et_{}", uuid::Uuid::new_v4().simple())
+}
+
+/// Validate a config-server URL path token (e.g. `admin`).
+pub fn validate_config_token_value(token: &str) -> Result<(), String> {
+    let token = token.trim();
+    if token.is_empty() {
+        return Err("Token cannot be empty".to_string());
+    }
+    if token.len() > 128 {
+        return Err("Token is too long (max 128 characters)".to_string());
+    }
+    if token.contains('/') || token.contains('\\') || token.contains(' ') || token.contains('?') {
+        return Err("Token cannot contain spaces, slashes, or '?'".to_string());
+    }
+    Ok(())
 }
 
 fn md5_hex(input: &str) -> String {
@@ -424,6 +440,7 @@ impl Db {
 
     /// Create user and join the given groups (e.g. `users`, `admins`) in one transaction.
     /// When `config_token` is `None`, a random token is generated.
+    /// The token is stored both on `users.config_token` (legacy) and `user_config_tokens`.
     pub async fn create_user_and_join_groups(
         &self,
         username: &str,
@@ -431,10 +448,15 @@ impl Db {
         group_names: &[&str],
         config_token: Option<String>,
     ) -> Result<entity::users::Model, DbErr> {
-        use entity::{groups, users, users_groups};
+        use entity::{groups, user_config_tokens, users, users_groups};
 
         if group_names.is_empty() {
             return Err(DbErr::Custom("At least one group is required".to_string()));
+        }
+
+        let token = config_token.unwrap_or_else(generate_config_token);
+        if let Err(e) = validate_config_token_value(&token) {
+            return Err(DbErr::Custom(e));
         }
 
         let txn = self.orm_db().begin().await?;
@@ -442,7 +464,7 @@ impl Db {
         let user_active = users::ActiveModel {
             username: Set(username.to_string()),
             password: Set(password_hash),
-            config_token: Set(config_token.unwrap_or_else(generate_config_token)),
+            config_token: Set(token.clone()),
             ..Default::default()
         };
         let insert_result = users::Entity::insert(user_active).exec(&txn).await?;
@@ -466,6 +488,19 @@ impl Db {
             };
             users_groups::Entity::insert(ug_active).exec(&txn).await?;
         }
+
+        let now = chrono::Local::now().fixed_offset();
+        let token_row = user_config_tokens::ActiveModel {
+            user_id: Set(new_user.id),
+            token: Set(token),
+            label: Set("default".to_string()),
+            create_time: Set(now),
+            update_time: Set(now),
+            ..Default::default()
+        };
+        user_config_tokens::Entity::insert(token_row)
+            .exec(&txn)
+            .await?;
 
         txn.commit().await?;
 
@@ -531,14 +566,35 @@ impl Db {
         .await
     }
 
-    // Lookup by dedicated config_token (path segment in udp://host/<token>).
+    pub async fn get_username_by_id(&self, user_id: UserIdInDb) -> Result<Option<String>, DbErr> {
+        use entity::users as u;
+        let user = u::Entity::find_by_id(user_id).one(self.orm_db()).await?;
+        Ok(user.map(|u| u.username))
+    }
+
+    // Lookup by config-server URL path token (`udp://host/<token>`).
     pub async fn get_user_id_by_token<T: ToString>(
         &self,
         token: T,
     ) -> Result<Option<UserIdInDb>, DbErr> {
-        use entity::users as u;
+        use entity::user_config_tokens as t;
 
         let token = token.to_string();
+        if token.is_empty() {
+            return Ok(None);
+        }
+
+        // Prefer multi-token table.
+        if let Some(row) = t::Entity::find()
+            .filter(t::Column::Token.eq(token.clone()))
+            .one(self.orm_db())
+            .await?
+        {
+            return Ok(Some(row.user_id));
+        }
+
+        // Legacy fallback: users.config_token (pre multi-token migration).
+        use entity::users as u;
         let user = u::Entity::find()
             .filter(u::Column::ConfigToken.eq(token))
             .one(self.orm_db())
@@ -546,22 +602,159 @@ impl Db {
         Ok(user.map(|u| u.id))
     }
 
-    /// Rotate config-server token. Returns the new token.
+    pub async fn list_config_tokens(
+        &self,
+    ) -> Result<Vec<(entity::user_config_tokens::Model, String)>, DbErr> {
+        use entity::{user_config_tokens as t, users};
+        use sea_orm::{JoinType, QueryOrder, QuerySelect, RelationTrait};
+
+        #[derive(sea_orm::FromQueryResult)]
+        struct Row {
+            id: i32,
+            user_id: i32,
+            token: String,
+            label: String,
+            create_time: chrono::DateTime<chrono::FixedOffset>,
+            update_time: chrono::DateTime<chrono::FixedOffset>,
+            username: String,
+        }
+
+        let rows = t::Entity::find()
+            .column_as(t::Column::Id, "id")
+            .column_as(t::Column::UserId, "user_id")
+            .column_as(t::Column::Token, "token")
+            .column_as(t::Column::Label, "label")
+            .column_as(t::Column::CreateTime, "create_time")
+            .column_as(t::Column::UpdateTime, "update_time")
+            .column_as(users::Column::Username, "username")
+            .join(JoinType::InnerJoin, t::Relation::Users.def())
+            .order_by_desc(t::Column::UpdateTime)
+            .into_model::<Row>()
+            .all(self.orm_db())
+            .await?;
+
+        Ok(rows
+            .into_iter()
+            .map(|r| {
+                (
+                    entity::user_config_tokens::Model {
+                        id: r.id,
+                        user_id: r.user_id,
+                        token: r.token,
+                        label: r.label,
+                        create_time: r.create_time,
+                        update_time: r.update_time,
+                    },
+                    r.username,
+                )
+            })
+            .collect())
+    }
+
+    pub async fn list_user_config_tokens(
+        &self,
+        user_id: UserIdInDb,
+    ) -> Result<Vec<entity::user_config_tokens::Model>, DbErr> {
+        use entity::user_config_tokens as t;
+        use sea_orm::QueryOrder as _;
+        t::Entity::find()
+            .filter(t::Column::UserId.eq(user_id))
+            .order_by_desc(t::Column::UpdateTime)
+            .all(self.orm_db())
+            .await
+    }
+
+    pub async fn create_config_token(
+        &self,
+        user_id: UserIdInDb,
+        token: Option<String>,
+        label: Option<String>,
+    ) -> Result<entity::user_config_tokens::Model, DbErr> {
+        use entity::{user_config_tokens as t, users};
+
+        users::Entity::find_by_id(user_id)
+            .one(self.orm_db())
+            .await?
+            .ok_or_else(|| DbErr::Custom("User not found".to_string()))?;
+
+        let token = token.unwrap_or_else(generate_config_token);
+        let token = token.trim().to_string();
+        if let Err(e) = validate_config_token_value(&token) {
+            return Err(DbErr::Custom(e));
+        }
+
+        let now = chrono::Local::now().fixed_offset();
+        let active = t::ActiveModel {
+            user_id: Set(user_id),
+            token: Set(token),
+            label: Set(label.unwrap_or_default().trim().to_string()),
+            create_time: Set(now),
+            update_time: Set(now),
+            ..Default::default()
+        };
+        let insert = t::Entity::insert(active).exec(self.orm_db()).await?;
+        t::Entity::find_by_id(insert.last_insert_id)
+            .one(self.orm_db())
+            .await?
+            .ok_or_else(|| DbErr::Custom("Failed to load created token".to_string()))
+    }
+
+    pub async fn update_config_token(
+        &self,
+        id: i32,
+        token: Option<String>,
+        label: Option<String>,
+    ) -> Result<entity::user_config_tokens::Model, DbErr> {
+        use entity::user_config_tokens as t;
+
+        let mut model = t::Entity::find_by_id(id)
+            .one(self.orm_db())
+            .await?
+            .ok_or_else(|| DbErr::Custom("Token not found".to_string()))?
+            .into_active_model();
+
+        if let Some(token) = token {
+            let token = token.trim().to_string();
+            if let Err(e) = validate_config_token_value(&token) {
+                return Err(DbErr::Custom(e));
+            }
+            model.token = Set(token);
+        }
+        if let Some(label) = label {
+            model.label = Set(label.trim().to_string());
+        }
+        model.update_time = Set(chrono::Local::now().fixed_offset());
+        let updated = model.update(self.orm_db()).await?;
+        Ok(updated)
+    }
+
+    pub async fn delete_config_token(&self, id: i32) -> Result<(), DbErr> {
+        use entity::user_config_tokens as t;
+        let result = t::Entity::delete_by_id(id).exec(self.orm_db()).await?;
+        if result.rows_affected == 0 {
+            return Err(DbErr::Custom("Token not found".to_string()));
+        }
+        Ok(())
+    }
+
+    /// Rotate legacy users.config_token and upsert into user_config_tokens.
     pub async fn regenerate_user_config_token(
         &self,
         user_id: UserIdInDb,
     ) -> Result<String, DbErr> {
-        use entity::users as u;
+        let created = self
+            .create_config_token(user_id, None, Some("regenerated".to_string()))
+            .await?;
 
-        let new_token = generate_config_token();
+        use entity::users as u;
         let mut model = u::Entity::find_by_id(user_id)
             .one(self.orm_db())
             .await?
             .ok_or_else(|| DbErr::Custom("User not found".to_string()))?
             .into_active_model();
-        model.config_token = Set(new_token.clone());
+        model.config_token = Set(created.token.clone());
         u::Entity::update(model).exec(self.orm_db()).await?;
-        Ok(new_token)
+        Ok(created.token)
     }
 
     pub async fn get_managed_config_revision(

@@ -10,6 +10,7 @@ pub mod networks;
 pub mod peer_conn_history;
 pub mod permissions;
 pub mod tower_sessions;
+pub mod user_config_tokens;
 pub mod user_running_network_configs;
 pub mod users;
 pub mod users_groups;

@@ -518,6 +518,7 @@ web:
     network_count: Network Count
     network_list: Network List
     user_list: User Management
+    config_tokens: Access Tokens
     login_page: Login Page
     settings: Settings
     logout: Logout
@@ -559,6 +560,30 @@ web:
     reset_failed: Failed to reset password
     password_required: Please enter a new password
     cancel: Cancel
+
+  config_tokens:
+    create_title: Create Access Token
+    hint: Clients use udp://host:port/Token as the config-server URL. Example: token "admin" → udp://127.0.0.1:22020/admin. Leave token blank to auto-generate.
+    create: Create
+    create_success: Token created
+    create_failed: Failed to create token
+    update_success: Token updated
+    update_failed: Failed to update token
+    delete: Delete Token
+    confirm_delete: Delete token "{token}"? Clients using it will lose access.
+    delete_success: Token deleted
+    delete_failed: Failed to delete token
+    empty: No tokens
+    user: User
+    user_required: Please select a user
+    token: Token / Key
+    token_placeholder: e.g. admin (leave blank to auto-generate)
+    label: Label
+    label_placeholder: Optional label
+    url_example: Client URL example
+    copy: Copy
+    copied: Copied
+    copy_failed: Copy failed
 
   device:
     list: Device List
@@ -730,11 +755,11 @@ mode:
 config-server:
   title: Config Server
   address: Config Server Address
-  address_placeholder: "e.g.: udp://127.0.0.1:22020/<config_token>"
+  address_placeholder: "e.g.: udp://127.0.0.1:22020/admin"
   description: |
     Config server address, allowed formats:
-    Full URL: udp://127.0.0.1:22020/<config_token> (path is the user's config_token, not username)
-    Token only: et_xxxx (uses official server)
+    Full URL: udp://127.0.0.1:22020/<token> (path is an access token managed in Web "Access Tokens", e.g. admin)
+    Token only: admin (uses official server)
     Leave blank: Don't connect to a config server
   secure_mode: Require secure tunnel
   secure_mode_hint: When enabled, the config server must support encrypted tunnels; otherwise the client will keep retrying.

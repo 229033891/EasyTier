@@ -1,3 +1,4 @@
+mod admin_config_tokens;
 mod admin_users;
 mod auth;
 pub(crate) mod captcha;
@@ -323,6 +324,7 @@ impl RestfulServer {
             .route_layer(login_required!(Backend))
             .merge(auth::router())
             .merge(admin_users::router())
+            .merge(admin_config_tokens::router())
             .merge(oidc::router())
             .with_state(self.client_mgr.clone())
             .route(
