@@ -430,10 +430,7 @@ pub fn list_interface_firewall_rules(interface_name: &str) -> anyhow::Result<Vec
 
     // Check fallback protocol rules
     for direction in ["Inbound", "Outbound"] {
-        let rule_name = format!(
-            "ET {} - All Protocols ({})",
-            interface_name, direction
-        );
+        let rule_name = format!("ET {} - All Protocols ({})", interface_name, direction);
         if check_rule_exists(&rules, &rule_name)? {
             found_rules.push(rule_name);
         }

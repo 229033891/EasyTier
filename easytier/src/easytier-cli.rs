@@ -3475,9 +3475,8 @@ async fn main() -> Result<(), Error> {
 
                         ret
                     });
-                    let bin_path = std::fs::canonicalize(bin_path).map_err(|e| {
-                        anyhow::anyhow!("failed to get ET-core application: {}", e)
-                    })?;
+                    let bin_path = std::fs::canonicalize(bin_path)
+                        .map_err(|e| anyhow::anyhow!("failed to get ET-core application: {}", e))?;
                     let bin_args = install_args.core_args.unwrap_or_default();
                     let work_dir = install_args.service_work_dir.unwrap_or_else(|| {
                         if cfg!(target_os = "windows") {
