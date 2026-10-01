@@ -563,7 +563,7 @@ web:
 
   config_tokens:
     create_title: Create Access Token
-    hint: Clients use udp://host:port/Token as the config-server URL. Example: token "admin" → udp://127.0.0.1:22020/admin. Leave token blank to auto-generate.
+    hint: "Clients use one URL; choose udp://host:port/Token or tcp://host:port/Token for the same endpoint (server listens on both by default). Example: token \"admin\" → udp://127.0.0.1:22020/admin. Leave token blank to auto-generate."
     create: Create
     create_success: Token created
     create_failed: Failed to create token
@@ -755,10 +755,11 @@ mode:
 config-server:
   title: Config Server
   address: Config Server Address
-  address_placeholder: "e.g.: udp://127.0.0.1:22020/admin"
+  address_placeholder: "e.g.: udp://127.0.0.1:22020/admin or tcp://…"
   description: |
-    Config server address, allowed formats:
-    Full URL: udp://127.0.0.1:22020/<token> (path is an access token managed in Web "Access Tokens", e.g. admin)
+    Enter a single config-server URL (one protocol only):
+    Full URL: udp://127.0.0.1:22020/<token> or tcp://127.0.0.1:22020/<token>
+    New servers listen on both UDP and TCP by default; pick the protocol that fits your network. The path is an access token (managed in Web "Access Tokens").
     Token only: admin (uses official server)
     Leave blank: Don't connect to a config server
   secure_mode: Require secure tunnel

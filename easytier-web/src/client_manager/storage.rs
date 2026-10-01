@@ -401,9 +401,9 @@ impl Storage {
         &self.0.db
     }
 
-    pub async fn auto_create_user(&self, username: &str) -> anyhow::Result<UserIdInDb> {
-        let new_user = self.db().auto_create_user(username).await?;
-        tracing::info!("Auto-created user '{}' with id {}", username, new_user.id);
+    pub async fn auto_create_user(&self, config_token: &str) -> anyhow::Result<UserIdInDb> {
+        let new_user = self.db().auto_create_user(config_token).await?;
+        tracing::info!("Auto-created user '{}' with id {}", config_token, new_user.id);
         Ok(new_user.id)
     }
 }

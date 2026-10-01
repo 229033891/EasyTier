@@ -32,9 +32,10 @@ const router = useRouter();
 const toast = useToast();
 
 const loadDevices = async (): Promise<Array<Utils.DeviceInfo>> => {
+    if (!api) return [];
     const [resp, archived] = await Promise.all([
-        api?.list_machines(),
-        api?.list_devices().catch(() => [] as Array<any>),
+        api.list_machines(),
+        api.list_devices().catch(() => [] as Array<any>),
     ]);
     const devices: Array<Utils.DeviceInfo> = [];
     const seen = new Set<string>();
@@ -50,9 +51,9 @@ const loadDevices = async (): Promise<Array<Utils.DeviceInfo>> => {
             continue;
         devices.push({
             hostname: row.hostname || row.device_id,
-            public_ip: row.last_client_url || '',
+            public_ip: Utils.formatClientUrl(row.last_client_url) || row.last_client_url || '',
             running_network_count: 0,
-            report_time: row.last_seen_at ? new Date(row.last_seen_at * 1000).toISOString() : '',
+            report_time: row.last_seen_at ? new Date(row.last_seen_at * 1000).toLocaleString() : '',
             easytier_version: row.last_easytier_version || '',
             running_network_instances: [],
             machine_id: row.device_id,

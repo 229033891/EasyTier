@@ -237,7 +237,7 @@ jobs:
       - name: Archive artifact
         uses: actions/upload-artifact@v5
         with:
-          name: easytier-gui-${{ matrix.ARTIFACT_NAME }}
+          name: ET-gui-${{ matrix.ARTIFACT_NAME }}
           path: |
             ./artifacts/*
 

@@ -30,14 +30,24 @@ const editToken = ref('');
 const editLabel = ref('');
 
 const load = async () => {
-    const [tokenList, userList] = await Promise.all([
-        props.api.list_config_tokens(),
-        props.api.list_users(),
-    ]);
-    tokens.value = tokenList;
-    users.value = userList;
-    if (newUserId.value == null && userList.length > 0) {
-        newUserId.value = userList[0].id;
+    try {
+        const [tokenList, userList] = await Promise.all([
+            props.api.list_config_tokens(),
+            props.api.list_users(),
+        ]);
+        tokens.value = tokenList;
+        users.value = userList;
+        if (newUserId.value == null && userList.length > 0) {
+            newUserId.value = userList[0].id;
+        }
+    } catch (e: any) {
+        tokens.value = [];
+        toast.add({
+            severity: 'error',
+            summary: t('web.common.error'),
+            detail: e?.response?.data?.message || String(e),
+            life: 3500,
+        });
     }
 };
 
@@ -95,7 +105,7 @@ const submitEdit = async () => {
     savingId.value = editId.value;
     try {
         await props.api.update_config_token(editId.value, {
-            token: editToken.value.trim(),
+            token: editToken.value.trim() || undefined,
             label: editLabel.value.trim(),
         });
         toast.add({
@@ -185,6 +195,8 @@ onMounted(load);
                         option-label="username"
                         option-value="id"
                         class="w-full"
+                        :placeholder="t('web.config_tokens.user')"
+                        :empty-message="t('web.users.empty')"
                     />
                 </FormField>
                 <FormField :label="t('web.config_tokens.token')">
@@ -245,7 +257,10 @@ onMounted(load);
                         <span v-else>{{ row.label || '—' }}</span>
                     </td>
                     <td>
-                        <code class="et-code text-xs">udp://&lt;host&gt;:22020/{{ row.token }}</code>
+                        <div class="flex flex-col gap-0.5">
+                            <code class="et-code text-xs">udp://&lt;host&gt;:22020/{{ row.token }}</code>
+                            <code class="et-code text-xs">tcp://&lt;host&gt;:22020/{{ row.token }}</code>
+                        </div>
                     </td>
                     <td class="whitespace-nowrap">
                         <template v-if="editId === row.id">

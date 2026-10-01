@@ -85,7 +85,7 @@ struct Cli {
         long,
         short='p',
         env = "ET_CONFIG_SERVER_PROTOCOL",
-        default_value = "udp",
+        default_value = "udp,tcp",
         help = t!("cli.config_server_protocol").to_string(),
     )]
     config_server_protocol: String,
@@ -292,6 +292,37 @@ pub fn get_listener_by_url(
     })
 }
 
+/// Parse `--config-server-protocol`, e.g. `udp`, `tcp`, `ws`, or `udp,tcp`.
+fn parse_config_server_protocols(protocol: &str) -> Result<Vec<IpScheme>, Error> {
+    let mut schemes = Vec::new();
+    for part in protocol.split(',') {
+        let part = part.trim();
+        if part.is_empty() {
+            continue;
+        }
+        let scheme: IpScheme = part
+            .parse()
+            .map_err(|_| Error::InvalidUrl(part.to_string()))?;
+        if !matches!(scheme, IpScheme::Udp | IpScheme::Tcp | IpScheme::Ws) {
+            return Err(Error::InvalidUrl(part.to_string()));
+        }
+        if !schemes.contains(&scheme) {
+            schemes.push(scheme);
+        }
+    }
+    if schemes.is_empty() {
+        return Err(Error::InvalidUrl(protocol.to_string()));
+    }
+    // TCP and WS both bind a TCP port; sharing one port will fail.
+    if schemes.contains(&IpScheme::Tcp) && schemes.contains(&IpScheme::Ws) {
+        return Err(Error::InvalidUrl(
+            "tcp and ws cannot share the same config-server port; pick one or use separate ports"
+                .to_string(),
+        ));
+    }
+    Ok(schemes)
+}
+
 async fn get_dual_stack_listener(
     protocol: &str,
     port: u16,
@@ -323,6 +354,55 @@ async fn get_dual_stack_listener(
         None
     };
     Ok((v6_listener, v4_listener))
+}
+
+async fn add_config_server_listeners(
+    mgr: &mut client_manager::ClientManager,
+    protocol_spec: &str,
+    port: u16,
+) -> Result<(), Error> {
+    let schemes = parse_config_server_protocols(protocol_spec)?;
+    let mut added = 0usize;
+
+    for scheme in schemes {
+        let protocol = match scheme {
+            IpScheme::Udp => "udp",
+            IpScheme::Tcp => "tcp",
+            IpScheme::Ws => "ws",
+            _ => continue,
+        };
+        let (v6_listener, v4_listener) = get_dual_stack_listener(protocol, port).await?;
+        let mut scheme_added = 0usize;
+        if let Some(listener) = v6_listener {
+            let url = mgr
+                .add_listener(listener)
+                .await
+                .map_err(|e| Error::InvalidUrl(format!("listen {protocol} v6 failed: {e}")))?;
+            tracing::info!(%url, protocol, "config-server listener started");
+            scheme_added += 1;
+        }
+        if let Some(listener) = v4_listener {
+            let url = mgr
+                .add_listener(listener)
+                .await
+                .map_err(|e| Error::InvalidUrl(format!("listen {protocol} v4 failed: {e}")))?;
+            tracing::info!(%url, protocol, "config-server listener started");
+            scheme_added += 1;
+        }
+        if scheme_added == 0 {
+            return Err(Error::InvalidUrl(format!(
+                "Failed to listen {protocol} on port {port} (neither IPv4 nor IPv6)"
+            )));
+        }
+        added += scheme_added;
+    }
+
+    if added == 0 {
+        return Err(Error::InvalidUrl(
+            "Listen to both IPv4 and IPv6 failed for all config-server protocols".to_string(),
+        ));
+    }
+    Ok(())
 }
 
 #[tokio::main(flavor = "multi_thread", worker_threads = 4)]
@@ -416,19 +496,13 @@ async fn main() {
         feature_flags.clone(),
         webhook_config.clone(),
     );
-    let (v6_listener, v4_listener) =
-        get_dual_stack_listener(&cli.config_server_protocol, cli.config_server_port)
-            .await
-            .unwrap();
-    if v4_listener.is_none() && v6_listener.is_none() {
-        panic!("Listen to both IPv4 and IPv6 failed");
-    }
-    if let Some(listener) = v6_listener {
-        mgr.add_listener(listener).await.unwrap();
-    }
-    if let Some(listener) = v4_listener {
-        mgr.add_listener(listener).await.unwrap();
-    }
+    add_config_server_listeners(
+        &mut mgr,
+        &cli.config_server_protocol,
+        cli.config_server_port,
+    )
+    .await
+    .unwrap_or_else(|e| panic!("Failed to start config-server listeners: {e}"));
 
     let mgr = Arc::new(mgr);
 

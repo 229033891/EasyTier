@@ -122,7 +122,7 @@ jobs:
       - name: Archive bins
         uses: actions/upload-artifact@v5
         with:
-          name: openwrt-bins
+          name: ET-openwrt-bins
           path: bins/*
 
   build-openwrt:
@@ -156,7 +156,7 @@ jobs:
       - name: Download bins
         uses: actions/download-artifact@v4
         with:
-          name: openwrt-bins
+          name: ET-openwrt-bins
           path: feed/easytier/bins/
 
       - name: Prepare feed (版本号 + 本地二进制)
@@ -224,7 +224,7 @@ jobs:
       - name: Archive packages
         uses: actions/upload-artifact@v5
         with:
-          name: openwrt-x86_64-${{ matrix.pkgtype }}
+          name: ET-openwrt-x86_64-${{ matrix.pkgtype }}
           path: dist/*
 
   openwrt-result:

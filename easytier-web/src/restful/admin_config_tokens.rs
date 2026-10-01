@@ -101,18 +101,27 @@ async fn create_token(
         .create_config_token(req.user_id, req.token, req.label)
         .await
         .map_err(|e| {
-            let msg = e.to_string();
-            if msg.contains("UNIQUE") || msg.contains("unique") {
+            if crate::db::is_config_token_taken_err(&e) {
+                // Exact sentinel from the pre-check.
                 (
                     StatusCode::CONFLICT,
-                    Json::from(other_error("Token already exists")),
+                    Json::from(other_error(crate::db::CONFIG_TOKEN_ALREADY_EXISTS_MSG)),
                 )
-            } else if msg.contains("User not found") {
-                (StatusCode::NOT_FOUND, Json::from(other_error(msg)))
-            } else if msg.contains("Token") {
-                (StatusCode::BAD_REQUEST, Json::from(other_error(msg)))
+            } else if crate::db::is_unique_violation_err(&e) {
+                // Final defense: UNIQUE constraint fired (race the pre-check missed).
+                (
+                    StatusCode::CONFLICT,
+                    Json::from(other_error(crate::db::CONFIG_TOKEN_ALREADY_EXISTS_MSG)),
+                )
             } else {
-                convert_db_error(e)
+                let msg = e.to_string();
+                if msg.contains("User not found") {
+                    (StatusCode::NOT_FOUND, Json::from(other_error(msg)))
+                } else if crate::db::is_config_token_validation_err(&e) {
+                    (StatusCode::BAD_REQUEST, Json::from(other_error(msg)))
+                } else {
+                    convert_db_error(e)
+                }
             }
         })?;
 
@@ -145,18 +154,27 @@ async fn update_token(
         .update_config_token(id, req.token, req.label)
         .await
         .map_err(|e| {
-            let msg = e.to_string();
-            if msg.contains("UNIQUE") || msg.contains("unique") {
+            if crate::db::is_config_token_taken_err(&e) {
+                // Exact sentinel from the pre-check.
                 (
                     StatusCode::CONFLICT,
-                    Json::from(other_error("Token already exists")),
+                    Json::from(other_error(crate::db::CONFIG_TOKEN_ALREADY_EXISTS_MSG)),
                 )
-            } else if msg.contains("not found") {
-                (StatusCode::NOT_FOUND, Json::from(other_error(msg)))
-            } else if msg.contains("Token") {
-                (StatusCode::BAD_REQUEST, Json::from(other_error(msg)))
+            } else if crate::db::is_unique_violation_err(&e) {
+                // Final defense: UNIQUE constraint fired (race the pre-check missed).
+                (
+                    StatusCode::CONFLICT,
+                    Json::from(other_error(crate::db::CONFIG_TOKEN_ALREADY_EXISTS_MSG)),
+                )
             } else {
-                convert_db_error(e)
+                let msg = e.to_string();
+                if msg.contains("not found") {
+                    (StatusCode::NOT_FOUND, Json::from(other_error(msg)))
+                } else if crate::db::is_config_token_validation_err(&e) {
+                    (StatusCode::BAD_REQUEST, Json::from(other_error(msg)))
+                } else {
+                    convert_db_error(e)
+                }
             }
         })?;
 

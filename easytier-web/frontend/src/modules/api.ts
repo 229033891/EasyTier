@@ -20,6 +20,7 @@ export interface MeResponse {
     username: string;
     is_admin: boolean;
     config_token?: string;
+    config_tokens?: string[];
 }
 
 export interface UserInfo {
@@ -28,6 +29,7 @@ export interface UserInfo {
     groups: string[];
     is_admin: boolean;
     config_token?: string;
+    config_tokens?: string[];
 }
 
 export interface ConfigTokenInfo {

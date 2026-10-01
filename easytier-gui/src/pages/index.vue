@@ -101,7 +101,7 @@ function openConfigServerDialog() {
   configServerUrl.value = (mode.mode === 'normal' || mode.mode === 'service')
     ? (mode.config_server_url ?? '')
     : ''
-  configServerSecureMode.value = (mode.mode === 'normal' || mode.mode === 'service')
+  configServerSecureMode.value = mode.mode === 'normal'
     ? !!mode.secure_mode
     : false
   configServerDialogVisible.value = true
@@ -113,7 +113,11 @@ async function applyConfigServerUrl(url?: string, secureMode?: boolean) {
     return
   }
   mode.config_server_url = url
-  mode.secure_mode = !!secureMode
+  if (mode.mode === 'normal') {
+    mode.secure_mode = !!secureMode
+  } else {
+    mode.secure_mode = undefined
+  }
   await initWithMode(mode)
 }
 
@@ -128,11 +132,11 @@ async function onConfigServerSave() {
   }
 
   const nextUrl = configServerUrl.value.trim() || undefined
-  const nextSecure = configServerSecureMode.value
+  const nextSecure = mode.mode === 'normal' ? configServerSecureMode.value : false
   const prevUrl = (mode.mode === 'normal' || mode.mode === 'service')
     ? (mode.config_server_url?.trim() || undefined)
     : undefined
-  const prevSecure = (mode.mode === 'normal' || mode.mode === 'service')
+  const prevSecure = mode.mode === 'normal'
     ? !!mode.secure_mode
     : false
   if (nextUrl === prevUrl && nextSecure === prevSecure) {
@@ -737,11 +741,11 @@ async function connectRpcClient(isNormalMode: boolean, url?: string) {
             <InputText id="config-server-url" v-model="configServerUrl" class="w-full"
               :placeholder="t('config-server.address_placeholder')" />
           </div>
-          <div class="flex items-center gap-2">
+          <div v-if="currentMode.mode === 'normal'" class="flex items-center gap-2">
             <Checkbox id="config-server-secure" v-model="configServerSecureMode" binary />
             <label for="config-server-secure">{{ t('config-server.secure_mode') }}</label>
           </div>
-          <p class="text-xs text-secondary m-0">{{ t('config-server.secure_mode_hint') }}</p>
+          <p v-if="currentMode.mode === 'normal'" class="text-xs text-secondary m-0">{{ t('config-server.secure_mode_hint') }}</p>
         </div>
       </template>
       <template #footer>

@@ -1,4 +1,5 @@
 use sea_orm_migration::prelude::*;
+use sea_orm::{DbBackend, Statement};
 
 pub struct Migration;
 
@@ -28,28 +29,42 @@ impl MigrationTrait for Migration {
                     ON DELETE CASCADE
                     ON UPDATE CASCADE
             );
-            CREATE UNIQUE INDEX IF NOT EXISTS idx_user_config_tokens_token
-                ON user_config_tokens(token);
-            CREATE INDEX IF NOT EXISTS idx_user_config_tokens_user_id
-                ON user_config_tokens(user_id);
+            "#,
+        )
+        .await?;
+        db.execute_unprepared(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_user_config_tokens_token ON user_config_tokens(token);",
+        )
+        .await?;
+        db.execute_unprepared(
+            "CREATE INDEX IF NOT EXISTS idx_user_config_tokens_user_id ON user_config_tokens(user_id);",
+        )
+        .await?;
 
-            -- Seed from existing users.config_token (compat with prior single-token design).
-            INSERT INTO user_config_tokens (user_id, token, label, create_time, update_time)
+        // Seed from existing users.config_token (compat with prior single-token design).
+        // Timestamps are generated on the Rust side as RFC3339 with timezone so they
+        // parse back into the DateTimeWithTimeZone entity fields; bare
+        // datetime('now') ('YYYY-MM-DD HH:MM:SS', no offset) does not.
+        let now = chrono::Local::now().fixed_offset().to_rfc3339();
+        let seed = Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            r#"INSERT INTO user_config_tokens (user_id, token, label, create_time, update_time)
             SELECT
                 id,
                 config_token,
                 'default',
-                datetime('now'),
-                datetime('now')
+                ?,
+                ?
             FROM users
             WHERE config_token IS NOT NULL
               AND config_token != ''
               AND NOT EXISTS (
                   SELECT 1 FROM user_config_tokens t WHERE t.token = users.config_token
-              );
-            "#,
-        )
-        .await?;
+              );"#,
+            vec![now.clone().into(), now.into()],
+        );
+        db.execute(seed).await?;
+
         Ok(())
     }
 

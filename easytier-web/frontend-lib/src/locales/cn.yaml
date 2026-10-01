@@ -564,7 +564,7 @@ web:
 
   config_tokens:
     create_title: 新建接入 Token
-    hint: 客户端配置服务器地址为 udp://主机:端口/Token。例如 Token 为 admin 时使用 udp://127.0.0.1:22020/admin。可自定义或留空自动生成。
+    hint: 客户端填写单个地址，按网络选用 udp://主机:端口/Token 或 tcp://主机:端口/Token（服务端默认同时支持）。例如 Token 为 admin → udp://127.0.0.1:22020/admin。可自定义或留空自动生成。
     create: 创建
     create_success: Token 已创建
     create_failed: 创建 Token 失败
@@ -756,10 +756,11 @@ mode:
 config-server:
   title: 配置服务器
   address: 配置服务器地址
-  address_placeholder: 例如：udp://127.0.0.1:22020/admin
+  address_placeholder: 例如：udp://127.0.0.1:22020/admin 或 tcp://…
   description: |
-    配置服务器地址，支持以下格式：
-    完整URL：udp://127.0.0.1:22020/<token>（路径为接入 Token，可在 Web「接入 Token」页管理，例如 admin）
+    填写单个配置服务器地址（一次只能选一种协议），格式：
+    完整 URL：udp://127.0.0.1:22020/<token> 或 tcp://127.0.0.1:22020/<token>
+    新版服务端默认同时监听 UDP 与 TCP，请按实际网络环境选择协议；路径为接入 Token（可在 Web「接入 Token」页管理）
     仅 token：admin（使用官方服务器）
     留空：不连接配置服务器
   secure_mode: 强制安全通道

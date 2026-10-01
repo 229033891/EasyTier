@@ -273,16 +273,19 @@ impl WebhookConfig {
                 return None;
             }
             if trimmed.len() < Self::INTERNAL_AUTH_TOKEN_MIN_LEN {
-                tracing::error!(
-                    "ET_INTERNAL_AUTH_TOKEN is too short ({} chars); need at least {}. Internal API disabled.",
+                // Compatibility: keep accepting legacy short tokens so existing
+                // deployments don't lose internal-API access on upgrade, but
+                // warn loudly — short secrets are brute-forceable.
+                tracing::warn!(
+                    "ET_INTERNAL_AUTH_TOKEN is short ({} chars, need at least {}). Keeping it for compatibility; please rotate to a longer secret.",
                     trimmed.len(),
                     Self::INTERNAL_AUTH_TOKEN_MIN_LEN
                 );
                 eprintln!(
-                    "ERROR: --internal-auth-token / ET_INTERNAL_AUTH_TOKEN must be at least {} characters; ignoring.",
+                    "WARNING: --internal-auth-token / ET_INTERNAL_AUTH_TOKEN is only {} characters (recommend at least {}); keeping it for compatibility but please rotate.",
+                    trimmed.len(),
                     Self::INTERNAL_AUTH_TOKEN_MIN_LEN
                 );
-                return None;
             }
             Some(trimmed)
         });
@@ -310,7 +313,7 @@ impl WebhookConfig {
     pub fn has_internal_auth(&self) -> bool {
         self.internal_auth_token
             .as_ref()
-            .is_some_and(|t| t.len() >= Self::INTERNAL_AUTH_TOKEN_MIN_LEN)
+            .is_some_and(|t| !t.is_empty())
     }
 }
 

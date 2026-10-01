@@ -422,7 +422,9 @@ fn load_or_create_session_key(db_path: &str) -> Key {
                 return key;
             }
         } else {
-            tracing::warn!(
+            // Keep serving (fall back to the key file) but log at error level:
+            // a short secret would weaken cookie signing.
+            tracing::error!(
                 "ET_SESSION_SECRET is too short (need at least {MIN_LEN} bytes); generating a key file instead"
             );
         }
@@ -454,6 +456,15 @@ fn load_or_create_session_key(db_path: &str) -> Key {
         {
             use std::os::unix::fs::PermissionsExt;
             let _ = std::fs::set_permissions(&key_path, std::fs::Permissions::from_mode(0o600));
+        }
+        // 0600 is only applied on unix; on Windows the key file has no
+        // restrictive ACL, so warn that host file permissions matter.
+        #[cfg(not(unix))]
+        {
+            tracing::warn!(
+                "Session signing key persisted to {} without restrictive file permissions (0600 is unix-only); restrict access via host ACLs",
+                key_path.display()
+            );
         }
     }
     key

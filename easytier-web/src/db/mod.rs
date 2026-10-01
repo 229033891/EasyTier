@@ -29,17 +29,60 @@ pub fn generate_config_token() -> String {
     format!("et_{}", uuid::Uuid::new_v4().simple())
 }
 
+/// Sentinel for "config token already taken" failures.
+/// Compare with [`is_config_token_taken_err`] (exact match) instead of
+/// `contains("Token already exists")` so UNIQUE-constraint text from the DB
+/// is never confused with this pre-check.
+pub const CONFIG_TOKEN_ALREADY_EXISTS_MSG: &str = "Token already exists";
+
+/// Exact-match check for the [`CONFIG_TOKEN_ALREADY_EXISTS_MSG`] pre-check sentinel.
+pub fn is_config_token_taken_err(e: &DbErr) -> bool {
+    matches!(e, DbErr::Custom(msg) if msg == CONFIG_TOKEN_ALREADY_EXISTS_MSG)
+}
+
+/// Best-effort check for a DB-level UNIQUE violation (final defense for races
+/// the pre-check cannot see). Maps to 409 in the REST layer.
+pub fn is_unique_violation_err(e: &DbErr) -> bool {
+    let msg = e.to_string();
+    msg.contains("UNIQUE") || msg.contains("unique") || msg.contains("Duplicate")
+}
+
+/// Exact-match check for token-shape validation failures (maps to 400).
+/// Kept as explicit sentinels so the REST layer never sniffs substrings.
+pub fn is_config_token_validation_err(e: &DbErr) -> bool {
+    matches!(
+        e,
+        DbErr::Custom(msg)
+            if msg == "Token cannot be empty"
+                || msg == "Token is too long (max 128 characters)"
+                || msg == "Token may only contain letters, digits, '.', '_' or '-'"
+                || msg == "Token must not start with 'revoked_' prefix"
+    )
+}
+
+/// Number of username-collision retries for `auto_create_user` (`auto_<prefix>`).
+pub const AUTO_CREATE_USERNAME_RETRIES: usize = 5;
+
 /// Validate a config-server URL path token (e.g. `admin`).
+/// Allowed: ASCII letters, digits, `.`, `_`, `-` (safe in URL paths).
 pub fn validate_config_token_value(token: &str) -> Result<(), String> {
     let token = token.trim();
     if token.is_empty() {
         return Err("Token cannot be empty".to_string());
     }
+    if token.starts_with("revoked_") {
+        return Err("Token must not start with 'revoked_' prefix".to_string());
+    }
     if token.len() > 128 {
         return Err("Token is too long (max 128 characters)".to_string());
     }
-    if token.contains('/') || token.contains('\\') || token.contains(' ') || token.contains('?') {
-        return Err("Token cannot contain spaces, slashes, or '?'".to_string());
+    if !token
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
+    {
+        return Err(
+            "Token may only contain letters, digits, '.', '_' or '-'".to_string(),
+        );
     }
     Ok(())
 }
@@ -455,8 +498,12 @@ impl Db {
         }
 
         let token = config_token.unwrap_or_else(generate_config_token);
+        let token = token.trim().to_string();
         if let Err(e) = validate_config_token_value(&token) {
             return Err(DbErr::Custom(e));
+        }
+        if self.is_config_token_taken(&token, None, None).await? {
+            return Err(DbErr::Custom(CONFIG_TOKEN_ALREADY_EXISTS_MSG.to_string()));
         }
 
         let txn = self.orm_db().begin().await?;
@@ -508,9 +555,16 @@ impl Db {
     }
 
     pub async fn delete_user_by_id(&self, user_id: i32) -> Result<(), DbErr> {
-        use entity::{users, users_groups};
+        use entity::{user_config_tokens, users, users_groups};
 
         let txn = self.orm_db().begin().await?;
+
+        // Explicitly remove this user's URL tokens too; do not rely on
+        // SQLite foreign-key enforcement (often off without PRAGMA foreign_keys=ON).
+        user_config_tokens::Entity::delete_many()
+            .filter(user_config_tokens::Column::UserId.eq(user_id))
+            .exec(&txn)
+            .await?;
 
         users_groups::Entity::delete_many()
             .filter(users_groups::Column::UserId.eq(user_id))
@@ -547,23 +601,58 @@ impl Db {
 
     pub async fn auto_create_user(&self, token: &str) -> Result<entity::users::Model, DbErr> {
         // Username is derived for display; config_token remains the URL secret.
-        let username = if token.len() > 32 {
-            format!("auto_{}", &token[..8])
+        // Slice by chars (not bytes) so multi-byte input cannot panic.
+        let token = token.trim().to_string();
+        let prefix: String = token.chars().take(8).collect();
+        let base_username = if token.chars().count() > 32 {
+            format!("auto_{prefix}")
         } else {
-            token.to_string()
+            token.clone()
         };
         let random_password = uuid::Uuid::new_v4().to_string();
         let hashed_password =
             tokio::task::spawn_blocking(move || password_auth::generate_hash(&random_password))
                 .await
                 .map_err(|e| DbErr::Custom(format!("Failed to hash password: {}", e)))?;
-        self.create_user_and_join_groups(
-            &username,
-            hashed_password,
-            &["users"],
-            Some(token.to_string()),
-        )
-        .await
+        // `auto_<8-char prefix>` can collide across tokens sharing a prefix;
+        // retry with a random suffix a few times before giving up.
+        let mut attempt = 0usize;
+        loop {
+            let username = if attempt == 0 {
+                base_username.clone()
+            } else {
+                format!(
+                    "{}_{}",
+                    base_username,
+                    &uuid::Uuid::new_v4().simple().to_string()[..6]
+                )
+            };
+            match self
+                .create_user_and_join_groups(
+                    &username,
+                    hashed_password.clone(),
+                    &["users"],
+                    Some(token.clone()),
+                )
+                .await
+            {
+                Ok(user) => return Ok(user),
+                Err(e) if is_config_token_taken_err(&e) => return Err(e),
+                Err(e)
+                    if attempt < AUTO_CREATE_USERNAME_RETRIES
+                        && is_unique_violation_err(&e)
+                        && e.to_string().contains("username") =>
+                {
+                    tracing::warn!(
+                        username = %username,
+                        attempt,
+                        "auto-create username collision, retrying"
+                    );
+                    attempt += 1;
+                }
+                Err(e) => return Err(e),
+            }
+        }
     }
 
     pub async fn get_username_by_id(&self, user_id: UserIdInDb) -> Result<Option<String>, DbErr> {
@@ -573,6 +662,8 @@ impl Db {
     }
 
     // Lookup by config-server URL path token (`udp://host/<token>`).
+    // Auth only uses `user_config_tokens` so delete/update truly revoke access.
+    // `users.config_token` is kept as a display/primary mirror and must stay in sync.
     pub async fn get_user_id_by_token<T: ToString>(
         &self,
         token: T,
@@ -580,26 +671,109 @@ impl Db {
         use entity::user_config_tokens as t;
 
         let token = token.to_string();
-        if token.is_empty() {
+        let token = token.trim().to_string();
+        if token.is_empty() || token.starts_with("revoked_") {
             return Ok(None);
         }
 
-        // Prefer multi-token table.
+        let row = t::Entity::find()
+            .filter(t::Column::Token.eq(token))
+            .one(self.orm_db())
+            .await?;
+        Ok(row.map(|r| r.user_id))
+    }
+
+    /// True if `token` is already used in `user_config_tokens` or `users.config_token`.
+    async fn is_config_token_taken(
+        &self,
+        token: &str,
+        exclude_token_row_id: Option<i32>,
+        exclude_user_id: Option<UserIdInDb>,
+    ) -> Result<bool, DbErr> {
+        use entity::{user_config_tokens as t, users as u};
+
+        let mut token_query = t::Entity::find().filter(t::Column::Token.eq(token.to_string()));
+        if let Some(id) = exclude_token_row_id {
+            token_query = token_query.filter(t::Column::Id.ne(id));
+        }
+        if token_query.one(self.orm_db()).await?.is_some() {
+            return Ok(true);
+        }
+
+        let mut user_query = u::Entity::find().filter(u::Column::ConfigToken.eq(token.to_string()));
+        if let Some(uid) = exclude_user_id {
+            user_query = user_query.filter(u::Column::Id.ne(uid));
+        }
+        Ok(user_query.one(self.orm_db()).await?.is_some())
+    }
+
+    async fn set_user_primary_config_token(
+        &self,
+        user_id: UserIdInDb,
+        token: String,
+    ) -> Result<(), DbErr> {
+        use entity::users as u;
+        let mut model = u::Entity::find_by_id(user_id)
+            .one(self.orm_db())
+            .await?
+            .ok_or_else(|| DbErr::Custom("User not found".to_string()))?
+            .into_active_model();
+        model.config_token = Set(token);
+        u::Entity::update(model).exec(self.orm_db()).await?;
+        Ok(())
+    }
+
+    /// After token table changes, keep `users.config_token` pointing at a live token
+    /// (or a unique non-auth `revoked_*` placeholder when none remain).
+    async fn sync_primary_config_token(
+        &self,
+        user_id: UserIdInDb,
+        preferred: Option<&str>,
+    ) -> Result<String, DbErr> {
+        use entity::{user_config_tokens as t, users as u};
+        use sea_orm::QueryOrder as _;
+
+        if let Some(preferred) = preferred {
+            if t::Entity::find()
+                .filter(t::Column::UserId.eq(user_id))
+                .filter(t::Column::Token.eq(preferred.to_string()))
+                .one(self.orm_db())
+                .await?
+                .is_some()
+            {
+                self.set_user_primary_config_token(user_id, preferred.to_string())
+                    .await?;
+                return Ok(preferred.to_string());
+            }
+        }
+
         if let Some(row) = t::Entity::find()
-            .filter(t::Column::Token.eq(token.clone()))
+            .filter(t::Column::UserId.eq(user_id))
+            .order_by_desc(t::Column::UpdateTime)
+            .order_by_desc(t::Column::Id)
             .one(self.orm_db())
             .await?
         {
-            return Ok(Some(row.user_id));
+            self.set_user_primary_config_token(user_id, row.token.clone())
+                .await?;
+            return Ok(row.token);
         }
 
-        // Legacy fallback: users.config_token (pre multi-token migration).
-        use entity::users as u;
-        let user = u::Entity::find()
-            .filter(u::Column::ConfigToken.eq(token))
+        // No live tokens: use a unique placeholder that cannot authenticate.
+        let mut candidate = format!("revoked_{}", uuid::Uuid::new_v4().simple());
+        while self
+            .is_config_token_taken(&candidate, None, Some(user_id))
+            .await?
+        {
+            candidate = format!("revoked_{}", uuid::Uuid::new_v4().simple());
+        }
+        let _ = u::Entity::find_by_id(user_id)
             .one(self.orm_db())
+            .await?
+            .ok_or_else(|| DbErr::Custom("User not found".to_string()))?;
+        self.set_user_primary_config_token(user_id, candidate.clone())
             .await?;
-        Ok(user.map(|u| u.id))
+        Ok(candidate)
     }
 
     pub async fn list_config_tokens(
@@ -682,21 +856,38 @@ impl Db {
         if let Err(e) = validate_config_token_value(&token) {
             return Err(DbErr::Custom(e));
         }
+        if self
+            .is_config_token_taken(&token, None, None)
+            .await?
+        {
+            return Err(DbErr::Custom(CONFIG_TOKEN_ALREADY_EXISTS_MSG.to_string()));
+        }
 
         let now = chrono::Local::now().fixed_offset();
         let active = t::ActiveModel {
             user_id: Set(user_id),
-            token: Set(token),
+            token: Set(token.clone()),
             label: Set(label.unwrap_or_default().trim().to_string()),
             create_time: Set(now),
             update_time: Set(now),
             ..Default::default()
         };
         let insert = t::Entity::insert(active).exec(self.orm_db()).await?;
-        t::Entity::find_by_id(insert.last_insert_id)
+        let created = t::Entity::find_by_id(insert.last_insert_id)
             .one(self.orm_db())
             .await?
-            .ok_or_else(|| DbErr::Custom("Failed to load created token".to_string()))
+            .ok_or_else(|| DbErr::Custom("Failed to load created token".to_string()))?;
+
+        // Keep primary mirror in sync when user had no live tokens / revoked placeholder.
+        let user = users::Entity::find_by_id(user_id)
+            .one(self.orm_db())
+            .await?
+            .ok_or_else(|| DbErr::Custom("User not found".to_string()))?;
+        if user.config_token.is_empty() || user.config_token.starts_with("revoked_") {
+            self.set_user_primary_config_token(user_id, token).await?;
+        }
+
+        Ok(created)
     }
 
     pub async fn update_config_token(
@@ -705,55 +896,136 @@ impl Db {
         token: Option<String>,
         label: Option<String>,
     ) -> Result<entity::user_config_tokens::Model, DbErr> {
-        use entity::user_config_tokens as t;
+        use entity::{user_config_tokens as t, users as u};
 
-        let mut model = t::Entity::find_by_id(id)
+        let existing = t::Entity::find_by_id(id)
             .one(self.orm_db())
             .await?
-            .ok_or_else(|| DbErr::Custom("Token not found".to_string()))?
-            .into_active_model();
+            .ok_or_else(|| DbErr::Custom("Token not found".to_string()))?;
+        let user_id = existing.user_id;
+        let old_token = existing.token.clone();
+        let mut model = existing.into_active_model();
 
+        let mut token_changed = false;
         if let Some(token) = token {
             let token = token.trim().to_string();
             if let Err(e) = validate_config_token_value(&token) {
                 return Err(DbErr::Custom(e));
             }
-            model.token = Set(token);
+            if token != old_token {
+                if self
+                    .is_config_token_taken(&token, Some(id), Some(user_id))
+                    .await?
+                {
+                    return Err(DbErr::Custom(CONFIG_TOKEN_ALREADY_EXISTS_MSG.to_string()));
+                }
+                model.token = Set(token);
+                token_changed = true;
+            }
         }
         if let Some(label) = label {
             model.label = Set(label.trim().to_string());
         }
         model.update_time = Set(chrono::Local::now().fixed_offset());
         let updated = model.update(self.orm_db()).await?;
+
+        if token_changed {
+            let user = u::Entity::find_by_id(user_id)
+                .one(self.orm_db())
+                .await?
+                .ok_or_else(|| DbErr::Custom("User not found".to_string()))?;
+            if user.config_token == old_token {
+                self.set_user_primary_config_token(user_id, updated.token.clone())
+                    .await?;
+            }
+        }
+
         Ok(updated)
     }
 
     pub async fn delete_config_token(&self, id: i32) -> Result<(), DbErr> {
         use entity::user_config_tokens as t;
+
+        let existing = t::Entity::find_by_id(id)
+            .one(self.orm_db())
+            .await?
+            .ok_or_else(|| DbErr::Custom("Token not found".to_string()))?;
+        let user_id = existing.user_id;
+
         let result = t::Entity::delete_by_id(id).exec(self.orm_db()).await?;
         if result.rows_affected == 0 {
             return Err(DbErr::Custom("Token not found".to_string()));
         }
+
+        // Keep users.config_token in sync (or revoked_* when none remain).
+        self.sync_primary_config_token(user_id, None).await?;
         Ok(())
     }
 
-    /// Rotate legacy users.config_token and upsert into user_config_tokens.
+    /// Rotate: revoke existing tokens for the user and issue a new primary token.
+    /// Delete + create + primary-mirror sync run in a single transaction so a
+    /// crash cannot leave the user with zero tokens but a stale primary.
     pub async fn regenerate_user_config_token(
         &self,
         user_id: UserIdInDb,
     ) -> Result<String, DbErr> {
-        let created = self
-            .create_config_token(user_id, None, Some("regenerated".to_string()))
+        use entity::{user_config_tokens as t, users as u};
+        use sea_orm::ActiveModelTrait as _;
+
+        let txn = self.orm_db().begin().await?;
+
+        u::Entity::find_by_id(user_id)
+            .one(&txn)
+            .await?
+            .ok_or_else(|| DbErr::Custom("User not found".to_string()))?;
+
+        // Revoke all previous tokens so old URLs stop working.
+        t::Entity::delete_many()
+            .filter(t::Column::UserId.eq(user_id))
+            .exec(&txn)
             .await?;
 
-        use entity::users as u;
-        let mut model = u::Entity::find_by_id(user_id)
-            .one(self.orm_db())
+        let token = generate_config_token();
+        let token = token.trim().to_string();
+        if let Err(e) = validate_config_token_value(&token) {
+            return Err(DbErr::Custom(e));
+        }
+        if t::Entity::find()
+            .filter(t::Column::Token.eq(token.clone()))
+            .one(&txn)
+            .await?
+            .is_some()
+            || u::Entity::find()
+                .filter(u::Column::ConfigToken.eq(token.clone()))
+                .filter(u::Column::Id.ne(user_id))
+                .one(&txn)
+                .await?
+                .is_some()
+        {
+            return Err(DbErr::Custom(CONFIG_TOKEN_ALREADY_EXISTS_MSG.to_string()));
+        }
+
+        let now = chrono::Local::now().fixed_offset();
+        let created = t::ActiveModel {
+            user_id: Set(user_id),
+            token: Set(token.clone()),
+            label: Set("regenerated".to_string()),
+            create_time: Set(now),
+            update_time: Set(now),
+            ..Default::default()
+        }
+        .insert(&txn)
+        .await?;
+
+        let mut user = u::Entity::find_by_id(user_id)
+            .one(&txn)
             .await?
             .ok_or_else(|| DbErr::Custom("User not found".to_string()))?
             .into_active_model();
-        model.config_token = Set(created.token.clone());
-        u::Entity::update(model).exec(self.orm_db()).await?;
+        user.config_token = Set(created.token.clone());
+        u::Entity::update(user).exec(&txn).await?;
+
+        txn.commit().await?;
         Ok(created.token)
     }
 

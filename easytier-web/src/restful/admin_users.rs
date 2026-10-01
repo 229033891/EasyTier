@@ -64,11 +64,18 @@ async fn get_me(auth_session: AuthSession) -> Result<Json<MeResponse>, HttpHandl
             )
         })?;
 
+    // Unified with list/OIDC semantics: live table rows win, empty collapses
+    // to "" — the `revoked_*` placeholder from sync_primary is never exposed.
+    let (config_token, config_tokens) = super::users::resolve_tokens_and_primary(
+        &user.db_user.config_token,
+        user.tokens.clone(),
+    );
     Ok(Json(MeResponse {
         id: user.db_user.id,
         username: user.db_user.username.clone(),
         is_admin,
-        config_token: user.db_user.config_token.clone(),
+        config_token,
+        config_tokens,
     }))
 }
 

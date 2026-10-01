@@ -114,7 +114,7 @@ watch(() => [
   normalMode.value?.enable_rpc_port_listen,
   normalMode.value?.rpc_listen_port,
   normalMode.value?.rpc_listen_all_interfaces,
-], ([enabled, port]) => {
+], ([enabled, port, _listenAll]) => {
   if (!normalMode.value)
     return
 

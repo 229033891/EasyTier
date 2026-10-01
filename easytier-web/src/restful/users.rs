@@ -71,8 +71,11 @@ pub struct UserInfo {
     pub username: String,
     pub groups: Vec<String>,
     pub is_admin: bool,
-    /// Config-server URL token (`udp://host/<config_token>`).
+    /// Primary config-server URL token (mirror of a live `user_config_tokens` row).
     pub config_token: String,
+    /// All active config-server tokens for this user.
+    #[serde(default)]
+    pub config_tokens: Vec<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -81,11 +84,51 @@ pub struct MeResponse {
     pub username: String,
     pub is_admin: bool,
     pub config_token: String,
+    #[serde(default)]
+    pub config_tokens: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
 pub struct Backend {
     db: db::Db,
+}
+
+/// Load live URL tokens for a user without failing the whole request.
+/// On DB error returns empty (caller falls back to the primary mirror) and logs.
+async fn load_live_tokens_or_empty(db: &db::Db, user_id: i32) -> Vec<String> {
+    match db.list_user_config_tokens(user_id).await {
+        Ok(rows) => rows.into_iter().map(|t| t.token).collect(),
+        Err(e) => {
+            tracing::warn!(user_id, ?e, "failed to list user config tokens, using fallback");
+            Vec::new()
+        }
+    }
+}
+
+/// Unified token semantics for list/get/me/OIDC paths:
+/// live table rows win; when empty, a usable primary mirror fills in;
+/// `revoked_*` placeholders and "" collapse to empty (never exposed to frontend).
+/// Returns (display_primary, effective_tokens).
+pub(crate) fn resolve_tokens_and_primary(
+    primary: &str,
+    table_tokens: Vec<String>,
+) -> (String, Vec<String>) {
+    if !table_tokens.is_empty() {
+        if table_tokens.iter().any(|t| !t.starts_with("revoked_")) {
+            let live: Vec<String> = table_tokens
+                .into_iter()
+                .filter(|t| !t.starts_with("revoked_"))
+                .collect();
+            let display = live.first().cloned().unwrap_or_default();
+            return (display, live);
+        }
+        return (String::new(), Vec::new());
+    }
+    if primary.is_empty() || primary.starts_with("revoked_") {
+        (String::new(), Vec::new())
+    } else {
+        (primary.to_string(), vec![primary.to_string()])
+    }
 }
 
 impl Backend {
@@ -147,7 +190,8 @@ impl Backend {
             username: db_user.username,
             groups: groups.iter().map(|s| (*s).to_string()).collect(),
             is_admin: req.is_admin,
-            config_token: db_user.config_token,
+            config_token: db_user.config_token.clone(),
+            config_tokens: vec![db_user.config_token],
         })
     }
 
@@ -187,6 +231,7 @@ impl Backend {
                 groups: Vec::new(),
                 is_admin: false,
                 config_token: row.config_token.clone(),
+                config_tokens: Vec::new(),
             });
             if let Some(name) = row.group_name {
                 if name == "admins" {
@@ -196,6 +241,45 @@ impl Backend {
                     entry.groups.push(name);
                 }
             }
+        }
+
+        // Single IN query for all users' tokens, then group in memory (no N+1).
+        // One user's failure must not fail the whole table: a batch failure
+        // falls back per-user to the primary mirror instead of 500.
+        let user_ids: Vec<i32> = map.keys().copied().collect();
+        let tokens_by_user: std::collections::HashMap<i32, Vec<String>> = if user_ids.is_empty()
+        {
+            std::collections::HashMap::new()
+        } else {
+            use entity::user_config_tokens as t;
+            match t::Entity::find()
+                .filter(t::Column::UserId.is_in(user_ids))
+                .all(self.db.orm_db())
+                .await
+            {
+                Ok(rows) => {
+                    let mut grouped: std::collections::HashMap<i32, Vec<String>> =
+                        std::collections::HashMap::new();
+                    for row in rows {
+                        grouped.entry(row.user_id).or_default().push(row.token);
+                    }
+                    grouped
+                }
+                Err(e) => {
+                    tracing::warn!(?e, "failed to batch-load user config tokens, using fallback");
+                    std::collections::HashMap::new()
+                }
+            }
+        };
+
+        for user in map.values_mut() {
+            let table_tokens = tokens_by_user.get(&user.id).cloned().unwrap_or_default();
+            // Empty grouped result may mean "no tokens" or "batch query failed";
+            // either way fall back to the primary mirror, never 500.
+            let (display, effective) =
+                resolve_tokens_and_primary(&user.config_token.clone(), table_tokens);
+            user.config_token = display;
+            user.config_tokens = effective;
         }
 
         Ok(map.into_values().collect())
@@ -234,8 +318,11 @@ impl Backend {
             .one(self.db.orm_db())
             .await?
         {
+            let table_tokens = load_live_tokens_or_empty(&self.db, db_user.id).await;
+            let (_, tokens) =
+                resolve_tokens_and_primary(&db_user.config_token.clone(), table_tokens);
             return Ok(User {
-                tokens: vec![db_user.config_token.clone()],
+                tokens,
                 db_user,
             });
         }
@@ -251,8 +338,10 @@ impl Backend {
             .create_user_and_join_users_group(username, hashed_password)
             .await?;
         tracing::info!("Auto-provisioned OIDC user '{username}'");
+        let table_tokens = load_live_tokens_or_empty(&self.db, db_user.id).await;
+        let (_, tokens) = resolve_tokens_and_primary(&db_user.config_token.clone(), table_tokens);
         Ok(User {
-            tokens: vec![db_user.config_token.clone()],
+            tokens,
             db_user,
         })
     }
@@ -334,19 +423,8 @@ impl AuthnBackend for Backend {
             }
         }
 
-        let tokens = self
-            .db
-            .list_user_config_tokens(db_user.id)
-            .await
-            .unwrap_or_default()
-            .into_iter()
-            .map(|t| t.token)
-            .collect::<Vec<_>>();
-        let tokens = if tokens.is_empty() {
-            vec![db_user.config_token.clone()]
-        } else {
-            tokens
-        };
+        let table_tokens = load_live_tokens_or_empty(&self.db, db_user.id).await;
+        let (_, tokens) = resolve_tokens_and_primary(&db_user.config_token.clone(), table_tokens);
 
         Ok(Some(User {
             tokens,
@@ -361,19 +439,8 @@ impl AuthnBackend for Backend {
             .await?;
 
         if let Some(u) = user {
-            let tokens = self
-                .db
-                .list_user_config_tokens(u.id)
-                .await
-                .unwrap_or_default()
-                .into_iter()
-                .map(|t| t.token)
-                .collect::<Vec<_>>();
-            let tokens = if tokens.is_empty() {
-                vec![u.config_token.clone()]
-            } else {
-                tokens
-            };
+            let table_tokens = load_live_tokens_or_empty(&self.db, u.id).await;
+            let (_, tokens) = resolve_tokens_and_primary(&u.config_token.clone(), table_tokens);
             Ok(Some(User {
                 tokens,
                 db_user: u,

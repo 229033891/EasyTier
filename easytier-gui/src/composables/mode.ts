@@ -41,9 +41,9 @@ export function loadMode(): Mode {
         try {
             const mode = JSON.parse(modeStr) as Mode
             if (type() === 'android') {
-                return { ...mode, mode: 'normal' }
+                return migrateNormalRpcListenFlag({ ...mode, mode: 'normal' })
             }
-            return mode
+            return migrateNormalRpcListenFlag(mode)
         }
         catch (e) {
             console.error('Failed to parse app_mode from localStorage', e)
@@ -53,11 +53,27 @@ export function loadMode(): Mode {
     return { mode: 'normal' }
 }
 
+/** Preserve LAN RPC bind when upgrading from builds that only stored `tcp://0.0.0.0:port`. */
+function migrateNormalRpcListenFlag(mode: Mode): Mode {
+    if (mode.mode !== 'normal')
+        return mode
+    const portal = mode.rpc_portal?.trim() ?? ''
+    const listensAll = /\/\/0\.0\.0\.0(?::|\/|$)/.test(portal)
+        || /\/\/\[::\](?::|\/|$)/.test(portal)
+    if (listensAll && !mode.rpc_listen_all_interfaces) {
+        return { ...mode, rpc_listen_all_interfaces: true }
+    }
+    return mode
+}
+
 export type Mode = NormalMode | ServiceMode | RemoteMode
 
 /** Normalize service-mode RPC portal to a tcp:// URL without double schemes. */
 export function normalizeServiceRpcUrl(portal: string): string {
-    let s = portal.trim().replace(/0\.0\.0\.0/g, '127.0.0.1')
+    // Only wildcards are rewritten to loopback: 0.0.0.0 and [::].
+    // NOTE: never blanket-replace "::" — that would mangle real IPv6
+    // addresses such as tcp://[2001:db8::1]:11010 or ::1.
+    let s = portal.trim().replace(/0\.0\.0\.0/g, '127.0.0.1').replace(/\[::\]/g, '127.0.0.1')
     if (!/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(s))
         s = `tcp://${s}`
     return s

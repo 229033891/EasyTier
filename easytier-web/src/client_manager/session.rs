@@ -822,15 +822,22 @@ impl SessionRpcService {
                 .map_err(rpc_types::error::Error::from)?;
         }
 
+        // Reject malformed tokens before they reach auth/auto-create: trim first
+        // and run the shared URL-token validator. Invalid input fails closed.
+        let clean_token = req.user_token.trim().to_string();
+        if let Err(reason) = crate::db::validate_config_token_value(&clean_token) {
+            return Err(anyhow::anyhow!("Invalid config token: {reason}").into());
+        }
+
         let user_id = match storage
             .db()
-            .get_user_id_by_token(req.user_token.clone())
+            .get_user_id_by_token(clean_token.clone())
             .await
             .with_context(|| "Failed to get user id by token from db".to_string())?
         {
             Some(id) => id,
             None if feature_flags.allow_auto_create_user => storage
-                .auto_create_user(&req.user_token)
+                .auto_create_user(&clean_token)
                 .await
                 .with_context(|| "Failed to auto-create user".to_string())?,
             None => {

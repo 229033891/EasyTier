@@ -53,7 +53,7 @@ function parseStoredConfigs(raw: string | null): StoredGuiConfig[] {
       try {
         return [{
           config: NetworkTypes.normalizeNetworkConfig(entry as NetworkConfig),
-          source: 'gui',
+          source: 'legacy',
         }]
       }
       catch {

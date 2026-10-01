@@ -149,7 +149,7 @@ jobs:
       - name: Archive artifact
         uses: actions/upload-artifact@v5
         with:
-          name: easytier-mobile-android-${{ matrix.ARCH }}
+          name: ET-mobile-android-${{ matrix.ARCH }}
           path: |
             ./artifacts/*
 
