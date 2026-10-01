@@ -1,0 +1,50 @@
+# EasyTier docker-compose 示例：单镜像、两种跑法
+#   console: 管理面（自建控制台），一台即可，无需特权
+#   node:    由控制台下发配置的组网节点（每台宿主机一个，需要 TUN）
+#
+# 用法：
+#   1. 把 image 里的 <owner> 换成你的 GHCR 用户名/组织，tag 与 Release 对应
+#   2. 启动控制台：docker compose up -d console
+#      浏览器打开 http://<主机>:8080 ，在「接入 Token」中创建/查看 token
+#   3. 把 node 的 -w 地址改成 udp://<控制台IP>:22020/<token>（也可用 tcp://）
+#   4. 启动节点：docker compose --profile node up -d node
+#
+# 说明：官方镜像 ENTRYPOINT 是 easytier-core，控制台必须覆盖 entrypoint。
+
+services:
+  console:
+    image: ghcr.io/<owner>/et:v2.7.0
+    container_name: et-console
+    restart: unless-stopped
+    # 覆盖镜像默认的 easytier-core，改为跑嵌入式 Web 控制台
+    entrypoint: ["/sbin/tini", "--"]
+    command:
+      - easytier-web-embed
+      - --db=/app/data/et.db
+      - --config-server-port=22020
+      - --config-server-protocol=udp,tcp
+      # API + 静态前端同端口，避免拆分后浏览器打不到 API
+      - --api-server-port=8080
+    ports:
+      - "22020:22020/udp"   # config-server（节点接入）
+      - "22020:22020/tcp"   # config-server（节点接入）
+      - "8080:8080"         # Web 控制台 + API
+    volumes:
+      - ./et-console-data:/app/data
+
+  node:
+    image: ghcr.io/<owner>/et:v2.7.0
+    container_name: et-node
+    profiles: ["node"]
+    restart: unless-stopped
+    network_mode: host
+    cap_add:
+      - NET_ADMIN
+      - SYS_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    # 镜像 ENTRYPOINT 已是 tini -- easytier-core，这里只传参数
+    # -w = 配置服务器（勿用 -p peers 指向控制台）
+    command:
+      - -w
+      - udp://<控制台IP>:22020/<token>

@@ -1,3 +1,8 @@
+//! Dedicated `users.config_token` column (was previously username-as-token).
+//!
+//! **Do not edit this migration after it may have been applied.** Further data
+//! fixes belong in later migrations (see `m20261001_000010_repair_config_tokens`).
+
 use sea_orm_migration::prelude::*;
 
 pub struct Migration;

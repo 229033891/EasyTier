@@ -564,7 +564,7 @@ web:
 
   config_tokens:
     create_title: 新建接入 Token
-    hint: 客户端填写单个地址，按网络选用 udp://主机:端口/Token 或 tcp://主机:端口/Token（服务端默认同时支持）。例如 Token 为 admin → udp://127.0.0.1:22020/admin。可自定义或留空自动生成。
+    hint: 客户端填写单个地址，按网络选用 udp://主机:端口/Token 或 tcp://主机:端口/Token（服务端默认同时支持）。例如 Token 为 admin → udp://127.0.0.1:22020/admin。可自定义或留空自动生成。用户名含空格等非法路径字符的老账号升级后会换成 et_ 开头的新 Token，需同步更新客户端 URL。
     create: 创建
     create_success: Token 已创建
     create_failed: 创建 Token 失败

@@ -563,7 +563,7 @@ web:
 
   config_tokens:
     create_title: Create Access Token
-    hint: "Clients use one URL; choose udp://host:port/Token or tcp://host:port/Token for the same endpoint (server listens on both by default). Example: token \"admin\" → udp://127.0.0.1:22020/admin. Leave token blank to auto-generate."
+    hint: "Clients use one URL; choose udp://host:port/Token or tcp://host:port/Token for the same endpoint (server listens on both by default). Example: token \"admin\" → udp://127.0.0.1:22020/admin. Leave token blank to auto-generate. After upgrade, accounts whose username is not a valid URL token get a new et_* token — update client URLs accordingly."
     create: Create
     create_success: Token created
     create_failed: Failed to create token

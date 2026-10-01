@@ -9,6 +9,7 @@ mod m20260929_000006_peer_conn_history;
 mod m20260930_000007_devices_networks_hardening;
 mod m20261001_000008_user_config_token;
 mod m20261001_000009_user_config_tokens;
+mod m20261001_000010_repair_config_tokens;
 
 pub struct Migrator;
 
@@ -25,6 +26,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20260930_000007_devices_networks_hardening::Migration),
             Box::new(m20261001_000008_user_config_token::Migration),
             Box::new(m20261001_000009_user_config_tokens::Migration),
+            Box::new(m20261001_000010_repair_config_tokens::Migration),
         ]
     }
 }

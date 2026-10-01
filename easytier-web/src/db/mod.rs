@@ -42,9 +42,16 @@ pub fn is_config_token_taken_err(e: &DbErr) -> bool {
 
 /// Best-effort check for a DB-level UNIQUE violation (final defense for races
 /// the pre-check cannot see). Maps to 409 in the REST layer.
+///
+/// Matches common SQLite / MySQL / Postgres unique-constraint texts only —
+/// avoid bare `"unique"` which can false-positive on unrelated messages.
 pub fn is_unique_violation_err(e: &DbErr) -> bool {
-    let msg = e.to_string();
-    msg.contains("UNIQUE") || msg.contains("unique") || msg.contains("Duplicate")
+    let msg = e.to_string().to_ascii_lowercase();
+    msg.contains("unique constraint failed")
+        || msg.contains("sqlite_constraint_unique")
+        || msg.contains("duplicate key")
+        || msg.contains("duplicate entry")
+        || msg.contains("unique violation")
 }
 
 /// Exact-match check for token-shape validation failures (maps to 400).
@@ -443,6 +450,11 @@ impl Db {
             .max_lifetime(None)
             .idle_timeout(None)
             .connect(db_path)
+            .await?;
+
+        // Enforce FK cascades (SQLite defaults to OFF per connection).
+        sqlx::query("PRAGMA foreign_keys = ON")
+            .execute(&db)
             .await?;
 
         Ok(db)
