@@ -1,12 +1,17 @@
-name: EasyTier Docker
+name: ET Docker
+
+# Linux Core 成功后自动打镜像；也可手动指定 Core run_id。
+# 当前 Core 仅产出 x86_64，故镜像平台为 linux/amd64。
 
 on:
+  workflow_run:
+    workflows: ["ET Linux"]
+    types: [completed]
   workflow_dispatch:
     inputs:
       run_id:
-        description: 'The run id of EasyTier-Core Action in EasyTier repo'
+        description: 'The run id of ET Linux Action in this repo'
         type: number
-        default: 10228239965
         required: true
       image_tag:
         description: 'Tag for this image build'
@@ -24,80 +29,180 @@ on:
         default: false
         required: true
 
+concurrency:
+  group: easytier-docker-${{ github.event.workflow_run.head_branch || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  packages: write
+  actions: read
+
 jobs:
   docker:
-    if: contains('["KKRainbow"]', github.actor)
+    # 自动：仅在 Linux Core 成功且非 PR 时推送；手动：任意触发
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (
+        github.event_name == 'workflow_run' &&
+        github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.event != 'pull_request'
+      )
     runs-on: ubuntu-latest
+    env:
+      DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+      DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
-      -
-        name: Checkout
-        uses: actions/checkout@v5
-      -
-        name: Validate inputs
+      - name: Resolve Core run id and tags
+        id: meta
+        shell: bash
         run: |
-          if [[ "${{ inputs.mark_latest }}" == "true" && "${{ inputs.mark_unstable }}" == "true" ]]; then
-            echo "Error: mark_latest and mark_unstable cannot both be true"
-            exit 1
+          set -euo pipefail
+
+          EXTRA_SHA_TAG=""
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            if [[ "${{ inputs.mark_latest }}" == "true" && "${{ inputs.mark_unstable }}" == "true" ]]; then
+              echo "Error: mark_latest and mark_unstable cannot both be true" >&2
+              exit 1
+            fi
+            RUN_ID="${{ inputs.run_id }}"
+            IMAGE_TAG="${{ inputs.image_tag }}"
+            MARK_LATEST="${{ inputs.mark_latest }}"
+            MARK_UNSTABLE="${{ inputs.mark_unstable }}"
+            CHECKOUT_REF="${{ github.sha }}"
+          else
+            RUN_ID="${{ github.event.workflow_run.id }}"
+            BRANCH="${{ github.event.workflow_run.head_branch }}"
+            CHECKOUT_REF="${{ github.event.workflow_run.head_sha }}"
+            SHORT_SHA="$(echo "$CHECKOUT_REF" | cut -c1-7)"
+            MARK_LATEST="false"
+            MARK_UNSTABLE="false"
+
+            if [[ "$BRANCH" == "releases/debug" ]]; then
+              IMAGE_TAG="debug"
+              MARK_UNSTABLE="true"
+            elif [[ "$BRANCH" == releases/* ]]; then
+              IMAGE_TAG="${BRANCH#releases/}"
+            elif [[ "$BRANCH" == "main" ]]; then
+              IMAGE_TAG="main"
+              MARK_LATEST="true"
+            else
+              # develop 等分支：标签不能含 /
+              IMAGE_TAG="${BRANCH//\//-}"
+            fi
+            EXTRA_SHA_TAG="$SHORT_SHA"
           fi
-      -
-        name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
-      -
-        name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-      -
-        name: Login to Docker Hub
-        uses: docker/login-action@v3
+
+          # Core 被 path-skip 时 workflow 仍可能 conclusion=success，但没有 ET-linux 产物
+          ARTIFACT_COUNT="$(gh api "repos/${{ github.repository }}/actions/runs/${RUN_ID}/artifacts" \
+            --jq '[.artifacts[] | select(.name == "ET-linux-x86_64" and .expired == false)] | length')"
+          if [[ "$ARTIFACT_COUNT" -eq 0 ]]; then
+            echo "No ET-linux-x86_64 artifact on run ${RUN_ID}; skip docker build."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "run_id=${RUN_ID}" >> "$GITHUB_OUTPUT"
+            echo "checkout_ref=${CHECKOUT_REF}" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          OWNER_LC="$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')"
+          GHCR_IMAGE="ghcr.io/${OWNER_LC}/et"
+
+          TAGS="${GHCR_IMAGE}:${IMAGE_TAG}"
+          if [[ -n "$EXTRA_SHA_TAG" && "$EXTRA_SHA_TAG" != "$IMAGE_TAG" ]]; then
+            TAGS="${TAGS},${GHCR_IMAGE}:${EXTRA_SHA_TAG}"
+          fi
+          if [[ "$MARK_LATEST" == "true" ]]; then
+            TAGS="${TAGS},${GHCR_IMAGE}:latest"
+          fi
+          if [[ "$MARK_UNSTABLE" == "true" ]]; then
+            TAGS="${TAGS},${GHCR_IMAGE}:unstable"
+          fi
+
+          if [[ -n "${DOCKERHUB_USERNAME:-}" && -n "${DOCKERHUB_TOKEN:-}" ]]; then
+            DH_USER_LC="$(echo "$DOCKERHUB_USERNAME" | tr '[:upper:]' '[:lower:]')"
+            DH_IMAGE="${DH_USER_LC}/et"
+            DH_TAGS="${DH_IMAGE}:${IMAGE_TAG}"
+            if [[ -n "$EXTRA_SHA_TAG" && "$EXTRA_SHA_TAG" != "$IMAGE_TAG" ]]; then
+              DH_TAGS="${DH_TAGS},${DH_IMAGE}:${EXTRA_SHA_TAG}"
+            fi
+            if [[ "$MARK_LATEST" == "true" ]]; then
+              DH_TAGS="${DH_TAGS},${DH_IMAGE}:latest"
+            fi
+            if [[ "$MARK_UNSTABLE" == "true" ]]; then
+              DH_TAGS="${DH_TAGS},${DH_IMAGE}:unstable"
+            fi
+            TAGS="${TAGS},${DH_TAGS}"
+            echo "push_dockerhub=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "push_dockerhub=false" >> "$GITHUB_OUTPUT"
+          fi
+
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+          echo "run_id=${RUN_ID}" >> "$GITHUB_OUTPUT"
+          echo "checkout_ref=${CHECKOUT_REF}" >> "$GITHUB_OUTPUT"
+          echo "tags=${TAGS}" >> "$GITHUB_OUTPUT"
+          echo "Resolved run_id=${RUN_ID} checkout_ref=${CHECKOUT_REF}"
+          echo "Generated tags: ${TAGS}"
+
+      - name: Checkout
+        if: steps.meta.outputs.skip != 'true'
+        uses: actions/checkout@v5
         with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-      - name: login github container registry
+          # workflow_run 默认检出会落在默认分支；必须切到触发 Core 的那次提交，Dockerfile 才与产物一致
+          ref: ${{ steps.meta.outputs.checkout_ref }}
+
+      - name: Set up QEMU
+        if: steps.meta.outputs.skip != 'true'
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        if: steps.meta.outputs.skip != 'true'
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GitHub Container Registry
+        if: steps.meta.outputs.skip != 'true'
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Download artifact
-        id: download-artifact
+
+      - name: Login to Docker Hub
+        if: steps.meta.outputs.skip != 'true' && steps.meta.outputs.push_dockerhub == 'true'
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Download Linux artifacts
+        if: steps.meta.outputs.skip != 'true'
         uses: dawidd6/action-download-artifact@v11
         with:
-          github_token: ${{secrets.GITHUB_TOKEN}}
-          run_id: ${{ inputs.run_id }}
-          repo: EasyTier/EasyTier
-          path: docker_context
-      - name: List files
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          run_id: ${{ steps.meta.outputs.run_id }}
+          repo: ${{ github.repository }}
+          path: docker_context/ET-linux-x86_64
+          name: ET-linux-x86_64
+
+      - name: Verify artifact layout for Dockerfile
+        if: steps.meta.outputs.skip != 'true'
         run: |
-          ls -l -R .
-      - name: Prepare Docker tags
-        id: tags
-        run: |
-          # Base tags with version
-          DOCKERHUB_TAGS="easytier/easytier:${{ inputs.image_tag }}"
-          GHCR_TAGS="ghcr.io/easytier/easytier:${{ inputs.image_tag }}"
-
-          # Add latest tags if requested
-          if [[ "${{ inputs.mark_latest }}" == "true" ]]; then
-            DOCKERHUB_TAGS="${DOCKERHUB_TAGS},easytier/easytier:latest"
-            GHCR_TAGS="${GHCR_TAGS},ghcr.io/easytier/easytier:latest"
+          set -euo pipefail
+          if ! compgen -G "docker_context/ET-linux-x86_64/easytier-*" > /dev/null; then
+            echo "Expected binaries missing under docker_context/ET-linux-x86_64:" >&2
+            find docker_context -maxdepth 4 -type f | head -n 80 >&2
+            exit 1
           fi
+          chmod +x docker_context/ET-linux-x86_64/easytier-* || true
+          ls -lR docker_context
 
-          # Add unstable tags if requested
-          if [[ "${{ inputs.mark_unstable }}" == "true" ]]; then
-            DOCKERHUB_TAGS="${DOCKERHUB_TAGS},easytier/easytier:unstable"
-            GHCR_TAGS="${GHCR_TAGS},ghcr.io/easytier/easytier:unstable"
-          fi
-
-          # Combine all tags
-          ALL_TAGS="${DOCKERHUB_TAGS},${GHCR_TAGS}"
-
-          echo "tags=${ALL_TAGS}" >> $GITHUB_OUTPUT
-          echo "Generated tags: ${ALL_TAGS}"
-      -
-        name: Build and push
+      - name: Build and push
+        if: steps.meta.outputs.skip != 'true'
         uses: docker/build-push-action@v6
         with:
           context: ./docker_context
-          platforms: linux/amd64,linux/arm/v6,linux/arm/v7,linux/arm64,linux/riscv64
+          platforms: linux/amd64
           push: true
           file: .github/workflows/Dockerfile
-          tags: ${{ steps.tags.outputs.tags }}
+          tags: ${{ steps.meta.outputs.tags }}

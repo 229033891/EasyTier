@@ -1,4 +1,4 @@
-name: EasyTier GUI
+name: ET Windows
 
 on:
   push:
@@ -28,7 +28,7 @@ jobs:
         "pnpm-lock.yaml", "pnpm-workspace.yaml", "package.json", "easytier/**",
         "easytier-core/**", "easytier-proto/**", "easytier-rpc-build/**",
         "easytier-gui/**", "tauri-plugin-vpnservice/**",
-        "easytier-web/frontend-lib/**", ".github/workflows/gui.yml",
+        "easytier-web/frontend-lib/**", ".github/workflows/windows.yml",
         ".github/actions/**"]
     outputs:
       # Release builds must run even if they only change release metadata.
@@ -66,36 +66,11 @@ jobs:
       fail-fast: true
       matrix:
         include:
-          - TARGET: x86_64-unknown-linux-musl
-            OS: ubuntu-24.04
-            GUI_TARGET: x86_64-unknown-linux-gnu
-            ARTIFACT_NAME: linux-x86_64
-          - TARGET: aarch64-unknown-linux-musl
-            OS: ubuntu-24.04-arm
-            GUI_TARGET: aarch64-unknown-linux-gnu
-            ARTIFACT_NAME: linux-aarch64
-
-          - TARGET: x86_64-apple-darwin
-            OS: macos-latest
-            GUI_TARGET: x86_64-apple-darwin
-            ARTIFACT_NAME: macos-x86_64
-          - TARGET: aarch64-apple-darwin
-            OS: macos-latest
-            GUI_TARGET: aarch64-apple-darwin
-            ARTIFACT_NAME: macos-aarch64
-
+          # Windows (x86_64): ET 安装包 + GUI 内置 core
           - TARGET: x86_64-pc-windows-msvc
             OS: windows-latest
             GUI_TARGET: x86_64-pc-windows-msvc
             ARTIFACT_NAME: windows-x86_64
-          - TARGET: i686-pc-windows-msvc
-            OS: windows-latest
-            GUI_TARGET: i686-pc-windows-msvc
-            ARTIFACT_NAME: windows-i686
-          - TARGET: aarch64-pc-windows-msvc
-            OS: windows-11-arm
-            GUI_TARGET: aarch64-pc-windows-msvc
-            ARTIFACT_NAME: windows-arm64
 
     runs-on: ${{ matrix.OS }}
     env:
@@ -228,6 +203,12 @@ jobs:
             xcrun stapler validate "$dmg"
           done
 
+      - name: Build web console (embed, 自建控制台用)
+        if: ${{ contains(matrix.GUI_TARGET, 'windows') }}
+        run: |
+          cargo build --release --target $TARGET --package=easytier-web --features=embed
+          mv ./target/$TARGET/release/easytier-web.exe ./target/$TARGET/release/easytier-web-embed.exe
+
       - name: Collect artifact
         run: |
           mkdir -p ./artifacts/objects/
@@ -241,6 +222,7 @@ jobs:
           # copy gui bundle, gui is built without specific target
           if [[ $GUI_TARGET =~ windows ]]; then
               mv ./target/$GUI_TARGET/release/bundle/nsis/*.exe ./artifacts/objects/
+              cp ./target/$GUI_TARGET/release/easytier-web-embed.exe ./artifacts/objects/
           elif [[ $GUI_TARGET =~ darwin ]]; then
               mv ./target/$GUI_TARGET/release/bundle/dmg/*.dmg ./artifacts/objects/
           elif [[ $GUI_TARGET =~ linux ]]; then
@@ -255,7 +237,7 @@ jobs:
       - name: Archive artifact
         uses: actions/upload-artifact@v5
         with:
-          name: easytier-gui-${{ matrix.ARTIFACT_NAME }}
+          name: ET-gui-${{ matrix.ARTIFACT_NAME }}
           path: |
             ./artifacts/*
 

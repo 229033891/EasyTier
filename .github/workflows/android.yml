@@ -1,4 +1,4 @@
-name: EasyTier Mobile
+name: ET Android
 
 on:
   push:
@@ -28,7 +28,7 @@ jobs:
         "pnpm-lock.yaml", "pnpm-workspace.yaml", "package.json", "easytier/**",
         "easytier-core/**", "easytier-proto/**", "easytier-rpc-build/**",
         "easytier-gui/**", "tauri-plugin-vpnservice/**",
-        "easytier-web/frontend-lib/**", ".github/workflows/mobile.yml",
+        "easytier-web/frontend-lib/**", ".github/workflows/android.yml",
         ".github/actions/**"]
     outputs:
       # Release builds must run even if they only change release metadata.
@@ -66,14 +66,9 @@ jobs:
       fail-fast: true
       matrix:
         include:
+          # Android arm64-v8a: ET.apk (Android 包, 与 OpenWrt apk 不同)
           - TARGET: aarch64-linux-android
             ARCH: aarch64
-          - TARGET: armv7-linux-androideabi
-            ARCH: armv7
-          - TARGET: i686-linux-android
-            ARCH: i686
-          - TARGET: x86_64-linux-android
-            ARCH: x86_64
     runs-on: ubuntu-latest
     env:
       NAME: easytier
@@ -139,13 +134,22 @@ jobs:
             TAG=$GITHUB_SHA
           fi
 
+          for apk in ./artifacts/objects/*.apk; do
+            [[ -f "$apk" ]] || continue
+            abi=$(basename "$apk" | sed -E 's/^app-(.+)-release\.apk$/\1/')
+            if [[ "$abi" == "$(basename "$apk")" ]]; then
+              abi="universal"
+            fi
+            mv "$apk" "./artifacts/objects/ET-android-${abi}.apk"
+          done
+
           mv ./artifacts/objects/* ./artifacts/
           rm -rf ./artifacts/objects/
 
       - name: Archive artifact
         uses: actions/upload-artifact@v5
         with:
-          name: easytier-mobile-android-${{ matrix.ARCH }}
+          name: ET-mobile-android-${{ matrix.ARCH }}
           path: |
             ./artifacts/*
 

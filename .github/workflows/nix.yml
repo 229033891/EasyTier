@@ -1,4 +1,4 @@
-name: Nix Check
+name: ET Nix
 
 on:
   push:
