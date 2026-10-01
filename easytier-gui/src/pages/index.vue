@@ -550,7 +550,7 @@ const configServerConnectionStatus = computed(() => {
         iconPos="left" />
     </div>
 
-    <Menubar :model="setting_menu_items" breakpoint="795px">
+    <Menubar :model="setting_menu_items" breakpoint="795px" class="app-menubar">
       <template #item="{ item, props }">
         <a v-if="item.key === 'logging_menu'" v-bind="props.action" @click="toggle_log_menu">
           <span :class="item.icon" />

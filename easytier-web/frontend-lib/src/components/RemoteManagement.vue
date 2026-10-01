@@ -1,11 +1,10 @@
 <script setup lang="ts">
-import { Button, Menu, Message, Select, Tag, useConfirm, useToast, type VirtualScrollerLazyEvent } from 'primevue';
-import { computed, onMounted, onUnmounted, Ref, ref, watch } from 'vue';
+import { Button, Message, Select, Tag, useConfirm, useToast, type VirtualScrollerLazyEvent } from 'primevue';
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import * as Api from '../modules/api';
 import * as Utils from '../modules/utils';
 import * as NetworkTypes from '../types/network';
-import { type MenuItem } from 'primevue/menuitem';
 
 const { t } = useI18n()
 
@@ -717,37 +716,18 @@ const syncTomlConfig = async (tomlConfig: string): Promise<void> => {
     currentNetworkConfig.value = config;
 }
 
-// ???????
-const screenWidth = ref(window.innerWidth);
-const updateScreenWidth = () => {
-    screenWidth.value = window.innerWidth;
-};
-
-// ??????????????????????/???????????
-const menuRef = ref();
-const actionMenu: Ref<MenuItem[]> = ref([
-    {
-        label: () => t('web.device_management.edit_network'),
-        icon: 'pi pi-pencil',
-        // ??????????????????????
-        visible: () =>
-            !isStatusMode.value
-            && !isEditingNetwork.value
-            && !(networkIsDisabled.value ?? true)
-            && currentNetworkControl.editable.value,
-        command: () => editNetwork()
-    },
-]);
-
-const showMoreActionsMenu = computed(() =>
-    !isStatusMode.value
-    && !!selectedInstanceId.value
-    && (isCombinedMode.value ? !isEditingNetwork.value : false)
-    && actionMenu.value.some((item) => item.visible === undefined || (typeof item.visible === 'function' ? item.visible() : item.visible))
+/** GUI combined 模式底部导航：状态页显示「前往配置」，编辑页显示「取消编辑」。
+ *  仅 combined 模式生效，web 的 status / config 模式不受影响。 */
+const showCombinedEditEntry = computed(() =>
+    isCombinedMode.value
+    && needShowNetworkStatus.value
+    && currentNetworkControl.editable.value
 );
-
-const showHeaderActions = computed(() =>
-    (isCombinedMode.value && isEditingNetwork.value) || showMoreActionsMenu.value
+const showCombinedCancelEdit = computed(() =>
+    isCombinedMode.value && isEditingNetwork.value
+);
+const showCombinedNavZone = computed(() =>
+    showCombinedEditEntry.value || showCombinedCancelEdit.value
 );
 
 /** ????????????????? */
@@ -781,16 +761,10 @@ let periodFunc = new Utils.PeriodicTask(async () => {
 
 onMounted(async () => {
     periodFunc.start();
-
-    // ????????
-    window.addEventListener('resize', updateScreenWidth);
 });
 
 onUnmounted(() => {
     periodFunc.stop();
-
-    // ????????
-    window.removeEventListener('resize', updateScreenWidth);
 });
 
 </script>
@@ -859,23 +833,6 @@ onUnmounted(() => {
                                 </div>
                             </template>
                         </Select>
-                </div>
-
-                <!-- ???? / ???? -->
-                <div v-if="showHeaderActions" class="flex gap-2 shrink-0 button-container items-center">
-                    <Button v-if="isCombinedMode && isEditingNetwork" @click="cancelEditNetwork" icon="pi pi-times"
-                        :label="screenWidth > 640 ? t('web.device_management.cancel_edit') : undefined"
-                        :class="['header-action-btn', screenWidth <= 640 ? 'p-button-icon-only' : '']"
-                        v-tooltip.bottom="screenWidth <= 640 ? t('web.device_management.cancel_edit') : undefined"
-                        severity="secondary" outlined />
-
-                    <!-- More actions menu?GUI ??? -->
-                    <Menu ref="menuRef" :model="actionMenu" :popup="true" />
-                    <Button v-if="showMoreActionsMenu"
-                        icon="pi pi-ellipsis-v"
-                        class="header-action-btn header-action-btn--icon" severity="secondary" outlined
-                        @click="menuRef.toggle($event)" :aria-label="t('web.device_management.more_actions')"
-                        v-tooltip.bottom="t('web.device_management.more_actions')" />
                 </div>
             </div>
         </div>
@@ -967,6 +924,17 @@ onUnmounted(() => {
             <Button v-if="showLeaveInFooter" @click="drawerClose" :label="leaveLabel" severity="secondary"
                 :icon="leaveIcon" iconPos="left" class="network-footer-btn network-footer-btn--muted"
                 v-tooltip.top="leaveTooltip" />
+            <!-- GUI combined 模式：右上角的编辑/取消移到下方左侧，与运行网络同一样式体系 -->
+            <div v-if="showCombinedNavZone" class="footer-zone">
+                <Button v-if="showCombinedEditEntry" icon="pi pi-cog" severity="secondary"
+                    :label="t('web.device_management.switch_to_config')" iconPos="left"
+                    class="network-footer-btn network-footer-btn--accent" @click="editNetwork"
+                    v-tooltip.top="t('web.device_management.switch_to_config_tip')" />
+                <Button v-if="showCombinedCancelEdit" icon="pi pi-times" severity="secondary"
+                    :label="t('web.device_management.cancel_edit')" iconPos="left"
+                    class="network-footer-btn network-footer-btn--muted" @click="cancelEditNetwork"
+                    v-tooltip.top="t('web.device_management.cancel_edit')" />
+            </div>
             <div class="footer-zone footer-zone--primary">
                 <Button v-if="isConfigMode" icon="pi pi-chart-line" severity="secondary"
                     :label="t('web.device_management.switch_to_status')" iconPos="left"

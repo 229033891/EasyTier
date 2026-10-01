@@ -51,3 +51,27 @@
 .p-password>input {
   width: 100%;
 }
+
+/* ConfirmDialog 宽度兜底，与 web 端一致 */
+.et-confirm-dialog.p-dialog,
+.p-confirmdialog .p-dialog {
+  width: min(24rem, calc(100vw - 2rem));
+}
+
+/* 底部设置条：不被压缩裁切，超宽时横向滚动而非重叠；
+   菜单项与底部按钮统一 token（高度/圆角/字重） */
+.app-menubar {
+  flex-shrink: 0;
+}
+
+.app-menubar .p-menubar-root-list {
+  overflow-x: auto;
+  flex-wrap: nowrap;
+  gap: 0.25rem;
+}
+
+.app-menubar .p-menubar-item-link {
+  white-space: nowrap;
+  border-radius: 0.5rem;
+  font-weight: 600;
+}
