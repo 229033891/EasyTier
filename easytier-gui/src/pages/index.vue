@@ -350,6 +350,8 @@ async function initWithMode(mode: Mode) {
         return initWithMode({ ...mode, mode: 'normal' });
       }
       url = mode.remote_rpc_address
+      // 远程是网络拨号（TCP + RPC 建链）：一两次连不上很常见（移动网络尤甚），给几次重试。
+      retrys = 3
       break;
     case 'service': {
       if (!mode.config_dir || !mode.file_log_dir || !mode.file_log_level || !mode.rpc_portal) {
@@ -379,6 +381,8 @@ async function initWithMode(mode: Mode) {
     }
     case 'normal':
       url = mode.rpc_portal;
+      // 带 portal 时同样要过网络；ring（无 portal）是进程内直连，一次即可。
+      retrys = url ? 3 : 1
       break;
   }
   try {

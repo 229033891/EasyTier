@@ -447,6 +447,92 @@ fn get_service_status() -> Result<&'static str, String> {
     }
 }
 
+/// 建立 RPC 客户端的预算。ring 是进程内直连；给了地址就是真的网络拨号
+/// （TCP 连接 + RPC 建链，见 runtime_rpc_dialer），公网与移动网络下 1 秒必然超时，
+/// 所以按目标区分：本机回环只需要够本地握手，跨网络要给足 RTT 余量。
+const RPC_CONNECT_TIMEOUT_RING: std::time::Duration = std::time::Duration::from_secs(2);
+const RPC_CONNECT_TIMEOUT_LOOPBACK: std::time::Duration = std::time::Duration::from_secs(3);
+const RPC_CONNECT_TIMEOUT_NETWORK: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// 目标是否指向本机（localhost / 127.0.0.0/8 / ::1）。
+fn is_loopback_rpc_target(url: &url::Url) -> bool {
+    match url.host_str() {
+        Some("localhost") => true,
+        Some(host) => host
+            .parse::<std::net::IpAddr>()
+            .is_ok_and(|addr| addr.is_loopback()),
+        None => false,
+    }
+}
+
+/// `None` = ring（进程内），`Some` = 网络拨号。
+fn rpc_connect_budget(rpc_url: Option<&url::Url>) -> std::time::Duration {
+    match rpc_url {
+        None => RPC_CONNECT_TIMEOUT_RING,
+        Some(url) if is_loopback_rpc_target(url) => RPC_CONNECT_TIMEOUT_LOOPBACK,
+        Some(_) => RPC_CONNECT_TIMEOUT_NETWORK,
+    }
+}
+
+/// 失败信息里要写清真正尝试的目标，否则用户只看到 "timed out" 无从下手。
+fn rpc_target_label(rpc_url: Option<&url::Url>) -> String {
+    match rpc_url {
+        Some(url) => url.to_string(),
+        None => format!("ring://{}", *RPC_RING_UUID.deref()),
+    }
+}
+
+#[cfg(test)]
+mod rpc_connect_budget_tests {
+    use super::{
+        RPC_CONNECT_TIMEOUT_LOOPBACK, RPC_CONNECT_TIMEOUT_NETWORK, RPC_CONNECT_TIMEOUT_RING,
+        is_loopback_rpc_target, rpc_connect_budget,
+    };
+
+    fn parse_url(target: &str) -> url::Url {
+        target.parse().unwrap()
+    }
+
+    #[test]
+    fn ring_uses_process_local_budget() {
+        assert_eq!(rpc_connect_budget(None), RPC_CONNECT_TIMEOUT_RING);
+    }
+
+    #[test]
+    fn loopback_targets_use_local_budget() {
+        for target in [
+            "tcp://127.0.0.1:15888",
+            "tcp://localhost:15888",
+            "ws://[::1]:15888",
+        ] {
+            let target_url = parse_url(target);
+            assert!(is_loopback_rpc_target(&target_url), "{target}");
+            assert_eq!(
+                rpc_connect_budget(Some(&target_url)),
+                RPC_CONNECT_TIMEOUT_LOOPBACK,
+                "{target}"
+            );
+        }
+    }
+
+    #[test]
+    fn remote_targets_use_network_budget() {
+        for target in [
+            "tcp://10.0.0.5:15888",
+            "tcp://example.com:15888",
+            "tcp://[2001:db8::1]:15888",
+        ] {
+            let target_url = parse_url(target);
+            assert!(!is_loopback_rpc_target(&target_url), "{target}");
+            assert_eq!(
+                rpc_connect_budget(Some(&target_url)),
+                RPC_CONNECT_TIMEOUT_NETWORK,
+                "{target}"
+            );
+        }
+    }
+}
+
 fn normalize_normal_mode_rpc_portal(portal: &str) -> Result<(url::Url, url::Url), String> {
     let portal_url: url::Url = portal
         .parse()
@@ -597,13 +683,27 @@ async fn init_rpc_connection(
         *rpc_server_guard = None;
     }
 
+    // 预算和报错都要先知道目标是谁；client_url 之后会被 move 进 GUIClientManager。
+    let dial_url = client_url
+        .as_deref()
+        .map(str::parse::<url::Url>)
+        .transpose()
+        .map_err(|e| format!("invalid rpc url {client_url:?}: {e}"))?;
+    let dial_target = rpc_target_label(dial_url.as_ref());
+    let connect_budget = rpc_connect_budget(dial_url.as_ref());
+
     let client_manager = tokio::time::timeout(
-        std::time::Duration::from_millis(1000),
+        connect_budget,
         manager::GUIClientManager::new(client_url, local_process_runtime),
     )
     .await
-    .map_err(|_| "connect remote rpc timed out".to_string())?
-    .with_context(|| "Failed to connect remote rpc")
+    .map_err(|_| {
+        format!(
+            "connect {dial_target} timed out after {}s",
+            connect_budget.as_secs()
+        )
+    })?
+    .with_context(|| format!("Failed to connect remote rpc {dial_target}"))
     .map_err(|e| format!("{:#}", e))?;
     *client_manager_guard = Some(client_manager);
 

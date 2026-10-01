@@ -340,6 +340,10 @@ impl From<NetworkIdentity> for super::NetworkIdentity {
 pub enum ConfigSource {
     #[default]
     User,
+    /// `webhook` 是旧版本的写法（服务端 migration m20260514_000004 已把它改名为
+    /// `web`）。仍然接受，否则用旧版本写下的 config.d 文件会让新版本节点整份 TOML
+    /// 解析失败、启动即退出（服务化部署下就是 Windows 服务无限重启）。
+    #[serde(alias = "webhook")]
     Web,
 }
 
@@ -358,7 +362,8 @@ impl std::str::FromStr for ConfigSource {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "user" => Ok(Self::User),
-            "web" => Ok(Self::Web),
+            // 旧名，与 serde 的 alias 保持一致，见枚举上的说明。
+            "web" | "webhook" => Ok(Self::Web),
             other => Err(format!("unknown network config source: {other}")),
         }
     }
@@ -1614,6 +1619,24 @@ tcp_stun_servers = []
         assert!(dumped.contains("source = \"web\""));
 
         let loaded = TomlConfigLoader::new_from_str(&dumped).unwrap();
+        assert_eq!(loaded.get_network_config_source(), ConfigSource::Web);
+    }
+
+    #[test]
+    fn legacy_webhook_source_is_accepted_as_web() {
+        // 旧版本把来源写成 "webhook"；升级后 core 若只认 "web"，整份 TOML 就会解析
+        // 失败，节点启动即退出（服务化部署下表现为 Windows 服务无限重启）。
+        assert_eq!("webhook".parse::<ConfigSource>().unwrap(), ConfigSource::Web);
+        assert_eq!("web".parse::<ConfigSource>().unwrap(), ConfigSource::Web);
+        assert_eq!("user".parse::<ConfigSource>().unwrap(), ConfigSource::User);
+
+        let loaded = TomlConfigLoader::new_from_str(
+            r#"
+[source]
+source = "webhook"
+"#,
+        )
+        .unwrap();
         assert_eq!(loaded.get_network_config_source(), ConfigSource::Web);
     }
 

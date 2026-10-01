@@ -170,7 +170,9 @@ watch(() => model.value.mode, async (newMode, oldMode) => {
       mode: 'service',
       config_dir: serviceMode.value?.config_dir || defaultConfigDir.value,
       rpc_portal: serviceMode.value?.rpc_portal || '127.0.0.1:15999',
-      file_log_level: serviceMode.value?.file_log_level || 'off',
+      // 默认 warn：服务起不来（配置解析失败、端口占用等）都是 log::error! 记的，
+      // 默认 off 会让这类故障在日志里完全看不到，只剩「服务反复重启」。
+      file_log_level: serviceMode.value?.file_log_level || 'warn',
       file_log_dir: serviceMode.value?.file_log_dir || defaultLogDir.value,
     }
   }
