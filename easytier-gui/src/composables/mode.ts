@@ -41,7 +41,16 @@ export function loadMode(): Mode {
         try {
             const mode = JSON.parse(modeStr) as Mode
             if (type() === 'android') {
-                return migrateNormalRpcListenFlag({ ...mode, mode: 'normal' })
+                // Android always uses in-process ring RPC; keep a stale tcp portal and
+                // "重试" can leave the UI stuck on "无法连接至远程客户端".
+                return migrateNormalRpcListenFlag({
+                    ...mode,
+                    mode: 'normal',
+                    rpc_portal: undefined,
+                    enable_rpc_port_listen: false,
+                    rpc_listen_port: undefined,
+                    rpc_listen_all_interfaces: undefined,
+                })
             }
             return migrateNormalRpcListenFlag(mode)
         }

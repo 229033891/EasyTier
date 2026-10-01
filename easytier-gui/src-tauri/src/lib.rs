@@ -517,13 +517,22 @@ async fn init_rpc_connection(
             (RpcServerKind::Ring, None, None)
         };
 
-        let need_restart = rpc_server_guard
+        // If the previous client tunnel died, kind/bind alone still match and we would
+        // keep a half-dead ApiRpcServer — reconnect then fails forever. Force rebuild.
+        let previous_client_dead = client_manager_guard
             .as_ref()
-            .map(|x| x.kind != desired_kind || x.bind_url != bind_url)
+            .map(|cm| !cm.rpc_manager.is_running())
             .unwrap_or(true);
+        let need_restart = previous_client_dead
+            || rpc_server_guard
+                .as_ref()
+                .map(|x| x.kind != desired_kind || x.bind_url != bind_url)
+                .unwrap_or(true);
 
         if need_restart {
             *rpc_server_guard = None;
+            // Drop the dead client before rebinding the ring so the old tunnel is gone.
+            *client_manager_guard = None;
 
             let tunnel: BoxedTunnelListener = match desired_kind {
                 RpcServerKind::Ring => instance_manager
