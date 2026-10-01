@@ -22,7 +22,7 @@ import { useToast, useConfirm } from 'primevue'
 import { loadMode, saveMode, normalizeServiceRpcUrl, type Mode } from '~/composables/mode'
 import { saveLastNetworkInstanceId, loadLastNetworkInstanceId } from '~/composables/config'
 import ModeSwitcher from '~/components/ModeSwitcher.vue'
-import { getEasytierVersion, getServiceStatus } from '~/composables/backend'
+import { getEasytierVersion, getServiceStatus, type ServiceStatus } from '~/composables/backend'
 
 const { t, locale } = useI18n()
 const confirm = useConfirm()
@@ -277,6 +277,60 @@ async function onStopService() {
   }
 }
 
+function sleep(ms: number) {
+  return new Promise(resolve => setTimeout(resolve, ms))
+}
+
+/** Wait until Windows/macOS service reaches an expected status (or timeout). */
+async function waitForServiceStatus(expected: ServiceStatus, attempts = 30, intervalMs = 200): Promise<ServiceStatus> {
+  let status = await getServiceStatus()
+  for (let i = 0; i < attempts; i++) {
+    if (status === expected)
+      return status
+    await sleep(intervalMs)
+    status = await getServiceStatus()
+  }
+  return status
+}
+
+/**
+ * Bounce a hung service that still reports Running while its RPC portal is dead.
+ * Soft reconnect / initWithMode previously only started Stopped services, so
+ * Windows users could get stuck on "无法连接至远程客户端" forever.
+ */
+async function bounceService(): Promise<void> {
+  const status = await getServiceStatus()
+  if (status === 'NotInstalled')
+    throw new Error('Service not installed')
+  if (status === 'Running') {
+    manualDisconnect.value = true
+    await setServiceStatus(false)
+    await waitForServiceStatus('Stopped')
+  }
+  await setServiceStatus(true)
+  await waitForServiceStatus('Running')
+}
+
+async function connectRpcWithRetries(isNormalMode: boolean, url: string | undefined, retrys: number) {
+  for (let i = 0; i < retrys; i++) {
+    try {
+      await connectRpcClient(isNormalMode, url)
+      return
+    }
+    catch (e) {
+      if (i === retrys - 1)
+        throw e
+      console.error('Error connecting rpc client, retrying...', e)
+      await sleep(1000)
+    }
+  }
+}
+
+async function restoreConfigsAfterReconnect() {
+  const running_inst_ids = (await remoteClient.value.list_network_instance_ids().catch(() => undefined))?.running_inst_ids ?? []
+  await sendConfigs(running_inst_ids.map(Utils.UuidToStr))
+}
+
 async function initWithMode(mode: Mode) {
   const running_inst_ids = (await remoteClient.value.list_network_instance_ids().catch(() => undefined))?.running_inst_ids ?? []
 
@@ -285,14 +339,7 @@ async function initWithMode(mode: Mode) {
     if (serviceStatus === "Running") {
       manualDisconnect.value = true
       await setServiceStatus(false)
-      serviceStatus = await getServiceStatus()
-      for (let i = 0; i < 10; i++) { // macOS takes a while to stop the service
-        if (serviceStatus === "Stopped") {
-          break;
-        }
-        await new Promise(resolve => setTimeout(resolve, 100))
-        serviceStatus = await getServiceStatus()
-      }
+      serviceStatus = await waitForServiceStatus('Stopped', 10, 100)
     }
     if (serviceStatus === "Stopped") {
       await initService(undefined)
@@ -339,23 +386,37 @@ async function initWithMode(mode: Mode) {
       url = mode.rpc_portal;
       break;
   }
-  for (let i = 0; i < retrys; i++) {
-    try {
-      await connectRpcClient(mode.mode === 'normal', url)
-      break;
-    } catch (e) {
-      if (i === retrys - 1) {
-        const errMsg = e instanceof Error ? e.message : String(e)
+  try {
+    await connectRpcWithRetries(mode.mode === 'normal', url, retrys)
+  }
+  catch (e) {
+    // Service still "Running" but RPC portal dead — bounce once, then retry.
+    if (mode.mode === 'service') {
+      console.error('Service RPC connect failed; bouncing service', e)
+      await bounceService()
+      try {
+        await connectRpcWithRetries(false, url, retrys)
+      }
+      catch (e2) {
+        const errMsg = e2 instanceof Error ? e2.message : String(e2)
         toast.add({
           severity: 'error',
           summary: t('error'),
           detail: t('mode.rpc_connection_failed', { error: errMsg }),
           life: 1000,
         })
-        throw e;
+        throw e2
       }
-      console.error("Error connecting rpc client, retrying...", e)
-      await new Promise(resolve => setTimeout(resolve, 1000))
+    }
+    else {
+      const errMsg = e instanceof Error ? e.message : String(e)
+      toast.add({
+        severity: 'error',
+        summary: t('error'),
+        detail: t('mode.rpc_connection_failed', { error: errMsg }),
+        life: 1000,
+      })
+      throw e
     }
   }
   await sendConfigs(running_inst_ids.map(Utils.UuidToStr))
@@ -474,6 +535,9 @@ watch(clientRunning, async (newVal, oldVal) => {
       manualDisconnect.value = false
       return
     }
+    // Avoid overlapping reconnect / mode-save races (common on Windows service bounce).
+    if (isModeSaving.value)
+      return
     await reconnectClient()
   } else if (newVal && !oldVal) {
     const lastInstanceId = loadLastNetworkInstanceId();
@@ -501,6 +565,9 @@ onMounted(async () => {
 })
 async function reconnectClient() {
   // Soft reconnect: re-establish RPC/web-client without reinstalling the Windows service.
+  if (isModeSaving.value)
+    return
+  isModeSaving.value = true
   const mode = loadMode()
   try {
     let url: string | undefined
@@ -521,21 +588,26 @@ async function reconnectClient() {
         url = mode.rpc_portal
         break
     }
-    for (let i = 0; i < retrys; i++) {
-      try {
-        await connectRpcClient(mode.mode === 'normal', url)
-        break
+    try {
+      await connectRpcWithRetries(mode.mode === 'normal', url, retrys)
+    }
+    catch (e) {
+      // Windows service can stay "Running" with a dead RPC portal — bounce then retry.
+      if (mode.mode === 'service') {
+        console.error('Soft reconnect failed against running service; bouncing', e)
+        await bounceService()
+        await connectRpcWithRetries(false, url, retrys)
       }
-      catch (e) {
-        if (i === retrys - 1)
-          throw e
-        await new Promise(resolve => setTimeout(resolve, 1000))
+      else {
+        throw e
       }
     }
     if (mode.mode === 'normal') {
       await initWebClient(mode.config_server_url, mode.secure_mode).catch(() => undefined)
       await refreshConfigServerConnection()
     }
+    // Soft reconnect creates a fresh GUIClientManager with empty storage.
+    await restoreConfigsAfterReconnect()
     clientRunning.value = await isClientRunning().catch(() => false)
     await setTrayRunState(clientRunning.value)
     // Soft path can return Ok while the tunnel is still dead; force full init then.
@@ -546,7 +618,13 @@ async function reconnectClient() {
   catch (e) {
     console.error('Soft reconnect failed, falling back to full init', e)
     editingMode.value = JSON.parse(JSON.stringify(mode))
+    // onModeSave also toggles isModeSaving; release our guard first.
+    isModeSaving.value = false
     await onModeSave()
+    return
+  }
+  finally {
+    isModeSaving.value = false
   }
 }
 
