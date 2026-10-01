@@ -536,8 +536,12 @@ async function reconnectClient() {
       await initWebClient(mode.config_server_url, mode.secure_mode).catch(() => undefined)
       await refreshConfigServerConnection()
     }
-    clientRunning.value = await isClientRunning()
+    clientRunning.value = await isClientRunning().catch(() => false)
     await setTrayRunState(clientRunning.value)
+    // Soft path can return Ok while the tunnel is still dead; force full init then.
+    if (!clientRunning.value) {
+      throw new Error('local RPC still not running after soft reconnect')
+    }
   }
   catch (e) {
     console.error('Soft reconnect failed, falling back to full init', e)
