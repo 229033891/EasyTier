@@ -196,6 +196,9 @@ jobs:
           cat feed/version.mk
           grep -A8 'Build/Prepare' feed/easytier/Makefile
 
+      - name: Prepare output dir (SDK action 会 chown 该目录, 不存在会直接失败)
+        run: mkdir -p "${{ github.workspace }}/out-${{ matrix.pkgtype }}"
+
       - name: Build OpenWrt packages (${{ matrix.pkgtype }})
         uses: openwrt/gh-action-sdk@main
         env:
