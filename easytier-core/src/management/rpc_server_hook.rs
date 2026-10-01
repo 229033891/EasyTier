@@ -33,12 +33,14 @@ impl RpcServerHook for ManagementRpcServerHook {
             .ok_or_else(|| anyhow::anyhow!("remote_addr is None"))?;
         let url = url::Url::parse(&remote_url.url)
             .map_err(|error| anyhow::anyhow!("failed to parse remote URL: {error}"))?;
-        let host = url
-            .host_str()
-            .ok_or_else(|| anyhow::anyhow!("remote URL has no host"))?;
-        let ip_addr: IpAddr = host
-            .parse()
-            .map_err(|error| anyhow::anyhow!("failed to parse client IP {host}: {error}"))?;
+        // Local transports (ring://, etc.) have no IP host — do not apply CIDR checks.
+        let host = match url.host_str() {
+            Some(host) => host,
+            None => return Ok(Some(tunnel_info)),
+        };
+        let Ok(ip_addr) = host.parse::<IpAddr>() else {
+            return Ok(Some(tunnel_info));
+        };
 
         if self.whitelist.iter().any(|cidr| cidr.contains(&ip_addr)) {
             return Ok(Some(tunnel_info));

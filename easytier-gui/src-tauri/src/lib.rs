@@ -570,16 +570,19 @@ async fn init_rpc_connection(
                 }
             };
 
-            let allow_lan = bind_url
-                .as_ref()
-                .and_then(|u| u.host_str())
-                .is_some_and(|h| h == "0.0.0.0" || h == "::");
-            let rpc_server = ApiRpcServer::from_tunnel(tunnel, instance_manager.clone())
-                .with_localhost_or_lan_whitelist(allow_lan)
-                .with_rx_timeout(None)
-                .serve()
-                .await
-                .map_err(|e| e.to_string())?;
+            // IP whitelist only applies to TCP portals. Ring tunnels use ring://uuid
+            // (no IP host); ManagementRpcServerHook would reject every client and leave
+            // the GUI stuck on "无法连接至远程客户端". Match main: no whitelist for ring.
+            let mut rpc_server = ApiRpcServer::from_tunnel(tunnel, instance_manager.clone())
+                .with_rx_timeout(None);
+            if desired_kind == RpcServerKind::Tcp {
+                let allow_lan = bind_url
+                    .as_ref()
+                    .and_then(|u| u.host_str())
+                    .is_some_and(|h| h == "0.0.0.0" || h == "::");
+                rpc_server = rpc_server.with_localhost_or_lan_whitelist(allow_lan);
+            }
+            let rpc_server = rpc_server.serve().await.map_err(|e| e.to_string())?;
             *rpc_server_guard = Some(RpcServer {
                 kind: desired_kind,
                 _server: rpc_server,
