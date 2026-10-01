@@ -2,7 +2,7 @@ name: EasyTier JavaScript Hosts
 
 on:
   push:
-    branches: ["develop", "main", "releases/**"]
+    branches: ["develop", "dev", "releases/**"]
     paths:
       - "Cargo.toml"
       - "Cargo.lock"
@@ -11,7 +11,7 @@ on:
       - "easytier-js/**"
       - ".github/workflows/js.yml"
   pull_request:
-    branches: ["develop", "main"]
+    branches: ["develop", "dev"]
     types: [opened, synchronize, reopened, ready_for_review]
     paths:
       - "Cargo.toml"

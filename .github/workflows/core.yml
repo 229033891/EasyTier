@@ -3,9 +3,10 @@ name: EasyTier Linux
 on:
   workflow_dispatch:
   push:
-    branches: [ "develop", "main", "releases/**" ]
+    # main：只作同步/合入，不跑自动构建
+    branches: [ "develop", "dev", "releases/**" ]
   pull_request:
-    branches: [ "develop", "main" ]
+    branches: [ "develop", "dev" ]
     types: [ opened, synchronize, reopened, ready_for_review ]
 
 concurrency:

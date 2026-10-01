@@ -2,13 +2,13 @@ name: Nix Check
 
 on:
   push:
-    branches: ["main", "develop"]
+    branches: ["develop", "dev"]
     paths:
       - "**/*.nix"
       - "flake.lock"
       - "rust-toolchain.toml"
   pull_request:
-    branches: ["main", "develop"]
+    branches: ["develop", "dev"]
     types: [opened, synchronize, reopened, ready_for_review]
     paths:
       - "**/*.nix"

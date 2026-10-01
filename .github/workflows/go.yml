@@ -2,12 +2,12 @@ name: EasyTier Go
 
 on:
   push:
-    branches: ["develop", "main", "releases/**"]
+    branches: ["develop", "dev", "releases/**"]
     paths:
       - "easytier-go/**"
       - ".github/workflows/go.yml"
   pull_request:
-    branches: ["develop", "main"]
+    branches: ["develop", "dev"]
     types: [opened, synchronize, reopened, ready_for_review]
     paths:
       - "easytier-go/**"

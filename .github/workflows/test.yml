@@ -2,9 +2,10 @@ name: EasyTier Test
 
 on:
   push:
-    branches: [ "develop", "main" ]
+    # main：只作同步/合入，不跑自动测试
+    branches: [ "develop", "dev" ]
   pull_request:
-    branches: [ "develop", "main" ]
+    branches: [ "develop", "dev" ]
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
