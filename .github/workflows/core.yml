@@ -81,7 +81,7 @@ jobs:
       - name: Archive artifact
         uses: actions/upload-artifact@v5
         with:
-          name: easytier-web-dashboard
+          name: ET-web-dashboard
           path: |
             easytier-web/frontend/dist/*
   build:
@@ -114,7 +114,7 @@ jobs:
       - name: Download web artifact
         uses: actions/download-artifact@v4
         with:
-          name: easytier-web-dashboard
+          name: ET-web-dashboard
           path: easytier-web/frontend/dist/
 
       - name: Prepare build environment
@@ -168,7 +168,7 @@ jobs:
       - name: Archive artifact
         uses: actions/upload-artifact@v5
         with:
-          name: easytier-${{ matrix.ARTIFACT_NAME }}
+          name: ET-${{ matrix.ARTIFACT_NAME }}
           path: |
             ./artifacts/*
 

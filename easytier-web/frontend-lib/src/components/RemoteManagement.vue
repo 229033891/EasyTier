@@ -921,10 +921,12 @@ onUnmounted(() => {
         </div>
 
         <div v-if="showStickyFooter" class="network-sticky-footer">
+            <!-- GUI 额外按钮（系统设置等）放最左，窄屏单行时更易点到 -->
+            <slot name="footer-extra" />
             <Button v-if="showLeaveInFooter" @click="drawerClose" :label="leaveLabel" severity="secondary"
                 :icon="leaveIcon" iconPos="left" class="network-footer-btn network-footer-btn--muted"
                 v-tooltip.top="leaveTooltip" />
-            <!-- GUI combined 模式：右上角的编辑/取消移到下方左侧，与运行网络同一样式体系 -->
+            <!-- GUI combined 模式：编辑/取消与运行网络同一样式体系 -->
             <div v-if="showCombinedNavZone" class="footer-zone">
                 <Button v-if="showCombinedEditEntry" icon="pi pi-cog" severity="secondary"
                     :label="t('web.device_management.switch_to_config')" iconPos="left"
@@ -959,8 +961,6 @@ onUnmounted(() => {
                     :label="t('web.device_management.disable_network')" severity="danger" icon="pi pi-power-off"
                     iconPos="left" class="network-footer-btn network-footer-btn--danger"
                     v-tooltip.top="t('web.device_management.disable_network_tip')" />
-                <!-- GUI 等 combined 模式宿主塞进来的额外按钮（切换模式 / 设置），与本行按钮同一样式 -->
-                <slot name="footer-extra" />
             </div>
         </div>
 

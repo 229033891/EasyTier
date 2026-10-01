@@ -570,7 +570,7 @@ const eventLogContent = computed(() => {
           toggleable :pt="panelHeaderPt('nodeDetails')">
           <div class="node-detail-groups flex flex-col gap-1.5 max-h-72 overflow-auto">
             <div v-for="group in myNodeInfoGroups" :key="group.key" class="node-info-group">
-              <span class="node-info-group-title truncate">
+              <span class="node-info-group-title" :title="t(group.titleKey)">
                 {{ t(group.titleKey) }}
                 <span v-if="group.chips.length > 1" class="normal-case font-normal">
                   ({{ group.chips.length }})
@@ -772,19 +772,17 @@ const eventLogContent = computed(() => {
   padding-right: 0.1rem;
 }
 
-.node-info-group {
-  border: 1px solid var(--et-border-color, #e2e8f0);
-  border-radius: calc(var(--et-radius, 0.75rem) - 0.25rem);
-  background: var(--surface-50, #f8fafc);
-  padding: 0.3rem 0.5rem 0.4rem;
-}
-
 /* 一组：标题定宽（顶部对齐）+ chip 区自动换行（不横向滚动）+ 复制按钮 */
 .node-info-group {
   display: flex;
   align-items: flex-start;
   gap: 0.5rem;
   min-height: 1.6rem;
+  border: 1px solid var(--et-border-color, #e2e8f0);
+  border-radius: calc(var(--et-radius, 0.75rem) - 0.25rem);
+  background: var(--surface-50, #f8fafc);
+  padding: 0.3rem 0.5rem 0.4rem;
+  overflow: hidden;
 }
 
 .node-info-group-title {
@@ -810,6 +808,7 @@ const eventLogContent = computed(() => {
 .status-panels :deep(.node-info-chip.p-chip) {
   flex: 0 1 auto;
   min-width: 0;
+  max-width: 100%;
   padding: 0.05rem 0.4rem;
   min-height: 1.25rem;
   height: auto;
@@ -820,10 +819,35 @@ const eventLogContent = computed(() => {
   overflow-wrap: anywhere;
 }
 
-/* 窄屏把标题压窄一点，给 chip 区留出可见宽度 */
+/* 窄屏改为上下堆叠：标题+复制一行，chip 全宽换行，避免标签被内容盖住 */
 @media (max-width: 640px) {
+  .node-info-group {
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.35rem 0.4rem;
+    padding: 0.45rem 0.55rem;
+  }
+
   .node-info-group-title {
-    flex: 0 0 5rem;
+    flex: 1 1 auto;
+    min-width: 0;
+    padding-top: 0;
+    font-size: 0.75rem;
+    text-transform: none;
+    letter-spacing: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .node-info-group :deep(.et-icon-action-btn) {
+    flex: 0 0 auto;
+    margin-left: auto;
+  }
+
+  .node-info-group-chips {
+    flex: 1 1 100%;
+    width: 100%;
   }
 }
 

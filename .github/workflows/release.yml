@@ -88,8 +88,8 @@ jobs:
           ls -l -R ./
           chmod -R 755 .
           for x in `ls`; do
-            # openwrt-bins / easytier-web-dashboard 是中间产物 (裸二进制 / 前端静态文件), 不发版
-            if [ "$x" = "openwrt-bins" ] || [ "$x" = "easytier-web-dashboard" ]; then
+            # openwrt-bins / ET-web-dashboard 是中间产物 (裸二进制 / 前端静态文件), 不发版
+            if [ "$x" = "openwrt-bins" ] || [ "$x" = "ET-web-dashboard" ]; then
               continue
             fi
             zip -r ../zipped_assets/$x-${VERSION}.zip $x;

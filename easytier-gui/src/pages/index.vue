@@ -823,27 +823,27 @@ body {
   text-overflow: ellipsis;
 }
 
-/* 设置弹出菜单：与主界面卡片一致 */
+/* 设置弹出菜单：与主界面卡片一致；行距/内边距约收紧 25% */
 .settings-popup.p-menu {
   background: var(--surface-card, #ffffff) !important;
   border: 1px solid var(--et-border-color, #e2e8f0) !important;
   border-radius: var(--et-radius, 0.75rem) !important;
   box-shadow: 0 12px 28px rgba(15, 23, 42, 0.14) !important;
-  padding: 0.35rem !important;
+  padding: 0.25rem !important;
   min-width: 13rem;
   max-width: min(22rem, calc(100vw - 1rem));
 }
 
 .settings-popup .p-menu-item-content {
-  border-radius: 0.5rem;
+  border-radius: 0.45rem;
 }
 
 .settings-popup .p-menu-item-link {
-  padding: 0.6rem 0.8rem !important;
-  border-radius: 0.5rem;
+  padding: 0.45rem 0.65rem !important;
+  border-radius: 0.45rem;
   font-size: var(--et-fs-body, 0.875rem) !important;
   font-weight: 600;
-  gap: 0.6rem;
+  gap: 0.45rem;
 }
 
 .settings-item-label {
@@ -904,8 +904,8 @@ body {
   }
 
   .settings-popup .p-menu-item-link {
-    min-height: 2.75rem;
-    padding: 0.75rem 0.9rem !important;
+    min-height: 2.15rem;
+    padding: 0.55rem 0.7rem !important;
     align-items: center;
   }
 
