@@ -44,13 +44,6 @@ async function openModeDialog() {
   modeDialogVisible.value = true
 }
 
-async function openAutostartDialog() {
-  editingMode.value = JSON.parse(JSON.stringify(loadMode()))
-  editingMode.value.mode = 'service'
-  showAutostartHint.value = true
-  modeDialogVisible.value = true
-}
-
 async function onModeSave() {
   if (isModeSaving.value) {
     return;
@@ -349,49 +342,17 @@ onMounted(async () => {
 
 let current_log_level = 'off'
 
-const log_menu = ref()
 // 从后端获取正确的日志路径
 async function getLogDirPath(): Promise<string> {
   return await invoke<string>('get_log_dir_path')
-}
-
-const log_menu_items_popup: Ref<MenuItem[]> = ref([
-  ...['off', 'warn', 'info', 'debug', 'trace'].map(level => ({
-    label: () => t(`logging_level_${level}`) + (current_log_level === level ? ' ✓' : ''),
-    command: async () => {
-      current_log_level = level
-      await setLoggingLevel(level)
-    },
-  })),
-  {
-    separator: true,
-  },
-  {
-    label: () => t('logging_open_dir'),
-    icon: 'pi pi-folder-open',
-    command: async () => {
-      // console.log('open log dir', await getLogDirPath())
-      await open(await getLogDirPath())
-    },
-    visible: () => type() !== 'android',
-  },
-  {
-    label: () => t('logging_copy_dir'),
-    icon: 'pi pi-tablet',
-    command: async () => {
-      await writeText(await getLogDirPath())
-    },
-  },
-])
-
-function toggle_log_menu(event: any) {
-  log_menu.value.toggle(event)
 }
 
 function getLabel(item: MenuItem) {
   return typeof item.label === 'function' ? item.label() : item.label
 }
 
+const settings_menu = ref()
+// 底部只剩两个按钮：[切换模式] 独立按钮 + [设置] 弹出菜单（开机自启动已并入切换模式对话框，不再单独占一项）
 const setting_menu_items: Ref<MenuItem[]> = ref([
   {
     label: () => t('exchange_language'),
@@ -405,28 +366,41 @@ const setting_menu_items: Ref<MenuItem[]> = ref([
     },
   },
   {
-    label: () => `${t('mode.switch_mode')}: ${t('mode.' + currentMode.value.mode)}`,
-    icon: 'pi pi-sync',
-    command: openModeDialog,
-    visible: () => type() !== 'android',
-  },
-  {
-    label: () => t('mode.autostart'),
-    icon: 'pi pi-clock',
-    command: openAutostartDialog,
-    visible: () => type() !== 'android',
-  },
-  {
     label: () => `${t('config-server.title')}${t('config-server.' + configServerConnectionStatus.value)}`,
     icon: 'pi pi-globe',
     command: openConfigServerDialog,
     visible: () => ["normal", "service"].includes(currentMode.value.mode),
   },
   {
-    key: 'logging_menu',
     label: () => t('logging'),
     icon: 'pi pi-file',
-    items: [], // Keep this to show it's a parent menu
+    items: [
+      ...['off', 'warn', 'info', 'debug', 'trace'].map(level => ({
+        label: () => t(`logging_level_${level}`) + (current_log_level === level ? ' ✓' : ''),
+        command: async () => {
+          current_log_level = level
+          await setLoggingLevel(level)
+        },
+      })),
+      {
+        separator: true,
+      },
+      {
+        label: () => t('logging_open_dir'),
+        icon: 'pi pi-folder-open',
+        command: async () => {
+          await open(await getLogDirPath())
+        },
+        visible: () => type() !== 'android',
+      },
+      {
+        label: () => t('logging_copy_dir'),
+        icon: 'pi pi-tablet',
+        command: async () => {
+          await writeText(await getLogDirPath())
+        },
+      },
+    ],
   },
   {
     label: () => t('about.title'),
@@ -436,7 +410,7 @@ const setting_menu_items: Ref<MenuItem[]> = ref([
     },
   },
   {
-    label: () => t('exit'),
+    label: () => t('exit_app'),
     icon: 'pi pi-power-off',
     command: async () => {
       await exit(1)
@@ -509,10 +483,10 @@ const configServerConnectionStatus = computed(() => {
 
 <template>
   <div id="root" class="flex flex-col">
-    <Dialog v-model:visible="aboutVisible" modal :header="t('about.title')" :style="{ width: '70%' }">
+    <Dialog v-model:visible="aboutVisible" modal :header="t('about.title')" :style="{ width: '70%' }" class="app-dialog">
       <About />
     </Dialog>
-    <Dialog v-model:visible="modeDialogVisible" modal :header="t('mode.switch_mode')" :style="{ width: '50vw' }">
+    <Dialog v-model:visible="modeDialogVisible" modal :header="t('mode.switch_mode')" :style="{ width: '50vw' }" class="app-dialog">
       <Message v-if="showAutostartHint" severity="info" :closable="false" class="mb-4">
         {{ t('mode.autostart_hint') }}
       </Message>
@@ -524,7 +498,7 @@ const configServerConnectionStatus = computed(() => {
     </Dialog>
 
     <Dialog v-model:visible="configServerDialogVisible" modal :header="t('config-server.title')"
-      :style="{ width: '50vw' }">
+      :style="{ width: '50vw' }" class="app-dialog">
       <div class="flex flex-col gap-3">
         <label for="config-server-address">{{ t('config-server.address') }}</label>
         <InputText id="config-server-address" v-model="(editingMode as WebClientConfig).config_server_url"
@@ -538,8 +512,6 @@ const configServerConnectionStatus = computed(() => {
       </template>
     </Dialog>
 
-    <Menu ref="log_menu" :model="log_menu_items_popup" :popup="true" />
-
     <RemoteManagement v-if="clientRunning" class="flex-1 overflow-y-auto" :api="remoteClient"
       :pause-auto-refresh="isModeSaving" v-model:instance-id="instanceId" />
     <div v-else class="empty-state flex-1 flex flex-col items-center py-12">
@@ -550,19 +522,21 @@ const configServerConnectionStatus = computed(() => {
         iconPos="left" />
     </div>
 
-    <Menubar :model="setting_menu_items" breakpoint="795px" class="app-menubar">
-      <template #item="{ item, props }">
-        <a v-if="item.key === 'logging_menu'" v-bind="props.action" @click="toggle_log_menu">
-          <span :class="item.icon" />
-          <span class="p-menubar-item-label">{{ getLabel(item) }}</span>
-          <span class="pi pi-angle-down p-menubar-item-icon text-[9px]"></span>
-        </a>
-        <a v-else v-bind="props.action">
-          <span :class="item.icon" />
-          <span class="p-menubar-item-label">{{ getLabel(item) }}</span>
-        </a>
-      </template>
-    </Menubar>
+    <div class="bottom-action-bar">
+      <Button v-if="type() !== 'android'" :label="`${t('mode.switch_mode')}: ${t('mode.' + currentMode.mode)}`"
+        icon="pi pi-sync" iconPos="left" severity="danger" class="bottom-bar-btn" @click="openModeDialog" />
+      <Button :label="t('settings')" icon="pi pi-cog" iconPos="left" severity="danger" class="bottom-bar-btn"
+        @click="settings_menu.toggle($event)" />
+      <Menu ref="settings_menu" :model="setting_menu_items" :popup="true" class="settings-popup">
+        <template #item="{ item, props }">
+          <a v-bind="props.action">
+            <span v-if="item.icon" :class="item.icon" />
+            <span class="settings-item-label">{{ getLabel(item) }}</span>
+            <span v-if="item.items?.length" class="pi pi-angle-right settings-submenu-icon" />
+          </a>
+        </template>
+      </Menu>
+    </div>
   </div>
 </template>
 
@@ -588,6 +562,87 @@ body {
 
 .p-menubar .p-menuitem {
   margin: 0;
+}
+
+/* 底部操作条：与上方网络底部栏同一套卡片 token */
+.bottom-action-bar {
+  flex-shrink: 0;
+  display: flex;
+  gap: 0.5rem;
+  padding: 0.55rem 0.75rem;
+  background: var(--surface-card, #ffffff);
+  border: 1px solid var(--et-border-color, #e2e8f0);
+  border-radius: var(--et-radius, 0.75rem);
+}
+
+/* 两个按钮与「禁用网络」同一样式体系（浅红 danger） */
+.bottom-bar-btn.p-button {
+  flex: 1 1 0;
+  min-width: 0;
+  max-width: 14rem;
+  height: var(--et-btn, 2.5rem) !important;
+  padding: 0 0.9rem !important;
+  font-size: var(--et-fs-body, 0.875rem) !important;
+  font-weight: 600 !important;
+  border-radius: var(--et-radius, 0.75rem) !important;
+  box-sizing: border-box;
+  justify-content: center;
+  background: color-mix(in srgb, #ef4444 12%, #ffffff) !important;
+  border: 1px solid color-mix(in srgb, #ef4444 35%, #e2e8f0) !important;
+  color: #b91c1c !important;
+}
+
+.bottom-bar-btn.p-button:hover:not(:disabled) {
+  background: color-mix(in srgb, #ef4444 20%, #ffffff) !important;
+}
+
+.bottom-bar-btn.p-button .p-button-label {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 设置弹出菜单：与主界面卡片一致 */
+.settings-popup.p-menu {
+  background: var(--surface-card, #ffffff) !important;
+  border: 1px solid var(--et-border-color, #e2e8f0) !important;
+  border-radius: var(--et-radius, 0.75rem) !important;
+  box-shadow: 0 12px 28px rgba(15, 23, 42, 0.14) !important;
+  padding: 0.35rem !important;
+  min-width: 13rem;
+}
+
+.settings-popup .p-menu-item-content {
+  border-radius: 0.5rem;
+}
+
+.settings-popup .p-menu-item-link {
+  padding: 0.6rem 0.8rem !important;
+  border-radius: 0.5rem;
+  font-size: var(--et-fs-body, 0.875rem) !important;
+  font-weight: 600;
+  gap: 0.6rem;
+}
+
+.settings-item-label {
+  flex: 1;
+  white-space: nowrap;
+}
+
+.settings-submenu-icon {
+  font-size: 0.7rem;
+  opacity: 0.6;
+}
+
+/* 设置相关弹窗：与主界面卡片一致 */
+.app-dialog.p-dialog {
+  border-radius: var(--et-radius, 0.75rem) !important;
+  border: 1px solid var(--et-border-color, #e2e8f0) !important;
+  max-width: calc(100vw - 2rem);
+}
+
+.app-dialog .p-dialog-header {
+  font-weight: 700;
 }
 
 .p-select-overlay {

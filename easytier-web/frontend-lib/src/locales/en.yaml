@@ -447,6 +447,7 @@ dhcp_experimental_warning: Experimental warning! if there is an IP conflict in t
 tray:
   show: Show / Hide
   exit: Exit
+  exit_app: Exit App
 
 about:
   title: About
