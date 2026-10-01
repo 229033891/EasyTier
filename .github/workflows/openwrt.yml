@@ -15,11 +15,8 @@ name: EasyTier OpenWrt
 on:
   workflow_dispatch:
   push:
-    # main：只作同步/合入，不跑自动构建
-    branches: ["develop", "dev", "releases/**"]
-  pull_request:
-    branches: ["develop", "dev"]
-    types: [opened, synchronize, reopened, ready_for_review]
+    # 仅 releases/** 自动构建；main/dev 推送不触发
+    branches: ["releases/**"]
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}

@@ -2,18 +2,12 @@ name: Nix Check
 
 on:
   push:
-    branches: ["develop", "dev"]
+    branches: ["releases/**"]
     paths:
       - "**/*.nix"
       - "flake.lock"
       - "rust-toolchain.toml"
-  pull_request:
-    branches: ["develop", "dev"]
-    types: [opened, synchronize, reopened, ready_for_review]
-    paths:
-      - "**/*.nix"
-      - "flake.lock"
-      - "rust-toolchain.toml"
+  workflow_dispatch:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}

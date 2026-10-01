@@ -2,10 +2,9 @@ name: EasyTier Test
 
 on:
   push:
-    # main：只作同步/合入，不跑自动测试
-    branches: [ "develop", "dev" ]
-  pull_request:
-    branches: [ "develop", "dev" ]
+    # 仅 releases/** 自动测试；main/dev 推送不触发
+    branches: [ "releases/**" ]
+  workflow_dispatch:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
