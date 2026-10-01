@@ -68,6 +68,7 @@ async fn get_me(auth_session: AuthSession) -> Result<Json<MeResponse>, HttpHandl
         id: user.db_user.id,
         username: user.db_user.username.clone(),
         is_admin,
+        config_token: user.db_user.config_token.clone(),
     }))
 }
 

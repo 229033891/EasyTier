@@ -1,7 +1,6 @@
 use std::collections::HashSet;
 
 use axum_login::{AuthUser, AuthnBackend, AuthzBackend, UserId};
-use password_auth::verify_password;
 use sea_orm::{
     ColumnTrait, EntityTrait, FromQueryResult, IntoActiveModel, JoinType, QueryFilter,
     QuerySelect as _, RelationTrait, Set,
@@ -72,6 +71,8 @@ pub struct UserInfo {
     pub username: String,
     pub groups: Vec<String>,
     pub is_admin: bool,
+    /// Config-server URL token (`udp://host/<config_token>`).
+    pub config_token: String,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -79,6 +80,7 @@ pub struct MeResponse {
     pub id: i32,
     pub username: String,
     pub is_admin: bool,
+    pub config_token: String,
 }
 
 #[derive(Debug, Clone)]
@@ -128,7 +130,7 @@ impl Backend {
             anyhow::bail!("Password is required");
         }
 
-        let hashed_password = password_auth::generate_hash(req.password.as_str());
+        let hashed_password = db::hash_web_login_password(req.password.as_str());
         let groups: &[&str] = if req.is_admin {
             &["users", "admins"]
         } else {
@@ -137,7 +139,7 @@ impl Backend {
 
         let db_user = self
             .db
-            .create_user_and_join_groups(username, hashed_password, groups)
+            .create_user_and_join_groups(username, hashed_password, groups, None)
             .await?;
 
         Ok(UserInfo {
@@ -145,6 +147,7 @@ impl Backend {
             username: db_user.username,
             groups: groups.iter().map(|s| (*s).to_string()).collect(),
             is_admin: req.is_admin,
+            config_token: db_user.config_token,
         })
     }
 
@@ -157,12 +160,14 @@ impl Backend {
         struct UserGroupRow {
             id: i32,
             username: String,
+            config_token: String,
             group_name: Option<String>,
         }
 
         let rows = users::Entity::find()
             .column_as(users::Column::Id, "id")
             .column_as(users::Column::Username, "username")
+            .column_as(users::Column::ConfigToken, "config_token")
             .column_as(groups::Column::Name, "group_name")
             .join(JoinType::LeftJoin, users::Relation::UsersGroups.def())
             .join(
@@ -181,6 +186,7 @@ impl Backend {
                 username: row.username.clone(),
                 groups: Vec::new(),
                 is_admin: false,
+                config_token: row.config_token.clone(),
             });
             if let Some(name) = row.group_name {
                 if name == "admins" {
@@ -229,16 +235,24 @@ impl Backend {
             .await?
         {
             return Ok(User {
-                tokens: vec![db_user.username.clone()],
+                tokens: vec![db_user.config_token.clone()],
                 db_user,
             });
         }
 
         // User not found – auto-provision a local account backed by the IdP identity.
-        let db_user = self.db.auto_create_user(username).await?;
+        let random_password = uuid::Uuid::new_v4().to_string();
+        let hashed_password =
+            task::spawn_blocking(move || password_auth::generate_hash(&random_password))
+                .await
+                .map_err(|e| anyhow::anyhow!("Failed to hash password: {e}"))?;
+        let db_user = self
+            .db
+            .create_user_and_join_users_group(username, hashed_password)
+            .await?;
         tracing::info!("Auto-provisioned OIDC user '{username}'");
         Ok(User {
-            tokens: vec![db_user.username.clone()],
+            tokens: vec![db_user.config_token.clone()],
             db_user,
         })
     }
@@ -248,7 +262,7 @@ impl Backend {
         id: <User as AuthUser>::Id,
         req: &ChangePassword,
     ) -> anyhow::Result<()> {
-        let hashed_password = password_auth::generate_hash(req.new_password.as_str());
+        let hashed_password = db::hash_web_login_password(req.new_password.as_str());
 
         use entity::users;
 
@@ -286,36 +300,57 @@ impl AuthnBackend for Backend {
         creds: Self::Credentials,
     ) -> Result<Option<Self::User>, Self::Error> {
         let user = entity::users::Entity::find()
-            .filter(entity::users::Column::Username.eq(creds.username))
+            .filter(entity::users::Column::Username.eq(creds.username.clone()))
             .one(self.db.orm_db())
             .await?;
-        task::spawn_blocking(|| {
-            // We're using password-based authentication--this works by comparing our form
-            // input with an argon2 password hash.
-            Ok(user
-                .filter(|user| verify_password(creds.password, &user.password).is_ok())
-                .map(|user| User {
-                    db_user: user.clone(),
-                    tokens: vec![user.username.clone()],
-                }))
+        let Some(db_user) = user else {
+            return Ok(None);
+        };
+
+        let password = creds.password.clone();
+        let stored_hash = db_user.password.clone();
+        let matched = task::spawn_blocking(move || {
+            db::verify_web_login_password(&password, &stored_hash)
         })
-        .await?
+        .await?;
+
+        if !matched {
+            return Ok(None);
+        }
+
+        // Upgrade legacy argon2(md5(password)) hashes to argon2(password).
+        if db::web_login_password_needs_upgrade(&creds.password, &db_user.password) {
+            let new_hash = db::hash_web_login_password(&creds.password);
+            if let Err(e) = self
+                .db
+                .set_user_password_by_username(&db_user.username, new_hash)
+                .await
+            {
+                tracing::warn!(
+                    "Failed to upgrade password hash for user {}: {:?}",
+                    db_user.username,
+                    e
+                );
+            }
+        }
+
+        Ok(Some(User {
+            tokens: vec![db_user.config_token.clone()],
+            db_user,
+        }))
     }
 
     async fn get_user(&self, user_id: &UserId<Self>) -> Result<Option<Self::User>, Self::Error> {
-        let mut user = entity::users::Entity::find()
+        let user = entity::users::Entity::find()
             .filter(entity::users::Column::Id.eq(*user_id))
             .one(self.db.orm_db())
             .await?;
 
-        if let Some(u) = &mut user {
-            let mut user = User {
-                db_user: u.clone(),
-                tokens: vec![],
-            };
-            // username is a token
-            user.tokens.push(u.username.clone());
-            Ok(Some(user))
+        if let Some(u) = user {
+            Ok(Some(User {
+                tokens: vec![u.config_token.clone()],
+                db_user: u,
+            }))
         } else {
             Ok(None)
         }

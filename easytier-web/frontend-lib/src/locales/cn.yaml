@@ -625,6 +625,8 @@ web:
     config_saved: 配置已保存
     save_failed: 保存配置失败
     start_failed: 启动网络失败
+    stop_failed: 停用网络失败
+    load_config_failed: 加载配置失败
     import_config: 导入配置
     import_config_tip: 从本地文件导入并覆盖当前网络配置
     create_new: 创建新网络
@@ -700,6 +702,8 @@ mode:
   rpc_portal: RPC端口
   enable_rpc_tcp_listen: 开启 RPC 端口监听（TCP）
   rpc_listen_port: RPC 监听端口
+  rpc_listen_all_interfaces: 监听所有网卡
+  rpc_listen_all_interfaces_hint: 默认仅本机(127.0.0.1)。开启后绑定 0.0.0.0，但仍默认只允许本机 IP 访问 RPC；如需局域网管理请使用命令行白名单。
   log_level: 日志级别
   log_dir: 日志目录
   remote_rpc_address: 远程RPC地址
@@ -727,12 +731,14 @@ mode:
 config-server:
   title: 配置服务器
   address: 配置服务器地址
-  address_placeholder: 例如：udp://127.0.0.1:22020/admin 或 admin
+  address_placeholder: 例如：udp://127.0.0.1:22020/<config_token>
   description: |
     配置服务器地址，支持以下格式：
-    完整URL：udp://127.0.0.1:22020/admin
-    仅用户名：admin（使用官方服务器）
+    完整URL：udp://127.0.0.1:22020/<config_token>（路径为用户的 config_token，不再是用户名）
+    仅 token：et_xxxx（使用官方服务器）
     留空：不连接配置服务器
+  secure_mode: 强制安全通道
+  secure_mode_hint: 开启后要求配置服务器支持加密隧道；服务器不支持时会持续重试。
   connection_status: 连接状态
   connected: ": 已连接"
   disconnected: ": 未连接"

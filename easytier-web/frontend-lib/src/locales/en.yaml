@@ -624,6 +624,8 @@ web:
     config_saved: Config Saved
     save_failed: Failed to save config
     start_failed: Failed to start network
+    stop_failed: Failed to stop network
+    load_config_failed: Failed to load network config
     import_config: Import Config
     import_config_tip: Import a local file and overwrite the current network config
     create_new: Create New Network
@@ -699,6 +701,8 @@ mode:
   rpc_portal: RPC Portal
   enable_rpc_tcp_listen: Enable RPC port listening (TCP)
   rpc_listen_port: RPC Listen Port
+  rpc_listen_all_interfaces: Listen on all interfaces
+  rpc_listen_all_interfaces_hint: Defaults to localhost (127.0.0.1). When enabled, binds 0.0.0.0 but still only allows localhost clients by default; use CLI whitelist for LAN access.
   log_level: Log Level
   log_dir: Log Dir
   remote_rpc_address: Remote RPC Address
@@ -726,12 +730,14 @@ mode:
 config-server:
   title: Config Server
   address: Config Server Address
-  address_placeholder: "e.g.: udp://127.0.0.1:22020/admin or admin"
+  address_placeholder: "e.g.: udp://127.0.0.1:22020/<config_token>"
   description: |
     Config server address, allowed formats:
-    Full URL: udp://127.0.0.1:22020/admin
-    Username only: admin (uses official server)
+    Full URL: udp://127.0.0.1:22020/<config_token> (path is the user's config_token, not username)
+    Token only: et_xxxx (uses official server)
     Leave blank: Don't connect to a config server
+  secure_mode: Require secure tunnel
+  secure_mode_hint: When enabled, the config server must support encrypted tunnels; otherwise the client will keep retrying.
   connection_status: Connection Status
   connected: ": Connected"
   disconnected: ": Disconnected"

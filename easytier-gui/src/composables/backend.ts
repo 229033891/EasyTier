@@ -22,7 +22,14 @@ interface StoredGuiConfig {
 }
 
 function parseStoredConfigs(raw: string | null): StoredGuiConfig[] {
-  const parsed: unknown = JSON.parse(raw || '[]')
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(raw || '[]')
+  }
+  catch (e) {
+    console.error('Failed to parse stored network configs', e)
+    return []
+  }
   if (!Array.isArray(parsed)) {
     return []
   }
@@ -41,11 +48,19 @@ function parseStoredConfigs(raw: string | null): StoredGuiConfig[] {
         source: normalizeConfigSource(source),
       }]
     }
-
-    return [{
-      config: NetworkTypes.normalizeNetworkConfig(entry as NetworkConfig),
-      source: 'legacy',
-    }]
+    // legacy: bare NetworkConfig
+    if (entry && typeof entry === 'object') {
+      try {
+        return [{
+          config: NetworkTypes.normalizeNetworkConfig(entry as NetworkConfig),
+          source: 'gui',
+        }]
+      }
+      catch {
+        return []
+      }
+    }
+    return []
   })
 }
 
@@ -155,8 +170,8 @@ export async function isClientRunning() {
   return await invoke<boolean>('is_client_running')
 }
 
-export async function initWebClient(url?: string) {
-  return await invoke('init_web_client', { url })
+export async function initWebClient(url?: string, secureMode?: boolean) {
+  return await invoke('init_web_client', { url, secureMode })
 }
 
 export async function isWebClientConnected() {

@@ -73,6 +73,27 @@ where
         self.rpc_server.set_rx_timeout(timeout);
         self
     }
+
+    /// Restrict TCP management clients to CIDRs. `None` defaults to localhost only.
+    pub fn with_whitelist(mut self, whitelist: Option<Vec<IpCidr>>) -> Self {
+        self.rpc_server.set_whitelist(whitelist);
+        self
+    }
+
+    /// Localhost-only when `allow_lan` is false; otherwise private LAN ranges + localhost.
+    pub fn with_localhost_or_lan_whitelist(self, allow_lan: bool) -> Self {
+        if !allow_lan {
+            return self.with_whitelist(None);
+        }
+        self.with_whitelist(Some(vec![
+            "127.0.0.0/8".parse().unwrap(),
+            "::1/128".parse().unwrap(),
+            "10.0.0.0/8".parse().unwrap(),
+            "172.16.0.0/12".parse().unwrap(),
+            "192.168.0.0/16".parse().unwrap(),
+            "fc00::/7".parse().unwrap(),
+        ]))
+    }
 }
 
 pub struct ReadOnlyApiRpcServer<T>

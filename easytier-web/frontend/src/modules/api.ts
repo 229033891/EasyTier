@@ -1,6 +1,5 @@
 import axios, { AxiosError, AxiosInstance, AxiosResponse, InternalAxiosRequestConfig } from 'axios';
 import { type Api, NetworkTypes, Utils } from 'easytier-frontend-lib';
-import { Md5 } from 'ts-md5';
 
 export interface ValidateConfigResponse {
     toml_config: string;
@@ -20,6 +19,7 @@ export interface MeResponse {
     id: number;
     username: string;
     is_admin: boolean;
+    config_token?: string;
 }
 
 export interface UserInfo {
@@ -27,6 +27,7 @@ export interface UserInfo {
     username: string;
     groups: string[];
     is_admin: boolean;
+    config_token?: string;
 }
 
 export interface AdminCreateUserRequest {
@@ -125,7 +126,7 @@ export class ApiClient {
     public async create_user(data: AdminCreateUserRequest): Promise<UserInfo> {
         const payload = {
             username: data.username,
-            password: Md5.hashStr(data.password),
+            password: data.password,
             is_admin: !!data.is_admin,
         };
         return await this.client.post<any, UserInfo>('/users', payload);
@@ -136,13 +137,12 @@ export class ApiClient {
     }
 
     public async reset_user_password(id: number, new_password: string): Promise<void> {
-        await this.client.put(`/users/${id}/password`, { new_password: Md5.hashStr(new_password) });
+        await this.client.put(`/users/${id}/password`, { new_password });
     }
 
     // 登录
     public async login(data: Credential): Promise<LoginResponse> {
         try {
-            data.password = Md5.hashStr(data.password);
             const response = await this.client.post<any>('/auth/login', data);
             console.log("login response:", response);
             return { success: true, message: 'Login success', };
@@ -166,7 +166,7 @@ export class ApiClient {
     }
 
     public async change_password(new_password: string) {
-        await this.client.put('/auth/password', { new_password: Md5.hashStr(new_password) });
+        await this.client.put('/auth/password', { new_password });
     }
 
     public async check_login_status() {
@@ -186,6 +186,17 @@ export class ApiClient {
     public async list_machines(): Promise<Array<any>> {
         const response = await this.client.get<any, Record<string, Array<any>>>('/machines');
         return response.machines;
+    }
+
+    public async list_devices(): Promise<Array<{
+        device_id: string;
+        hostname: string;
+        last_easytier_version: string;
+        last_client_url: string;
+        last_seen_at: number;
+    }>> {
+        const response = await this.client.get<any, { devices: Array<any> }>('/devices');
+        return response.devices || [];
     }
 
     public async get_summary(): Promise<Summary> {

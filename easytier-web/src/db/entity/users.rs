@@ -11,6 +11,9 @@ pub struct Model {
     #[sea_orm(unique)]
     pub username: String,
     pub password: String,
+    /// Secret used by config-server clients (`udp://host:port/<config_token>`).
+    #[sea_orm(unique)]
+    pub config_token: String,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

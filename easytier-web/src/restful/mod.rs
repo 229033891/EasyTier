@@ -59,6 +59,20 @@ struct GetSummaryJsonResp {
 }
 
 #[derive(Debug, serde::Deserialize, serde::Serialize)]
+struct DeviceArchiveItem {
+    device_id: String,
+    hostname: String,
+    last_easytier_version: String,
+    last_client_url: String,
+    last_seen_at: i64,
+}
+
+#[derive(Debug, serde::Deserialize, serde::Serialize)]
+struct ListDevicesJsonResp {
+    devices: Vec<DeviceArchiveItem>,
+}
+
+#[derive(Debug, serde::Deserialize, serde::Serialize)]
 struct GenerateConfigRequest {
     config: NetworkConfig,
 }
@@ -163,6 +177,33 @@ impl RestfulServer {
         .into())
     }
 
+    async fn handle_list_devices(
+        auth_session: AuthSession,
+        Extension(db): Extension<Db>,
+    ) -> Result<Json<ListDevicesJsonResp>, HttpHandleError> {
+        let Some(user) = auth_session.user else {
+            return Err((StatusCode::UNAUTHORIZED, other_error("No such user").into()));
+        };
+
+        let devices = db
+            .list_user_devices(user.id())
+            .await
+            .map_err(convert_db_error)?;
+
+        Ok(Json(ListDevicesJsonResp {
+            devices: devices
+                .into_iter()
+                .map(|d| DeviceArchiveItem {
+                    device_id: d.device_id,
+                    hostname: d.hostname,
+                    last_easytier_version: d.last_easytier_version,
+                    last_client_url: d.last_client_url,
+                    last_seen_at: d.last_seen_at,
+                })
+                .collect(),
+        }))
+    }
+
     async fn handle_generate_config(
         Json(req): Json<GenerateConfigRequest>,
     ) -> Result<Json<GenerateConfigResponse>, HttpHandleError> {
@@ -225,11 +266,12 @@ impl RestfulServer {
                 .continuously_delete_expired(tokio::time::Duration::from_secs(60)),
         ));
 
-        // Generate a cryptographic key to sign the session cookie.
-        let key = Key::generate();
+        // Persist session signing key next to the DB so restarts don't invalidate cookies.
+        let key = load_or_create_session_key(self.db.db_path());
+        let cookie_secure = session_cookie_secure_from_env();
 
         let session_layer = SessionManagerLayer::new(session_store)
-            .with_secure(false)
+            .with_secure(cookie_secure)
             .with_same_site(SameSite::Lax)
             .with_expiry(Expiry::OnInactivity(Duration::days(1)))
             .with_signed(key);
@@ -274,6 +316,7 @@ impl RestfulServer {
         let mut app = Router::new()
             .route("/api/v1/summary", get(Self::handle_get_summary))
             .route("/api/v1/sessions", get(Self::handle_list_all_sessions))
+            .route("/api/v1/devices", get(Self::handle_list_devices))
             .merge(NetworkApi::build_route())
             .merge(peer_history::PeerHistoryApi::build_route())
             .merge(rpc::router())
@@ -288,6 +331,7 @@ impl RestfulServer {
             )
             .route("/api/v1/parse-config", post(Self::handle_parse_config))
             .layer(Extension(self.oidc_config.clone()))
+            .layer(Extension(self.db.clone()))
             .layer(MessagesManagerLayer)
             .layer(auth_layer)
             .layer(tower_http::cors::CorsLayer::very_permissive())
@@ -358,4 +402,74 @@ async fn internal_auth_middleware(
             ))
             .unwrap(),
     }
+}
+
+fn session_cookie_secure_from_env() -> bool {
+    match std::env::var("ET_SESSION_COOKIE_SECURE") {
+        Ok(v) => matches!(v.as_str(), "1" | "true" | "TRUE" | "yes" | "YES"),
+        Err(_) => false,
+    }
+}
+
+fn load_or_create_session_key(db_path: &str) -> Key {
+    const MIN_LEN: usize = 64;
+    if let Ok(from_env) = std::env::var("ET_SESSION_SECRET") {
+        let bytes = from_env.into_bytes();
+        if bytes.len() >= MIN_LEN {
+            if let Ok(key) = Key::try_from(bytes.as_slice()) {
+                return key;
+            }
+        } else {
+            tracing::warn!(
+                "ET_SESSION_SECRET is too short (need at least {MIN_LEN} bytes); generating a key file instead"
+            );
+        }
+    }
+
+    let Some(path) = filesystem_path_from_sqlite_url(db_path) else {
+        return Key::generate();
+    };
+    let key_path = path.with_file_name(format!(
+        "{}.session.key",
+        path.file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("et.db")
+    ));
+
+    if let Ok(bytes) = std::fs::read(&key_path) {
+        if bytes.len() >= MIN_LEN {
+            if let Ok(key) = Key::try_from(bytes.as_slice()) {
+                return key;
+            }
+        }
+    }
+
+    let key = Key::generate();
+    if let Err(e) = std::fs::write(&key_path, key.master()) {
+        tracing::warn!("Failed to persist session signing key to {}: {e}", key_path.display());
+    } else {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(&key_path, std::fs::Permissions::from_mode(0o600));
+        }
+    }
+    key
+}
+
+fn filesystem_path_from_sqlite_url(db_path: &str) -> Option<std::path::PathBuf> {
+    if db_path.ends_with(":memory:") || db_path.contains("mode=memory") {
+        return None;
+    }
+    let path = db_path
+        .strip_prefix("sqlite://")
+        .or_else(|| db_path.strip_prefix("sqlite:"))
+        .unwrap_or(db_path);
+    let path = path
+        .strip_prefix("file:")
+        .unwrap_or(path)
+        .split('?')
+        .next()
+        .filter(|p| !p.is_empty())?;
+    Some(std::path::PathBuf::from(path))
 }

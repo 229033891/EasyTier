@@ -8,7 +8,7 @@ import { open } from '@tauri-apps/plugin-shell'
 import { exit } from '@tauri-apps/plugin-process'
 import { I18nUtils, RemoteManagement, Utils } from "easytier-frontend-lib"
 import type { MenuItem } from 'primevue/menuitem'
-import { useTray } from '~/composables/tray'
+import { useTray, setTrayRunState } from '~/composables/tray'
 import {
   consumePendingMobileVpnTileAction,
   initMobileVpnService,
@@ -19,7 +19,7 @@ import { executeVpnTileAction } from '~/composables/mobile_vpn_tile'
 import { GUIRemoteClient } from '~/modules/api'
 
 import { useToast, useConfirm } from 'primevue'
-import { loadMode, saveMode, type Mode } from '~/composables/mode'
+import { loadMode, saveMode, normalizeServiceRpcUrl, type Mode } from '~/composables/mode'
 import { saveLastNetworkInstanceId, loadLastNetworkInstanceId } from '~/composables/config'
 import ModeSwitcher from '~/components/ModeSwitcher.vue'
 import { getEasytierVersion, getServiceStatus } from '~/composables/backend'
@@ -30,6 +30,7 @@ const aboutVisible = ref(false)
 const modeDialogVisible = ref(false)
 const configServerDialogVisible = ref(false)
 const configServerUrl = ref('')
+const configServerSecureMode = ref(false)
 const isConfigServerSaving = ref(false)
 const configServerConnected = ref(false)
 const configServerLastError = ref('')
@@ -100,15 +101,19 @@ function openConfigServerDialog() {
   configServerUrl.value = (mode.mode === 'normal' || mode.mode === 'service')
     ? (mode.config_server_url ?? '')
     : ''
+  configServerSecureMode.value = (mode.mode === 'normal' || mode.mode === 'service')
+    ? !!mode.secure_mode
+    : false
   configServerDialogVisible.value = true
 }
 
-async function applyConfigServerUrl(url?: string) {
+async function applyConfigServerUrl(url?: string, secureMode?: boolean) {
   const mode = JSON.parse(JSON.stringify(currentMode.value)) as Mode
   if (mode.mode !== 'normal' && mode.mode !== 'service') {
     return
   }
   mode.config_server_url = url
+  mode.secure_mode = !!secureMode
   await initWithMode(mode)
 }
 
@@ -123,10 +128,14 @@ async function onConfigServerSave() {
   }
 
   const nextUrl = configServerUrl.value.trim() || undefined
+  const nextSecure = configServerSecureMode.value
   const prevUrl = (mode.mode === 'normal' || mode.mode === 'service')
     ? (mode.config_server_url?.trim() || undefined)
     : undefined
-  if (nextUrl === prevUrl) {
+  const prevSecure = (mode.mode === 'normal' || mode.mode === 'service')
+    ? !!mode.secure_mode
+    : false
+  if (nextUrl === prevUrl && nextSecure === prevSecure) {
     configServerDialogVisible.value = false
     return
   }
@@ -134,7 +143,7 @@ async function onConfigServerSave() {
   const doSave = async () => {
     isConfigServerSaving.value = true
     try {
-      await applyConfigServerUrl(nextUrl)
+      await applyConfigServerUrl(nextUrl, nextSecure)
       if (mode.mode === 'normal' && nextUrl && configServerLastError.value) {
         toast.add({
           severity: 'error',
@@ -318,7 +327,7 @@ async function initWithMode(mode: Mode) {
       if (serviceStatus === "Stopped") {
         await setServiceStatus(true)
       }
-      url = "tcp://" + mode.rpc_portal.replace("0.0.0.0", "127.0.0.1")
+      url = normalizeServiceRpcUrl(mode.rpc_portal)
       retrys = 5
       break;
     }
@@ -349,7 +358,7 @@ async function initWithMode(mode: Mode) {
   if (mode.mode === 'normal') {
     mode.config_server_url = mode.config_server_url || undefined
     try {
-      await initWebClient(mode.config_server_url)
+      await initWebClient(mode.config_server_url, mode.secure_mode)
       configServerLastError.value = ''
     }
     catch (e: any) {
@@ -366,6 +375,7 @@ async function initWithMode(mode: Mode) {
   currentMode.value = mode
   saveMode(mode)
   clientRunning.value = await isClientRunning()
+  await setTrayRunState(clientRunning.value)
 }
 
 onMounted(async () => {
@@ -454,6 +464,7 @@ watch(instanceId, (newVal) => {
 });
 
 watch(clientRunning, async (newVal, oldVal) => {
+  await setTrayRunState(!!newVal)
   if (!newVal && oldVal) {
     if (manualDisconnect.value) {
       manualDisconnect.value = false
@@ -470,6 +481,7 @@ watch(clientRunning, async (newVal, oldVal) => {
 
 onMounted(async () => {
   clientRunning.value = await isClientRunning().catch(() => false)
+  await setTrayRunState(clientRunning.value)
   const timer = setInterval(async () => {
     try {
       clientRunning.value = await isClientRunning()
@@ -484,8 +496,50 @@ onMounted(async () => {
   })
 })
 async function reconnectClient() {
-  editingMode.value = JSON.parse(JSON.stringify(loadMode()));
-  await onModeSave()
+  // Soft reconnect: re-establish RPC/web-client without reinstalling the Windows service.
+  const mode = loadMode()
+  try {
+    let url: string | undefined
+    let retrys = 1
+    switch (mode.mode) {
+      case 'remote':
+        url = mode.remote_rpc_address
+        break
+      case 'service': {
+        const status = await getServiceStatus()
+        if (status === 'Stopped')
+          await setServiceStatus(true)
+        url = normalizeServiceRpcUrl(mode.rpc_portal)
+        retrys = 5
+        break
+      }
+      case 'normal':
+        url = mode.rpc_portal
+        break
+    }
+    for (let i = 0; i < retrys; i++) {
+      try {
+        await connectRpcClient(mode.mode === 'normal', url)
+        break
+      }
+      catch (e) {
+        if (i === retrys - 1)
+          throw e
+        await new Promise(resolve => setTimeout(resolve, 1000))
+      }
+    }
+    if (mode.mode === 'normal') {
+      await initWebClient(mode.config_server_url, mode.secure_mode).catch(() => undefined)
+      await refreshConfigServerConnection()
+    }
+    clientRunning.value = await isClientRunning()
+    await setTrayRunState(clientRunning.value)
+  }
+  catch (e) {
+    console.error('Soft reconnect failed, falling back to full init', e)
+    editingMode.value = JSON.parse(JSON.stringify(mode))
+    await onModeSave()
+  }
 }
 
 onMounted(async () => {
@@ -683,6 +737,11 @@ async function connectRpcClient(isNormalMode: boolean, url?: string) {
             <InputText id="config-server-url" v-model="configServerUrl" class="w-full"
               :placeholder="t('config-server.address_placeholder')" />
           </div>
+          <div class="flex items-center gap-2">
+            <Checkbox id="config-server-secure" v-model="configServerSecureMode" binary />
+            <label for="config-server-secure">{{ t('config-server.secure_mode') }}</label>
+          </div>
+          <p class="text-xs text-secondary m-0">{{ t('config-server.secure_mode_hint') }}</p>
         </div>
       </template>
       <template #footer>

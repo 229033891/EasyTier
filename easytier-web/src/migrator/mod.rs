@@ -7,6 +7,7 @@ mod m20260514_000004_rename_web_config_source;
 mod m20260619_000005_managed_config_revisions;
 mod m20260929_000006_peer_conn_history;
 mod m20260930_000007_devices_networks_hardening;
+mod m20261001_000008_user_config_token;
 
 pub struct Migrator;
 
@@ -21,6 +22,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20260619_000005_managed_config_revisions::Migration),
             Box::new(m20260929_000006_peer_conn_history::Migration),
             Box::new(m20260930_000007_devices_networks_hardening::Migration),
+            Box::new(m20261001_000008_user_config_token::Migration),
         ]
     }
 }

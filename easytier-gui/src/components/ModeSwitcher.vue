@@ -110,7 +110,11 @@ const statusColorClass = computed(() => {
   }
 })
 
-watch(() => [normalMode.value?.enable_rpc_port_listen, normalMode.value?.rpc_listen_port], ([enabled, port]) => {
+watch(() => [
+  normalMode.value?.enable_rpc_port_listen,
+  normalMode.value?.rpc_listen_port,
+  normalMode.value?.rpc_listen_all_interfaces,
+], ([enabled, port]) => {
   if (!normalMode.value)
     return
 
@@ -123,10 +127,20 @@ watch(() => [normalMode.value?.enable_rpc_port_listen, normalMode.value?.rpc_lis
   if (normalMode.value.rpc_listen_port !== normalizedPort)
     normalMode.value.rpc_listen_port = normalizedPort
 
-  const desiredPortal = `tcp://0.0.0.0:${normalizedPort}`
+  const host = normalMode.value.rpc_listen_all_interfaces ? '0.0.0.0' : '127.0.0.1'
+  const desiredPortal = `tcp://${host}:${normalizedPort}`
   if (normalMode.value.rpc_portal !== desiredPortal)
     normalMode.value.rpc_portal = desiredPortal
 }, { immediate: true })
+
+const rpcListenAllInterfaces = computed<boolean>({
+  get: () => !!normalMode.value?.rpc_listen_all_interfaces,
+  set: (value) => {
+    if (!normalMode.value)
+      return
+    normalMode.value.rpc_listen_all_interfaces = value
+  },
+})
 
 watch(() => model.value.mode, async (newMode, oldMode) => {
   if (newMode === oldMode)
@@ -146,6 +160,7 @@ watch(() => model.value.mode, async (newMode, oldMode) => {
       rpc_portal: portal || undefined,
       enable_rpc_port_listen: normalMode.value?.enable_rpc_port_listen,
       rpc_listen_port: normalMode.value?.rpc_listen_port,
+      rpc_listen_all_interfaces: normalMode.value?.rpc_listen_all_interfaces,
       mode: 'normal',
     }
   }
@@ -198,6 +213,14 @@ watch(() => model.value.mode, async (newMode, oldMode) => {
         <div class="flex items-center gap-2">
           <label for="rpc-listen-port">{{ t('mode.rpc_listen_port') }}</label>
           <InputText id="rpc-listen-port" v-model="rpcListenPort" class="flex-1" inputmode="numeric" />
+        </div>
+        <div class="flex items-center gap-2">
+          <label for="rpc-listen-all">{{ t('mode.rpc_listen_all_interfaces') }}</label>
+          <SelectButton id="rpc-listen-all" v-model="rpcListenAllInterfaces" :options="rpcListenOptions"
+            option-label="label" option-value="value" />
+        </div>
+        <div class="text-xs text-gray-500">
+          {{ t('mode.rpc_listen_all_interfaces_hint') }}
         </div>
       </div>
     </div>

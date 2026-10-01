@@ -536,7 +536,12 @@ async fn init_rpc_connection(
                 }
             };
 
+            let allow_lan = bind_url
+                .as_ref()
+                .and_then(|u| u.host_str())
+                .is_some_and(|h| h == "0.0.0.0" || h == "::");
             let rpc_server = ApiRpcServer::from_tunnel(tunnel, instance_manager.clone())
+                .with_localhost_or_lan_whitelist(allow_lan)
                 .with_rx_timeout(None)
                 .serve()
                 .await
@@ -585,7 +590,11 @@ async fn is_client_running() -> Result<bool, String> {
 }
 
 #[tauri::command]
-async fn init_web_client(app: AppHandle, url: Option<String>) -> Result<(), String> {
+async fn init_web_client(
+    app: AppHandle,
+    url: Option<String>,
+    secure_mode: Option<bool>,
+) -> Result<(), String> {
     let mut web_client_guard = WEB_CLIENT.write().await;
     let Some(url) = url else {
         *web_client_guard = None;
@@ -611,7 +620,7 @@ async fn init_web_client(app: AppHandle, url: Option<String>) -> Result<(), Stri
             state_dir: Some(machine_id_state_dir),
         },
         None,
-        false,
+        secure_mode.unwrap_or(false),
         instance_manager,
         Some(hooks),
     )

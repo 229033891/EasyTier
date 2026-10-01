@@ -20,8 +20,36 @@ use crate::migrator;
 use async_trait::async_trait;
 
 pub fn hash_web_login_password(plaintext: &str) -> String {
-    let digest = md5::compute(plaintext.as_bytes());
-    password_auth::generate_hash(&format!("{:x}", digest))
+    // Prefer argon2(plaintext). Legacy clients stored argon2(md5(plaintext)); login upgrades.
+    password_auth::generate_hash(plaintext)
+}
+
+pub fn generate_config_token() -> String {
+    format!("et_{}", uuid::Uuid::new_v4().simple())
+}
+
+fn md5_hex(input: &str) -> String {
+    format!("{:x}", md5::compute(input.as_bytes()))
+}
+
+/// Verify a password against stored argon2 hash.
+/// Accepts plaintext (preferred) and legacy md5-prehash / argon2(md5(plaintext)).
+pub fn verify_web_login_password(input: &str, stored_hash: &str) -> bool {
+    if password_auth::verify_password(input, stored_hash).is_ok() {
+        return true;
+    }
+    let legacy = md5_hex(input);
+    password_auth::verify_password(&legacy, stored_hash).is_ok()
+}
+
+/// Returns true when the stored hash is the legacy argon2(md5(plaintext)) form
+/// and should be upgraded to argon2(plaintext).
+pub fn web_login_password_needs_upgrade(plaintext: &str, stored_hash: &str) -> bool {
+    if password_auth::verify_password(plaintext, stored_hash).is_ok() {
+        return false;
+    }
+    let legacy = md5_hex(plaintext);
+    password_auth::verify_password(&legacy, stored_hash).is_ok()
 }
 
 pub type UserIdInDb = i32;
@@ -310,12 +338,34 @@ impl Db {
         let db = Self::prepare_db(db_path.to_string().as_str()).await?;
         let orm_db = SqlxSqliteConnector::from_sqlx_sqlite_pool(db.clone());
         migrator::Migrator::up(&orm_db, None).await?;
+        Self::backfill_empty_network_secret_digests(&orm_db).await?;
 
         Ok(Self {
             db_path: db_path.to_string(),
             db,
             orm_db,
         })
+    }
+
+    pub fn db_path(&self) -> &str {
+        &self.db_path
+    }
+
+    async fn backfill_empty_network_secret_digests(orm_db: &DatabaseConnection) -> anyhow::Result<()> {
+        use entity::networks as n;
+        use sea_orm::ActiveModelTrait;
+
+        let rows = n::Entity::find()
+            .filter(n::Column::NetworkSecretDigest.eq(""))
+            .all(orm_db)
+            .await?;
+        for row in rows {
+            let digest = network_secret_digest(&row.network_name, &row.network_secret);
+            let mut active = row.into_active_model();
+            active.network_secret_digest = Set(digest);
+            active.update(orm_db).await?;
+        }
+        Ok(())
     }
 
     pub async fn memory_db() -> Self {
@@ -368,16 +418,18 @@ impl Db {
         username: &str,
         password_hash: String,
     ) -> Result<entity::users::Model, DbErr> {
-        self.create_user_and_join_groups(username, password_hash, &["users"])
+        self.create_user_and_join_groups(username, password_hash, &["users"], None)
             .await
     }
 
     /// Create user and join the given groups (e.g. `users`, `admins`) in one transaction.
+    /// When `config_token` is `None`, a random token is generated.
     pub async fn create_user_and_join_groups(
         &self,
         username: &str,
         password_hash: String,
         group_names: &[&str],
+        config_token: Option<String>,
     ) -> Result<entity::users::Model, DbErr> {
         use entity::{groups, users, users_groups};
 
@@ -390,6 +442,7 @@ impl Db {
         let user_active = users::ActiveModel {
             username: Set(username.to_string()),
             password: Set(password_hash),
+            config_token: Set(config_token.unwrap_or_else(generate_config_token)),
             ..Default::default()
         };
         let insert_result = users::Entity::insert(user_active).exec(&txn).await?;
@@ -457,22 +510,58 @@ impl Db {
         Ok(())
     }
 
-    pub async fn auto_create_user(&self, username: &str) -> Result<entity::users::Model, DbErr> {
+    pub async fn auto_create_user(&self, token: &str) -> Result<entity::users::Model, DbErr> {
+        // Username is derived for display; config_token remains the URL secret.
+        let username = if token.len() > 32 {
+            format!("auto_{}", &token[..8])
+        } else {
+            token.to_string()
+        };
         let random_password = uuid::Uuid::new_v4().to_string();
         let hashed_password =
             tokio::task::spawn_blocking(move || password_auth::generate_hash(&random_password))
                 .await
                 .map_err(|e| DbErr::Custom(format!("Failed to hash password: {}", e)))?;
-        self.create_user_and_join_users_group(username, hashed_password)
-            .await
+        self.create_user_and_join_groups(
+            &username,
+            hashed_password,
+            &["users"],
+            Some(token.to_string()),
+        )
+        .await
     }
 
-    // TODO: currently we don't have a token system, so we just use the user name as token
+    // Lookup by dedicated config_token (path segment in udp://host/<token>).
     pub async fn get_user_id_by_token<T: ToString>(
         &self,
         token: T,
     ) -> Result<Option<UserIdInDb>, DbErr> {
-        self.get_user_id(token).await
+        use entity::users as u;
+
+        let token = token.to_string();
+        let user = u::Entity::find()
+            .filter(u::Column::ConfigToken.eq(token))
+            .one(self.orm_db())
+            .await?;
+        Ok(user.map(|u| u.id))
+    }
+
+    /// Rotate config-server token. Returns the new token.
+    pub async fn regenerate_user_config_token(
+        &self,
+        user_id: UserIdInDb,
+    ) -> Result<String, DbErr> {
+        use entity::users as u;
+
+        let new_token = generate_config_token();
+        let mut model = u::Entity::find_by_id(user_id)
+            .one(self.orm_db())
+            .await?
+            .ok_or_else(|| DbErr::Custom("User not found".to_string()))?
+            .into_active_model();
+        model.config_token = Set(new_token.clone());
+        u::Entity::update(model).exec(self.orm_db()).await?;
+        Ok(new_token)
     }
 
     pub async fn get_managed_config_revision(
@@ -512,7 +601,6 @@ impl Db {
 
         mcr::Entity::insert(insert_m)
             .on_conflict(on_conflict)
-            .do_nothing()
             .exec(self.orm_db())
             .await?;
         Ok(())

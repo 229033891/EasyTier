@@ -32,10 +32,32 @@ const router = useRouter();
 const toast = useToast();
 
 const loadDevices = async (): Promise<Array<Utils.DeviceInfo>> => {
-    const resp = await api?.list_machines();
+    const [resp, archived] = await Promise.all([
+        api?.list_machines(),
+        api?.list_devices().catch(() => [] as Array<any>),
+    ]);
     const devices: Array<Utils.DeviceInfo> = [];
+    const seen = new Set<string>();
     for (const device of (resp || [])) {
-        devices.push(Utils.buildDeviceInfo(device));
+        const info = Utils.buildDeviceInfo(device);
+        devices.push(info);
+        if (info.machine_id)
+            seen.add(info.machine_id);
+    }
+    // Merge offline archive rows that are not currently connected.
+    for (const row of (archived || [])) {
+        if (!row?.device_id || seen.has(row.device_id))
+            continue;
+        devices.push({
+            hostname: row.hostname || row.device_id,
+            public_ip: row.last_client_url || '',
+            running_network_count: 0,
+            report_time: row.last_seen_at ? new Date(row.last_seen_at * 1000).toISOString() : '',
+            easytier_version: row.last_easytier_version || '',
+            running_network_instances: [],
+            machine_id: row.device_id,
+            location: undefined,
+        });
     }
     return devices;
 };

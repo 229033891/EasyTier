@@ -258,6 +258,8 @@ pub struct WebhookConfig {
 }
 
 impl WebhookConfig {
+    pub const INTERNAL_AUTH_TOKEN_MIN_LEN: usize = 32;
+
     pub fn new(
         webhook_url: Option<String>,
         webhook_secret: Option<String>,
@@ -265,6 +267,26 @@ impl WebhookConfig {
         web_instance_id: Option<String>,
         web_instance_api_base_url: Option<String>,
     ) -> Self {
+        let internal_auth_token = internal_auth_token.and_then(|token| {
+            let trimmed = token.trim().to_string();
+            if trimmed.is_empty() {
+                return None;
+            }
+            if trimmed.len() < Self::INTERNAL_AUTH_TOKEN_MIN_LEN {
+                tracing::error!(
+                    "ET_INTERNAL_AUTH_TOKEN is too short ({} chars); need at least {}. Internal API disabled.",
+                    trimmed.len(),
+                    Self::INTERNAL_AUTH_TOKEN_MIN_LEN
+                );
+                eprintln!(
+                    "ERROR: --internal-auth-token / ET_INTERNAL_AUTH_TOKEN must be at least {} characters; ignoring.",
+                    Self::INTERNAL_AUTH_TOKEN_MIN_LEN
+                );
+                return None;
+            }
+            Some(trimmed)
+        });
+
         WebhookConfig {
             webhook_url,
             webhook_secret,
@@ -286,7 +308,9 @@ impl WebhookConfig {
     }
 
     pub fn has_internal_auth(&self) -> bool {
-        self.internal_auth_token.is_some()
+        self.internal_auth_token
+            .as_ref()
+            .is_some_and(|t| t.len() >= Self::INTERNAL_AUTH_TOKEN_MIN_LEN)
     }
 }
 

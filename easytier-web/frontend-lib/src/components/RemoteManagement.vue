@@ -332,8 +332,20 @@ const stopNetwork = async () => {
         return;
     }
 
-    await props.api.update_network_instance_state(selectedInstanceId.value.uuid, true);
-    await loadNetworkInstanceIds();
+    try {
+        await props.api.update_network_instance_state(selectedInstanceId.value.uuid, true);
+        await loadNetworkInstanceIds();
+        await loadCurrentNetworkInfo();
+        emits('update');
+    } catch (e: any) {
+        console.error(e);
+        toast.add({
+            severity: 'error',
+            summary: t('web.common.error'),
+            detail: t('web.device_management.stop_failed') + ': ' + errorDetail(e),
+            life: 3000,
+        });
+    }
 }
 
 const confirmStopNetwork = (_event?: Event) => {
@@ -411,8 +423,14 @@ const ensureConfigModeEditing = async () => {
         if (currentNetworkConfig.value?.instance_id === selectedInstanceId.value.uuid) {
             isEditingNetwork.value = true;
         }
-    } catch (e) {
+    } catch (e: any) {
         console.error(e);
+        toast.add({
+            severity: 'error',
+            summary: t('web.common.error'),
+            detail: t('web.device_management.load_config_failed') + ': ' + errorDetail(e),
+            life: 3000,
+        });
     }
 }
 

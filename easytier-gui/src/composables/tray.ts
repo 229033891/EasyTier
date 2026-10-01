@@ -91,7 +91,8 @@ export async function setTrayRunState(isRunning: boolean = false) {
   const tray = await useTray()
   if (!tray)
     return
-  tray.setIcon(isRunning ? 'icons/icon-inactive.ico' : 'icons/icon.ico')
+  // Running → active icon; stopped → inactive icon
+  tray.setIcon(isRunning ? 'icons/icon.ico' : 'icons/icon-inactive.ico')
 }
 
 export async function setTrayTooltip(tooltip: string) {
