@@ -172,14 +172,16 @@ jobs:
           print(f"EASYTIER_VERSION={ver}")
 
           # easytier 包默认从 GitHub Release 下载旧二进制, 改成用本地现编译的.
-          # 注意: 必须在解析期把 feed 目录固定下来, 不能在 define 体内用
-          # $(lastword $(MAKEFILE_LIST)), 否则展开时 MAKEFILE_LIST 已经变了.
+          # EASYTIER_FEED_DIR must be an absolute path under the SDK FEED_DIR mount
+          # (/feed/...). Using $(dir $(lastword $(MAKEFILE_LIST))) breaks because by
+          # Build/Prepare expand time the last makefile is include/package.mk.
           mk = pathlib.Path("feed/easytier/Makefile")
           text = mk.read_text()
           old_start = text.index("define Build/Prepare")
           old_end = text.index("endef", old_start) + len("endef")
           new_block = (
-              "EASYTIER_FEED_DIR:=$(dir $(lastword $(MAKEFILE_LIST)))\n"
+              # Absolute path inside the SDK container feed mount (FEED_DIR -> /feed).
+              "EASYTIER_FEED_DIR:=/feed/easytier/\n"
               "define Build/Prepare\n"
               "\tmkdir -p $(PKG_BUILD_DIR)\n"
               "\t$(CP) $(EASYTIER_FEED_DIR)bins/easytier-core $(PKG_BUILD_DIR)/\n"

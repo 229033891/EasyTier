@@ -15,10 +15,7 @@ use super::{
 pub fn router() -> Router<AppStateInner> {
     Router::new()
         .route("/api/v1/auth/me", get(get_me))
-        .route(
-            "/api/v1/users",
-            get(list_users).post(create_user),
-        )
+        .route("/api/v1/users", get(list_users).post(create_user))
         .route("/api/v1/users/{id}", axum::routing::delete(delete_user))
         .route("/api/v1/users/{id}/password", put(reset_password))
         .route_layer(login_required!(Backend))
@@ -66,10 +63,8 @@ async fn get_me(auth_session: AuthSession) -> Result<Json<MeResponse>, HttpHandl
 
     // Unified with list/OIDC semantics: live table rows win, empty collapses
     // to "" — the `revoked_*` placeholder from sync_primary is never exposed.
-    let (config_token, config_tokens) = super::users::resolve_tokens_and_primary(
-        &user.db_user.config_token,
-        user.tokens.clone(),
-    );
+    let (config_token, config_tokens) =
+        super::users::resolve_tokens_and_primary(&user.db_user.config_token, user.tokens.clone());
     Ok(Json(MeResponse {
         id: user.db_user.id,
         username: user.db_user.username.clone(),
@@ -122,11 +117,7 @@ async fn delete_user(
         ));
     };
 
-    match auth_session
-        .backend
-        .delete_user(id, actor.db_user.id)
-        .await
-    {
+    match auth_session.backend.delete_user(id, actor.db_user.id).await {
         Ok(()) => Ok(Json(Void::default())),
         Err(e) => {
             tracing::error!("Failed to delete user {}: {:?}", id, e);

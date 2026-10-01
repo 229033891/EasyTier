@@ -99,7 +99,11 @@ async fn load_live_tokens_or_empty(db: &db::Db, user_id: i32) -> Vec<String> {
     match db.list_user_config_tokens(user_id).await {
         Ok(rows) => rows.into_iter().map(|t| t.token).collect(),
         Err(e) => {
-            tracing::warn!(user_id, ?e, "failed to list user config tokens, using fallback");
+            tracing::warn!(
+                user_id,
+                ?e,
+                "failed to list user config tokens, using fallback"
+            );
             Vec::new()
         }
     }
@@ -214,10 +218,7 @@ impl Backend {
             .column_as(users::Column::ConfigToken, "config_token")
             .column_as(groups::Column::Name, "group_name")
             .join(JoinType::LeftJoin, users::Relation::UsersGroups.def())
-            .join(
-                JoinType::LeftJoin,
-                users_groups::Relation::Groups.def(),
-            )
+            .join(JoinType::LeftJoin, users_groups::Relation::Groups.def())
             .order_by_asc(users::Column::Id)
             .into_model::<UserGroupRow>()
             .all(self.db.orm_db())
@@ -247,8 +248,7 @@ impl Backend {
         // One user's failure must not fail the whole table: a batch failure
         // falls back per-user to the primary mirror instead of 500.
         let user_ids: Vec<i32> = map.keys().copied().collect();
-        let tokens_by_user: std::collections::HashMap<i32, Vec<String>> = if user_ids.is_empty()
-        {
+        let tokens_by_user: std::collections::HashMap<i32, Vec<String>> = if user_ids.is_empty() {
             std::collections::HashMap::new()
         } else {
             use entity::user_config_tokens as t;
@@ -266,7 +266,10 @@ impl Backend {
                     grouped
                 }
                 Err(e) => {
-                    tracing::warn!(?e, "failed to batch-load user config tokens, using fallback");
+                    tracing::warn!(
+                        ?e,
+                        "failed to batch-load user config tokens, using fallback"
+                    );
                     std::collections::HashMap::new()
                 }
             }
@@ -321,10 +324,7 @@ impl Backend {
             let table_tokens = load_live_tokens_or_empty(&self.db, db_user.id).await;
             let (_, tokens) =
                 resolve_tokens_and_primary(&db_user.config_token.clone(), table_tokens);
-            return Ok(User {
-                tokens,
-                db_user,
-            });
+            return Ok(User { tokens, db_user });
         }
 
         // User not found – auto-provision a local account backed by the IdP identity.
@@ -340,10 +340,7 @@ impl Backend {
         tracing::info!("Auto-provisioned OIDC user '{username}'");
         let table_tokens = load_live_tokens_or_empty(&self.db, db_user.id).await;
         let (_, tokens) = resolve_tokens_and_primary(&db_user.config_token.clone(), table_tokens);
-        Ok(User {
-            tokens,
-            db_user,
-        })
+        Ok(User { tokens, db_user })
     }
 
     pub async fn change_password(
@@ -398,10 +395,9 @@ impl AuthnBackend for Backend {
 
         let password = creds.password.clone();
         let stored_hash = db_user.password.clone();
-        let matched = task::spawn_blocking(move || {
-            db::verify_web_login_password(&password, &stored_hash)
-        })
-        .await?;
+        let matched =
+            task::spawn_blocking(move || db::verify_web_login_password(&password, &stored_hash))
+                .await?;
 
         if !matched {
             return Ok(None);
@@ -426,10 +422,7 @@ impl AuthnBackend for Backend {
         let table_tokens = load_live_tokens_or_empty(&self.db, db_user.id).await;
         let (_, tokens) = resolve_tokens_and_primary(&db_user.config_token.clone(), table_tokens);
 
-        Ok(Some(User {
-            tokens,
-            db_user,
-        }))
+        Ok(Some(User { tokens, db_user }))
     }
 
     async fn get_user(&self, user_id: &UserId<Self>) -> Result<Option<Self::User>, Self::Error> {
@@ -441,10 +434,7 @@ impl AuthnBackend for Backend {
         if let Some(u) = user {
             let table_tokens = load_live_tokens_or_empty(&self.db, u.id).await;
             let (_, tokens) = resolve_tokens_and_primary(&u.config_token.clone(), table_tokens);
-            Ok(Some(User {
-                tokens,
-                db_user: u,
-            }))
+            Ok(Some(User { tokens, db_user: u }))
         } else {
             Ok(None)
         }

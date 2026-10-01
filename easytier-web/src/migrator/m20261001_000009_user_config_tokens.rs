@@ -3,8 +3,8 @@
 //! **Do not edit this migration after it may have been applied.** Timestamp /
 //! validation repairs belong in `m20261001_000010_repair_config_tokens`.
 
-use sea_orm_migration::prelude::*;
 use sea_orm::{DbBackend, Statement};
+use sea_orm_migration::prelude::*;
 
 pub struct Migration;
 

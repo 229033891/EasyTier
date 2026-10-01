@@ -87,9 +87,7 @@ pub fn validate_config_token_value(token: &str) -> Result<(), String> {
         .chars()
         .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
     {
-        return Err(
-            "Token may only contain letters, digits, '.', '_' or '-'".to_string(),
-        );
+        return Err("Token may only contain letters, digits, '.', '_' or '-'".to_string());
     }
     Ok(())
 }
@@ -417,7 +415,9 @@ impl Db {
         &self.db_path
     }
 
-    async fn backfill_empty_network_secret_digests(orm_db: &DatabaseConnection) -> anyhow::Result<()> {
+    async fn backfill_empty_network_secret_digests(
+        orm_db: &DatabaseConnection,
+    ) -> anyhow::Result<()> {
         use entity::networks as n;
         use sea_orm::ActiveModelTrait;
 
@@ -453,9 +453,7 @@ impl Db {
             .await?;
 
         // Enforce FK cascades (SQLite defaults to OFF per connection).
-        sqlx::query("PRAGMA foreign_keys = ON")
-            .execute(&db)
-            .await?;
+        sqlx::query("PRAGMA foreign_keys = ON").execute(&db).await?;
 
         Ok(db)
     }
@@ -745,18 +743,17 @@ impl Db {
         use entity::{user_config_tokens as t, users as u};
         use sea_orm::QueryOrder as _;
 
-        if let Some(preferred) = preferred {
-            if t::Entity::find()
+        if let Some(preferred) = preferred
+            && t::Entity::find()
                 .filter(t::Column::UserId.eq(user_id))
                 .filter(t::Column::Token.eq(preferred.to_string()))
                 .one(self.orm_db())
                 .await?
                 .is_some()
-            {
-                self.set_user_primary_config_token(user_id, preferred.to_string())
-                    .await?;
-                return Ok(preferred.to_string());
-            }
+        {
+            self.set_user_primary_config_token(user_id, preferred.to_string())
+                .await?;
+            return Ok(preferred.to_string());
         }
 
         if let Some(row) = t::Entity::find()
@@ -868,10 +865,7 @@ impl Db {
         if let Err(e) = validate_config_token_value(&token) {
             return Err(DbErr::Custom(e));
         }
-        if self
-            .is_config_token_taken(&token, None, None)
-            .await?
-        {
+        if self.is_config_token_taken(&token, None, None).await? {
             return Err(DbErr::Custom(CONFIG_TOKEN_ALREADY_EXISTS_MSG.to_string()));
         }
 
@@ -977,10 +971,7 @@ impl Db {
     /// Rotate: revoke existing tokens for the user and issue a new primary token.
     /// Delete + create + primary-mirror sync run in a single transaction so a
     /// crash cannot leave the user with zero tokens but a stale primary.
-    pub async fn regenerate_user_config_token(
-        &self,
-        user_id: UserIdInDb,
-    ) -> Result<String, DbErr> {
+    pub async fn regenerate_user_config_token(&self, user_id: UserIdInDb) -> Result<String, DbErr> {
         use entity::{user_config_tokens as t, users as u};
         use sea_orm::ActiveModelTrait as _;
 

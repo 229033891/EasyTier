@@ -762,8 +762,8 @@ impl SessionRpcService {
             (notify, runtime_notify, device_upsert)
         };
 
-        if let Some((storage_token, hostname, version, report_time)) = device_upsert {
-            if let Err(e) = storage
+        if let Some((storage_token, hostname, version, report_time)) = device_upsert
+            && let Err(e) = storage
                 .db()
                 .upsert_device(
                     storage_token.user_id,
@@ -774,9 +774,8 @@ impl SessionRpcService {
                     report_time,
                 )
                 .await
-            {
-                tracing::warn!(?e, "failed to upsert device archive from webhook heartbeat");
-            }
+        {
+            tracing::warn!(?e, "failed to upsert device archive from webhook heartbeat");
         }
 
         if let Some((notifier, runtime_req)) = runtime_notify {

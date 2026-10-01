@@ -435,22 +435,22 @@ fn load_or_create_session_key(db_path: &str) -> Key {
     };
     let key_path = path.with_file_name(format!(
         "{}.session.key",
-        path.file_name()
-            .and_then(|s| s.to_str())
-            .unwrap_or("et.db")
+        path.file_name().and_then(|s| s.to_str()).unwrap_or("et.db")
     ));
 
-    if let Ok(bytes) = std::fs::read(&key_path) {
-        if bytes.len() >= MIN_LEN {
-            if let Ok(key) = Key::try_from(bytes.as_slice()) {
-                return key;
-            }
-        }
+    if let Ok(bytes) = std::fs::read(&key_path)
+        && bytes.len() >= MIN_LEN
+        && let Ok(key) = Key::try_from(bytes.as_slice())
+    {
+        return key;
     }
 
     let key = Key::generate();
     if let Err(e) = std::fs::write(&key_path, key.master()) {
-        tracing::warn!("Failed to persist session signing key to {}: {e}", key_path.display());
+        tracing::warn!(
+            "Failed to persist session signing key to {}: {e}",
+            key_path.display()
+        );
     } else {
         #[cfg(unix)]
         {

@@ -734,7 +734,7 @@ const syncTomlConfig = async (tomlConfig: string): Promise<void> => {
     currentNetworkConfig.value = config;
 }
 
-/** GUI combined 模式底部导航：状态页显示「前往配置」，编辑页显示「取消编辑」。
+/** GUI combined 模式底部导航：状态页显示「节点配置」，编辑页显示「取消编辑」。
  *  仅 combined 模式生效，web 的 status / config 模式不受影响。 */
 const showCombinedEditEntry = computed(() =>
     isCombinedMode.value

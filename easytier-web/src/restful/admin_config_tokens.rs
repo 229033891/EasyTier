@@ -69,7 +69,9 @@ async fn require_admin(auth_session: &AuthSession) -> Result<(), HttpHandleError
     }
 }
 
-async fn list_tokens(auth_session: AuthSession) -> Result<Json<Vec<ConfigTokenInfo>>, HttpHandleError> {
+async fn list_tokens(
+    auth_session: AuthSession,
+) -> Result<Json<Vec<ConfigTokenInfo>>, HttpHandleError> {
     require_admin(&auth_session).await?;
     let rows = auth_session
         .backend

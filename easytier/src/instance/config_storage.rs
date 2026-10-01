@@ -36,6 +36,7 @@ impl ConfigFileStorage for NativeConfigFileStorage {
         let path = path.to_owned();
         let contents = contents.to_owned();
         tokio::task::spawn_blocking(move || {
+            #[allow(unused_mut)] // mutated via OpenOptionsExt on unix only
             let mut options = OpenOptions::new();
             #[cfg(unix)]
             {

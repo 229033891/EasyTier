@@ -666,8 +666,8 @@ web:
     select_existing_network_or_create_new: 从上方选择已有网络，或点击「添加网络」
     select_network_for_status: 请选择网络实例以查看状态或启停
     network_disabled_hint: 该网络已禁用。可在此启动，或打开「配置」修改设置。
-    switch_to_config: 前往配置
-    switch_to_config_tip: 切换到配置页，编辑网络参数
+    switch_to_config: 节点配置
+    switch_to_config_tip: 切换到配置页，编辑本节点网络参数
     switch_to_status: 前往状态
     switch_to_status_tip: 切换到状态页，查看节点与连接信息
     confirm_disable_network: 确定禁用该网络吗？

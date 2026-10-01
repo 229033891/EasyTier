@@ -20,8 +20,10 @@ impl MigrationTrait for Migration {
 
         // Dedicated config-server auth token (was previously username-as-token).
         // Each statement runs in its own exec: some drivers reject multi-statement strings.
-        db.execute_unprepared("ALTER TABLE users ADD COLUMN config_token TEXT NOT NULL DEFAULT '';")
-            .await?;
+        db.execute_unprepared(
+            "ALTER TABLE users ADD COLUMN config_token TEXT NOT NULL DEFAULT '';",
+        )
+        .await?;
 
         // Only carry over usernames that are already valid tokens
         // ([A-Za-z0-9._-], 1..=128 chars); the rest get random tokens below

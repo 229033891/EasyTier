@@ -153,7 +153,9 @@ impl PeerHistoryApi {
         let mut index: std::collections::HashMap<i64, usize> = std::collections::HashMap::new();
 
         for row in rows {
-            let peer_id: i64 = row.try_get("", "peer_id").map_err(super::convert_db_error)?;
+            let peer_id: i64 = row
+                .try_get("", "peer_id")
+                .map_err(super::convert_db_error)?;
             let point = PeerConnHistoryPoint {
                 t: row
                     .try_get("", "bucket_ts")
@@ -203,7 +205,9 @@ impl PeerHistoryApi {
             .map_err(super::convert_db_error)?;
 
         for row in meta_rows {
-            let peer_id: i64 = row.try_get("", "peer_id").map_err(super::convert_db_error)?;
+            let peer_id: i64 = row
+                .try_get("", "peer_id")
+                .map_err(super::convert_db_error)?;
             let Some(&idx) = index.get(&peer_id) else {
                 continue;
             };
@@ -214,7 +218,7 @@ impl PeerHistoryApi {
         }
 
         // 最近活跃的 peer 排前面
-        series.sort_by(|a, b| b.last_seen.cmp(&a.last_seen));
+        series.sort_by_key(|a| std::cmp::Reverse(a.last_seen));
 
         Ok(Json(PeerConnHistoryResponse {
             bucket_seconds: bucket,
@@ -239,6 +243,9 @@ mod tests {
     use super::*;
     use crate::db::{Db, entity::peer_conn_history};
     use sea_orm::{EntityTrait as _, Set};
+
+    /// 聚合桶行：(peer_id, bucket_ts, latency_us, loss_rate, rx_bytes, tx_bytes, samples)
+    type SeriesRow = (i64, i64, Option<i64>, Option<f64>, i64, i64, i64);
 
     /// 与 60s 边界对齐，桶边界才会是 T0 / T0+60 / ...
     const T0: i64 = 1_700_000_040;
@@ -300,7 +307,7 @@ mod tests {
             .expect("seed peer_conn_history");
     }
 
-    async fn run_series(db: &Db, bucket: i64) -> Vec<(i64, i64, Option<i64>, Option<f64>, i64, i64, i64)> {
+    async fn run_series(db: &Db, bucket: i64) -> Vec<SeriesRow> {
         let rows = db
             .orm_db()
             .query_all(Statement::from_sql_and_values(
@@ -334,11 +341,7 @@ mod tests {
             .collect()
     }
 
-    fn find(
-        rows: &[(i64, i64, Option<i64>, Option<f64>, i64, i64, i64)],
-        peer: i64,
-        ts: i64,
-    ) -> (i64, i64, Option<i64>, Option<f64>, i64, i64, i64) {
+    fn find(rows: &[SeriesRow], peer: i64, ts: i64) -> SeriesRow {
         *rows
             .iter()
             .find(|r| r.0 == peer && r.1 == ts)
