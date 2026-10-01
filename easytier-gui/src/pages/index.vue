@@ -326,11 +326,6 @@ async function connectRpcWithRetries(isNormalMode: boolean, url: string | undefi
   }
 }
 
-async function restoreConfigsAfterReconnect() {
-  const running_inst_ids = (await remoteClient.value.list_network_instance_ids().catch(() => undefined))?.running_inst_ids ?? []
-  await sendConfigs(running_inst_ids.map(Utils.UuidToStr))
-}
-
 async function initWithMode(mode: Mode) {
   const running_inst_ids = (await remoteClient.value.list_network_instance_ids().catch(() => undefined))?.running_inst_ids ?? []
 
