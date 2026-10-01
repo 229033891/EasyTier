@@ -5,7 +5,7 @@ CONFIG_FILE="${MODDIR}/config/config.toml"
 COMMAND_ARGS="${MODDIR}/config/command_args"
 LOG_FILE="${MODDIR}/log.log"
 MODULE_PROP="${MODDIR}/module.prop"
-EASYTIER="${MODDIR}/easytier-core"
+EASYTIER="${MODDIR}/ET-core"
 
 # 处理获取到的设备型号中可能出现的空格
 BRAND=$(getprop ro.product.brand | tr ' ' '-')

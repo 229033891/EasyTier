@@ -21,12 +21,13 @@ version="v${version}"
 filename="easytier_magisk_${version}.zip"
 echo "${version}"
 
-if [ ! -f "./easytier-core" ] || [ ! -f "./easytier-cli" ] || [ ! -f "./easytier-web" ]; then
-    wget -O "easytier_last.zip" "https://github.com/EasyTier/EasyTier/releases/download/${version}/easytier-linux-aarch64-${version}.zip"
+if [ ! -f "./ET-core" ] || [ ! -f "./ET-cli" ] || [ ! -f "./ET-web-embed" ]; then
+    GITHUB_REPO="${GITHUB_REPO:-229033891/EasyTier}"
+    wget -O "easytier_last.zip" "https://github.com/${GITHUB_REPO}/releases/download/${version}/ET-linux-aarch64-${version}.zip"
     unzip -o easytier_last.zip -d ./
-    mv ./easytier-linux-aarch64/* ./
+    mv ./ET-linux-aarch64/* ./
     rm -rf ./easytier_last.zip
-    rm -rf ./easytier-linux-aarch64
+    rm -rf ./ET-linux-aarch64
 fi
 
 zip -r -o -X "${filename}" ./ -x '.git/*' -x '.github/*' -x 'folder/*' -x 'build.sh' -x 'magisk_update.json'

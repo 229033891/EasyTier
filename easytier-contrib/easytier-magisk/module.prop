@@ -3,5 +3,5 @@ name=EasyTier_Magisk
 version=v2.7.0
 versionCode=1
 author=EasyTier
-description=easytier magisk module @EasyTier(https://github.com/EasyTier/EasyTier)
-updateJson=https://raw.githubusercontent.com/EasyTier/EasyTier/refs/heads/main/easytier-contrib/easytier-magisk/magisk_update.json
+description=easytier magisk module @229033891/EasyTier(https://github.com/229033891/EasyTier)
+updateJson=https://raw.githubusercontent.com/229033891/EasyTier/refs/heads/dev/easytier-contrib/easytier-magisk/magisk_update.json

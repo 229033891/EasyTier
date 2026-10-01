@@ -9,7 +9,7 @@ name: ET OpenWrt
 #     apk add --allow-untrusted /tmp/easytier-*.apk /tmp/luci-app-easytier-*.apk /tmp/luci-i18n-easytier-zh-cn-*.apk
 #
 # 注意: OpenWrt 的 .apk 和 Android 的 easytier-gui.apk 不是同一个东西, 不要混淆.
-# LuCI 界面源码来自 https://github.com/EasyTier/luci-app-easytier,
+# LuCI 界面源码来自 https://github.com/229033891/luci-app-easytier（官方 fork）,
 # easytier 主包里的二进制是本仓库现编译的 (core + cli + web-embed), 不是从旧 Release 下载的.
 
 on:
@@ -149,7 +149,7 @@ jobs:
       - name: Checkout luci-app-easytier (打包 feed)
         uses: actions/checkout@v5
         with:
-          repository: EasyTier/luci-app-easytier
+          repository: 229033891/luci-app-easytier
           ref: main
           path: feed
 

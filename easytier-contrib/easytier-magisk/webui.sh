@@ -6,7 +6,7 @@ MODDIR=$(CDPATH= cd "${0%/*}" 2>/dev/null && pwd -P) || {
 }
 CONFIG_FILE="${MODDIR}/config/config.toml"
 COMMAND_ARGS="${MODDIR}/config/command_args"
-EASYTIER="${MODDIR}/easytier-core"
+EASYTIER="${MODDIR}/ET-core"
 
 fail() {
     echo "$1" >&2
@@ -46,7 +46,7 @@ case "$1" in
     save-and-restart)
         [ -f "${COMMAND_ARGS}" ] && fail "command_args is active; config.toml would be ignored"
         [ -n "$2" ] || fail "Missing base64-encoded configuration"
-        [ -x "${EASYTIER}" ] || fail "easytier-core is not executable"
+        [ -x "${EASYTIER}" ] || fail "ET-core is not executable"
 
         TEMP_FILE="${CONFIG_FILE}.webui.$$"
         trap 'rm -f "${TEMP_FILE}"' EXIT HUP INT TERM

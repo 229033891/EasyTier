@@ -45,6 +45,8 @@ SKIP_FOLDER_VERIFY=false
 SKIP_FOLDER_FIX=false
 NO_GH_PROXY=false
 GH_PROXY='https://ghfast.top/'
+# 本 fork Release（ET-* 包）；如需上游可 export GITHUB_REPO=EasyTier/EasyTier
+GITHUB_REPO="${GITHUB_REPO:-229033891/EasyTier}"
 
 COMMEND=$1
 shift
@@ -174,7 +176,7 @@ fi
 
 CHECK() {
   if ! $SKIP_FOLDER_VERIFY; then
-    if [ -f "$INSTALL_PATH/easytier-core" ]; then
+    if [ -f "$INSTALL_PATH/ET-core" ]; then
       echo "There is EasyTier in $INSTALL_PATH. Please choose other path or use \"update\""
         echo -e "Or use Try ${GREEN_COLOR}--skip-folder-verify${RES} to skip"
       exit 0
@@ -198,7 +200,7 @@ CHECK() {
 
 INSTALL() {
   # Get version number
-  RESPONSE=$(curl -s "https://api.github.com/repos/EasyTier/EasyTier/releases/latest")
+  RESPONSE=$(curl -s "https://api.github.com/repos/${GITHUB_REPO}/releases/latest")
   LATEST_VERSION=$(echo "$RESPONSE" | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
   LATEST_VERSION=$(echo -e "$LATEST_VERSION" | tr -d '[:space:]')
 
@@ -210,7 +212,7 @@ INSTALL() {
   # Download
   echo -e "\r\n${GREEN_COLOR}Downloading EasyTier $LATEST_VERSION ...${RES}"
   rm -rf /tmp/easytier_tmp_install.zip
-  BASE_URL="https://github.com/EasyTier/EasyTier/releases/latest/download/easytier-linux-${ARCH}-${LATEST_VERSION}.zip"
+  BASE_URL="https://github.com/${GITHUB_REPO}/releases/latest/download/ET-linux-${ARCH}-${LATEST_VERSION}.zip"
   DOWNLOAD_URL=$($NO_GH_PROXY && echo "$BASE_URL" || echo "${GH_PROXY}${BASE_URL}")
   echo -e "Download URL: ${GREEN_COLOR}${DOWNLOAD_URL}${RES}"
   curl -L ${DOWNLOAD_URL} -o /tmp/easytier_tmp_install.zip $CURL_BAR
@@ -219,10 +221,10 @@ INSTALL() {
   echo -e "\r\n${GREEN_COLOR}Unzip resource ...${RES}"
   unzip -o /tmp/easytier_tmp_install.zip -d $INSTALL_PATH/
   mkdir $INSTALL_PATH/config
-  mv $INSTALL_PATH/easytier-linux-${ARCH}/* $INSTALL_PATH/
-  rm -rf $INSTALL_PATH/easytier-linux-${ARCH}/
-  chmod +x $INSTALL_PATH/easytier-core $INSTALL_PATH/easytier-cli
-  if [ -f $INSTALL_PATH/easytier-core ] || [ -f $INSTALL_PATH/easytier-cli ]; then
+  mv $INSTALL_PATH/ET-linux-${ARCH}/* $INSTALL_PATH/
+  rm -rf $INSTALL_PATH/ET-linux-${ARCH}/
+  chmod +x $INSTALL_PATH/ET-core $INSTALL_PATH/ET-cli
+  if [ -f $INSTALL_PATH/ET-core ] || [ -f $INSTALL_PATH/ET-cli ]; then
     echo -e "${GREEN_COLOR} Download successfully! ${RES}"
   else
     echo -e "${RED_COLOR} Download failed! ${RES}"
@@ -231,7 +233,7 @@ INSTALL() {
 }
 
 INIT() {
-  if [ ! -f "$INSTALL_PATH/easytier-core" ]; then
+  if [ ! -f "$INSTALL_PATH/ET-core" ]; then
     echo -e "\r\n${RED_COLOR}Opus${RES}, unable to find EasyTier\r\n"
     exit 1
   fi
@@ -283,7 +285,7 @@ EOF
 
 name="EasyTier"
 description="EasyTier Service"
-command="$INSTALL_PATH/easytier-core"
+command="$INSTALL_PATH/ET-core"
 command_args="-c $INSTALL_PATH/config/default.conf"
 command_user="nobody:nobody"
 command_background=true
@@ -311,7 +313,7 @@ StartLimitIntervalSec=0
 [Service]
 Type=simple
 WorkingDirectory=$INSTALL_PATH
-ExecStart=$INSTALL_PATH/easytier-core -c $INSTALL_PATH/config/%i.conf
+ExecStart=$INSTALL_PATH/ET-core -c $INSTALL_PATH/config/%i.conf
 Restart=always
 RestartSec=1s
 
@@ -322,7 +324,7 @@ EOF
 
 #   # Create run script
 #   cat >$INSTALL_PATH/run.sh <<EOF
-# $INSTALL_PATH/easytier-core
+# $INSTALL_PATH/ET-core
 # EOF
 
   # Startup
@@ -337,12 +339,12 @@ EOF
 
   # For issues from the previous version
   rm -rf /etc/systemd/system/easytier.service
-  rm -rf /usr/bin/easytier-core
-  rm -rf /usr/bin/easytier-cli
+  rm -rf /usr/bin/ET-core
+  rm -rf /usr/bin/ET-cli
 
   # Add link
-  ln -s $INSTALL_PATH/easytier-core /usr/sbin/easytier-core
-  ln -s $INSTALL_PATH/easytier-cli /usr/sbin/easytier-cli
+  ln -s $INSTALL_PATH/ET-core /usr/sbin/ET-core
+  ln -s $INSTALL_PATH/ET-cli /usr/sbin/ET-cli
 }
 
 SUCCESS() {
@@ -382,10 +384,10 @@ UNINSTALL() {
   fi
   echo -e "${GREEN_COLOR}Delete files ...${RES}"
   if [ "$INIT_SYSTEM" = "systemd" ]; then
-    rm -rf $INSTALL_PATH /etc/systemd/system/easytier.service /usr/bin/easytier-core /usr/bin/easytier-cli /etc/systemd/system/easytier@.service /usr/sbin/easytier-core /usr/sbin/easytier-cli
+    rm -rf $INSTALL_PATH /etc/systemd/system/easytier.service /usr/bin/ET-core /usr/bin/ET-cli /etc/systemd/system/easytier@.service /usr/sbin/ET-core /usr/sbin/ET-cli
     systemctl daemon-reload
   else
-    rm -rf $INSTALL_PATH /etc/init.d/easytier /usr/bin/easytier-core /usr/bin/easytier-cli /usr/sbin/easytier-core /usr/sbin/easytier-cli
+    rm -rf $INSTALL_PATH /etc/init.d/easytier /usr/bin/ET-core /usr/bin/ET-cli /usr/sbin/ET-core /usr/sbin/ET-cli
   fi
   echo -e "\r\n${GREEN_COLOR}EasyTier was removed successfully! ${RES}\r\n"
 }
@@ -393,14 +395,14 @@ UNINSTALL() {
 # Minimizes downtime by preparing new files before stopping the service.
 # Correctly handles restarting multiple systemd service instances.
 UPDATE() {
-  if [ ! -f "$INSTALL_PATH/easytier-core" ]; then
+  if [ ! -f "$INSTALL_PATH/ET-core" ]; then
     echo -e "\r\n${RED_COLOR}Error${RES}: EasyTier not found in $INSTALL_PATH. Cannot perform update.\r\n"
     exit 1
   fi
 
   # 1. Get the latest version info (while service is still running)
   echo -e "${GREEN_COLOR}Checking for the latest version...${RES}"
-  RESPONSE=$(curl -s "https://api.github.com/repos/EasyTier/EasyTier/releases/latest")
+  RESPONSE=$(curl -s "https://api.github.com/repos/${GITHUB_REPO}/releases/latest")
   LATEST_VERSION=$(echo "$RESPONSE" | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
   LATEST_VERSION=$(echo -e "$LATEST_VERSION" | tr -d '[:space:]')
 
@@ -415,7 +417,7 @@ UPDATE() {
   TEMP_UPDATE_DIR=$(mktemp -d /tmp/easytier_update_XXXXXX)
   echo -e "${GREEN_COLOR}Downloading new version to temporary directory: $TEMP_UPDATE_DIR${RES}"
   
-  BASE_URL="https://github.com/EasyTier/EasyTier/releases/latest/download/easytier-linux-${ARCH}-${LATEST_VERSION}.zip"
+  BASE_URL="https://github.com/${GITHUB_REPO}/releases/latest/download/ET-linux-${ARCH}-${LATEST_VERSION}.zip"
   DOWNLOAD_URL=$($NO_GH_PROXY && echo "$BASE_URL" || echo "${GH_PROXY}${BASE_URL}")
   
   echo -e "Download URL: ${GREEN_COLOR}${DOWNLOAD_URL}${RES}"
@@ -428,7 +430,7 @@ UPDATE() {
   
   unzip -o "$TEMP_UPDATE_DIR/easytier.zip" -d "$TEMP_UPDATE_DIR/"
   
-  NEW_CORE_FILE="$TEMP_UPDATE_DIR/easytier-linux-${ARCH}/easytier-core"
+  NEW_CORE_FILE="$TEMP_UPDATE_DIR/ET-linux-${ARCH}/ET-core"
   if [ ! -f "$NEW_CORE_FILE" ]; then
       echo -e "${RED_COLOR}Extraction failed or the downloaded archive is invalid.${RES}"
       rm -rf "$TEMP_UPDATE_DIR"
@@ -466,11 +468,11 @@ UPDATE() {
   
   echo "Replacing files..."
   # Remove old binaries and docs, but not the config directory
-  rm -f "$INSTALL_PATH/easytier-core" "$INSTALL_PATH/easytier-cli" "$INSTALL_PATH/LICENSE" "$INSTALL_PATH/README.md"
+  rm -f "$INSTALL_PATH/ET-core" "$INSTALL_PATH/ET-cli" "$INSTALL_PATH/LICENSE" "$INSTALL_PATH/README.md"
   
   # Move new files into the installation directory
-  mv "$TEMP_UPDATE_DIR/easytier-linux-${ARCH}"/* "$INSTALL_PATH/"
-  chmod +x "$INSTALL_PATH/easytier-core" "$INSTALL_PATH/easytier-cli"
+  mv "$TEMP_UPDATE_DIR/ET-linux-${ARCH}"/* "$INSTALL_PATH/"
+  chmod +x "$INSTALL_PATH/ET-core" "$INSTALL_PATH/ET-cli"
 
   # Restore configuration to prevent user-defined settings from being overwritten
   if [ -d "$BACKUP_CONFIG_DIR/config" ]; then
@@ -519,7 +521,7 @@ elif [ "$COMMEND" = "install" ]; then
   CHECK
   INSTALL
   INIT
-  if [ -f "$INSTALL_PATH/easytier-core" ]; then
+  if [ -f "$INSTALL_PATH/ET-core" ]; then
     SUCCESS
   else
     echo -e "${RED_COLOR} Install fail, try install by hand${RES}"

@@ -28,7 +28,7 @@ if [ -f "${MODDIR}/disable" ]; then
     IS_RUNNING=false
     ET_STATUS="主程序已关闭"
 
-elif pgrep -f "${MODDIR}/easytier-core" >/dev/null; then
+elif pgrep -f "${MODDIR}/ET-core" >/dev/null; then
     IS_RUNNING=true
     if [ -f "${MODDIR}/config/command_args" ]; then
         ET_STATUS="主程序正在运行（启动参数模式）"
