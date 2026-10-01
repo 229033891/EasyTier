@@ -189,12 +189,12 @@ jobs:
         if: steps.meta.outputs.skip != 'true'
         run: |
           set -euo pipefail
-          if ! compgen -G "docker_context/ET-linux-x86_64/easytier-*" > /dev/null; then
-            echo "Expected binaries missing under docker_context/ET-linux-x86_64:" >&2
+          if ! compgen -G "docker_context/ET-linux-x86_64/ET-*" > /dev/null; then
+            echo "Expected ET-* binaries missing under docker_context/ET-linux-x86_64:" >&2
             find docker_context -maxdepth 4 -type f | head -n 80 >&2
             exit 1
           fi
-          chmod +x docker_context/ET-linux-x86_64/easytier-* || true
+          chmod +x docker_context/ET-linux-x86_64/ET-* || true
           ls -lR docker_context
 
       - name: Build and push

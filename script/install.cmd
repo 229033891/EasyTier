@@ -71,7 +71,7 @@ param(
 
     [Parameter(Mandatory = $false)]
     [Alias("n")]
-    [string]$ServiceName = "EasyTierService",
+    [string]$ServiceName = "ET-Service",
 
     [Parameter(ValueFromRemainingArguments = $true)]
     [string[]]$ServiceArgs
@@ -382,7 +382,7 @@ function Get-LocalVersion {
     }
     try {
         $versionOutput = & $CorePath --version 2>$null
-        if ($versionOutput -match "easytier-core\s+([0-9]+\.[0-9]+\.[0-9]+)") {
+        if ($versionOutput -match "(?:ET-core|easytier-core)\s+([0-9]+\.[0-9]+\.[0-9]+)") {
             return [System.Version]$matches[1]
         }
         else {
@@ -404,6 +404,9 @@ function Get-RemoteVersion {
 }
 function Get-EasyTier {
     $Arch = Get-SystemArchitecture
+    # Map install.cmd arch labels (windows-x86_64) to release asset stem (ET-windows-x86_64)
+    $AssetArch = $Arch -replace '^windows-', ''
+    $Repo = if ($env:GITHUB_REPO) { $env:GITHUB_REPO } else { '229033891/EasyTier' }
 
     $tempDirectory = Join-Path $ScriptRoot "easytier_update"
 
@@ -417,8 +420,8 @@ function Get-EasyTier {
     }
 
     try {
-        Write-Host "检查最新版本..." -ForegroundColor Green
-        $response = Invoke-RestMethodCompatible -Uri "https://api.github.com/repos/EasyTier/EasyTier/releases/latest"
+        Write-Host "检查最新版本 ($Repo)..." -ForegroundColor Green
+        $response = Invoke-RestMethodCompatible -Uri "https://api.github.com/repos/$Repo/releases/latest"
         $latestVersion = Get-RemoteVersion($response)
     }
     catch {
@@ -427,20 +430,32 @@ function Get-EasyTier {
 
     $localVersion = Get-LocalVersion($EasyTierPath)
     if ($localVersion -ge $latestVersion) {
-        Write-Host "EasyTier 已是最新版本 $localVersion" -ForegroundColor Green
+        Write-Host "ET 已是最新版本 $localVersion" -ForegroundColor Green
         return
     }
 
-    $asset = $response.assets | Where-Object { $_.name -like "easytier-$Arch*.zip" } | Select-Object -First 1
+    $tag = $response.tag_name
+    $preferredNames = @(
+        "ET-windows-$AssetArch-$tag.zip",
+        "ET-windows-$AssetArch.zip"
+    )
+    $asset = $null
+    foreach ($n in $preferredNames) {
+        $asset = $response.assets | Where-Object { $_.name -eq $n } | Select-Object -First 1
+        if ($asset) { break }
+    }
+    if (-not $asset) {
+        $asset = $response.assets | Where-Object { $_.name -like "ET-windows-$AssetArch*.zip" } | Select-Object -First 1
+    }
     if ($asset) {
-        Write-Output "发现新版本 $latestVersion"
+        Write-Output "发现新版本 $latestVersion ($($asset.name))"
         $downloadUrl = $asset.browser_download_url
         if ($UseGitHubProxy) {
             $downloadUrl = "$GitHubProxy$downloadUrl"
         }
     }
     else {
-        throw "未适配当前平台!"
+        throw "未找到适配当前平台的 ET-windows-$AssetArch 发布包"
     }
 
     $updateFile = Join-Path $tempDirectory $asset.name
@@ -455,8 +470,15 @@ function Get-EasyTier {
 
     try {
         Expand-ZipFile -ZipPath $updateFile -DestinationPath $tempDirectory
-        $extractedRoot = Get-ChildItem -Path $tempDirectory -Directory | Select-Object -First 1
-        $updateFileDirectory = $extractedRoot.FullName
+        $coreExe = Get-ChildItem -Path $tempDirectory -Filter 'ET-core.exe' -Recurse -ErrorAction SilentlyContinue |
+            Select-Object -First 1
+        if ($coreExe) {
+            $updateFileDirectory = $coreExe.Directory.FullName
+        }
+        else {
+            $extractedRoot = Get-ChildItem -Path $tempDirectory -Directory | Select-Object -First 1
+            $updateFileDirectory = $extractedRoot.FullName
+        }
     }
     catch {
         throw "解压失败!`n$_"
@@ -468,7 +490,7 @@ function Get-EasyTier {
     if ($activeServices) {
         try {
             Write-Host "发现正在运行的服务: $ServiceName" -ForegroundColor Yellow
-            Write-Host "停止 EasyTier 服务..." -ForegroundColor Yellow
+            Write-Host "停止 ET 服务..." -ForegroundColor Yellow
             $activeServices | Stop-Service -Force
         }
         catch {
@@ -495,7 +517,7 @@ function Get-EasyTier {
                 throw "服务启动失败!`n$_"
             }
         }
-        Write-Host "EasyTier 已成功更新到版本 $latestVersion" -ForegroundColor Green
+        Write-Host "ET 已成功更新到版本 $latestVersion" -ForegroundColor Green
     }
     else {
         throw "更新文件失败! 请检查脚本是否过时或者文件/文件夹是否被其他程序占用"
@@ -504,7 +526,7 @@ function Get-EasyTier {
 }
 
 $HelpText = @"
-EasyTier 服务管理脚本
+ET 服务管理脚本
 
 【使用方式】
 直接双击运行或在命令行中执行:
@@ -541,7 +563,7 @@ EasyTier 服务管理脚本
         * CLI    使用命令行直接传参
 
     -N / -ServiceName <名称>
-        指定安装的服务名称 (默认: EasyTierService)
+        指定安装的服务名称 (默认: ET-Service)
 
     <其他参数...>
         当选择 CLI 模式时，用于传递自定义参数
@@ -571,7 +593,7 @@ EasyTier 服务管理脚本
         install.cmd -ConfigType File
 
     2. 使用远程服务器并设定服务名称: 
-        install.cmd -ConfigType Remote -ServiceName EasyTierService
+        install.cmd -ConfigType Remote -ServiceName ET-Service
 
     3. 使用命令行传参: 
         install.cmd -ConfigType CLI --ipv4 x.x.x.x --network-name xxx --network-secret yyy --peers tcp://peer_host:11010
@@ -592,7 +614,7 @@ $WatchDogTemplate = @"
 <Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
   <RegistrationInfo>
     <Date>$((Get-Date).ToString("s"))</Date>
-    <URI>\EasyTierWatchDog</URI>
+    <URI>\ET-WatchDog</URI>
   </RegistrationInfo>
   <Triggers>
     <EventTrigger>
@@ -630,9 +652,9 @@ $WatchDogTemplate = @"
 $host.ui.rawui.WindowTitle = "安装/卸载/更新 EasyTier 服务"
 Clear-Host
 $ScriptRoot = (Get-Location).Path
-$RegistryPath = "HKLM:\SOFTWARE\EasyTierServiceManage"
+$RegistryPath = "HKLM:\SOFTWARE\ET-ServiceManage"
 $RegistryName = "Services"
-$EasyTierPath = Join-Path $ScriptRoot "easytier-core.exe"
+$EasyTierPath = Join-Path $ScriptRoot "ET-core.exe"
 $OPTIONS = @()
 
 $ErrorActionPreference = "Stop"
@@ -671,7 +693,7 @@ try {
             }
         }
         Show-Pause -Text "按任意键退出..."
-        Unregister-ScheduledTask -TaskName "EasyTierWatchDog" -Confirm:$false -ErrorAction SilentlyContinue | Out-Null
+        Unregister-ScheduledTask -TaskName "ET-WatchDog" -Confirm:$false -ErrorAction SilentlyContinue | Out-Null
         exit 0
     }
     if ($Update) {
@@ -724,13 +746,13 @@ try {
             Stop-Service -Name $ServiceName -Force | Out-Null
             Remove-ServiceCompatible -Name $ServiceName
         }
-        New-Service -Name $ServiceName -DisplayName "EasyTier" `
-            -Description "EasyTier 核心服务" `
+        New-Service -Name $ServiceName -DisplayName "ET" `
+            -Description "ET 核心服务" `
             -StartupType Automatic `
             -BinaryPathName $BinaryPath | Out-Null
         Start-Service -Name $ServiceName | Out-Null
 
-        Register-ScheduledTask -TaskName "EasyTierWatchDog" -User "SYSTEM" -Xml $WatchDogTemplate.Replace("%#ServiceName#%", $ServiceName) -Force | Out-Null
+        Register-ScheduledTask -TaskName "ET-WatchDog" -User "SYSTEM" -Xml $WatchDogTemplate.Replace("%#ServiceName#%", $ServiceName) -Force | Out-Null
         Save-ServiceName -Name $ServiceName
         Write-Host "安装完成。" -ForegroundColor Green
     }
@@ -742,7 +764,7 @@ try {
 catch {
     Write-Host "发生错误: $_" -ForegroundColor Red
     Show-Pause -Text "按任意键退出..."
-    Unregister-ScheduledTask -TaskName "EasyTierWatchDog" -Confirm:$false -ErrorAction SilentlyContinue
+    Unregister-ScheduledTask -TaskName "ET-WatchDog" -Confirm:$false -ErrorAction SilentlyContinue
     exit 1
 }
 

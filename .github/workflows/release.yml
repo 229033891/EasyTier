@@ -79,21 +79,33 @@ jobs:
         env:
           VERSION: ${{ inputs.version }}
         run: |
-          mkdir zipped_assets
+          mkdir -p zipped_assets release_assets
 
-          find release_assets_nozip -type f -exec mv {} zipped_assets \;
-          ls -l -R ./zipped_assets
+          # Windows 无头包 (ET-windows-*) 与 GUI 同一次 run 下载到 nozip；
+          # 需按目录打 zip，不能当成已可分发的安装包扁平放出。
+          if [ -d release_assets_nozip ]; then
+            for d in release_assets_nozip/ET-windows-*; do
+              if [ -d "$d" ]; then
+                mv "$d" release_assets/
+              fi
+            done
+            # 其余 (NSIS / APK 等) 已是最终分发形态，直接放入发布目录
+            find release_assets_nozip -type f -exec mv {} zipped_assets \;
+          fi
+          ls -l -R ./zipped_assets || true
 
-          cd release_assets
-          ls -l -R ./
-          chmod -R 755 .
-          for x in `ls`; do
-            # ET-openwrt-bins / ET-web-dashboard 是中间产物 (裸二进制 / 前端静态文件), 不发版
-            if [ "$x" = "ET-openwrt-bins" ] || [ "$x" = "ET-web-dashboard" ]; then
-              continue
-            fi
-            zip -r ../zipped_assets/$x-${VERSION}.zip $x;
-          done
+          if [ -d release_assets ]; then
+            cd release_assets
+            ls -l -R ./ || true
+            chmod -R 755 . || true
+            for x in `ls`; do
+              # ET-openwrt-bins / ET-web-dashboard 是中间产物 (裸二进制 / 前端静态文件), 不发版
+              if [ "$x" = "ET-openwrt-bins" ] || [ "$x" = "ET-web-dashboard" ]; then
+                continue
+              fi
+              zip -r ../zipped_assets/$x-${VERSION}.zip $x;
+            done
+          fi
 
       - name: Release
         uses: softprops/action-gh-release@v2

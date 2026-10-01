@@ -28,7 +28,7 @@ jobs:
         "pnpm-lock.yaml", "pnpm-workspace.yaml", "package.json", "easytier/**",
         "easytier-core/**", "easytier-proto/**", "easytier-rpc-build/**",
         "easytier-gui/**", "tauri-plugin-vpnservice/**",
-        "easytier-web/frontend-lib/**", ".github/workflows/windows.yml",
+        "easytier-web/**", ".github/workflows/windows.yml",
         ".github/actions/**"]
     outputs:
       # Release builds must run even if they only change release metadata.
@@ -94,7 +94,8 @@ jobs:
           target: ${{ matrix.TARGET }}
           gui: true
           pnpm: true
-          pnpm-build-filter: ''
+          # embed 需要 frontend/dist；与 Linux build_web 一致先编控制台前端
+          pnpm-build-filter: './easytier-web/*'
           token: ${{ secrets.GITHUB_TOKEN }}
 
       - uses: Swatinem/rust-cache@v2
@@ -206,10 +207,17 @@ jobs:
       - name: Build web console (embed, 自建控制台用)
         if: ${{ contains(matrix.GUI_TARGET, 'windows') }}
         run: |
+          set -euo pipefail
+          test -f easytier-web/frontend/dist/index.html
           cargo build --release --target $TARGET --package=easytier-web --features=embed
           mv ./target/$TARGET/release/easytier-web.exe ./target/$TARGET/release/easytier-web-embed.exe
 
-      - name: Collect artifact
+      - name: Build headless core + cli
+        if: ${{ contains(matrix.GUI_TARGET, 'windows') }}
+        run: |
+          cargo build --release --target $TARGET --package=easytier
+
+      - name: Collect GUI artifact
         run: |
           mkdir -p ./artifacts/objects/
           
@@ -222,7 +230,6 @@ jobs:
           # copy gui bundle, gui is built without specific target
           if [[ $GUI_TARGET =~ windows ]]; then
               mv ./target/$GUI_TARGET/release/bundle/nsis/*.exe ./artifacts/objects/
-              cp ./target/$GUI_TARGET/release/easytier-web-embed.exe ./artifacts/objects/
           elif [[ $GUI_TARGET =~ darwin ]]; then
               mv ./target/$GUI_TARGET/release/bundle/dmg/*.dmg ./artifacts/objects/
           elif [[ $GUI_TARGET =~ linux ]]; then
@@ -234,12 +241,53 @@ jobs:
           mv ./artifacts/objects/* ./artifacts/
           rm -rf ./artifacts/objects/
 
-      - name: Archive artifact
+      - name: Archive GUI artifact
         uses: actions/upload-artifact@v5
         with:
           name: ET-gui-${{ matrix.ARTIFACT_NAME }}
           path: |
             ./artifacts/*
+
+      - name: Collect headless Windows binaries
+        if: ${{ contains(matrix.GUI_TARGET, 'windows') }}
+        run: |
+          set -euo pipefail
+          mkdir -p ./headless/objects
+          declare -A RENAME=(
+            [easytier-core]=ET-core
+            [easytier-cli]=ET-cli
+            [easytier-web-embed]=ET-web-embed
+          )
+          for SRC in easytier-core easytier-cli easytier-web-embed; do
+            BIN="./target/$TARGET/release/${SRC}.exe"
+            if [[ -f "$BIN" ]]; then
+              cp "$BIN" "./headless/objects/${RENAME[$SRC]}.exe"
+            fi
+          done
+          # Runtime DLLs / drivers next to binaries
+          case $TARGET in
+              x86_64*)  ARCH_DIR=x86_64 ;;
+              i686*)    ARCH_DIR=i686 ;;
+              aarch64*) ARCH_DIR=arm64 ;;
+          esac
+          if [[ -n "${ARCH_DIR:-}" && -d "./easytier/third_party/${ARCH_DIR}" ]]; then
+              find "./easytier/third_party/${ARCH_DIR}" -maxdepth 1 -type f \( -name "*.dll" -o -name "*.sys" \) \
+                -exec cp {} ./headless/objects/ \;
+          fi
+          test -f ./headless/objects/ET-core.exe
+          test -f ./headless/objects/ET-cli.exe
+          test -f ./headless/objects/ET-web-embed.exe
+          mv ./headless/objects/* ./headless/
+          rm -rf ./headless/objects
+          ls -la ./headless/
+
+      - name: Archive headless Windows artifact
+        if: ${{ contains(matrix.GUI_TARGET, 'windows') }}
+        uses: actions/upload-artifact@v5
+        with:
+          name: ET-${{ matrix.ARTIFACT_NAME }}
+          path: |
+            ./headless/*
 
   gui-result:
     runs-on: ubuntu-latest

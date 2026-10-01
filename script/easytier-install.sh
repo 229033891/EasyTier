@@ -2,8 +2,8 @@
 #
 # EasyTier 一键部署脚本（参考 openvpn-install 风格）
 # 支持：
-#   1) server  - easytier-web-embed（控制台 + 配置下发）+ 可选本机 easytier-core 节点
-#   2) client  - 仅 easytier-core，连接远程自托管控制台
+#   1) server  - ET-web-embed（控制台 + 配置下发）+ 可选本机 ET-core 节点
+#   2) client  - 仅 ET-core，连接远程自托管控制台
 #
 # 官方文档: https://easytier.rs/en/guide/network/web-console
 # 官方安装: https://github.com/EasyTier/EasyTier/blob/main/script/install.sh
@@ -550,12 +550,29 @@ fetch_file_with_fallback() {
 }
 
 remove_systemd_units() {
+  # New ET-* units
+  rm -f /etc/systemd/system/ET-web.service
+  rm -f /etc/systemd/system/ET-core@node0.service
+  rm -f /etc/systemd/system/ET-core@default.service
+  rm -f /etc/systemd/system/ET-core@.service
+  rm -f /etc/systemd/system/ET-backup.service
+  rm -f /etc/systemd/system/ET-backup.timer
+  # Legacy easytier-* units (pre-rename installs)
   rm -f /etc/systemd/system/easytier-web.service
   rm -f /etc/systemd/system/easytier-core@node0.service
   rm -f /etc/systemd/system/easytier-core@default.service
   rm -f /etc/systemd/system/easytier-core@.service
   rm -f /etc/systemd/system/easytier-backup.service
   rm -f /etc/systemd/system/easytier-backup.timer
+}
+
+stop_legacy_easytier_services() {
+  systemctl stop easytier-web.service 2>/dev/null || true
+  systemctl stop easytier-core@node0.service 2>/dev/null || true
+  systemctl stop easytier-core@default.service 2>/dev/null || true
+  systemctl disable easytier-web.service 2>/dev/null || true
+  systemctl disable easytier-core@node0.service 2>/dev/null || true
+  systemctl disable easytier-core@default.service 2>/dev/null || true
 }
 
 detect_arch() {
@@ -925,7 +942,7 @@ resolve_backup_dir() {
 }
 
 write_backup_script() {
-  cat >"${INSTALL_PATH}/easytier-backup.sh" <<'EOF'
+  cat >"${INSTALL_PATH}/ET-backup.sh" <<'EOF'
 #!/bin/bash
 # EasyTier 数据库定时/手动备份脚本
 set -euo pipefail
@@ -936,8 +953,8 @@ DB_PATH="${INSTALL_PATH}/et.db"
 RETENTION_DAYS="${BACKUP_RETENTION_DAYS:-30}"
 CRED_FILE="${INSTALL_PATH}/admin-credentials.txt"
 
-log() { echo "[easytier-backup] $*"; }
-warn() { echo "[easytier-backup] WARN: $*" >&2; }
+log() { echo "[ET-backup] $*"; }
+warn() { echo "[ET-backup] WARN: $*" >&2; }
 
 mkdir -p "$BACKUP_DIR"
 chmod 700 "$BACKUP_DIR" 2>/dev/null || true
@@ -975,7 +992,7 @@ if [[ "$RETENTION_DAYS" =~ ^[0-9]+$ ]] && [[ "$RETENTION_DAYS" -gt 0 ]]; then
   find "$BACKUP_DIR" -maxdepth 1 -type f -name 'easytier-db-*.tar.gz' -mtime +"$RETENTION_DAYS" -delete
 fi
 EOF
-  chmod 755 "${INSTALL_PATH}/easytier-backup.sh"
+  chmod 755 "${INSTALL_PATH}/ET-backup.sh"
 }
 
 setup_daily_backup() {
@@ -984,20 +1001,20 @@ setup_daily_backup() {
   mkdir -p "$BACKUP_DIR"
   chmod 700 "$BACKUP_DIR"
 
-  cat >/etc/systemd/system/easytier-backup.service <<EOF
+  cat >/etc/systemd/system/ET-backup.service <<EOF
 [Unit]
 Description=EasyTier database backup
-After=easytier-web.service
+After=ET-web.service
 
 [Service]
 Type=oneshot
 Environment=INSTALL_PATH=${INSTALL_PATH}
 Environment=BACKUP_DIR=${BACKUP_DIR}
 Environment=BACKUP_RETENTION_DAYS=${BACKUP_RETENTION_DAYS}
-ExecStart=${INSTALL_PATH}/easytier-backup.sh
+ExecStart=${INSTALL_PATH}/ET-backup.sh
 EOF
 
-  cat >/etc/systemd/system/easytier-backup.timer <<EOF
+  cat >/etc/systemd/system/ET-backup.timer <<EOF
 [Unit]
 Description=Daily EasyTier database backup
 
@@ -1011,14 +1028,18 @@ WantedBy=timers.target
 EOF
 
   systemctl daemon-reload
-  systemctl enable easytier-backup.timer
-  systemctl start easytier-backup.timer
+  systemctl enable ET-backup.timer
+  systemctl start ET-backup.timer
   log "每日备份已启用: ${BACKUP_DIR}（每天 ${BACKUP_HOUR}:00，保留 ${BACKUP_RETENTION_DAYS} 天）"
 }
 
 remove_daily_backup() {
+  systemctl stop ET-backup.timer 2>/dev/null || true
+  systemctl disable ET-backup.timer 2>/dev/null || true
   systemctl stop easytier-backup.timer 2>/dev/null || true
   systemctl disable easytier-backup.timer 2>/dev/null || true
+  rm -f /etc/systemd/system/ET-backup.service
+  rm -f /etc/systemd/system/ET-backup.timer
   rm -f /etc/systemd/system/easytier-backup.service
   rm -f /etc/systemd/system/easytier-backup.timer
   systemctl daemon-reload 2>/dev/null || true
@@ -1026,12 +1047,12 @@ remove_daily_backup() {
 
 run_backup_now() {
   resolve_backup_dir
-  if [[ ! -x "${INSTALL_PATH}/easytier-backup.sh" ]]; then
+  if [[ ! -x "${INSTALL_PATH}/ET-backup.sh" ]]; then
     write_backup_script
   fi
   INSTALL_PATH="$INSTALL_PATH" BACKUP_DIR="$BACKUP_DIR" \
     BACKUP_RETENTION_DAYS="$BACKUP_RETENTION_DAYS" \
-    "${INSTALL_PATH}/easytier-backup.sh"
+    "${INSTALL_PATH}/ET-backup.sh"
 }
 
 print_service_boot_check() {
@@ -1061,23 +1082,23 @@ verify_boot_services() {
   log "开机自启与服务状态自检:"
   local found=false
 
-  if [[ -f /etc/systemd/system/easytier-web.service ]] || \
-     systemctl cat easytier-web.service &>/dev/null; then
+  if [[ -f /etc/systemd/system/ET-web.service ]] || \
+     systemctl cat ET-web.service &>/dev/null; then
     found=true
-    print_service_boot_check "easytier-web.service" "Web 控制台"
-    if [[ -f /etc/systemd/system/easytier-core@node0.service ]] || \
-       systemctl cat easytier-core@node0.service &>/dev/null; then
-      print_service_boot_check "easytier-core@node0.service" "本机节点"
+    print_service_boot_check "ET-web.service" "Web 控制台"
+    if [[ -f /etc/systemd/system/ET-core@node0.service ]] || \
+       systemctl cat ET-core@node0.service &>/dev/null; then
+      print_service_boot_check "ET-core@node0.service" "本机节点"
     fi
-    if systemctl cat easytier-backup.timer &>/dev/null; then
-      print_service_boot_check "easytier-backup.timer" "每日备份"
+    if systemctl cat ET-backup.timer &>/dev/null; then
+      print_service_boot_check "ET-backup.timer" "每日备份"
     fi
   fi
 
-  if [[ -f /etc/systemd/system/easytier-core@default.service ]] || \
-     systemctl cat easytier-core@default.service &>/dev/null; then
+  if [[ -f /etc/systemd/system/ET-core@default.service ]] || \
+     systemctl cat ET-core@default.service &>/dev/null; then
     found=true
-    print_service_boot_check "easytier-core@default.service" "客户端节点"
+    print_service_boot_check "ET-core@default.service" "客户端节点"
   fi
 
   if [[ "$found" != "true" ]]; then
@@ -1086,86 +1107,110 @@ verify_boot_services() {
   echo
 }
 
+_parse_web_exec_start() {
+  local exec_line="$1"
+  local val
+  [[ -n "$exec_line" ]] || return 0
+  val="$(printf '%s\n' "$exec_line" | sed -n 's/.*--api-server-port[[:space:]]\+\([0-9]\+\).*/\1/p' | head -1)"
+  [[ -n "$val" ]] && API_PORT="$val"
+  val="$(printf '%s\n' "$exec_line" | sed -n 's/.*--config-server-port[[:space:]]\+\([0-9]\+\).*/\1/p' | head -1)"
+  [[ -n "$val" ]] && CONFIG_PORT="$val"
+  val="$(printf '%s\n' "$exec_line" | sed -n 's/.*--config-server-protocol[[:space:]]\+\([^[:space:]\\]\+\).*/\1/p' | head -1)"
+  [[ -n "$val" ]] && CONFIG_PROTOCOL="$val"
+  val="$(printf '%s\n' "$exec_line" | sed -n 's/.*--api-host[[:space:]]\+"*\([^"[:space:]]*\).*/\1/p' | head -1)"
+  if [[ -n "$val" ]]; then
+    SYSTEMD_API_HOST="$val"
+    reconcile_nginx_mode_from_api_host "$val"
+  fi
+}
+
+_parse_core_config_server() {
+  local cs_line="$1"
+  local val
+  [[ -n "$cs_line" ]] || return 0
+  val="$(printf '%s\n' "$cs_line" | sed -n 's/.*--config-server[[:space:]]\+\([^[:space:]]*\).*/\1/p' | head -1)"
+  [[ -n "$val" ]] || return 0
+  val="${val#\"}"; val="${val%\"}"; val="${val#\'}"; val="${val%\'}"
+  parse_config_server_url "$val"
+  [[ -n "$CS_HOST" ]] && SERVER_HOST="$CS_HOST"
+  [[ -n "$CS_PORT" ]] && CONFIG_PORT="$CS_PORT"
+  [[ -n "$CS_SCHEME" ]] && CONFIG_PROTOCOL="$CS_SCHEME"
+  [[ -n "$CS_TOKEN" ]] && CONFIG_TOKEN="$CS_TOKEN"
+}
+
 load_runtime_config_from_systemd() {
-  local systemd_api_host=""
-  if systemctl cat easytier-web.service &>/dev/null; then
-    local exec_line val
-    # systemctl show 返回完整 ExecStart（多行 unit 文件也能正确解析）
+  # Set by _parse_web_exec_start (must not be local — helper writes this name)
+  SYSTEMD_API_HOST=""
+  local exec_line cs_line
+  # Prefer ET-* units; fall back to legacy easytier-* for in-place rename migration
+  if systemctl cat ET-web.service &>/dev/null; then
+    exec_line="$(systemctl show ET-web.service -p ExecStart --value 2>/dev/null || true)"
+    _parse_web_exec_start "$exec_line"
+  elif systemctl cat easytier-web.service &>/dev/null; then
     exec_line="$(systemctl show easytier-web.service -p ExecStart --value 2>/dev/null || true)"
-    if [[ -n "$exec_line" ]]; then
-      val="$(printf '%s\n' "$exec_line" | sed -n 's/.*--api-server-port[[:space:]]\+\([0-9]\+\).*/\1/p' | head -1)"
-      [[ -n "$val" ]] && API_PORT="$val"
-      val="$(printf '%s\n' "$exec_line" | sed -n 's/.*--config-server-port[[:space:]]\+\([0-9]\+\).*/\1/p' | head -1)"
-      [[ -n "$val" ]] && CONFIG_PORT="$val"
-      val="$(printf '%s\n' "$exec_line" | sed -n 's/.*--config-server-protocol[[:space:]]\+\([^[:space:]\\]\+\).*/\1/p' | head -1)"
-      [[ -n "$val" ]] && CONFIG_PROTOCOL="$val"
-      val="$(printf '%s\n' "$exec_line" | sed -n 's/.*--api-host[[:space:]]\+"*\([^"[:space:]]*\).*/\1/p' | head -1)"
-      if [[ -n "$val" ]]; then
-        systemd_api_host="$val"
-        reconcile_nginx_mode_from_api_host "$val"
-      fi
-    fi
+    _parse_web_exec_start "$exec_line"
   fi
 
   load_install_options
 
   # systemd --api-host 协议为准，覆盖 install-options.env 中的 NGINX_HTTPS_PROXY
-  if [[ -n "$systemd_api_host" ]]; then
-    reconcile_nginx_mode_from_api_host "$systemd_api_host"
+  if [[ -n "${SYSTEMD_API_HOST:-}" ]]; then
+    reconcile_nginx_mode_from_api_host "$SYSTEMD_API_HOST"
   else
     PUBLIC_HOST="$(normalize_host_input "${PUBLIC_HOST:-}")"
   fi
 
-  if systemctl cat easytier-core@default.service &>/dev/null; then
-    local cs_line val
+  if systemctl cat ET-core@default.service &>/dev/null; then
+    cs_line="$(systemctl show ET-core@default.service -p ExecStart --value 2>/dev/null || true)"
+    _parse_core_config_server "$cs_line"
+  elif systemctl cat easytier-core@default.service &>/dev/null; then
     cs_line="$(systemctl show easytier-core@default.service -p ExecStart --value 2>/dev/null || true)"
-    if [[ -n "$cs_line" ]]; then
-      val="$(printf '%s\n' "$cs_line" | sed -n 's/.*--config-server[[:space:]]\+\([^[:space:]]*\).*/\1/p' | head -1)"
-      if [[ -n "$val" ]]; then
-        val="${val#\"}"; val="${val%\"}"; val="${val#\'}"; val="${val%\'}"
-        parse_config_server_url "$val"
-        [[ -n "$CS_HOST" ]] && SERVER_HOST="$CS_HOST"
-        [[ -n "$CS_PORT" ]] && CONFIG_PORT="$CS_PORT"
-        [[ -n "$CS_SCHEME" ]] && CONFIG_PROTOCOL="$CS_SCHEME"
-        [[ -n "$CS_TOKEN" ]] && CONFIG_TOKEN="$CS_TOKEN"
-      fi
-    fi
+    _parse_core_config_server "$cs_line"
   fi
 
   BACKUP_DIR="${BACKUP_DIR:-${INSTALL_PATH}/backups}"
 }
 
 is_server_installed() {
-  systemctl cat easytier-web.service &>/dev/null || [[ -f /etc/systemd/system/easytier-web.service ]]
+  systemctl cat ET-web.service &>/dev/null || \
+    [[ -f /etc/systemd/system/ET-web.service ]] || \
+    systemctl cat easytier-web.service &>/dev/null || \
+    [[ -f /etc/systemd/system/easytier-web.service ]]
+}
+
+unit_present() {
+  local unit="$1"
+  systemctl cat "$unit" &>/dev/null || [[ -f "/etc/systemd/system/${unit}" ]]
 }
 
 stop_easytier_services() {
-  systemctl stop easytier-web.service 2>/dev/null || true
-  systemctl stop easytier-core@node0.service 2>/dev/null || true
-  systemctl stop easytier-core@default.service 2>/dev/null || true
+  systemctl stop ET-web.service 2>/dev/null || true
+  systemctl stop ET-core@node0.service 2>/dev/null || true
+  systemctl stop ET-core@default.service 2>/dev/null || true
+  stop_legacy_easytier_services
 }
 
 start_easytier_services() {
-  if systemctl is-enabled easytier-web.service &>/dev/null; then
-    systemctl start easytier-web.service 2>/dev/null || true
+  if systemctl is-enabled ET-web.service &>/dev/null; then
+    systemctl start ET-web.service 2>/dev/null || true
   fi
-  if systemctl is-enabled easytier-core@node0.service &>/dev/null; then
-    systemctl start easytier-core@node0.service 2>/dev/null || true
+  if systemctl is-enabled ET-core@node0.service &>/dev/null; then
+    systemctl start ET-core@node0.service 2>/dev/null || true
   fi
-  if systemctl is-enabled easytier-core@default.service &>/dev/null; then
-    systemctl start easytier-core@default.service 2>/dev/null || true
+  if systemctl is-enabled ET-core@default.service &>/dev/null; then
+    systemctl start ET-core@default.service 2>/dev/null || true
   fi
 }
 
 restart_easytier_services() {
-  if systemctl is-enabled easytier-web.service &>/dev/null; then
-    systemctl restart easytier-web.service 2>/dev/null || true
+  if systemctl is-enabled ET-web.service &>/dev/null; then
+    systemctl restart ET-web.service 2>/dev/null || true
   fi
-  if systemctl is-enabled easytier-core@node0.service &>/dev/null; then
-    systemctl restart easytier-core@node0.service 2>/dev/null || true
+  if systemctl is-enabled ET-core@node0.service &>/dev/null; then
+    systemctl restart ET-core@node0.service 2>/dev/null || true
   fi
-  if systemctl is-enabled easytier-core@default.service &>/dev/null; then
-    systemctl restart easytier-core@default.service 2>/dev/null || true
+  if systemctl is-enabled ET-core@default.service &>/dev/null; then
+    systemctl restart ET-core@default.service 2>/dev/null || true
   fi
 }
 
@@ -1237,8 +1282,8 @@ run_health_check() {
   # systemd --api-host 协议优先于 install-options.env 中的 NGINX_HTTPS_PROXY
 
   if ! is_server_installed && \
-     ! systemctl cat easytier-core@default.service &>/dev/null && \
-     ! systemctl cat easytier-core@node0.service &>/dev/null; then
+     ! systemctl cat ET-core@default.service &>/dev/null && \
+     ! systemctl cat ET-core@node0.service &>/dev/null; then
     warn "未检测到 EasyTier 服务，请先 install"
     return 1
   fi
@@ -1313,10 +1358,10 @@ run_health_check() {
       fail=1
     fi
 
-    if systemctl is-active --quiet easytier-web.service 2>/dev/null; then
-      health_print ok "服务状态" "easytier-web.service 运行中"
+    if systemctl is-active --quiet ET-web.service 2>/dev/null; then
+      health_print ok "服务状态" "ET-web.service 运行中"
     else
-      health_print fail "服务状态" "easytier-web.service 未运行"
+      health_print fail "服务状态" "ET-web.service 未运行"
       fail=1
     fi
 
@@ -1325,11 +1370,11 @@ run_health_check() {
     fi
   fi
 
-  if systemctl cat easytier-core@default.service &>/dev/null; then
-    if systemctl is-active --quiet easytier-core@default.service 2>/dev/null; then
-      health_print ok "客户端节点" "easytier-core@default 运行中"
+  if systemctl cat ET-core@default.service &>/dev/null; then
+    if systemctl is-active --quiet ET-core@default.service 2>/dev/null; then
+      health_print ok "客户端节点" "ET-core@default 运行中"
     else
-      health_print fail "客户端节点" "easytier-core@default 未运行"
+      health_print fail "客户端节点" "ET-core@default 未运行"
       fail=1
     fi
     local cs_host
@@ -1349,11 +1394,11 @@ run_health_check() {
     fi
   fi
 
-  if systemctl cat easytier-core@node0.service &>/dev/null; then
-    if systemctl is-active --quiet easytier-core@node0.service 2>/dev/null; then
-      health_print ok "本机节点" "easytier-core@node0 运行中"
+  if systemctl cat ET-core@node0.service &>/dev/null; then
+    if systemctl is-active --quiet ET-core@node0.service 2>/dev/null; then
+      health_print ok "本机节点" "ET-core@node0 运行中"
     else
-      health_print fail "本机节点" "easytier-core@node0 未运行"
+      health_print fail "本机节点" "ET-core@node0 未运行"
       fail=1
     fi
   fi
@@ -1381,8 +1426,8 @@ get_latest_release_tag() {
 
 verify_binary_bundle() {
   local inner="$1"
-  [[ -x "${inner}/easytier-core" && -x "${inner}/easytier-cli" ]] || {
-    err "release 包缺少 easytier-core 或 easytier-cli"
+  [[ -x "${inner}/ET-core" && -x "${inner}/ET-cli" ]] || {
+    err "release 包缺少 ET-core 或 ET-cli"
     return 1
   }
 }
@@ -1392,30 +1437,50 @@ download_and_install_binaries() {
   local tag="${2:-}"
   [[ -n "$tag" ]] || tag="$(get_latest_release_tag)"
 
-  # 本 fork 的 Release 包名格式：ET-linux-<arch>-<tag>.zip（如 ET-linux-x86_64-v2.7.0.zip），
-  # 包内为裸二进制（无子目录），下面的 inner 回退逻辑可直接处理。
+  # 本 fork 的 Release 包名格式：ET-linux-<arch>-<tag>.zip（如 ET-linux-x86_64-v2.7.0.zip）
+  # 包内一般为子目录 ET-linux-<arch>/，也可能是扁平文件。
   local base="https://github.com/${GITHUB_REPO}/releases/download/${tag}/ET-linux-${arch}-${tag}.zip"
 
   log "准备下载 ${tag} (${arch})..."
   mkdir -p "$INSTALL_PATH"
+  rm -rf /tmp/easytier-install-extract
   fetch_file_with_fallback "$base" /tmp/easytier-install.zip
   unzip -oq /tmp/easytier-install.zip -d /tmp/easytier-install-extract
-  local inner="/tmp/easytier-install-extract/easytier-linux-${arch}"
-  [[ -d "$inner" ]] || inner="/tmp/easytier-install-extract"
+  # Release zip 通常含 ET-linux-<arch>/；Actions 产物解压后也可能是扁平目录
+  local inner=""
+  local candidate
+  for candidate in \
+    "/tmp/easytier-install-extract/ET-linux-${arch}" \
+    "/tmp/easytier-install-extract"; do
+    if [[ -x "${candidate}/ET-core" && -x "${candidate}/ET-cli" ]]; then
+      inner="$candidate"
+      break
+    fi
+  done
+  if [[ -z "$inner" ]]; then
+    candidate="$(find /tmp/easytier-install-extract -maxdepth 2 -type f -name ET-core 2>/dev/null | head -1 || true)"
+    if [[ -n "$candidate" ]]; then
+      inner="$(dirname "$candidate")"
+    fi
+  fi
+  [[ -n "$inner" ]] || {
+    err "解压后未找到 ET-core（期望 ET-linux-${arch}/ 或包根目录）"
+    return 1
+  }
   verify_binary_bundle "$inner"
 
-  install -m 755 "$inner/easytier-core" "${INSTALL_PATH}/easytier-core"
-  install -m 755 "$inner/easytier-cli" "${INSTALL_PATH}/easytier-cli"
-  if [[ -f "$inner/easytier-web-embed" ]]; then
-    install -m 755 "$inner/easytier-web-embed" "${INSTALL_PATH}/easytier-web-embed"
+  install -m 755 "$inner/ET-core" "${INSTALL_PATH}/ET-core"
+  install -m 755 "$inner/ET-cli" "${INSTALL_PATH}/ET-cli"
+  if [[ -f "$inner/ET-web-embed" ]]; then
+    install -m 755 "$inner/ET-web-embed" "${INSTALL_PATH}/ET-web-embed"
   fi
-  if [[ -f "$inner/easytier-web" ]]; then
-    install -m 755 "$inner/easytier-web" "${INSTALL_PATH}/easytier-web"
+  if [[ -f "$inner/ET-web" ]]; then
+    install -m 755 "$inner/ET-web" "${INSTALL_PATH}/ET-web"
   fi
   rm -rf /tmp/easytier-install.zip /tmp/easytier-install-extract
   mkdir -p "$CONFIG_DIR"
-  ln -sf "${INSTALL_PATH}/easytier-core" /usr/sbin/easytier-core 2>/dev/null || true
-  ln -sf "${INSTALL_PATH}/easytier-cli" /usr/sbin/easytier-cli 2>/dev/null || true
+  ln -sfn "${INSTALL_PATH}/ET-core" /usr/sbin/ET-core 2>/dev/null || true
+  ln -sfn "${INSTALL_PATH}/ET-cli" /usr/sbin/ET-cli 2>/dev/null || true
   INSTALLED_VERSION="$tag"
   log "二进制已更新到 ${INSTALL_PATH}（版本 ${tag}）"
 }
@@ -1604,16 +1669,16 @@ write_web_service() {
   local public_host="$1"
   local api_url
   api_url="$(api_host_url "$public_host")"
-  cat >/etc/systemd/system/easytier-web.service <<EOF
+  cat >/etc/systemd/system/ET-web.service <<EOF
 [Unit]
-Description=EasyTier Web Console (easytier-web-embed)
+Description=EasyTier Web Console (ET-web-embed)
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
 WorkingDirectory=${INSTALL_PATH}
-ExecStart=${INSTALL_PATH}/easytier-web-embed \\
+ExecStart=${INSTALL_PATH}/ET-web-embed \\
   --db ${INSTALL_PATH}/et.db \\
   --api-server-port ${API_PORT} \\
   --api-host "${api_url}" \\
@@ -1635,10 +1700,10 @@ write_core_service() {
   local after_web="${3:-no}"
   local unit_after="After=network-online.target"
   if [[ "$after_web" == "yes" ]]; then
-    unit_after="After=network-online.target easytier-web.service"
+    unit_after="After=network-online.target ET-web.service"
   fi
   # URL is validated (safe charset); quote for systemd word splitting safety.
-  cat >/etc/systemd/system/easytier-core@${instance}.service <<EOF
+  cat >/etc/systemd/system/ET-core@${instance}.service <<EOF
 [Unit]
 Description=EasyTier Core Node (${instance})
 ${unit_after}
@@ -1647,7 +1712,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 WorkingDirectory=${INSTALL_PATH}
-ExecStart=${INSTALL_PATH}/easytier-core --config-server "${config_server}"
+ExecStart=${INSTALL_PATH}/ET-core --config-server "${config_server}"
 Restart=on-failure
 RestartSec=5
 LimitNOFILE=1048576
@@ -1658,13 +1723,20 @@ EOF
 }
 
 install_server() {
-  [[ -f "$INSTALL_PATH/easytier-web-embed" ]] || { err "包内无 easytier-web-embed，请检查 release zip"; exit 1; }
+  [[ -f "$INSTALL_PATH/ET-web-embed" ]] || { err "包内无 ET-web-embed，请检查 release zip"; exit 1; }
+
+  # Stop/disable any pre-rename units so ports are free and only ET-* remain
+  stop_legacy_easytier_services
+  rm -f /etc/systemd/system/easytier-web.service \
+    /etc/systemd/system/easytier-core@node0.service \
+    /etc/systemd/system/easytier-core@default.service \
+    /etc/systemd/system/easytier-core@.service
 
   write_web_service "$PUBLIC_HOST"
 
   systemctl daemon-reload
-  systemctl enable easytier-web.service
-  systemctl restart easytier-web.service
+  systemctl enable ET-web.service
+  systemctl restart ET-web.service
 
   if change_admin_password "$ADMIN_PASSWORD"; then
     save_admin_credentials
@@ -1677,8 +1749,8 @@ install_server() {
     local local_cs
     local_cs="$(build_config_server_url "$CONFIG_PROTOCOL" "127.0.0.1" "$CONFIG_PORT" "$CONFIG_TOKEN")"
     write_core_service "$local_cs" "node0" "yes"
-    systemctl enable easytier-core@node0.service
-    systemctl restart easytier-core@node0.service
+    systemctl enable ET-core@node0.service
+    systemctl restart ET-core@node0.service
   fi
 
   local api_url host_clean reg_note pass_note backup_note="" cs_url
@@ -1713,7 +1785,7 @@ ${pass_note}
 3. 其他节点 client 连接（任选 udp 或 tcp，按网络环境）:
    ${cs_url}
 
-本机节点: easytier-core@node0 -> $(build_config_server_url "$CONFIG_PROTOCOL" "127.0.0.1" "$CONFIG_PORT" "$CONFIG_TOKEN")
+本机节点: ET-core@node0 -> $(build_config_server_url "$CONFIG_PROTOCOL" "127.0.0.1" "$CONFIG_PORT" "$CONFIG_TOKEN")
 数据库: ${INSTALL_PATH}/et.db
 ${backup_note}
 EOF
@@ -1760,10 +1832,14 @@ install_client() {
   host_clean="$(normalize_host_input "$SERVER_HOST")"
   config_server="$(build_config_server_url "$CONFIG_PROTOCOL" "$host_clean" "$CONFIG_PORT" "$CONFIG_TOKEN")"
 
+  stop_legacy_easytier_services
+  rm -f /etc/systemd/system/easytier-core@default.service \
+    /etc/systemd/system/easytier-core@.service
+
   write_core_service "$config_server" "default" "no"
   systemctl daemon-reload
-  systemctl enable easytier-core@default.service
-  systemctl restart easytier-core@default.service
+  systemctl enable ET-core@default.service
+  systemctl restart ET-core@default.service
 
   cat >"${INSTALL_PATH}/INSTALL_INFO.txt" <<EOF
 EasyTier Client 安装完成
@@ -1772,9 +1848,9 @@ Config Server: ${config_server}
 接入 Token: ${CONFIG_TOKEN}
 
 管理命令:
-  systemctl status easytier-core@default
-  systemctl restart easytier-core@default
-  easytier-cli peer
+  systemctl status ET-core@default
+  systemctl restart ET-core@default
+  ET-cli peer
 
 请确保控制台「接入 Token」中已存在 Token「${CONFIG_TOKEN}」（默认内置 admin），并在 Web 中配置网络。
 EOF
@@ -1817,7 +1893,7 @@ prompt_interactive() {
     else
       NGINX_HTTPS_PROXY=no
     fi
-    read -rp "本机同时运行 easytier-core? [Y/n]: " yn
+    read -rp "本机同时运行 ET-core? [Y/n]: " yn
     [[ "$yn" =~ ^[Nn] ]] && WITH_NODE="no" || WITH_NODE="yes"
     read -rp "本机节点接入 Token [${CONFIG_TOKEN}]: " u
     if [[ -n "$u" ]]; then
@@ -2003,7 +2079,27 @@ cmd_update() {
   parse_common_args "$@"
   need_cmd
   [[ -d "$INSTALL_PATH" ]] || { err "未找到 ${INSTALL_PATH}，请先 install"; exit 1; }
-  [[ -x "${INSTALL_PATH}/easytier-core" ]] || { err "未找到 easytier-core 二进制"; exit 1; }
+  if [[ ! -x "${INSTALL_PATH}/ET-core" && ! -x "${INSTALL_PATH}/easytier-core" ]]; then
+    err "未找到 ET-core / easytier-core 二进制"
+    exit 1
+  fi
+
+  load_runtime_config_from_systemd
+
+  # Remember which roles were installed (ET-* or legacy) so we can rewrite units
+  local had_web=no had_node0=no had_default=no had_backup=no
+  if unit_present ET-web.service || unit_present easytier-web.service; then
+    had_web=yes
+  fi
+  if unit_present ET-core@node0.service || unit_present easytier-core@node0.service; then
+    had_node0=yes
+  fi
+  if unit_present ET-core@default.service || unit_present easytier-core@default.service; then
+    had_default=yes
+  fi
+  if unit_present ET-backup.timer || unit_present easytier-backup.timer; then
+    had_backup=yes
+  fi
 
   if is_interactive; then
     prompt_download_source
@@ -2034,9 +2130,48 @@ cmd_update() {
   arch="$(detect_arch)"
   download_and_install_binaries "$arch"
 
+  # Rewrite systemd units to ET-* ExecStart (critical after binary rename)
+  if [[ "$had_web" == "yes" ]]; then
+    [[ -f "${INSTALL_PATH}/ET-web-embed" ]] || { err "更新包缺少 ET-web-embed"; exit 1; }
+    if [[ -z "${PUBLIC_HOST:-}" ]]; then
+      err "无法解析控制台地址，请加参数: --public-host <域名或IP>"
+      exit 1
+    fi
+    write_web_service "$PUBLIC_HOST"
+    systemctl enable ET-web.service
+  fi
+  if [[ "$had_node0" == "yes" ]]; then
+    local local_cs
+    local_cs="$(build_config_server_url "$CONFIG_PROTOCOL" "127.0.0.1" "$CONFIG_PORT" "$CONFIG_TOKEN")"
+    write_core_service "$local_cs" "node0" "yes"
+    systemctl enable ET-core@node0.service
+  fi
+  if [[ "$had_default" == "yes" ]]; then
+    local host_clean config_server
+    host_clean="$(normalize_host_input "${SERVER_HOST:-${PUBLIC_HOST:-127.0.0.1}}")"
+    config_server="$(build_config_server_url "$CONFIG_PROTOCOL" "$host_clean" "$CONFIG_PORT" "$CONFIG_TOKEN")"
+    write_core_service "$config_server" "default" "no"
+    systemctl enable ET-core@default.service
+  fi
+  if [[ "$had_backup" == "yes" ]]; then
+    setup_daily_backup
+  fi
+
+  # Drop legacy unit files and old binary names left from pre-rename installs
+  rm -f /etc/systemd/system/easytier-web.service \
+    /etc/systemd/system/easytier-core@node0.service \
+    /etc/systemd/system/easytier-core@default.service \
+    /etc/systemd/system/easytier-core@.service \
+    /etc/systemd/system/easytier-backup.service \
+    /etc/systemd/system/easytier-backup.timer
+  rm -f "${INSTALL_PATH}/easytier-core" "${INSTALL_PATH}/easytier-cli" \
+    "${INSTALL_PATH}/easytier-web-embed" "${INSTALL_PATH}/easytier-web" \
+    "${INSTALL_PATH}/easytier-backup.sh"
+  rm -f /usr/sbin/easytier-core /usr/sbin/easytier-cli
+
   systemctl daemon-reload
   log "重启服务..."
-  restart_easytier_services
+  start_easytier_services
 
   update_ok=yes
   trap - EXIT
@@ -2101,7 +2236,7 @@ cmd_restore() {
   log "启动服务..."
   start_easytier_services
 
-  if is_server_installed && ! systemctl is-active --quiet easytier-web.service 2>/dev/null; then
+  if is_server_installed && ! systemctl is-active --quiet ET-web.service 2>/dev/null; then
     warn "Web 服务启动失败，回滚数据库..."
     cp -a "$pre_db" "${INSTALL_PATH}/et.db"
     rm -f "${INSTALL_PATH}/et.db-wal" "${INSTALL_PATH}/et.db-shm"
@@ -2200,9 +2335,9 @@ cmd_uninstall() {
   log "停止服务..."
   remove_daily_backup
   stop_easytier_services
-  systemctl disable easytier-web.service 2>/dev/null || true
-  systemctl disable easytier-core@node0.service 2>/dev/null || true
-  systemctl disable easytier-core@default.service 2>/dev/null || true
+  systemctl disable ET-web.service 2>/dev/null || true
+  systemctl disable ET-core@node0.service 2>/dev/null || true
+  systemctl disable ET-core@default.service 2>/dev/null || true
   remove_systemd_units
   systemctl daemon-reload
   if [[ -d "$INSTALL_PATH" ]]; then
@@ -2210,6 +2345,7 @@ cmd_uninstall() {
     mv "$INSTALL_PATH" "$bak"
     log "配置已备份到 $bak"
   fi
+  rm -f /usr/sbin/ET-core /usr/sbin/ET-cli
   rm -f /usr/sbin/easytier-core /usr/sbin/easytier-cli
   log "卸载完成"
 }
@@ -2217,10 +2353,10 @@ cmd_uninstall() {
 cmd_status() {
   verify_boot_services
   run_health_check || true
-  systemctl status easytier-web.service --no-pager 2>/dev/null || true
-  systemctl status easytier-core@node0.service --no-pager 2>/dev/null || true
-  systemctl status easytier-core@default.service --no-pager 2>/dev/null || true
-  systemctl status easytier-backup.timer --no-pager 2>/dev/null || true
+  systemctl status ET-web.service --no-pager 2>/dev/null || true
+  systemctl status ET-core@node0.service --no-pager 2>/dev/null || true
+  systemctl status ET-core@default.service --no-pager 2>/dev/null || true
+  systemctl status ET-backup.timer --no-pager 2>/dev/null || true
   [[ -f "${INSTALL_PATH}/INSTALL_INFO.txt" ]] && cat "${INSTALL_PATH}/INSTALL_INFO.txt"
 }
 

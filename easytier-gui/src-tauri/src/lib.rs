@@ -1375,15 +1375,15 @@ mod service {
     }
 
     pub fn install(opts: ServiceOptions) -> anyhow::Result<()> {
-        let service = easytier::service_manager::Service::new(env!("CARGO_PKG_NAME").to_string())?;
+        let service = easytier::service_manager::Service::new("ET-Gui".to_string())?;
         let options = easytier::service_manager::ServiceInstallOptions {
             program: super::get_exe_path().into(),
             args: opts.to_args_vec(),
             work_directory: std::env::current_dir()?,
             environment: service_environment(),
             disable_autostart: false,
-            description: Some("EasyTier Gui Service".to_string()),
-            display_name: Some("EasyTier Gui Service".to_string()),
+            description: Some("ET Gui Service".to_string()),
+            display_name: Some("ET Gui Service".to_string()),
             disable_restart_on_failure: false,
         };
         service
@@ -1393,14 +1393,14 @@ mod service {
     }
 
     pub fn uninstall() -> anyhow::Result<()> {
-        let service = easytier::service_manager::Service::new(env!("CARGO_PKG_NAME").to_string())?;
+        let service = easytier::service_manager::Service::new("ET-Gui".to_string())?;
         service.uninstall()?;
         Ok(())
     }
 
     pub fn set_status(enable: bool) -> anyhow::Result<()> {
         use easytier::service_manager::*;
-        let service = Service::new(env!("CARGO_PKG_NAME").to_string())?;
+        let service = Service::new("ET-Gui".to_string())?;
         let status = service.status()?;
         if enable && status != ServiceStatus::Running {
             service.start().with_context(|| "Failed to start service")?;
@@ -1413,7 +1413,7 @@ mod service {
     }
 
     pub fn status() -> anyhow::Result<easytier::service_manager::ServiceStatus> {
-        let service = easytier::service_manager::Service::new(env!("CARGO_PKG_NAME").to_string())?;
+        let service = easytier::service_manager::Service::new("ET-Gui".to_string())?;
         service.status()
     }
 

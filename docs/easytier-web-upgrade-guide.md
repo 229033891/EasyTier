@@ -78,7 +78,7 @@ et.db-shm              # 若存在
 ### 3.2 停止旧进程
 
 - Windows：结束 `easytier-web.exe` / `easytier-web-embed.exe`，或停掉对应服务。
-- Linux：`systemctl stop easytier-web`（若已做成服务），或结束对应进程。
+- Linux：`systemctl stop ET-web`（若已做成服务），或结束对应进程。
 
 确认没有进程仍占用 `et.db`（避免备份不完整或替换失败）。
 

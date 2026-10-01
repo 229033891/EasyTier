@@ -21,8 +21,9 @@
 
 .NOTES
     Administrator privileges are required.
-    After installation, run: easytier-cli service install
-    to register EasyTier as a system service.
+    After installation, run: ET-cli service install
+    to register ET as a system service (default service name: ET-Service).
+    Override repo with env GITHUB_REPO (default 229033891/EasyTier).
 #>
 param(
     [Parameter(Position = 0)]
@@ -43,7 +44,7 @@ $ProgressPreference = 'SilentlyContinue'
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
-$GITHUB_REPO        = 'EasyTier/EasyTier'
+$GITHUB_REPO        = if ($env:GITHUB_REPO) { $env:GITHUB_REPO } else { '229033891/EasyTier' }
 $GITHUB_API         = "https://api.github.com/repos/$GITHUB_REPO"
 $GITHUB_RELEASE_URL = "https://github.com/$GITHUB_REPO/releases"
 
@@ -72,13 +73,14 @@ switch ($cpuArch) {
         exit 1
     }
 }
-$assetBaseName = "easytier-windows-$arch"
+$assetBaseName = "ET-windows-$arch"
 
 Write-Host ''
 Write-Host '  ===============================================' -ForegroundColor Cyan
-Write-Host '        EasyTier Windows Installer              ' -ForegroundColor Cyan
+Write-Host '        ET Windows Installer                     ' -ForegroundColor Cyan
 Write-Host '  ===============================================' -ForegroundColor Cyan
 Write-Host ''
+Write-Host "  Repository   : $GITHUB_REPO" -ForegroundColor White
 Write-Host "  Architecture : $arch" -ForegroundColor White
 Write-Host ''
 
@@ -170,15 +172,21 @@ catch {
     exit 1
 }
 
-# ZIP may contain a sub-directory; find exe files recursively and flatten
-$exeFiles = Get-ChildItem -Path $extractDir -Filter '*.exe' -Recurse
-if (-not $exeFiles) {
-    Remove-Item -Recurse -Force $tempDir -ErrorAction SilentlyContinue
-    Write-Error 'No .exe files found after extraction. The ZIP may be malformed.'
-    exit 1
+# Prefer folder containing ET-core.exe; fall back to any .exe directory
+$coreExe = Get-ChildItem -Path $extractDir -Filter 'ET-core.exe' -Recurse -ErrorAction SilentlyContinue |
+    Select-Object -First 1
+if ($coreExe) {
+    $binSourceDir = $coreExe.DirectoryName
 }
-
-$binSourceDir = $exeFiles[0].DirectoryName
+else {
+    $exeFiles = Get-ChildItem -Path $extractDir -Filter '*.exe' -Recurse
+    if (-not $exeFiles) {
+        Remove-Item -Recurse -Force $tempDir -ErrorAction SilentlyContinue
+        Write-Error 'No .exe files found after extraction. The ZIP may be malformed.'
+        exit 1
+    }
+    $binSourceDir = $exeFiles[0].DirectoryName
+}
 
 try {
     New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
@@ -187,6 +195,12 @@ try {
 catch {
     Remove-Item -Recurse -Force $tempDir -ErrorAction SilentlyContinue
     Write-Error "Failed to copy files to install directory: $_"
+    exit 1
+}
+
+if (-not (Test-Path (Join-Path $InstallDir 'ET-core.exe'))) {
+    Remove-Item -Recurse -Force $tempDir -ErrorAction SilentlyContinue
+    Write-Error "ET-core.exe missing under $InstallDir after install."
     exit 1
 }
 
@@ -225,10 +239,11 @@ catch {
 # Done
 # ---------------------------------------------------------------------------
 Write-Host ''
-Write-Host "  [OK] EasyTier $releaseVersion installation complete!" -ForegroundColor Green
+Write-Host "  [OK] ET $releaseVersion installation complete!" -ForegroundColor Green
 Write-Host ''
 Write-Host "  Install dir : $InstallDir" -ForegroundColor White
-Write-Host '  User guide  : https://easytier.cn/en/guide/network/decentralized-networking.html' -ForegroundColor DarkGray
+Write-Host '  Binaries    : ET-core.exe / ET-cli.exe / ET-web-embed.exe' -ForegroundColor White
+Write-Host '  Next        : ET-cli service install' -ForegroundColor DarkGray
 Write-Host ''
 Write-Host '  NOTE: If PATH was just updated, please restart your terminal.' -ForegroundColor DarkYellow
 Write-Host ''

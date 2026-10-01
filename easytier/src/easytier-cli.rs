@@ -487,7 +487,7 @@ enum CredentialSubCommand {
 
 #[derive(Args, Debug)]
 struct ServiceArgs {
-    #[arg(short, long, default_value = env!("CARGO_PKG_NAME"), help = "service name")]
+    #[arg(short, long, default_value = "ET-Service", help = "service name")]
     name: String,
 
     #[command(subcommand)]
@@ -496,15 +496,15 @@ struct ServiceArgs {
 
 #[derive(Subcommand, Debug)]
 enum ServiceSubCommand {
-    #[command(about = "register easytier-core as a system service")]
+    #[command(about = "register ET-core as a system service")]
     Install(InstallArgs),
-    #[command(about = "unregister easytier-core system service")]
+    #[command(about = "unregister ET-core system service")]
     Uninstall,
-    #[command(about = "check easytier-core system service status")]
+    #[command(about = "check ET-core system service status")]
     Status,
-    #[command(about = "start easytier-core system service")]
+    #[command(about = "start ET-core system service")]
     Start,
-    #[command(about = "stop easytier-core system service")]
+    #[command(about = "stop ET-core system service")]
     Stop,
 }
 
@@ -528,17 +528,17 @@ struct InstallArgs {
     )]
     disable_restart_on_failure: Option<bool>,
 
-    #[arg(long, help = "path to easytier-core binary")]
+    #[arg(long, help = "path to ET-core binary")]
     core_path: Option<PathBuf>,
 
-    #[arg(long, help = "working directory for the easytier-core service")]
+    #[arg(long, help = "working directory for the ET-core service")]
     service_work_dir: Option<PathBuf>,
 
     #[arg(
         long,
         num_args = 1..,
         allow_hyphen_values = true,
-        help = "args to pass to easytier-core, must be the last option of install"
+        help = "args to pass to ET-core, must be the last option of install"
     )]
     core_args: Option<Vec<OsString>>,
 }
@@ -3467,7 +3467,7 @@ async fn main() -> Result<(), Error> {
                             .unwrap()
                             .parent()
                             .unwrap()
-                            .join("easytier-core");
+                            .join("ET-core");
 
                         if cfg!(target_os = "windows") {
                             ret.set_extension("exe");
@@ -3476,7 +3476,7 @@ async fn main() -> Result<(), Error> {
                         ret
                     });
                     let bin_path = std::fs::canonicalize(bin_path).map_err(|e| {
-                        anyhow::anyhow!("failed to get easytier core application: {}", e)
+                        anyhow::anyhow!("failed to get ET-core application: {}", e)
                     })?;
                     let bin_args = install_args.core_args.unwrap_or_default();
                     let work_dir = install_args.service_work_dir.unwrap_or_else(|| {
