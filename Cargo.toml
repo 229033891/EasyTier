@@ -80,7 +80,7 @@ sys-locale = "0.3"
 tauri = "2.11.5"
 tempfile = "3.27.0"
 thiserror = "2.0"
-thunk-rs = { git = "https://github.com/EasyTier/thunk.git", default-features = false }
+thunk-rs = { git = "https://github.com/229033891/thunk.git", default-features = false }
 tokio = { version = "1.53", default-features = false }
 tokio-rustls = { version = "0.26", default-features = false }
 tokio-util = "0.7.19"
