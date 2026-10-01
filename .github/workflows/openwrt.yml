@@ -4,9 +4,9 @@ name: ET OpenWrt
 #   OpenWrt 24.10 (opkg): easytier_<ver>_x86_64.ipk + luci-app-easytier_<ver>_all.ipk
 #                         + luci-i18n-easytier-zh-cn_<ver>_all.ipk (中文语言包)
 #     opkg install /tmp/easytier_*.ipk /tmp/luci-app-easytier_*.ipk /tmp/luci-i18n-easytier-zh-cn_*.ipk
-#   OpenWrt 25.12 (apk):  easytier_<ver>_x86_64.apk + luci-app-easytier_<ver>_all.apk
-#                         + luci-i18n-easytier-zh-cn_<ver>_all.apk (中文语言包)
-#     apk add --allow-untrusted /tmp/easytier_*.apk /tmp/luci-app-easytier_*.apk /tmp/luci-i18n-easytier-zh-cn_*.apk
+#   OpenWrt 25.12 (apk):  easytier-<ver>.apk + luci-app-easytier-<ver>.apk
+#                         + luci-i18n-easytier-zh-cn-<ver>.apk (中文语言包)
+#     apk add --allow-untrusted /tmp/easytier-*.apk /tmp/luci-app-easytier-*.apk /tmp/luci-i18n-easytier-zh-cn-*.apk
 #
 # 注意: OpenWrt 的 .apk 和 Android 的 easytier-gui.apk 不是同一个东西, 不要混淆.
 # LuCI 界面源码来自 https://github.com/EasyTier/luci-app-easytier,
@@ -217,11 +217,17 @@ jobs:
           mkdir -p dist
           find out-${{ matrix.pkgtype }}/bin -type f \( -name '*.ipk' -o -name '*.apk' \) -exec cp {} dist/ \;
           ls -l dist/
+          # ipk 用下划线 (easytier_1.2.3_x86_64.ipk)；apk 用连字符 (easytier-1.2.3.apk)
+          pkg="${{ matrix.pkgtype }}"
+          shopt -s nullglob
+          easytier=(dist/easytier_*.${pkg} dist/easytier-*.${pkg})
+          luci=(dist/luci-app-easytier_*.${pkg} dist/luci-app-easytier-*.${pkg})
+          i18n=(dist/luci-i18n-easytier-zh-cn_*.${pkg} dist/luci-i18n-easytier-zh-cn-*.${pkg})
           # 只要 easytier 主包 + luci 界面包 + 中文语言包
           # (中文包是 luci-app-easytier 编译时自动带出的子包, 无需加到 PACKAGES 里)
-          test -n "$(ls dist/easytier_*.${{ matrix.pkgtype }} 2>/dev/null)" || { echo "missing easytier .${{ matrix.pkgtype }}"; exit 1; }
-          test -n "$(ls dist/luci-app-easytier_*.${{ matrix.pkgtype }} 2>/dev/null)" || { echo "missing luci-app-easytier .${{ matrix.pkgtype }}"; exit 1; }
-          test -n "$(ls dist/luci-i18n-easytier-zh-cn_*.${{ matrix.pkgtype }} 2>/dev/null)" || { echo "missing luci-i18n-easytier-zh-cn .${{ matrix.pkgtype }}"; exit 1; }
+          (( ${#easytier[@]} > 0 )) || { echo "missing easytier .${pkg}"; ls -l dist/; exit 1; }
+          (( ${#luci[@]} > 0 )) || { echo "missing luci-app-easytier .${pkg}"; ls -l dist/; exit 1; }
+          (( ${#i18n[@]} > 0 )) || { echo "missing luci-i18n-easytier-zh-cn .${pkg}"; ls -l dist/; exit 1; }
 
       - name: Archive packages
         uses: actions/upload-artifact@v5
