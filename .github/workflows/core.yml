@@ -1,4 +1,4 @@
-name: EasyTier Core
+name: EasyTier Linux
 
 on:
   workflow_dispatch:

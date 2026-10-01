@@ -85,15 +85,21 @@ magisk_config_saved_restart_pending: 配置已验证并保存，EasyTier 守护�
 retain_network_instance: 保留网络实例
 collect_network_infos: 收集网络信息
 settings: 设置
-exchange_language: Switch to English
+exchange_language: 语言
+language_zh: 中文
+language_en: English
+system_settings: 系统设置
 logging: 日志
+logging_level: 日志级别
 logging_level_info: 信息
 logging_level_debug: 调试
 logging_level_warn: 警告
 logging_level_trace: 跟踪
 logging_level_off: 关闭
+logging_path: 日志目录
 logging_open_dir: 打开日志目录
 logging_copy_dir: 复制日志路径
+logging_copied: 已复制日志路径
 vpn_tile_no_network: 没有已配置的网络
 vpn_tile_no_network_description: 请先在 EasyTier 中配置网络，再使用 VPN 快捷磁贴。
 vpn_tile_started: VPN 网络已启动
@@ -732,7 +738,14 @@ config-server:
   disconnected: ": 未连接"
   connecting: ": 连接中..."
   unknown: ""
+  status_connected: 已连接
+  status_disconnected: 未连接
+  status_connecting: 连接中
+  status_failed: 连接失败
+  status_service: 由服务进程连接
+  status_remote: 远程模式不适用
   update_service_confirm: 将重启服务以应用更改，是否继续？
+  remote_not_supported: 当前为远程模式，不使用配置服务器。请先切换到普通模式或服务模式。
 
 client:
   not_running: 无法连接至远程客户端

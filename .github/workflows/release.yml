@@ -4,11 +4,11 @@ on:
   workflow_dispatch:
     inputs:
       core_run_id:
-        description: 'The run id of EasyTier-Core Action in EasyTier repo'
+        description: 'The run id of EasyTier-Linux Action in EasyTier repo'
         type: number
         required: true
       gui_run_id:
-        description: 'The run id of EasyTier-GUI Action in EasyTier repo'
+        description: 'The run id of EasyTier-Windows Action in EasyTier repo'
         type: number
         required: true
       mobile_run_id:

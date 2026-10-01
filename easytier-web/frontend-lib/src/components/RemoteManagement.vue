@@ -745,7 +745,7 @@ const stickyFooterPrimary = computed(() => {
 });
 
 const showStickyFooter = computed(() =>
-    showLeaveInFooter.value || stickyFooterPrimary.value !== 'none'
+    showLeaveInFooter.value || stickyFooterPrimary.value !== 'none' || isCombinedMode.value
 );
 
 let periodFunc = new Utils.PeriodicTask(async () => {
@@ -928,7 +928,7 @@ onUnmounted(() => {
             <div v-if="showCombinedNavZone" class="footer-zone">
                 <Button v-if="showCombinedEditEntry" icon="pi pi-cog" severity="secondary"
                     :label="t('web.device_management.switch_to_config')" iconPos="left"
-                    class="network-footer-btn network-footer-btn--accent" @click="editNetwork"
+                    class="network-footer-btn network-footer-btn--muted" @click="editNetwork"
                     v-tooltip.top="t('web.device_management.switch_to_config_tip')" />
                 <Button v-if="showCombinedCancelEdit" icon="pi pi-times" severity="secondary"
                     :label="t('web.device_management.cancel_edit')" iconPos="left"
@@ -959,6 +959,8 @@ onUnmounted(() => {
                     :label="t('web.device_management.disable_network')" severity="danger" icon="pi pi-power-off"
                     iconPos="left" class="network-footer-btn network-footer-btn--danger"
                     v-tooltip.top="t('web.device_management.disable_network_tip')" />
+                <!-- GUI 等 combined 模式宿主塞进来的额外按钮（切换模式 / 设置），与本行按钮同一样式 -->
+                <slot name="footer-extra" />
             </div>
         </div>
 
@@ -1059,7 +1061,8 @@ onUnmounted(() => {
     border-radius: var(--et-radius, 0.75rem);
     box-shadow: var(--et-shadow-card, none);
     display: flex;
-    flex-wrap: wrap;
+    /* 底部主操作尽量始终单行，避免 2/3 按钮折行看起来散 */
+    flex-wrap: nowrap;
     align-items: center;
     justify-content: space-between;
     gap: 0.5rem;
@@ -1067,20 +1070,24 @@ onUnmounted(() => {
 
 .footer-zone {
     display: flex;
-    flex-wrap: wrap;
+    flex-wrap: nowrap;
     align-items: center;
     gap: 0.5rem;
+    min-width: 0;
 }
 
 .footer-zone--primary {
     justify-content: flex-end;
     margin-left: auto;
+    flex: 1 1 auto;
 }
 
-/* ????????????????? */
+/* 同高同圆角；宽度随可用空间均分，保证一行排得下 */
 :deep(.network-footer-btn.p-button) {
-    width: var(--et-btn-w, 10rem);
-    min-width: var(--et-btn-w, 10rem);
+    flex: 1 1 0;
+    width: auto;
+    min-width: 0;
+    max-width: var(--et-btn-w, 10rem);
     height: var(--et-btn, 2.5rem) !important;
     padding: 0 0.9rem !important;
     font-size: var(--et-fs-body, 0.875rem) !important;
@@ -1088,6 +1095,12 @@ onUnmounted(() => {
     border-radius: var(--et-radius, 0.75rem) !important;
     box-sizing: border-box;
     justify-content: center;
+}
+
+:deep(.network-footer-btn.p-button .p-button-label) {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 :deep(.network-footer-btn--muted.p-button),
@@ -1314,13 +1327,14 @@ onUnmounted(() => {
     }
 
     .network-sticky-footer {
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(0, 1fr));
+        /* 窄屏也强制单行等分，避免折成两行 */
+        display: flex;
+        flex-wrap: nowrap;
         align-items: stretch;
         gap: 0.3rem;
     }
 
-    /* ???????????????????????????? */
+    /* 展开子区，让按钮都成为 footer 的直接 flex 子项以便均分 */
     .footer-zone,
     .footer-zone--primary {
         display: contents;
@@ -1328,14 +1342,13 @@ onUnmounted(() => {
 
     :deep(.network-footer-btn.p-button),
     :deep(.config-toolbar-btn.p-button) {
+        flex: 1 1 0;
         min-width: 0;
-        width: 100%;
-        /* ??????????? auto ??????? */
+        max-width: none;
+        width: auto;
         height: auto !important;
         min-height: var(--et-btn, 2.5rem) !important;
         padding: 0.3rem !important;
-        /* 12px?360px ?? 4 ??? 75.1px????????????? 69.6px?? 5.5px ??????
-           13px ?? 74.6px??? 0.1px????? */
         font-size: 0.75rem !important;
     }
 
@@ -1346,7 +1359,9 @@ onUnmounted(() => {
 
     :deep(.config-toolbar-btn.p-button .p-button-label),
     :deep(.network-footer-btn.p-button .p-button-label) {
-        white-space: normal;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
         line-height: 1.15;
     }
 }

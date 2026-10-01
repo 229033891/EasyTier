@@ -19,7 +19,7 @@ import { executeVpnTileAction } from '~/composables/mobile_vpn_tile'
 import { GUIRemoteClient } from '~/modules/api'
 
 import { useToast, useConfirm } from 'primevue'
-import { loadMode, saveMode, WebClientConfig, type Mode } from '~/composables/mode'
+import { loadMode, saveMode, type Mode } from '~/composables/mode'
 import { saveLastNetworkInstanceId, loadLastNetworkInstanceId } from '~/composables/config'
 import ModeSwitcher from '~/components/ModeSwitcher.vue'
 import { getEasytierVersion, getServiceStatus } from '~/composables/backend'
@@ -28,20 +28,159 @@ const { t, locale } = useI18n()
 const confirm = useConfirm()
 const aboutVisible = ref(false)
 const modeDialogVisible = ref(false)
+const configServerDialogVisible = ref(false)
+const configServerUrl = ref('')
+const isConfigServerSaving = ref(false)
+const configServerConnected = ref(false)
+const configServerLastError = ref('')
 const currentMode = ref<Mode>({ mode: 'normal' })
 const editingMode = ref<Mode>({ mode: 'normal' })
 const isModeSaving = ref(false)
 const manualDisconnect = ref(false)
 
-const configServerDialogVisible = ref(false)
-const configServerConnected = ref(false)
-
 const showAutostartHint = ref(false)
+
+type ConfigServerStatus = 'connected' | 'disconnected' | 'connecting' | 'failed' | 'service' | 'remote'
+
+const configServerStatus = computed<ConfigServerStatus>(() => {
+  const mode = currentMode.value
+  if (mode.mode === 'remote')
+    return 'remote'
+  if (mode.mode === 'service') {
+    return mode.config_server_url?.trim() ? 'service' : 'disconnected'
+  }
+  if (!mode.config_server_url?.trim())
+    return 'disconnected'
+  if (configServerLastError.value)
+    return 'failed'
+  return configServerConnected.value ? 'connected' : 'connecting'
+})
+
+const configServerStatusSeverity = computed(() => {
+  switch (configServerStatus.value) {
+    case 'connected':
+      return 'success'
+    case 'failed':
+      return 'danger'
+    case 'connecting':
+      return 'warn'
+    case 'service':
+      return 'info'
+    default:
+      return 'secondary'
+  }
+})
+
+const configServerStatusLabel = computed(() => t(`config-server.status_${configServerStatus.value}`))
+
+async function refreshConfigServerConnection() {
+  try {
+    if (currentMode.value.mode !== 'normal' || !currentMode.value.config_server_url?.trim()) {
+      configServerConnected.value = false
+      return
+    }
+    configServerConnected.value = await isWebClientConnected()
+    if (configServerConnected.value)
+      configServerLastError.value = ''
+  }
+  catch (e) {
+    configServerConnected.value = false
+    console.error('Failed to refresh config server connection', e)
+  }
+}
 
 async function openModeDialog() {
   editingMode.value = JSON.parse(JSON.stringify(loadMode()))
   showAutostartHint.value = false
   modeDialogVisible.value = true
+}
+
+function openConfigServerDialog() {
+  const mode = currentMode.value
+  configServerUrl.value = (mode.mode === 'normal' || mode.mode === 'service')
+    ? (mode.config_server_url ?? '')
+    : ''
+  configServerDialogVisible.value = true
+}
+
+async function applyConfigServerUrl(url?: string) {
+  const mode = JSON.parse(JSON.stringify(currentMode.value)) as Mode
+  if (mode.mode !== 'normal' && mode.mode !== 'service') {
+    return
+  }
+  mode.config_server_url = url
+  await initWithMode(mode)
+}
+
+async function onConfigServerSave() {
+  if (isConfigServerSaving.value) {
+    return
+  }
+  const mode = currentMode.value
+  if (mode.mode === 'remote') {
+    configServerDialogVisible.value = false
+    return
+  }
+
+  const nextUrl = configServerUrl.value.trim() || undefined
+  const prevUrl = (mode.mode === 'normal' || mode.mode === 'service')
+    ? (mode.config_server_url?.trim() || undefined)
+    : undefined
+  if (nextUrl === prevUrl) {
+    configServerDialogVisible.value = false
+    return
+  }
+
+  const doSave = async () => {
+    isConfigServerSaving.value = true
+    try {
+      await applyConfigServerUrl(nextUrl)
+      if (mode.mode === 'normal' && nextUrl && configServerLastError.value) {
+        toast.add({
+          severity: 'error',
+          summary: t('error'),
+          detail: configServerLastError.value,
+          life: 10000,
+        })
+        return
+      }
+      configServerDialogVisible.value = false
+      toast.add({ severity: 'success', summary: t('web.common.success'), life: 2000 })
+    }
+    catch (e: any) {
+      toast.add({
+        severity: 'error',
+        summary: t('error'),
+        detail: e instanceof Error ? e.message : String(e),
+        life: 10000,
+      })
+      console.error('Error saving config server', e)
+    }
+    finally {
+      isConfigServerSaving.value = false
+    }
+  }
+
+  if (mode.mode === 'service') {
+    confirm.require({
+      message: t('config-server.update_service_confirm'),
+      header: t('config-server.title'),
+      icon: 'pi pi-exclamation-triangle',
+      rejectProps: {
+        label: t('web.common.cancel'),
+        severity: 'secondary',
+        outlined: true,
+      },
+      acceptProps: {
+        label: t('web.common.save'),
+        severity: 'danger',
+      },
+      accept: () => { void doSave() },
+    })
+    return
+  }
+
+  await doSave()
 }
 
 async function onModeSave() {
@@ -209,7 +348,20 @@ async function initWithMode(mode: Mode) {
   await sendConfigs(running_inst_ids.map(Utils.UuidToStr))
   if (mode.mode === 'normal') {
     mode.config_server_url = mode.config_server_url || undefined
-    initWebClient(mode.config_server_url)
+    try {
+      await initWebClient(mode.config_server_url)
+      configServerLastError.value = ''
+    }
+    catch (e: any) {
+      configServerConnected.value = false
+      configServerLastError.value = e instanceof Error ? e.message : String(e)
+      console.error('Failed to init web client', e)
+    }
+    await refreshConfigServerConnection()
+  }
+  else {
+    configServerConnected.value = false
+    configServerLastError.value = ''
   }
   currentMode.value = mode
   saveMode(mode)
@@ -241,6 +393,11 @@ onMounted(async () => {
       console.error("easytier sync vpn service failed", e)
     }
   }
+
+  const configServerTimer = window.setInterval(() => {
+    void refreshConfigServerConnection()
+  }, 1000)
+  cleanupFns.push(() => clearInterval(configServerTimer))
 
   onUnmounted(() => {
     cleanupFns.forEach(unlisten => unlisten())
@@ -341,21 +498,111 @@ onMounted(async () => {
 })
 
 let current_log_level = 'off'
+const loggingDialogVisible = ref(false)
+const loggingLevel = ref('off')
+const loggingPath = ref('')
+const isLoggingSaving = ref(false)
+
+const loggingLevelOptions = computed(() =>
+  ['off', 'warn', 'info', 'debug', 'trace'].map(level => ({
+    label: t(`logging_level_${level}`),
+    value: level,
+  })),
+)
 
 // 从后端获取正确的日志路径
 async function getLogDirPath(): Promise<string> {
   return await invoke<string>('get_log_dir_path')
 }
 
+async function openLoggingDialog() {
+  loggingLevel.value = current_log_level
+  try {
+    loggingPath.value = await getLogDirPath()
+  }
+  catch (e) {
+    loggingPath.value = ''
+    console.error('Failed to get log dir path', e)
+  }
+  loggingDialogVisible.value = true
+}
+
+async function onLoggingSave() {
+  if (isLoggingSaving.value) {
+    return
+  }
+  isLoggingSaving.value = true
+  try {
+    await setLoggingLevel(loggingLevel.value)
+    current_log_level = loggingLevel.value
+    loggingDialogVisible.value = false
+    toast.add({ severity: 'success', summary: t('web.common.success'), life: 2000 })
+  }
+  catch (e: any) {
+    toast.add({
+      severity: 'error',
+      summary: t('error'),
+      detail: e instanceof Error ? e.message : String(e),
+      life: 10000,
+    })
+    console.error('Error saving logging level', e)
+  }
+  finally {
+    isLoggingSaving.value = false
+  }
+}
+
+async function openLoggingDir() {
+  try {
+    await open(await getLogDirPath())
+  }
+  catch (e: any) {
+    toast.add({
+      severity: 'error',
+      summary: t('error'),
+      detail: e instanceof Error ? e.message : String(e),
+      life: 10000,
+    })
+  }
+}
+
+async function copyLoggingDir() {
+  try {
+    await writeText(await getLogDirPath())
+    toast.add({ severity: 'success', summary: t('logging_copied'), life: 2000 })
+  }
+  catch (e: any) {
+    toast.add({
+      severity: 'error',
+      summary: t('error'),
+      detail: e instanceof Error ? e.message : String(e),
+      life: 10000,
+    })
+  }
+}
+
 function getLabel(item: MenuItem) {
   return typeof item.label === 'function' ? item.label() : item.label
 }
 
+const settingsDialogStyle = { width: 'min(480px, calc(100vw - 1.5rem))' }
+
 const settings_menu = ref()
-// 底部只剩两个按钮：[切换模式] 独立按钮 + [设置] 弹出菜单（开机自启动已并入切换模式对话框，不再单独占一项）
+// 底部设置弹出菜单：各项统一为一级入口，复杂配置走弹窗
 const setting_menu_items: Ref<MenuItem[]> = ref([
   {
-    label: () => t('exchange_language'),
+    label: () => `${t('mode.switch_mode')}: ${t('mode.' + currentMode.value.mode)}`,
+    icon: 'pi pi-sync',
+    command: openModeDialog,
+    visible: () => type() !== 'android',
+  },
+  {
+    label: () => `${t('config-server.title')}: ${configServerStatusLabel.value}`,
+    icon: 'pi pi-cloud',
+    command: openConfigServerDialog,
+  },
+  {
+    label: () => `${t('exchange_language')}: ${locale.value === 'cn' ? t('language_zh') : t('language_en')}`,
     icon: 'pi pi-language',
     command: async () => {
       await I18nUtils.loadLanguageAsync((locale.value === 'en' ? 'cn' : 'en'))
@@ -366,45 +613,13 @@ const setting_menu_items: Ref<MenuItem[]> = ref([
     },
   },
   {
-    label: () => `${t('config-server.title')}${t('config-server.' + configServerConnectionStatus.value)}`,
-    icon: 'pi pi-globe',
-    command: openConfigServerDialog,
-    visible: () => ["normal", "service"].includes(currentMode.value.mode),
-  },
-  {
     label: () => t('logging'),
     icon: 'pi pi-file',
-    items: [
-      ...['off', 'warn', 'info', 'debug', 'trace'].map(level => ({
-        label: () => t(`logging_level_${level}`) + (current_log_level === level ? ' ✓' : ''),
-        command: async () => {
-          current_log_level = level
-          await setLoggingLevel(level)
-        },
-      })),
-      {
-        separator: true,
-      },
-      {
-        label: () => t('logging_open_dir'),
-        icon: 'pi pi-folder-open',
-        command: async () => {
-          await open(await getLogDirPath())
-        },
-        visible: () => type() !== 'android',
-      },
-      {
-        label: () => t('logging_copy_dir'),
-        icon: 'pi pi-tablet',
-        command: async () => {
-          await writeText(await getLogDirPath())
-        },
-      },
-    ],
+    command: openLoggingDialog,
   },
   {
     label: () => t('about.title'),
-    icon: 'pi pi-at',
+    icon: 'pi pi-info-circle',
     command: async () => {
       aboutVisible.value = true
     },
@@ -423,71 +638,20 @@ async function connectRpcClient(isNormalMode: boolean, url?: string) {
   console.log("easytier rpc connection established, isNormalMode: ", isNormalMode)
 }
 
-async function openConfigServerDialog() {
-  editingMode.value = JSON.parse(JSON.stringify(loadMode()))
-  configServerDialogVisible.value = true
-}
-async function onConfigServerSave() {
-  if (JSON.stringify(currentMode.value) === JSON.stringify(editingMode.value)) {
-    configServerDialogVisible.value = false
-    return;
-  }
-  if (editingMode.value.mode === 'service') {
-    await new Promise<void>((resolve, reject) => {
-      confirm.require({
-        message: t('config-server.update_service_confirm'),
-        icon: 'pi pi-exclamation-triangle',
-        rejectProps: {
-          label: t('web.common.cancel'),
-          severity: 'secondary',
-          outlined: true
-        },
-        acceptProps: {
-          label: t('web.common.confirm'),
-        },
-        accept: async () => {
-          resolve()
-        },
-        reject: () => {
-          reject()
-        }
-      });
-    })
-  }
-  console.log("Saving config server url", (editingMode.value as WebClientConfig).config_server_url)
-  await onModeSave();
-  configServerDialogVisible.value = false
-}
-onMounted(() => {
-  const timer = setInterval(async () => {
-    if (currentMode.value.mode !== 'normal') return;
-    if (!currentMode.value.config_server_url) return;
-    configServerConnected.value = await isWebClientConnected();
-  }, 1000)
-
-  onUnmounted(() => {
-    clearInterval(timer)
-  })
-})
-const configServerConnectionStatus = computed(() => {
-  if (currentMode.value.mode !== 'normal') {
-    return 'unknown'
-  }
-  if (!currentMode.value.config_server_url) {
-    return 'disconnected'
-  }
-  return configServerConnected.value ? 'connected' : 'connecting'
-})
-
 </script>
 
 <template>
   <div id="root" class="flex flex-col">
-    <Dialog v-model:visible="aboutVisible" modal :header="t('about.title')" :style="{ width: '70%' }" class="app-dialog">
+    <Dialog v-model:visible="aboutVisible" modal :header="t('about.title')" :style="settingsDialogStyle"
+      class="app-dialog">
       <About />
+      <template #footer>
+        <Button :label="t('close')" icon="pi pi-times" @click="aboutVisible = false" text autofocus />
+      </template>
     </Dialog>
-    <Dialog v-model:visible="modeDialogVisible" modal :header="t('mode.switch_mode')" :style="{ width: '50vw' }" class="app-dialog">
-      <Message v-if="showAutostartHint" severity="info" :closable="false" class="mb-4">
+    <Dialog v-model:visible="modeDialogVisible" modal :header="t('mode.switch_mode')" :style="settingsDialogStyle"
+      class="app-dialog">
+      <Message v-if="showAutostartHint" severity="info" :closable="false" class="mb-3">
         {{ t('mode.autostart_hint') }}
       </Message>
       <ModeSwitcher v-model="editingMode" @uninstall-service="onUninstallService" @stop-service="onStopService" />
@@ -496,24 +660,81 @@ const configServerConnectionStatus = computed(() => {
         <Button :label="t('web.common.save')" icon="pi pi-save" @click="onModeSave" autofocus :loading="isModeSaving" />
       </template>
     </Dialog>
-
     <Dialog v-model:visible="configServerDialogVisible" modal :header="t('config-server.title')"
-      :style="{ width: '50vw' }" class="app-dialog">
+      :style="settingsDialogStyle" class="app-dialog">
+      <Message v-if="currentMode.mode === 'remote'" severity="warn" :closable="false" class="mb-3">
+        {{ t('config-server.remote_not_supported') }}
+      </Message>
+      <template v-else>
+        <div class="flex flex-col gap-3">
+          <div class="flex items-center justify-between gap-2 flex-wrap">
+            <label class="m-0">{{ t('config-server.connection_status') }}</label>
+            <Tag :severity="configServerStatusSeverity" :value="configServerStatusLabel" />
+          </div>
+          <Message v-if="configServerStatus === 'failed' && configServerLastError" severity="error" :closable="false"
+            class="mb-0">
+            {{ configServerLastError }}
+          </Message>
+          <p class="text-sm text-secondary m-0 whitespace-pre-line leading-relaxed">
+            {{ t('config-server.description') }}
+          </p>
+          <div class="flex flex-col gap-2">
+            <label for="config-server-url">{{ t('config-server.address') }}</label>
+            <InputText id="config-server-url" v-model="configServerUrl" class="w-full"
+              :placeholder="t('config-server.address_placeholder')" />
+          </div>
+        </div>
+      </template>
+      <template #footer>
+        <Button :label="currentMode.mode === 'remote' ? t('close') : t('web.common.cancel')" icon="pi pi-times"
+          @click="configServerDialogVisible = false" text />
+        <Button v-if="currentMode.mode !== 'remote'" :label="t('web.common.save')" icon="pi pi-save"
+          @click="onConfigServerSave" autofocus :loading="isConfigServerSaving" />
+      </template>
+    </Dialog>
+    <Dialog v-model:visible="loggingDialogVisible" modal :header="t('logging')" :style="settingsDialogStyle"
+      class="app-dialog">
       <div class="flex flex-col gap-3">
-        <label for="config-server-address">{{ t('config-server.address') }}</label>
-        <InputText id="config-server-address" v-model="(editingMode as WebClientConfig).config_server_url"
-          :placeholder="t('config-server.address_placeholder')" />
-        <small class="p-text-secondary whitespace-pre-wrap">{{ t('config-server.description') }}</small>
+        <div class="flex flex-col gap-2">
+          <label for="logging-level">{{ t('logging_level') }}</label>
+          <Select id="logging-level" v-model="loggingLevel" :options="loggingLevelOptions" option-label="label"
+            option-value="value" class="w-full" />
+        </div>
+        <div class="flex flex-col gap-2">
+          <label>{{ t('logging_path') }}</label>
+          <InputText :model-value="loggingPath" class="w-full" readonly />
+          <div class="flex flex-wrap gap-2">
+            <Button v-if="type() !== 'android'" :label="t('logging_open_dir')" icon="pi pi-folder-open"
+              severity="secondary" outlined @click="openLoggingDir" />
+            <Button :label="t('logging_copy_dir')" icon="pi pi-copy" severity="secondary" outlined
+              @click="copyLoggingDir" />
+          </div>
+        </div>
       </div>
       <template #footer>
-        <Button :label="t('web.common.cancel')" icon="pi pi-times" @click="configServerDialogVisible = false" text />
-        <Button :label="t('web.common.save')" icon="pi pi-save" @click="onConfigServerSave" autofocus
-          :loading="isModeSaving" />
+        <Button :label="t('web.common.cancel')" icon="pi pi-times" @click="loggingDialogVisible = false" text />
+        <Button :label="t('web.common.save')" icon="pi pi-save" @click="onLoggingSave" autofocus
+          :loading="isLoggingSaving" />
       </template>
     </Dialog>
 
     <RemoteManagement v-if="clientRunning" class="flex-1 overflow-y-auto" :api="remoteClient"
-      :pause-auto-refresh="isModeSaving" v-model:instance-id="instanceId" />
+      :pause-auto-refresh="isModeSaving || isConfigServerSaving" v-model:instance-id="instanceId">
+      <!-- 与共享底部栏同一行：样式与禁用网络完全一致 -->
+      <template #footer-extra>
+        <Button :label="t('system_settings')" icon="pi pi-cog" iconPos="left" severity="secondary"
+          class="network-footer-btn network-footer-btn--muted" @click="settings_menu.toggle($event)" />
+        <Menu ref="settings_menu" :model="setting_menu_items" :popup="true" class="settings-popup">
+          <template #item="{ item, props }">
+            <a v-bind="props.action">
+              <span v-if="item.icon" :class="item.icon" />
+              <span class="settings-item-label">{{ getLabel(item) }}</span>
+              <span v-if="item.items?.length" class="pi pi-angle-right settings-submenu-icon" />
+            </a>
+          </template>
+        </Menu>
+      </template>
+    </RemoteManagement>
     <div v-else class="empty-state flex-1 flex flex-col items-center py-12">
       <i class="pi pi-server text-5xl text-secondary mb-4 opacity-50"></i>
       <div class="text-xl text-center font-medium mb-3">{{ t('client.not_running') }}
@@ -522,10 +743,9 @@ const configServerConnectionStatus = computed(() => {
         iconPos="left" />
     </div>
 
-    <div class="bottom-action-bar">
-      <Button v-if="type() !== 'android'" :label="`${t('mode.switch_mode')}: ${t('mode.' + currentMode.mode)}`"
-        icon="pi pi-sync" iconPos="left" severity="danger" class="bottom-bar-btn" @click="openModeDialog" />
-      <Button :label="t('settings')" icon="pi pi-cog" iconPos="left" severity="danger" class="bottom-bar-btn"
+    <!-- RPC 未连接时的兜底：保持设置可用 -->
+    <div v-if="!clientRunning" class="bottom-action-bar">
+      <Button :label="t('system_settings')" icon="pi pi-cog" iconPos="left" severity="secondary" class="bottom-bar-btn"
         @click="settings_menu.toggle($event)" />
       <Menu ref="settings_menu" :model="setting_menu_items" :popup="true" class="settings-popup">
         <template #item="{ item, props }">
@@ -570,12 +790,13 @@ body {
   display: flex;
   gap: 0.5rem;
   padding: 0.55rem 0.75rem;
+  padding-bottom: max(0.55rem, env(safe-area-inset-bottom, 0px));
   background: var(--surface-card, #ffffff);
   border: 1px solid var(--et-border-color, #e2e8f0);
   border-radius: var(--et-radius, 0.75rem);
 }
 
-/* 两个按钮与「禁用网络」同一样式体系（浅红 danger） */
+/* 未连接时的设置按钮：与底部栏 muted 体系一致 */
 .bottom-bar-btn.p-button {
   flex: 1 1 0;
   min-width: 0;
@@ -587,13 +808,13 @@ body {
   border-radius: var(--et-radius, 0.75rem) !important;
   box-sizing: border-box;
   justify-content: center;
-  background: color-mix(in srgb, #ef4444 12%, #ffffff) !important;
-  border: 1px solid color-mix(in srgb, #ef4444 35%, #e2e8f0) !important;
-  color: #b91c1c !important;
+  background: var(--surface-100, #f1f5f9) !important;
+  border: 1px solid var(--et-border-color, #e2e8f0) !important;
+  color: var(--text-color, #1e293b) !important;
 }
 
 .bottom-bar-btn.p-button:hover:not(:disabled) {
-  background: color-mix(in srgb, #ef4444 20%, #ffffff) !important;
+  background: var(--surface-200, #e2e8f0) !important;
 }
 
 .bottom-bar-btn.p-button .p-button-label {
@@ -610,6 +831,7 @@ body {
   box-shadow: 0 12px 28px rgba(15, 23, 42, 0.14) !important;
   padding: 0.35rem !important;
   min-width: 13rem;
+  max-width: min(22rem, calc(100vw - 1rem));
 }
 
 .settings-popup .p-menu-item-content {
@@ -627,6 +849,8 @@ body {
 .settings-item-label {
   flex: 1;
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .settings-submenu-icon {
@@ -634,19 +858,92 @@ body {
   opacity: 0.6;
 }
 
-/* 设置相关弹窗：与主界面卡片一致 */
+/* 系统设置相关弹窗：统一宽度与外观 */
 .app-dialog.p-dialog {
+  width: min(480px, calc(100vw - 1.5rem)) !important;
+  max-width: calc(100vw - 1.5rem);
   border-radius: var(--et-radius, 0.75rem) !important;
   border: 1px solid var(--et-border-color, #e2e8f0) !important;
-  max-width: calc(100vw - 2rem);
 }
 
 .app-dialog .p-dialog-header {
   font-weight: 700;
 }
 
+.app-dialog .p-dialog-content {
+  min-height: 4.5rem;
+}
+
+.app-dialog .p-dialog-content label {
+  font-size: var(--et-fs-body, 0.875rem);
+  font-weight: 600;
+  color: var(--text-color, #1e293b);
+}
+
+.app-dialog .p-dialog-footer {
+  gap: 0.5rem;
+}
+
+.app-dialog .p-dialog-content .p-inputtext[readonly] {
+  font-size: 0.8125rem;
+  overflow-x: auto;
+}
+
 .p-select-overlay {
   max-width: calc(100% - 2rem);
+}
+
+/* Android / 窄屏：加大触控、防裁切、适配安全区 */
+@media (max-width: 640px) {
+  .settings-popup.p-menu {
+    min-width: min(18rem, calc(100vw - 1rem));
+    max-width: calc(100vw - 1rem);
+    max-height: min(70dvh, calc(100dvh - 5rem));
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .settings-popup .p-menu-item-link {
+    min-height: 2.75rem;
+    padding: 0.75rem 0.9rem !important;
+    align-items: center;
+  }
+
+  .app-dialog.p-dialog {
+    width: calc(100vw - 1rem) !important;
+    max-width: calc(100vw - 1rem);
+    margin: 0.5rem !important;
+    max-height: calc(100dvh - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px) - 1rem);
+    display: flex;
+    flex-direction: column;
+  }
+
+  .app-dialog .p-dialog-content {
+    flex: 1 1 auto;
+    max-height: calc(100dvh - 12rem);
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .app-dialog .p-dialog-footer {
+    flex-wrap: wrap;
+    padding-bottom: max(1rem, env(safe-area-inset-bottom, 0px)) !important;
+  }
+
+  .app-dialog .p-dialog-footer .p-button {
+    flex: 1 1 auto;
+    min-width: 0 !important;
+  }
+
+  .bottom-action-bar {
+    margin: 0.35rem;
+    border-radius: calc(var(--et-radius, 0.75rem) - 0.1rem);
+  }
+
+  .bottom-bar-btn.p-button {
+    max-width: none;
+    min-height: 2.75rem !important;
+  }
 }
 
 /*

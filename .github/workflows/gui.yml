@@ -1,4 +1,4 @@
-name: EasyTier GUI
+name: EasyTier Windows
 
 on:
   push:
@@ -67,7 +67,7 @@ jobs:
       fail-fast: true
       matrix:
         include:
-          # Windows (x86_64): easytier-gui.exe, GUI 内置 core
+          # Windows (x86_64): ET 安装包 + GUI 内置 core
           - TARGET: x86_64-pc-windows-msvc
             OS: windows-latest
             GUI_TARGET: x86_64-pc-windows-msvc

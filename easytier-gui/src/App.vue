@@ -4,7 +4,7 @@ import { ConfirmDialog } from 'primevue'
 import pkg from '~/../package.json'
 
 onBeforeMount(async () => {
-  await getCurrentWindow().setTitle(`Easytier GUI: v${pkg.version}`)
+  await getCurrentWindow().setTitle(`ET: v${pkg.version}`)
 })
 </script>
 

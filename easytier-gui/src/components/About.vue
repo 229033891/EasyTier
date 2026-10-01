@@ -11,16 +11,15 @@ onMounted(async () => {
 </script>
 
 <template>
-  <Card>
-    <template #title>
-      Easytier - {{ t('about.version') }}: {{ etVersion }}
-    </template>
-    <template #content>
-      <p class="mb-1">
-        {{ t('about.description') }}
-      </p>
-    </template>
-  </Card>
+  <div class="flex flex-col gap-3">
+    <div class="flex flex-col gap-2">
+      <label>{{ t('about.version') }}</label>
+      <InputText :model-value="etVersion || '...'" class="w-full" readonly />
+    </div>
+    <p class="text-sm text-secondary m-0 leading-relaxed whitespace-pre-line">
+      {{ t('about.description') }}
+    </p>
+  </div>
 </template>
 
 <style scoped lang="postcss">

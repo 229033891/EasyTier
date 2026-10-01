@@ -16,7 +16,7 @@
     ],
     "createUpdaterArtifacts": false
   },
-  "productName": "easytier-gui",
+  "productName": "ET",
   "version": "2.7.0",
   "identifier": "com.kkrainbow.easytier",
   "plugins": {
@@ -27,7 +27,7 @@
   "app": {
     "windows": [
       {
-        "title": "easytier-gui",
+        "title": "ET",
         "width": 800,
         "height": 600
       }

@@ -85,15 +85,21 @@ magisk_config_saved_restart_pending: Configuration validated and saved; the Easy
 retain_network_instance: Retain Network Instance
 collect_network_infos: Collect Network Infos
 settings: Settings
-exchange_language: 切换中文
+exchange_language: Language
+language_zh: 中文
+language_en: English
+system_settings: System Settings
 logging: Logging
+logging_level: Log Level
 logging_level_info: Info
 logging_level_debug: Debug
 logging_level_warn: Warn
 logging_level_trace: Trace
 logging_level_off: Off
+logging_path: Log Directory
 logging_open_dir: Open Log Directory
 logging_copy_dir: Copy Log Path
+logging_copied: Log path copied
 vpn_tile_no_network: No configured network
 vpn_tile_no_network_description: Configure a network in EasyTier before using the VPN tile.
 vpn_tile_started: VPN network started
@@ -104,6 +110,7 @@ enable_auto_launch: Enable Launch on Reboot
 hide_dock_icon: Hide Dock Icon
 show_dock_icon: Show Dock Icon
 exit: Exit
+exit_app: Exit App
 use_latency_first: Latency First Mode
 show_node_details: Show Node Details
 hide_node_details: Hide Node Details
@@ -447,7 +454,6 @@ dhcp_experimental_warning: Experimental warning! if there is an IP conflict in t
 tray:
   show: Show / Hide
   exit: Exit
-  exit_app: Exit App
 
 about:
   title: About
@@ -731,7 +737,14 @@ config-server:
   disconnected: ": Disconnected"
   connecting: ": Connecting..."
   unknown: ""
+  status_connected: Connected
+  status_disconnected: Not Connected
+  status_connecting: Connecting
+  status_failed: Connection Failed
+  status_service: Managed by service process
+  status_remote: Not available in remote mode
   update_service_confirm: The service will be restarted to apply changes, do you want to continue?
+  remote_not_supported: Remote mode does not use a config server. Switch to Normal or Service mode first.
 
 client:
   not_running: Unable to connect to remote client.
