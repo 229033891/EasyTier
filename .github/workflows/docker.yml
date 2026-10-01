@@ -1,16 +1,16 @@
-name: EasyTier Docker
+name: ET Docker
 
 # Linux Core 成功后自动打镜像；也可手动指定 Core run_id。
 # 当前 Core 仅产出 x86_64，故镜像平台为 linux/amd64。
 
 on:
   workflow_run:
-    workflows: ["EasyTier Linux"]
+    workflows: ["ET Linux"]
     types: [completed]
   workflow_dispatch:
     inputs:
       run_id:
-        description: 'The run id of EasyTier Linux Action in this repo'
+        description: 'The run id of ET Linux Action in this repo'
         type: number
         required: true
       image_tag:

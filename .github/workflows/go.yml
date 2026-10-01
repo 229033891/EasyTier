@@ -1,4 +1,4 @@
-name: EasyTier Go
+name: ET Go
 
 on:
   push:

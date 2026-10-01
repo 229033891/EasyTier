@@ -1,22 +1,22 @@
-name: EasyTier Release
+name: ET Release
 
 on:
   workflow_dispatch:
     inputs:
       core_run_id:
-        description: 'The run id of EasyTier-Linux Action in EasyTier repo'
+        description: 'The run id of ET Linux Action in EasyTier repo'
         type: number
         required: true
       gui_run_id:
-        description: 'The run id of EasyTier-Windows Action in EasyTier repo'
+        description: 'The run id of ET Windows Action in EasyTier repo'
         type: number
         required: true
       mobile_run_id:
-        description: 'The run id of EasyTier-Mobile Action in EasyTier repo'
+        description: 'The run id of ET Android Action in EasyTier repo'
         type: number
         required: true
       openwrt_run_id:
-        description: 'The run id of EasyTier-OpenWrt Action in EasyTier repo'
+        description: 'The run id of ET OpenWrt Action in EasyTier repo'
         type: number
         required: false
         default: 0

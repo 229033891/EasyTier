@@ -1,4 +1,4 @@
-name: EasyTier JavaScript Hosts
+name: ET JS
 
 on:
   push:

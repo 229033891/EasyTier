@@ -1,4 +1,4 @@
-name: EasyTier OpenWrt
+name: ET OpenWrt
 
 # 生成 OpenWrt x86_64 包 (只要这 6 个):
 #   OpenWrt 24.10 (opkg): easytier_<ver>_x86_64.ipk + luci-app-easytier_<ver>_all.ipk

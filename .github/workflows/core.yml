@@ -1,4 +1,4 @@
-name: EasyTier Linux
+name: ET Linux
 
 on:
   workflow_dispatch:

@@ -1,4 +1,4 @@
-name: EasyTier Windows
+name: ET Windows
 
 on:
   push:
