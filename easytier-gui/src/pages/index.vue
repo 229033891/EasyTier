@@ -564,68 +564,12 @@ onMounted(async () => {
   })
 })
 async function reconnectClient() {
-  // Soft reconnect: re-establish RPC/web-client without reinstalling the Windows service.
+  // Match main: always full init. Soft reconnect (3856ef51) left Android/Windows
+  // stuck on "无法连接至远程客户端" even after later recovery patches.
   if (isModeSaving.value)
     return
-  isModeSaving.value = true
-  const mode = loadMode()
-  try {
-    let url: string | undefined
-    let retrys = 1
-    switch (mode.mode) {
-      case 'remote':
-        url = mode.remote_rpc_address
-        break
-      case 'service': {
-        const status = await getServiceStatus()
-        if (status === 'Stopped')
-          await setServiceStatus(true)
-        url = normalizeServiceRpcUrl(mode.rpc_portal)
-        retrys = 5
-        break
-      }
-      case 'normal':
-        url = mode.rpc_portal
-        break
-    }
-    try {
-      await connectRpcWithRetries(mode.mode === 'normal', url, retrys)
-    }
-    catch (e) {
-      // Windows service can stay "Running" with a dead RPC portal — bounce then retry.
-      if (mode.mode === 'service') {
-        console.error('Soft reconnect failed against running service; bouncing', e)
-        await bounceService()
-        await connectRpcWithRetries(false, url, retrys)
-      }
-      else {
-        throw e
-      }
-    }
-    if (mode.mode === 'normal') {
-      await initWebClient(mode.config_server_url, mode.secure_mode).catch(() => undefined)
-      await refreshConfigServerConnection()
-    }
-    // Soft reconnect creates a fresh GUIClientManager with empty storage.
-    await restoreConfigsAfterReconnect()
-    clientRunning.value = await isClientRunning().catch(() => false)
-    await setTrayRunState(clientRunning.value)
-    // Soft path can return Ok while the tunnel is still dead; force full init then.
-    if (!clientRunning.value) {
-      throw new Error('local RPC still not running after soft reconnect')
-    }
-  }
-  catch (e) {
-    console.error('Soft reconnect failed, falling back to full init', e)
-    editingMode.value = JSON.parse(JSON.stringify(mode))
-    // onModeSave also toggles isModeSaving; release our guard first.
-    isModeSaving.value = false
-    await onModeSave()
-    return
-  }
-  finally {
-    isModeSaving.value = false
-  }
+  editingMode.value = JSON.parse(JSON.stringify(loadMode()))
+  await onModeSave()
 }
 
 onMounted(async () => {
