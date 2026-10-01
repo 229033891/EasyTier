@@ -94,8 +94,9 @@ jobs:
           target: ${{ matrix.TARGET }}
           gui: true
           pnpm: true
-          # embed 需要 frontend/dist；与 Linux build_web 一致先编控制台前端
-          pnpm-build-filter: './easytier-web/*'
+          # 空 filter = 编全部 workspace（含 tauri-plugin-vpnservice-api + easytier-web 前端）
+          # 不可写成 ./easytier-web/*，否则 GUI vue-tsc 找不到 vpn 插件类型
+          pnpm-build-filter: ''
           token: ${{ secrets.GITHUB_TOKEN }}
 
       - uses: Swatinem/rust-cache@v2
