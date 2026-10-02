@@ -184,11 +184,8 @@ select {
   color: var(--text-color-secondary, #94a3b8) !important;
 }
 
-/* 顶部导航栏安全区适配 */
+/* 顶部导航栏安全区适配（position/z-index 由 MainPage 控制，避免压过抽屉） */
 .top-navbar {
-  position: sticky;
-  top: 0;
-  z-index: 100;
   padding-top: env(safe-area-inset-top, 0px);
   background: var(--surface-card, #fff);
   border-bottom: var(--et-border);

@@ -58,26 +58,25 @@ watch(sidebarCollapsed, (v) => {
     localStorage.setItem('easytier-web.sidebarCollapsed', String(v));
 });
 
+/** ≥640px 才应用折叠态展示（移动端抽屉始终展开） */
+const isDesktopLayout = ref(false)
+const syncDesktopLayout = () => {
+    isDesktopLayout.value = typeof window !== 'undefined' && window.innerWidth >= 640
+}
+const showCollapsedUser = computed(() => sidebarCollapsed.value && isDesktopLayout.value)
+
 const sidebarRef = ref<HTMLElement>()
 const toggleButtonRef = ref<HTMLElement>()
 const userTriggerRef = ref<HTMLElement>()
-const mobileUserTriggerRef = ref<HTMLElement>()
 const userMenuOpen = ref(false)
 const userMenuStyle = ref<Record<string, string>>({})
-
-const activeUserTrigger = () => {
-    if (typeof window !== 'undefined' && window.innerWidth < 640)
-        return mobileUserTriggerRef.value || userTriggerRef.value
-    return userTriggerRef.value || mobileUserTriggerRef.value
-}
 
 const handleClickOutside = (event: Event) => {
     const target = event.target as HTMLElement;
     if (userMenuOpen.value) {
-        const inDesktop = userTriggerRef.value?.contains(target);
-        const inMobile = mobileUserTriggerRef.value?.contains(target);
+        const inTrigger = userTriggerRef.value?.contains(target);
         const inMenu = target.closest?.('.sidebar-user-menu');
-        if (!inDesktop && !inMobile && !inMenu) {
+        if (!inTrigger && !inMenu) {
             closeUserMenu();
         }
     }
@@ -107,7 +106,7 @@ const closeUserMenu = () => {
 };
 
 const syncUserMenuPosition = () => {
-    const el = activeUserTrigger();
+    const el = userTriggerRef.value;
     if (!el) return;
     const rect = el.getBoundingClientRect();
     const menuWidth = Math.max(rect.width, 9.5 * 16);
@@ -185,24 +184,28 @@ const navRef = ref<HTMLElement>();
 let navResizeObserver: ResizeObserver | undefined;
 
 /**
- * 顶栏（移动端专属，sticky 占据文档流）的实测高度写入 --et-navbar-h，
- * 供内容区高度与侧栏内边距使用，避免按固定值估算导致的双倍占位 / 底部溢出。
- *
- * 桌面端顶栏 display:none → offsetHeight 为 0，因此这里**必须允许写入 0px**，
- * 内容区才能用满 100dvh（顶栏高度不再占用纵向空间）。
- * 另外 display:none 的元素 ResizeObserver 不一定回调，所以始终额外监听 window.resize。
+ * 顶栏（移动端专属，fixed）实测高度写入 --et-navbar-h。
+ * 桌面端顶栏 display:none → 写 0，内容区用满 100dvh。
+ * display:none 时 ResizeObserver 不一定回调，故额外监听 window.resize。
  */
 const syncNavbarHeight = () => {
     const h = navRef.value?.offsetHeight ?? 0;
     document.documentElement.style.setProperty('--et-navbar-h', `${h}px`);
 };
 
+/** 抽屉关闭时一并收起账户菜单，避免触发点已不可见 */
+watch(forceShowSideBar, (open) => {
+    if (!open) closeUserMenu();
+});
+
 onMounted(async () => {
     await nextTick();
     document.addEventListener('click', handleClickOutside);
     window.addEventListener('resize', syncNavbarHeight);
+    window.addEventListener('resize', syncDesktopLayout);
     window.addEventListener('resize', syncUserMenuPosition);
     window.addEventListener('scroll', syncUserMenuPosition, true);
+    syncDesktopLayout();
     syncNavbarHeight();
     if (typeof ResizeObserver !== 'undefined' && navRef.value) {
         navResizeObserver = new ResizeObserver(syncNavbarHeight);
@@ -225,6 +228,7 @@ onUnmounted(() => {
     document.removeEventListener('click', handleClickOutside);
     navResizeObserver?.disconnect();
     window.removeEventListener('resize', syncNavbarHeight);
+    window.removeEventListener('resize', syncDesktopLayout);
     window.removeEventListener('resize', syncUserMenuPosition);
     window.removeEventListener('scroll', syncUserMenuPosition, true);
 });
@@ -232,32 +236,25 @@ onUnmounted(() => {
 </script>
 
 <template>
-    <!-- 顶栏仅保留在移动端：抽屉开关 + 用户名菜单 -->
+    <!-- 移动端顶栏：仅抽屉开关（用户名改到侧栏，与桌面一致） -->
     <nav ref="navRef"
-        class="sm:hidden fixed top-0 z-50 w-full top-navbar et-shell-surface">
-        <div class="px-3 py-2">
-            <div class="flex items-center justify-between gap-2">
-                <div ref="toggleButtonRef">
-                    <Button type="button" aria-haspopup="true" icon="pi pi-bars"
-                        variant="text" size="large" severity="contrast"
-                        :aria-label="t('web.main.toggle_sidebar')"
-                        v-tooltip.bottom="t('web.main.toggle_sidebar')"
-                        @click="toggleMobileSidebar" />
-                </div>
-                <button ref="mobileUserTriggerRef" type="button" class="sidebar-user-trigger sidebar-user-trigger--mobile"
-                    :class="{ 'is-open': userMenuOpen }"
-                    @click="toggleUserMenu">
-                    <span class="sidebar-user-name truncate">{{ displayName }}</span>
-                </button>
+        class="sm:hidden fixed top-0 z-40 w-full top-navbar et-shell-surface">
+        <div class="px-2 py-1.5">
+            <div ref="toggleButtonRef" class="flex items-center">
+                <Button type="button" aria-haspopup="true" icon="pi pi-bars"
+                    variant="text" size="large" severity="contrast"
+                    :aria-label="t('web.main.toggle_sidebar')"
+                    v-tooltip.bottom="t('web.main.toggle_sidebar')"
+                    @click="toggleMobileSidebar" />
             </div>
         </div>
     </nav>
 
-    <div v-if="forceShowSideBar" class="fixed inset-0 z-30 bg-black bg-opacity-50 sm:hidden" @click="closeSidebar">
+    <div v-if="forceShowSideBar" class="fixed inset-0 z-40 bg-black/50 sm:hidden" @click="closeSidebar">
     </div>
 
     <aside ref="sidebarRef" id="logo-sidebar"
-        class="fixed top-0 left-0 z-40 flex h-screen flex-col et-shell-surface et-shell-border-r"
+        class="fixed top-0 left-0 z-50 flex h-dvh max-h-dvh flex-col et-shell-surface et-shell-border-r"
         :class="[
             forceShowSideBar ? 'translate-x-0' : '-translate-x-full',
             'sm:translate-x-0',
@@ -265,10 +262,10 @@ onUnmounted(() => {
             'w-64',
         ]"
         :aria-label="t('web.main.sidebar')">
-        <!-- 顶部：桌面折叠 + 用户名；移动端抽屉内只显示品牌，用户名在顶栏 -->
+        <!-- 顶部：桌面折叠按钮 + 用户名（移动端抽屉同样只显示用户名） -->
         <div
             class="sidebar-brand flex shrink-0 items-center gap-1"
-            :class="sidebarCollapsed ? 'justify-center px-1' : 'px-2'">
+            :class="showCollapsedUser ? 'justify-center px-1' : 'px-2'">
             <button type="button"
                 class="sidebar-collapse-btn"
                 :class="{ 'is-collapsed': sidebarCollapsed }"
@@ -281,21 +278,19 @@ onUnmounted(() => {
                     <span class="sidebar-collapse-bar"></span>
                 </span>
             </button>
-            <button ref="userTriggerRef" type="button" class="sidebar-user-trigger sidebar-user-trigger--desktop"
+            <button ref="userTriggerRef" type="button" class="sidebar-user-trigger"
                 :class="{
-                    'sidebar-user-trigger--collapsed': sidebarCollapsed,
+                    'sidebar-user-trigger--collapsed': showCollapsedUser,
                     'is-open': userMenuOpen,
                 }"
                 :aria-expanded="userMenuOpen"
                 aria-haspopup="menu"
-                v-tooltip.right="sidebarCollapsed ? displayName : undefined"
+                v-tooltip.right="showCollapsedUser ? displayName : undefined"
                 @click="toggleUserMenu">
                 <span class="sidebar-user-name truncate">
-                    {{ sidebarCollapsed ? displayName.slice(0, 1).toUpperCase() : displayName }}
+                    {{ showCollapsedUser ? displayName.slice(0, 1).toUpperCase() : displayName }}
                 </span>
             </button>
-
-            <div class="sidebar-brand-mobile">EasyTier</div>
         </div>
 
         <div class="sidebar-nav flex-1 min-h-0 overflow-y-auto px-2 py-2">
@@ -306,7 +301,7 @@ onUnmounted(() => {
                         :class="[sidebarButtonClass, { 'sidebar-button--active': isNavActive(item.name) }]"
                         severity="contrast" @click="goNav(item.name)"
                         :aria-current="isNavActive(item.name) ? 'page' : undefined"
-                        v-tooltip.right="sidebarCollapsed ? item.label : undefined">
+                        v-tooltip.right="showCollapsedUser ? item.label : undefined">
                         <i :class="[item.icon, 'sidebar-icon']"></i>
                         <span :class="{ 'sm:hidden': sidebarCollapsed }">{{ item.label }}</span>
                     </Button>
@@ -359,7 +354,8 @@ onUnmounted(() => {
 .top-navbar.et-shell-surface {
     background: var(--surface-card, #ffffff);
     border-bottom: 1px solid var(--et-border-color, var(--surface-border, #e2e8f0));
-    padding-top: env(safe-area-inset-top);
+    /* safe-area 只加在顶栏；--et-navbar-h 已含此高度，内容区勿再叠加 */
+    padding-top: env(safe-area-inset-top, 0px);
 }
 
 .sidebar-nav-list {
@@ -435,32 +431,16 @@ onUnmounted(() => {
 
 .sidebar-brand {
     height: 3.5rem;
+    /* 刘海机：抽屉顶到顶时，品牌区自己吃 safe-area，避免用户名贴齐系统状态栏 */
+    padding-top: env(safe-area-inset-top, 0px);
+    box-sizing: content-box;
     border-bottom: 1px solid var(--et-border-color, var(--surface-border, #e2e8f0));
 }
 
-.sidebar-brand-mobile {
-    display: flex;
-    align-items: center;
-    min-width: 0;
-    flex: 1 1 auto;
-    padding: 0 0.55rem;
-    font-size: 1rem;
-    font-weight: 700;
-    letter-spacing: -0.02em;
-    color: var(--text-color, #1e293b);
-}
-
-.sidebar-user-trigger--desktop {
-    display: none;
-}
-
 @media (min-width: 640px) {
-    .sidebar-brand-mobile {
-        display: none;
-    }
-
-    .sidebar-user-trigger--desktop {
-        display: inline-flex;
+    .sidebar-brand {
+        padding-top: 0;
+        box-sizing: border-box;
     }
 }
 
@@ -566,11 +546,6 @@ onUnmounted(() => {
     transition: background-color 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease;
 }
 
-.sidebar-user-trigger--mobile {
-    flex: 0 1 auto;
-    max-width: 60%;
-}
-
 .sidebar-user-trigger--collapsed {
     flex: 0 0 auto;
     width: 2rem;
@@ -600,11 +575,9 @@ onUnmounted(() => {
     text-align: center;
 }
 
-/* 侧栏为 fixed，需让位给顶栏：用实测顶栏高度对齐其底边。
-   桌面端顶栏 display:none，--et-navbar-h 为 0，侧栏直接从顶部开始。
-   过渡只列实际会变的属性（折叠改 width、抽屉改 transform），不用 transition: all。 */
+/* 抽屉/侧栏顶到顶；移动端打开时盖住顶栏。桌面无顶栏占位。 */
 #logo-sidebar {
-    padding-top: var(--et-navbar-h, 0px);
+    padding-top: 0;
     transition: width 0.2s ease, transform 0.2s ease;
 }
 
@@ -613,22 +586,20 @@ onUnmounted(() => {
     box-sizing: border-box;
     padding: 0.75rem 1rem 1.5rem;
     background: var(--surface-ground, #f6f8fb);
-    /* 顶栏使用 fixed，移动端必须显式让出实测高度，避免首屏内容被盖住 */
-    padding-top: calc(var(--et-navbar-h, 0px) + max(0.75rem, env(safe-area-inset-top, 0px)));
+    /* --et-navbar-h 已含 safe-area，只再加内容间距 */
+    padding-top: calc(var(--et-navbar-h, 0px) + 0.75rem);
     transition: margin-left 0.2s ease;
 }
 
 .et-main-content--mgmt {
     box-sizing: border-box;
-    /* 扣掉顶栏高度（桌面端为 0），否则底部溢出（按钮栏被挤出视口） */
     height: calc(100dvh - var(--et-navbar-h, 0px));
     max-height: calc(100dvh - var(--et-navbar-h, 0px));
     min-height: 0;
     display: flex;
     flex-direction: column;
     overflow: hidden;
-    /* 高度已经扣除 fixed 顶栏，不能再次把顶栏高度塞进内部 padding */
-    padding-top: max(0.25rem, env(safe-area-inset-top, 0px));
+    padding-top: 0.25rem;
     padding-bottom: 0.25rem;
 }
 
