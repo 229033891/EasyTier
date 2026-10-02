@@ -731,7 +731,8 @@ web:
 
 mode:
   title: Mode
-  switch_mode: Switch Mode
+  switch_mode: Runtime Settings
+  runtime_settings: Runtime Settings
   config_dir: Config Dir
   rpc_portal: RPC Portal
   enable_rpc_tcp_listen: Enable RPC port listening (TCP)
@@ -744,9 +745,9 @@ mode:
   normal: Normal
   service: Service
   remote: Remote
-  normal_description: Run EasyTier directly, suitable for local use.
-  service_description: Run as a system service, supporting auto-startup and background operation. The service continues to run in the background after exiting the GUI.
-  remote_description: Connect to a remote RPC service to manage and control remote nodes.
+  normal_description: Run EasyTier in this app. Closing the GUI also stops the network.
+  service_description: Install as a system service with start-on-boot; it keeps running after you quit the GUI.
+  remote_description: Manage a node that is already running on another machine via RPC. This PC does not run the core network; configure the config server on the remote side if needed.
   service_status: Service Status
   service_status_running: Running
   service_status_stopped: Stopped
@@ -767,13 +768,14 @@ config-server:
   address: Config Server Address
   address_placeholder: "e.g.: udp://127.0.0.1:22020/admin or tcp://…"
   description: |
-    Enter a single config-server URL (one protocol only):
+    Connect to the Web console (device list and remote config). Enter a single URL (one protocol only):
     Full URL: udp://127.0.0.1:22020/<token> or tcp://127.0.0.1:22020/<token>
-    New servers listen on both UDP and TCP by default; pick the protocol that fits your network. The path is an access token (managed in Web "Access Tokens").
+    New servers listen on both UDP and TCP by default; pick the protocol that fits your network. The path is an access token.
     Token only: admin (uses official server)
-    Leave blank: Don't connect to a config server
+    Leave blank: do not connect; manage networks only in this GUI
   secure_mode: Require secure tunnel
   secure_mode_hint: When enabled, the config server must support encrypted tunnels; otherwise the client will keep retrying.
+  service_hint: The system service connects to the config server. Saving will restart the service to apply changes.
   connection_status: Connection Status
   connected: ": Connected"
   disconnected: ": Disconnected"

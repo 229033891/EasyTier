@@ -9,6 +9,8 @@ pub struct ServiceOptions {
     pub(super) file_log_level: String,
     pub(super) file_log_dir: String,
     pub(super) config_server: Option<String>,
+    #[serde(default)]
+    pub(super) secure_mode: bool,
 }
 impl ServiceOptions {
     fn to_args_vec(&self) -> Vec<std::ffi::OsString> {
@@ -27,6 +29,11 @@ impl ServiceOptions {
         if let Some(config_server) = &self.config_server {
             args.push("--config-server".into());
             args.push(config_server.clone().into());
+            if self.secure_mode {
+                // Reused by core as the config-server encrypted-tunnel requirement
+                // when --config-server is set (no network-name, so not merged into configs).
+                args.push("--secure-mode".into());
+            }
         }
 
         args

@@ -12,6 +12,7 @@ interface ServiceOptions {
   file_log_level: string
   file_log_dir: string
   config_server?: string
+  secure_mode?: boolean
 }
 
 export type ServiceStatus = "Running" | "Stopped" | "NotInstalled"

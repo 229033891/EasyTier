@@ -1,19 +1,51 @@
 <script setup lang="ts">
 import { computed, watch, onMounted, ref } from 'vue';
-import type { Mode, ServiceMode, RemoteMode, NormalMode } from '~/composables/mode';
-import { appConfigDir, appLogDir } from '@tauri-apps/api/path';
-import { join } from '@tauri-apps/api/path';
-import { getServiceStatus, type ServiceStatus } from '~/composables/backend';
+import type { Mode, ServiceMode, RemoteMode, NormalMode, WebClientConfig } from '~/composables/mode'
+import { appConfigDir, appLogDir } from '@tauri-apps/api/path'
+import { join } from '@tauri-apps/api/path'
+import { getServiceStatus, type ServiceStatus } from '~/composables/backend'
 
 const { t } = useI18n()
 
 const model = defineModel<Mode>({ required: true })
 const emit = defineEmits(['uninstall-service', 'stop-service'])
 
+defineProps<{
+  configServerStatusLabel?: string
+  configServerStatusSeverity?: string
+  configServerLastError?: string
+}>()
+
 const defaultConfigDir = ref('')
 const defaultLogDir = ref('')
 const serviceStatus = ref<ServiceStatus>('NotInstalled')
 const isServiceStatusLoaded = ref(false)
+
+const showConfigServer = computed(() => model.value.mode === 'normal' || model.value.mode === 'service')
+
+const configServerUrl = computed({
+  get: () => {
+    if (model.value.mode === 'normal' || model.value.mode === 'service')
+      return model.value.config_server_url ?? ''
+    return ''
+  },
+  set: (value: string) => {
+    if (model.value.mode === 'normal' || model.value.mode === 'service')
+      model.value.config_server_url = value
+  },
+})
+
+const configServerSecureMode = computed({
+  get: () => {
+    if (model.value.mode === 'normal' || model.value.mode === 'service')
+      return !!model.value.secure_mode
+    return false
+  },
+  set: (value: boolean) => {
+    if (model.value.mode === 'normal' || model.value.mode === 'service')
+      model.value.secure_mode = value
+  },
+})
 
 function normalizeRpcListenPort(port: unknown): number {
   const defaultPort = 15999
@@ -153,6 +185,9 @@ watch(() => model.value.mode, async (newMode, oldMode) => {
 
   const oldModelValue = { ...model.value }
 
+  const prevConfigServerUrl = (oldModelValue as WebClientConfig).config_server_url
+  const prevSecureMode = (oldModelValue as WebClientConfig).secure_mode
+
   if (newMode === 'normal') {
     const portal = normalMode.value?.rpc_portal?.trim()
     model.value = {
@@ -161,6 +196,8 @@ watch(() => model.value.mode, async (newMode, oldMode) => {
       enable_rpc_port_listen: normalMode.value?.enable_rpc_port_listen,
       rpc_listen_port: normalMode.value?.rpc_listen_port,
       rpc_listen_all_interfaces: normalMode.value?.rpc_listen_all_interfaces,
+      config_server_url: prevConfigServerUrl,
+      secure_mode: !!prevSecureMode,
       mode: 'normal',
     }
   }
@@ -174,9 +211,13 @@ watch(() => model.value.mode, async (newMode, oldMode) => {
       // 默认 off 会让这类故障在日志里完全看不到，只剩「服务反复重启」。
       file_log_level: serviceMode.value?.file_log_level || 'warn',
       file_log_dir: serviceMode.value?.file_log_dir || defaultLogDir.value,
+      config_server_url: prevConfigServerUrl,
+      secure_mode: !!prevSecureMode,
     }
   }
   else if (newMode === 'remote') {
+    // Keep config_server_* on the editing object so switching tabs before save
+    // does not drop them; normalizeEditingMode strips them when remote is saved.
     model.value = {
       ...oldModelValue,
       mode: 'remote',
@@ -264,6 +305,31 @@ watch(() => model.value.mode, async (newMode, oldMode) => {
         <label for="remote-addr">{{ t('mode.remote_rpc_address') }}</label>
         <InputText id="remote-addr" v-model="remoteMode.remote_rpc_address" class="flex-1" />
       </div>
+    </div>
+
+    <div v-if="showConfigServer" class="flex flex-col gap-2 pt-3 mt-1 border-t border-gray-200">
+      <div class="flex items-center justify-between gap-2 flex-wrap">
+        <label class="m-0 font-medium">{{ t('config-server.title') }}</label>
+        <Tag v-if="configServerStatusLabel" :severity="configServerStatusSeverity || 'secondary'"
+          :value="configServerStatusLabel" />
+      </div>
+      <p class="text-xs text-secondary m-0 whitespace-pre-line leading-relaxed">
+        {{ t('config-server.description') }}
+      </p>
+      <Message v-if="configServerLastError" severity="error" :closable="false" class="mb-0">
+        {{ configServerLastError }}
+      </Message>
+      <div class="flex flex-col gap-2">
+        <label for="config-server-url">{{ t('config-server.address') }}</label>
+        <InputText id="config-server-url" v-model="configServerUrl" class="w-full"
+          :placeholder="t('config-server.address_placeholder')" />
+      </div>
+      <div class="flex items-center gap-2">
+        <Checkbox id="config-server-secure" v-model="configServerSecureMode" binary />
+        <label for="config-server-secure">{{ t('config-server.secure_mode') }}</label>
+      </div>
+      <p class="text-xs text-secondary m-0">{{ t('config-server.secure_mode_hint') }}</p>
+      <p v-if="serviceMode" class="text-xs text-secondary m-0">{{ t('config-server.service_hint') }}</p>
     </div>
   </div>
 </template>

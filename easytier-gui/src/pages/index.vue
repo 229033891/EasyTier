@@ -28,10 +28,6 @@ const { t, locale } = useI18n()
 const confirm = useConfirm()
 const aboutVisible = ref(false)
 const modeDialogVisible = ref(false)
-const configServerDialogVisible = ref(false)
-const configServerUrl = ref('')
-const configServerSecureMode = ref(false)
-const isConfigServerSaving = ref(false)
 const configServerConnected = ref(false)
 const configServerLastError = ref('')
 const currentMode = ref<Mode>({ mode: 'normal' })
@@ -133,147 +129,114 @@ async function waitForConfigServerOutcome(
   return 'timeout'
 }
 
+function normalizeEditingMode(mode: Mode): Mode {
+  if (mode.mode === 'remote') {
+    return {
+      mode: 'remote',
+      remote_rpc_address: mode.remote_rpc_address,
+    }
+  }
+  const next = JSON.parse(JSON.stringify(mode)) as Mode
+  if (next.mode === 'normal' || next.mode === 'service') {
+    next.config_server_url = next.config_server_url?.trim() || undefined
+    next.secure_mode = !!next.secure_mode
+  }
+  return next
+}
+
+function configServerEndpointOf(mode: Mode): { url?: string, secure: boolean } {
+  if (mode.mode === 'normal' || mode.mode === 'service')
+    return { url: mode.config_server_url?.trim() || undefined, secure: !!mode.secure_mode }
+  return { url: undefined, secure: false }
+}
+
 async function openModeDialog() {
   editingMode.value = JSON.parse(JSON.stringify(loadMode()))
   showAutostartHint.value = false
   modeDialogVisible.value = true
 }
 
-function openConfigServerDialog() {
-  const mode = currentMode.value
-  configServerUrl.value = (mode.mode === 'normal' || mode.mode === 'service')
-    ? (mode.config_server_url ?? '')
-    : ''
-  configServerSecureMode.value = mode.mode === 'normal'
-    ? !!mode.secure_mode
-    : false
-  configServerDialogVisible.value = true
-}
-
-async function applyConfigServerUrl(url?: string, secureMode?: boolean) {
-  const mode = JSON.parse(JSON.stringify(currentMode.value)) as Mode
-  if (mode.mode !== 'normal' && mode.mode !== 'service') {
-    return
-  }
-  mode.config_server_url = url
-  if (mode.mode === 'normal') {
-    mode.secure_mode = !!secureMode
-  } else {
-    mode.secure_mode = undefined
-  }
-  await initWithMode(mode)
-}
-
-/** Restore previous config-server endpoint after a failed save attempt. */
-async function revertConfigServerUrl(url?: string, secureMode?: boolean) {
-  try {
-    await applyConfigServerUrl(url, secureMode)
-    if (url) {
-      // Best-effort wait so the status badge reflects the restored channel.
-      await waitForConfigServerOutcome(15_000)
-    }
-    else {
-      await refreshConfigServerConnection()
-    }
-  }
-  catch (e) {
-    console.error('Failed to revert config server endpoint', e)
-  }
-}
-
-async function onConfigServerSave() {
-  if (isConfigServerSaving.value) {
-    return
-  }
-  const mode = currentMode.value
-  if (mode.mode === 'remote') {
-    configServerDialogVisible.value = false
+async function onModeSave() {
+  if (isModeSaving.value) {
     return
   }
 
-  const nextUrl = configServerUrl.value.trim() || undefined
-  const nextSecure = mode.mode === 'normal' ? configServerSecureMode.value : false
-  const prevUrl = (mode.mode === 'normal' || mode.mode === 'service')
-    ? (mode.config_server_url?.trim() || undefined)
-    : undefined
-  const prevSecure = mode.mode === 'normal'
-    ? !!mode.secure_mode
-    : false
-  if (nextUrl === prevUrl && nextSecure === prevSecure) {
-    configServerDialogVisible.value = false
-    return
-  }
+  const next = normalizeEditingMode(editingMode.value)
+  editingMode.value = next
+  const prev = currentMode.value
+  const prevEndpoint = configServerEndpointOf(prev)
+  const nextEndpoint = configServerEndpointOf(next)
+  const configServerChanged = nextEndpoint.url !== prevEndpoint.url
+    || nextEndpoint.secure !== prevEndpoint.secure
+    || (prev.mode !== next.mode && !!nextEndpoint.url)
 
   const doSave = async () => {
-    isConfigServerSaving.value = true
+    isModeSaving.value = true
     try {
-      await applyConfigServerUrl(nextUrl, nextSecure)
-      if (!nextUrl) {
-        configServerDialogVisible.value = false
-        toast.add({ severity: 'success', summary: t('web.common.success'), life: TOAST_LIFE.success })
-        return
+      await initWithMode(next)
+
+      // Validate config-server dial only when Normal mode activates/changes the endpoint.
+      const shouldWaitForConfigServer = next.mode === 'normal'
+        && !!nextEndpoint.url
+        && (configServerChanged || prev.mode !== 'normal')
+      if (shouldWaitForConfigServer) {
+        if (configServerLastError.value && !configServerConnected.value) {
+          const detail = configServerLastError.value
+          await initWithMode(prev)
+          editingMode.value = next
+          toast.add({
+            severity: 'error',
+            summary: t('error'),
+            detail,
+            life: TOAST_LIFE.severe,
+          })
+          return
+        }
+
+        const outcome = await waitForConfigServerOutcome()
+        if (outcome !== 'connected' && outcome !== 'disabled') {
+          const detail = outcome === 'timeout'
+            ? t('config-server.connect_timeout')
+            : (configServerLastError.value || t('config-server.status_failed'))
+          await initWithMode(prev)
+          editingMode.value = next
+          toast.add({
+            severity: 'error',
+            summary: t('error'),
+            detail: prevEndpoint.url
+              ? `${detail} (${t('config-server.reverted')})`
+              : detail,
+            life: TOAST_LIFE.severe,
+          })
+          return
+        }
       }
 
-      // Init/parse failure: lastError is already set and the old client was dropped.
-      // Do not wait the full connect timeout; restore the previous endpoint.
-      if (configServerLastError.value && !configServerConnected.value) {
-        const detail = configServerLastError.value
-        await revertConfigServerUrl(prevUrl, prevSecure)
-        configServerUrl.value = nextUrl
-        configServerSecureMode.value = nextSecure
-        toast.add({
-          severity: 'error',
-          summary: t('error'),
-          detail,
-          life: TOAST_LIFE.severe,
-        })
-        return
-      }
-
-      const outcome = await waitForConfigServerOutcome()
-      if (outcome === 'connected') {
-        configServerDialogVisible.value = false
-        toast.add({ severity: 'success', summary: t('web.common.success'), life: TOAST_LIFE.success })
-        return
-      }
-
-      const detail = outcome === 'timeout'
-        ? t('config-server.connect_timeout')
-        : (configServerLastError.value || t('config-server.status_failed'))
-
-      // Keep management channel stable: roll back to the previous working endpoint.
-      await revertConfigServerUrl(prevUrl, prevSecure)
-      configServerUrl.value = nextUrl
-      configServerSecureMode.value = nextSecure
-
-      toast.add({
-        severity: 'error',
-        summary: t('error'),
-        detail: prevUrl
-          ? `${detail} (${t('config-server.reverted')})`
-          : detail,
-        life: TOAST_LIFE.severe,
-      })
+      modeDialogVisible.value = false
     }
     catch (e: any) {
-      // apply/init threw — try to restore previous endpoint before surfacing the error.
-      await revertConfigServerUrl(prevUrl, prevSecure)
-      configServerUrl.value = nextUrl ?? ''
-      configServerSecureMode.value = nextSecure
       toast.add({
         severity: 'error',
         summary: t('error'),
         detail: e instanceof Error ? e.message : String(e),
         life: TOAST_LIFE.severe,
       })
-      console.error('Error saving config server', e)
+      console.error('Error switching mode', e, prev, next)
+      try {
+        await initWithMode(prev)
+      }
+      catch (revertError) {
+        console.error('Failed to revert mode after save error', revertError)
+      }
+      editingMode.value = next
     }
     finally {
-      isConfigServerSaving.value = false
+      isModeSaving.value = false
     }
   }
 
-  if (mode.mode === 'service') {
+  // Service reinstall/restart applies config-server changes — confirm when that endpoint changes.
+  if (next.mode === 'service' && configServerChanged) {
     confirm.require({
       message: t('config-server.update_service_confirm'),
       header: t('config-server.title'),
@@ -293,25 +256,6 @@ async function onConfigServerSave() {
   }
 
   await doSave()
-}
-
-async function onModeSave() {
-  if (isModeSaving.value) {
-    return;
-  }
-  isModeSaving.value = true
-  try {
-    await initWithMode(editingMode.value);
-    modeDialogVisible.value = false
-  }
-  catch (e: any) {
-    toast.add({ severity: 'error', summary: t('error'), detail: e, life: TOAST_LIFE.severe })
-    console.error("Error switching mode", e, currentMode.value, editingMode.value)
-    await initWithMode(currentMode.value);
-  }
-  finally {
-    isModeSaving.value = false
-  }
 }
 
 async function onUninstallService() {
@@ -467,6 +411,7 @@ async function initWithMode(mode: Mode) {
           file_log_level: mode.file_log_level,
           rpc_portal: mode.rpc_portal,
           config_server: mode.config_server_url,
+          secure_mode: !!mode.secure_mode,
         })
         mode.installed_core_version = coreVersion
         serviceStatus = await getServiceStatus()
@@ -780,15 +725,15 @@ const settings_menu = ref()
 // 底部设置弹出菜单：各项统一为一级入口，复杂配置走弹窗
 const setting_menu_items: Ref<MenuItem[]> = ref([
   {
-    label: () => `${t('mode.switch_mode')}: ${t('mode.' + currentMode.value.mode)}`,
-    icon: 'pi pi-sync',
+    label: () => {
+      const modeLabel = t('mode.' + currentMode.value.mode)
+      if (currentMode.value.mode === 'remote')
+        return `${t('mode.runtime_settings')}: ${modeLabel}`
+      return `${t('mode.runtime_settings')}: ${modeLabel} · ${configServerStatusLabel.value}`
+    },
+    icon: 'pi pi-cog',
     command: openModeDialog,
     visible: () => type() !== 'android',
-  },
-  {
-    label: () => `${t('config-server.title')}: ${configServerStatusLabel.value}`,
-    icon: 'pi pi-cloud',
-    command: openConfigServerDialog,
   },
   {
     label: () => `${t('exchange_language')}: ${locale.value === 'cn' ? t('language_zh') : t('language_en')}`,
@@ -838,54 +783,23 @@ async function connectRpcClient(isNormalMode: boolean, url?: string) {
         <Button :label="t('close')" icon="pi pi-times" @click="aboutVisible = false" text autofocus />
       </template>
     </Dialog>
-    <Dialog v-model:visible="modeDialogVisible" modal :header="t('mode.switch_mode')" :style="settingsDialogStyle"
+    <Dialog v-model:visible="modeDialogVisible" modal :header="t('mode.runtime_settings')" :style="settingsDialogStyle"
       class="app-dialog">
       <Message v-if="showAutostartHint" severity="info" :closable="false" class="mb-3">
         {{ t('mode.autostart_hint') }}
       </Message>
-      <ModeSwitcher v-model="editingMode" @uninstall-service="onUninstallService" @stop-service="onStopService" />
+      <ModeSwitcher
+        v-model="editingMode"
+        :config-server-status-label="configServerStatusLabel"
+        :config-server-status-severity="configServerStatusSeverity"
+        :config-server-last-error="configServerStatus === 'failed' ? configServerLastError : ''"
+        @uninstall-service="onUninstallService"
+        @stop-service="onStopService"
+      />
       <template #footer>
-        <Button :label="t('web.common.cancel')" icon="pi pi-times" @click="modeDialogVisible = false" text />
+        <Button :label="t('web.common.cancel')" icon="pi pi-times" @click="modeDialogVisible = false" text
+          :disabled="isModeSaving" />
         <Button :label="t('web.common.save')" icon="pi pi-save" @click="onModeSave" autofocus :loading="isModeSaving" />
-      </template>
-    </Dialog>
-    <Dialog v-model:visible="configServerDialogVisible" modal :header="t('config-server.title')"
-      :style="settingsDialogStyle" class="app-dialog">
-      <Message v-if="currentMode.mode === 'remote'" severity="warn" :closable="false" class="mb-3">
-        {{ t('config-server.remote_not_supported') }}
-      </Message>
-      <template v-else>
-        <div class="flex flex-col gap-3">
-          <div class="flex items-center justify-between gap-2 flex-wrap">
-            <label class="m-0">{{ t('config-server.connection_status') }}</label>
-            <Tag :severity="configServerStatusSeverity" :value="configServerStatusLabel" />
-          </div>
-          <Message v-if="configServerStatus === 'failed' && configServerLastError" severity="error" :closable="false"
-            class="mb-0">
-            {{ configServerLastError }}
-          </Message>
-          <p class="text-sm text-secondary m-0 whitespace-pre-line leading-relaxed">
-            {{ t('config-server.description') }}
-          </p>
-          <div class="flex flex-col gap-2">
-            <label for="config-server-url">{{ t('config-server.address') }}</label>
-            <InputText id="config-server-url" v-model="configServerUrl" class="w-full"
-              :placeholder="t('config-server.address_placeholder')"
-              :disabled="isConfigServerSaving" />
-          </div>
-          <div v-if="currentMode.mode === 'normal'" class="flex items-center gap-2">
-            <Checkbox id="config-server-secure" v-model="configServerSecureMode" binary
-              :disabled="isConfigServerSaving" />
-            <label for="config-server-secure">{{ t('config-server.secure_mode') }}</label>
-          </div>
-          <p v-if="currentMode.mode === 'normal'" class="text-xs text-secondary m-0">{{ t('config-server.secure_mode_hint') }}</p>
-        </div>
-      </template>
-      <template #footer>
-        <Button :label="currentMode.mode === 'remote' ? t('close') : t('web.common.cancel')" icon="pi pi-times"
-          @click="configServerDialogVisible = false" text :disabled="isConfigServerSaving" />
-        <Button v-if="currentMode.mode !== 'remote'" :label="t('web.common.save')" icon="pi pi-save"
-          @click="onConfigServerSave" autofocus :loading="isConfigServerSaving" />
       </template>
     </Dialog>
     <Dialog v-model:visible="loggingDialogVisible" modal :header="t('logging')" :style="settingsDialogStyle"
@@ -915,7 +829,7 @@ async function connectRpcClient(isNormalMode: boolean, url?: string) {
     </Dialog>
 
     <RemoteManagement v-if="clientRunning" class="flex-1 overflow-y-auto" :api="remoteClient"
-      :pause-auto-refresh="isModeSaving || isConfigServerSaving" v-model:instance-id="instanceId">
+      :pause-auto-refresh="isModeSaving" v-model:instance-id="instanceId">
       <!-- 与共享底部栏同一行：样式与禁用网络完全一致 -->
       <template #footer-extra>
         <Button :label="t('system_settings')" icon="pi pi-cog" iconPos="left" severity="secondary"
