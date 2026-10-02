@@ -115,12 +115,14 @@ jobs:
           name: ET-web-dashboard
           path: easytier-web/frontend/dist/
 
+      # Frontend/wasm already built in build_web and downloaded above.
+      # Skip pnpm here to avoid a second (multi-minute) rebuild.
       - name: Prepare build environment
         uses: ./.github/actions/prepare-build
         with:
           target: ${{ matrix.TARGET }}
           gui: false
-          pnpm: true
+          pnpm: false
           token: ${{ secrets.GITHUB_TOKEN }}
 
       - uses: Swatinem/rust-cache@v2
@@ -131,13 +133,21 @@ jobs:
           shared-key: "core-registry"
           cache-targets: "false"
 
+      - name: Verify web embed frontend dist
+        run: |
+          set -euo pipefail
+          test -f easytier-web/frontend/dist/index.html
+
       - name: Build
         run: |
+          set -euo pipefail
+          # One cargo invocation shares dependency compilation between packages.
           # Linux 无头包: ET-core + ET-cli + ET-web-embed (自建控制台)
-          cargo build --release --target $TARGET --package=easytier-web --features=embed
+          cargo build --release --target "$TARGET" \
+            -p easytier-web \
+            -p easytier \
+            --features easytier-web/embed,easytier/jemalloc
           mv ./target/$TARGET/release/easytier-web ./target/$TARGET/release/easytier-web-embed
-
-          cargo build --release --target $TARGET --package=easytier --features=jemalloc
 
       - name: Cache UPX
         uses: actions/cache@v5

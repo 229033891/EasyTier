@@ -158,9 +158,10 @@ jobs:
         run: |
           set -euo pipefail
           test -f easytier-gui/dist/index.html
+          # Path is relative to projectPath (easytier-gui/), not src-tauri/.
           # Deep-merged by `tauri build --config`; only clears beforeBuildCommand.
           printf '%s\n' '{"build":{"beforeBuildCommand":""}}' \
-            > easytier-gui/src-tauri/tauri.ci.conf.json
+            > easytier-gui/tauri.ci.conf.json
 
       - name: Build GUI
         if: ${{ matrix.GUI_TARGET != '' && (!contains(matrix.GUI_TARGET, 'darwin') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository)) }}
