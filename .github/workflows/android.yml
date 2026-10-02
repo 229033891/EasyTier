@@ -84,10 +84,18 @@ jobs:
         run: |
           echo "GIT_DESC=$(git log -1 --format=%cd.%h --date=format:%Y-%m-%d_%H:%M:%S)" >> $GITHUB_ENV
 
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v5
         with:
-          distribution: 'oracle'
+          distribution: 'temurin'
           java-version: '21'
+
+      # Ubuntu runners keep the SDK under /usr/local/lib/android/sdk; cache NDK to
+      # avoid re-downloading ~600MB+ on every Android job.
+      - name: Cache Android NDK
+        uses: actions/cache@v5
+        with:
+          path: /usr/local/lib/android/sdk/ndk/26.0.10792818
+          key: android-ndk-26.0.10792818-${{ runner.os }}
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
@@ -107,7 +115,9 @@ jobs:
           target: ${{ matrix.TARGET }}
           gui: false
           pnpm: true
-          pnpm-build-filter: ''
+          # GUI only: skip web frontend / config-generator wasm (~1.5min+)
+          pnpm-build-filter: 'easytier-gui'
+          pnpm-setup-wasm: 'false'
           token: ${{ secrets.GITHUB_TOKEN }}
 
       - uses: Swatinem/rust-cache@v2
@@ -117,6 +127,16 @@ jobs:
           prefix-key: ""
           shared-key: "gui-registry"
           cache-targets: "false"
+
+      - name: Cache Gradle
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-android-${{ runner.os }}-${{ hashFiles('easytier-gui/src-tauri/gen/android/**/*.gradle*', 'easytier-gui/src-tauri/gen/android/**/gradle-wrapper.properties', 'tauri-plugin-vpnservice/android/**/*.gradle*') }}
+          restore-keys: |
+            gradle-android-${{ runner.os }}-
 
       - name: Build
         run: |

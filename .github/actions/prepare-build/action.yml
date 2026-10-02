@@ -13,6 +13,10 @@ inputs:
     description: 'The filter argument for pnpm build (e.g. ./easytier-web/*)'
     required: false
     default: './easytier-web/*'
+  pnpm-setup-wasm:
+    description: 'Install wasm toolchain for pnpm packages that need it (config-generator)'
+    required: false
+    default: 'true'
   gui:
     description: 'Whether to prepare the GUI build environment'
     required: true
@@ -54,6 +58,7 @@ runs:
         build-filter: ${{ inputs.pnpm-build-filter }}
         # prepare-build already cached/installed protoc above
         setup-protoc: 'false'
+        setup-wasm: ${{ inputs.pnpm-setup-wasm }}
 
     - name: Install GUI dependencies (Linux)
       if: ${{ inputs.gui == 'true' && runner.os == 'Linux' }}

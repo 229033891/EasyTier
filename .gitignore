@@ -42,6 +42,9 @@ easytier-panic.log
 # optional local build caches (VC-LTL / YY-Thunks / protoc); see script/build-easytier-web.ps1
 .deps-cache/
 
+# local CI log / artifact downloads
+.tmp/
+
 # web
 node_modules
 easytier-web/frontend-lib/src/generated/

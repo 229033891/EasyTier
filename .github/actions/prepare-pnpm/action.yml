@@ -14,11 +14,16 @@ inputs:
     description: 'Install protoc (set false when caller already installed it)'
     required: false
     default: 'true'
+  setup-wasm:
+    description: 'Install wasm rust target and wasm-pack (needed for config-generator)'
+    required: false
+    default: 'true'
 
 runs:
   using: "composite"
   steps:
     - uses: actions-rust-lang/setup-rust-toolchain@v1
+      if: ${{ inputs.setup-wasm == 'true' }}
       with:
         toolchain: 1.95
         target: wasm32-unknown-unknown
@@ -26,6 +31,7 @@ runs:
         rustflags: ''
 
     - uses: taiki-e/install-action@v2
+      if: ${{ inputs.setup-wasm == 'true' }}
       with:
         tool: wasm-pack
 
