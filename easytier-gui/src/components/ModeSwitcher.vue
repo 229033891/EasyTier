@@ -11,6 +11,7 @@ const model = defineModel<Mode>({ required: true })
 const emit = defineEmits(['uninstall-service', 'stop-service'])
 
 defineProps<{
+  configServerOnly?: boolean
   configServerStatusLabel?: string
   configServerStatusSeverity?: string
   configServerLastError?: string
@@ -230,86 +231,91 @@ watch(() => model.value.mode, async (newMode, oldMode) => {
 
 <template>
   <div class="flex flex-col gap-4">
-    <div>
-      <SelectButton id="mode-select" v-model="model.mode" :options="modeOptions" option-label="label"
-        option-value="value" fluid />
-    </div>
+    <template v-if="!configServerOnly">
+      <div>
+        <SelectButton id="mode-select" v-model="model.mode" :options="modeOptions" option-label="label"
+          option-value="value" fluid />
+      </div>
 
-    <!-- Mode descriptions -->
-    <div v-if="model.mode === 'normal'" class="text-sm text-gray-500">
-      {{ t('mode.normal_description') }}
-    </div>
-    <div v-else-if="model.mode === 'service'" class="text-sm text-gray-500">
-      {{ t('mode.service_description') }}
-    </div>
-    <div v-else-if="model.mode === 'remote'" class="text-sm text-gray-500">
-      {{ t('mode.remote_description') }}
-    </div>
+      <!-- Mode descriptions -->
+      <div v-if="model.mode === 'normal'" class="text-sm text-gray-500">
+        {{ t('mode.normal_description') }}
+      </div>
+      <div v-else-if="model.mode === 'service'" class="text-sm text-gray-500">
+        {{ t('mode.service_description') }}
+      </div>
+      <div v-else-if="model.mode === 'remote'" class="text-sm text-gray-500">
+        {{ t('mode.remote_description') }}
+      </div>
 
-    <div v-if="normalMode" class="flex flex-col gap-2">
-      <div class="flex items-center gap-2">
-        <label for="rpc-listen-toggle">{{ t('mode.enable_rpc_tcp_listen') }}</label>
-        <SelectButton id="rpc-listen-toggle" v-model="rpcListenEnabled" :options="rpcListenOptions" option-label="label"
-          option-value="value" />
-      </div>
-      <div v-if="rpcListenEnabled" class="flex flex-col gap-2">
+      <div v-if="normalMode" class="flex flex-col gap-2">
         <div class="flex items-center gap-2">
-          <label for="rpc-listen-port">{{ t('mode.rpc_listen_port') }}</label>
-          <InputText id="rpc-listen-port" v-model="rpcListenPort" class="flex-1" inputmode="numeric" />
+          <label for="rpc-listen-toggle">{{ t('mode.enable_rpc_tcp_listen') }}</label>
+          <SelectButton id="rpc-listen-toggle" v-model="rpcListenEnabled" :options="rpcListenOptions" option-label="label"
+            option-value="value" />
         </div>
-        <div class="flex items-center gap-2">
-          <label for="rpc-listen-all">{{ t('mode.rpc_listen_all_interfaces') }}</label>
-          <SelectButton id="rpc-listen-all" v-model="rpcListenAllInterfaces" :options="rpcListenOptions"
-            option-label="label" option-value="value" />
-        </div>
-        <div class="text-xs text-gray-500">
-          {{ t('mode.rpc_listen_all_interfaces_hint') }}
+        <div v-if="rpcListenEnabled" class="flex flex-col gap-2">
+          <div class="flex items-center gap-2">
+            <label for="rpc-listen-port">{{ t('mode.rpc_listen_port') }}</label>
+            <InputText id="rpc-listen-port" v-model="rpcListenPort" class="flex-1" inputmode="numeric" />
+          </div>
+          <div class="flex items-center gap-2">
+            <label for="rpc-listen-all">{{ t('mode.rpc_listen_all_interfaces') }}</label>
+            <SelectButton id="rpc-listen-all" v-model="rpcListenAllInterfaces" :options="rpcListenOptions"
+              option-label="label" option-value="value" />
+          </div>
+          <div class="text-xs text-gray-500">
+            {{ t('mode.rpc_listen_all_interfaces_hint') }}
+          </div>
         </div>
       </div>
-    </div>
 
-    <div v-if="serviceMode" class="flex flex-col gap-2">
-      <div class="flex items-center gap-2">
-        <label for="config-dir">{{ t('mode.config_dir') }}</label>
-        <InputText id="config-dir" v-model="serviceMode.config_dir" class="flex-1" />
-      </div>
-      <div class="flex items-center gap-2">
-        <label for="rpc-portal">{{ t('mode.rpc_portal') }}</label>
-        <InputText id="rpc-portal" v-model="serviceMode.rpc_portal" class="flex-1" />
-      </div>
-      <div class="flex items-center gap-2">
-        <label for="log-level">{{ t('mode.log_level') }}</label>
-        <Select id="log-level" v-model="serviceMode.file_log_level"
-          :options="['off', 'warn', 'info', 'debug', 'trace']" />
-      </div>
-      <div class="flex items-center gap-2">
-        <label for="log-dir">{{ t('mode.log_dir') }}</label>
-        <InputText id="log-dir" v-model="serviceMode.file_log_dir" class="flex-1" />
-      </div>
-      <div class="flex items-center gap-2 justify-between">
+      <div v-if="serviceMode" class="flex flex-col gap-2">
         <div class="flex items-center gap-2">
-          <label>{{ t('mode.service_status') }}</label>
-          <span :class="statusColorClass">{{ t(`mode.service_status_${serviceStatus.toLowerCase()}`) }}</span>
+          <label for="config-dir">{{ t('mode.config_dir') }}</label>
+          <InputText id="config-dir" v-model="serviceMode.config_dir" class="flex-1" />
         </div>
         <div class="flex items-center gap-2">
-          <Button :label="t('mode.stop_service')" icon="pi pi-stop-circle" v-if="serviceStatus === 'Running'"
-            @click="emit('stop-service')" severity="warn" text />
-          <Button :label="t('mode.uninstall_service')" icon="pi pi-trash" v-if="serviceStatus !== 'NotInstalled'"
-            @click="emit('uninstall-service')" severity="danger" text />
+          <label for="rpc-portal">{{ t('mode.rpc_portal') }}</label>
+          <InputText id="rpc-portal" v-model="serviceMode.rpc_portal" class="flex-1" />
+        </div>
+        <div class="flex items-center gap-2">
+          <label for="log-level">{{ t('mode.log_level') }}</label>
+          <Select id="log-level" v-model="serviceMode.file_log_level"
+            :options="['off', 'warn', 'info', 'debug', 'trace']" />
+        </div>
+        <div class="flex items-center gap-2">
+          <label for="log-dir">{{ t('mode.log_dir') }}</label>
+          <InputText id="log-dir" v-model="serviceMode.file_log_dir" class="flex-1" />
+        </div>
+        <div class="flex items-center gap-2 justify-between">
+          <div class="flex items-center gap-2">
+            <label>{{ t('mode.service_status') }}</label>
+            <span :class="statusColorClass">{{ t(`mode.service_status_${serviceStatus.toLowerCase()}`) }}</span>
+          </div>
+          <div class="flex items-center gap-2">
+            <Button :label="t('mode.stop_service')" icon="pi pi-stop-circle" v-if="serviceStatus === 'Running'"
+              @click="emit('stop-service')" severity="warn" text />
+            <Button :label="t('mode.uninstall_service')" icon="pi pi-trash" v-if="serviceStatus !== 'NotInstalled'"
+              @click="emit('uninstall-service')" severity="danger" text />
+          </div>
         </div>
       </div>
-    </div>
 
-    <div v-if="remoteMode" class="flex flex-col gap-2">
-      <div class="flex items-center gap-2">
-        <label for="remote-addr">{{ t('mode.remote_rpc_address') }}</label>
-        <InputText id="remote-addr" v-model="remoteMode.remote_rpc_address" class="flex-1" />
+      <div v-if="remoteMode" class="flex flex-col gap-2">
+        <div class="flex items-center gap-2">
+          <label for="remote-addr">{{ t('mode.remote_rpc_address') }}</label>
+          <InputText id="remote-addr" v-model="remoteMode.remote_rpc_address" class="flex-1" />
+        </div>
       </div>
-    </div>
+    </template>
 
-    <div v-if="showConfigServer" class="flex flex-col gap-2 pt-3 mt-1 border-t border-gray-200">
+    <div v-if="showConfigServer" class="flex flex-col gap-2"
+      :class="configServerOnly ? '' : 'pt-3 mt-1 border-t border-gray-200'">
       <div class="flex items-center justify-between gap-2 flex-wrap">
-        <label class="m-0 font-medium">{{ t('config-server.title') }}</label>
+        <label class="m-0 font-medium">
+          {{ configServerOnly ? t('config-server.connection_status') : t('config-server.title') }}
+        </label>
         <Tag v-if="configServerStatusLabel" :severity="configServerStatusSeverity || 'secondary'"
           :value="configServerStatusLabel" />
       </div>
