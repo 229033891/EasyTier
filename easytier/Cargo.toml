@@ -23,7 +23,7 @@ required-features = ["management"]
 
 [[bin]]
 name = "easytier-cli"
-path = "src/easytier-cli.rs"
+path = "src/easytier-cli/main.rs"
 required-features = ["management", "cli"]
 
 [lib]

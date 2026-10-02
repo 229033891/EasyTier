@@ -1,6 +1,6 @@
 module github.com/easytier/easytier/easytier-go
 
-go 1.20
+go 1.25.0
 
 require (
 	github.com/metacubex/wazero v0.0.0-20260628025728-9ae6bdcf2a7d

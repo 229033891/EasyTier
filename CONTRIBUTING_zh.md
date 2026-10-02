@@ -114,6 +114,27 @@ script/            # 安装 / 构建 / CI 辅助脚本
 两边可能存在同名模块（`gateway`、`tunnel`、`socket`、`instance`）——协议逻辑优先放
 `easytier-core`，原生 I/O 放 `easytier`。
 
+### 前端 / JS 工作区
+
+仓库里有意保留 **两套** pnpm workspace：
+
+| 工作区根目录 | 包含包 | 使用场景 |
+|---|---|---|
+| 仓库根（`pnpm-workspace.yaml`） | `easytier-gui`、`easytier-web/frontend*`、`tauri-plugin-vpnservice` | 桌面 GUI 与 Web 控制台 |
+| `easytier-js/` | `@easytier/browser`、`@easytier/cloudflare`、`@easytier/runtime` | Browser / Cloudflare WASM 宿主 |
+
+请 **不要** 合并这两套：JS workspace 锁定了 Cloudflare 工具链，避免污染 GUI 的 lockfile。
+干净仓库下的用法：
+
+```bash
+# GUI + Web 控制台
+pnpm -r install
+pnpm -r build
+
+# JavaScript WASM 宿主
+cd easytier-js && pnpm install && pnpm check
+```
+
 ## 构建指南
 
 ### 构建核心组件

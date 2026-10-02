@@ -106,6 +106,27 @@ Layering note: `easytier-core` owns portable networking domains; `easytier` owns
 host adapters. Both may contain similarly named modules (`gateway`, `tunnel`, `socket`,
 `instance`) — prefer `easytier-core` for protocol logic and `easytier` for native I/O.
 
+### Frontend / JS workspaces
+
+There are **two** pnpm workspaces on purpose:
+
+| Workspace root | Packages | When to use |
+|---|---|---|
+| Repository root (`pnpm-workspace.yaml`) | `easytier-gui`, `easytier-web/frontend*`, `tauri-plugin-vpnservice` | Desktop GUI and Web console development |
+| `easytier-js/` | `@easytier/browser`, `@easytier/cloudflare`, `@easytier/runtime` | Browser / Cloudflare WASM hosts |
+
+Do **not** merge them: the JS workspace pins Cloudflare tooling that should not affect the GUI lockfile.
+From a clean checkout:
+
+```bash
+# GUI + Web console
+pnpm -r install
+pnpm -r build
+
+# JavaScript WASM hosts
+cd easytier-js && pnpm install && pnpm check
+```
+
 ## Build Guide
 
 ### Building Core
