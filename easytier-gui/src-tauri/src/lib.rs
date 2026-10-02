@@ -1610,7 +1610,9 @@ pub fn run_gui() -> std::process::ExitCode {
             let config = LoggingConfig::builder()
                 .file_logger(FileLoggerConfig {
                     dir: Some(log_dir.to_string_lossy().to_string()),
-                    level: None,
+                    // Default warn so startup/RPC failures are visible without
+                    // requiring the user to open Settings → Logging first.
+                    level: Some("warn".to_string()),
                     file: None,
                     size_mb: None,
                     count: None,

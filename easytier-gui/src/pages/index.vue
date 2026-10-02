@@ -580,9 +580,9 @@ onMounted(async () => {
   }, 1000)
 })
 
-let current_log_level = 'off'
+let current_log_level = 'warn'
 const loggingDialogVisible = ref(false)
-const loggingLevel = ref('off')
+const loggingLevel = ref('warn')
 const loggingPath = ref('')
 const isLoggingSaving = ref(false)
 

@@ -54,7 +54,16 @@ impl FileSink {
             .map(parse_level)
             .transpose()
             .context("invalid file log level")?
-            .unwrap_or(LevelFilter::Off);
+            .unwrap_or_else(|| {
+                // No explicit level: keep file logging off unless a log dir/reload
+                // path is configured. Clients that enable a file sink without a
+                // level should still capture warn+ (startup/service failures).
+                if config.dir.is_some() || reload {
+                    LevelFilter::Warn
+                } else {
+                    LevelFilter::Off
+                }
+            });
         if level == LevelFilter::Off && !reload {
             return Ok(Self::disabled());
         }

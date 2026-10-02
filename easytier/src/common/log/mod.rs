@@ -570,7 +570,7 @@ mod tests {
 
         assert_eq!(
             logger.active_max_level.load(Ordering::Relaxed),
-            level_rank(LevelFilter::Off)
+            level_rank(LevelFilter::Warn)
         );
 
         let barrier = std::sync::Arc::new(std::sync::Barrier::new(9));

@@ -1374,7 +1374,10 @@ impl LoggingConfigLoader for &LoggingOptions {
 
     fn get_file_logger_config(&self) -> FileLoggerConfig {
         FileLoggerConfig {
-            level: self.file_log_level.clone(),
+            level: self
+                .file_log_level
+                .clone()
+                .or_else(|| self.file_log_dir.as_ref().map(|_| "warn".to_string())),
             dir: self.file_log_dir.clone(),
             file: None,
             size_mb: self.file_log_size,
