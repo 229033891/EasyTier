@@ -19,7 +19,6 @@ ffi-dataplane = [
 easytier = { workspace = true, default-features = true, features = ["tracing-log"] }
 easytier-core = { workspace = true, default-features = true }
 
-once_cell.workspace = true
 tokio = { workspace = true, default-features = true, features = ["rt-multi-thread", "io-util", "time", "sync", "macros"] }
 async-trait.workspace = true
 log.workspace = true

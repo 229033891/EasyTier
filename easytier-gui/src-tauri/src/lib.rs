@@ -41,7 +41,7 @@ use easytier_core::{
     socket::SocketListener, tunnel::Tunnel,
 };
 use std::ops::Deref;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 use tokio::sync::{Mutex, RwLock, RwLockReadGuard};
 use uuid::Uuid;
 
@@ -50,14 +50,13 @@ use tauri::{AppHandle, Emitter, Manager as _};
 #[cfg(not(target_os = "android"))]
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 
-static INSTANCE_MANAGER: once_cell::sync::Lazy<RwLock<Option<Arc<NativeInstanceManager>>>> =
-    once_cell::sync::Lazy::new(|| RwLock::new(None));
+static INSTANCE_MANAGER: LazyLock<RwLock<Option<Arc<NativeInstanceManager>>>> =
+    LazyLock::new(|| RwLock::new(None));
 
-static RPC_RING_UUID: once_cell::sync::Lazy<uuid::Uuid> =
-    once_cell::sync::Lazy::new(uuid::Uuid::new_v4);
+static RPC_RING_UUID: LazyLock<uuid::Uuid> = LazyLock::new(uuid::Uuid::new_v4);
 
-static CLIENT_MANAGER: once_cell::sync::Lazy<RwLock<Option<manager::GUIClientManager>>> =
-    once_cell::sync::Lazy::new(|| RwLock::new(None));
+static CLIENT_MANAGER: LazyLock<RwLock<Option<manager::GUIClientManager>>> =
+    LazyLock::new(|| RwLock::new(None));
 
 type BoxedTunnelListener = Box<dyn SocketListener<Accepted = Box<dyn Tunnel>>>;
 
@@ -72,11 +71,11 @@ struct RpcServer {
     _server: ApiRpcServer<BoxedTunnelListener>,
     bind_url: Option<url::Url>,
 }
-static RPC_SERVER: once_cell::sync::Lazy<Mutex<Option<RpcServer>>> =
-    once_cell::sync::Lazy::new(|| Mutex::new(None));
+static RPC_SERVER: LazyLock<Mutex<Option<RpcServer>>> =
+    LazyLock::new(|| Mutex::new(None));
 
-static WEB_CLIENT: once_cell::sync::Lazy<RwLock<Option<WebClient>>> =
-    once_cell::sync::Lazy::new(|| RwLock::new(None));
+static WEB_CLIENT: LazyLock<RwLock<Option<WebClient>>> =
+    LazyLock::new(|| RwLock::new(None));
 
 macro_rules! get_client_manager {
     () => {{

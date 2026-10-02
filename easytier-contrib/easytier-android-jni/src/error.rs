@@ -1,16 +1,15 @@
 use std::{
     ffi::{CStr, c_char},
     ptr,
-    sync::Mutex,
+    sync::{LazyLock, Mutex},
 };
 
 use easytier_ffi::{free_string, get_error_msg};
 use jni::JNIEnv;
 use jni::objects::JClass;
 use jni::sys::jstring;
-use once_cell::sync::Lazy;
 
-static JNI_CALLBACK_ERROR: Lazy<Mutex<Option<String>>> = Lazy::new(|| Mutex::new(None));
+static JNI_CALLBACK_ERROR: LazyLock<Mutex<Option<String>>> = LazyLock::new(|| Mutex::new(None));
 
 pub(crate) fn set_callback_error(error: String) {
     log::error!("{}", error);

@@ -10,7 +10,6 @@ publish = false
 async-trait.workspace = true
 easytier = { workspace = true, default-features = true }
 ipnet = "2.10"
-once_cell.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 tokio = { workspace = true, features = ["rt", "rt-multi-thread", "sync", "time"] }

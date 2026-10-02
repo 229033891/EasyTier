@@ -9,7 +9,7 @@ use std::{
 };
 use windows::Win32::NetworkManagement::IpHelper::INTERNAL_IF_OPER_STATUS;
 use windows::Win32::{
-    Foundation::NO_ERROR,
+    Foundation::{NO_ERROR, WIN32_ERROR},
     NetworkManagement::IpHelper::{GetIfEntry, MIB_IFROW, SetIfEntry},
     System::Diagnostics::Debug::{
         FORMAT_MESSAGE_FROM_SYSTEM, FORMAT_MESSAGE_IGNORE_INSERTS, FormatMessageW,
@@ -24,7 +24,8 @@ use winreg::{
 use super::{Error, IfConfiguerTrait};
 pub struct WindowsIfConfiger {}
 
-fn format_win_error(error: u32) -> String {
+fn format_win_error(error: WIN32_ERROR) -> String {
+    let code = error.0;
     // use FormatMessageW to get the error message
     let mut buffer = vec![0; 1024];
     let size = buffer.len() as u32;
@@ -34,7 +35,7 @@ fn format_win_error(error: u32) -> String {
         FormatMessageW(
             flags,
             None,
-            error,
+            code,
             0,
             PWSTR(buffer.as_mut_ptr()),
             size,
@@ -45,7 +46,7 @@ fn format_win_error(error: u32) -> String {
     format!(
         "{} (code: {})",
         String::from_utf16_lossy(&buffer[..str_end]).trim(),
-        error
+        code
     )
 }
 

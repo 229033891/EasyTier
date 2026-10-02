@@ -97,11 +97,22 @@ sudo apt install -y bridge-utils
 ## 项目结构
 
 ```
-easytier/          # 核心功能和库
-easytier-web/      # Web 仪表盘和前端
-easytier-gui/      # 桌面 GUI 应用
+easytier-core/     # 无 OS 依赖的可移植控制面（含 WASI/WASM）
+easytier-proto/    # 共享 protobuf / RPC 定义
+easytier/          # 原生宿主运行时、CLI（easytier-core / easytier-cli）、TUN、平台代码
+easytier-web/      # 配置服务（Rust）+ Vue 前端 + 共享 frontend-lib
+easytier-gui/      # 桌面 / 移动壳（Tauri 2 + Vue）
+easytier-js/       # Browser / Cloudflare WASM 宿主（独立 pnpm workspace）
+easytier-go/       # 通过 wazero 嵌入 easytier-core 的 Go 宿主
+easytier-contrib/  # 可选绑定：FFI、Android JNI、iOS、OHOS、mini、Magisk、uptime
+tauri-plugin-vpnservice/  # easytier-gui 使用的 Tauri VPN 插件
+script/            # 安装 / 构建 / CI 辅助脚本
 .github/workflows/ # CI/CD 配置文件
 ```
+
+分层说明：`easytier-core` 负责可移植网络域；`easytier` 负责 OS 相关宿主适配。
+两边可能存在同名模块（`gateway`、`tunnel`、`socket`、`instance`）——协议逻辑优先放
+`easytier-core`，原生 I/O 放 `easytier`。
 
 ## 构建指南
 

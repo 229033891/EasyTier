@@ -64,7 +64,7 @@ use napi_types::{
 use runtime::state::runtime_state::{RuntimeAggregateState, RuntimeInstanceState};
 use std::collections::{HashMap, HashSet};
 use std::format;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, LazyLock, Mutex};
 use uuid::Uuid;
 
 pub(crate) fn feature_log_sink(level: i32, target: &str, message: &str) {
@@ -75,8 +75,8 @@ pub(crate) fn feature_log_enabled(level: i32) -> bool {
     platform::logging::log_manager::app_log_enabled(level)
 }
 
-static WEB_CLIENTS: once_cell::sync::Lazy<Mutex<HashMap<String, ManagedWebClient>>> =
-    once_cell::sync::Lazy::new(|| Mutex::new(HashMap::new()));
+static WEB_CLIENTS: LazyLock<Mutex<HashMap<String, ManagedWebClient>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
 const PRO_CONFIG_SERVER_CLIENT_ID: &str = "__easytier_pro_config_server_client__";
 
 #[derive(Default)]

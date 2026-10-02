@@ -1,6 +1,6 @@
 use std::net::{IpAddr, SocketAddr, ToSocketAddrs as _};
 #[cfg(feature = "dns-resolver")]
-use std::{future::Future, io, pin::Pin, sync::Arc, time::Duration};
+use std::{future::Future, io, pin::Pin, sync::{Arc, LazyLock}, time::Duration};
 
 use anyhow::Context;
 use async_trait::async_trait;
@@ -18,8 +18,6 @@ use hickory_resolver::name_server::{GenericConnector, TokioConnectionProvider};
 use hickory_resolver::system_conf::read_system_conf;
 #[cfg(feature = "dns-resolver")]
 use hickory_resolver::{Resolver, TokioResolver};
-#[cfg(feature = "dns-resolver")]
-use once_cell::sync::Lazy;
 use tokio::net::lookup_host;
 #[cfg(feature = "dns-resolver")]
 use tokio::net::{TcpStream, UdpSocket};
@@ -66,7 +64,7 @@ fn resolver_config() -> (ResolverConfig, ResolverOpts) {
 }
 
 #[cfg(feature = "dns-resolver")]
-static RESOLVER: Lazy<Arc<Resolver<GenericConnector<TokioRuntimeProvider>>>> = Lazy::new(|| {
+static RESOLVER: LazyLock<Arc<Resolver<GenericConnector<TokioRuntimeProvider>>>> = LazyLock::new(|| {
     let (config, options) = resolver_config();
     let builder = TokioResolver::builder_with_config(config, TokioConnectionProvider::default())
         .with_options(options);

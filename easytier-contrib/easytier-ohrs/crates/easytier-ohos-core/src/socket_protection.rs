@@ -2,12 +2,11 @@ use std::{
     collections::{HashMap, VecDeque},
     io,
     os::fd::{AsRawFd, BorrowedFd, OwnedFd},
-    sync::{Arc, Mutex},
+    sync::{Arc, LazyLock, Mutex},
 };
 
 use async_trait::async_trait;
 use easytier::socket_protector::{NativeSocketProtector, set_native_socket_protector};
-use once_cell::sync::Lazy;
 use tokio::sync::{Notify, oneshot};
 
 const MAX_PENDING_SOCKET_PROTECTIONS: usize = 128;
@@ -38,8 +37,8 @@ pub struct SocketProtectionManager {
     request_ready: Notify,
 }
 
-pub static SOCKET_PROTECTION_MANAGER: Lazy<Arc<SocketProtectionManager>> =
-    Lazy::new(|| Arc::new(SocketProtectionManager::default()));
+pub static SOCKET_PROTECTION_MANAGER: LazyLock<Arc<SocketProtectionManager>> =
+    LazyLock::new(|| Arc::new(SocketProtectionManager::default()));
 
 impl SocketProtectionManager {
     fn enable(&self) {

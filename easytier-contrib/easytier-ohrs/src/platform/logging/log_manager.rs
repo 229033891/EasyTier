@@ -1,10 +1,9 @@
 use napi_derive_ohos::napi;
-use once_cell::sync::Lazy;
 use std::collections::VecDeque;
 use std::fs::{self, Metadata, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{LazyLock, Mutex};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -38,8 +37,8 @@ struct LogManagerState {
     options: LogOptions,
 }
 
-static LOG_MANAGER: Lazy<Mutex<LogManagerState>> =
-    Lazy::new(|| Mutex::new(LogManagerState::default()));
+static LOG_MANAGER: LazyLock<Mutex<LogManagerState>> =
+    LazyLock::new(|| Mutex::new(LogManagerState::default()));
 static CORE_LOG_ENABLED: AtomicBool = AtomicBool::new(false);
 static DEBUG_LOG_ENABLED: AtomicBool = AtomicBool::new(false);
 

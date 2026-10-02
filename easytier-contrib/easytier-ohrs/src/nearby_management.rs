@@ -12,7 +12,7 @@ use std::{
     path::{Path, PathBuf},
     pin::Pin,
     sync::{
-        Arc, Mutex,
+        Arc, LazyLock, Mutex,
         atomic::{AtomicBool, Ordering},
     },
     task::{Context, Poll},
@@ -110,8 +110,8 @@ struct NearbyHostCommandState {
     completions: HashMap<String, oneshot::Sender<Result<(), String>>>,
 }
 
-static NEARBY_HOST_COMMANDS: once_cell::sync::Lazy<Mutex<NearbyHostCommandState>> =
-    once_cell::sync::Lazy::new(|| {
+static NEARBY_HOST_COMMANDS: LazyLock<Mutex<NearbyHostCommandState>> =
+    LazyLock::new(|| {
         Mutex::new(NearbyHostCommandState {
             queued: VecDeque::new(),
             completions: HashMap::new(),
@@ -509,8 +509,8 @@ struct NearbyManagementHostServer {
     _server: StandAloneServer<NearbyUnixListener>,
 }
 
-static NEARBY_HOST_SERVER: once_cell::sync::Lazy<Mutex<Option<NearbyManagementHostServer>>> =
-    once_cell::sync::Lazy::new(|| Mutex::new(None));
+static NEARBY_HOST_SERVER: LazyLock<Mutex<Option<NearbyManagementHostServer>>> =
+    LazyLock::new(|| Mutex::new(None));
 
 pub(crate) fn runtime_management_config_control(_instance_id: Uuid) -> ConfigFileControl {
     ConfigFileControl::STATIC_CONFIG
@@ -721,9 +721,8 @@ impl Drop for NearbyManagementSession {
     }
 }
 
-static NEARBY_SESSIONS: once_cell::sync::Lazy<
-    Mutex<HashMap<String, Arc<NearbyManagementSession>>>,
-> = once_cell::sync::Lazy::new(|| Mutex::new(HashMap::new()));
+static NEARBY_SESSIONS: LazyLock<Mutex<HashMap<String, Arc<NearbyManagementSession>>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
 
 fn management_socket_path() -> Option<PathBuf> {
     config_root_dir().map(|root| root.join(MANAGEMENT_SOCKET_FILE_NAME))

@@ -1,12 +1,11 @@
 use std::{
     ffi::{CStr, c_char, c_void},
-    sync::{Arc, Mutex, MutexGuard},
+    sync::{Arc, LazyLock, Mutex, MutexGuard},
 };
 
 use easytier_ffi::ConfigServerEventCallback;
 use jni::JNIEnv;
 use jni::objects::{GlobalRef, JObject, JValue};
-use once_cell::sync::Lazy;
 
 use crate::error;
 
@@ -15,8 +14,8 @@ pub(crate) struct JniConfigServerCallback {
     callback: GlobalRef,
 }
 
-static CONFIG_SERVER_CALLBACK: Lazy<Mutex<Option<Arc<JniConfigServerCallback>>>> =
-    Lazy::new(|| Mutex::new(None));
+static CONFIG_SERVER_CALLBACK: LazyLock<Mutex<Option<Arc<JniConfigServerCallback>>>> =
+    LazyLock::new(|| Mutex::new(None));
 
 pub(crate) fn lock_callback_storage()
 -> Result<MutexGuard<'static, Option<Arc<JniConfigServerCallback>>>, String> {

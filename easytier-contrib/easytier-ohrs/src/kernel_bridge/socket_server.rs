@@ -10,14 +10,13 @@ use easytier_ohos_core::protocol::{
     TunRequestPayload, broadcast_local_socket_json_payload_message, broadcast_local_socket_message,
 };
 use easytier_ohos_core::routing::aggregate_tun_routes;
-use once_cell::sync::Lazy;
 use serde::Serialize;
 use std::collections::{HashMap, HashSet};
 use std::hash::Hash;
 use std::io::ErrorKind;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::PathBuf;
-use std::sync::Mutex;
+use std::sync::{LazyLock, Mutex};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -28,7 +27,8 @@ struct LocalSocketState {
     worker: JoinHandle<()>,
 }
 
-static LOCAL_SOCKET_STATE: Lazy<Mutex<Option<LocalSocketState>>> = Lazy::new(|| Mutex::new(None));
+static LOCAL_SOCKET_STATE: LazyLock<Mutex<Option<LocalSocketState>>> =
+    LazyLock::new(|| Mutex::new(None));
 const SOCKET_TICK_INTERVAL: Duration = Duration::from_millis(250);
 const TRAFFIC_STATS_INTERVAL: Duration = Duration::from_secs(1);
 const INSTANCE_POLL_INTERVAL: Duration = Duration::from_secs(1);

@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 
 use easytier::instance::factory::{
     NativeInstanceManager, NativeProcessManagement, native_instance_manager_with_runtime,
@@ -45,7 +45,7 @@ impl FfiContext {
     }
 }
 
-static FFI_CONTEXT: once_cell::sync::Lazy<FfiContext> = once_cell::sync::Lazy::new(FfiContext::new);
+static FFI_CONTEXT: LazyLock<FfiContext> = LazyLock::new(FfiContext::new);
 
 pub(crate) fn ffi_context() -> &'static FfiContext {
     &FFI_CONTEXT

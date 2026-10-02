@@ -1,6 +1,6 @@
-use once_cell::sync::Lazy;
+use std::sync::LazyLock;
 
-static LOGGER_INIT: Lazy<()> = Lazy::new(|| {
+static LOGGER_INIT: LazyLock<()> = LazyLock::new(|| {
     android_logger::init_once(
         android_logger::Config::default()
             .with_max_level(log::LevelFilter::Debug)
@@ -9,5 +9,5 @@ static LOGGER_INIT: Lazy<()> = Lazy::new(|| {
 });
 
 pub(crate) fn init() {
-    Lazy::force(&LOGGER_INIT);
+    LazyLock::force(&LOGGER_INIT);
 }

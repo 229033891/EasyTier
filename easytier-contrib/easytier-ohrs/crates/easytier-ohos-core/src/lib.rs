@@ -4,12 +4,11 @@ pub mod runtime;
 pub mod socket_protection;
 
 use easytier::instance::factory::{NativeInstanceManager, native_instance_manager_with_runtime};
-use once_cell::sync::Lazy;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 use tokio::runtime::{Builder, Runtime};
 
 /// The single Tokio runtime that owns HarmonyOS kernel and web-client work.
-pub static ASYNC_RUNTIME: Lazy<Runtime> = Lazy::new(|| {
+pub static ASYNC_RUNTIME: LazyLock<Runtime> = LazyLock::new(|| {
     Builder::new_multi_thread()
         .enable_all()
         .build()
@@ -18,7 +17,7 @@ pub static ASYNC_RUNTIME: Lazy<Runtime> = Lazy::new(|| {
 
 /// Process-wide EasyTier instance manager. Keeping it in the kernel crate prevents feature/storage
 /// code from acquiring lifecycle ownership.
-pub static INSTANCE_MANAGER: Lazy<Arc<NativeInstanceManager>> = Lazy::new(|| {
+pub static INSTANCE_MANAGER: LazyLock<Arc<NativeInstanceManager>> = LazyLock::new(|| {
     Arc::new(native_instance_manager_with_runtime(
         ASYNC_RUNTIME.handle().clone(),
     ))

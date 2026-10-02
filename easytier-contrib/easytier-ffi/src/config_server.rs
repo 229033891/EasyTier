@@ -3,7 +3,7 @@ use std::{
     collections::HashSet,
     ffi::{CString, c_char, c_int, c_void},
     sync::{
-        Arc, Mutex,
+        Arc, LazyLock, Mutex,
         atomic::{AtomicBool, Ordering},
     },
 };
@@ -29,14 +29,14 @@ thread_local! {
     static IN_CONFIG_SERVER_CALLBACK: Cell<bool> = const { Cell::new(false) };
 }
 
-static CONFIG_SERVER_CLIENT: once_cell::sync::Lazy<Mutex<Option<ManagedConfigServerClient>>> =
-    once_cell::sync::Lazy::new(|| Mutex::new(None));
-static CONFIG_SERVER_CLIENT_ACTIVE: once_cell::sync::Lazy<AtomicBool> =
-    once_cell::sync::Lazy::new(|| AtomicBool::new(false));
-static CONFIG_SERVER_CLIENT_STOPPING: once_cell::sync::Lazy<AtomicBool> =
-    once_cell::sync::Lazy::new(|| AtomicBool::new(false));
-static LAST_CONFIG_SERVER_CALLBACK_ERROR: once_cell::sync::Lazy<Mutex<Option<String>>> =
-    once_cell::sync::Lazy::new(|| Mutex::new(None));
+static CONFIG_SERVER_CLIENT: LazyLock<Mutex<Option<ManagedConfigServerClient>>> =
+    LazyLock::new(|| Mutex::new(None));
+static CONFIG_SERVER_CLIENT_ACTIVE: LazyLock<AtomicBool> =
+    LazyLock::new(|| AtomicBool::new(false));
+static CONFIG_SERVER_CLIENT_STOPPING: LazyLock<AtomicBool> =
+    LazyLock::new(|| AtomicBool::new(false));
+static LAST_CONFIG_SERVER_CALLBACK_ERROR: LazyLock<Mutex<Option<String>>> =
+    LazyLock::new(|| Mutex::new(None));
 
 pub(crate) struct ConfigServerCallbackScope;
 

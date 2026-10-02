@@ -1,11 +1,11 @@
 use easytier::proto::{api, common};
 use serde::Serialize;
 use std::collections::HashSet;
-use std::sync::Mutex;
+use std::sync::{LazyLock, Mutex};
 use url::Url;
 
-static ATTACHED_TUN_INSTANCE_IDS: once_cell::sync::Lazy<Mutex<HashSet<String>>> =
-    once_cell::sync::Lazy::new(|| Mutex::new(HashSet::new()));
+static ATTACHED_TUN_INSTANCE_IDS: LazyLock<Mutex<HashSet<String>>> =
+    LazyLock::new(|| Mutex::new(HashSet::new()));
 
 pub fn mark_tun_attached(instance_id: &str) {
     if let Ok(mut guard) = ATTACHED_TUN_INSTANCE_IDS.lock() {

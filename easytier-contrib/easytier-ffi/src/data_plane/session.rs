@@ -2,7 +2,7 @@ use std::{
     collections::HashMap,
     net::SocketAddr,
     sync::{
-        Arc, Mutex, RwLock,
+        Arc, LazyLock, Mutex, RwLock,
         atomic::{AtomicBool, AtomicU64, Ordering},
     },
     time::Duration,
@@ -23,10 +23,10 @@ use crate::{
 type CoreDataPlaneSession = DataPlaneSession<NativeInstanceHost>;
 
 static NEXT_SESSION_HANDLE: AtomicU64 = AtomicU64::new(1);
-static SESSIONS: once_cell::sync::Lazy<Mutex<HashMap<u64, Arc<NativeDataPlaneSession>>>> =
-    once_cell::sync::Lazy::new(|| Mutex::new(HashMap::new()));
-static DATA_PLANE_USAGE_LOCK: once_cell::sync::Lazy<RwLock<()>> =
-    once_cell::sync::Lazy::new(|| RwLock::new(()));
+static SESSIONS: LazyLock<Mutex<HashMap<u64, Arc<NativeDataPlaneSession>>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+static DATA_PLANE_USAGE_LOCK: LazyLock<RwLock<()>> =
+    LazyLock::new(|| RwLock::new(()));
 
 #[derive(Debug)]
 pub(super) struct NativeDataPlaneError {

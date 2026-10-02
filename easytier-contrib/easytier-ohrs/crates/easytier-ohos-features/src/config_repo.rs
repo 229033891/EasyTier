@@ -7,17 +7,16 @@ use crate::config::types::stored_config::{ExportTomlResult, StoredConfigRecord};
 use easytier::common::config::{NetworkConfigExt, TomlConfigLoader};
 use easytier::proto::api::manage::NetworkConfig;
 use easytier::proto::common::CompressionAlgoPb;
-use once_cell::sync::Lazy;
 use rusqlite::params;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::Mutex;
+use std::sync::{LazyLock, Mutex};
 use std::time::Instant;
 
 static CONFIG_ROOT_DIR: Mutex<Option<PathBuf>> = Mutex::new(None);
-static RUNTIME_CONFIG_SNAPSHOTS: Lazy<Mutex<HashMap<String, RuntimeConfigSnapshot>>> =
-    Lazy::new(|| Mutex::new(HashMap::new()));
+static RUNTIME_CONFIG_SNAPSHOTS: LazyLock<Mutex<HashMap<String, RuntimeConfigSnapshot>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
 pub const CONFIG_DIR_NAME: &str = "easytier-configs";
 pub const KERNEL_SOCKET_FILE_NAME: &str = "easytier-kernel.sock";
 

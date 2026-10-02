@@ -1,7 +1,7 @@
 use easytier::proto::ALL_DESCRIPTOR_BYTES;
-use once_cell::sync::Lazy;
 use prost_reflect::{Cardinality, DescriptorPool, FieldDescriptor, Kind, MessageDescriptor};
 use serde::Serialize;
+use std::sync::LazyLock;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct FieldOption {
@@ -39,7 +39,7 @@ pub struct ConfigFieldMapping {
     pub field_number: i32,
 }
 
-static DESCRIPTOR_POOL: Lazy<DescriptorPool> = Lazy::new(|| {
+static DESCRIPTOR_POOL: LazyLock<DescriptorPool> = LazyLock::new(|| {
     DescriptorPool::decode(ALL_DESCRIPTOR_BYTES)
         .expect("easytier descriptor pool should decode from embedded protobuf descriptors")
 });

@@ -2,14 +2,13 @@ use std::{
     io,
     net::{IpAddr, SocketAddr},
     sync::{
-        Arc, Weak,
+        Arc, LazyLock, Weak,
         atomic::{AtomicU32, Ordering},
     },
 };
 
 use bytes::{Bytes, BytesMut};
 use dashmap::DashMap;
-use once_cell::sync::Lazy;
 use pnet_datalink::{self as datalink, DataLinkSender, NetworkInterface};
 use smoltcp::wire::{
     EthernetFrame, EthernetProtocol, IpProtocol, Ipv4Packet, Ipv6Packet, TcpPacket,
@@ -200,8 +199,8 @@ enum NetworkNamespaceId {
 
 type InterfaceWorkerKey = (NetworkNamespaceId, String);
 
-static INTERFACE_MANAGERS: Lazy<DashMap<InterfaceWorkerKey, Weak<InterfaceWorker>>> =
-    Lazy::new(DashMap::new);
+static INTERFACE_MANAGERS: LazyLock<DashMap<InterfaceWorkerKey, Weak<InterfaceWorker>>> =
+    LazyLock::new(DashMap::new);
 
 fn current_network_namespace_id() -> Option<NetworkNamespaceId> {
     #[cfg(target_os = "linux")]

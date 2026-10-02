@@ -89,11 +89,22 @@ sudo apt install -y bridge-utils
 ## Project Structure
 
 ```
-easytier/          # Core functionality and libraries
-easytier-web/      # Web dashboard and frontend
-easytier-gui/      # Desktop GUI application
+easytier-core/     # OS-free portable control plane (incl. WASI/WASM builds)
+easytier-proto/    # Shared protobuf / RPC definitions
+easytier/          # Native host runtime, CLI binaries (easytier-core / easytier-cli), TUN, platform code
+easytier-web/      # Config server (Rust) + Vue frontend + shared frontend-lib
+easytier-gui/      # Desktop / mobile shell (Tauri 2 + Vue)
+easytier-js/       # Browser / Cloudflare WASM hosts (separate pnpm workspace)
+easytier-go/       # Go host embedding easytier-core via wazero
+easytier-contrib/  # Optional bindings: FFI, Android JNI, iOS, OHOS, mini, Magisk, uptime
+tauri-plugin-vpnservice/  # Tauri VPN service plugin used by easytier-gui
+script/            # Install / build / CI helper scripts
 .github/workflows/ # CI/CD configuration files
 ```
+
+Layering note: `easytier-core` owns portable networking domains; `easytier` owns OS-specific
+host adapters. Both may contain similarly named modules (`gateway`, `tunnel`, `socket`,
+`instance`) — prefer `easytier-core` for protocol logic and `easytier` for native I/O.
 
 ## Build Guide
 

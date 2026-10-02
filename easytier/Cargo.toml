@@ -131,9 +131,6 @@ uuid = { workspace = true, features = [
     "serde",
 ] }
 
-# for ring tunnel
-once_cell.workspace = true
-
 # for rpc
 prost.workspace = true
 anyhow.workspace = true
@@ -258,7 +255,6 @@ windows = { workspace = true, features = [
 encoding = "0.2"
 winreg = "0.56"
 windows-service = "0.8.1"
-winapi = { workspace = true, features = ["impl-default"] }
 
 [target.'cfg(not(windows))'.dependencies]
 jemallocator = { package = "tikv-jemallocator", version = "0.7.0", optional = true, features = [

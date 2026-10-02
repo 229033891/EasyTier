@@ -1,16 +1,16 @@
 use crate::config::types::stored_config::{
     SnapshotImportResult, StoredConfigList, StoredConfigMeta,
 };
-use once_cell::sync::Lazy;
 use rusqlite::{Connection, OptionalExtension, params};
 use std::collections::HashSet;
 use std::ops::{Deref, DerefMut};
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, MutexGuard};
+use std::sync::{LazyLock, Mutex, MutexGuard};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 static CONFIG_DB_PATH: Mutex<Option<PathBuf>> = Mutex::new(None);
-static CONFIG_DB_CONNECTION: Lazy<Mutex<Option<CachedConfigDb>>> = Lazy::new(|| Mutex::new(None));
+static CONFIG_DB_CONNECTION: LazyLock<Mutex<Option<CachedConfigDb>>> =
+    LazyLock::new(|| Mutex::new(None));
 const CONFIG_DB_FILE_NAME: &str = "easytier-config-store.db";
 
 struct CachedConfigDb {
