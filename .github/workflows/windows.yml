@@ -94,10 +94,12 @@ jobs:
           target: ${{ matrix.TARGET }}
           gui: true
           pnpm: true
-          # 空 filter = 编全部 workspace（GUI + vpnservice + web frontend + config-generator wasm）。
-          # Windows 同时出安装包与 ET-web-embed，不能像 Android 那样收窄并关掉 wasm。
-          # 不可写成仅 ./easytier-web/*，否则 GUI vue-tsc 找不到 vpn 插件类型。
-          pnpm-build-filter: ''
+          # GUI + workspace deps (frontend-lib, tauri-plugin-vpnservice-api).
+          # Do NOT build web frontend / config-generator wasm here — that is
+          # only needed for ET-web-embed and runs in a later step.
+          # Matching Android: plain "easytier-gui" skips vpnservice dist-js.
+          pnpm-build-filter: 'easytier-gui...'
+          pnpm-setup-wasm: 'false'
           token: ${{ secrets.GITHUB_TOKEN }}
 
       - uses: Swatinem/rust-cache@v2
@@ -149,12 +151,23 @@ jobs:
             exit 1
           fi
 
+      # prepare-build already ran `pnpm --filter easytier-gui... build`.
+      # Skip Tauri beforeBuildCommand so the GUI frontend is not built twice.
+      - name: Verify GUI frontend dist
+        if: ${{ matrix.GUI_TARGET != '' }}
+        run: |
+          set -euo pipefail
+          test -f easytier-gui/dist/index.html
+          # Deep-merged by `tauri build --config`; only clears beforeBuildCommand.
+          printf '%s\n' '{"build":{"beforeBuildCommand":""}}' \
+            > easytier-gui/src-tauri/tauri.ci.conf.json
+
       - name: Build GUI
         if: ${{ matrix.GUI_TARGET != '' && (!contains(matrix.GUI_TARGET, 'darwin') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository)) }}
         uses: tauri-apps/tauri-action@v0
         with:
           projectPath: ./easytier-gui
-          args: --verbose --target ${{ matrix.GUI_TARGET }}
+          args: --verbose --target ${{ matrix.GUI_TARGET }} --config tauri.ci.conf.json
 
       - name: Build GUI (signed and notarized)
         if: ${{ contains(matrix.GUI_TARGET, 'darwin') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
@@ -169,7 +182,7 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         with:
           projectPath: ./easytier-gui
-          args: --verbose --target ${{ matrix.GUI_TARGET }}
+          args: --verbose --target ${{ matrix.GUI_TARGET }} --config tauri.ci.conf.json
 
       - name: Notarize and staple macOS DMG
         if: ${{ contains(matrix.GUI_TARGET, 'darwin') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
@@ -213,6 +226,24 @@ jobs:
             xcrun stapler staple "$dmg"
             xcrun stapler validate "$dmg"
           done
+
+      # Web embed assets (frontend + config-generator wasm). Deferred until after
+      # GUI so Prepare stays light; product bits for ET-web-embed unchanged.
+      - name: Build web console assets for embed
+        if: ${{ contains(matrix.GUI_TARGET, 'windows') }}
+        uses: ./.github/actions/prepare-pnpm
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          build-filter: './easytier-web/*'
+          setup-protoc: 'false'
+          setup-wasm: 'true'
+
+      - name: Verify web embed frontend dist
+        if: ${{ contains(matrix.GUI_TARGET, 'windows') }}
+        run: |
+          set -euo pipefail
+          test -f easytier-web/frontend/dist/index.html
+          test -d easytier-web/frontend/dist/config-generator
 
       # One cargo invocation shares dependency compilation between web-embed and core/cli.
       - name: Build headless Windows binaries (web-embed + core/cli)
