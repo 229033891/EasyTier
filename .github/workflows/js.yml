@@ -32,10 +32,10 @@ jobs:
           cache: false
           rustflags: ''
 
-      - uses: arduino/setup-protoc@v3
-        with:
-          version: '35.1'
-          repo-token: ${{ github.token }}
+      - name: Setup protoc
+        run: bash script/install-protoc.sh
+        env:
+          PROTOC_VERSION: '35.1'
 
       - uses: actions/setup-node@v5
         with:

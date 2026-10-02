@@ -110,7 +110,7 @@ jobs:
           echo "GIT_DESC=$(git log -1 --format=%cd.%h --date=format:%Y-%m-%d_%H:%M:%S)" >> $GITHUB_ENV
 
       - name: Download web artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v5
         with:
           name: ET-web-dashboard
           path: easytier-web/frontend/dist/

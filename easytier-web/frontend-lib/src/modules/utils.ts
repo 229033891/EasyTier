@@ -102,7 +102,12 @@ export interface Location {
 }
 
 export interface DeviceInfo {
+    /** Display name shown in the console (alias or reported hostname). */
     hostname: string;
+    /** Hostname reported by the client heartbeat / archive. */
+    reported_hostname?: string;
+    /** Explicit console alias when set; empty/undefined means no alias. */
+    display_name?: string;
     public_ip: string;
     running_network_count: number;
     report_time: string;
@@ -112,10 +117,22 @@ export interface DeviceInfo {
     location: Location | undefined;
 }
 
+/** Archive row from `/api/v1/devices` (offline devices + display aliases). */
+export interface DeviceArchiveRow {
+    device_id: string;
+    hostname: string;
+    display_name?: string;
+    last_easytier_version?: string;
+    last_client_url?: string;
+    last_seen_at?: number;
+}
+
 export function buildDeviceInfo(device: any): DeviceInfo {
     const runningInstances = device.info?.running_network_instances ?? [];
+    const reported = device.info?.hostname ?? '';
     let dev_info: DeviceInfo = {
-        hostname: device.info?.hostname,
+        hostname: reported,
+        reported_hostname: reported,
         public_ip: device.client_url,
         running_network_instances: runningInstances.map((instance: any) => UuidToStr(instance)),
         running_network_count: runningInstances.length,
@@ -126,6 +143,73 @@ export function buildDeviceInfo(device: any): DeviceInfo {
     };
 
     return dev_info;
+}
+
+function archiveDisplayName(row: DeviceArchiveRow | undefined): string {
+    return (row?.display_name ?? '').trim();
+}
+
+/**
+ * Merge online `list_machines` results with `/devices` archive:
+ * - overlay `display_name` onto online devices
+ * - append offline archive rows not currently connected
+ */
+export function mergeDevicesWithArchive(
+    online: DeviceInfo[],
+    archived: DeviceArchiveRow[] | null | undefined,
+): DeviceInfo[] {
+    const archiveById = new Map<string, DeviceArchiveRow>();
+    for (const row of archived || []) {
+        if (row?.device_id) {
+            archiveById.set(row.device_id, row);
+        }
+    }
+
+    const devices: DeviceInfo[] = [];
+    const seen = new Set<string>();
+
+    for (const info of online) {
+        const machineId = info.machine_id;
+        if (machineId) {
+            seen.add(machineId);
+        }
+        const alias = archiveDisplayName(archiveById.get(machineId));
+        const reported = info.reported_hostname || info.hostname;
+        devices.push({
+            ...info,
+            reported_hostname: reported,
+            display_name: alias || undefined,
+            hostname: alias || reported,
+        });
+    }
+
+    for (const row of archived || []) {
+        if (!row?.device_id || seen.has(row.device_id)) {
+            continue;
+        }
+        const reported = row.hostname || row.device_id;
+        const alias = archiveDisplayName(row);
+        // Skip stub rows created only for rename before any heartbeat (empty hostname).
+        if (!row.hostname && !alias) {
+            continue;
+        }
+        devices.push({
+            hostname: alias || reported,
+            reported_hostname: reported,
+            display_name: alias || undefined,
+            public_ip: formatClientUrl(row.last_client_url) || row.last_client_url || '',
+            running_network_count: 0,
+            report_time: row.last_seen_at
+                ? new Date(row.last_seen_at * 1000).toLocaleString()
+                : '',
+            easytier_version: row.last_easytier_version || '',
+            running_network_instances: [],
+            machine_id: row.device_id,
+            location: undefined,
+        });
+    }
+
+    return devices;
 }
 
 // write a class to run a function periodically and can be stopped by calling stop(), use setTimeout to trigger the function

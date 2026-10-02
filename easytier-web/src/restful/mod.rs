@@ -14,7 +14,7 @@ use axum::extract::Path;
 use axum::http::{Request, StatusCode, header};
 use axum::middleware::{self as axum_mw, Next};
 use axum::response::Response;
-use axum::routing::{delete, post};
+use axum::routing::{delete, post, put};
 use axum::{Extension, Json, Router, extract::State, routing::get};
 use axum_login::tower_sessions::{ExpiredDeletion, SessionManagerLayer};
 use axum_login::{AuthManagerLayerBuilder, AuthUser, login_required};
@@ -63,6 +63,8 @@ struct GetSummaryJsonResp {
 struct DeviceArchiveItem {
     device_id: String,
     hostname: String,
+    #[serde(default)]
+    display_name: String,
     last_easytier_version: String,
     last_client_url: String,
     last_seen_at: i64,
@@ -71,6 +73,22 @@ struct DeviceArchiveItem {
 #[derive(Debug, serde::Deserialize, serde::Serialize)]
 struct ListDevicesJsonResp {
     devices: Vec<DeviceArchiveItem>,
+}
+
+#[derive(Debug, serde::Deserialize, serde::Serialize)]
+struct UpdateDeviceDisplayNameJsonReq {
+    display_name: String,
+}
+
+/// Normalize a console display alias: strip control chars, trim, cap at 32.
+fn normalize_device_display_name(raw: &str) -> String {
+    raw.chars()
+        .filter(|c| !c.is_control())
+        .collect::<String>()
+        .trim()
+        .chars()
+        .take(32)
+        .collect()
 }
 
 #[derive(Debug, serde::Deserialize, serde::Serialize)]
@@ -197,12 +215,30 @@ impl RestfulServer {
                 .map(|d| DeviceArchiveItem {
                     device_id: d.device_id,
                     hostname: d.hostname,
+                    display_name: d.display_name,
                     last_easytier_version: d.last_easytier_version,
                     last_client_url: d.last_client_url,
                     last_seen_at: d.last_seen_at,
                 })
                 .collect(),
         }))
+    }
+
+    async fn handle_update_device_display_name(
+        auth_session: AuthSession,
+        Extension(db): Extension<Db>,
+        Path(device_id): Path<uuid::Uuid>,
+        Json(payload): Json<UpdateDeviceDisplayNameJsonReq>,
+    ) -> Result<(), HttpHandleError> {
+        let Some(user) = auth_session.user else {
+            return Err((StatusCode::UNAUTHORIZED, other_error("No such user").into()));
+        };
+
+        let display_name = normalize_device_display_name(&payload.display_name);
+        db.set_device_display_name(user.id(), device_id, &display_name)
+            .await
+            .map_err(convert_db_error)?;
+        Ok(())
     }
 
     async fn handle_generate_config(
@@ -318,6 +354,10 @@ impl RestfulServer {
             .route("/api/v1/summary", get(Self::handle_get_summary))
             .route("/api/v1/sessions", get(Self::handle_list_all_sessions))
             .route("/api/v1/devices", get(Self::handle_list_devices))
+            .route(
+                "/api/v1/devices/{device-id}",
+                put(Self::handle_update_device_display_name),
+            )
             .merge(NetworkApi::build_route())
             .merge(peer_history::PeerHistoryApi::build_route())
             .merge(rpc::router())

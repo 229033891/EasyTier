@@ -5,6 +5,7 @@ import { useRoute, useRouter } from 'vue-router';
 import { ProgressSpinner, useToast } from 'primevue';
 import { useI18n } from 'vue-i18n';
 import ApiClient from '../modules/api';
+import { loadMergedDevices } from '../modules/deviceArchive';
 
 const props = defineProps<{
     api: ApiClient;
@@ -77,7 +78,8 @@ const remoteClient = computed<Api.RemoteClient>(() => props.api.get_remote_clien
 
 const newConfigGenerator = () => {
     const config = NetworkTypes.DEFAULT_NETWORK_CONFIG();
-    config.hostname = deviceInfo.value?.hostname;
+    config.hostname =
+        deviceInfo.value?.reported_hostname || deviceInfo.value?.hostname;
     return config;
 }
 
@@ -97,12 +99,7 @@ const backToList = () => {
 }
 
 const loadDevices = async () => {
-    const resp = await props.api?.list_machines();
-    const devices: Array<Utils.DeviceInfo> = [];
-    for (const device of (resp || [])) {
-        devices.push(Utils.buildDeviceInfo(device));
-    }
-    deviceList.value = devices;
+    deviceList.value = await loadMergedDevices(props.api, { toast, t });
 };
 
 const periodFunc = new Utils.PeriodicTask(async () => {

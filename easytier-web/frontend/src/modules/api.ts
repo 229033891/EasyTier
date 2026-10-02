@@ -228,12 +228,19 @@ export class ApiClient {
     public async list_devices(): Promise<Array<{
         device_id: string;
         hostname: string;
+        display_name?: string;
         last_easytier_version: string;
         last_client_url: string;
         last_seen_at: number;
     }>> {
         const response = await this.client.get<any, { devices: Array<any> }>('/devices');
         return response.devices || [];
+    }
+
+    public async update_device_display_name(deviceId: string, displayName: string): Promise<void> {
+        await this.client.put(`/devices/${deviceId}`, {
+            display_name: displayName,
+        });
     }
 
     public async get_summary(): Promise<Summary> {

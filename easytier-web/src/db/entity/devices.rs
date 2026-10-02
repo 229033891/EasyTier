@@ -13,6 +13,9 @@ pub struct Model {
     pub device_id: String,
     #[sea_orm(column_type = "Text")]
     pub hostname: String,
+    /// Web-console display alias; empty means fall back to `hostname`.
+    #[sea_orm(column_type = "Text")]
+    pub display_name: String,
     #[sea_orm(column_type = "Text")]
     pub last_easytier_version: String,
     #[sea_orm(column_type = "Text")]

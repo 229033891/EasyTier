@@ -115,6 +115,7 @@ chips_placeholder: 例如： {0}, 输入后在下拉框中选择生效
 show_node_details: 显示节点详细信息
 hide_node_details: 隐藏节点详细信息
 hostname_placeholder: '留空默认为主机名: {0}'
+hostname_help: 网络节点主机名，用于路由与 Magic DNS（如 &lt;hostname&gt;.et.net）。与 Web 控制台设备列表显示名无关。
 dev_name_placeholder: 注意：当多个网络同时使用相同的TUN接口名称时，将会在设置TUN的IP时产生冲突，留空以自动生成随机名称
 off_text: 点击关闭
 on_text: 点击开启
@@ -612,13 +613,13 @@ web:
     page_title_status: 网络状态
     page_title_config: 编辑网络
     no_running_network_hint: 该设备当前没有运行中的虚拟网。可打开状态页选择已停用网络，或切换到配置页创建。
-    sort_by_hostname: 主机名
+    sort_by_hostname: 显示名
     sort_by_public_ip: 公网IP
     sort_by_version: 版本
     sort_by_networks: 网络数量
     sort_direction_asc: 当前升序，点击切换为降序
     sort_direction_desc: 当前降序，点击切换为升序
-    hostname: 主机名
+    hostname: 显示名
     public_ip: 公网IP
     connection_addr: 连接地址
     networks: 网络数量
@@ -627,6 +628,15 @@ web:
     machine_id: 机器ID
     unknown_location: 未知位置
     network_count: 运行中网络数量
+    rename: 修改显示名
+    rename_placeholder: 留空则使用上报主机名
+    rename_reported: '上报主机名: {0}'
+    rename_hint: 仅影响 Web 控制台设备列表，不会修改网络配置中的节点主机名。
+    rename_clear: 清除别名
+    rename_success: 显示名已更新
+    rename_failed: 更新显示名失败
+    reported_hostname: 上报主机名
+    archive_load_failed: 设备归档加载失败，暂时沿用上次显示名
     back_to_list: 返回设备列表
     back_to_list_tip: 返回设备列表，不保存未提交的修改
     back_to_network_list: 返回网络列表

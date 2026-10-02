@@ -1,12 +1,13 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
 import { TOAST_LIFE } from 'easytier-frontend-lib'
-import { Button, ProgressSpinner, useToast, Dropdown } from 'primevue';
+import { Button, Dialog, InputText, ProgressSpinner, useToast, Dropdown } from 'primevue';
 import { Utils, tooltipDirective } from 'easytier-frontend-lib';
 import { useRouter } from 'vue-router';
 import DeviceDetails from './DeviceDetails.vue';
 import { useI18n } from 'vue-i18n'
 import ApiClient from '../modules/api';
+import { loadMergedDevices } from '../modules/deviceArchive';
 import { usePollingList } from '../modules/usePollingList';
 
 const { t } = useI18n()
@@ -32,39 +33,55 @@ const api = props.api;
 const router = useRouter();
 const toast = useToast();
 
+const renameVisible = ref(false);
+const renameSaving = ref(false);
+const renameDeviceId = ref('');
+const renameInput = ref('');
+const renameReportedHostname = ref('');
+
 const loadDevices = async (): Promise<Array<Utils.DeviceInfo>> => {
-    if (!api) return [];
-    const [resp, archived] = await Promise.all([
-        api.list_machines(),
-        api.list_devices().catch(() => [] as Array<any>),
-    ]);
-    const devices: Array<Utils.DeviceInfo> = [];
-    const seen = new Set<string>();
-    for (const device of (resp || [])) {
-        const info = Utils.buildDeviceInfo(device);
-        devices.push(info);
-        if (info.machine_id)
-            seen.add(info.machine_id);
-    }
-    // Merge offline archive rows that are not currently connected.
-    for (const row of (archived || [])) {
-        if (!row?.device_id || seen.has(row.device_id))
-            continue;
-        devices.push({
-            hostname: row.hostname || row.device_id,
-            public_ip: Utils.formatClientUrl(row.last_client_url) || row.last_client_url || '',
-            running_network_count: 0,
-            report_time: row.last_seen_at ? new Date(row.last_seen_at * 1000).toLocaleString() : '',
-            easytier_version: row.last_easytier_version || '',
-            running_network_instances: [],
-            machine_id: row.device_id,
-            location: undefined,
-        });
-    }
-    return devices;
+    return loadMergedDevices(api, { toast, t });
 };
 
-const { data: deviceList } = usePollingList<Array<Utils.DeviceInfo>>({ fetcher: loadDevices });
+const { data: deviceList, reload: reloadDevices } = usePollingList<Array<Utils.DeviceInfo>>({
+    fetcher: loadDevices,
+});
+
+const openRenameDialog = (device: Utils.DeviceInfo) => {
+    renameDeviceId.value = device.machine_id;
+    renameReportedHostname.value = device.reported_hostname || device.hostname;
+    renameInput.value = (device.display_name || '').trim();
+    renameVisible.value = true;
+};
+
+const saveRename = async () => {
+    if (!api || !renameDeviceId.value || renameSaving.value) return;
+    renameSaving.value = true;
+    try {
+        await api.update_device_display_name(renameDeviceId.value, renameInput.value.trim());
+        renameVisible.value = false;
+        await reloadDevices();
+        toast.add({
+            severity: 'success',
+            summary: t('web.device.rename_success'),
+            life: TOAST_LIFE.success,
+        });
+    } catch (e) {
+        toast.add({
+            severity: 'error',
+            summary: t('web.device.rename_failed'),
+            detail: String(e),
+            life: TOAST_LIFE.error,
+        });
+    } finally {
+        renameSaving.value = false;
+    }
+};
+
+const clearRename = async () => {
+    renameInput.value = '';
+    await saveRename();
+};
 
 /** 打开设备管理全页：status=查看/启停；config=编辑/新建 */
 const handleDeviceManagement = (device: Utils.DeviceInfo, mode: 'status' | 'config') => {
@@ -480,8 +497,23 @@ const locationText = (device: Utils.DeviceInfo): string => {
                 <div v-for="device in sortedDeviceList" :key="device.machine_id" class="device-card">
                     <div class="card-header">
                         <div class="flex justify-between items-center mb-2">
-                            <div class="font-semibold truncate card-title"
-                                v-tooltip.top="device.hostname">{{ device.hostname }}
+                            <div class="flex items-center gap-1 min-w-0 flex-1">
+                                <div class="font-semibold truncate card-title"
+                                    v-tooltip.top="device.reported_hostname && device.reported_hostname !== device.hostname
+                                        ? `${device.hostname} (${device.reported_hostname})`
+                                        : device.hostname">{{ device.hostname }}
+                                </div>
+                                <Button
+                                    icon="pi pi-pencil"
+                                    severity="secondary"
+                                    rounded
+                                    text
+                                    size="small"
+                                    class="et-icon-action-btn device-rename-btn shrink-0"
+                                    v-tooltip.top="t('web.device.rename')"
+                                    :aria-label="t('web.device.rename')"
+                                    @click="openRenameDialog(device)"
+                                />
                             </div>
 
                             <div class="text-xs version-badge" v-tooltip.top="`EasyTier ${device.easytier_version}`">
@@ -534,4 +566,50 @@ const locationText = (device: Utils.DeviceInfo): string => {
                 </div>
         </div>
     </div>
+
+    <Dialog
+        v-model:visible="renameVisible"
+        modal
+        :header="t('web.device.rename')"
+        :style="{ width: '24rem' }"
+        :closable="!renameSaving"
+    >
+        <div class="flex flex-col gap-3">
+            <div class="text-sm text-muted-color">
+                {{ t('web.device.rename_reported', [renameReportedHostname]) }}
+            </div>
+            <div class="text-sm text-muted-color">
+                {{ t('web.device.rename_hint') }}
+            </div>
+            <InputText
+                v-model="renameInput"
+                class="w-full"
+                :placeholder="t('web.device.rename_placeholder')"
+                maxlength="32"
+                :disabled="renameSaving"
+                @keyup.enter="saveRename"
+            />
+        </div>
+        <template #footer>
+            <Button
+                :label="t('web.device.rename_clear')"
+                severity="secondary"
+                text
+                :disabled="renameSaving"
+                @click="clearRename"
+            />
+            <Button
+                :label="t('close')"
+                severity="secondary"
+                text
+                :disabled="renameSaving"
+                @click="renameVisible = false"
+            />
+            <Button
+                :label="t('save')"
+                :loading="renameSaving"
+                @click="saveRename"
+            />
+        </template>
+    </Dialog>
 </template>

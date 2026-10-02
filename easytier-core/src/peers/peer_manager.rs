@@ -1488,6 +1488,7 @@ impl PeerManagerCore {
     pub fn get_peer_session_store(&self) -> Arc<PeerSessionStore> {
         self.peer_session_store.clone()
     }
+    #[cfg(feature = "proxy-packet")]
     pub(crate) fn get_nic_channel(&self) -> HostPacketSender {
         self.nic_channel.clone()
     }

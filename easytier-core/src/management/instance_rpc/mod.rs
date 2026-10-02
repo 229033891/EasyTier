@@ -16,10 +16,7 @@ use easytier_proto::{
 };
 
 use crate::{
-    config::{
-        IpPrefix, ProxyNetworkConfig,
-        toml::{ConfigLoader as _, TomlConfig},
-    },
+    config::{IpPrefix, ProxyNetworkConfig},
     connectivity::manual::{ManualConnectorSnapshot, ManualConnectorStatus},
     instance::{
         CoreInstance, CoreInstanceHost,
@@ -27,6 +24,8 @@ use crate::{
     },
     peers::{context::TrustedKeySource, foreign_network::ForeignNetworkEntryInfo},
 };
+#[cfg(feature = "web-client")]
+use crate::config::toml::{ConfigLoader as _, TomlConfig};
 
 use super::resolve_instance;
 #[cfg(feature = "web-client")]

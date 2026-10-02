@@ -18,7 +18,7 @@ inputs:
     required: true
     default: 'true'
   token:
-    description: 'GitHub token, used by setup-protoc action'
+    description: 'GitHub token (optional; reserved for future authenticated downloads)'
     required: false
 runs:
   using: 'composite'
@@ -34,17 +34,10 @@ runs:
       shell: bash
 
     - name: Setup protoc
-      uses: arduino/setup-protoc@v3
-      with:
-        version: '35.1'
-        # GitHub repo token to use to avoid rate limiter
-        repo-token: ${{ inputs.token }}
-
-    - name: Verify protoc version
-      run: |
-        version="$(protoc --version | tr -d '\r')"
-        test "$version" = "libprotoc 35.1"
+      run: bash script/install-protoc.sh
       shell: bash
+      env:
+        PROTOC_VERSION: '35.1'
 
     - name: Setup Frontend Environment
       if: ${{ inputs.pnpm == 'true' }}

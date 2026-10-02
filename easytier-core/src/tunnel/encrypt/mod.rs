@@ -149,6 +149,15 @@ pub(crate) fn algorithm_is_available(algorithm: EncryptionAlgorithm) -> bool {
     }
 }
 
+#[cfg_attr(
+    not(any(
+        feature = "openssl-crypto",
+        feature = "ring-crypto",
+        feature = "aes-gcm",
+        feature = "chacha20"
+    )),
+    allow(dead_code)
+)]
 fn is_aead_algorithm(algorithm: EncryptionAlgorithm) -> bool {
     matches!(
         algorithm,

@@ -22,6 +22,13 @@ defineProps<{
       <div class="detail-label">{{ t('web.device.hostname') }}</div>
       <div class="detail-value">{{ device.hostname }}</div>
     </div>
+    <div
+      v-if="device.reported_hostname && device.reported_hostname !== device.hostname"
+      class="detail-item reported-hostname"
+    >
+      <div class="detail-label">{{ t('web.device.reported_hostname') }}</div>
+      <div class="detail-value">{{ device.reported_hostname }}</div>
+    </div>
     <div class="detail-item public-ip">
       <div class="detail-label">{{ t('web.device.connection_addr') }}</div>
       <div class="detail-value">{{ device.public_ip }}</div>

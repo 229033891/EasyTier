@@ -484,7 +484,11 @@ function removeVpnPortalClient(index: number) {
 
               <div class="flex flex-col gap-2">
                 <div class="config-inline-field">
-                  <label for="hostname" class="config-inline-label">{{ t('hostname') }}</label>
+                  <div class="config-inline-label flex items-center gap-1">
+                    <label for="hostname">{{ t('hostname') }}</label>
+                    <i class="pi pi-question-circle config-help-tip"
+                      v-tooltip.top="{ value: t('hostname_help'), escape: false }" role="img"></i>
+                  </div>
                   <div class="config-inline-control">
                     <InputText id="hostname" v-model="curNetwork.hostname" aria-describedby="hostname-help"
                       :format="true" :placeholder="t('hostname_placeholder', [props.hostname])" fluid />

@@ -1310,6 +1310,8 @@ impl Db {
     }
 
     /// Upsert device archive row from heartbeat / list activity.
+    ///
+    /// Does **not** overwrite an existing `display_name` alias.
     pub async fn upsert_device(
         &self,
         user_id: UserIdInDb,
@@ -1323,9 +1325,9 @@ impl Db {
         sqlx::query(
             r#"
             INSERT INTO devices (
-                user_id, device_id, hostname, last_easytier_version,
+                user_id, device_id, hostname, display_name, last_easytier_version,
                 last_client_url, last_seen_at, create_time, update_time
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, '', ?, ?, ?, ?, ?)
             ON CONFLICT(user_id, device_id) DO UPDATE SET
                 hostname = excluded.hostname,
                 last_easytier_version = excluded.last_easytier_version,
@@ -1340,6 +1342,41 @@ impl Db {
         .bind(easytier_version)
         .bind(client_url)
         .bind(last_seen_at)
+        .bind(now)
+        .bind(now)
+        .execute(&self.db)
+        .await
+        .map_err(sqlx_db_error)?;
+        Ok(())
+    }
+
+    /// Set or clear the web-console display alias for a device archive row.
+    ///
+    /// Empty `display_name` clears the alias (list falls back to reported hostname).
+    /// Creates a stub archive row when the device has not been upserted yet so that
+    /// renaming an online machine cannot fail with "not found" before the first
+    /// successful heartbeat archive write.
+    pub async fn set_device_display_name(
+        &self,
+        user_id: UserIdInDb,
+        device_id: Uuid,
+        display_name: &str,
+    ) -> Result<(), DbErr> {
+        let now = chrono::Local::now().fixed_offset();
+        sqlx::query(
+            r#"
+            INSERT INTO devices (
+                user_id, device_id, hostname, display_name, last_easytier_version,
+                last_client_url, last_seen_at, create_time, update_time
+            ) VALUES (?, ?, '', ?, '', '', 0, ?, ?)
+            ON CONFLICT(user_id, device_id) DO UPDATE SET
+                display_name = excluded.display_name,
+                update_time = excluded.update_time
+            "#,
+        )
+        .bind(user_id)
+        .bind(device_id.to_string())
+        .bind(display_name)
         .bind(now)
         .bind(now)
         .execute(&self.db)
@@ -1879,7 +1916,77 @@ mod tests {
         let devices = db.list_user_devices(user_id).await.unwrap();
         assert_eq!(devices.len(), 1);
         assert_eq!(devices[0].hostname, "host-b");
+        assert_eq!(devices[0].display_name, "");
         assert_eq!(devices[0].last_easytier_version, "2.6.5");
         assert_eq!(devices[0].last_seen_at, 1_700_000_100);
+    }
+
+    #[tokio::test]
+    async fn device_display_name_survives_heartbeat_upsert() {
+        let db = Db::memory_db().await;
+        let user_id = db
+            .auto_create_user("device-display-name-user")
+            .await
+            .unwrap()
+            .id;
+        let device_id = uuid::Uuid::new_v4();
+
+        db.upsert_device(
+            user_id,
+            device_id,
+            "host-a",
+            "2.6.4",
+            "udp://127.0.0.1:22020",
+            1_700_000_000,
+        )
+        .await
+        .unwrap();
+
+        assert!(
+            db.set_device_display_name(user_id, device_id, "APP-SERVER")
+                .await
+                .is_ok()
+        );
+
+        db.upsert_device(
+            user_id,
+            device_id,
+            "host-b",
+            "2.6.5",
+            "udp://127.0.0.1:22021",
+            1_700_000_100,
+        )
+        .await
+        .unwrap();
+
+        let devices = db.list_user_devices(user_id).await.unwrap();
+        assert_eq!(devices.len(), 1);
+        assert_eq!(devices[0].hostname, "host-b");
+        assert_eq!(devices[0].display_name, "APP-SERVER");
+
+        assert!(
+            db.set_device_display_name(user_id, device_id, "")
+                .await
+                .is_ok()
+        );
+        let devices = db.list_user_devices(user_id).await.unwrap();
+        assert_eq!(devices[0].display_name, "");
+
+        // Renaming a device with no prior archive row should create a stub.
+        let missing_id = uuid::Uuid::new_v4();
+        assert!(
+            db.set_device_display_name(user_id, missing_id, "stub-alias")
+                .await
+                .is_ok()
+        );
+        let stub = db
+            .list_user_devices(user_id)
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|d| d.device_id == missing_id.to_string())
+            .expect("stub archive row");
+        assert_eq!(stub.display_name, "stub-alias");
+        assert_eq!(stub.hostname, "");
     }
 }

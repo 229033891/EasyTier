@@ -1,16 +1,18 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue';
-import { Button, ProgressSpinner } from 'primevue';
+import { Button, ProgressSpinner, useToast } from 'primevue';
 import { Utils, tooltipDirective, NetworkTypes } from 'easytier-frontend-lib';
 import { useRouter } from 'vue-router';
 import { useI18n } from 'vue-i18n';
 import ApiClient from '../modules/api';
+import { loadMergedDevices } from '../modules/deviceArchive';
 import { usePollingList } from '../modules/usePollingList';
 import ListPageShell from './ListPageShell.vue';
 
 const vTooltip = tooltipDirective;
 const { t } = useI18n();
 const router = useRouter();
+const toast = useToast();
 
 const props = defineProps({
     api: ApiClient,
@@ -232,11 +234,7 @@ const refreshNetworkMetas = async (devices: Utils.DeviceInfo[]) => {
 };
 
 const loadDevices = async (): Promise<Array<Utils.DeviceInfo>> => {
-    const resp = await props.api?.list_machines();
-    const devices: Array<Utils.DeviceInfo> = [];
-    for (const device of (resp || [])) {
-        devices.push(Utils.buildDeviceInfo(device));
-    }
+    const devices = await loadMergedDevices(props.api, { toast, t });
     void refreshNetworkMetas(devices);
     return devices;
 };

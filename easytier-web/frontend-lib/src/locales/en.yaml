@@ -116,6 +116,7 @@ show_node_details: Show Node Details
 hide_node_details: Hide Node Details
 chips_placeholder: 'e.g: {0}, select from the dropdown after input'
 hostname_placeholder: 'Leave blank and default to host name: {0}'
+hostname_help: Network node hostname for routing and Magic DNS (e.g. &lt;hostname&gt;.et.net). Independent of the Web console device display name.
 dev_name_placeholder: 'Note: When multiple networks use the same TUN interface name at the same time, there will be a conflict when setting the TUN''s IP. Leave blank to automatically generate a random name.'
 off_text: Press to disable
 on_text: Press to enable
@@ -611,13 +612,13 @@ web:
     page_title_status: Network Status
     page_title_config: Edit Network
     no_running_network_hint: No running network on this device. You can still open Status to pick a stopped network, or switch to Config to create one.
-    sort_by_hostname: Hostname
+    sort_by_hostname: Display Name
     sort_by_public_ip: Public IP
     sort_by_version: Version
     sort_by_networks: Network Count
     sort_direction_asc: Currently ascending, click to switch to descending
     sort_direction_desc: Currently descending, click to switch to ascending
-    hostname: Hostname
+    hostname: Display Name
     public_ip: Public IP
     connection_addr: Connection Address
     networks: Network Count
@@ -626,6 +627,15 @@ web:
     machine_id: Machine ID
     unknown_location: Unknown Location
     network_count: Running Networks
+    rename: Rename Display Name
+    rename_placeholder: Leave blank to use reported hostname
+    rename_reported: 'Reported hostname: {0}'
+    rename_hint: Only affects the Web console device list. Does not change the network node hostname in config.
+    rename_clear: Clear alias
+    rename_success: Display name updated
+    rename_failed: Failed to update display name
+    reported_hostname: Reported Hostname
+    archive_load_failed: Failed to load device archive; keeping last display names
     back_to_list: Back to Device List
     back_to_list_tip: Return to the device list without saving unsaved changes
     back_to_network_list: Back to Network List
