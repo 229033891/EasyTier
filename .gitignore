@@ -55,6 +55,7 @@ easytier-web/config-generator/src/generated/
 
 easytier-gui/src-tauri/*.dll
 easytier-gui/src-tauri/*.sys
+easytier-gui/src-tauri/tauri.ci.conf.json
 /easytier-contrib/easytier-ohrs/dist/
 
 .direnv
