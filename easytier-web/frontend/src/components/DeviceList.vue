@@ -83,8 +83,19 @@ const clearRename = async () => {
     await saveRename();
 };
 
-/** 打开设备管理全页：status=查看/启停；config=编辑/新建 */
+/** 打开设备管理全页：status=查看/启停；config=编辑/新建。离线设备不可操作网络。 */
+const isDeviceOnline = (device: Utils.DeviceInfo) => device.online !== false;
+
 const handleDeviceManagement = (device: Utils.DeviceInfo, mode: 'status' | 'config') => {
+    if (!isDeviceOnline(device)) {
+        toast.add({
+            severity: 'warn',
+            summary: t('web.device.offline'),
+            detail: t('web.device.offline_action_denied'),
+            life: TOAST_LIFE.warn,
+        });
+        return;
+    }
     const instanceId = device.running_network_instances?.[0];
     if (mode === 'status' && !instanceId) {
         toast.add({
@@ -127,6 +138,12 @@ const sortDevices = (devices: Array<Utils.DeviceInfo> | undefined) => {
     const direction = ascending.value ? 1 : -1;
 
     return [...devices].sort((a, b) => {
+        // 在线优先，避免离线设备挤在前面
+        const onlineDiff = Number(isDeviceOnline(b)) - Number(isDeviceOnline(a));
+        if (onlineDiff !== 0) {
+            return onlineDiff;
+        }
+
         let result = 0;
 
         switch (sortField) {
@@ -265,6 +282,40 @@ const locationText = (device: Utils.DeviceInfo): string => {
     font-size: var(--et-fs-meta);
 }
 
+.device-status-dot {
+    flex: 0 0 auto;
+    width: 0.5rem;
+    height: 0.5rem;
+    border-radius: 999px;
+}
+
+.device-status-dot--online {
+    background: var(--et-success, #10b981);
+}
+
+.device-status-dot--offline {
+    background: var(--text-color-secondary, #94a3b8);
+}
+
+.device-status-tag {
+    font-size: var(--et-fs-meta, 0.75rem);
+    font-weight: 600;
+    padding: 0.1rem 0.45rem;
+    border-radius: 999px;
+    line-height: 1.2;
+    white-space: nowrap;
+}
+
+.device-status-tag--online {
+    color: #047857;
+    background: color-mix(in srgb, var(--et-success, #10b981) 16%, transparent);
+}
+
+.device-status-tag--offline {
+    color: var(--text-color-secondary, #64748b);
+    background: var(--surface-100, #f1f5f9);
+}
+
 .sort-dropdown {
     min-width: 6rem;
     max-width: 9rem;
@@ -301,6 +352,16 @@ const locationText = (device: Utils.DeviceInfo): string => {
 
     .version-badge {
         background-color: var(--primary-color, var(--et-primary, #0ea5e9));
+    }
+
+    .device-status-tag--online {
+        color: #6ee7b7;
+        background: color-mix(in srgb, var(--et-success, #10b981) 22%, transparent);
+    }
+
+    .device-status-tag--offline {
+        color: var(--text-color-secondary, #94a3b8);
+        background: var(--surface-100, #334155);
     }
 
     .card-details {
@@ -498,6 +559,12 @@ const locationText = (device: Utils.DeviceInfo): string => {
                     <div class="card-header">
                         <div class="flex justify-between items-center mb-2">
                             <div class="flex items-center gap-1 min-w-0 flex-1">
+                                <span
+                                    class="device-status-dot"
+                                    :class="isDeviceOnline(device) ? 'device-status-dot--online' : 'device-status-dot--offline'"
+                                    :title="isDeviceOnline(device) ? t('web.device.online') : t('web.device.offline')"
+                                    :aria-label="isDeviceOnline(device) ? t('web.device.online') : t('web.device.offline')"
+                                />
                                 <div class="font-semibold truncate card-title"
                                     v-tooltip.top="device.reported_hostname && device.reported_hostname !== device.hostname
                                         ? `${device.hostname} (${device.reported_hostname})`
@@ -516,22 +583,41 @@ const locationText = (device: Utils.DeviceInfo): string => {
                                 />
                             </div>
 
-                            <div class="text-xs version-badge" v-tooltip.top="`EasyTier ${device.easytier_version}`">
-                                v{{ device.easytier_version.split('-')[0] }}
+                            <div class="flex items-center gap-2 shrink-0">
+                                <span
+                                    class="device-status-tag"
+                                    :class="isDeviceOnline(device) ? 'device-status-tag--online' : 'device-status-tag--offline'"
+                                >
+                                    {{ isDeviceOnline(device) ? t('web.device.online') : t('web.device.offline') }}
+                                </span>
+                                <div class="text-xs version-badge" v-tooltip.top="`EasyTier ${device.easytier_version}`">
+                                    v{{ device.easytier_version.split('-')[0] || '—' }}
+                                </div>
                             </div>
                         </div>
 
                         <div class="flex justify-between items-center">
                             <div class="text-sm truncate card-subtitle max-w-[60%] flex items-center gap-2"
-                                v-tooltip.top="locationText(device)">
+                                v-tooltip.top="isDeviceOnline(device)
+                                    ? locationText(device)
+                                    : (device.report_time
+                                        ? `${t('web.device.last_seen')}: ${device.report_time}`
+                                        : t('web.device.offline'))">
                                 <i class="pi pi-map-marker location-icon"></i>
                                 <span class="location-text">
-                                    <template v-for="(part, index) in locationParts(device)" :key="index">
-                                        <span v-if="index > 0" class="location-separator">·</span>
-                                        {{ part }}
+                                    <template v-if="!isDeviceOnline(device)">
+                                        {{ device.report_time
+                                            ? `${t('web.device.last_seen')}: ${device.report_time}`
+                                            : t('web.device.offline') }}
                                     </template>
-                                    <template v-if="!locationParts(device).length">
-                                        {{ t('web.device.unknown_location') }}
+                                    <template v-else>
+                                        <template v-for="(part, index) in locationParts(device)" :key="index">
+                                            <span v-if="index > 0" class="location-separator">·</span>
+                                            {{ part }}
+                                        </template>
+                                        <template v-if="!locationParts(device).length">
+                                            {{ t('web.device.unknown_location') }}
+                                        </template>
                                     </template>
                                 </span>
                             </div>
@@ -545,15 +631,23 @@ const locationText = (device: Utils.DeviceInfo): string => {
                                     {{ device.running_network_count }}
                                 </span>
 
-                                <Button v-tooltip.top="t('web.device.open_network_status')"
+                                <Button
+                                    v-tooltip.top="isDeviceOnline(device)
+                                        ? t('web.device.open_network_status')
+                                        : t('web.device.offline_action_denied')"
                                     icon="pi pi-chart-line" severity="info" rounded text
                                     class="et-icon-action-btn device-action-btn"
+                                    :disabled="!isDeviceOnline(device)"
                                     @click="handleDeviceManagement(device, 'status')"
                                     :aria-label="t('web.device.open_network_status')" />
 
-                                <Button v-tooltip.top="t('web.device.open_network_config')"
+                                <Button
+                                    v-tooltip.top="isDeviceOnline(device)
+                                        ? t('web.device.open_network_config')
+                                        : t('web.device.offline_action_denied')"
                                     icon="pi pi-cog" severity="secondary" rounded text
                                     class="et-icon-action-btn device-action-btn"
+                                    :disabled="!isDeviceOnline(device)"
                                     @click="handleDeviceManagement(device, 'config')"
                                     :aria-label="t('web.device.open_network_config')" />
                             </div>

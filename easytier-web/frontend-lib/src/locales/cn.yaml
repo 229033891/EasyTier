@@ -601,6 +601,7 @@ web:
     status: 状态
     online: 在线
     offline: 离线
+    offline_action_denied: 设备离线，无法查看状态或添加/编辑网络。请待设备重新上线后再操作。
     last_seen: 最后在线
     no_devices: 未找到设备
     sort_by: 排序依据

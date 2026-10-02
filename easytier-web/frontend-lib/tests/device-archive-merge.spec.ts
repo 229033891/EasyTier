@@ -69,6 +69,25 @@ describe('mergeDevicesWithArchive', () => {
     expect(merged[1].running_network_count).toBe(0)
   })
 
+  it('marks live machines online and archive-only rows offline', () => {
+    const online = [onlineDevice({ machine_id: 'dev-1', hostname: 'APP' })]
+    const merged = mergeDevicesWithArchive(online, [
+      {
+        device_id: 'dev-1',
+        hostname: 'APP',
+      },
+      {
+        device_id: 'dev-2',
+        hostname: 'fn-nas',
+        last_seen_at: 1_700_000_000,
+      },
+    ])
+    expect(merged).toHaveLength(2)
+    expect(merged[0].online).toBe(true)
+    expect(merged[1].online).toBe(false)
+    expect(merged[1].machine_id).toBe('dev-2')
+  })
+
   it('hides empty rename stub rows that are not online', () => {
     const merged = mergeDevicesWithArchive([], [
       {

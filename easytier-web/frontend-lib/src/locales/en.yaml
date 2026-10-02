@@ -600,6 +600,7 @@ web:
     status: Status
     online: Online
     offline: Offline
+    offline_action_denied: Device is offline. Status and network create/edit are unavailable until it reconnects.
     last_seen: Last Seen
     no_devices: No Devices Found
     sort_by: Sort By

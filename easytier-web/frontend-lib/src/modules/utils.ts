@@ -115,6 +115,8 @@ export interface DeviceInfo {
     running_network_instances?: Array<string>;
     machine_id: string;
     location: Location | undefined;
+    /** True when present in live `list_machines`; false for archive-only offline rows. */
+    online?: boolean;
 }
 
 /** Archive row from `/api/v1/devices` (offline devices + display aliases). */
@@ -140,6 +142,7 @@ export function buildDeviceInfo(device: any): DeviceInfo {
         easytier_version: device.info?.easytier_version,
         machine_id: UuidToStr(device.info?.machine_id),
         location: device.location,
+        online: true,
     };
 
     return dev_info;
@@ -180,6 +183,7 @@ export function mergeDevicesWithArchive(
             reported_hostname: reported,
             display_name: alias || undefined,
             hostname: alias || reported,
+            online: true,
         });
     }
 
@@ -206,6 +210,7 @@ export function mergeDevicesWithArchive(
             running_network_instances: [],
             machine_id: row.device_id,
             location: undefined,
+            online: false,
         });
     }
 
