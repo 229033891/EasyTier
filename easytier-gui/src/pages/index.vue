@@ -100,6 +100,39 @@ async function refreshConfigServerConnection() {
   }
 }
 
+/**
+ * Wait until the config-server client reports connected or a first failure.
+ * `initWebClient` only parses the URL and starts a background dialer, so the
+ * UI must wait before claiming success.
+ */
+async function waitForConfigServerOutcome(
+  timeoutMs = 25_000,
+): Promise<'connected' | 'failed' | 'timeout' | 'disabled'> {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    await refreshConfigServerConnection()
+    const mode = currentMode.value
+    if (!(mode.mode === 'normal' || mode.mode === 'service') || !mode.config_server_url?.trim()) {
+      return 'disabled'
+    }
+    if (configServerConnected.value) {
+      return 'connected'
+    }
+    if (configServerLastError.value) {
+      return 'failed'
+    }
+    await new Promise(resolve => setTimeout(resolve, 500))
+  }
+  await refreshConfigServerConnection()
+  if (configServerConnected.value) {
+    return 'connected'
+  }
+  if (configServerLastError.value) {
+    return 'failed'
+  }
+  return 'timeout'
+}
+
 async function openModeDialog() {
   editingMode.value = JSON.parse(JSON.stringify(loadMode()))
   showAutostartHint.value = false
@@ -131,6 +164,23 @@ async function applyConfigServerUrl(url?: string, secureMode?: boolean) {
   await initWithMode(mode)
 }
 
+/** Restore previous config-server endpoint after a failed save attempt. */
+async function revertConfigServerUrl(url?: string, secureMode?: boolean) {
+  try {
+    await applyConfigServerUrl(url, secureMode)
+    if (url) {
+      // Best-effort wait so the status badge reflects the restored channel.
+      await waitForConfigServerOutcome(15_000)
+    }
+    else {
+      await refreshConfigServerConnection()
+    }
+  }
+  catch (e) {
+    console.error('Failed to revert config server endpoint', e)
+  }
+}
+
 async function onConfigServerSave() {
   if (isConfigServerSaving.value) {
     return
@@ -158,19 +208,58 @@ async function onConfigServerSave() {
     isConfigServerSaving.value = true
     try {
       await applyConfigServerUrl(nextUrl, nextSecure)
-      if (nextUrl && configServerLastError.value) {
+      if (!nextUrl) {
+        configServerDialogVisible.value = false
+        toast.add({ severity: 'success', summary: t('web.common.success'), life: TOAST_LIFE.success })
+        return
+      }
+
+      // Init/parse failure: lastError is already set and the old client was dropped.
+      // Do not wait the full connect timeout; restore the previous endpoint.
+      if (configServerLastError.value && !configServerConnected.value) {
+        const detail = configServerLastError.value
+        await revertConfigServerUrl(prevUrl, prevSecure)
+        configServerUrl.value = nextUrl
+        configServerSecureMode.value = nextSecure
         toast.add({
           severity: 'error',
           summary: t('error'),
-          detail: configServerLastError.value,
+          detail,
           life: TOAST_LIFE.severe,
         })
         return
       }
-      configServerDialogVisible.value = false
-      toast.add({ severity: 'success', summary: t('web.common.success'), life: TOAST_LIFE.success })
+
+      const outcome = await waitForConfigServerOutcome()
+      if (outcome === 'connected') {
+        configServerDialogVisible.value = false
+        toast.add({ severity: 'success', summary: t('web.common.success'), life: TOAST_LIFE.success })
+        return
+      }
+
+      const detail = outcome === 'timeout'
+        ? t('config-server.connect_timeout')
+        : (configServerLastError.value || t('config-server.status_failed'))
+
+      // Keep management channel stable: roll back to the previous working endpoint.
+      await revertConfigServerUrl(prevUrl, prevSecure)
+      configServerUrl.value = nextUrl
+      configServerSecureMode.value = nextSecure
+
+      toast.add({
+        severity: 'error',
+        summary: t('error'),
+        detail: prevUrl
+          ? `${detail} (${t('config-server.reverted')})`
+          : detail,
+        life: TOAST_LIFE.severe,
+      })
     }
     catch (e: any) {
+      // apply/init threw — try to restore previous endpoint before surfacing the error.
+      await revertConfigServerUrl(prevUrl, prevSecure)
+      configServerUrl.value = nextUrl ?? ''
+      configServerSecureMode.value = nextSecure
       toast.add({
         severity: 'error',
         summary: t('error'),
@@ -433,7 +522,8 @@ async function initWithMode(mode: Mode) {
     mode.config_server_url = mode.config_server_url || undefined
     try {
       await initWebClient(mode.config_server_url, mode.secure_mode)
-      configServerLastError.value = ''
+      // Connection happens asynchronously in the background dialer.
+      // Do not clear lastError here — waitForConfigServerOutcome / refresh owns that.
     }
     catch (e: any) {
       configServerConnected.value = false
@@ -780,10 +870,12 @@ async function connectRpcClient(isNormalMode: boolean, url?: string) {
           <div class="flex flex-col gap-2">
             <label for="config-server-url">{{ t('config-server.address') }}</label>
             <InputText id="config-server-url" v-model="configServerUrl" class="w-full"
-              :placeholder="t('config-server.address_placeholder')" />
+              :placeholder="t('config-server.address_placeholder')"
+              :disabled="isConfigServerSaving" />
           </div>
           <div v-if="currentMode.mode === 'normal'" class="flex items-center gap-2">
-            <Checkbox id="config-server-secure" v-model="configServerSecureMode" binary />
+            <Checkbox id="config-server-secure" v-model="configServerSecureMode" binary
+              :disabled="isConfigServerSaving" />
             <label for="config-server-secure">{{ t('config-server.secure_mode') }}</label>
           </div>
           <p v-if="currentMode.mode === 'normal'" class="text-xs text-secondary m-0">{{ t('config-server.secure_mode_hint') }}</p>
@@ -791,7 +883,7 @@ async function connectRpcClient(isNormalMode: boolean, url?: string) {
       </template>
       <template #footer>
         <Button :label="currentMode.mode === 'remote' ? t('close') : t('web.common.cancel')" icon="pi pi-times"
-          @click="configServerDialogVisible = false" text />
+          @click="configServerDialogVisible = false" text :disabled="isConfigServerSaving" />
         <Button v-if="currentMode.mode !== 'remote'" :label="t('web.common.save')" icon="pi pi-save"
           @click="onConfigServerSave" autofocus :loading="isConfigServerSaving" />
       </template>

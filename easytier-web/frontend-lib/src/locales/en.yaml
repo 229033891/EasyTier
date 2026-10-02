@@ -785,6 +785,8 @@ config-server:
   status_failed: Connection Failed
   status_service: Managed by service process
   status_remote: Not available in remote mode
+  connect_timeout: Connection timed out. Please check that the config server address is correct.
+  reverted: Restored the previous address
   update_service_confirm: The service will be restarted to apply changes, do you want to continue?
   remote_not_supported: Remote mode does not use a config server. Switch to Normal or Service mode first.
 

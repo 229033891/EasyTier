@@ -740,6 +740,13 @@ async fn init_web_client(
         easytier_core::management::clear_config_server_status();
         return Ok(());
     };
+
+    // Drop any previous client before creating a replacement. Otherwise a failed
+    // init (bad URL parse, missing instance manager, …) would leave the old
+    // client connected while the UI/persisted config already points at the new URL.
+    *web_client_guard = None;
+    easytier_core::management::clear_config_server_status();
+
     let instance_manager = INSTANCE_MANAGER
         .try_read()
         .map_err(|_| "Failed to acquire read lock for instance manager")?

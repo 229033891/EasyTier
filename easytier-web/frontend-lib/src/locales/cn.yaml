@@ -786,6 +786,8 @@ config-server:
   status_failed: 连接失败
   status_service: 由服务进程连接
   status_remote: 远程模式不适用
+  connect_timeout: 连接超时，请检查配置服务器地址是否正确
+  reverted: 已恢复为原地址
   update_service_confirm: 将重启服务以应用更改，是否继续？
   remote_not_supported: 当前为远程模式，不使用配置服务器。请先切换到普通模式或服务模式。
 
