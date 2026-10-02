@@ -15,8 +15,8 @@ use easytier::proto::api::instance::{
     VpnPortalRpcClientFactory, instance_identifier,
 };
 use easytier::proto::api::manage::{
-    CollectNetworkInfoResponse, ValidateConfigResponse, VpnPortalClientConfig, WebClientService,
-    WebClientServiceClientFactory,
+    CollectNetworkInfoResponse, GetConfigServerStatusRequest, ValidateConfigResponse,
+    VpnPortalClientConfig, WebClientService, WebClientServiceClientFactory,
 };
 use easytier::proto::rpc_types::controller::BaseController;
 use easytier::web_client::{self, WebClient};
@@ -735,6 +735,7 @@ async fn init_web_client(
     let mut web_client_guard = WEB_CLIENT.write().await;
     let Some(url) = url else {
         *web_client_guard = None;
+        easytier_core::management::clear_config_server_status();
         return Ok(());
     };
     let instance_manager = INSTANCE_MANAGER
@@ -766,6 +767,49 @@ async fn init_web_client(
     .map_err(|e| format!("{:#}", e))?;
     *web_client_guard = Some(web_client);
     Ok(())
+}
+
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ConfigServerStatusDto {
+    enabled: bool,
+    connected: bool,
+    last_error: String,
+}
+
+#[tauri::command]
+async fn get_config_server_status(app: AppHandle) -> Result<ConfigServerStatusDto, String> {
+    // Normal mode: WebClient lives in the GUI process.
+    {
+        let web_client_guard = WEB_CLIENT.read().await;
+        if let Some(web_client) = web_client_guard.as_ref() {
+            let status = easytier_core::management::config_server_status();
+            return Ok(ConfigServerStatusDto {
+                enabled: true,
+                connected: web_client.is_connected(),
+                last_error: status.last_error.unwrap_or_default(),
+            });
+        }
+    }
+
+    // Service / remote mode: query the process that owns the WebClient via RPC.
+    let client_manager = get_client_manager!()?;
+    let Some(client) = client_manager.get_rpc_client(app) else {
+        return Ok(ConfigServerStatusDto {
+            enabled: false,
+            connected: false,
+            last_error: String::new(),
+        });
+    };
+    let response = client
+        .get_config_server_status(BaseController::default(), GetConfigServerStatusRequest {})
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(ConfigServerStatusDto {
+        enabled: response.enabled,
+        connected: response.connected,
+        last_error: response.last_error,
+    })
 }
 
 #[tauri::command]
@@ -1671,6 +1715,7 @@ pub fn run_gui() -> std::process::ExitCode {
             is_client_running,
             init_web_client,
             is_web_client_connected,
+            get_config_server_status,
             get_log_dir_path,
         ])
         .on_window_event(|_win, event| match event {

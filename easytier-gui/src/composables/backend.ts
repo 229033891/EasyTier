@@ -177,3 +177,13 @@ export async function initWebClient(url?: string, secureMode?: boolean) {
 export async function isWebClientConnected() {
   return await invoke<boolean>('is_web_client_connected')
 }
+
+export interface ConfigServerStatus {
+  enabled: boolean
+  connected: boolean
+  lastError: string
+}
+
+export async function getConfigServerStatus() {
+  return await invoke<ConfigServerStatus>('get_config_server_status')
+}

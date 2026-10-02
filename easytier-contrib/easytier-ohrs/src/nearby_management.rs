@@ -32,12 +32,13 @@ use easytier_core::{
 use easytier_proto::{
     api::manage::{
         CollectNetworkInfoRequest, CollectNetworkInfoResponse, DeleteNetworkInstanceRequest,
-        DeleteNetworkInstanceResponse, GetNetworkInstanceConfigRequest,
-        GetNetworkInstanceConfigResponse, ListNetworkInstanceMetaRequest,
-        ListNetworkInstanceMetaResponse, ListNetworkInstanceRequest, ListNetworkInstanceResponse,
-        RetainNetworkInstanceRequest, RetainNetworkInstanceResponse, RunNetworkInstanceRequest,
-        RunNetworkInstanceResponse, ValidateConfigRequest, ValidateConfigResponse,
-        WebClientService, WebClientServiceClientFactory, WebClientServiceServer,
+        DeleteNetworkInstanceResponse, GetConfigServerStatusRequest, GetConfigServerStatusResponse,
+        GetNetworkInstanceConfigRequest, GetNetworkInstanceConfigResponse,
+        ListNetworkInstanceMetaRequest, ListNetworkInstanceMetaResponse, ListNetworkInstanceRequest,
+        ListNetworkInstanceResponse, RetainNetworkInstanceRequest, RetainNetworkInstanceResponse,
+        RunNetworkInstanceRequest, RunNetworkInstanceResponse, ValidateConfigRequest,
+        ValidateConfigResponse, WebClientService, WebClientServiceClientFactory,
+        WebClientServiceServer,
     },
     common::TunnelInfo,
     rpc_types::{controller::BaseController, error::Error as RpcError},
@@ -488,6 +489,18 @@ impl WebClientService for NearbyWebClientService {
         self.inner
             .list_network_instance_meta(controller, request)
             .await
+    }
+
+    async fn get_config_server_status(
+        &self,
+        _controller: BaseController,
+        _request: GetConfigServerStatusRequest,
+    ) -> Result<GetConfigServerStatusResponse, RpcError> {
+        Ok(GetConfigServerStatusResponse {
+            enabled: false,
+            connected: false,
+            last_error: String::new(),
+        })
     }
 }
 
@@ -994,6 +1007,7 @@ fn valid_management_json_call(service_name: &str, method_name: &str, domain_name
                 | "CollectNetworkInfo"
                 | "RunNetworkInstance"
                 | "DeleteNetworkInstance"
+                | "GetConfigServerStatus"
         )
 }
 

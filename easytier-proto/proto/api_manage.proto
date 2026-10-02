@@ -226,6 +226,17 @@ message ListNetworkInstanceMetaRequest { repeated common.UUID inst_ids = 1; }
 
 message ListNetworkInstanceMetaResponse { repeated NetworkMeta metas = 1; }
 
+message GetConfigServerStatusRequest {}
+
+message GetConfigServerStatusResponse {
+  // True when a config-server client is configured in this process.
+  bool enabled = 1;
+  // True when the config-server session is currently connected.
+  bool connected = 2;
+  // Last connect/handshake failure; empty when connected or not yet failed.
+  string last_error = 3;
+}
+
 service WebClientService {
   rpc ValidateConfig(ValidateConfigRequest) returns (ValidateConfigResponse) {}
   rpc RunNetworkInstance(RunNetworkInstanceRequest)
@@ -242,4 +253,6 @@ service WebClientService {
       returns (GetNetworkInstanceConfigResponse) {}
   rpc ListNetworkInstanceMeta(ListNetworkInstanceMetaRequest)
       returns (ListNetworkInstanceMetaResponse) {}
+  rpc GetConfigServerStatus(GetConfigServerStatusRequest)
+      returns (GetConfigServerStatusResponse) {}
 }

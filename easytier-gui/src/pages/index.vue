@@ -41,16 +41,13 @@ const manualDisconnect = ref(false)
 
 const showAutostartHint = ref(false)
 
-type ConfigServerStatus = 'connected' | 'disconnected' | 'connecting' | 'failed' | 'service' | 'remote'
+type ConfigServerStatus = 'connected' | 'disconnected' | 'connecting' | 'failed' | 'remote'
 
 const configServerStatus = computed<ConfigServerStatus>(() => {
   const mode = currentMode.value
   if (mode.mode === 'remote')
     return 'remote'
-  if (mode.mode === 'service') {
-    return mode.config_server_url?.trim() ? 'service' : 'disconnected'
-  }
-  if (!mode.config_server_url?.trim())
+  if (!(mode.mode === 'normal' || mode.mode === 'service') || !mode.config_server_url?.trim())
     return 'disconnected'
   if (configServerLastError.value)
     return 'failed'
@@ -65,8 +62,6 @@ const configServerStatusSeverity = computed(() => {
       return 'danger'
     case 'connecting':
       return 'warn'
-    case 'service':
-      return 'info'
     default:
       return 'secondary'
   }
@@ -76,16 +71,31 @@ const configServerStatusLabel = computed(() => t(`config-server.status_${configS
 
 async function refreshConfigServerConnection() {
   try {
-    if (currentMode.value.mode !== 'normal' || !currentMode.value.config_server_url?.trim()) {
+    const mode = currentMode.value
+    if (!(mode.mode === 'normal' || mode.mode === 'service') || !mode.config_server_url?.trim()) {
       configServerConnected.value = false
+      configServerLastError.value = ''
       return
     }
-    configServerConnected.value = await isWebClientConnected()
-    if (configServerConnected.value)
+
+    const status = await getConfigServerStatus()
+    configServerConnected.value = !!status.connected
+    if (status.connected) {
       configServerLastError.value = ''
+    }
+    else if (status.lastError) {
+      configServerLastError.value = status.lastError
+    }
+    else if (status.enabled) {
+      // Client is retrying without a recorded failure — clear a stale red badge.
+      configServerLastError.value = ''
+    }
   }
   catch (e) {
     configServerConnected.value = false
+    if (currentMode.value.mode === 'service') {
+      configServerLastError.value = e instanceof Error ? e.message : String(e)
+    }
     console.error('Failed to refresh config server connection', e)
   }
 }
@@ -148,7 +158,7 @@ async function onConfigServerSave() {
     isConfigServerSaving.value = true
     try {
       await applyConfigServerUrl(nextUrl, nextSecure)
-      if (mode.mode === 'normal' && nextUrl && configServerLastError.value) {
+      if (nextUrl && configServerLastError.value) {
         toast.add({
           severity: 'error',
           summary: t('error'),
@@ -430,11 +440,17 @@ async function initWithMode(mode: Mode) {
       configServerLastError.value = e instanceof Error ? e.message : String(e)
       console.error('Failed to init web client', e)
     }
-    await refreshConfigServerConnection()
+  }
+  else if (mode.mode === 'service') {
+    // Config-server client runs inside the service process; poll its status via RPC.
+    configServerLastError.value = ''
   }
   else {
     configServerConnected.value = false
     configServerLastError.value = ''
+  }
+  if (mode.mode === 'normal' || mode.mode === 'service') {
+    await refreshConfigServerConnection()
   }
   currentMode.value = mode
   saveMode(mode)

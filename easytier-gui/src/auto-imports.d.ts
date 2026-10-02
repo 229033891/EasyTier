@@ -28,6 +28,7 @@ declare global {
   const generateNetworkConfig: typeof import('./composables/backend')['generateNetworkConfig']
   const getActivePinia: typeof import('pinia')['getActivePinia']
   const getConfig: typeof import('./composables/backend')['getConfig']
+  const getConfigServerStatus: typeof import('./composables/backend')['getConfigServerStatus']
   const getCurrentInstance: typeof import('vue')['getCurrentInstance']
   const getCurrentScope: typeof import('vue')['getCurrentScope']
   const getEasytierVersion: typeof import('./composables/backend')['getEasytierVersion']
@@ -163,6 +164,7 @@ declare module 'vue' {
     readonly generateNetworkConfig: UnwrapRef<typeof import('./composables/backend')['generateNetworkConfig']>
     readonly getActivePinia: UnwrapRef<typeof import('pinia')['getActivePinia']>
     readonly getConfig: UnwrapRef<typeof import('./composables/backend')['getConfig']>
+    readonly getConfigServerStatus: UnwrapRef<typeof import('./composables/backend')['getConfigServerStatus']>
     readonly getCurrentInstance: UnwrapRef<typeof import('vue')['getCurrentInstance']>
     readonly getCurrentScope: UnwrapRef<typeof import('vue')['getCurrentScope']>
     readonly getEasytierVersion: UnwrapRef<typeof import('./composables/backend')['getEasytierVersion']>

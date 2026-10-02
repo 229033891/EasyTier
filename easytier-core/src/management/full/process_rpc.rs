@@ -7,12 +7,12 @@ use std::{
 use easytier_proto::{
     api::manage::{
         CollectNetworkInfoRequest, CollectNetworkInfoResponse, DeleteNetworkInstanceRequest,
-        DeleteNetworkInstanceResponse, GetNetworkInstanceConfigRequest,
-        GetNetworkInstanceConfigResponse, ListNetworkInstanceMetaRequest,
-        ListNetworkInstanceMetaResponse, ListNetworkInstanceRequest, ListNetworkInstanceResponse,
-        NetworkInstanceRunningInfoMap, NetworkMeta, RetainNetworkInstanceRequest,
-        RetainNetworkInstanceResponse, RunNetworkInstanceRequest, RunNetworkInstanceResponse,
-        ValidateConfigRequest, ValidateConfigResponse, WebClientService,
+        DeleteNetworkInstanceResponse, GetConfigServerStatusRequest, GetConfigServerStatusResponse,
+        GetNetworkInstanceConfigRequest, GetNetworkInstanceConfigResponse,
+        ListNetworkInstanceMetaRequest, ListNetworkInstanceMetaResponse, ListNetworkInstanceRequest,
+        ListNetworkInstanceResponse, NetworkInstanceRunningInfoMap, NetworkMeta,
+        RetainNetworkInstanceRequest, RetainNetworkInstanceResponse, RunNetworkInstanceRequest,
+        RunNetworkInstanceResponse, ValidateConfigRequest, ValidateConfigResponse, WebClientService,
     },
     rpc_types::{self, controller::BaseController},
 };
@@ -27,8 +27,8 @@ use crate::{
 };
 
 use super::{
-    ConfigFileControl, ConfigFilePermission, InstanceManager, config_source_from_rpc,
-    config_source_to_rpc, network_instance_running_info,
+    ConfigFileControl, ConfigFilePermission, InstanceManager, config_server_status,
+    config_source_from_rpc, config_source_to_rpc, network_instance_running_info,
 };
 
 #[async_trait::async_trait]
@@ -756,5 +756,18 @@ where
             });
         }
         Ok(ListNetworkInstanceMetaResponse { metas })
+    }
+
+    async fn get_config_server_status(
+        &self,
+        _: BaseController,
+        _: GetConfigServerStatusRequest,
+    ) -> rpc_types::error::Result<GetConfigServerStatusResponse> {
+        let status = config_server_status::snapshot();
+        Ok(GetConfigServerStatusResponse {
+            enabled: status.enabled,
+            connected: status.connected,
+            last_error: status.last_error.unwrap_or_default(),
+        })
     }
 }

@@ -1,6 +1,7 @@
 #[cfg(feature = "management")]
 mod compiled;
 mod config_patch;
+pub(crate) mod config_server_status;
 mod instance_info;
 #[cfg(feature = "management")]
 mod logger_rpc;
@@ -49,6 +50,10 @@ pub use process_rpc::{
 };
 #[cfg(target_os = "wasi")]
 pub(crate) use web_client::WebClientBackend;
+pub use config_server_status::{
+    ConfigServerStatusSnapshot, clear as clear_config_server_status,
+    snapshot as config_server_status,
+};
 pub use web_client::{ConfigServerEndpoint, WebClient, WebClientConfig};
 
 #[cfg(feature = "management")]

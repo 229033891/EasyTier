@@ -26,7 +26,9 @@ use crate::{
 
 #[cfg(not(feature = "management"))]
 use super::register_web_client_rpc;
-use super::{ConfigFileStorage, DaemonGuard, InstanceManager, InstanceMutationHooks};
+use super::{
+    ConfigFileStorage, DaemonGuard, InstanceManager, InstanceMutationHooks, config_server_status,
+};
 #[cfg(feature = "management")]
 use super::{LoggerControl, register_management_rpc};
 
@@ -291,6 +293,7 @@ impl<F> WebClient<F> {
             runtime_id: uuid::Uuid::new_v4(),
         });
         let connected = Arc::new(AtomicBool::new(false));
+        config_server_status::mark_enabled();
         let tasks = AbortOnDropHandle::new(tokio::spawn(web_client_routine(
             controller.clone(),
             connected.clone(),
@@ -321,12 +324,15 @@ async fn web_client_routine(
             Ok(connection) => connection,
             Err(error) => {
                 tracing::warn!(%error, "failed to connect to config server; retrying");
+                config_server_status::mark_error(error.to_string());
+                connected.store(false, Ordering::Release);
                 time::sleep(RETRY_INTERVAL).await;
                 continue;
             }
         };
 
         connected.store(true, Ordering::Release);
+        config_server_status::mark_connected();
         tracing::info!(?connection, "connected to config server");
         let mut session = WebClientSession::new(connection, controller.clone());
         let support_encryption = match time::timeout(FEATURE_TIMEOUT, session.get_feature()).await {
@@ -348,6 +354,7 @@ async fn web_client_routine(
                 Ok(connection) => connection,
                 Err(error) => {
                     connected.store(false, Ordering::Release);
+                    config_server_status::mark_error(error.to_string());
                     tracing::warn!(%error, "failed to reconnect secure config-server tunnel");
                     time::sleep(RETRY_INTERVAL).await;
                     continue;
@@ -357,21 +364,28 @@ async fn web_client_routine(
                 Ok(connection) => connection,
                 Err(error) => {
                     connected.store(false, Ordering::Release);
+                    config_server_status::mark_error(error.to_string());
                     tracing::warn!(%error, "config-server secure handshake failed");
                     time::sleep(RETRY_INTERVAL).await;
                     continue;
                 }
             };
+            connected.store(true, Ordering::Release);
+            config_server_status::mark_connected();
             let mut session = WebClientSession::new(connection, controller.clone());
             session.start_heartbeat().await;
             session.wait().await;
             connected.store(false, Ordering::Release);
+            config_server_status::mark_disconnected();
             continue;
         }
 
         if support_encryption {
             if controller.config.secure_mode {
                 connected.store(false, Ordering::Release);
+                config_server_status::mark_error(
+                    "secure mode requires web secure-tunnel support in the local build",
+                );
                 tracing::warn!("secure mode requires web secure-tunnel support in the local build");
                 time::sleep(RETRY_INTERVAL).await;
                 continue;
@@ -382,6 +396,9 @@ async fn web_client_routine(
         }
         if controller.config.secure_mode {
             connected.store(false, Ordering::Release);
+            config_server_status::mark_error(
+                "secure mode requires config-server encryption support",
+            );
             tracing::warn!("secure mode requires config-server encryption support");
             time::sleep(RETRY_INTERVAL).await;
             continue;
@@ -390,6 +407,7 @@ async fn web_client_routine(
         session.start_heartbeat().await;
         session.wait().await;
         connected.store(false, Ordering::Release);
+        config_server_status::mark_disconnected();
     }
 }
 
