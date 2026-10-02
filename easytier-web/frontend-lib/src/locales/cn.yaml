@@ -826,6 +826,7 @@ acl:
   forward: 转发
   rules: 规则
   add_rule: 添加规则
+  add_chain: 添加规则链
   edit_rule: 编辑规则
   rule:
     name: 规则名称
@@ -846,6 +847,7 @@ acl:
   group:
     declares: 声明组
     members: 加入组
+    members_help: 选择本节点所属的已声明组。
     name: 组名
     secret: 密钥
     help: 在此处定义网络中的组身份，以便在规则中使用。
@@ -857,3 +859,6 @@ acl:
     name: 名称
     type: 类型
   match: 匹配
+  match_src: 源
+  match_dst: 目的
+  empty_chains: 还没有规则链。可添加入站、出站或转发链开始配置。

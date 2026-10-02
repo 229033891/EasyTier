@@ -825,6 +825,7 @@ acl:
   forward: Forward
   rules: Rules
   add_rule: Add Rule
+  add_chain: Add Rule Chain
   edit_rule: Edit Rule
   rule:
     name: Rule Name
@@ -845,6 +846,7 @@ acl:
   group:
     declares: Declared Groups
     members: Node Memberships
+    members_help: Select which declared groups this node belongs to.
     name: Group Name
     secret: Group Secret
     help: Define group identities in the network to use them in rules.
@@ -856,3 +858,6 @@ acl:
     name: Name
     type: Type
   match: Match
+  match_src: Src
+  match_dst: Dst
+  empty_chains: No rule chains yet. Add an inbound, outbound, or forward chain to get started.

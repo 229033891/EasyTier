@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Button, Column, DataTable, Divider, InputText, Select, SelectButton, ToggleButton } from 'primevue'
+import { Button, Column, DataTable, InputText, Select, SelectButton, Tag, ToggleButton } from 'primevue'
 import { ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { AclAction, AclChain, AclChainType, AclProtocol, AclRule, ensureAclChain, ensureAclRuleLists } from '../../types/network'
@@ -105,7 +105,6 @@ function saveRule(rule: AclRule) {
 function onRowReorder(event: any) {
   chain.value.rules = event.value ?? []
   const chainRules = rules()
-  // Update priorities based on new order (higher priority at top)
   chainRules.forEach((rule, index) => {
     rule.priority = chainRules.length - index - 1
   })
@@ -113,105 +112,86 @@ function onRowReorder(event: any) {
 </script>
 
 <template>
-  <div class="flex flex-col gap-6">
-    <!-- Chain Metadata Section -->
-    <div
-      class="grid grid-cols-1 md:grid-cols-2 gap-4 p-4 bg-surface-50 rounded-xl border border-surface dark:bg-surface-900">
-      <div class="flex flex-col gap-2">
-        <label class="font-bold text-sm">{{ t('acl.chain.name') }}</label>
+  <div class="acl-chain flex flex-col gap-3">
+    <div class="acl-card grid grid-cols-1 md:grid-cols-2 gap-3">
+      <div class="flex flex-col gap-1.5">
+        <label class="acl-label">{{ t('acl.chain.name') }}</label>
         <InputText v-model="chain.name" size="small" />
       </div>
-      <div class="flex flex-col gap-2">
-        <label class="font-bold text-sm">{{ t('acl.rule.description') }}</label>
+      <div class="flex flex-col gap-1.5">
+        <label class="acl-label">{{ t('acl.rule.description') }}</label>
         <InputText v-model="chain.description" size="small" />
       </div>
 
-      <div class="flex items-center gap-6 col-span-full border-t border-surface pt-2 mt-2">
+      <div class="acl-card-footer col-span-full flex flex-wrap items-center gap-x-4 gap-y-2">
         <div class="flex items-center gap-2">
-          <label class="font-bold text-sm">{{ t('acl.rule.enabled') }}</label>
+          <label class="acl-label">{{ t('acl.rule.enabled') }}</label>
           <ToggleButton v-model="chain.enabled" on-icon="pi pi-check" off-icon="pi pi-times"
             :on-label="t('web.common.enable')" :off-label="t('web.common.disable')" class="w-24" />
         </div>
         <div class="flex items-center gap-2">
-          <label class="font-bold text-sm">{{ t('acl.chain.type') }}</label>
+          <label class="acl-label">{{ t('acl.chain.type') }}</label>
           <Select v-model="chain.chain_type" :options="chainTypeOptions" :option-label="opt => opt.label()"
-            option-value="value" size="small" class="w-40" />
+            option-value="value" size="small" class="w-36" />
         </div>
-        <div class="flex items-center gap-2 ml-auto">
-          <label class="font-bold text-sm">{{ t('acl.default_action') }}</label>
+        <div class="flex items-center gap-2 md:ml-auto">
+          <label class="acl-label">{{ t('acl.default_action') }}</label>
           <SelectButton v-model="chain.default_action" :options="actionOptions" :option-label="opt => opt.label()"
             option-value="value" :allow-empty="false" />
         </div>
       </div>
     </div>
 
-    <div class="flex flex-row items-center gap-4 justify-between">
-      <h4 class="text-md font-bold">{{ t('acl.rules') }}</h4>
+    <div class="flex flex-row items-center gap-3 justify-between">
+      <h4 class="acl-section-title">{{ t('acl.rules') }}</h4>
       <Button icon="pi pi-plus" :label="t('acl.add_rule')" severity="success" size="small" @click="addRule" />
     </div>
 
-    <DataTable :value="rules()" @row-reorder="onRowReorder" responsiveLayout="scroll">
+    <DataTable :value="rules()" @row-reorder="onRowReorder" responsiveLayout="scroll" class="acl-rules-table">
       <Column rowReorder headerStyle="width: 3rem" />
-      <Column field="enabled" :header="t('acl.rule.enabled')">
+      <Column field="enabled" :header="t('acl.rule.enabled')" headerStyle="width: 4.5rem">
         <template #body="{ data }">
-          <i class="pi" :class="data.enabled ? 'pi-check-circle text-green-500' : 'pi-times-circle text-red-500'"></i>
+          <i class="pi text-sm"
+            :class="data.enabled ? 'pi-check-circle acl-ok' : 'pi-times-circle acl-off'"></i>
         </template>
       </Column>
       <Column field="name" :header="t('acl.rule.name')" />
       <Column :header="t('acl.match')">
         <template #body="{ data }">
-          <div class="flex flex-col gap-2 py-1">
-            <div class="flex items-center gap-2">
-              <span
-                class="px-2 py-0.5 rounded-md text-[10px] font-bold uppercase tracking-wider bg-primary/10 text-primary">
-                {{ getProtocolLabel(data.protocol) }}
-              </span>
-            </div>
-
-            <div class="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-3">
+          <div class="flex flex-col gap-1.5 py-0.5">
+            <span class="acl-proto">{{ getProtocolLabel(data.protocol) }}</span>
+            <div class="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-2">
               <div class="flex items-center gap-1.5 min-w-0">
-                <span class="text-[10px] font-bold text-muted-color uppercase w-7">Src</span>
-                <div class="flex flex-wrap gap-1 items-center overflow-hidden">
-                  <span v-for="ip in data.source_ips" :key="ip"
-                    class="font-mono text-xs bg-surface-100 dark:bg-surface-800 px-1.5 py-0.5 rounded">{{ ip }}</span>
-                  <span v-for="grp in data.source_groups" :key="grp"
-                    class="text-xs font-bold text-primary">@{{ grp }}</span>
-                  <span v-if="data.source_ports.length" class="text-xs text-primary font-mono">:{{
-                    data.source_ports.join(',') }}</span>
-                  <span v-if="!data.source_ips.length && !data.source_groups.length" class="text-muted-color">*</span>
+                <span class="acl-endpoint">{{ t('acl.match_src') }}</span>
+                <div class="flex flex-wrap gap-1 items-center">
+                  <span v-for="ip in data.source_ips" :key="ip" class="acl-chip">{{ ip }}</span>
+                  <span v-for="grp in data.source_groups" :key="grp" class="acl-group">@{{ grp }}</span>
+                  <span v-if="data.source_ports.length" class="acl-ports">:{{ data.source_ports.join(',') }}</span>
+                  <span v-if="!data.source_ips.length && !data.source_groups.length" class="acl-any">*</span>
                 </div>
               </div>
-
-              <i class="pi pi-arrow-right hidden sm:block text-muted-color text-xs"></i>
-              <Divider layout="horizontal" class="sm:hidden my-1" />
-
+              <i class="pi pi-arrow-right hidden sm:block acl-arrow"></i>
               <div class="flex items-center gap-1.5 min-w-0">
-                <span class="text-[10px] font-bold text-muted-color uppercase w-7">Dst</span>
-                <div class="flex flex-wrap gap-1 items-center overflow-hidden">
-                  <span v-for="ip in data.destination_ips" :key="ip"
-                    class="font-mono text-xs bg-surface-100 dark:bg-surface-800 px-1.5 py-0.5 rounded">{{ ip }}</span>
-                  <span v-for="grp in data.destination_groups" :key="grp"
-                    class="text-xs font-bold text-primary">@{{ grp }}</span>
-                  <span v-if="data.ports.length" class="text-xs text-primary font-mono">:{{
-                    data.ports.join(',') }}</span>
-                  <span v-if="!data.destination_ips.length && !data.destination_groups.length"
-                    class="text-muted-color">*</span>
+                <span class="acl-endpoint">{{ t('acl.match_dst') }}</span>
+                <div class="flex flex-wrap gap-1 items-center">
+                  <span v-for="ip in data.destination_ips" :key="ip" class="acl-chip">{{ ip }}</span>
+                  <span v-for="grp in data.destination_groups" :key="grp" class="acl-group">@{{ grp }}</span>
+                  <span v-if="data.ports.length" class="acl-ports">:{{ data.ports.join(',') }}</span>
+                  <span v-if="!data.destination_ips.length && !data.destination_groups.length" class="acl-any">*</span>
                 </div>
               </div>
             </div>
           </div>
         </template>
       </Column>
-      <Column field="action" :header="t('acl.rule.action')">
+      <Column field="action" :header="t('acl.rule.action')" headerStyle="width: 5.5rem">
         <template #body="{ data }">
-          <span :class="data.action === AclAction.Allow ? 'text-green-600' : 'text-red-600 font-bold'">
-            {{ getActionLabel(data.action) }}
-          </span>
+          <Tag :severity="data.action === AclAction.Allow ? 'success' : 'danger'" :value="getActionLabel(data.action)" />
         </template>
       </Column>
-      <Column :header="t('web.common.edit')">
+      <Column :header="t('web.common.edit')" headerStyle="width: 6rem">
         <template #body="{ index }">
-          <div class="flex gap-2">
+          <div class="flex gap-1">
             <Button icon="pi pi-pencil" severity="secondary" rounded text class="et-icon-action-btn"
               @click="editRule(index)" />
             <Button icon="pi pi-trash" severity="danger" rounded text class="et-icon-action-btn"
@@ -225,3 +205,121 @@ function onRowReorder(event: any) {
       :group-names="props.groupNames" @save="saveRule" />
   </div>
 </template>
+
+<style scoped>
+.acl-card {
+  padding: 0.75rem 0.85rem;
+  border: 1px solid var(--et-border-color, #e2e8f0);
+  border-radius: var(--et-radius, 0.75rem);
+  background: var(--surface-50, #f8fafc);
+}
+
+.acl-card-footer {
+  border-top: 1px solid var(--et-border-color, #e2e8f0);
+  padding-top: 0.65rem;
+  margin-top: 0.15rem;
+}
+
+.acl-label {
+  font-size: var(--et-fs-meta, 0.75rem);
+  font-weight: 600;
+  color: var(--text-color-secondary, #64748b);
+}
+
+.acl-section-title {
+  margin: 0;
+  font-size: var(--et-fs-section, 1rem);
+  font-weight: 600;
+  color: var(--text-color, #1e293b);
+}
+
+.acl-proto {
+  display: inline-flex;
+  align-self: flex-start;
+  padding: 0.1rem 0.4rem;
+  border-radius: 0.375rem;
+  font-size: var(--et-fs-meta, 0.75rem);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--primary-color, var(--et-primary, #0ea5e9));
+  background: color-mix(in srgb, var(--primary-color, #0ea5e9) 12%, transparent);
+}
+
+.acl-endpoint {
+  flex: 0 0 auto;
+  width: 1.75rem;
+  font-size: var(--et-fs-meta, 0.75rem);
+  font-weight: 600;
+  color: var(--text-color-secondary, #64748b);
+}
+
+.acl-chip {
+  display: inline-block;
+  padding: 0.05rem 0.35rem;
+  border-radius: 0.3rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: var(--et-fs-meta, 0.75rem);
+  color: var(--text-color, #1e293b);
+  background: var(--surface-100, #f1f5f9);
+  border: 1px solid var(--et-border-color, #e2e8f0);
+}
+
+.acl-group {
+  font-size: var(--et-fs-meta, 0.75rem);
+  font-weight: 600;
+  color: var(--primary-color, var(--et-primary, #0ea5e9));
+}
+
+.acl-ports {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: var(--et-fs-meta, 0.75rem);
+  color: var(--primary-color, var(--et-primary, #0ea5e9));
+}
+
+.acl-any,
+.acl-arrow {
+  font-size: var(--et-fs-meta, 0.75rem);
+  color: var(--text-color-secondary, #94a3b8);
+}
+
+.acl-ok {
+  color: var(--et-success, #10b981);
+}
+
+.acl-off {
+  color: var(--et-danger, #ef4444);
+}
+
+.acl-rules-table :deep(.p-datatable-thead > tr > th) {
+  padding: 0.4rem 0.55rem !important;
+  font-size: var(--et-fs-meta, 0.75rem);
+}
+
+.acl-rules-table :deep(.p-datatable-tbody > tr > td) {
+  padding: 0.4rem 0.55rem !important;
+  font-size: var(--et-fs-body, 0.875rem);
+  vertical-align: top;
+}
+
+@media (prefers-color-scheme: dark) {
+  .acl-card {
+    border-color: var(--surface-border, #334155);
+    background: var(--surface-card, #1e293b);
+  }
+
+  .acl-card-footer {
+    border-top-color: var(--surface-border, #334155);
+  }
+
+  .acl-section-title,
+  .acl-chip {
+    color: var(--text-color, #f1f5f9);
+  }
+
+  .acl-chip {
+    background: var(--surface-100, #334155);
+    border-color: var(--surface-border, #475569);
+  }
+}
+</style>

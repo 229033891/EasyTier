@@ -85,50 +85,46 @@ const tabs = computed(() => {
 </script>
 
 <template>
-  <div class="flex flex-col gap-4">
+  <div class="acl-manager flex flex-col gap-3">
     <Tabs v-model:value="activeTab">
-      <div class="flex items-center border-b border-surface-200 dark:border-surface-700">
+      <div class="acl-tabs-bar flex items-center border-b border-surface-200 dark:border-surface-700">
         <TabList class="flex-grow min-w-0 overflow-x-auto" style="border-bottom: none;">
           <Tab v-for="tab in tabs" :key="tab.type + tab.index" :value="tab.index">
-            <div class="flex items-center gap-2 whitespace-nowrap">
-              {{ tab.label }}
+            <div class="flex items-center gap-1.5 whitespace-nowrap">
+              <span class="text-sm font-medium">{{ tab.label }}</span>
               <Button v-if="tab.type === 'chain'" icon="pi pi-times" severity="danger" text rounded size="small"
-                class="et-icon-action-btn w-6 h-6 p-0" @click.stop="removeChain(tab.index)" />
+                class="et-icon-action-btn" :aria-label="t('web.common.delete')"
+                @click.stop="removeChain(tab.index)" />
             </div>
           </Tab>
         </TabList>
-        <div
-          class="flex-shrink-0 flex items-center px-2 bg-surface-0 dark:bg-surface-900 border-l border-surface-100 dark:border-surface-800">
-          <Button icon="pi pi-plus" severity="secondary" text rounded size="small" class="et-icon-action-btn w-8 h-8 p-0"
-            @click="(event) => menu.toggle(event)" />
+        <div class="flex-shrink-0 flex items-center pl-1">
+          <Button icon="pi pi-plus" severity="secondary" text rounded size="small" class="et-icon-action-btn"
+            :aria-label="t('acl.add_chain')" @click="(event) => menu.toggle(event)" />
           <Menu ref="menu" :model="addMenuModel" :popup="true" />
         </div>
       </div>
       <TabPanels>
         <TabPanel v-for="tab in tabs" :key="'panel' + tab.type + tab.index" :value="tab.index">
-          <!-- Empty State within TabPanel -->
-          <div v-if="tab.type === 'empty'"
-            class="py-8 flex flex-col items-center justify-center border-2 border-dashed border-surface-200 rounded-lg bg-surface-50 dark:bg-surface-900 dark:border-surface-700">
-            <i class="pi pi-shield text-5xl mb-4 text-primary" />
-            <div class="text-xl font-bold mb-2">{{ t('acl.chains') }}</div>
-            <p class="text-surface-500 mb-8 text-center max-w-sm px-4">{{ t('acl.help') }}</p>
-            <div class="flex flex-wrap gap-3 justify-center">
-              <Button :label="t('acl.inbound')" icon="pi pi-arrow-down-left" severity="secondary" outlined
+          <div v-if="tab.type === 'empty'" class="acl-empty">
+            <i class="pi pi-shield acl-empty-icon" />
+            <div class="acl-section-title">{{ t('acl.chains') }}</div>
+            <p class="acl-help">{{ t('acl.empty_chains') }}</p>
+            <div class="flex flex-wrap gap-2 justify-center">
+              <Button :label="t('acl.inbound')" icon="pi pi-arrow-down-left" severity="secondary" outlined size="small"
                 @click="addChain(AclChainType.Inbound)" />
-              <Button :label="t('acl.outbound')" icon="pi pi-arrow-up-right" severity="secondary" outlined
+              <Button :label="t('acl.outbound')" icon="pi pi-arrow-up-right" severity="secondary" outlined size="small"
                 @click="addChain(AclChainType.Outbound)" />
-              <Button :label="t('acl.forward')" icon="pi pi-directions" severity="info" outlined
+              <Button :label="t('acl.forward')" icon="pi pi-directions" severity="info" outlined size="small"
                 @click="addChain(AclChainType.Forward)" />
             </div>
           </div>
 
-          <!-- Rule Chains -->
-          <div v-if="tab.type === 'chain' && aclV1.chains[tab.index]" class="py-4">
+          <div v-if="tab.type === 'chain' && aclV1.chains[tab.index]" class="pt-3">
             <AclChainEditor v-model="aclV1.chains[tab.index]" :group-names="groupNames" />
           </div>
 
-          <!-- Group Management -->
-          <div v-if="tab.type === 'groups'" class="py-4">
+          <div v-if="tab.type === 'groups'" class="pt-3">
             <AclGroupEditor v-model="aclV1.group" :group-names="groupNames" @rename-group="handleRenameGroup" />
           </div>
         </TabPanel>
@@ -136,3 +132,54 @@ const tabs = computed(() => {
     </Tabs>
   </div>
 </template>
+
+<style scoped>
+.acl-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 1.25rem 1rem;
+  border: 1px dashed var(--et-border-color, #e2e8f0);
+  border-radius: var(--et-radius, 0.75rem);
+  background: var(--surface-50, #f8fafc);
+}
+
+.acl-empty-icon {
+  font-size: 1.5rem;
+  color: var(--primary-color, var(--et-primary, #0ea5e9));
+  margin-bottom: 0.15rem;
+}
+
+.acl-section-title {
+  font-size: var(--et-fs-section, 1rem);
+  font-weight: 600;
+  color: var(--text-color, #1e293b);
+}
+
+.acl-help {
+  margin: 0 0 0.5rem;
+  max-width: 22rem;
+  text-align: center;
+  font-size: var(--et-fs-body, 0.875rem);
+  color: var(--text-color-secondary, #64748b);
+  line-height: 1.45;
+  padding: 0 0.5rem;
+}
+
+@media (prefers-color-scheme: dark) {
+  .acl-empty {
+    border-color: var(--surface-border, #334155);
+    background: var(--surface-card, #1e293b);
+  }
+
+  .acl-section-title {
+    color: var(--text-color, #f1f5f9);
+  }
+
+  .acl-help {
+    color: var(--text-color-secondary, #94a3b8);
+  }
+}
+</style>

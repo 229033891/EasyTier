@@ -883,9 +883,10 @@ function removeVpnPortalClient(index: number) {
 .config-panels :deep(.p-panel .p-panel-header) {
   padding: 0.35rem 0.75rem !important;
   min-height: 2rem !important;
-  font-size: 0.875rem;
+  font-size: var(--et-fs-body, 0.875rem);
   font-weight: 600;
   line-height: 1.2;
+  color: var(--text-color, #1e293b);
   background: transparent;
   border: none;
 }
@@ -898,13 +899,16 @@ function removeVpnPortalClient(index: number) {
   padding: 0.55rem 0.75rem !important;
   border: none;
   background: transparent;
+  font-size: var(--et-fs-body, 0.875rem);
+  color: var(--text-color, #1e293b);
 }
 
 .config-panels :deep(.p-panel .p-panel-header .p-panel-title),
-.config-panels :deep(.p-panel .p-panel-header span) {
-  font-size: 0.875rem;
+.config-panels :deep(.p-panel .p-panel-header span:not(.p-badge)) {
+  font-size: var(--et-fs-body, 0.875rem);
   font-weight: 600;
   line-height: 1.2;
+  color: var(--text-color, #1e293b);
 }
 
 .network-footer-btn {

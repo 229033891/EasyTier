@@ -80,29 +80,29 @@ const genericSuggestions = ref<string[]>([])
     <div class="flex flex-col gap-4">
       <div class="flex flex-row gap-4 items-center">
         <div class="flex flex-col gap-2 grow">
-          <label class="font-bold">{{ t('acl.rule.name') }}</label>
+          <label class="acl-dlg-label">{{ t('acl.rule.name') }}</label>
           <InputText v-model="rule.name" fluid />
         </div>
         <div class="flex flex-col gap-2">
-          <label class="font-bold">{{ t('acl.rule.enabled') }}</label>
+          <label class="acl-dlg-label">{{ t('acl.rule.enabled') }}</label>
           <ToggleButton v-model="rule.enabled" on-icon="pi pi-check" off-icon="pi pi-times"
             :on-label="t('web.common.enable')" :off-label="t('web.common.disable')" class="w-24" />
         </div>
       </div>
 
       <div class="flex flex-col gap-2">
-        <label class="font-bold">{{ t('acl.rule.description') }}</label>
+        <label class="acl-dlg-label">{{ t('acl.rule.description') }}</label>
         <InputText v-model="rule.description" fluid />
       </div>
 
       <div class="flex flex-row gap-4 flex-wrap">
         <div class="flex flex-col gap-2 grow">
-          <label class="font-bold">{{ t('acl.rule.action') }}</label>
+          <label class="acl-dlg-label">{{ t('acl.rule.action') }}</label>
           <SelectButton v-model="rule.action" :options="actionOptions" :option-label="opt => opt.label()"
             option-value="value" :allow-empty="false" />
         </div>
         <div class="flex flex-col gap-2 grow">
-          <label class="font-bold">{{ t('acl.rule.protocol') }}</label>
+          <label class="acl-dlg-label">{{ t('acl.rule.protocol') }}</label>
           <SelectButton v-model="rule.protocol" :options="protocolOptions"
             :option-label="opt => typeof opt.label === 'function' ? opt.label() : opt.label" option-value="value"
             :allow-empty="false" />
@@ -111,30 +111,32 @@ const genericSuggestions = ref<string[]>([])
 
       <Panel v-model:collapsed="panelCollapsed.rules" :header="t('acl.rules')" toggleable
         :pt="panelHeaderPt('rules')">
-        <div class="flex flex-col gap-4">
-          <div class="flex flex-col gap-2">
-            <label class="font-bold">{{ t('acl.rule.src_ips') }}</label>
+        <div class="flex flex-col gap-3">
+          <div class="flex flex-col gap-1.5">
+            <label class="acl-dlg-label">{{ t('acl.rule.src_ips') }}</label>
             <AutoComplete v-model="rule.source_ips" multiple fluid :suggestions="genericSuggestions"
               @complete="genericSuggestions = [$event.query]"
               :placeholder="t('chips_placeholder', ['10.126.126.0/24'])" />
           </div>
-          <div class="flex flex-col gap-2">
-            <label class="font-bold">{{ t('acl.rule.dst_ips') }}</label>
+          <div class="flex flex-col gap-1.5">
+            <label class="acl-dlg-label">{{ t('acl.rule.dst_ips') }}</label>
             <AutoComplete v-model="rule.destination_ips" multiple fluid :suggestions="genericSuggestions"
               @complete="genericSuggestions = [$event.query]"
               :placeholder="t('chips_placeholder', ['10.126.126.2/32'])" />
           </div>
 
           <div v-if="showPorts" class="flex flex-row gap-4 flex-wrap">
-            <div class="flex flex-col gap-2 grow">
-              <label class="font-bold">{{ t('acl.rule.src_ports') }}</label>
+            <div class="flex flex-col gap-1.5 grow">
+              <label class="acl-dlg-label">{{ t('acl.rule.src_ports') }}</label>
               <AutoComplete v-model="rule.source_ports" multiple fluid :suggestions="genericSuggestions"
-                @complete="genericSuggestions = [$event.query]" placeholder="e.g. 80, 1000-2000" />
+                @complete="genericSuggestions = [$event.query]"
+                :placeholder="t('chips_placeholder', ['80, 1000-2000'])" />
             </div>
-            <div class="flex flex-col gap-2 grow">
-              <label class="font-bold">{{ t('acl.rule.dst_ports') }}</label>
+            <div class="flex flex-col gap-1.5 grow">
+              <label class="acl-dlg-label">{{ t('acl.rule.dst_ports') }}</label>
               <AutoComplete v-model="rule.ports" multiple fluid :suggestions="genericSuggestions"
-                @complete="genericSuggestions = [$event.query]" placeholder="e.g. 80, 1000-2000" />
+                @complete="genericSuggestions = [$event.query]"
+                :placeholder="t('chips_placeholder', ['80, 1000-2000'])" />
             </div>
           </div>
         </div>
@@ -142,30 +144,30 @@ const genericSuggestions = ref<string[]>([])
 
       <Panel v-model:collapsed="panelCollapsed.advanced" :header="t('advanced_settings')" toggleable
         :pt="panelHeaderPt('advanced')">
-        <div class="flex flex-col gap-4">
+        <div class="flex flex-col gap-3">
           <div class="flex items-center gap-2">
             <Checkbox v-model="rule.stateful" :binary="true" inputId="rule-stateful" />
-            <label for="rule-stateful" class="font-bold">{{ t('acl.rule.stateful') }}</label>
+            <label for="rule-stateful" class="acl-dlg-label">{{ t('acl.rule.stateful') }}</label>
           </div>
 
           <div class="flex flex-row gap-4 flex-wrap">
-            <div class="flex flex-col gap-2 grow">
-              <label class="font-bold">{{ t('acl.rule.rate_limit') }}</label>
-              <InputNumber v-model="rule.rate_limit" :min="0" placeholder="0 = no limit" fluid />
+            <div class="flex flex-col gap-1.5 grow">
+              <label class="acl-dlg-label">{{ t('acl.rule.rate_limit') }}</label>
+              <InputNumber v-model="rule.rate_limit" :min="0" placeholder="0" fluid />
             </div>
-            <div class="flex flex-col gap-2 grow">
-              <label class="font-bold">{{ t('acl.rule.burst_limit') }}</label>
-              <InputNumber v-model="rule.burst_limit" :min="0" placeholder="0 = no limit" fluid />
+            <div class="flex flex-col gap-1.5 grow">
+              <label class="acl-dlg-label">{{ t('acl.rule.burst_limit') }}</label>
+              <InputNumber v-model="rule.burst_limit" :min="0" placeholder="0" fluid />
             </div>
           </div>
 
-          <div class="flex flex-col gap-2">
-            <label class="font-bold">{{ t('acl.rule.src_groups') }}</label>
+          <div class="flex flex-col gap-1.5">
+            <label class="acl-dlg-label">{{ t('acl.rule.src_groups') }}</label>
             <MultiSelect v-model="rule.source_groups" :options="props.groupNames" multiple fluid filter
               :placeholder="t('acl.rule.src_groups')" />
           </div>
-          <div class="flex flex-col gap-2">
-            <label class="font-bold">{{ t('acl.rule.dst_groups') }}</label>
+          <div class="flex flex-col gap-1.5">
+            <label class="acl-dlg-label">{{ t('acl.rule.dst_groups') }}</label>
             <MultiSelect v-model="rule.destination_groups" :options="props.groupNames" multiple fluid filter
               :placeholder="t('acl.rule.dst_groups')" />
           </div>
@@ -179,3 +181,11 @@ const genericSuggestions = ref<string[]>([])
     </template>
   </Dialog>
 </template>
+
+<style scoped>
+.acl-dlg-label {
+  font-size: var(--et-fs-meta, 0.75rem);
+  font-weight: 600;
+  color: var(--text-color-secondary, #64748b);
+}
+</style>

@@ -662,50 +662,62 @@ const eventLogContent = computed(() => {
         <Panel v-if="myNodeInfo" v-model:collapsed="panelCollapsed.vpnPortal" :header="t('vpn_portal_config')"
           toggleable :pt="panelHeaderPt('vpnPortal')">
           <ScrollPanel class="max-h-[50vh] pr-3">
-            <div v-if="vpnPortalLoading" class="py-8 text-center text-surface-500">
+            <div v-if="vpnPortalLoading" class="status-empty status-empty--center">
               {{ t('web.device_management.loading_network_status') }}
             </div>
-            <div v-else-if="vpnPortalError" class="py-4 text-red-500">
+            <div v-else-if="vpnPortalError" class="status-empty status-empty--error">
               {{ vpnPortalError }}
             </div>
             <div
               v-else-if="!vpnPortalInfo || ((!vpnPortalInfo.vpn_type || vpnPortalInfo.vpn_type === 'null') && vpnPortalClients.length === 0)"
-              class="py-4 text-surface-500">
+              class="status-empty">
               {{ t('vpn_portal_not_configured') }}
             </div>
-            <div v-else class="flex flex-col gap-4">
-              <div class="flex flex-wrap gap-x-6 gap-y-2 text-sm">
-                <span v-if="vpnPortalInfo.vpn_type"><strong>{{ t('vpn_portal_type') }}:</strong>
-                  {{ vpnPortalInfo.vpn_type }}</span>
-                <span v-if="vpnPortalInfo.listener"><strong>{{ t('vpn_portal_listener') }}:</strong>
-                  {{ vpnPortalInfo.listener }}</span>
+            <div v-else class="flex flex-col gap-3">
+              <div class="status-meta-row">
+                <span v-if="vpnPortalInfo.vpn_type">
+                  <span class="status-meta-label">{{ t('vpn_portal_type') }}</span>
+                  {{ vpnPortalInfo.vpn_type }}
+                </span>
+                <span v-if="vpnPortalInfo.listener">
+                  <span class="status-meta-label">{{ t('vpn_portal_listener') }}</span>
+                  {{ vpnPortalInfo.listener }}
+                </span>
               </div>
 
-              <div v-for="client in vpnPortalClients" :key="client.name"
-                class="rounded border border-surface-200 dark:border-surface-700 p-4">
-                <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
-                  <div class="font-semibold">{{ client.name }} · {{ client.virtual_ip }}</div>
+              <div v-for="client in vpnPortalClients" :key="client.name" class="status-subcard">
+                <div class="mb-2 flex flex-wrap items-center justify-between gap-2">
+                  <div class="status-subcard-title">{{ client.name }} · {{ client.virtual_ip }}</div>
                   <Tag :severity="vpnPortalStateSeverity(client.state)" :value="t(vpnPortalStateKey(client.state))" />
                 </div>
-                <div class="mb-3 grid gap-x-6 gap-y-1 text-sm sm:grid-cols-2">
-                  <span v-if="client.groups.length"><strong>{{ t('vpn_portal_client_groups') }}:</strong>
-                    {{ client.groups.join(', ') }}</span>
-                  <span v-if="client.peer_id !== undefined"><strong>{{ t('vpn_portal_peer_id') }}:</strong>
-                    {{ client.peer_id }}</span>
-                  <span v-if="client.endpoint"><strong>{{ t('vpn_portal_endpoint') }}:</strong>
-                    {{ client.endpoint }}</span>
-                  <span v-if="client.tunnel_ip"><strong>{{ t('vpn_portal_tunnel_ip') }}:</strong>
-                    {{ client.tunnel_ip }}</span>
-                  <span v-if="client.error" class="text-red-500 sm:col-span-2">{{ client.error }}</span>
+                <div class="status-meta-grid mb-2">
+                  <span v-if="client.groups.length">
+                    <span class="status-meta-label">{{ t('vpn_portal_client_groups') }}</span>
+                    {{ client.groups.join(', ') }}
+                  </span>
+                  <span v-if="client.peer_id !== undefined">
+                    <span class="status-meta-label">{{ t('vpn_portal_peer_id') }}</span>
+                    {{ client.peer_id }}
+                  </span>
+                  <span v-if="client.endpoint">
+                    <span class="status-meta-label">{{ t('vpn_portal_endpoint') }}</span>
+                    {{ client.endpoint }}
+                  </span>
+                  <span v-if="client.tunnel_ip">
+                    <span class="status-meta-label">{{ t('vpn_portal_tunnel_ip') }}</span>
+                    {{ client.tunnel_ip }}
+                  </span>
+                  <span v-if="client.error" class="status-meta-error sm:col-span-2">{{ client.error }}</span>
                 </div>
                 <div class="mb-2 flex items-center justify-between gap-3">
-                  <label class="font-medium">{{ t('vpn_portal_client_config') }}</label>
-                  <Button size="small" severity="secondary" outlined icon="pi pi-copy"
-                    :label="copiedVpnPortalClient === client.name ? t('config_copied') : t('vpn_portal_copy_client_config')"
+                  <span class="status-meta-label">{{ t('vpn_portal_client_config') }}</span>
+                  <Button size="small" severity="secondary" text rounded icon="pi pi-copy"
+                    class="et-icon-action-btn"
+                    :aria-label="t('vpn_portal_copy_client_config')"
+                    v-tooltip.top="copiedVpnPortalClient === client.name ? t('config_copied') : t('vpn_portal_copy_client_config')"
                     @click="copyVpnPortalClientConfig(client)" />
                 </div>
-                <pre
-                  class="max-w-full overflow-x-auto whitespace-pre-wrap break-all rounded bg-surface-100 p-3 text-xs dark:bg-surface-800">{{ client.client_config }}</pre>
+                <pre class="status-code-block">{{ client.client_config }}</pre>
               </div>
             </div>
           </ScrollPanel>
@@ -715,14 +727,13 @@ const eventLogContent = computed(() => {
           :pt="panelHeaderPt('eventLog')">
           <Timeline v-if="eventLogContent.length" :value="eventLogContent">
             <template #opposite="slotProps">
-              <small class="text-surface-500 dark:text-surface-400">{{ useTimeAgo(Date.parse(slotProps.item.time))
-              }}</small>
+              <small class="status-event-time">{{ useTimeAgo(Date.parse(slotProps.item.time)) }}</small>
             </template>
             <template #content="slotProps">
               <HumanEvent :event="slotProps.item.event" />
             </template>
           </Timeline>
-          <div v-else class="py-4 text-surface-500 text-sm">—</div>
+          <div v-else class="status-empty">—</div>
         </Panel>
   </div>
 </template>
@@ -745,9 +756,10 @@ const eventLogContent = computed(() => {
 .status-panels :deep(.p-panel .p-panel-header) {
   padding: 0.35rem 0.75rem !important;
   min-height: 2rem !important;
-  font-size: 0.875rem;
+  font-size: var(--et-fs-body, 0.875rem);
   font-weight: 600;
   line-height: 1.2;
+  color: var(--text-color, #1e293b);
   background: transparent;
   border: none;
 }
@@ -760,29 +772,31 @@ const eventLogContent = computed(() => {
   padding: 0.55rem 0.75rem !important;
   border: none;
   background: transparent;
+  font-size: var(--et-fs-body, 0.875rem);
+  color: var(--text-color, #1e293b);
 }
 
 .status-panels :deep(.p-panel .p-panel-header .p-panel-title),
-.status-panels :deep(.p-panel .p-panel-header span) {
-  font-size: 0.875rem;
+.status-panels :deep(.p-panel .p-panel-header span:not(.p-badge)) {
+  font-size: var(--et-fs-body, 0.875rem);
   font-weight: 600;
   line-height: 1.2;
+  color: var(--text-color, #1e293b);
 }
 
-/* 节点详情分组卡片 */
+/* 节点详情分组：与 Status 其它面板共用 surface / text token */
 .node-detail-groups {
   padding-right: 0.1rem;
 }
 
-/* 默认横向：标签 | 数值 | 复制；窄屏再折行 */
 .node-info-group {
   display: flex;
   flex-wrap: wrap;
   align-items: flex-start;
   gap: 0.35rem 0.5rem;
-  border: 1px solid #e2e8f0;
+  border: 1px solid var(--et-border-color, #e2e8f0);
   border-radius: calc(var(--et-radius, 0.75rem) - 0.25rem);
-  background: #f8fafc;
+  background: var(--surface-50, #f8fafc);
   padding: 0.35rem 0.5rem 0.4rem;
 }
 
@@ -790,12 +804,12 @@ const eventLogContent = computed(() => {
   flex: 0 0 6.5rem;
   min-width: 0;
   padding-top: 0.15rem;
-  font-size: 0.6875rem;
+  font-size: var(--et-fs-meta, 0.75rem);
   font-weight: 600;
   letter-spacing: 0.02em;
   text-transform: uppercase;
   line-height: 1.25;
-  color: #64748b;
+  color: var(--text-color-secondary, #64748b);
 }
 
 .node-info-group-count {
@@ -819,8 +833,8 @@ const eventLogContent = computed(() => {
 }
 
 /*
- * 数值与标签同色：标签在 Android 上已能正常显示，数值跟它走即可。
- * 禁止 flex-shrink / min-width:0，否则单行会被压成 0 宽。
+ * 标签用次要色、数值用正文色（回退色保证 Android WebView 可见）。
+ * 禁止 flex-shrink，避免单行被压成 0 宽。
  */
 .node-info-chip {
   display: inline-block;
@@ -830,16 +844,101 @@ const eventLogContent = computed(() => {
   padding: 0.1rem 0.45rem;
   min-height: 1.3rem;
   box-sizing: border-box;
-  font-size: 0.8125rem;
+  font-size: var(--et-fs-body, 0.875rem);
   font-weight: 500;
   line-height: 1.35;
-  color: #64748b;
-  background: transparent;
-  border: 1px solid #e2e8f0;
+  color: var(--text-color, #1e293b);
+  background: var(--surface-100, #f1f5f9);
+  border: 1px solid var(--et-border-color, #e2e8f0);
   border-radius: 0.375rem;
   white-space: normal;
   overflow-wrap: break-word;
   word-break: normal;
+}
+
+.status-subcard {
+  border: 1px solid var(--et-border-color, #e2e8f0);
+  border-radius: calc(var(--et-radius, 0.75rem) - 0.25rem);
+  background: var(--surface-50, #f8fafc);
+  padding: 0.75rem 0.85rem;
+}
+
+.status-subcard-title {
+  font-size: var(--et-fs-body, 0.875rem);
+  font-weight: 600;
+  color: var(--text-color, #1e293b);
+  line-height: 1.35;
+}
+
+.status-meta-row,
+.status-meta-grid {
+  font-size: var(--et-fs-body, 0.875rem);
+  color: var(--text-color, #1e293b);
+}
+
+.status-meta-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 1.25rem;
+}
+
+.status-meta-grid {
+  display: grid;
+  gap: 0.25rem 1.5rem;
+}
+
+@media (min-width: 640px) {
+  .status-meta-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.status-meta-label {
+  font-size: var(--et-fs-meta, 0.75rem);
+  font-weight: 600;
+  color: var(--text-color-secondary, #64748b);
+  margin-right: 0.25rem;
+}
+
+.status-meta-error {
+  color: var(--et-danger, #ef4444);
+}
+
+.status-code-block {
+  max-width: 100%;
+  margin: 0;
+  overflow-x: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  padding: 0.65rem 0.75rem;
+  border: 1px solid var(--et-border-color, #e2e8f0);
+  border-radius: calc(var(--et-radius, 0.75rem) - 0.35rem);
+  background: var(--surface-100, #f1f5f9);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: var(--et-fs-meta, 0.75rem);
+  line-height: 1.45;
+  color: var(--text-color, #1e293b);
+}
+
+.status-empty {
+  padding: 1rem 0;
+  font-size: var(--et-fs-body, 0.875rem);
+  color: var(--text-color-secondary, #64748b);
+}
+
+.status-empty--center {
+  text-align: center;
+  padding: 2rem 0;
+}
+
+.status-empty--error {
+  color: var(--et-danger, #ef4444);
+}
+
+.status-event-time {
+  font-size: var(--et-fs-meta, 0.75rem);
+  color: var(--text-color-secondary, #64748b);
 }
 
 @media (max-width: 640px) {
@@ -851,7 +950,7 @@ const eventLogContent = computed(() => {
   .node-info-group-title {
     flex: 1 1 auto;
     padding-top: 0;
-    font-size: 0.75rem;
+    font-size: var(--et-fs-meta, 0.75rem);
     text-transform: none;
     letter-spacing: 0;
     overflow: hidden;
@@ -870,28 +969,50 @@ const eventLogContent = computed(() => {
 }
 
 @media (prefers-color-scheme: dark) {
-  .node-info-group {
-    border-color: #334155;
-    background: #1e293b;
+  .node-info-group,
+  .status-subcard {
+    border-color: var(--surface-border, #334155);
+    background: var(--surface-card, #1e293b);
   }
 
   .node-info-group-title,
-  .node-info-chip {
-    color: #94a3b8;
+  .status-meta-label,
+  .status-empty,
+  .status-event-time {
+    color: var(--text-color-secondary, #94a3b8);
   }
 
-  .node-info-chip {
-    border-color: #334155;
+  .node-info-chip,
+  .status-code-block {
+    color: var(--text-color, #f1f5f9);
+    background: var(--surface-100, #334155);
+    border-color: var(--surface-border, #475569);
+  }
+
+  .status-subcard-title,
+  .status-meta-row,
+  .status-meta-grid {
+    color: var(--text-color, #f1f5f9);
+  }
+
+  .status-empty--error,
+  .status-meta-error {
+    color: var(--et-danger, #f87171);
   }
 }
 
-/* 节点信息表格：行高紧凑（仅收紧内边距，不改字号） */
+/* 节点信息表格：行高紧凑，字号与面板正文一致 */
 .status-panels :deep(.p-datatable .p-datatable-thead > tr > th) {
   padding: 0.4rem 0.6rem !important;
+  font-size: var(--et-fs-meta, 0.75rem);
+  font-weight: 600;
+  color: var(--text-color-secondary, #64748b);
 }
 
 .status-panels :deep(.p-datatable .p-datatable-tbody > tr > td) {
   padding: 0.35rem 0.6rem !important;
+  font-size: var(--et-fs-body, 0.875rem);
+  color: var(--text-color, #1e293b);
 }
 
 .peer-addr-cell,
