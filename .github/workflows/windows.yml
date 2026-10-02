@@ -94,8 +94,9 @@ jobs:
           target: ${{ matrix.TARGET }}
           gui: true
           pnpm: true
-          # 空 filter = 编全部 workspace（含 tauri-plugin-vpnservice-api + easytier-web 前端）
-          # 不可写成 ./easytier-web/*，否则 GUI vue-tsc 找不到 vpn 插件类型
+          # 空 filter = 编全部 workspace（GUI + vpnservice + web frontend + config-generator wasm）。
+          # Windows 同时出安装包与 ET-web-embed，不能像 Android 那样收窄并关掉 wasm。
+          # 不可写成仅 ./easytier-web/*，否则 GUI vue-tsc 找不到 vpn 插件类型。
           pnpm-build-filter: ''
           token: ${{ secrets.GITHUB_TOKEN }}
 
@@ -118,6 +119,14 @@ jobs:
           if [[ -n "$ARCH_DIR" ]]; then
               find "./easytier/third_party/${ARCH_DIR}" -maxdepth 1 -type f \( -name "*.dll" -o -name "*.sys" \) -exec cp {} ./easytier-gui/src-tauri/ \;
           fi
+
+      # NSIS / WiX / WebView2 bootstrapper live under %LOCALAPPDATA%\tauri on Windows.
+      - name: Cache Tauri bundler tools
+        if: ${{ contains(matrix.GUI_TARGET, 'windows') }}
+        uses: actions/cache@v5
+        with:
+          path: ~/AppData/Local/tauri
+          key: tauri-bundler-windows-${{ runner.arch }}-v1
 
       - name: Validate macOS signing secrets
         if: ${{ contains(matrix.GUI_TARGET, 'darwin') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
@@ -205,18 +214,17 @@ jobs:
             xcrun stapler validate "$dmg"
           done
 
-      - name: Build web console (embed, 自建控制台用)
+      # One cargo invocation shares dependency compilation between web-embed and core/cli.
+      - name: Build headless Windows binaries (web-embed + core/cli)
         if: ${{ contains(matrix.GUI_TARGET, 'windows') }}
         run: |
           set -euo pipefail
           test -f easytier-web/frontend/dist/index.html
-          cargo build --release --target $TARGET --package=easytier-web --features=embed
+          cargo build --release --target "$TARGET" \
+            -p easytier-web \
+            -p easytier \
+            --features easytier-web/embed
           mv ./target/$TARGET/release/easytier-web.exe ./target/$TARGET/release/easytier-web-embed.exe
-
-      - name: Build headless core + cli
-        if: ${{ contains(matrix.GUI_TARGET, 'windows') }}
-        run: |
-          cargo build --release --target $TARGET --package=easytier
 
       - name: Collect GUI artifact
         run: |
