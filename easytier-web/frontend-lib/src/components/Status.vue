@@ -569,18 +569,12 @@ const eventLogContent = computed(() => {
           toggleable :pt="panelHeaderPt('nodeDetails')">
           <div class="node-detail-groups flex flex-col gap-1.5 max-h-72 overflow-auto">
             <div v-for="group in myNodeInfoGroups" :key="group.key" class="node-info-group">
-              <div class="node-info-group-header">
-                <span class="node-info-group-title" :title="t(group.titleKey)">
-                  {{ t(group.titleKey) }}
-                  <span v-if="group.chips.length > 1" class="node-info-group-count">
-                    ({{ group.chips.length }})
-                  </span>
+              <span class="node-info-group-title" :title="t(group.titleKey)">
+                {{ t(group.titleKey) }}
+                <span v-if="group.chips.length > 1" class="node-info-group-count">
+                  ({{ group.chips.length }})
                 </span>
-                <Button v-if="group.chips.length" size="small" severity="secondary" text rounded icon="pi pi-copy"
-                  class="et-icon-action-btn" :aria-label="t('node_info_copy_group')"
-                  v-tooltip.top="t('node_info_copy_group')" @click="copyGroupChips(group)" />
-              </div>
-              <!-- 数值：不用主题色变量（Android WebView 上 --text-color/--surface-* 可能同色导致“只有标签”） -->
+              </span>
               <div class="node-info-group-chips">
                 <span
                   v-for="(chip, i) in group.chips"
@@ -589,6 +583,9 @@ const eventLogContent = computed(() => {
                   v-tooltip.top="chip.label"
                 >{{ chip.label }}</span>
               </div>
+              <Button v-if="group.chips.length" size="small" severity="secondary" text rounded icon="pi pi-copy"
+                class="et-icon-action-btn node-info-group-copy" :aria-label="t('node_info_copy_group')"
+                v-tooltip.top="t('node_info_copy_group')" @click="copyGroupChips(group)" />
             </div>
           </div>
         </Panel>
@@ -777,70 +774,60 @@ const eventLogContent = computed(() => {
   padding-right: 0.1rem;
 }
 
-/*
- * 始终上下布局：标题行 + 数值行。
- * 避免横向 flex 在 Android WebView 上把数值区挤成 0 宽，看起来像“只有标签”。
- */
+/* 默认横向：标签 | 数值 | 复制；窄屏再折行 */
 .node-info-group {
   display: flex;
-  flex-direction: column;
-  align-items: stretch;
-  gap: 0.35rem;
-  min-height: 0;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 0.35rem 0.5rem;
   border: 1px solid #e2e8f0;
   border-radius: calc(var(--et-radius, 0.75rem) - 0.25rem);
   background: #f8fafc;
-  padding: 0.45rem 0.55rem;
-}
-
-.node-info-group-header {
-  display: flex;
-  align-items: center;
-  gap: 0.35rem;
-  min-width: 0;
+  padding: 0.35rem 0.5rem 0.4rem;
 }
 
 .node-info-group-title {
-  flex: 1 1 auto;
+  flex: 0 0 6.5rem;
   min-width: 0;
-  font-size: 0.75rem;
+  padding-top: 0.15rem;
+  font-size: 0.6875rem;
   font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
   line-height: 1.25;
   color: #64748b;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .node-info-group-count {
   font-weight: 400;
   text-transform: none;
-}
-
-.node-info-group-header :deep(.et-icon-action-btn) {
-  flex: 0 0 auto;
+  letter-spacing: 0;
 }
 
 .node-info-group-chips {
+  flex: 1 1 8rem;
+  min-width: 0;
   display: flex;
   flex-wrap: wrap;
   align-items: flex-start;
   gap: 0.3rem;
-  width: 100%;
-  min-width: 0;
+}
+
+.node-info-group-copy {
+  flex: 0 0 auto;
+  align-self: flex-start;
 }
 
 /*
- * 写死对比色，不依赖 --text-color / --surface-*。
- * Android WebView 上 PrimeVue 暗色 token 与浅色 surface 交叉时会出现浅字浅底。
+ * 写死对比色；禁止 flex-shrink / min-width:0，否则 Android WebView 会把单行数值压成 0 宽。
  */
 .node-info-chip {
   display: inline-block;
-  flex: 0 1 auto;
-  min-width: 0;
+  flex: 0 0 auto;
+  width: auto;
   max-width: 100%;
-  padding: 0.15rem 0.45rem;
-  min-height: 1.35rem;
+  padding: 0.1rem 0.45rem;
+  min-height: 1.3rem;
   box-sizing: border-box;
   font-size: 0.8125rem;
   font-weight: 500;
@@ -850,9 +837,36 @@ const eventLogContent = computed(() => {
   border: 1px solid #cbd5e1 !important;
   border-radius: 0.375rem;
   white-space: normal;
-  overflow-wrap: anywhere;
-  word-break: break-word;
+  overflow-wrap: break-word;
+  word-break: normal;
   -webkit-text-fill-color: #0f172a;
+}
+
+@media (max-width: 640px) {
+  .node-info-group {
+    align-items: center;
+    padding: 0.45rem 0.55rem;
+  }
+
+  .node-info-group-title {
+    flex: 1 1 auto;
+    padding-top: 0;
+    font-size: 0.75rem;
+    text-transform: none;
+    letter-spacing: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .node-info-group-copy {
+    margin-left: auto;
+  }
+
+  .node-info-group-chips {
+    flex: 1 1 100%;
+    width: 100%;
+  }
 }
 
 @media (prefers-color-scheme: dark) {
