@@ -104,16 +104,26 @@ jobs:
           mv ./target/$TARGET/release/easytier-web ./target/$TARGET/release/easytier-web-embed
           cargo build --release --target $TARGET --package=easytier --features=jemalloc
 
+      - name: Cache UPX
+        uses: actions/cache@v5
+        with:
+          path: ${{ runner.temp }}/upx-4.2.4
+          key: upx-4.2.4-${{ runner.os }}-${{ runner.arch }}
+
       - name: Compress
+        env:
+          UPX_VERSION: '4.2.4'
+          UPX_INSTALL_DIR: ${{ runner.temp }}/upx-4.2.4
         run: |
           mkdir -p bins
-          UPX_VERSION=4.2.4
-          UPX_PKG="upx-${UPX_VERSION}-amd64_linux"
-          curl -L "https://github.com/upx/upx/releases/download/v${UPX_VERSION}/${UPX_PKG}.tar.xz" -s | tar xJvf -
-          cp "${UPX_PKG}/upx" .
+          # install-upx.sh runs in a subshell; use UPX_INSTALL_DIR for this step
+          bash script/install-upx.sh
+          UPX_BIN="${UPX_INSTALL_DIR}/upx"
           for BIN in ./target/x86_64-unknown-linux-musl/release/easytier-{core,cli,web-embed}; do
             if [[ -f "$BIN" ]]; then
-              ./upx --lzma --best "$BIN" || true
+              if [[ -x "$UPX_BIN" ]]; then
+                "$UPX_BIN" --lzma --best "$BIN" || true
+              fi
               cp "$BIN" bins/
             fi
           done

@@ -33,11 +33,18 @@ runs:
         sudo apt-get install -qqy build-essential mold musl-tools
       shell: bash
 
+    - name: Cache protoc
+      uses: actions/cache@v5
+      with:
+        path: ${{ runner.temp }}/protoc-35.1
+        key: protoc-35.1-${{ runner.os }}-${{ runner.arch }}
+
     - name: Setup protoc
       run: bash script/install-protoc.sh
       shell: bash
       env:
         PROTOC_VERSION: '35.1'
+        PROTOC_INSTALL_DIR: ${{ runner.temp }}/protoc-35.1
 
     - name: Setup Frontend Environment
       if: ${{ inputs.pnpm == 'true' }}
@@ -45,6 +52,8 @@ runs:
       with:
         token: ${{ inputs.token }}
         build-filter: ${{ inputs.pnpm-build-filter }}
+        # prepare-build already cached/installed protoc above
+        setup-protoc: 'false'
 
     - name: Install GUI dependencies (Linux)
       if: ${{ inputs.gui == 'true' && runner.os == 'Linux' }}

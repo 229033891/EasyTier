@@ -10,6 +10,10 @@ inputs:
     description: 'The filter argument for pnpm build (e.g. ./easytier-web/*)'
     required: false
     default: ''
+  setup-protoc:
+    description: 'Install protoc (set false when caller already installed it)'
+    required: false
+    default: 'true'
 
 runs:
   using: "composite"
@@ -25,11 +29,20 @@ runs:
       with:
         tool: wasm-pack
 
+    - name: Cache protoc
+      if: ${{ inputs.setup-protoc == 'true' }}
+      uses: actions/cache@v5
+      with:
+        path: ${{ runner.temp }}/protoc-35.1
+        key: protoc-35.1-${{ runner.os }}-${{ runner.arch }}
+
     - name: Setup protoc
+      if: ${{ inputs.setup-protoc == 'true' }}
       run: bash script/install-protoc.sh
       shell: bash
       env:
         PROTOC_VERSION: '35.1'
+        PROTOC_INSTALL_DIR: ${{ runner.temp }}/protoc-35.1
 
     - name: Setup Node.js
       uses: actions/setup-node@v5

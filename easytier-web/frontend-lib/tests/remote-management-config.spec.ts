@@ -198,6 +198,9 @@ describe('RemoteManagement config save', () => {
         instanceId: INSTANCE_ID,
       },
       global: {
+        directives: {
+          tooltip: () => {},
+        },
         stubs: {
           Config: true,
           ConfigEditDialog: true,
