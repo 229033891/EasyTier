@@ -726,9 +726,6 @@ const settings_menu = ref()
 const setting_menu_items: Ref<MenuItem[]> = ref([
   {
     label: () => {
-      // Android is always normal mode; expose config-server status directly.
-      if (type() === 'android')
-        return `${t('config-server.title')}: ${configServerStatusLabel.value}`
       const modeLabel = t('mode.' + currentMode.value.mode)
       if (currentMode.value.mode === 'remote')
         return `${t('mode.runtime_settings')}: ${modeLabel}`
@@ -785,17 +782,14 @@ async function connectRpcClient(isNormalMode: boolean, url?: string) {
         <Button :label="t('close')" icon="pi pi-times" @click="aboutVisible = false" text autofocus />
       </template>
     </Dialog>
-    <Dialog v-model:visible="modeDialogVisible"
-      modal
-      :header="type() === 'android' ? t('config-server.title') : t('mode.runtime_settings')"
-      :style="settingsDialogStyle"
-      class="app-dialog">
+    <Dialog v-model:visible="modeDialogVisible" modal :header="t('mode.runtime_settings')"
+      :style="settingsDialogStyle" class="app-dialog">
       <Message v-if="showAutostartHint" severity="info" :closable="false" class="mb-3">
         {{ t('mode.autostart_hint') }}
       </Message>
       <ModeSwitcher
         v-model="editingMode"
-        :config-server-only="type() === 'android'"
+        :normal-mode-only="type() === 'android'"
         :config-server-status-label="configServerStatusLabel"
         :config-server-status-severity="configServerStatusSeverity"
         :config-server-last-error="configServerStatus === 'failed' ? configServerLastError : ''"
