@@ -89,8 +89,12 @@ jobs:
           distribution: 'temurin'
           java-version: '21'
 
-      # Ubuntu runners keep the SDK under /usr/local/lib/android/sdk; cache NDK to
-      # avoid re-downloading ~600MB+ on every Android job.
+      # Ensure NDK parent dir is writable before cache restore (system SDK path).
+      - name: Prepare Android NDK cache directory
+        run: |
+          sudo mkdir -p /usr/local/lib/android/sdk/ndk
+          sudo chmod -R a+rwx /usr/local/lib/android/sdk/ndk
+
       - name: Cache Android NDK
         uses: actions/cache@v5
         with:
@@ -115,8 +119,10 @@ jobs:
           target: ${{ matrix.TARGET }}
           gui: false
           pnpm: true
-          # GUI only: skip web frontend / config-generator wasm (~1.5min+)
-          pnpm-build-filter: 'easytier-gui'
+          # GUI + workspace deps (frontend-lib, tauri-plugin-vpnservice-api).
+          # Plain "easytier-gui" skips vpnservice dist-js (gitignored) and breaks vue-tsc.
+          # Do NOT build web frontend / config-generator wasm.
+          pnpm-build-filter: 'easytier-gui...'
           pnpm-setup-wasm: 'false'
           token: ${{ secrets.GITHUB_TOKEN }}
 
