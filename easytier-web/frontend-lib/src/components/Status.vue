@@ -569,13 +569,18 @@ const eventLogContent = computed(() => {
           toggleable :pt="panelHeaderPt('nodeDetails')">
           <div class="node-detail-groups flex flex-col gap-1.5 max-h-72 overflow-auto">
             <div v-for="group in myNodeInfoGroups" :key="group.key" class="node-info-group">
-              <span class="node-info-group-title" :title="t(group.titleKey)">
-                {{ t(group.titleKey) }}
-                <span v-if="group.chips.length > 1" class="normal-case font-normal">
-                  ({{ group.chips.length }})
+              <div class="node-info-group-header">
+                <span class="node-info-group-title" :title="t(group.titleKey)">
+                  {{ t(group.titleKey) }}
+                  <span v-if="group.chips.length > 1" class="node-info-group-count">
+                    ({{ group.chips.length }})
+                  </span>
                 </span>
-              </span>
-              <!-- 内容多时自动换行（不横向滚动），分组高度随之增加 -->
+                <Button v-if="group.chips.length" size="small" severity="secondary" text rounded icon="pi pi-copy"
+                  class="et-icon-action-btn" :aria-label="t('node_info_copy_group')"
+                  v-tooltip.top="t('node_info_copy_group')" @click="copyGroupChips(group)" />
+              </div>
+              <!-- 数值：不用主题色变量（Android WebView 上 --text-color/--surface-* 可能同色导致“只有标签”） -->
               <div class="node-info-group-chips">
                 <span
                   v-for="(chip, i) in group.chips"
@@ -584,9 +589,6 @@ const eventLogContent = computed(() => {
                   v-tooltip.top="chip.label"
                 >{{ chip.label }}</span>
               </div>
-              <Button v-if="group.chips.length" size="small" severity="secondary" text rounded icon="pi pi-copy"
-                class="et-icon-action-btn" :aria-label="t('node_info_copy_group')"
-                v-tooltip.top="t('node_info_copy_group')" @click="copyGroupChips(group)" />
             </div>
           </div>
         </Panel>
@@ -775,86 +777,99 @@ const eventLogContent = computed(() => {
   padding-right: 0.1rem;
 }
 
-/* 一组：标题定宽（顶部对齐）+ chip 区自动换行（不横向滚动）+ 复制按钮 */
+/*
+ * 始终上下布局：标题行 + 数值行。
+ * 避免横向 flex 在 Android WebView 上把数值区挤成 0 宽，看起来像“只有标签”。
+ */
 .node-info-group {
   display: flex;
-  align-items: flex-start;
-  gap: 0.5rem;
-  min-height: 1.6rem;
-  border: 1px solid var(--et-border-color, #e2e8f0);
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.35rem;
+  min-height: 0;
+  border: 1px solid #e2e8f0;
   border-radius: calc(var(--et-radius, 0.75rem) - 0.25rem);
-  background: var(--surface-50, #f8fafc);
-  padding: 0.3rem 0.5rem 0.4rem;
+  background: #f8fafc;
+  padding: 0.45rem 0.55rem;
+}
+
+.node-info-group-header {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  min-width: 0;
 }
 
 .node-info-group-title {
-  flex: 0 0 6.5rem;
+  flex: 1 1 auto;
   min-width: 0;
-  padding-top: 0.15rem; /* 与换行的 chip 首行基线对齐 */
-  font-size: 0.6875rem;
+  font-size: 0.75rem;
   font-weight: 600;
-  letter-spacing: 0.02em;
-  text-transform: uppercase;
-  color: var(--text-color-secondary, #64748b);
+  line-height: 1.25;
+  color: #64748b;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.node-info-group-count {
+  font-weight: 400;
+  text-transform: none;
+}
+
+.node-info-group-header :deep(.et-icon-action-btn) {
+  flex: 0 0 auto;
 }
 
 .node-info-group-chips {
-  flex: 1 1 auto;
-  min-width: 0;
   display: flex;
   flex-wrap: wrap;
-  align-items: center;
+  align-items: flex-start;
   gap: 0.3rem;
+  width: 100%;
+  min-width: 0;
 }
 
-/* 不用 PrimeVue Chip：其主题色在部分 WebView/桌面壳下可能变成与背景同色，只剩左侧标题可见 */
+/*
+ * 写死对比色，不依赖 --text-color / --surface-*。
+ * Android WebView 上 PrimeVue 暗色 token 与浅色 surface 交叉时会出现浅字浅底。
+ */
 .node-info-chip {
   display: inline-block;
   flex: 0 1 auto;
   min-width: 0;
   max-width: 100%;
-  padding: 0.05rem 0.4rem;
-  min-height: 1.25rem;
+  padding: 0.15rem 0.45rem;
+  min-height: 1.35rem;
   box-sizing: border-box;
-  font-size: 0.75rem;
-  line-height: 1.2;
-  color: var(--text-color, #1e293b);
-  background: var(--surface-100, #f1f5f9);
-  border: 1px solid var(--et-border-color, #e2e8f0);
-  border-radius: 9999px;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  line-height: 1.35;
+  color: #0f172a !important;
+  background: #e2e8f0 !important;
+  border: 1px solid #cbd5e1 !important;
+  border-radius: 0.375rem;
   white-space: normal;
   overflow-wrap: anywhere;
+  word-break: break-word;
+  -webkit-text-fill-color: #0f172a;
 }
 
-/* 窄屏改为上下堆叠：标题+复制一行，chip 全宽换行，避免标签被内容盖住 */
-@media (max-width: 640px) {
+@media (prefers-color-scheme: dark) {
   .node-info-group {
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 0.35rem 0.4rem;
-    padding: 0.45rem 0.55rem;
+    border-color: #334155;
+    background: #1e293b;
   }
 
   .node-info-group-title {
-    flex: 1 1 auto;
-    min-width: 0;
-    padding-top: 0;
-    font-size: 0.75rem;
-    text-transform: none;
-    letter-spacing: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    color: #94a3b8;
   }
 
-  .node-info-group :deep(.et-icon-action-btn) {
-    flex: 0 0 auto;
-    margin-left: auto;
-  }
-
-  .node-info-group-chips {
-    flex: 1 1 100%;
-    width: 100%;
+  .node-info-chip {
+    color: #f8fafc !important;
+    background: #334155 !important;
+    border-color: #475569 !important;
+    -webkit-text-fill-color: #f8fafc;
   }
 }
 
