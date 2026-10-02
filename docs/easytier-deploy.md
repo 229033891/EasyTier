@@ -4,6 +4,8 @@
 
 脚本位置：`script/easytier-install.sh`（配套静态检查：`script/check-easytier-install.sh`）。
 
+总方案（GitHub 产物 / Docker / 升级清单）：`docs/github-install-upgrade-scheme-2026-10-02.md`。
+
 ## 远程一键安装（VPS）
 
 ```bash
