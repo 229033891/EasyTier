@@ -455,9 +455,12 @@ const RPC_CONNECT_TIMEOUT_NETWORK: std::time::Duration = std::time::Duration::fr
 
 /// 目标是否指向本机（localhost / 127.0.0.0/8 / ::1）。
 fn is_loopback_rpc_target(url: &url::Url) -> bool {
-    match url.host_str() {
-        Some("localhost") => true,
-        Some(host) => host
+    match url.host() {
+        Some(url::Host::Domain("localhost")) => true,
+        Some(url::Host::Ipv4(addr)) => addr.is_loopback(),
+        Some(url::Host::Ipv6(addr)) => addr.is_loopback(),
+        // Non-special schemes (tcp/ws/...) may keep dotted IPs as Domain.
+        Some(url::Host::Domain(host)) => host
             .parse::<std::net::IpAddr>()
             .is_ok_and(|addr| addr.is_loopback()),
         None => false,
