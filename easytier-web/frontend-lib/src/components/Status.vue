@@ -6,7 +6,7 @@ import { useI18n } from 'vue-i18n';
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue';
 import { ipv4InetToString, ipv4ToString, ipv6ToString } from '../modules/utils';
 import { latencyMs, lossRate, numericValue, peerConns, resolvePeerRemoteAddr, resolveRoutePath, type RoutePeerLabel } from '../modules/statusDisplay';
-import { Badge, DataTable, Column, Tag, Chip, Button, ScrollPanel, Timeline, Card, Panel, } from 'primevue';
+import { Badge, DataTable, Column, Tag, Button, ScrollPanel, Timeline, Card, Panel, } from 'primevue';
 import NetworkChart from './NetworkChart.vue';
 import PeerConnHistoryChart from './PeerConnHistoryChart.vue';
 
@@ -184,15 +184,14 @@ const myNodeInfo = computed(() => {
   return props.curNetworkInst.detail?.my_node_info
 })
 
-interface Chip {
+interface InfoChip {
   label: string
-  icon: string
 }
 
 interface ChipGroup {
   key: string
   titleKey: string
-  chips: Chip[]
+  chips: InfoChip[]
 }
 
 // udp nat type
@@ -233,7 +232,7 @@ const myNodeInfoGroups = computed(() => {
   if (!my_node_info)
     return groups
 
-  const chip = (label: string): Chip => ({ label, icon: '' })
+  const chip = (label: string): InfoChip => ({ label })
 
   groups.push({
     key: 'peer_id',
@@ -265,7 +264,7 @@ const myNodeInfoGroups = computed(() => {
     })
   }
 
-  const localChips: Chip[] = []
+  const localChips: InfoChip[] = []
   for (const [idx, ip] of my_node_info.ips?.interface_ipv4s?.entries() ?? []) {
     localChips.push(chip(`IPv4 ${idx}: ${ipv4ToString(ip)}`))
   }
@@ -280,7 +279,7 @@ const myNodeInfoGroups = computed(() => {
     })
   }
 
-  const publicChips: Chip[] = []
+  const publicChips: InfoChip[] = []
   // 公网 IP 附带侦听端口，便于直接作为对端接入地址使用；优先取 UDP 侦听端口
   const listenerUrls = my_node_info.listeners ?? []
   const publicPort = (() => {
@@ -303,7 +302,7 @@ const myNodeInfoGroups = computed(() => {
     })
   }
 
-  const listenerChips: Chip[] = []
+  const listenerChips: InfoChip[] = []
   for (const [idx, listener] of my_node_info.listeners?.entries() ?? []) {
     listenerChips.push(chip(`${idx}: ${listener.url}`))
   }
@@ -382,7 +381,7 @@ const panelCollapsed = reactive({
 
 /** 节点详情不再分组折叠：所有条目一次铺开，长内容允许换行，避免撑出横向滚动条。 */
 
-async function copyGroupChips(group: { titleKey: string; chips: Chip[] }) {
+async function copyGroupChips(group: { titleKey: string; chips: InfoChip[] }) {
   const text = group.chips.map(c => c.label).join('\n')
   try {
     if (navigator.clipboard?.writeText) {
@@ -578,8 +577,12 @@ const eventLogContent = computed(() => {
               </span>
               <!-- 内容多时自动换行（不横向滚动），分组高度随之增加 -->
               <div class="node-info-group-chips">
-                <Chip v-for="(chip, i) in group.chips" :key="i" :label="chip.label" :icon="chip.icon"
-                  class="node-info-chip" v-tooltip.top="chip.label" />
+                <span
+                  v-for="(chip, i) in group.chips"
+                  :key="i"
+                  class="node-info-chip"
+                  v-tooltip.top="chip.label"
+                >{{ chip.label }}</span>
               </div>
               <Button v-if="group.chips.length" size="small" severity="secondary" text rounded icon="pi pi-copy"
                 class="et-icon-action-btn" :aria-label="t('node_info_copy_group')"
@@ -782,7 +785,6 @@ const eventLogContent = computed(() => {
   border-radius: calc(var(--et-radius, 0.75rem) - 0.25rem);
   background: var(--surface-50, #f8fafc);
   padding: 0.3rem 0.5rem 0.4rem;
-  overflow: hidden;
 }
 
 .node-info-group-title {
@@ -805,16 +807,21 @@ const eventLogContent = computed(() => {
   gap: 0.3rem;
 }
 
-.status-panels :deep(.node-info-chip.p-chip) {
+/* 不用 PrimeVue Chip：其主题色在部分 WebView/桌面壳下可能变成与背景同色，只剩左侧标题可见 */
+.node-info-chip {
+  display: inline-block;
   flex: 0 1 auto;
   min-width: 0;
   max-width: 100%;
   padding: 0.05rem 0.4rem;
   min-height: 1.25rem;
-  height: auto;
+  box-sizing: border-box;
   font-size: 0.75rem;
   line-height: 1.2;
-  /* 允许文字在极窄屏换行，避免单个超长 chip 撑出横向滚动条 */
+  color: var(--text-color, #1e293b);
+  background: var(--surface-100, #f1f5f9);
+  border: 1px solid var(--et-border-color, #e2e8f0);
+  border-radius: 9999px;
   white-space: normal;
   overflow-wrap: anywhere;
 }
