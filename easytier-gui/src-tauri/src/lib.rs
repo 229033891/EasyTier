@@ -901,6 +901,7 @@ mod manager;
 #[cfg(not(target_os = "android"))]
 mod service;
 
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run_gui() -> std::process::ExitCode {
     #[cfg(not(target_os = "android"))]
     if !check_sudo() {
