@@ -819,7 +819,8 @@ const eventLogContent = computed(() => {
 }
 
 /*
- * 写死对比色；禁止 flex-shrink / min-width:0，否则 Android WebView 会把单行数值压成 0 宽。
+ * 数值与标签同色：标签在 Android 上已能正常显示，数值跟它走即可。
+ * 禁止 flex-shrink / min-width:0，否则单行会被压成 0 宽。
  */
 .node-info-chip {
   display: inline-block;
@@ -832,14 +833,13 @@ const eventLogContent = computed(() => {
   font-size: 0.8125rem;
   font-weight: 500;
   line-height: 1.35;
-  color: #0f172a !important;
-  background: #e2e8f0 !important;
-  border: 1px solid #cbd5e1 !important;
+  color: #64748b;
+  background: transparent;
+  border: 1px solid #e2e8f0;
   border-radius: 0.375rem;
   white-space: normal;
   overflow-wrap: break-word;
   word-break: normal;
-  -webkit-text-fill-color: #0f172a;
 }
 
 @media (max-width: 640px) {
@@ -875,15 +875,13 @@ const eventLogContent = computed(() => {
     background: #1e293b;
   }
 
-  .node-info-group-title {
+  .node-info-group-title,
+  .node-info-chip {
     color: #94a3b8;
   }
 
   .node-info-chip {
-    color: #f8fafc !important;
-    background: #334155 !important;
-    border-color: #475569 !important;
-    -webkit-text-fill-color: #f8fafc;
+    border-color: #334155;
   }
 }
 
