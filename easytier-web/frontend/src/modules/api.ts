@@ -243,6 +243,22 @@ export class ApiClient {
         });
     }
 
+    /** Retire an offline device from the archive (and drop its stored configs). */
+    public async delete_device(deviceId: string): Promise<void> {
+        await this.client.delete(`/devices/${deviceId}`);
+    }
+
+    /**
+     * Merge source archive identity into target (configs + alias + history),
+     * then remove the source device row.
+     */
+    public async merge_devices(sourceDeviceId: string, targetDeviceId: string): Promise<void> {
+        await this.client.post('/devices/merge', {
+            source_device_id: sourceDeviceId,
+            target_device_id: targetDeviceId,
+        });
+    }
+
     public async get_summary(): Promise<Summary> {
         const response = await this.client.get<any, Summary>('/summary');
         return response;

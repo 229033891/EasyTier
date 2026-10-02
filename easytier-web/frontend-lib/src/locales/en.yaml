@@ -637,6 +637,22 @@ web:
     rename_failed: Failed to update display name
     reported_hostname: Reported Hostname
     archive_load_failed: Failed to load device archive; keeping last display names
+    retire: Retire Device
+    retire_confirm: 'Remove "{0}" from the device list? Stored network configs for this identity will also be deleted. Peer history is kept.'
+    retire_success: Device retired
+    retire_failed: Failed to retire device
+    retire_online_denied: Online devices cannot be retired. Disconnect the device first.
+    merge: Merge Into…
+    merge_title: Merge Device
+    merge_hint: Move the alias, network configs, and history from this offline device into another device identity, then remove the source. Use after a reinstall created a duplicate.
+    merge_source: Source device
+    merge_target: Keep this device
+    merge_target_placeholder: Select target device
+    merge_confirm: 'Merge "{0}" into "{1}"? The source device will be removed.'
+    merge_success: Devices merged
+    merge_failed: Failed to merge devices
+    merge_no_targets: No other devices available to merge into
+    merge_online_denied: Online devices cannot be merged away. Merge from the offline (old) device into the new one.
     back_to_list: Back to Device List
     back_to_list_tip: Return to the device list without saving unsaved changes
     back_to_network_list: Back to Network List

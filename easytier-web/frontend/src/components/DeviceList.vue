@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
 import { TOAST_LIFE } from 'easytier-frontend-lib'
-import { Button, Dialog, InputText, ProgressSpinner, useToast, Dropdown } from 'primevue';
+import { Button, Dialog, InputText, ProgressSpinner, useConfirm, useToast, Dropdown } from 'primevue';
 import { Utils, tooltipDirective } from 'easytier-frontend-lib';
 import { useRouter } from 'vue-router';
 import DeviceDetails from './DeviceDetails.vue';
@@ -32,12 +32,19 @@ const api = props.api;
 
 const router = useRouter();
 const toast = useToast();
+const confirm = useConfirm();
 
 const renameVisible = ref(false);
 const renameSaving = ref(false);
 const renameDeviceId = ref('');
 const renameInput = ref('');
 const renameReportedHostname = ref('');
+
+const mergeVisible = ref(false);
+const mergeSaving = ref(false);
+const mergeSourceId = ref('');
+const mergeSourceLabel = ref('');
+const mergeTargetId = ref<string | null>(null);
 
 const loadDevices = async (): Promise<Array<Utils.DeviceInfo>> => {
     return loadMergedDevices(api, { toast, t });
@@ -83,9 +90,146 @@ const clearRename = async () => {
     await saveRename();
 };
 
-/** 打开设备管理全页：status=查看/启停；config=编辑/新建。离线设备不可操作网络。 */
+/** True when present in live list_machines; archive-only rows are offline. */
 const isDeviceOnline = (device: Utils.DeviceInfo) => device.online !== false;
 
+const mergeTargetOptions = computed(() => {
+    const sourceId = mergeSourceId.value;
+    return (deviceList.value || [])
+        .filter((d) => d.machine_id && d.machine_id !== sourceId)
+        .map((d) => ({
+            label: `${d.hostname}${isDeviceOnline(d) ? '' : ` (${t('web.device.offline')})`}`,
+            value: d.machine_id,
+        }));
+});
+
+const openMergeDialog = (device: Utils.DeviceInfo) => {
+    if (isDeviceOnline(device)) {
+        toast.add({
+            severity: 'warn',
+            summary: t('web.device.merge'),
+            detail: t('web.device.merge_online_denied'),
+            life: TOAST_LIFE.warn,
+        });
+        return;
+    }
+    mergeSourceId.value = device.machine_id;
+    mergeSourceLabel.value = device.hostname;
+    mergeTargetId.value = null;
+    const options = (deviceList.value || []).filter(
+        (d) => d.machine_id && d.machine_id !== device.machine_id,
+    );
+    if (!options.length) {
+        toast.add({
+            severity: 'info',
+            summary: t('web.device.merge'),
+            detail: t('web.device.merge_no_targets'),
+            life: TOAST_LIFE.info,
+        });
+        return;
+    }
+    // Prefer an online device with the same reported hostname when present.
+    const reported = (device.reported_hostname || device.hostname || '').toLowerCase();
+    const preferred =
+        options.find(
+            (d) =>
+                isDeviceOnline(d) &&
+                (d.reported_hostname || d.hostname || '').toLowerCase() === reported,
+        ) ||
+        options.find((d) => isDeviceOnline(d)) ||
+        options[0];
+    mergeTargetId.value = preferred?.machine_id ?? null;
+    mergeVisible.value = true;
+};
+
+const confirmMerge = () => {
+    if (!api || !mergeSourceId.value || !mergeTargetId.value || mergeSaving.value) return;
+    const target = (deviceList.value || []).find((d) => d.machine_id === mergeTargetId.value);
+    const targetLabel = target?.hostname || mergeTargetId.value;
+    confirm.require({
+        message: t('web.device.merge_confirm', [mergeSourceLabel.value, targetLabel]),
+        header: t('web.device.merge_title'),
+        icon: 'pi pi-sitemap',
+        rejectProps: {
+            label: t('web.common.cancel'),
+            severity: 'secondary',
+            outlined: true,
+        },
+        acceptProps: {
+            label: t('web.device.merge'),
+            severity: 'warning',
+        },
+        accept: async () => {
+            mergeSaving.value = true;
+            try {
+                await api.merge_devices(mergeSourceId.value, mergeTargetId.value!);
+                mergeVisible.value = false;
+                await reloadDevices();
+                toast.add({
+                    severity: 'success',
+                    summary: t('web.device.merge_success'),
+                    life: TOAST_LIFE.success,
+                });
+            } catch (e: any) {
+                toast.add({
+                    severity: 'error',
+                    summary: t('web.device.merge_failed'),
+                    detail: e?.response?.data?.message || String(e),
+                    life: TOAST_LIFE.error,
+                });
+            } finally {
+                mergeSaving.value = false;
+            }
+        },
+    });
+};
+
+const confirmRetire = (device: Utils.DeviceInfo) => {
+    if (isDeviceOnline(device)) {
+        toast.add({
+            severity: 'warn',
+            summary: t('web.device.retire'),
+            detail: t('web.device.retire_online_denied'),
+            life: TOAST_LIFE.warn,
+        });
+        return;
+    }
+    confirm.require({
+        message: t('web.device.retire_confirm', [device.hostname]),
+        header: t('web.device.retire'),
+        icon: 'pi pi-exclamation-triangle',
+        rejectProps: {
+            label: t('web.common.cancel'),
+            severity: 'secondary',
+            outlined: true,
+        },
+        acceptProps: {
+            label: t('web.device.retire'),
+            severity: 'danger',
+        },
+        accept: async () => {
+            if (!api) return;
+            try {
+                await api.delete_device(device.machine_id);
+                await reloadDevices();
+                toast.add({
+                    severity: 'success',
+                    summary: t('web.device.retire_success'),
+                    life: TOAST_LIFE.success,
+                });
+            } catch (e: any) {
+                toast.add({
+                    severity: 'error',
+                    summary: t('web.device.retire_failed'),
+                    detail: e?.response?.data?.message || String(e),
+                    life: TOAST_LIFE.error,
+                });
+            }
+        },
+    });
+};
+
+/** 打开设备管理全页：status=查看/启停；config=编辑/新建。离线设备不可操作网络。 */
 const handleDeviceManagement = (device: Utils.DeviceInfo, mode: 'status' | 'config') => {
     if (!isDeviceOnline(device)) {
         toast.add({
@@ -650,6 +794,22 @@ const locationText = (device: Utils.DeviceInfo): string => {
                                     :disabled="!isDeviceOnline(device)"
                                     @click="handleDeviceManagement(device, 'config')"
                                     :aria-label="t('web.device.open_network_config')" />
+
+                                <Button
+                                    v-if="!isDeviceOnline(device)"
+                                    v-tooltip.top="t('web.device.merge')"
+                                    icon="pi pi-arrow-right-arrow-left" severity="help" rounded text
+                                    class="et-icon-action-btn device-action-btn"
+                                    @click="openMergeDialog(device)"
+                                    :aria-label="t('web.device.merge')" />
+
+                                <Button
+                                    v-if="!isDeviceOnline(device)"
+                                    v-tooltip.top="t('web.device.retire')"
+                                    icon="pi pi-trash" severity="danger" rounded text
+                                    class="et-icon-action-btn device-action-btn"
+                                    @click="confirmRetire(device)"
+                                    :aria-label="t('web.device.retire')" />
                             </div>
                         </div>
                     </div>
@@ -703,6 +863,53 @@ const locationText = (device: Utils.DeviceInfo): string => {
                 :label="t('save')"
                 :loading="renameSaving"
                 @click="saveRename"
+            />
+        </template>
+    </Dialog>
+
+    <Dialog
+        v-model:visible="mergeVisible"
+        modal
+        :header="t('web.device.merge_title')"
+        :style="{ width: '26rem' }"
+        :closable="!mergeSaving"
+    >
+        <div class="flex flex-col gap-3">
+            <div class="text-sm text-muted-color">
+                {{ t('web.device.merge_hint') }}
+            </div>
+            <div class="text-sm">
+                <span class="text-muted-color">{{ t('web.device.merge_source') }}:</span>
+                <span class="font-semibold ml-1">{{ mergeSourceLabel }}</span>
+            </div>
+            <div class="flex flex-col gap-1">
+                <label class="text-sm text-muted-color" for="merge-target">{{ t('web.device.merge_target') }}</label>
+                <Dropdown
+                    id="merge-target"
+                    v-model="mergeTargetId"
+                    :options="mergeTargetOptions"
+                    optionLabel="label"
+                    optionValue="value"
+                    class="w-full"
+                    :placeholder="t('web.device.merge_target_placeholder')"
+                    :disabled="mergeSaving"
+                />
+            </div>
+        </div>
+        <template #footer>
+            <Button
+                :label="t('close')"
+                severity="secondary"
+                text
+                :disabled="mergeSaving"
+                @click="mergeVisible = false"
+            />
+            <Button
+                :label="t('web.device.merge')"
+                severity="warning"
+                :loading="mergeSaving"
+                :disabled="!mergeTargetId"
+                @click="confirmMerge"
             />
         </template>
     </Dialog>

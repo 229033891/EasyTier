@@ -638,6 +638,22 @@ web:
     rename_failed: 更新显示名失败
     reported_hostname: 上报主机名
     archive_load_failed: 设备归档加载失败，暂时沿用上次显示名
+    retire: 退役设备
+    retire_confirm: '将「{0}」从设备列表移除？该身份下已保存的网络配置也会删除；对端连接历史会保留。'
+    retire_success: 设备已退役
+    retire_failed: 退役设备失败
+    retire_online_denied: 在线设备不能退役，请先断开连接
+    merge: 合并到…
+    merge_title: 合并设备
+    merge_hint: 将本离线设备的显示名、网络配置与历史迁移到另一台设备身份，并删除源设备。适用于重装后出现重复设备的情况。
+    merge_source: 源设备
+    merge_target: 保留此设备
+    merge_target_placeholder: 选择目标设备
+    merge_confirm: '将「{0}」合并到「{1}」？源设备将被移除。'
+    merge_success: 设备已合并
+    merge_failed: 合并设备失败
+    merge_no_targets: 没有可合并的其他设备
+    merge_online_denied: 在线设备不能作为合并源，请从离线（旧）设备合并到新设备
     back_to_list: 返回设备列表
     back_to_list_tip: 返回设备列表，不保存未提交的修改
     back_to_network_list: 返回网络列表

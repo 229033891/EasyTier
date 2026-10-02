@@ -80,6 +80,12 @@ struct UpdateDeviceDisplayNameJsonReq {
     display_name: String,
 }
 
+#[derive(Debug, serde::Deserialize, serde::Serialize)]
+struct MergeDevicesJsonReq {
+    source_device_id: uuid::Uuid,
+    target_device_id: uuid::Uuid,
+}
+
 /// Normalize a console display alias: strip control chars, trim, cap at 32.
 fn normalize_device_display_name(raw: &str) -> String {
     raw.chars()
@@ -241,6 +247,91 @@ impl RestfulServer {
         Ok(())
     }
 
+    async fn handle_delete_device(
+        auth_session: AuthSession,
+        State(client_mgr): AppState,
+        Extension(db): Extension<Db>,
+        Path(device_id): Path<uuid::Uuid>,
+    ) -> Result<(), HttpHandleError> {
+        let Some(user) = auth_session.user else {
+            return Err((StatusCode::UNAUTHORIZED, other_error("No such user").into()));
+        };
+
+        if client_mgr
+            .get_session_by_machine_id(user.id(), &device_id)
+            .is_some()
+        {
+            return Err((
+                StatusCode::CONFLICT,
+                other_error("Cannot retire an online device; disconnect it first").into(),
+            ));
+        }
+
+        let deleted = db
+            .delete_device(user.id(), device_id)
+            .await
+            .map_err(convert_db_error)?;
+        if !deleted {
+            return Err((StatusCode::NOT_FOUND, other_error("Device not found").into()));
+        }
+        Ok(())
+    }
+
+    async fn handle_merge_devices(
+        auth_session: AuthSession,
+        State(client_mgr): AppState,
+        Extension(db): Extension<Db>,
+        Json(payload): Json<MergeDevicesJsonReq>,
+    ) -> Result<(), HttpHandleError> {
+        let Some(user) = auth_session.user else {
+            return Err((StatusCode::UNAUTHORIZED, other_error("No such user").into()));
+        };
+
+        if payload.source_device_id == payload.target_device_id {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                other_error("source and target device must be different").into(),
+            ));
+        }
+
+        if client_mgr
+            .get_session_by_machine_id(user.id(), &payload.source_device_id)
+            .is_some()
+        {
+            return Err((
+                StatusCode::CONFLICT,
+                other_error("Cannot merge away an online device; disconnect the source first")
+                    .into(),
+            ));
+        }
+
+        match db
+            .merge_devices(
+                user.id(),
+                payload.source_device_id,
+                payload.target_device_id,
+            )
+            .await
+        {
+            Ok(()) => {
+                // Target may be online: force managed-config re-sync after ownership change.
+                client_mgr
+                    .invalidate_applied_config_revision(user.id(), payload.target_device_id)
+                    .await;
+                Ok(())
+            }
+            Err(DbErr::Custom(msg)) if msg == "source device not found" => Err((
+                StatusCode::NOT_FOUND,
+                other_error(msg).into(),
+            )),
+            Err(DbErr::Custom(msg)) if msg.contains("must be different") => Err((
+                StatusCode::BAD_REQUEST,
+                other_error(msg).into(),
+            )),
+            Err(e) => Err(convert_db_error(e)),
+        }
+    }
+
     async fn handle_generate_config(
         Json(req): Json<GenerateConfigRequest>,
     ) -> Result<Json<GenerateConfigResponse>, HttpHandleError> {
@@ -355,8 +446,13 @@ impl RestfulServer {
             .route("/api/v1/sessions", get(Self::handle_list_all_sessions))
             .route("/api/v1/devices", get(Self::handle_list_devices))
             .route(
+                "/api/v1/devices/merge",
+                post(Self::handle_merge_devices),
+            )
+            .route(
                 "/api/v1/devices/{device-id}",
-                put(Self::handle_update_device_display_name),
+                put(Self::handle_update_device_display_name)
+                    .delete(Self::handle_delete_device),
             )
             .merge(NetworkApi::build_route())
             .merge(peer_history::PeerHistoryApi::build_route())

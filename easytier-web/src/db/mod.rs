@@ -1444,6 +1444,303 @@ impl Db {
             .all(self.orm_db())
             .await
     }
+
+    /// Retire a device: remove archive row and device-scoped configs/revisions.
+    ///
+    /// Peer connection history is left intact so charts for past sessions remain.
+    /// Returns `true` when an archive row was deleted.
+    pub async fn delete_device(
+        &self,
+        user_id: UserIdInDb,
+        device_id: Uuid,
+    ) -> Result<bool, DbErr> {
+        let mut transaction = self
+            .db
+            .begin_with("BEGIN IMMEDIATE")
+            .await
+            .map_err(sqlx_db_error)?;
+
+        let deleted = sqlx::query(
+            r#"
+            DELETE FROM devices
+            WHERE user_id = ? AND device_id = ?
+            "#,
+        )
+        .bind(user_id)
+        .bind(device_id.to_string())
+        .execute(&mut *transaction)
+        .await
+        .map_err(sqlx_db_error)?
+        .rows_affected()
+            > 0;
+
+        // Do not wipe configs on a "not found" path — REST maps false → 404.
+        if !deleted {
+            transaction
+                .rollback()
+                .await
+                .map_err(sqlx_db_error)?;
+            return Ok(false);
+        }
+
+        sqlx::query(
+            r#"
+            DELETE FROM user_running_network_configs
+            WHERE user_id = ? AND device_id = ?
+            "#,
+        )
+        .bind(user_id)
+        .bind(device_id.to_string())
+        .execute(&mut *transaction)
+        .await
+        .map_err(sqlx_db_error)?;
+
+        clear_managed_config_revision(&mut transaction, user_id, device_id).await?;
+
+        transaction.commit().await.map_err(sqlx_db_error)?;
+        Ok(true)
+    }
+
+    /// Merge `source_device_id` into `target_device_id` for the same user.
+    ///
+    /// - Prefer target `display_name`; copy from source when target alias is empty
+    /// - Move network configs that do not conflict on instance id
+    /// - Drop remaining source configs / archive row; clear both managed revisions
+    /// - Remap peer history samples onto the target machine id
+    pub async fn merge_devices(
+        &self,
+        user_id: UserIdInDb,
+        source_device_id: Uuid,
+        target_device_id: Uuid,
+    ) -> Result<(), DbErr> {
+        if source_device_id == target_device_id {
+            return Err(DbErr::Custom(
+                "source and target device must be different".to_string(),
+            ));
+        }
+
+        let mut transaction = self
+            .db
+            .begin_with("BEGIN IMMEDIATE")
+            .await
+            .map_err(sqlx_db_error)?;
+
+        let source = sqlx::query_as::<_, (String, String, String, String, String, i64)>(
+            r#"
+            SELECT device_id, hostname, display_name, last_easytier_version,
+                   last_client_url, last_seen_at
+            FROM devices
+            WHERE user_id = ? AND device_id = ?
+            "#,
+        )
+        .bind(user_id)
+        .bind(source_device_id.to_string())
+        .fetch_optional(&mut *transaction)
+        .await
+        .map_err(sqlx_db_error)?;
+
+        let Some((
+            _src_id,
+            src_hostname,
+            src_display_name,
+            src_version,
+            src_client_url,
+            src_last_seen,
+        )) = source
+        else {
+            transaction
+                .rollback()
+                .await
+                .map_err(sqlx_db_error)?;
+            return Err(DbErr::Custom("source device not found".to_string()));
+        };
+
+        let now = chrono::Local::now().fixed_offset();
+        // Ensure target archive row exists (may be online-only without prior upsert).
+        sqlx::query(
+            r#"
+            INSERT INTO devices (
+                user_id, device_id, hostname, display_name, last_easytier_version,
+                last_client_url, last_seen_at, create_time, update_time
+            ) VALUES (?, ?, ?, '', '', '', 0, ?, ?)
+            ON CONFLICT(user_id, device_id) DO NOTHING
+            "#,
+        )
+        .bind(user_id)
+        .bind(target_device_id.to_string())
+        .bind(&src_hostname)
+        .bind(now)
+        .bind(now)
+        .execute(&mut *transaction)
+        .await
+        .map_err(sqlx_db_error)?;
+
+        let target_display = sqlx::query_as::<_, (String,)>(
+            r#"
+            SELECT display_name FROM devices
+            WHERE user_id = ? AND device_id = ?
+            "#,
+        )
+        .bind(user_id)
+        .bind(target_device_id.to_string())
+        .fetch_one(&mut *transaction)
+        .await
+        .map_err(sqlx_db_error)?
+        .0;
+
+        if target_display.trim().is_empty() && !src_display_name.trim().is_empty() {
+            sqlx::query(
+                r#"
+                UPDATE devices
+                SET display_name = ?, update_time = ?
+                WHERE user_id = ? AND device_id = ?
+                "#,
+            )
+            .bind(&src_display_name)
+            .bind(now)
+            .bind(user_id)
+            .bind(target_device_id.to_string())
+            .execute(&mut *transaction)
+            .await
+            .map_err(sqlx_db_error)?;
+        }
+
+        // If target never heartbeated, inherit last-seen metadata from source.
+        sqlx::query(
+            r#"
+            UPDATE devices
+            SET
+                hostname = CASE WHEN hostname = '' THEN ? ELSE hostname END,
+                last_easytier_version = CASE
+                    WHEN last_easytier_version = '' THEN ? ELSE last_easytier_version END,
+                last_client_url = CASE
+                    WHEN last_client_url = '' THEN ? ELSE last_client_url END,
+                last_seen_at = CASE
+                    WHEN last_seen_at = 0 THEN ? ELSE last_seen_at END,
+                update_time = ?
+            WHERE user_id = ? AND device_id = ?
+            "#,
+        )
+        .bind(&src_hostname)
+        .bind(&src_version)
+        .bind(&src_client_url)
+        .bind(src_last_seen)
+        .bind(now)
+        .bind(user_id)
+        .bind(target_device_id.to_string())
+        .execute(&mut *transaction)
+        .await
+        .map_err(sqlx_db_error)?;
+
+        // Move non-conflicting network configs onto the target device.
+        // Nested SELECT avoids SQLite "cannot modify table while reading it".
+        sqlx::query(
+            r#"
+            UPDATE user_running_network_configs
+            SET device_id = ?, update_time = ?
+            WHERE user_id = ? AND device_id = ?
+              AND network_instance_id NOT IN (
+                  SELECT network_instance_id FROM (
+                      SELECT network_instance_id FROM user_running_network_configs
+                      WHERE user_id = ? AND device_id = ?
+                  )
+              )
+            "#,
+        )
+        .bind(target_device_id.to_string())
+        .bind(now)
+        .bind(user_id)
+        .bind(source_device_id.to_string())
+        .bind(user_id)
+        .bind(target_device_id.to_string())
+        .execute(&mut *transaction)
+        .await
+        .map_err(sqlx_db_error)?;
+
+        sqlx::query(
+            r#"
+            DELETE FROM user_running_network_configs
+            WHERE user_id = ? AND device_id = ?
+            "#,
+        )
+        .bind(user_id)
+        .bind(source_device_id.to_string())
+        .execute(&mut *transaction)
+        .await
+        .map_err(sqlx_db_error)?;
+
+        // Carry/clear managed revisions after ownership change.
+        // Always clear both: copying source revision onto a target that already
+        // had configs (or gained moved configs) would leave a stale revision.
+        clear_managed_config_revision(&mut transaction, user_id, source_device_id).await?;
+        clear_managed_config_revision(&mut transaction, user_id, target_device_id).await?;
+
+        // Remap history via INSERT…SELECT then delete source samples.
+        // Nested FROM avoids SQLite same-table INSERT/SELECT hazards.
+        sqlx::query(
+            r#"
+            INSERT INTO peer_conn_history (
+                user_id, machine_id, instance_id, peer_id, peer_hostname,
+                remote_addr, tunnel_type, latency_us, loss_rate,
+                rx_bytes, tx_bytes, conn_count, sampled_at
+            )
+            SELECT
+                user_id, ?, instance_id, peer_id, peer_hostname,
+                remote_addr, tunnel_type, latency_us, loss_rate,
+                rx_bytes, tx_bytes, conn_count, sampled_at
+            FROM (
+                SELECT
+                    user_id, instance_id, peer_id, peer_hostname,
+                    remote_addr, tunnel_type, latency_us, loss_rate,
+                    rx_bytes, tx_bytes, conn_count, sampled_at
+                FROM peer_conn_history
+                WHERE user_id = ? AND machine_id = ?
+            ) AS src
+            WHERE NOT EXISTS (
+                SELECT 1 FROM peer_conn_history AS existing
+                WHERE existing.user_id = src.user_id
+                  AND existing.machine_id = ?
+                  AND existing.instance_id = src.instance_id
+                  AND existing.peer_id = src.peer_id
+                  AND existing.sampled_at = src.sampled_at
+            )
+            "#,
+        )
+        .bind(target_device_id.to_string())
+        .bind(user_id)
+        .bind(source_device_id.to_string())
+        .bind(target_device_id.to_string())
+        .execute(&mut *transaction)
+        .await
+        .map_err(sqlx_db_error)?;
+
+        sqlx::query(
+            r#"
+            DELETE FROM peer_conn_history
+            WHERE user_id = ? AND machine_id = ?
+            "#,
+        )
+        .bind(user_id)
+        .bind(source_device_id.to_string())
+        .execute(&mut *transaction)
+        .await
+        .map_err(sqlx_db_error)?;
+
+        sqlx::query(
+            r#"
+            DELETE FROM devices
+            WHERE user_id = ? AND device_id = ?
+            "#,
+        )
+        .bind(user_id)
+        .bind(source_device_id.to_string())
+        .execute(&mut *transaction)
+        .await
+        .map_err(sqlx_db_error)?;
+
+        transaction.commit().await.map_err(sqlx_db_error)?;
+        Ok(())
+    }
 }
 
 #[async_trait]
@@ -1604,7 +1901,7 @@ impl Storage<(UserIdInDb, Uuid), user_running_network_configs::Model, DbErr> for
 mod tests {
     use easytier::{common::config::ConfigSource, proto::api::manage::NetworkConfig};
     use easytier_core::management::remote_client::{PersistentConfig, Storage};
-    use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter as _, Set};
+    use sea_orm::{ActiveModelTrait, ColumnTrait, DbErr, EntityTrait, QueryFilter as _, Set};
 
     use crate::db::{Db, ListNetworkProps, entity::user_running_network_configs};
 
@@ -1988,5 +2285,176 @@ mod tests {
             .expect("stub archive row");
         assert_eq!(stub.display_name, "stub-alias");
         assert_eq!(stub.hostname, "");
+    }
+
+    #[tokio::test]
+    async fn delete_device_removes_archive_and_configs() {
+        let db = Db::memory_db().await;
+        let user_id = db.auto_create_user("device-delete-user").await.unwrap().id;
+        let device_id = uuid::Uuid::new_v4();
+        let instance_id = uuid::Uuid::new_v4();
+
+        db.upsert_device(
+            user_id,
+            device_id,
+            "old-host",
+            "2.6.4",
+            "udp://127.0.0.1:22020",
+            1_700_000_000,
+        )
+        .await
+        .unwrap();
+        db.set_device_display_name(user_id, device_id, "OLD")
+            .await
+            .unwrap();
+        db.insert_or_update_user_network_config(
+            (user_id, device_id),
+            instance_id,
+            NetworkConfig {
+                network_name: Some("n1".to_string()),
+                ..Default::default()
+            },
+            ConfigSource::Web,
+        )
+        .await
+        .unwrap();
+        db.set_managed_config_revision((user_id, device_id), "rev-1")
+            .await
+            .unwrap();
+
+        assert!(db.delete_device(user_id, device_id).await.unwrap());
+        assert!(db.list_user_devices(user_id).await.unwrap().is_empty());
+        assert!(
+            db.list_network_configs((user_id, device_id), ListNetworkProps::All)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            db.get_managed_config_revision((user_id, device_id))
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert!(!db.delete_device(user_id, device_id).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn merge_devices_moves_alias_and_configs() {
+        let db = Db::memory_db().await;
+        let user_id = db.auto_create_user("device-merge-user").await.unwrap().id;
+        let source_id = uuid::Uuid::new_v4();
+        let target_id = uuid::Uuid::new_v4();
+        let moved_instance = uuid::Uuid::new_v4();
+        let conflict_instance = uuid::Uuid::new_v4();
+
+        db.upsert_device(
+            user_id,
+            source_id,
+            "phone-old",
+            "2.6.4",
+            "udp://10.0.0.1:1",
+            1_700_000_000,
+        )
+        .await
+        .unwrap();
+        db.set_device_display_name(user_id, source_id, "PHONE")
+            .await
+            .unwrap();
+        db.insert_or_update_user_network_config(
+            (user_id, source_id),
+            moved_instance,
+            NetworkConfig {
+                network_name: Some("moved".to_string()),
+                ..Default::default()
+            },
+            ConfigSource::Web,
+        )
+        .await
+        .unwrap();
+        db.insert_or_update_user_network_config(
+            (user_id, source_id),
+            conflict_instance,
+            NetworkConfig {
+                network_name: Some("conflict-src".to_string()),
+                ..Default::default()
+            },
+            ConfigSource::User,
+        )
+        .await
+        .unwrap();
+        db.set_managed_config_revision((user_id, source_id), "rev-src")
+            .await
+            .unwrap();
+
+        db.upsert_device(
+            user_id,
+            target_id,
+            "phone-new",
+            "2.6.5",
+            "udp://10.0.0.2:1",
+            1_700_000_200,
+        )
+        .await
+        .unwrap();
+        db.insert_or_update_user_network_config(
+            (user_id, target_id),
+            conflict_instance,
+            NetworkConfig {
+                network_name: Some("conflict-tgt".to_string()),
+                ..Default::default()
+            },
+            ConfigSource::Web,
+        )
+        .await
+        .unwrap();
+
+        db.merge_devices(user_id, source_id, target_id)
+            .await
+            .unwrap();
+
+        let devices = db.list_user_devices(user_id).await.unwrap();
+        assert_eq!(devices.len(), 1);
+        assert_eq!(devices[0].device_id, target_id.to_string());
+        assert_eq!(devices[0].display_name, "PHONE");
+        assert_eq!(devices[0].hostname, "phone-new");
+
+        let configs = db
+            .list_network_configs((user_id, target_id), ListNetworkProps::All)
+            .await
+            .unwrap();
+        let ids: std::collections::HashSet<_> = configs
+            .iter()
+            .map(|c| c.network_instance_id.clone())
+            .collect();
+        assert!(ids.contains(&moved_instance.to_string()));
+        assert!(ids.contains(&conflict_instance.to_string()));
+        assert_eq!(configs.len(), 2);
+
+        assert!(
+            db.list_network_configs((user_id, source_id), ListNetworkProps::All)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        // Merging changes config ownership — both revisions must be cleared.
+        assert!(
+            db.get_managed_config_revision((user_id, target_id))
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            db.get_managed_config_revision((user_id, source_id))
+                .await
+                .unwrap()
+                .is_none()
+        );
+
+        let err = db
+            .merge_devices(user_id, source_id, target_id)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, DbErr::Custom(msg) if msg == "source device not found"));
     }
 }
