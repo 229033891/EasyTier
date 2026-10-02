@@ -6,7 +6,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { writeText } from '@tauri-apps/plugin-clipboard-manager'
 import { open } from '@tauri-apps/plugin-shell'
 import { exit } from '@tauri-apps/plugin-process'
-import { I18nUtils, RemoteManagement, Utils } from "easytier-frontend-lib"
+import { I18nUtils, RemoteManagement, Utils, TOAST_LIFE } from 'easytier-frontend-lib'
 import type { MenuItem } from 'primevue/menuitem'
 import { useTray, setTrayRunState } from '~/composables/tray'
 import {
@@ -153,19 +153,19 @@ async function onConfigServerSave() {
           severity: 'error',
           summary: t('error'),
           detail: configServerLastError.value,
-          life: 10000,
+          life: TOAST_LIFE.severe,
         })
         return
       }
       configServerDialogVisible.value = false
-      toast.add({ severity: 'success', summary: t('web.common.success'), life: 2000 })
+      toast.add({ severity: 'success', summary: t('web.common.success'), life: TOAST_LIFE.success })
     }
     catch (e: any) {
       toast.add({
         severity: 'error',
         summary: t('error'),
         detail: e instanceof Error ? e.message : String(e),
-        life: 10000,
+        life: TOAST_LIFE.severe,
       })
       console.error('Error saving config server', e)
     }
@@ -206,7 +206,7 @@ async function onModeSave() {
     modeDialogVisible.value = false
   }
   catch (e: any) {
-    toast.add({ severity: 'error', summary: t('error'), detail: e, life: 10000 })
+    toast.add({ severity: 'error', summary: t('error'), detail: e, life: TOAST_LIFE.severe })
     console.error("Error switching mode", e, currentMode.value, editingMode.value)
     await initWithMode(currentMode.value);
   }
@@ -234,10 +234,10 @@ async function onUninstallService() {
       try {
         await initWithMode({ ...currentMode.value, mode: 'normal' });
         await initService(undefined)
-        toast.add({ severity: 'success', summary: t('web.common.success'), detail: t('mode.uninstall_service_success'), life: 3000 })
+        toast.add({ severity: 'success', summary: t('web.common.success'), detail: t('mode.uninstall_service_success'), life: TOAST_LIFE.success })
         modeDialogVisible.value = false
       } catch (e: any) {
-        toast.add({ severity: 'error', summary: t('error'), detail: e, life: 10000 })
+        toast.add({ severity: 'error', summary: t('error'), detail: e, life: TOAST_LIFE.severe })
         console.error("Error uninstalling service", e)
       } finally {
         isModeSaving.value = false
@@ -265,11 +265,11 @@ async function onStopService() {
   manualDisconnect.value = true
   try {
     await setServiceStatus(false)
-    toast.add({ severity: 'success', summary: t('web.common.success'), detail: t('mode.stop_service_success'), life: 3000 })
+    toast.add({ severity: 'success', summary: t('web.common.success'), detail: t('mode.stop_service_success'), life: TOAST_LIFE.success })
     modeDialogVisible.value = false
   }
   catch (e: any) {
-    toast.add({ severity: 'error', summary: t('error'), detail: e, life: 10000 })
+    toast.add({ severity: 'error', summary: t('error'), detail: e, life: TOAST_LIFE.severe })
     console.error("Error stopping service", e)
   }
   finally {
@@ -346,7 +346,7 @@ async function initWithMode(mode: Mode) {
   switch (mode.mode) {
     case 'remote':
       if (!mode.remote_rpc_address) {
-        toast.add({ severity: 'error', summary: t('error'), detail: t('mode.remote_rpc_address_empty'), life: 10000 })
+        toast.add({ severity: 'error', summary: t('error'), detail: t('mode.remote_rpc_address_empty'), life: TOAST_LIFE.severe })
         return initWithMode({ ...mode, mode: 'normal' });
       }
       url = mode.remote_rpc_address
@@ -355,7 +355,7 @@ async function initWithMode(mode: Mode) {
       break;
     case 'service': {
       if (!mode.config_dir || !mode.file_log_dir || !mode.file_log_level || !mode.rpc_portal) {
-        toast.add({ severity: 'error', summary: t('error'), detail: t('mode.service_config_empty'), life: 10000 })
+        toast.add({ severity: 'error', summary: t('error'), detail: t('mode.service_config_empty'), life: TOAST_LIFE.severe })
         return initWithMode({ ...mode, mode: 'normal' });
       }
       let serviceStatus = await getServiceStatus()
@@ -402,7 +402,7 @@ async function initWithMode(mode: Mode) {
           severity: 'error',
           summary: t('error'),
           detail: t('mode.rpc_connection_failed', { error: errMsg }),
-          life: 1000,
+          life: TOAST_LIFE.severe,
         })
         throw e2
       }
@@ -413,7 +413,7 @@ async function initWithMode(mode: Mode) {
         severity: 'error',
         summary: t('error'),
         detail: t('mode.rpc_connection_failed', { error: errMsg }),
-        life: 1000,
+        life: TOAST_LIFE.severe,
       })
       throw e
     }
@@ -497,7 +497,7 @@ async function handleMobileVpnTileAction(action: 'start' | 'stop') {
         severity: 'warn',
         summary: t('vpn_tile_no_network'),
         detail: t('vpn_tile_no_network_description'),
-        life: 5000,
+        life: TOAST_LIFE.warn,
       })
       return
     }
@@ -505,9 +505,9 @@ async function handleMobileVpnTileAction(action: 'start' | 'stop') {
     instanceId.value = result.instanceId
     saveLastNetworkInstanceId(result.instanceId)
     toast.add({
-      severity: action === 'start' ? 'success' : 'secondary',
+      severity: action === 'start' ? 'success' : 'info',
       summary: t(action === 'start' ? 'vpn_tile_started' : 'vpn_tile_stopped'),
-      life: 3000,
+      life: TOAST_LIFE.success,
     })
   }
   catch (error) {
@@ -516,7 +516,7 @@ async function handleMobileVpnTileAction(action: 'start' | 'stop') {
       severity: 'error',
       summary: t('error'),
       detail: t('vpn_tile_action_failed', { error: String(error) }),
-      life: 8000,
+      life: TOAST_LIFE.severe,
     })
   }
 }
@@ -619,14 +619,14 @@ async function onLoggingSave() {
     await setLoggingLevel(loggingLevel.value)
     current_log_level = loggingLevel.value
     loggingDialogVisible.value = false
-    toast.add({ severity: 'success', summary: t('web.common.success'), life: 2000 })
+    toast.add({ severity: 'success', summary: t('web.common.success'), life: TOAST_LIFE.success })
   }
   catch (e: any) {
     toast.add({
       severity: 'error',
       summary: t('error'),
       detail: e instanceof Error ? e.message : String(e),
-      life: 10000,
+      life: TOAST_LIFE.severe,
     })
     console.error('Error saving logging level', e)
   }
@@ -644,7 +644,7 @@ async function openLoggingDir() {
       severity: 'error',
       summary: t('error'),
       detail: e instanceof Error ? e.message : String(e),
-      life: 10000,
+      life: TOAST_LIFE.severe,
     })
   }
 }
@@ -652,14 +652,14 @@ async function openLoggingDir() {
 async function copyLoggingDir() {
   try {
     await writeText(await getLogDirPath())
-    toast.add({ severity: 'success', summary: t('logging_copied'), life: 2000 })
+    toast.add({ severity: 'success', summary: t('logging_copied'), life: TOAST_LIFE.success })
   }
   catch (e: any) {
     toast.add({
       severity: 'error',
       summary: t('error'),
       detail: e instanceof Error ? e.message : String(e),
-      life: 10000,
+      life: TOAST_LIFE.severe,
     })
   }
 }

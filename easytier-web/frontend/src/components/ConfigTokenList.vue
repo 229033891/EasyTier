@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue';
+import { TOAST_LIFE } from 'easytier-frontend-lib'
 import { Button, InputText, Select, useConfirm, useToast } from 'primevue';
 import { tooltipDirective } from 'easytier-frontend-lib';
 import { useI18n } from 'vue-i18n';
@@ -46,7 +47,7 @@ const load = async () => {
             severity: 'error',
             summary: t('web.common.error'),
             detail: e?.response?.data?.message || String(e),
-            life: 3500,
+            life: TOAST_LIFE.error,
         });
     }
 };
@@ -57,7 +58,7 @@ const createToken = async () => {
             severity: 'warn',
             summary: t('web.config_tokens.create_failed'),
             detail: t('web.config_tokens.user_required'),
-            life: 2500,
+            life: TOAST_LIFE.warn,
         });
         return;
     }
@@ -73,7 +74,7 @@ const createToken = async () => {
         toast.add({
             severity: 'success',
             summary: t('web.config_tokens.create_success'),
-            life: 2000,
+            life: TOAST_LIFE.success,
         });
         await load();
     } catch (e: any) {
@@ -81,7 +82,7 @@ const createToken = async () => {
             severity: 'error',
             summary: t('web.config_tokens.create_failed'),
             detail: e?.response?.data?.message || String(e),
-            life: 3500,
+            life: TOAST_LIFE.error,
         });
     } finally {
         creating.value = false;
@@ -111,7 +112,7 @@ const submitEdit = async () => {
         toast.add({
             severity: 'success',
             summary: t('web.config_tokens.update_success'),
-            life: 2000,
+            life: TOAST_LIFE.success,
         });
         cancelEdit();
         await load();
@@ -120,7 +121,7 @@ const submitEdit = async () => {
             severity: 'error',
             summary: t('web.config_tokens.update_failed'),
             detail: e?.response?.data?.message || String(e),
-            life: 3500,
+            life: TOAST_LIFE.error,
         });
     } finally {
         savingId.value = null;
@@ -147,7 +148,7 @@ const confirmDelete = (row: ConfigTokenInfo) => {
                 toast.add({
                     severity: 'success',
                     summary: t('web.config_tokens.delete_success'),
-                    life: 2000,
+                    life: TOAST_LIFE.success,
                 });
                 await load();
             } catch (e: any) {
@@ -155,7 +156,7 @@ const confirmDelete = (row: ConfigTokenInfo) => {
                     severity: 'error',
                     summary: t('web.config_tokens.delete_failed'),
                     detail: e?.response?.data?.message || String(e),
-                    life: 3500,
+                    life: TOAST_LIFE.error,
                 });
             }
         },
@@ -168,13 +169,13 @@ const copyToken = async (token: string) => {
         toast.add({
             severity: 'success',
             summary: t('web.config_tokens.copied'),
-            life: 1500,
+            life: TOAST_LIFE.success,
         });
     } catch {
         toast.add({
             severity: 'error',
             summary: t('web.config_tokens.copy_failed'),
-            life: 2500,
+            life: TOAST_LIFE.error,
         });
     }
 };

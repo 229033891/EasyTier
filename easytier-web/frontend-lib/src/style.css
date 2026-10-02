@@ -407,19 +407,25 @@
 
 /*
  * Toast / Message / Confirm 统一提示样式：
- * 不透明底色 + 语义色边框/图标，避免白底黑框透出页面内容。
+ * 不透明底色 + 左侧语义色条 + 清晰字重层级，避免白底透出页面内容。
  */
-.p-toast {
+.p-toast,
+.et-toast.p-toast {
   opacity: 1 !important;
-  max-width: min(24rem, calc(100vw - 2rem));
+  max-width: min(22rem, calc(100vw - 1.5rem));
+  z-index: 1400 !important;
 }
 
-.p-toast .p-toast-message {
-  margin: 0 0 0.65rem !important;
-  border-radius: var(--et-radius, 0.75rem) !important;
+.p-toast .p-toast-message,
+.et-toast .p-toast-message {
+  margin: 0 0 0.55rem !important;
+  border-radius: calc(var(--et-radius, 0.75rem) - 0.1rem) !important;
   border-width: 1px !important;
   border-style: solid !important;
-  box-shadow: 0 12px 28px rgba(15, 23, 42, 0.14) !important;
+  border-left-width: 3px !important;
+  box-shadow:
+    0 1px 2px rgba(15, 23, 42, 0.06),
+    0 10px 24px rgba(15, 23, 42, 0.12) !important;
   backdrop-filter: none !important;
   opacity: 1 !important;
   overflow: hidden;
@@ -427,40 +433,44 @@
 
 .p-toast .p-toast-message-content {
   align-items: flex-start !important;
-  gap: 0.65rem !important;
-  padding: 0.85rem 0.95rem !important;
+  gap: 0.6rem !important;
+  padding: 0.75rem 0.85rem !important;
 }
 
 .p-toast .p-toast-summary {
-  font-size: 0.9rem !important;
-  font-weight: 700 !important;
+  font-size: 0.875rem !important;
+  font-weight: 650 !important;
   line-height: 1.35 !important;
+  letter-spacing: 0.01em;
 }
 
 .p-toast .p-toast-detail {
-  margin-top: 0.2rem !important;
+  margin-top: 0.15rem !important;
   font-size: 0.8125rem !important;
+  font-weight: 450 !important;
   line-height: 1.45 !important;
-  opacity: 0.92;
+  opacity: 0.9;
   word-break: break-word;
 }
 
 .p-toast .p-toast-message-icon {
-  font-size: 1.1rem !important;
-  margin-top: 0.1rem;
+  font-size: 1.05rem !important;
+  margin-top: 0.08rem;
 }
 
 .p-toast .p-toast-close-button {
-  width: 1.75rem !important;
-  height: 1.75rem !important;
+  width: 1.65rem !important;
+  height: 1.65rem !important;
   border-radius: 9999px !important;
-  margin: -0.15rem -0.2rem 0 0.35rem !important;
+  margin: -0.1rem -0.15rem 0 0.25rem !important;
+  color: inherit !important;
 }
 
 .p-toast-message-error,
 .p-message.p-message-error {
   background: #fef2f2 !important;
-  border-color: #fca5a5 !important;
+  border-color: #fecaca !important;
+  border-left-color: #ef4444 !important;
   color: #991b1b !important;
 }
 
@@ -475,7 +485,8 @@
 .p-toast-message-success,
 .p-message.p-message-success {
   background: #ecfdf5 !important;
-  border-color: #6ee7b7 !important;
+  border-color: #a7f3d0 !important;
+  border-left-color: #10b981 !important;
   color: #065f46 !important;
 }
 
@@ -491,7 +502,8 @@
 .p-toast-message-warnning,
 .p-message.p-message-warn {
   background: #fffbeb !important;
-  border-color: #fcd34d !important;
+  border-color: #fde68a !important;
+  border-left-color: #f59e0b !important;
   color: #92400e !important;
 }
 
@@ -506,7 +518,8 @@
 .p-toast-message-info,
 .p-message.p-message-info {
   background: #f0f9ff !important;
-  border-color: #7dd3fc !important;
+  border-color: #bae6fd !important;
+  border-left-color: #0ea5e9 !important;
   color: #075985 !important;
 }
 

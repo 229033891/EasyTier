@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
+import { TOAST_LIFE } from 'easytier-frontend-lib'
 import { Button, ProgressSpinner, useToast, Dropdown } from 'primevue';
 import { Utils, tooltipDirective } from 'easytier-frontend-lib';
 import { useRouter } from 'vue-router';
@@ -73,7 +74,7 @@ const handleDeviceManagement = (device: Utils.DeviceInfo, mode: 'status' | 'conf
             severity: 'info',
             summary: t('web.device.open_network_status'),
             detail: t('web.device.no_running_network_hint'),
-            life: 3500,
+            life: TOAST_LIFE.info,
         });
     }
     router.push({

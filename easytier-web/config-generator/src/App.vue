@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { exec, moduleInfo } from 'kernelsu'
-import { Config, I18nUtils, NetworkTypes } from 'easytier-frontend-lib'
-import { Button, SelectButton, Textarea } from 'primevue'
+import { Config, I18nUtils, NetworkTypes, TOAST_LIFE } from 'easytier-frontend-lib'
+import { Button, ConfirmDialog, SelectButton, Textarea, Toast, useToast } from 'primevue'
 import { computed, onMounted, ref, watch } from 'vue'
 import initConfigWasm, {
   generate_config as generateTomlConfig,
@@ -30,19 +30,27 @@ const moduleDirectory = ref('')
 const moduleStatus = ref<ModuleStatus>()
 const commandArgsMode = ref(false)
 const moduleReady = ref(!isModuleWebUi)
-const moduleMessage = ref('')
 const isSaving = ref(false)
 const networkConfig = ref<NetworkTypes.NetworkConfig>(NetworkTypes.DEFAULT_NETWORK_CONFIG())
 const tomlConfig = ref('')
 const originalTomlConfig = ref('')
-const errorMessage = ref('')
 const configCopied = ref(false)
+const toast = useToast()
+
 function t(key: string, params: Record<string, unknown> = {}): string {
   return I18nUtils.i18n.global.t(key, params)
 }
 
 function errorDetail(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
+}
+
+function toastSuccess(summary: string, detail?: string) {
+  toast.add({ severity: 'success', summary, detail, life: TOAST_LIFE.success })
+}
+
+function toastError(summary: string, detail?: string) {
+  toast.add({ severity: 'error', summary, detail, life: TOAST_LIFE.error })
 }
 const copyButtonLabel = computed(() => t(configCopied.value ? 'config_copied' : 'copy_config'))
 const actionLabel = computed(() => t(isModuleWebUi ? 'magisk_save_restart' : 'generate_config'))
@@ -141,7 +149,7 @@ async function initialize(): Promise<void> {
     await loadModuleConfig()
   }
   catch (error) {
-    errorMessage.value = t('magisk_load_failed', { error: errorDetail(error) })
+    toastError(t('magisk_load_failed', { error: errorDetail(error) }))
   }
 }
 
@@ -154,8 +162,6 @@ function setLanguage(language: Language): void {
 
 async function generateConfig(config: NetworkTypes.NetworkConfig): Promise<void> {
   try {
-    errorMessage.value = ''
-    moduleMessage.value = ''
     configCopied.value = false
     isSaving.value = isModuleWebUi
     const configJson = JSON.stringify(NetworkTypes.toBackendNetworkConfig(config))
@@ -170,18 +176,21 @@ async function generateConfig(config: NetworkTypes.NetworkConfig): Promise<void>
       await runModuleCommand(`save-and-restart ${encodeBase64(generatedConfig)}`)
       originalTomlConfig.value = generatedConfig
       const status = await refreshModuleState(true)
-      moduleMessage.value = t(
+      toastSuccess(t(
         status === 'running'
           ? 'magisk_config_saved'
           : 'magisk_config_saved_restart_pending',
-      )
+      ))
     }
   }
   catch (error) {
     const detail = errorDetail(error)
-    errorMessage.value = isModuleWebUi
-      ? t('magisk_save_failed', { error: detail })
-      : `${t('config_generation_failed')}: ${detail}`
+    if (isModuleWebUi) {
+      toastError(t('magisk_save_failed', { error: detail }))
+    }
+    else {
+      toastError(t('config_generation_failed'), detail)
+    }
   }
   finally {
     isSaving.value = false
@@ -190,18 +199,20 @@ async function generateConfig(config: NetworkTypes.NetworkConfig): Promise<void>
 
 async function copyConfig(): Promise<void> {
   try {
-    errorMessage.value = ''
     configCopied.value = false
     await navigator.clipboard.writeText(tomlConfig.value)
     configCopied.value = true
+    toastSuccess(t('config_copied'))
   }
   catch (error) {
-    errorMessage.value = `${t('config_copy_failed')}: ${errorDetail(error)}`
+    toastError(t('config_copy_failed'), errorDetail(error))
   }
 }
 </script>
 
 <template>
+  <Toast position="bottom-right" class="et-toast" />
+  <ConfirmDialog class="et-confirm-dialog" />
   <main class="config-generator">
     <section v-if="isModuleWebUi" class="module-status">
       <div>
@@ -212,9 +223,6 @@ async function copyConfig(): Promise<void> {
       </div>
       <p v-if="commandArgsMode" class="module-warning">
         {{ t('magisk_command_args_warning') }}
-      </p>
-      <p v-if="moduleMessage" class="module-success">
-        {{ moduleMessage }}
       </p>
     </section>
     <section class="config-panel">
@@ -237,7 +245,6 @@ async function copyConfig(): Promise<void> {
       />
     </section>
     <section :class="['output-panel', { 'module-output-panel': isModuleWebUi }]">
-      <pre v-if="errorMessage" class="error-message">{{ errorMessage }}</pre>
       <Textarea
         v-model="tomlConfig"
         spellcheck="false"
@@ -298,22 +305,13 @@ async function copyConfig(): Promise<void> {
   color: var(--p-orange-500);
 }
 
-.module-warning,
-.module-success {
+.module-warning {
   flex-basis: 100%;
   margin: 0;
   padding: 0.75rem;
   border-radius: var(--p-border-radius-sm);
-}
-
-.module-warning {
   color: var(--p-orange-700);
   background: var(--p-orange-50);
-}
-
-.module-success {
-  color: var(--p-green-700);
-  background: var(--p-green-50);
 }
 
 .config-panel {
@@ -350,15 +348,6 @@ async function copyConfig(): Promise<void> {
   flex: 1;
   resize: none;
   font-family: monospace;
-}
-
-.error-message {
-  max-height: 10rem;
-  overflow: auto;
-  padding: 0.5rem;
-  color: #b91c1c;
-  background: #fee2e2;
-  border-radius: 0.25rem;
 }
 
 @media (max-width: 768px) {

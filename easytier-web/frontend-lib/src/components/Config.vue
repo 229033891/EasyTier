@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { v4 as uuidv4 } from 'uuid'
 import { AutoComplete, Button, Checkbox, Dialog, InputNumber, InputText, MultiSelect, Panel, Password, Select, SelectButton, ToggleButton, useConfirm, useToast } from 'primevue'
+import { TOAST_LIFE } from '../modules/toast'
 import InputGroup from 'primevue/inputgroup'
 import InputGroupAddon from 'primevue/inputgroupaddon'
 import {
@@ -68,13 +69,13 @@ async function applyGeneratedNetworkSecret() {
     toast.add({
       severity: 'success',
       summary: t('network_secret_generated'),
-      life: 2500,
+      life: TOAST_LIFE.success,
     })
   } catch {
     toast.add({
       severity: 'warn',
       summary: t('network_secret_copy_failed'),
-      life: 3000,
+      life: TOAST_LIFE.warn,
     })
   }
 }

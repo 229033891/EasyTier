@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { Button, Message, Select, Tag, useConfirm, useToast, type VirtualScrollerLazyEvent } from 'primevue';
+import { TOAST_LIFE } from '../modules/toast'
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import * as Api from '../modules/api';
@@ -234,7 +235,7 @@ watch(selectedInstanceId, async (newVal, oldVal) => {
             severity: 'error',
             summary: t('web.common.error'),
             detail: errorDetail(e),
-            life: 3000,
+            life: TOAST_LIFE.error,
         });
     }
 });
@@ -291,7 +292,7 @@ watch(networkIsDisabled, async (newVal, oldVal) => {
                 severity: 'error',
                 summary: t('web.common.error'),
                 detail: errorDetail(e),
-                life: 3000,
+                life: TOAST_LIFE.error,
             });
         }
     }
@@ -343,7 +344,7 @@ const stopNetwork = async () => {
             severity: 'error',
             summary: t('web.common.error'),
             detail: t('web.device_management.stop_failed') + ': ' + errorDetail(e),
-            life: 3000,
+            life: TOAST_LIFE.error,
         });
     }
 }
@@ -383,7 +384,7 @@ const startNetwork = async () => {
             severity: 'error',
             summary: t('web.common.error'),
             detail: t('web.device_management.start_failed') + ': ' + errorDetail(e),
-            life: 3000,
+            life: TOAST_LIFE.error,
         });
     }
 }
@@ -429,7 +430,7 @@ const ensureConfigModeEditing = async () => {
             severity: 'error',
             summary: t('web.common.error'),
             detail: t('web.device_management.load_config_failed') + ': ' + errorDetail(e),
-            life: 3000,
+            life: TOAST_LIFE.error,
         });
     }
 }
@@ -468,7 +469,7 @@ const confirmDeleteNetwork = () => {
                     severity: 'success',
                     summary: t('web.device_management.delete_network'),
                     detail: t('web.common.success'),
-                    life: 2000,
+                    life: TOAST_LIFE.success,
                 });
             } catch (e) {
                 console.error(e);
@@ -476,7 +477,7 @@ const confirmDeleteNetwork = () => {
                     severity: 'error',
                     summary: t('web.device_management.delete_network'),
                     detail: String(e),
-                    life: 3000,
+                    life: TOAST_LIFE.error,
                 });
             }
             emits('update');
@@ -514,7 +515,7 @@ const saveAndRunNewNetwork = async (config?: NetworkTypes.NetworkConfig) => {
         await loadCurrentNetworkInfo();
     } catch (e: any) {
         console.error(e);
-        toast.add({ severity: 'error', summary: t('web.common.error'), detail: t('web.device_management.start_failed') + ': ' + errorDetail(e), life: 3000 });
+        toast.add({ severity: 'error', summary: t('web.common.error'), detail: t('web.device_management.start_failed') + ': ' + errorDetail(e), life: TOAST_LIFE.error });
         return;
     }
 
@@ -542,7 +543,7 @@ const saveNetworkConfig = async () => {
             severity: 'success',
             summary: t('web.common.success'),
             detail: t('web.device_management.config_saved'),
-            life: 2000,
+            life: TOAST_LIFE.success,
         });
     } catch (e: any) {
         console.error(e);
@@ -550,7 +551,7 @@ const saveNetworkConfig = async () => {
             severity: 'error',
             summary: t('web.common.error'),
             detail: t('web.device_management.save_failed') + ': ' + errorDetail(e),
-            life: 3000,
+            life: TOAST_LIFE.error,
         });
     } finally {
         savingConfig.value = false;
@@ -570,7 +571,7 @@ const newNetwork = async () => {
             severity: 'error',
             summary: t('web.common.error'),
             detail: t('web.device_management.save_failed') + ': ' + errorDetail(e),
-            life: 3000,
+            life: TOAST_LIFE.error,
         });
     }
 }
@@ -581,7 +582,7 @@ const cancelEditNetwork = () => {
 
 const editNetwork = async () => {
     if (!instanceId.value) {
-        toast.add({ severity: 'error', summary: 'Error', detail: 'No network instance selected', life: 2000 });
+        toast.add({ severity: 'error', summary: 'Error', detail: 'No network instance selected', life: TOAST_LIFE.error });
         return;
     }
 
@@ -591,7 +592,7 @@ const editNetwork = async () => {
         isEditingNetwork.value = true; // Switch to editing mode instead
     } catch (e: any) {
         console.error(e);
-        toast.add({ severity: 'error', summary: t('web.common.error'), detail: t('web.device_management.save_failed') + ': ' + errorDetail(e), life: 3000 });
+        toast.add({ severity: 'error', summary: t('web.common.error'), detail: t('web.device_management.save_failed') + ': ' + errorDetail(e), life: TOAST_LIFE.error });
         return;
     }
 }
@@ -638,7 +639,7 @@ const loadCurrentNetworkInfo = async () => {
 
 const exportConfig = async () => {
     if (!instanceId.value) {
-        toast.add({ severity: 'error', summary: 'Error', detail: 'No network instance selected', life: 2000 });
+        toast.add({ severity: 'error', summary: 'Error', detail: 'No network instance selected', life: TOAST_LIFE.error });
         return;
     }
 
@@ -655,7 +656,7 @@ const exportConfig = async () => {
         exportTomlFile(tomlConfig ?? '', targetInstanceId + '.toml');
     } catch (e: any) {
         console.error(e);
-        toast.add({ severity: 'error', summary: t('web.common.error'), detail: t('web.device_management.export_config') + ': ' + errorDetail(e), life: 3000 });
+        toast.add({ severity: 'error', summary: t('web.common.error'), detail: t('web.device_management.export_config') + ': ' + errorDetail(e), life: TOAST_LIFE.error });
         return;
     }
 }
@@ -687,9 +688,9 @@ const handleFileUpload = (event: Event) => {
 
             config.instance_id = targetInstanceId ?? config.instance_id;
             currentNetworkConfig.value = config;
-            toast.add({ severity: 'success', summary: 'Import Success', detail: "Config file import success", life: 2000 });
+            toast.add({ severity: 'success', summary: 'Import Success', detail: "Config file import success", life: TOAST_LIFE.success });
         } catch (error) {
-            toast.add({ severity: 'error', summary: 'Error', detail: 'Config file parse error: ' + error, life: 2000 });
+            toast.add({ severity: 'error', summary: 'Error', detail: 'Config file parse error: ' + error, life: TOAST_LIFE.error });
         }
         configFile.value.value = null;
     }

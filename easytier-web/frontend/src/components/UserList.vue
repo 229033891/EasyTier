@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue';
+import { TOAST_LIFE } from 'easytier-frontend-lib'
 import { Button, Checkbox, InputText, Password, useConfirm, useToast } from 'primevue';
 import { tooltipDirective } from 'easytier-frontend-lib';
 import { useI18n } from 'vue-i18n';
@@ -36,7 +37,7 @@ const createUser = async () => {
             severity: 'warn',
             summary: t('web.users.create_failed'),
             detail: t('web.users.username_password_required'),
-            life: 2500,
+            life: TOAST_LIFE.warn,
         });
         return;
     }
@@ -53,7 +54,7 @@ const createUser = async () => {
         toast.add({
             severity: 'success',
             summary: t('web.users.create_success'),
-            life: 2000,
+            life: TOAST_LIFE.success,
         });
         await loadUsers();
     } catch (e: any) {
@@ -61,7 +62,7 @@ const createUser = async () => {
             severity: 'error',
             summary: t('web.users.create_failed'),
             detail: e?.response?.data?.message || String(e),
-            life: 3500,
+            life: TOAST_LIFE.error,
         });
     } finally {
         creating.value = false;
@@ -85,7 +86,7 @@ const submitReset = async () => {
             severity: 'warn',
             summary: t('web.users.reset_failed'),
             detail: t('web.users.password_required'),
-            life: 2500,
+            life: TOAST_LIFE.warn,
         });
         return;
     }
@@ -95,7 +96,7 @@ const submitReset = async () => {
         toast.add({
             severity: 'success',
             summary: t('web.users.reset_success'),
-            life: 2000,
+            life: TOAST_LIFE.success,
         });
         cancelReset();
     } catch (e: any) {
@@ -103,7 +104,7 @@ const submitReset = async () => {
             severity: 'error',
             summary: t('web.users.reset_failed'),
             detail: e?.response?.data?.message || String(e),
-            life: 3500,
+            life: TOAST_LIFE.error,
         });
     } finally {
         resettingId.value = null;
@@ -116,7 +117,7 @@ const confirmDelete = (user: UserInfo) => {
             severity: 'warn',
             summary: t('web.users.delete_failed'),
             detail: t('web.users.delete_admin_forbidden'),
-            life: 2500,
+            life: TOAST_LIFE.warn,
         });
         return;
     }
@@ -139,7 +140,7 @@ const confirmDelete = (user: UserInfo) => {
                 toast.add({
                     severity: 'success',
                     summary: t('web.users.delete_success'),
-                    life: 2000,
+                    life: TOAST_LIFE.success,
                 });
                 await loadUsers();
             } catch (e: any) {
@@ -147,7 +148,7 @@ const confirmDelete = (user: UserInfo) => {
                     severity: 'error',
                     summary: t('web.users.delete_failed'),
                     detail: e?.response?.data?.message || String(e),
-                    life: 3500,
+                    life: TOAST_LIFE.error,
                 });
             }
         },
@@ -162,7 +163,7 @@ onMounted(async () => {
             severity: 'error',
             summary: t('web.users.load_failed'),
             detail: e?.response?.data?.message || String(e),
-            life: 3500,
+            life: TOAST_LIFE.error,
         });
         users.value = [];
     }

@@ -1,10 +1,12 @@
 <script setup lang="ts">
 import { onMounted, ref, watch } from 'vue';
 import { NetworkConfig } from '../types/network';
-import { Button, Dialog, Textarea } from 'primevue'
+import { Button, Dialog, Textarea, useToast } from 'primevue'
+import { TOAST_LIFE } from '../modules/toast'
 import { useI18n } from 'vue-i18n'
 
 const { t } = useI18n()
+const toast = useToast()
 
 const props = defineProps({
     readonly: {
@@ -42,7 +44,6 @@ async function refreshConfig(newVisible: boolean, config: NetworkConfig | undefi
 
     const previousToml = tomlConfig.value;
     try {
-        errorMessage.value = '';
         const generated = await props.generateConfig(config);
         if (sequence !== generateSequence || !visible.value || curNetwork.value !== config || tomlConfig.value !== previousToml) {
             return;
@@ -52,7 +53,12 @@ async function refreshConfig(newVisible: boolean, config: NetworkConfig | undefi
         if (sequence !== generateSequence || !visible.value || curNetwork.value !== config) {
             return;
         }
-        errorMessage.value = 'Failed to generate config: ' + (e instanceof Error ? e.message : String(e));
+        toast.add({
+            severity: 'error',
+            summary: t('config_generation_failed'),
+            detail: e instanceof Error ? e.message : String(e),
+            life: TOAST_LIFE.error,
+        })
         tomlConfig.value = '';
     }
 }
@@ -70,8 +76,18 @@ const handleConfigSave = async () => {
     try {
         await props.saveConfig(tomlConfig.value);
         visible.value = false;
+        toast.add({
+            severity: 'success',
+            summary: t('web.common.success'),
+            life: TOAST_LIFE.success,
+        })
     } catch (e) {
-        errorMessage.value = 'Failed to save config: ' + (e instanceof Error ? e.message : String(e));
+        toast.add({
+            severity: 'error',
+            summary: t('web.device_management.save_failed'),
+            detail: e instanceof Error ? e.message : String(e),
+            life: TOAST_LIFE.error,
+        })
     } finally {
         saveInProgress = false;
     }
@@ -79,11 +95,9 @@ const handleConfigSave = async () => {
 
 const tomlConfig = ref<string>('')
 const tomlConfigRows = ref<number>(1);
-const errorMessage = ref<string>('');
 
 watch(tomlConfig, (newValue) => {
     tomlConfigRows.value = newValue.split('\n').length;
-    errorMessage.value = '';
 });
 
 </script>
@@ -91,8 +105,6 @@ watch(tomlConfig, (newValue) => {
     <Dialog v-model:visible="visible" modal :header="t('config_file')"
         class="et-dialog et-dialog--wide"
         :style="{ width: 'min(70vw, 56rem)', maxWidth: 'calc(100vw - 2rem)' }">
-        <pre v-if="errorMessage"
-            class="et-dialog-error mb-3">{{ errorMessage }}</pre>
         <div class="et-dialog-scroll">
             <Textarea v-model="tomlConfig" class="w-full h-full font-mono flex flex-col resize-none" :rows="tomlConfigRows"
                 spellcheck="false" :readonly="props.readonly"></Textarea>
@@ -109,20 +121,5 @@ watch(tomlConfig, (newValue) => {
     max-height: 60vh;
     overflow-y: auto;
     width: 100%;
-}
-
-.et-dialog-error {
-    margin: 0 0 0.75rem;
-    padding: 0.65rem 0.75rem;
-    border-radius: calc(var(--et-radius, 0.75rem) - 0.25rem);
-    border: 1px solid #fca5a5;
-    background: #fef2f2;
-    color: #991b1b;
-    font-size: var(--et-fs-meta, 0.75rem);
-    line-height: 1.45;
-    overflow: auto;
-    max-height: 10rem;
-    white-space: pre-wrap;
-    word-break: break-word;
 }
 </style>

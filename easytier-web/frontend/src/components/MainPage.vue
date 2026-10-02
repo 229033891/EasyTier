@@ -473,12 +473,12 @@ onUnmounted(() => {
     min-width: 2rem;
     padding: 0;
     border-radius: 999px;
-    border: 1.5px solid color-mix(in srgb, var(--primary-color, #0ea5e9) 75%, #7dd3fc);
-    background: #0b1220;
-    color: color-mix(in srgb, var(--primary-color, #0ea5e9) 85%, #7dd3fc);
+    border: 1.5px solid color-mix(in srgb, var(--primary-color, #0ea5e9) 45%, #cbd5e1);
+    background: color-mix(in srgb, var(--surface-0, #ffffff) 88%, var(--primary-color, #0ea5e9) 12%);
+    color: var(--primary-color, #0284c7);
     cursor: pointer;
-    box-shadow: 0 0 0 1px color-mix(in srgb, var(--primary-color, #0ea5e9) 18%, transparent);
-    transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease;
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--primary-color, #0ea5e9) 10%, transparent);
+    transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease, background 0.15s ease, color 0.15s ease;
 }
 
 @media (min-width: 640px) {
@@ -531,8 +531,10 @@ onUnmounted(() => {
 
 @media (hover: hover) {
     .sidebar-collapse-btn:hover {
-        border-color: var(--primary-color, #38bdf8);
-        box-shadow: 0 0 0 2px color-mix(in srgb, var(--primary-color, #0ea5e9) 28%, transparent);
+        background: color-mix(in srgb, var(--surface-0, #ffffff) 72%, var(--primary-color, #0ea5e9) 28%);
+        border-color: var(--primary-color, #0ea5e9);
+        color: color-mix(in srgb, var(--primary-color, #0284c7) 85%, #0f172a);
+        box-shadow: 0 0 0 2px color-mix(in srgb, var(--primary-color, #0ea5e9) 22%, transparent);
         transform: scale(1.04);
     }
 }

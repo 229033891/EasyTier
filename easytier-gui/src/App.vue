@@ -9,7 +9,7 @@ onBeforeMount(async () => {
 </script>
 
 <template>
-  <Toast position="bottom-right" />
+  <Toast position="bottom-right" class="et-toast" />
   <ConfirmDialog class="et-confirm-dialog" />
   <RouterView />
 </template>

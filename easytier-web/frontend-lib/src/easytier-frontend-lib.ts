@@ -14,6 +14,7 @@ import { EasyTierPreset, ET_PRIMARY, ET_PRIMARY_EMPHASIS } from './modules/theme
 
 import * as Api from './modules/api';
 import * as Utils from './modules/utils';
+import { TOAST_LIFE } from './modules/toast';
 
 export default {
     install: (app: App): void => {
@@ -57,6 +58,7 @@ export {
     NetworkTypes,
     Api,
     Utils,
+    TOAST_LIFE,
     tooltipDirective,
     tooltipDefaults,
     normalizeTooltipValue,

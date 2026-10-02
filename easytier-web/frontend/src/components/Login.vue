@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { I18nUtils, TOAST_LIFE } from 'easytier-frontend-lib'
 import { Card, InputText, Password, Button, AutoComplete } from 'primevue';
 import { useRouter } from 'vue-router';
 import { useToast } from 'primevue/usetoast';
-import { I18nUtils } from 'easytier-frontend-lib';
 import { getInitialApiHost, cleanAndLoadApiHosts, saveApiHost } from "../modules/api-host"
 import { useI18n } from 'vue-i18n'
 import ApiClient, { Credential } from '../modules/api';
@@ -40,7 +40,7 @@ const onSubmit = async () => {
                 params: { apiHost: btoa(apiHost.value) },
             });
         } else {
-            toast.add({ severity: 'error', summary: 'Login Failed', detail: ret.message, life: 2000 });
+            toast.add({ severity: 'error', summary: 'Login Failed', detail: ret.message, life: TOAST_LIFE.error });
         }
     } finally {
         submitting.value = false;

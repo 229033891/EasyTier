@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { Card, useToast } from 'primevue';
+import { TOAST_LIFE } from 'easytier-frontend-lib'
 import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { Utils } from 'easytier-frontend-lib';
 import { useI18n } from 'vue-i18n';
@@ -23,7 +24,7 @@ const periodFunc = new Utils.PeriodicTask(async () => {
     try {
         await loadSummary();
     } catch (e) {
-        toast.add({ severity: 'error', summary: t('web.dashboard.load_failed'), detail: String(e), life: 2000 });
+        toast.add({ severity: 'error', summary: t('web.dashboard.load_failed'), detail: String(e), life: TOAST_LIFE.error });
         console.error(e);
     }
 }, 1000);

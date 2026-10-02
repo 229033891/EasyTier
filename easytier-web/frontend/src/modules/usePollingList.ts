@@ -1,6 +1,6 @@
 import { onMounted, onUnmounted, ref, shallowRef } from 'vue';
+import { TOAST_LIFE, Utils } from 'easytier-frontend-lib';
 import { useToast } from 'primevue';
-import { Utils } from 'easytier-frontend-lib';
 import { useI18n } from 'vue-i18n';
 
 export interface PollingListOptions<T> {
@@ -36,7 +36,7 @@ export function usePollingList<T>(options: PollingListOptions<T>) {
         try {
             await load();
         } catch (e) {
-            toast.add({ severity: 'error', summary: t(errorSummaryKey), detail: String(e), life: 2000 });
+            toast.add({ severity: 'error', summary: t(errorSummaryKey), detail: String(e), life: TOAST_LIFE.error });
             console.error(e);
         }
     }, interval);
