@@ -22,7 +22,7 @@
 | [architecture.md](./current/architecture.md) | 可移植 core / host / proto 边界（架构 SoT） |
 | [product-map.md](./current/product-map.md) | 产品与 crate / 二进制命名地图 |
 | [traffic-steering.md](./current/traffic-steering.md) | 出口节点、子网代理、系统路由：**真实行为与缺口** |
-| [data-plane.md](./current/data-plane.md) | DataPlaneRuntime / FFI / Go / WASI（含剩余缺口） |
+| [data-plane.md](./current/data-plane.md) | DataPlaneRuntime / FFI / Go / WASI（现状摘要；长文在 Archive） |
 | [web-managed-config.md](./current/web-managed-config.md) | Web managed config Full/PATCH 接收与 Session 收敛 |
 | [socket-protection.md](./current/socket-protection.md) | Host VPN-bypass / `need_protect` 契约 |
 | [peer-connections.md](./current/peer-connections.md) | 节点间多 PeerConn 与单 `default_conn` 发送路径 |
@@ -52,7 +52,11 @@
 
 ## Archive — 历史记录
 
-验证与 benchmark 见 [`archive/`](./archive/)。
+验证与 benchmark 见 [`archive/`](./archive/)。含：
+
+| 文档 | 说明 |
+|------|------|
+| [data-plane-runtime-plan.md](./archive/data-plane-runtime-plan.md) | DataPlane 原实现计划全文（已由 Current 摘要替代日常阅读） |
 
 ---
 

@@ -322,12 +322,10 @@ generic completion, cancellation, free, drain, and take transitions. The data
 plane retains TCP/UDP resource ownership, operation metadata, route deadlines,
 and error semantics.
 
-The proposed restructuring of the smoltcp data plane, SOCKS5 and port-forward
-Adapters, portable KCP engine, event-driven FFI/WASI completion model, and Go
-Host integration is tracked in
-[`data-plane-runtime-plan.md`](data-plane-runtime-plan.md). That document is a
-future implementation plan; this document remains the source of truth for the
-currently implemented architecture until the plan is completed.
+Current data-plane status is summarized in
+[`data-plane.md`](data-plane.md). The historical implementation plan lives in
+[`../archive/data-plane-runtime-plan.md`](../archive/data-plane-runtime-plan.md);
+this document remains the source of truth for crate boundaries and ownership.
 
 ### Instance and management
 

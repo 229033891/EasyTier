@@ -19,7 +19,7 @@
 <img src="assets/running-page.png" width="300" alt="运行页面">
 </p>
 
-📚 **[上游文档](https://easytier.cn)** | 🖥️ **[上游 Web 控制台](https://easytier.cn/web)** | 📝 **[下载发布版本](https://github.com/229033891/EasyTier/releases)** | 🐳 **[Docker Compose](./docker-compose.yml)**
+📚 **[上游文档](https://easytier.cn)** | 🖥️ **[上游 Web 控制台](https://easytier.cn/web)** | 📝 **[下载发布版本](https://github.com/229033891/EasyTier/releases)** | 🐳 **[Docker Compose](./docker-compose.yml)** | 📖 **[内部文档索引](./docs/README.md)**
 
 ## 特性
 
@@ -49,7 +49,20 @@
 
 选择最适合您需求的安装方式：
 
-Linux（推荐）：
+Linux（推荐 — 交互式控制台 / 节点部署）：
+```bash
+# clone 后本地执行（最稳）
+git clone https://github.com/229033891/EasyTier.git
+cd EasyTier
+sudo bash script/easytier-install.sh
+```
+
+Windows（推荐，请以管理员权限运行）：
+```powershell
+irm "https://github.com/229033891/EasyTier/blob/main/script/install.ps1?raw=true" | iex
+```
+
+Linux 轻量仅下载安装（无交互式 server/client 向导）：
 ```bash
 curl -fsSL "https://github.com/229033891/EasyTier/blob/main/script/install.sh?raw=true" | sudo bash -s install
 ```
@@ -60,25 +73,14 @@ brew tap brewforge/chinese
 brew install --cask easytier-gui
 ```
 
-Windows（推荐，请以管理员权限运行）：
-```powershell
-irm "https://github.com/229033891/EasyTier/blob/main/script/install.ps1?raw=true" | iex
-```
-
 通过 cargo 安装（最新开发版本）：
 ```bash
 cargo install --git https://github.com/229033891/EasyTier.git easytier
 ```
 
-[下载预编译文件](https://github.com/229033891/EasyTier/releases)（推荐，支持所有平台）
+[预编译文件](https://github.com/229033891/EasyTier/releases) · [部署说明](./docs/ops/deploy-install.md) · [Docker Compose](./docker-compose.yml)（`ghcr.io/229033891/et`）
 
-[Docker Compose](./docker-compose.yml) — 镜像 `ghcr.io/229033891/et`
-
-[安装 OpenWrt ipk 软件包](https://github.com/EasyTier/luci-app-easytier)（上游）
-
-附加步骤：
-
-[一键注册系统服务](https://easytier.cn/guide/network/oneclick-install-as-service.html)（系统启动时自动后台运行）
+[OpenWrt Luci 软件包](https://github.com/EasyTier/luci-app-easytier)（上游）
 
 ### 🚀 基本用法
 

@@ -13,7 +13,7 @@ EasyTier 仅为最新正式版本提供安全更新。报告漏洞前，请尽�
 
 ## 报告安全漏洞
 
-请通过 GitHub 的[私有漏洞报告表单](https://github.com/EasyTier/EasyTier/security/advisories/new)报告疑似安全漏洞。
+请通过 GitHub 的[私有漏洞报告表单](https://github.com/229033891/EasyTier/security/advisories/new)报告疑似安全漏洞。
 
 请勿在公开 Issue、Discussion 或 Pull Request 中披露漏洞。一份有效的报告应包括：
 

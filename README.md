@@ -19,7 +19,7 @@ Maintained fork of [EasyTier/EasyTier](https://github.com/EasyTier/EasyTier). Re
 <img src="assets/running-page.png" width="300" alt="running page">
 </p>
 
-📚 **[Upstream Docs](https://easytier.cn/en/)** | 🖥️ **[Upstream Web Console](https://easytier.cn/web)** | 📝 **[Download Releases](https://github.com/229033891/EasyTier/releases)** | 🐳 **[Docker Compose](./docker-compose.yml)**
+📚 **[Upstream Docs](https://easytier.cn/en/)** | 🖥️ **[Upstream Web Console](https://easytier.cn/web)** | 📝 **[Download Releases](https://github.com/229033891/EasyTier/releases)** | 🐳 **[Docker Compose](./docker-compose.yml)** | 📖 **[Internal Docs](./docs/README.md)**
 
 ## Features
 
@@ -49,7 +49,20 @@ Maintained fork of [EasyTier/EasyTier](https://github.com/EasyTier/EasyTier). Re
 
 Choose the installation method that best suits your needs:
 
-Linux (Recommended):
+Linux (recommended — interactive console / node deploy):
+```bash
+# clone then run (most reliable)
+git clone https://github.com/229033891/EasyTier.git
+cd EasyTier
+sudo bash script/easytier-install.sh
+```
+
+Windows (recommended, run as Administrator):
+```powershell
+irm "https://github.com/229033891/EasyTier/blob/main/script/install.ps1?raw=true" | iex
+```
+
+Lightweight Linux download-only (no interactive server/client wizard):
 ```bash
 curl -fsSL "https://github.com/229033891/EasyTier/blob/main/script/install.sh?raw=true" | sudo bash -s install
 ```
@@ -60,25 +73,14 @@ brew tap brewforge/chinese
 brew install --cask easytier-gui
 ```
 
-Windows (Recommended, run with administrator privileges):
-```powershell
-irm "https://github.com/229033891/EasyTier/blob/main/script/install.ps1?raw=true" | iex
-```
-
-Install via cargo (Latest development version):
+Install via cargo (latest development version):
 ```bash
 cargo install --git https://github.com/229033891/EasyTier.git easytier
 ```
 
-[Install pre-built binary](https://github.com/229033891/EasyTier/releases) (Recommended, All platforms supported)
+[Pre-built binaries](https://github.com/229033891/EasyTier/releases) · [Deploy guide](./docs/ops/deploy-install.md) · [Docker Compose](./docker-compose.yml) (`ghcr.io/229033891/et`)
 
-[Docker Compose](./docker-compose.yml) — image `ghcr.io/229033891/et`
-
-[Install OpenWrt ipk package](https://github.com/EasyTier/luci-app-easytier) (upstream)
-
-Additional steps:
-
-[One-Click Register Service](https://easytier.cn/en/guide/network/oneclick-install-as-service.html) (Automatically start when the system boots and run in the background)
+[OpenWrt Luci package](https://github.com/EasyTier/luci-app-easytier) (upstream)
 
 ### 🚀 Basic Usage
 

@@ -13,7 +13,7 @@ Security updates are provided for the latest EasyTier release. Before reporting 
 
 ## Reporting a Vulnerability
 
-Please report suspected vulnerabilities through GitHub's [private vulnerability reporting form](https://github.com/EasyTier/EasyTier/security/advisories/new).
+Please report suspected vulnerabilities through GitHub's [private vulnerability reporting form](https://github.com/229033891/EasyTier/security/advisories/new).
 
 Do not disclose the vulnerability in a public issue, discussion, or pull request. A useful report should include:
 

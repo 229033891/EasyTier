@@ -72,7 +72,7 @@ sudo apt install -y bridge-utils
 
 1. Clone the repository:
    ```bash
-   git clone https://github.com/EasyTier/EasyTier.git
+   git clone https://github.com/229033891/EasyTier.git
    cd EasyTier
    ```
 
@@ -255,8 +255,8 @@ cargo test --no-default-features --features=full --verbose
 
 ## Additional Resources
 
-- [Issue Tracker](https://github.com/EasyTier/EasyTier/issues)
-- [Project Documentation](https://github.com/EasyTier/EasyTier/wiki)
+- [Issue Tracker](https://github.com/229033891/EasyTier/issues)
+- [Internal Docs](./docs/README.md)
 
 ## Questions or Need Help?
 

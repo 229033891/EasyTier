@@ -80,7 +80,7 @@ sudo apt install -y bridge-utils
 
 1. 克隆仓库：
    ```bash
-   git clone https://github.com/EasyTier/EasyTier.git
+   git clone https://github.com/229033891/EasyTier.git
    cd EasyTier
    ```
 
@@ -252,8 +252,8 @@ cargo test --no-default-features --features=full --verbose
 
 ## 其他资源
 
-- [问题追踪](https://github.com/EasyTier/EasyTier/issues)
-- [项目文档](https://github.com/EasyTier/EasyTier/wiki)
+- [问题追踪](https://github.com/229033891/EasyTier/issues)
+- [内部文档索引](./docs/README.md)
 
 ## 需要帮助？
 
