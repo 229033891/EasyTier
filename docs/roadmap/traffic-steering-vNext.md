@@ -8,6 +8,7 @@
 - 目标读者：产品决策 + 后续实现
 - 索引：[`../README.md`](../README.md)
 - **现状行为（已实现）**：[`../current/traffic-steering.md`](../current/traffic-steering.md)
+- **市场对比（Tailscale exit / subnet）**：[`market-comparison-2026-10.md`](./market-comparison-2026-10.md)
 - 输入文档：
   - 出口节点选路与系统路由缺口（会话分析）
   - [`domain-proxy.md`](./domain-proxy.md)（域名驱动子网代理草案）

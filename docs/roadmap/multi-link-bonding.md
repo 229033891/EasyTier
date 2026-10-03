@@ -6,6 +6,10 @@
 - 最近审阅：2026-10-03
 - 索引：[`../README.md`](../README.md)
 - **现状行为**：[`../current/peer-connections.md`](../current/peer-connections.md)
+- **市场对比**：[`market-comparison-2026-10.md`](./market-comparison-2026-10.md)（ZeroTier Multipath；Tailscale 仍单路径；VeloCloud DMPO 为站间 SD-WAN）
+
+MVP 语义对齐 **ZeroTier Multipath 的 balance-xor（按流哈希）**；  
+**不对标** 华为/VeloCloud 站点多 WAN / DMPO 包级优化。
 
 ---
 

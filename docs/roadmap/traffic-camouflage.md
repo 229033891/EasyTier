@@ -7,16 +7,23 @@
 - 索引：[`../README.md`](../README.md)
 - **现状隧道能力**：[`../current/tunnels-and-transport.md`](../current/tunnels-and-transport.md)
 - 相关：[`../current/peer-connections.md`](../current/peer-connections.md)、[`multi-link-bonding.md`](./multi-link-bonding.md)
+- **市场对比**：[`market-comparison-2026-10.md`](./market-comparison-2026-10.md)（Tailscale DERP / 蒲公英转发分层）
 
 ---
 
 ## 1. 背景与问题
 
-部分网络环境会限制或干扰 **可识别的 P2P / VPN 隧道**（非常用端口、UDP 打洞、协议指纹、长连接特征等）。  
-业界已有成熟思路：把隧道外层做成 **普通 HTTPS / Web 访问**，或降低被动指纹；EasyTier 目前仅有 `wss` / `quic` / `faketcp` 等传输，**没有**完整伪装产品档。
+部分网络环境会限制或干扰 **P2P / 打洞**（NAT、运营商策略、非常用端口等）。  
+市场成熟产品的主路径通常是 **「直连优先 + 失败必有中继」**（Tailscale：Peer Relay → DERP/HTTPS；蒲公英：P2P → 转发 → 强制转发），而不是先做完整抗 DPI 伪装。
 
-目标：在合法自建/自有域名与证书前提下，提供可选的「伪装传输」路径，使节点间（或经中继）流量更接近正常 Web，降低被策略误伤的概率。  
-**不承诺**对抗所有主动探测或审查系统；文档与 UI 不得夸大。
+EasyTier 已有 `wss` / 中继相关能力，但缺少产品化的 **中继保底档** 与清晰回落策略；TLS 指纹级伪装仍属增强。
+
+目标（按优先级）：
+
+1. **连通保底**：合法域名 + `wss`/`443` 中继，使「能上 HTTPS 就能组网」成为可交付预设。  
+2. **可选外观增强**：降低被动指纹（Phase C+）。  
+
+**不承诺**对抗所有主动探测；文档与 UI 不得夸大「隐身」。
 
 ---
 

@@ -801,8 +801,11 @@ const eventLogContent = computed(() => {
   border-radius: calc(var(--et-radius, 0.75rem) - 0.25rem);
   background: var(--surface-50, #f8fafc);
   padding: 0.35rem 0.5rem 0.4rem;
+  /* Do not shrink inside .node-detail-groups (flex column + max-height).
+     min-height:0 + default flex-shrink crushed rows and overlapped chips on Android WebView. */
   height: auto;
-  min-height: 0;
+  min-height: auto;
+  flex: 0 0 auto;
 }
 
 .node-info-group-title {
@@ -950,7 +953,7 @@ const eventLogContent = computed(() => {
 
 @media (max-width: 640px) {
   .node-info-group {
-    /* 窄屏：标题+复制同一行，chip 区占满下一行并随内容长高 */
+    /* Narrow: title + copy on row 1, chips full-width on row 2. */
     grid-template-columns: minmax(0, 1fr) auto;
     padding: 0.45rem 0.55rem;
   }

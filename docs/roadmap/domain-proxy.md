@@ -9,6 +9,7 @@
 - 决策：先文档立项，**当前不实现代码**
 - 索引：[`../README.md`](../README.md)
 - **全局导流 / 与出口交界**：[`traffic-steering-vNext.md`](./traffic-steering-vNext.md)
+- **市场对比（Tailscale App Connector）**：[`market-comparison-2026-10.md`](./market-comparison-2026-10.md)
 - **出口与 CIDR 现状**：[`../current/traffic-steering.md`](../current/traffic-steering.md)
 - 本文仍是域名子系统的权威细节。
 
