@@ -111,11 +111,14 @@ const tabs = computed(() => {
             <div class="acl-section-title">{{ t('acl.chains') }}</div>
             <p class="acl-help">{{ t('acl.empty_chains') }}</p>
             <div class="flex flex-wrap gap-2 justify-center">
-              <Button :label="t('acl.inbound')" icon="pi pi-arrow-down-left" severity="secondary" outlined size="small"
+              <Button class="et-panel-action-btn acl-chain-add-btn" :label="t('acl.inbound')"
+                icon="pi pi-arrow-down-left" severity="secondary"
                 @click="addChain(AclChainType.Inbound)" />
-              <Button :label="t('acl.outbound')" icon="pi pi-arrow-up-right" severity="secondary" outlined size="small"
+              <Button class="et-panel-action-btn acl-chain-add-btn" :label="t('acl.outbound')"
+                icon="pi pi-arrow-up-right" severity="secondary"
                 @click="addChain(AclChainType.Outbound)" />
-              <Button :label="t('acl.forward')" icon="pi pi-directions" severity="info" outlined size="small"
+              <Button class="et-panel-action-btn acl-chain-add-btn" :label="t('acl.forward')"
+                icon="pi pi-directions" severity="info"
                 @click="addChain(AclChainType.Forward)" />
             </div>
           </div>
@@ -134,6 +137,59 @@ const tabs = computed(() => {
 </template>
 
 <style scoped>
+.acl-manager :deep(.p-tablist) {
+  background: transparent;
+  border: none;
+  gap: 0.35rem;
+}
+
+.acl-manager :deep(.p-tablist-content),
+.acl-manager :deep(.p-tablist-tab-list) {
+  border: none;
+  background: transparent;
+  gap: 0.35rem;
+}
+
+.acl-tabs-bar {
+  gap: 0.35rem;
+  padding: 0.2rem;
+  margin-bottom: 0.15rem;
+  border: 1px solid var(--et-border-color, #e2e8f0) !important;
+  border-radius: var(--et-radius, 0.75rem);
+  background: var(--surface-50, #f8fafc);
+}
+
+.acl-manager :deep(.p-tab) {
+  margin: 0;
+  padding: 0.45rem 0.75rem !important;
+  border: 1px solid transparent !important;
+  border-radius: calc(var(--et-radius, 0.75rem) - 0.2rem) !important;
+  background: transparent !important;
+  color: var(--text-color-secondary, #64748b) !important;
+  box-shadow: none !important;
+}
+
+.acl-manager :deep(.p-tab:not(.p-tab-active):hover) {
+  background: color-mix(in srgb, var(--primary-color, #0ea5e9) 8%, #ffffff) !important;
+  color: var(--primary-color, #0284c7) !important;
+}
+
+.acl-manager :deep(.p-tab.p-tab-active),
+.acl-manager :deep(.p-tab[data-p-active="true"]) {
+  background: color-mix(in srgb, var(--primary-color, #0ea5e9) 12%, #ffffff) !important;
+  border-color: color-mix(in srgb, var(--primary-color, #0ea5e9) 32%, var(--et-border-color, #e2e8f0)) !important;
+  color: var(--primary-color, #0284c7) !important;
+  font-weight: 600;
+}
+
+.acl-manager :deep(.p-tabpanels),
+.acl-manager :deep(.p-tabpanel) {
+  padding: 0;
+  background: transparent;
+  border: none;
+  box-shadow: none;
+}
+
 .acl-empty {
   display: flex;
   flex-direction: column;
@@ -168,7 +224,33 @@ const tabs = computed(() => {
   padding: 0 0.5rem;
 }
 
+.acl-chain-add-btn {
+  /* keep panel action height; allow slightly narrower on wrap */
+  min-width: 7.5rem !important;
+  width: auto !important;
+}
+
 @media (prefers-color-scheme: dark) {
+  .acl-tabs-bar {
+    border-color: var(--surface-border, #334155) !important;
+    background: var(--surface-card, #1e293b);
+  }
+
+  .acl-manager :deep(.p-tab) {
+    color: var(--text-color-secondary, #94a3b8) !important;
+  }
+
+  .acl-manager :deep(.p-tab:not(.p-tab-active):hover) {
+    background: color-mix(in srgb, var(--primary-color, #0ea5e9) 16%, transparent) !important;
+  }
+
+  .acl-manager :deep(.p-tab.p-tab-active),
+  .acl-manager :deep(.p-tab[data-p-active="true"]) {
+    background: color-mix(in srgb, var(--primary-color, #0ea5e9) 20%, transparent) !important;
+    border-color: color-mix(in srgb, var(--primary-color, #0ea5e9) 40%, #334155) !important;
+    color: var(--primary-color, #38bdf8) !important;
+  }
+
   .acl-empty {
     border-color: var(--surface-border, #334155);
     background: var(--surface-card, #1e293b);

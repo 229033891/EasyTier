@@ -869,6 +869,7 @@ acl:
     name: 组名
     secret: 密钥
     help: 在此处定义网络中的组身份，以便在规则中使用。
+    empty_declares: 还没有声明组。添加后可在规则和「加入组」中使用。
   any: 任意
   allow: 允许
   drop: 丢弃

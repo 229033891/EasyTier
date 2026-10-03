@@ -69,17 +69,25 @@ function saveGroup() {
 </script>
 
 <template>
-  <div class="acl-groups flex flex-col gap-4">
+  <div class="acl-groups flex flex-col gap-3">
     <section class="acl-card flex flex-col gap-3">
       <div class="flex justify-between items-start gap-3">
         <div class="min-w-0">
           <div class="acl-section-title">{{ t('acl.group.declares') }}</div>
           <p class="acl-help">{{ t('acl.group.help') }}</p>
         </div>
-        <Button icon="pi pi-plus" :label="t('web.common.add')" severity="success" size="small" @click="addGroup" />
+        <Button class="et-panel-action-btn acl-add-btn" icon="pi pi-plus" :label="t('web.common.add')"
+          severity="success" @click="addGroup" />
       </div>
 
-      <DataTable :value="groupInfo().declares" responsiveLayout="scroll" class="acl-groups-table">
+      <div v-if="!groupInfo().declares.length" class="acl-empty">
+        <i class="pi pi-users acl-empty-icon" />
+        <p class="acl-help acl-help--center">{{ t('acl.group.empty_declares') }}</p>
+        <Button class="et-panel-action-btn acl-add-btn" icon="pi pi-plus" :label="t('web.common.add')"
+          severity="success" @click="addGroup" />
+      </div>
+
+      <DataTable v-else :value="groupInfo().declares" responsiveLayout="scroll" class="acl-groups-table">
         <Column field="group_name" :header="t('acl.group.name')" />
         <Column field="group_secret" :header="t('acl.group.secret')">
           <template #body="{ data }">
@@ -103,7 +111,10 @@ function saveGroup() {
       <div class="acl-section-title">{{ t('acl.group.members') }}</div>
       <p class="acl-help">{{ t('acl.group.members_help') }}</p>
       <MultiSelect v-model="members" :options="props.groupNames" multiple fluid filter
-        :placeholder="t('acl.group.members')" />
+        class="acl-members-select"
+        :placeholder="t('acl.group.members')"
+        :disabled="!props.groupNames?.length"
+        :empty-message="t('acl.group.empty_declares')" />
     </section>
 
     <Dialog v-model:visible="showGroupDialog" modal :header="t('acl.groups')"
@@ -122,7 +133,7 @@ function saveGroup() {
       <template #footer>
         <Button :label="t('web.common.cancel')" icon="pi pi-times" severity="secondary" outlined
           @click="showGroupDialog = false" />
-        <Button :label="t('web.common.save')" icon="pi pi-save" @click="saveGroup" />
+        <Button :label="t('web.common.save')" icon="pi pi-save" severity="success" @click="saveGroup" />
       </template>
     </Dialog>
   </div>
@@ -149,20 +160,78 @@ function saveGroup() {
   line-height: 1.4;
 }
 
+.acl-help--center {
+  margin: 0 0 0.35rem;
+  text-align: center;
+  max-width: 22rem;
+}
+
 .acl-label {
   font-size: var(--et-fs-meta, 0.75rem);
   font-weight: 600;
   color: var(--text-color-secondary, #64748b);
 }
 
+.acl-add-btn {
+  min-width: 7.5rem !important;
+  width: auto !important;
+  flex-shrink: 0;
+}
+
+.acl-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.45rem;
+  padding: 1.1rem 0.85rem;
+  border: 1px dashed var(--et-border-color, #e2e8f0);
+  border-radius: calc(var(--et-radius, 0.75rem) - 0.125rem);
+  background: var(--surface-0, #ffffff);
+}
+
+.acl-empty-icon {
+  font-size: 1.35rem;
+  color: var(--primary-color, var(--et-primary, #0ea5e9));
+}
+
 .acl-groups-table :deep(.p-datatable-thead > tr > th) {
-  padding: 0.4rem 0.55rem !important;
+  padding: 0.45rem 0.6rem !important;
   font-size: var(--et-fs-meta, 0.75rem);
+  font-weight: 600;
+  color: var(--text-color-secondary, #64748b);
+  background: var(--surface-0, #ffffff) !important;
+  border-bottom: 1px solid var(--et-border-color, #e2e8f0) !important;
 }
 
 .acl-groups-table :deep(.p-datatable-tbody > tr > td) {
-  padding: 0.4rem 0.55rem !important;
+  padding: 0.45rem 0.6rem !important;
   font-size: var(--et-fs-body, 0.875rem);
+  border-bottom: 1px solid var(--et-border-color, #e2e8f0) !important;
+}
+
+.acl-groups-table :deep(.p-datatable),
+.acl-groups-table :deep(.p-datatable-table) {
+  border: 1px solid var(--et-border-color, #e2e8f0);
+  border-radius: calc(var(--et-radius, 0.75rem) - 0.125rem);
+  overflow: hidden;
+  background: var(--surface-0, #ffffff);
+}
+
+.acl-groups :deep(.acl-members-select.p-multiselect) {
+  min-height: 2.5rem;
+  border: 1px solid var(--et-border-color, #e2e8f0) !important;
+  border-radius: calc(var(--et-radius, 0.75rem) - 0.125rem) !important;
+  background: var(--surface-0, #ffffff) !important;
+}
+
+.acl-groups :deep(.acl-members-select.p-multiselect:not(.p-disabled):hover) {
+  border-color: color-mix(in srgb, var(--primary-color, #0ea5e9) 35%, var(--et-border-color, #e2e8f0)) !important;
+}
+
+.acl-groups :deep(.acl-members-select.p-multiselect.p-focus) {
+  border-color: var(--primary-color, #0ea5e9) !important;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary-color, #0ea5e9) 18%, transparent) !important;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -178,6 +247,23 @@ function saveGroup() {
   .acl-help,
   .acl-label {
     color: var(--text-color-secondary, #94a3b8);
+  }
+
+  .acl-empty {
+    border-color: var(--surface-border, #334155);
+    background: color-mix(in srgb, var(--surface-0, #0f172a) 40%, transparent);
+  }
+
+  .acl-groups-table :deep(.p-datatable),
+  .acl-groups-table :deep(.p-datatable-table),
+  .acl-groups-table :deep(.p-datatable-thead > tr > th) {
+    background: var(--surface-ground, #0f172a) !important;
+    border-color: var(--surface-border, #334155) !important;
+  }
+
+  .acl-groups :deep(.acl-members-select.p-multiselect) {
+    background: var(--surface-ground, #0f172a) !important;
+    border-color: var(--surface-border, #334155) !important;
   }
 }
 </style>

@@ -868,6 +868,7 @@ acl:
     name: Group Name
     secret: Group Secret
     help: Define group identities in the network to use them in rules.
+    empty_declares: No groups yet. Add one to use it in rules and membership.
   any: Any
   allow: Allow
   drop: Drop

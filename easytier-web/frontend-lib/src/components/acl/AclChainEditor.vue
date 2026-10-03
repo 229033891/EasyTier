@@ -127,17 +127,17 @@ function onRowReorder(event: any) {
         <div class="flex items-center gap-2">
           <label class="acl-label">{{ t('acl.rule.enabled') }}</label>
           <ToggleButton v-model="chain.enabled" on-icon="pi pi-check" off-icon="pi pi-times"
-            :on-label="t('web.common.enable')" :off-label="t('web.common.disable')" class="w-24" />
+            :on-label="t('web.common.enable')" :off-label="t('web.common.disable')" class="acl-toggle" />
         </div>
-        <div class="flex items-center gap-2">
+        <div class="flex items-center gap-2 min-w-0">
           <label class="acl-label">{{ t('acl.chain.type') }}</label>
           <Select v-model="chain.chain_type" :options="chainTypeOptions" :option-label="opt => opt.label()"
-            option-value="value" size="small" class="w-36" />
+            option-value="value" size="small" class="acl-select w-36" />
         </div>
         <div class="flex items-center gap-2 md:ml-auto">
           <label class="acl-label">{{ t('acl.default_action') }}</label>
           <SelectButton v-model="chain.default_action" :options="actionOptions" :option-label="opt => opt.label()"
-            option-value="value" :allow-empty="false" />
+            option-value="value" :allow-empty="false" class="acl-select-button" />
         </div>
       </div>
     </div>
@@ -224,6 +224,22 @@ function onRowReorder(event: any) {
   font-size: var(--et-fs-meta, 0.75rem);
   font-weight: 600;
   color: var(--text-color-secondary, #64748b);
+}
+
+.acl-toggle {
+  width: 6.5rem;
+  min-height: 2.25rem;
+}
+
+.acl-select :deep(.p-select),
+.acl-chain :deep(.acl-select.p-select) {
+  min-height: 2.25rem;
+}
+
+.acl-select-button :deep(.p-togglebutton) {
+  min-height: 2.25rem;
+  padding: 0.35rem 0.75rem;
+  font-weight: 600;
 }
 
 .acl-section-title {
