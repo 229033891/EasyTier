@@ -55,7 +55,7 @@ IPv6：VIP / 非 `/0` 的 proxy LPM → `exit_nodes`（同样要求下一跳）�
 
 - 期望集合 = 对端 OSPF 通告的 proxy CIDR（排除本节点）  
 - **本机 `exit_nodes` 中至少有一个 VIP 可解析且有下一跳**、未开 `manual_routes`、未 `no_tun`：另外加入本机管理的 `0.0.0.0/0`（低度量）；IPv4 `/0` **成功装上之后**再装 `::/0`（按 TUN 接口）  
-- 装本机出口默认路由前，会先把 **underlay 排除宿主路由**（`/32`/`/128`）装到**物理默认网关**上：已连接 peer 隧道的 `resolved_remote_addr`、以及对端 `stun_info.public_ip`（公网地址）。避免 P2P/打洞流量被吸进 TUN  
+- 装本机出口默认路由前，会先把 **underlay 排除宿主路由**（`/32`/`/128`）装到**物理默认网关**上：已连接 peer 隧道的 `resolved_remote_addr`、对端 `stun_info.public_ip`（公网地址）、以及本进程 **config-server / 管理面** 连接目标（URL 字面量 IP、隧道远端、DNS 解析结果中的公网地址）。避免 P2P/打洞与管理面心跳被吸进 TUN  
 - 对端宣告的 `0.0.0.0/0`（非子网出口）仍用高度量，避免没配出口时抢物理默认网关  
 - 出口不可达或清空 `exit_nodes`：卸掉本机默认路由与上述排除路由，其它 CIDR 不动；卸 `::/0` 后若本机仍是 Public IPv6 提供者，按原 metric 把提供者默认路由装回同一 TUN  
 - `manual_routes` 开启：整表由手动列表覆盖，**不**自动加出口默认路由  

@@ -76,12 +76,17 @@ impl CorePacketPlane {
     }
 
     /// Already-resolved underlay destinations that must not follow the TUN
-    /// exit-node default route (peer tunnel remotes + peer STUN public IPs).
+    /// exit-node default route (peer tunnel remotes, peer STUN public IPs,
+    /// and the process config-server / management endpoint when enabled).
     pub async fn underlay_exclude_ips(&self) -> BTreeSet<IpAddr> {
         if !self.proxy_cidr_monitor_available {
             return BTreeSet::new();
         }
-        collect_underlay_exclude_ips(self.peer_manager.as_ref()).await
+        #[cfg(feature = "web-client")]
+        let extra = crate::management::config_server_underlay_ips().await;
+        #[cfg(not(feature = "web-client"))]
+        let extra = std::iter::empty::<IpAddr>();
+        collect_underlay_exclude_ips(self.peer_manager.as_ref(), extra).await
     }
 
     pub async fn public_ipv6_routes(&self) -> BTreeSet<cidr::Ipv6Inet> {

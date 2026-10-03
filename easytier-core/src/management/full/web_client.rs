@@ -249,6 +249,8 @@ pub struct WebClient<F> {
     _manager_guard: Option<DaemonGuard>,
     connected: Arc<AtomicBool>,
     _factory: std::marker::PhantomData<F>,
+    // Declared last so Drop clears status after the reconnect task aborts.
+    _clear_status_on_drop: ClearConfigServerStatusOnDrop,
 }
 
 impl<F, H> WebClient<F>
@@ -302,6 +304,7 @@ impl<F> WebClient<F> {
         });
         let connected = Arc::new(AtomicBool::new(false));
         config_server_status::mark_enabled();
+        config_server_status::set_endpoint_url(&connector.remote_url());
         let tasks = AbortOnDropHandle::new(tokio::spawn(web_client_routine(
             controller.clone(),
             connected.clone(),
@@ -314,11 +317,20 @@ impl<F> WebClient<F> {
             _manager_guard: manager_guard,
             connected,
             _factory: std::marker::PhantomData,
+            _clear_status_on_drop: ClearConfigServerStatusOnDrop,
         }
     }
 
     pub fn is_connected(&self) -> bool {
         self.connected.load(Ordering::Acquire)
+    }
+}
+
+struct ClearConfigServerStatusOnDrop;
+
+impl Drop for ClearConfigServerStatusOnDrop {
+    fn drop(&mut self) {
+        config_server_status::clear();
     }
 }
 
@@ -339,6 +351,7 @@ async fn web_client_routine(
             }
         };
 
+        config_server_status::record_tunnel_remote(connection.info().as_ref());
         connected.store(true, Ordering::Release);
         config_server_status::mark_connected();
         tracing::info!(?connection, "connected to config server");
@@ -368,6 +381,7 @@ async fn web_client_routine(
                     continue;
                 }
             };
+            config_server_status::record_tunnel_remote(connection.info().as_ref());
             let connection = match web_security::upgrade_client_tunnel(connection).await {
                 Ok(connection) => connection,
                 Err(error) => {
@@ -378,6 +392,7 @@ async fn web_client_routine(
                     continue;
                 }
             };
+            config_server_status::record_tunnel_remote(connection.info().as_ref());
             connected.store(true, Ordering::Release);
             config_server_status::mark_connected();
             let mut session = WebClientSession::new(connection, controller.clone());

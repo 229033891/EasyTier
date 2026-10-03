@@ -11,8 +11,12 @@ use crate::{
 };
 
 /// Underlay destinations that must keep a more-specific host route when the
-/// local exit-node installs `0.0.0.0/0` on TUN (peer tunnels, STUN publics).
-pub async fn collect_underlay_exclude_ips(peer_manager: &PeerManagerCore) -> BTreeSet<IpAddr> {
+/// local exit-node installs `0.0.0.0/0` on TUN (peer tunnels, STUN publics,
+/// and any extra candidates such as the config-server management plane).
+pub async fn collect_underlay_exclude_ips(
+    peer_manager: &PeerManagerCore,
+    extra_candidates: impl IntoIterator<Item = IpAddr>,
+) -> BTreeSet<IpAddr> {
     let mut ips = BTreeSet::new();
 
     for snapshot in peer_manager.list_peer_snapshots().await {
@@ -32,6 +36,12 @@ pub async fn collect_underlay_exclude_ips(peer_manager: &PeerManagerCore) -> BTr
                     ips.insert(ip);
                 }
             }
+        }
+    }
+
+    for ip in extra_candidates {
+        if should_exclude_ip(peer_manager, ip).await {
+            ips.insert(ip);
         }
     }
 
@@ -107,5 +117,12 @@ mod tests {
         assert!(!is_global_ipv4("192.168.1.1".parse().unwrap()));
         assert!(!is_global_ipv4("127.0.0.1".parse().unwrap()));
         assert!(is_global_ipv4("8.8.8.8".parse().unwrap()));
+    }
+
+    #[test]
+    fn global_ipv6_filter_matches_underlay_policy() {
+        assert!(!is_global_ipv6("fe80::1".parse().unwrap()));
+        assert!(!is_global_ipv6("fd00::1".parse().unwrap()));
+        assert!(is_global_ipv6("2001:db8::1".parse().unwrap()));
     }
 }
