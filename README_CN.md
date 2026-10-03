@@ -1,24 +1,25 @@
 # EasyTier
 
-[![Github release](https://img.shields.io/github/v/tag/EasyTier/EasyTier)](https://github.com/EasyTier/EasyTier/releases)
-[![GitHub](https://img.shields.io/github/license/EasyTier/EasyTier)](https://github.com/EasyTier/EasyTier/blob/main/LICENSE)
-[![GitHub last commit](https://img.shields.io/github/last-commit/EasyTier/EasyTier)](https://github.com/EasyTier/EasyTier/commits/main)
-[![GitHub issues](https://img.shields.io/github/issues/EasyTier/EasyTier)](https://github.com/EasyTier/EasyTier/issues)
-[![GitHub Core Actions](https://github.com/EasyTier/EasyTier/actions/workflows/core.yml/badge.svg)](https://github.com/EasyTier/EasyTier/actions/workflows/core.yml)
-[![GitHub GUI Actions](https://github.com/EasyTier/EasyTier/actions/workflows/gui.yml/badge.svg)](https://github.com/EasyTier/EasyTier/actions/workflows/gui.yml)
-[![GitHub Test Actions](https://github.com/EasyTier/EasyTier/actions/workflows/test.yml/badge.svg)](https://github.com/EasyTier/EasyTier/actions/workflows/test.yml)
-[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/EasyTier/EasyTier)
+[![Github release](https://img.shields.io/github/v/tag/229033891/EasyTier)](https://github.com/229033891/EasyTier/releases)
+[![GitHub](https://img.shields.io/github/license/229033891/EasyTier)](https://github.com/229033891/EasyTier/blob/main/LICENSE)
+[![GitHub last commit](https://img.shields.io/github/last-commit/229033891/EasyTier)](https://github.com/229033891/EasyTier/commits/main)
+[![GitHub issues](https://img.shields.io/github/issues/229033891/EasyTier)](https://github.com/229033891/EasyTier/issues)
+[![GitHub Linux Actions](https://github.com/229033891/EasyTier/actions/workflows/linux.yml/badge.svg)](https://github.com/229033891/EasyTier/actions/workflows/linux.yml)
+[![GitHub Windows Actions](https://github.com/229033891/EasyTier/actions/workflows/windows.yml/badge.svg)](https://github.com/229033891/EasyTier/actions/workflows/windows.yml)
+[![GitHub Test Actions](https://github.com/229033891/EasyTier/actions/workflows/test.yml/badge.svg)](https://github.com/229033891/EasyTier/actions/workflows/test.yml)
 
 [简体中文](/README_CN.md) | [English](/README.md)
 
 > ✨ 一个由 Rust 和 Tokio 驱动的简单、安全、去中心化的异地组网方案
+
+本仓库为 [EasyTier/EasyTier](https://github.com/EasyTier/EasyTier) 的维护分支。Release、CI 产物与 Docker 镜像（`ghcr.io/229033891/et`）均由**本仓库**发布。
 
 <p align="center">
 <img src="assets/config-page.png" width="300" alt="配置页面">
 <img src="assets/running-page.png" width="300" alt="运行页面">
 </p>
 
-📚 **[完整文档](https://easytier.cn)** | 🖥️ **[Web 控制台](https://easytier.cn/web)** | 📝 **[下载发布版本](https://github.com/EasyTier/EasyTier/releases)** | 🧩 **[第三方工具](https://easytier.cn/guide/installation_gui.html#%E7%AC%AC%E4%B8%89%E6%96%B9%E5%9B%BE%E5%BD%A2%E7%95%8C%E9%9D%A2)** | ❤️ **[赞助](#赞助)**
+📚 **[上游文档](https://easytier.cn)** | 🖥️ **[上游 Web 控制台](https://easytier.cn/web)** | 📝 **[下载发布版本](https://github.com/229033891/EasyTier/releases)** | 🐳 **[Docker Compose](./docker-compose.yml)**
 
 ## 特性
 
@@ -50,10 +51,10 @@
 
 Linux（推荐）：
 ```bash
-curl -fsSL "https://github.com/EasyTier/EasyTier/blob/main/script/install.sh?raw=true" | sudo bash -s install
+curl -fsSL "https://github.com/229033891/EasyTier/blob/main/script/install.sh?raw=true" | sudo bash -s install
 ```
 
-Homebrew（MacOS/Linux）：
+Homebrew（MacOS/Linux；上游 cask）：
 ```bash
 brew tap brewforge/chinese
 brew install --cask easytier-gui
@@ -61,19 +62,19 @@ brew install --cask easytier-gui
 
 Windows（推荐，请以管理员权限运行）：
 ```powershell
-irm "https://github.com/EasyTier/EasyTier/blob/main/script/install.ps1?raw=true" | iex
+irm "https://github.com/229033891/EasyTier/blob/main/script/install.ps1?raw=true" | iex
 ```
 
 通过 cargo 安装（最新开发版本）：
 ```bash
-cargo install --git https://github.com/EasyTier/EasyTier.git easytier
+cargo install --git https://github.com/229033891/EasyTier.git easytier
 ```
 
-[下载预编译文件](https://github.com/EasyTier/EasyTier/releases)（推荐，支持所有平台）
+[下载预编译文件](https://github.com/229033891/EasyTier/releases)（推荐，支持所有平台）
 
-[通过 Docker 安装](https://easytier.cn/guide/installation.html#%E5%AE%89%E8%A3%85%E6%96%B9%E5%BC%8F)
+[Docker Compose](./docker-compose.yml) — 镜像 `ghcr.io/229033891/et`
 
-[安装 OpenWrt ipk 软件包](https://github.com/EasyTier/luci-app-easytier)
+[安装 OpenWrt ipk 软件包](https://github.com/EasyTier/luci-app-easytier)（上游）
 
 附加步骤：
 
@@ -287,50 +288,19 @@ sudo easytier-core --network-name mysharednode --network-secret mysharednode
 - [ZeroTier](https://www.zerotier.com/)：用于连接设备的全球虚拟网络。
 - [TailScale](https://tailscale.com/)：旨在简化网络配置的 VPN 解决方案。
 
-### 联系我们
+### 联系方式
 
-- 💬 **[Telegram 群组](https://t.me/easytier)**
-- 👥 **QQ 群**
+- 🐛 **[Issues](https://github.com/229033891/EasyTier/issues)**
+- 💬 **[上游 Telegram](https://t.me/easytier)**
+- 👥 **上游 QQ 群**
   - 一群 [949700262](https://qm.qq.com/q/wFoTUChqZW)
   - 二群 [837676408](https://qm.qq.com/q/4V33DrfgHe)
   - 三群 [957189589](https://qm.qq.com/q/YNyTQjwlai)
 
 ## 许可证
 
-EasyTier 在 [LGPL-3.0](https://github.com/EasyTier/EasyTier/blob/main/LICENSE) 许可下发布。
+EasyTier 在 [LGPL-3.0](https://github.com/229033891/EasyTier/blob/main/LICENSE) 许可下发布。
 
 ## 使用规范
 
 请仅将 EasyTier 用于合法用途，并遵守适用的法律法规。使用者有责任确保其已获授权连接和管理相关网络与设备。
-
-## 赞助
-
-本项目的 CDN 加速和安全防护由腾讯云 EdgeOne 赞助。
-
-<p align="center">
-<a href="https://edgeone.ai/?from=github" target="_blank">
-<img src="assets/edgeone.png" width="200">
-</a>
-</p>
-
-特别感谢 [浪浪云](https://langlangy.cn/?i26c5a5) 和 [雨云](https://www.rainyun.com/NjM0NzQ1_) 赞助我们的公共服务器。
-也感谢 [林枫云](https://www.dkdun.cn/aff/RZGBFYSW) 对 EasyTier 的支持。
-
-<p align="center">
-<a href="https://langlangy.cn/?i26c5a5" target="_blank">
-<img src="assets/langlang.png" width="200">
-</a>
-<a href="https://langlangy.cn/?i26c5a5" target="_blank">
-<img src="assets/raincloud.png" width="200">
-</a>
-<a href="https://www.dkdun.cn/aff/RZGBFYSW" target="_blank">
-<img src="assets/linfengyun.png" width="200" alt="林枫云">
-</a>
-</p>
-
-如果您觉得 EasyTier 有帮助，请考虑赞助我们。软件开发和维护需要大量的时间和精力，您的赞助将帮助我们更好地维护和改进 EasyTier。
-
-<p align="center">
-<img src="assets/wechat.png" width="200">
-<img src="assets/alipay.png" width="200">
-</p>
