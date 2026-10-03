@@ -1732,3 +1732,36 @@ fn default_proxy_cidr_is_excluded_from_specific_lookup() {
         None
     );
 }
+
+#[test]
+fn default_proxy_remains_available_for_service_paths() {
+    let mut remote_proxy_peer = peer(3);
+    remote_proxy_peer.info.proxy_cidrs.push("0.0.0.0/0".into());
+
+    let snapshot = OspfRouteSnapshot {
+        peer_infos: vec![peer(1), peer(2), remote_proxy_peer],
+        conn_map: vec![connected(1, [2]), connected(2, [1, 3]), connected(3, [2])],
+        suppressed_peer_ids: BTreeSet::new(),
+        version: 1,
+    };
+
+    let table = OspfRouteTable::new();
+    table.build_from_snapshot(
+        1,
+        &snapshot,
+        NextHopPolicy::LeastHop,
+        &DefaultRouteCostCalculator,
+    );
+
+    // L3-specific proxy lookup still ignores /0 so exit_nodes stay ahead.
+    assert_eq!(
+        table.get_peer_id_for_proxy(&"8.8.8.8".parse::<IpAddr>().unwrap()),
+        None
+    );
+    // ACL / KCP / wrapped-TCP use get_peer_id_by_ip_allowing_default_proxy,
+    // which falls through to this dedicated /0 match.
+    assert_eq!(
+        table.get_peer_id_for_default_route_proxy(&"8.8.8.8".parse::<IpAddr>().unwrap()),
+        Some(3)
+    );
+}

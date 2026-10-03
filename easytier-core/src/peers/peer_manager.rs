@@ -2587,7 +2587,11 @@ impl PeerOutboundPacketRouter {
         dst_allows_input: impl Fn(crate::proto::common::PeerFeatureFlag) -> bool,
         next_hop_disables_relay: impl Fn(crate::proto::common::PeerFeatureFlag) -> bool,
     ) -> bool {
-        let Some(dst_peer_id) = self.route.get_peer_id_by_ip(dst_ip).await else {
+        let Some(dst_peer_id) = self
+            .route
+            .get_peer_id_by_ip_allowing_default_proxy(dst_ip)
+            .await
+        else {
             return false;
         };
         let Some(peer_info) = self.route.get_peer_info(dst_peer_id).await else {

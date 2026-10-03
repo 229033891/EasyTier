@@ -50,45 +50,76 @@ pub struct PhysicalDefaultRoute {
     pub gateway: Option<IpAddr>,
 }
 
-/// Treat "already present" / "already gone" as success so reconcile can stop retrying.
-pub(crate) fn route_op_already_satisfied(err: &Error) -> bool {
+/// Treat "already present" as success for **add** ops so reconcile can stop retrying.
+/// Does **not** treat NotFound / missing-interface as success (that would fake an install).
+pub(crate) fn route_add_already_satisfied(err: &Error) -> bool {
     match err {
-        Error::NotFound => true,
-        Error::IOError(io_err) => io_error_already_satisfied(io_err),
+        Error::NotFound => false,
+        Error::IOError(io_err) => io_error_already_exists(io_err),
         Error::AnyhowError(anyhow_err) => {
             if let Some(io_err) = anyhow_err.downcast_ref::<std::io::Error>() {
-                return io_error_already_satisfied(io_err);
+                return io_error_already_exists(io_err);
             }
-            error_text_already_satisfied(&anyhow_err.to_string())
+            error_text_already_exists(&anyhow_err.to_string())
         }
-        Error::ShellCommandError(text) => error_text_already_satisfied(text),
+        Error::ShellCommandError(text) => error_text_already_exists(text),
         _ => false,
     }
 }
 
-fn io_error_already_satisfied(err: &std::io::Error) -> bool {
-    if matches!(
-        err.kind(),
-        std::io::ErrorKind::AlreadyExists | std::io::ErrorKind::NotFound
-    ) {
+/// Treat "already gone" as success for **remove** ops so reconcile can stop retrying.
+pub(crate) fn route_remove_already_satisfied(err: &Error) -> bool {
+    match err {
+        Error::NotFound => true,
+        Error::IOError(io_err) => io_error_already_gone(io_err),
+        Error::AnyhowError(anyhow_err) => {
+            if let Some(io_err) = anyhow_err.downcast_ref::<std::io::Error>() {
+                return io_error_already_gone(io_err);
+            }
+            error_text_already_gone(&anyhow_err.to_string())
+        }
+        Error::ShellCommandError(text) => error_text_already_gone(text),
+        _ => false,
+    }
+}
+
+fn io_error_already_exists(err: &std::io::Error) -> bool {
+    if matches!(err.kind(), std::io::ErrorKind::AlreadyExists) {
         return true;
     }
     match err.raw_os_error() {
         #[cfg(windows)]
-        Some(183 | 1168 | 2 | 3) => true,
+        Some(183) => true,
         #[cfg(unix)]
-        Some(17 | 2 | 3) => true,
-        _ => false,
+        Some(17) => true,
+        _ => error_text_already_exists(&err.to_string()),
     }
 }
 
-fn error_text_already_satisfied(text: &str) -> bool {
+fn io_error_already_gone(err: &std::io::Error) -> bool {
+    if matches!(err.kind(), std::io::ErrorKind::NotFound) {
+        return true;
+    }
+    match err.raw_os_error() {
+        #[cfg(windows)]
+        Some(1168 | 2 | 3) => true,
+        #[cfg(unix)]
+        Some(2 | 3) => true,
+        _ => error_text_already_gone(&err.to_string()),
+    }
+}
+
+fn error_text_already_exists(text: &str) -> bool {
     let text = text.to_ascii_lowercase();
     text.contains("(code: 183)")
-        || text.contains("(code: 1168)")
         || text.contains("file exists")
         || text.contains("already exists")
         || text.contains("object already exists")
+}
+
+fn error_text_already_gone(text: &str) -> bool {
+    let text = text.to_ascii_lowercase();
+    text.contains("(code: 1168)")
         || text.contains("not in table")
         || text.contains("not found")
         || text.contains("cannot find")
@@ -361,25 +392,49 @@ mod tests {
     }
 
     #[test]
-    fn already_exists_and_not_found_are_idempotent() {
-        use super::{Error, route_op_already_satisfied};
+    fn add_and_remove_idempotency_are_separated() {
+        use super::{Error, route_add_already_satisfied, route_remove_already_satisfied};
 
-        assert!(route_op_already_satisfied(&Error::NotFound));
+        assert!(!route_add_already_satisfied(&Error::NotFound));
+        assert!(route_remove_already_satisfied(&Error::NotFound));
+
         #[cfg(unix)]
-        assert!(route_op_already_satisfied(&Error::IOError(
-            std::io::Error::from_raw_os_error(17)
-        )));
+        {
+            assert!(route_add_already_satisfied(&Error::IOError(
+                std::io::Error::from_raw_os_error(17)
+            )));
+            assert!(!route_add_already_satisfied(&Error::IOError(
+                std::io::Error::from_raw_os_error(2)
+            )));
+            assert!(route_remove_already_satisfied(&Error::IOError(
+                std::io::Error::from_raw_os_error(2)
+            )));
+        }
         #[cfg(windows)]
-        assert!(route_op_already_satisfied(&Error::IOError(
-            std::io::Error::from_raw_os_error(183)
-        )));
-        assert!(route_op_already_satisfied(&Error::AnyhowError(anyhow::anyhow!(
+        {
+            assert!(route_add_already_satisfied(&Error::IOError(
+                std::io::Error::from_raw_os_error(183)
+            )));
+            assert!(!route_add_already_satisfied(&Error::IOError(
+                std::io::Error::from_raw_os_error(2)
+            )));
+            assert!(route_remove_already_satisfied(&Error::IOError(
+                std::io::Error::from_raw_os_error(1168)
+            )));
+        }
+        assert!(route_add_already_satisfied(&Error::AnyhowError(anyhow::anyhow!(
             "Failed to add route: already exists (code: 183)"
         ))));
-        assert!(route_op_already_satisfied(&Error::ShellCommandError(
+        assert!(!route_add_already_satisfied(&Error::ShellCommandError(
             "route: not in table".to_string()
         )));
-        assert!(!route_op_already_satisfied(&Error::AnyhowError(
+        assert!(route_remove_already_satisfied(&Error::ShellCommandError(
+            "route: not in table".to_string()
+        )));
+        assert!(!route_add_already_satisfied(&Error::AnyhowError(
+            anyhow::anyhow!("access denied (code: 5)")
+        )));
+        assert!(!route_remove_already_satisfied(&Error::AnyhowError(
             anyhow::anyhow!("access denied (code: 5)")
         )));
     }

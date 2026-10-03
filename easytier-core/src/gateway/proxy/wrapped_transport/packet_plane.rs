@@ -81,7 +81,7 @@ pub(super) async fn connect_wrapped_transport_source(
     };
     let dst_peer_id = peer_manager
         .get_peer_map()
-        .get_peer_id_by_ipv4(dst_v4.ip())
+        .get_peer_id_by_ipv4_allowing_default_proxy(dst_v4.ip())
         .await
         .ok_or_else(|| anyhow::anyhow!("no peer found for wrapped TCP dst: {dst}"))?;
     engine

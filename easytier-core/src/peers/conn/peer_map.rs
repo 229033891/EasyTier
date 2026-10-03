@@ -239,6 +239,22 @@ impl PeerMap {
         Ok(())
     }
 
+    pub async fn get_peer_id_by_ipv4_allowing_default_proxy(
+        &self,
+        ipv4: &Ipv4Addr,
+    ) -> Option<PeerId> {
+        if let Some(peer_id) = self.get_peer_id_by_ipv4(ipv4).await {
+            return Some(peer_id);
+        }
+        let ip = IpAddr::V4(*ipv4);
+        for route in self.routes.read().await.iter() {
+            if let Some(peer_id) = route.get_peer_id_for_default_route_proxy(&ip).await {
+                return Some(peer_id);
+            }
+        }
+        None
+    }
+
     pub async fn get_peer_id_by_ipv4(&self, ipv4: &Ipv4Addr) -> Option<PeerId> {
         for route in self.routes.read().await.iter() {
             let peer_id = route.get_peer_id_by_ipv4(ipv4).await;

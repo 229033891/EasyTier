@@ -12,7 +12,8 @@ use crate::common::{
     error::Error,
     global_ctx::{ArcGlobalCtx, GlobalCtxEvent},
     ifcfg::{
-        IfConfiger, IfConfiguerTrait, PhysicalDefaultRoute, route_op_already_satisfied,
+        IfConfiger, IfConfiguerTrait, PhysicalDefaultRoute, route_add_already_satisfied,
+        route_remove_already_satisfied,
     },
 };
 
@@ -976,7 +977,7 @@ impl NicCtx {
                 Ok(()) => {
                     cur_proxy_cidrs.remove(&cidr);
                 }
-                Err(err) if route_op_already_satisfied(&err) => {
+                Err(err) if route_remove_already_satisfied(&err) => {
                     cur_proxy_cidrs.remove(&cidr);
                 }
                 Err(err) => {
@@ -1010,7 +1011,7 @@ impl NicCtx {
                         *ipv4_default_uses_exit_metric = local_exit_default;
                     }
                 }
-                Err(err) if route_op_already_satisfied(&err) => {
+                Err(err) if route_add_already_satisfied(&err) => {
                     cur_proxy_cidrs.insert(cidr);
                     if cidr.network_length() == 0 {
                         *ipv4_default_uses_exit_metric = local_exit_default;
@@ -1049,6 +1050,98 @@ impl NicCtx {
         .await;
     }
 
+    /// Install excludes before TUN `/0`; tear down TUN `/0` before clearing excludes.
+    async fn sync_proxy_cidrs_with_underlay_excludes(
+        ifcfg: &impl IfConfiguerTrait,
+        ifname: &str,
+        net_ns: &crate::common::netns::NetNS,
+        packet_plane: &CorePacketPlane,
+        installed: &mut BTreeSet<cidr::Ipv4Cidr>,
+        exit_ipv6_default_installed: &mut bool,
+        ipv4_default_uses_exit_metric: &mut bool,
+        exclude_installed: &mut BTreeSet<IpAddr>,
+        ipv4_physical_default: &mut Option<PhysicalDefaultRoute>,
+        ipv6_physical_default: &mut Option<PhysicalDefaultRoute>,
+        local_exit_default: bool,
+        added: Vec<cidr::Ipv4Cidr>,
+        removed: Vec<cidr::Ipv4Cidr>,
+    ) {
+        let restore_public_ipv6_default = packet_plane.public_ipv6_addr().await.is_some();
+        if local_exit_default {
+            let exclude_desired = packet_plane.underlay_exclude_ips().await;
+            Self::reconcile_underlay_exclude_routes(
+                ifcfg,
+                ifname,
+                net_ns,
+                true,
+                &exclude_desired,
+                exclude_installed,
+                ipv4_physical_default,
+                ipv6_physical_default,
+            )
+            .await;
+            Self::apply_route_changes(
+                ifcfg,
+                ifname,
+                net_ns,
+                installed,
+                exit_ipv6_default_installed,
+                ipv4_default_uses_exit_metric,
+                restore_public_ipv6_default,
+                true,
+                added,
+                removed,
+            )
+            .await;
+        } else {
+            Self::apply_route_changes(
+                ifcfg,
+                ifname,
+                net_ns,
+                installed,
+                exit_ipv6_default_installed,
+                ipv4_default_uses_exit_metric,
+                restore_public_ipv6_default,
+                false,
+                added,
+                removed,
+            )
+            .await;
+            Self::reconcile_underlay_exclude_routes(
+                ifcfg,
+                ifname,
+                net_ns,
+                false,
+                &BTreeSet::new(),
+                exclude_installed,
+                ipv4_physical_default,
+                ipv6_physical_default,
+            )
+            .await;
+        }
+    }
+
+    async fn clear_underlay_exclude_routes(
+        ifcfg: &impl IfConfiguerTrait,
+        ifname: &str,
+        net_ns: &crate::common::netns::NetNS,
+        exclude_installed: &mut BTreeSet<IpAddr>,
+        ipv4_physical_default: &mut Option<PhysicalDefaultRoute>,
+        ipv6_physical_default: &mut Option<PhysicalDefaultRoute>,
+    ) {
+        Self::reconcile_underlay_exclude_routes(
+            ifcfg,
+            ifname,
+            net_ns,
+            false,
+            &BTreeSet::new(),
+            exclude_installed,
+            ipv4_physical_default,
+            ipv6_physical_default,
+        )
+        .await;
+    }
+
     async fn reconcile_ipv4_default_metric(
         ifcfg: &impl IfConfiguerTrait,
         ifname: &str,
@@ -1074,7 +1167,7 @@ impl NicCtx {
             .remove_ipv4_route(ifname, default.first_address(), 0)
             .await;
         if let Err(err) = remove
-            && !route_op_already_satisfied(&err)
+            && !route_remove_already_satisfied(&err)
         {
             tracing::warn!(
                 ifname,
@@ -1102,7 +1195,7 @@ impl NicCtx {
                 cur_proxy_cidrs.insert(default);
                 *ipv4_default_uses_exit_metric = local_exit_default;
             }
-            Err(err) if route_op_already_satisfied(&err) => {
+            Err(err) if route_add_already_satisfied(&err) => {
                 cur_proxy_cidrs.insert(default);
                 *ipv4_default_uses_exit_metric = local_exit_default;
             }
@@ -1138,7 +1231,7 @@ impl NicCtx {
                 .await
             {
                 Ok(()) => *exit_ipv6_default_installed = true,
-                Err(err) if route_op_already_satisfied(&err) => {
+                Err(err) if route_add_already_satisfied(&err) => {
                     *exit_ipv6_default_installed = true;
                 }
                 Err(err) => tracing::warn!(
@@ -1155,7 +1248,7 @@ impl NicCtx {
             .remove_ipv6_route(ifname, Ipv6Addr::UNSPECIFIED, 0)
             .await
         {
-            if !route_op_already_satisfied(&err) {
+            if !route_remove_already_satisfied(&err) {
                 tracing::warn!(
                     ifname,
                     ?err,
@@ -1172,7 +1265,7 @@ impl NicCtx {
                 .add_ipv6_route(ifname, Ipv6Addr::UNSPECIFIED, 0, Some(5))
                 .await
             {
-                if !route_op_already_satisfied(&err) {
+                if !route_add_already_satisfied(&err) {
                     tracing::warn!(
                         ifname,
                         ?err,
@@ -1216,7 +1309,7 @@ impl NicCtx {
                     Ok(()) => {
                         installed.remove(&ip);
                     }
-                    Err(err) if route_op_already_satisfied(&err) => {
+                    Err(err) if route_remove_already_satisfied(&err) => {
                         installed.remove(&ip);
                     }
                     Err(err) => tracing::warn!(
@@ -1281,7 +1374,7 @@ impl NicCtx {
                 Ok(()) => {
                     installed.remove(&ip);
                 }
-                Err(err) if route_op_already_satisfied(&err) => {
+                Err(err) if route_remove_already_satisfied(&err) => {
                     installed.remove(&ip);
                 }
                 Err(err) => tracing::warn!(
@@ -1318,7 +1411,7 @@ impl NicCtx {
                 Ok(()) => {
                     installed.insert(ip);
                 }
-                Err(err) if route_op_already_satisfied(&err) => {
+                Err(err) if route_add_already_satisfied(&err) => {
                     installed.insert(ip);
                 }
                 Err(err) => tracing::warn!(
@@ -1348,7 +1441,7 @@ impl NicCtx {
                 .await;
             if ret.is_err() {
                 let err = ret.err().unwrap();
-                if route_op_already_satisfied(&err) {
+                if route_remove_already_satisfied(&err) {
                     cur_routes.remove(&route);
                     continue;
                 }
@@ -1367,7 +1460,7 @@ impl NicCtx {
                 .add_ipv6_route(ifname, route.address(), route.network_length(), None)
                 .await;
             if let Err(err) = ret {
-                if route_op_already_satisfied(&err) {
+                if route_add_already_satisfied(&err) {
                     cur_routes.insert(route);
                 } else {
                     tracing::warn!(route = ?route, err = ?err, "add public ipv6 route failed; will retry");
@@ -1402,34 +1495,17 @@ impl NicCtx {
             let mut desired = diff.current;
             let mut desired_local_exit_default = diff.local_exit_default;
 
-            // Pin underlay peers before installing TUN default so P2P/STUN
-            // cannot be sucked into the exit-node path.
-            let exclude_desired = if desired_local_exit_default {
-                packet_plane.underlay_exclude_ips().await
-            } else {
-                BTreeSet::new()
-            };
-            Self::reconcile_underlay_exclude_routes(
+            Self::sync_proxy_cidrs_with_underlay_excludes(
                 &ifcfg,
                 &ifname,
                 &net_ns,
-                desired_local_exit_default,
-                &exclude_desired,
-                &mut exclude_installed,
-                &mut ipv4_physical_default,
-                &mut ipv6_physical_default,
-            )
-            .await;
-
-            let restore_public_ipv6_default = packet_plane.public_ipv6_addr().await.is_some();
-            Self::apply_route_changes(
-                &ifcfg,
-                &ifname,
-                &net_ns,
+                &packet_plane,
                 &mut installed,
                 &mut exit_ipv6_default_installed,
                 &mut ipv4_default_uses_exit_metric,
-                restore_public_ipv6_default,
+                &mut exclude_installed,
+                &mut ipv4_physical_default,
+                &mut ipv6_physical_default,
                 desired_local_exit_default,
                 diff.added,
                 diff.removed,
@@ -1457,6 +1533,15 @@ impl NicCtx {
                                 let Some(diff) = packet_plane.proxy_cidr_diff(&installed).await
                                 else {
                                     tracing::error!("proxy CIDR monitor host is unavailable");
+                                    Self::clear_underlay_exclude_routes(
+                                        &ifcfg,
+                                        &ifname,
+                                        &net_ns,
+                                        &mut exclude_installed,
+                                        &mut ipv4_physical_default,
+                                        &mut ipv6_physical_default,
+                                    )
+                                    .await;
                                     return;
                                 };
                                 desired = diff.current.clone();
@@ -1477,33 +1562,17 @@ impl NicCtx {
                                 desired.extend(added.iter().copied());
                                 desired_local_exit_default = local_exit_default;
 
-                                let exclude_desired = if desired_local_exit_default {
-                                    packet_plane.underlay_exclude_ips().await
-                                } else {
-                                    BTreeSet::new()
-                                };
-                                Self::reconcile_underlay_exclude_routes(
+                                Self::sync_proxy_cidrs_with_underlay_excludes(
                                     &ifcfg,
                                     &ifname,
                                     &net_ns,
-                                    desired_local_exit_default,
-                                    &exclude_desired,
-                                    &mut exclude_installed,
-                                    &mut ipv4_physical_default,
-                                    &mut ipv6_physical_default,
-                                )
-                                .await;
-
-                                let restore_public_ipv6_default =
-                                    packet_plane.public_ipv6_addr().await.is_some();
-                                Self::apply_route_changes(
-                                    &ifcfg,
-                                    &ifname,
-                                    &net_ns,
+                                    &packet_plane,
                                     &mut installed,
                                     &mut exit_ipv6_default_installed,
                                     &mut ipv4_default_uses_exit_metric,
-                                    restore_public_ipv6_default,
+                                    &mut exclude_installed,
+                                    &mut ipv4_physical_default,
+                                    &mut ipv6_physical_default,
                                     desired_local_exit_default,
                                     added,
                                     removed,
@@ -1514,24 +1583,44 @@ impl NicCtx {
                         }
                     }
                     _ = retry.tick() => {
+                        // Skip expensive exclude collection when exit is off and clean.
+                        if !desired_local_exit_default && exclude_installed.is_empty() {
+                            let added =
+                                desired.difference(&installed).copied().collect::<Vec<_>>();
+                            let removed =
+                                installed.difference(&desired).copied().collect::<Vec<_>>();
+                            if added.is_empty()
+                                && removed.is_empty()
+                                && !exit_ipv6_default_installed
+                                && !ipv4_default_uses_exit_metric
+                            {
+                                continue;
+                            }
+                            Self::sync_proxy_cidrs_with_underlay_excludes(
+                                &ifcfg,
+                                &ifname,
+                                &net_ns,
+                                &packet_plane,
+                                &mut installed,
+                                &mut exit_ipv6_default_installed,
+                                &mut ipv4_default_uses_exit_metric,
+                                &mut exclude_installed,
+                                &mut ipv4_physical_default,
+                                &mut ipv6_physical_default,
+                                false,
+                                added,
+                                removed,
+                            )
+                            .await;
+                            continue;
+                        }
+
                         let exclude_desired = if desired_local_exit_default {
                             packet_plane.underlay_exclude_ips().await
                         } else {
                             BTreeSet::new()
                         };
                         let excludes_changed = exclude_desired != exclude_installed;
-                        Self::reconcile_underlay_exclude_routes(
-                            &ifcfg,
-                            &ifname,
-                            &net_ns,
-                            desired_local_exit_default,
-                            &exclude_desired,
-                            &mut exclude_installed,
-                            &mut ipv4_physical_default,
-                            &mut ipv6_physical_default,
-                        )
-                        .await;
-
                         let added = desired.difference(&installed).copied().collect::<Vec<_>>();
                         let removed = installed.difference(&desired).copied().collect::<Vec<_>>();
                         let has_default =
@@ -1545,16 +1634,17 @@ impl NicCtx {
                         {
                             continue;
                         }
-                        let restore_public_ipv6_default =
-                            packet_plane.public_ipv6_addr().await.is_some();
-                        Self::apply_route_changes(
+                        Self::sync_proxy_cidrs_with_underlay_excludes(
                             &ifcfg,
                             &ifname,
                             &net_ns,
+                            &packet_plane,
                             &mut installed,
                             &mut exit_ipv6_default_installed,
                             &mut ipv4_default_uses_exit_metric,
-                            restore_public_ipv6_default,
+                            &mut exclude_installed,
+                            &mut ipv4_physical_default,
+                            &mut ipv6_physical_default,
                             desired_local_exit_default,
                             added,
                             removed,
@@ -1563,6 +1653,16 @@ impl NicCtx {
                     }
                 }
             }
+
+            Self::clear_underlay_exclude_routes(
+                &ifcfg,
+                &ifname,
+                &net_ns,
+                &mut exclude_installed,
+                &mut ipv4_physical_default,
+                &mut ipv6_physical_default,
+            )
+            .await;
         });
 
         Ok(())

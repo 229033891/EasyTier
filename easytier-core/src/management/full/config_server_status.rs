@@ -1,14 +1,19 @@
 //! Process-wide config-server connection status for local UI / RPC queries,
 //! plus underlay destinations that must stay off the TUN exit default.
 
-use std::{collections::BTreeSet, net::IpAddr, time::Duration};
+use std::{
+    collections::BTreeSet,
+    net::IpAddr,
+    time::{Duration, Instant},
+};
 
 use parking_lot::RwLock;
 use url::Url;
 
 use crate::proto::common::{TunnelInfo, Url as ProtoUrl};
 
-const DNS_LOOKUP_TIMEOUT: Duration = Duration::from_secs(2);
+const DNS_LOOKUP_TIMEOUT: Duration = Duration::from_millis(300);
+const DNS_CACHE_TTL: Duration = Duration::from_secs(45);
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ConfigServerStatusSnapshot {
@@ -19,11 +24,19 @@ pub struct ConfigServerStatusSnapshot {
     pub endpoint_host: Option<String>,
 }
 
+#[derive(Clone, Default)]
+struct DnsCache {
+    host: String,
+    ips: BTreeSet<IpAddr>,
+    fetched_at: Option<Instant>,
+}
+
 #[derive(Default)]
 struct Status {
     snapshot: ConfigServerStatusSnapshot,
-    /// IPs from URL literals and live tunnel remotes (not DNS — refreshed each lookup).
+    /// IPs from URL literals and live tunnel remotes.
     resolved_ips: BTreeSet<IpAddr>,
+    dns_cache: DnsCache,
 }
 
 static STATUS: RwLock<Status> = RwLock::new(Status {
@@ -34,6 +47,11 @@ static STATUS: RwLock<Status> = RwLock::new(Status {
         endpoint_host: None,
     },
     resolved_ips: BTreeSet::new(),
+    dns_cache: DnsCache {
+        host: String::new(),
+        ips: BTreeSet::new(),
+        fetched_at: None,
+    },
 });
 
 pub fn snapshot() -> ConfigServerStatusSnapshot {
@@ -51,7 +69,11 @@ pub fn mark_enabled() {
 /// pin management-plane traffic to the physical gateway.
 pub fn set_endpoint_url(url: &Url) {
     let mut status = STATUS.write();
-    status.snapshot.endpoint_host = url.host_str().map(|host| host.to_string());
+    let host = url.host_str().map(|host| host.to_string());
+    if status.snapshot.endpoint_host.as_ref() != host.as_ref() {
+        status.dns_cache = DnsCache::default();
+    }
+    status.snapshot.endpoint_host = host;
     status.resolved_ips.clear();
     if let Some(ip) = url_host_ip(url) {
         status.resolved_ips.insert(ip);
@@ -92,14 +114,20 @@ pub fn clear() {
 
 /// Candidate underlay IPs for the active config-server endpoint (cached + DNS).
 pub async fn underlay_exclude_candidate_ips() -> BTreeSet<IpAddr> {
-    let (host, mut ips) = {
+    let (host, mut ips, cached_dns) = {
         let status = STATUS.read();
         if !status.snapshot.enabled {
             return BTreeSet::new();
         }
+        let cached_dns = status
+            .dns_cache
+            .fetched_at
+            .is_some_and(|at| at.elapsed() < DNS_CACHE_TTL)
+            .then(|| status.dns_cache.ips.clone());
         (
             status.snapshot.endpoint_host.clone(),
             status.resolved_ips.clone(),
+            cached_dns,
         )
     };
 
@@ -111,14 +139,47 @@ pub async fn underlay_exclude_candidate_ips() -> BTreeSet<IpAddr> {
         return ips;
     }
 
+    if let Some(cached) = cached_dns {
+        ips.extend(cached);
+        return ips;
+    }
+
     let lookup = tokio::time::timeout(
         DNS_LOOKUP_TIMEOUT,
         tokio::net::lookup_host((host.as_str(), 0)),
     )
     .await;
-    if let Ok(Ok(addrs)) = lookup {
-        for addr in addrs {
-            ips.insert(addr.ip());
+    match lookup {
+        Ok(Ok(addrs)) => {
+            let mut resolved = BTreeSet::new();
+            for addr in addrs {
+                resolved.insert(addr.ip());
+            }
+            {
+                let mut status = STATUS.write();
+                if status.snapshot.endpoint_host.as_deref() == Some(host.as_str()) {
+                    status.dns_cache = DnsCache {
+                        host: host.clone(),
+                        ips: resolved.clone(),
+                        fetched_at: Some(Instant::now()),
+                    };
+                }
+            }
+            ips.extend(resolved);
+        }
+        Ok(Err(err)) => {
+            tracing::warn!(%host, %err, "config-server DNS lookup failed for underlay exclude");
+            let stale = STATUS.read().dns_cache.ips.clone();
+            ips.extend(stale);
+        }
+        Err(_) => {
+            tracing::warn!(
+                %host,
+                timeout_ms = DNS_LOOKUP_TIMEOUT.as_millis(),
+                "config-server DNS lookup timed out for underlay exclude"
+            );
+            let stale = STATUS.read().dns_cache.ips.clone();
+            ips.extend(stale);
         }
     }
 

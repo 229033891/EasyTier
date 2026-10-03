@@ -143,6 +143,21 @@ pub trait Route {
         }
     }
 
+    /// VIP / more-specific proxy CIDR first, then peer-advertised `/0`/`::/0`.
+    ///
+    /// Used by ACL / KCP / QUIC / wrapped-TCP service paths that need the owning
+    /// peer even when only a default-route proxy matches. Must **not** be used by
+    /// the L3 outbound packet router, which keeps `exit_nodes` ahead of peer `/0`.
+    async fn get_peer_id_by_ip_allowing_default_proxy(
+        &self,
+        ip: &std::net::IpAddr,
+    ) -> Option<PeerId> {
+        if let Some(peer_id) = self.get_peer_id_by_ip(ip).await {
+            return Some(peer_id);
+        }
+        self.get_peer_id_for_default_route_proxy(ip).await
+    }
+
     async fn list_peers_own_foreign_network(
         &self,
         _network_identity: &NetworkIdentity,
@@ -179,7 +194,7 @@ pub trait Route {
     async fn refresh_acl_groups(&self) {}
 
     async fn get_peer_groups_by_ip(&self, ip: &std::net::IpAddr) -> Arc<Vec<String>> {
-        match self.get_peer_id_by_ip(ip).await {
+        match self.get_peer_id_by_ip_allowing_default_proxy(ip).await {
             Some(peer_id) => self.get_peer_groups(peer_id),
             None => Arc::new(Vec::new()),
         }
