@@ -62,10 +62,16 @@ async fn require_admin(auth_session: &AuthSession) -> Result<(), HttpHandleError
             StatusCode::FORBIDDEN,
             Json::from(other_error("Admin permission required")),
         )),
-        Err(e) => Err((
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json::from(other_error(format!("{:?}", e))),
-        )),
+        Err(e) => {
+            tracing::error!("Failed to check admin permission: {e:?}");
+            Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json::from(super::other_error_with_code(
+                    "Failed to check admin permission",
+                    "internal_error",
+                )),
+            ))
+        }
     }
 }
 

@@ -106,7 +106,12 @@ const periodFunc = new Utils.PeriodicTask(async () => {
     try {
         await loadDevices();
     } catch (e) {
-        toast.add({ severity: 'error', summary: t('web.device.load_list_failed'), detail: String(e), life: TOAST_LIFE.error });
+        toast.add({
+            severity: 'error',
+            summary: t('web.device.load_list_failed'),
+            detail: Utils.formatApiErrorDetail(e, t),
+            life: TOAST_LIFE.error,
+        });
         console.error(e);
     }
 }, 3000);

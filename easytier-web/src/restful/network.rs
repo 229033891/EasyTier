@@ -18,34 +18,24 @@ use crate::db::UserIdInDb;
 
 use super::users::AuthSession;
 use super::{
-    AppState, AppStateInner, Error, HttpHandleError, RpcError, convert_db_error, other_error,
+    AppState, AppStateInner, Error, HttpHandleError, convert_db_error, convert_rpc_error,
+    other_error, other_error_with_code,
 };
 
 const MAX_MANAGED_CONFIG_REQUEST_BODY_SIZE: usize = 32 * 1024 * 1024;
 
-fn convert_rpc_error(e: RpcError) -> (StatusCode, Json<Error>) {
-    let status_code = match &e {
-        RpcError::ExecutionError(_) => StatusCode::BAD_REQUEST,
-        RpcError::Timeout(_) => StatusCode::GATEWAY_TIMEOUT,
-        _ => StatusCode::BAD_GATEWAY,
-    };
-    let error = Error {
-        message: format!("{:?}", e),
-        code: None,
-        current_config_revision: None,
-    };
-    (status_code, Json(error))
-}
-
-fn convert_error(e: RemoteClientError<DbErr>) -> (StatusCode, Json<Error>) {
+fn convert_error(e: RemoteClientError<DbErr>) -> HttpHandleError {
     match e {
         RemoteClientError::PersistentError(e) => convert_db_error(e),
         RemoteClientError::RpcError(e) => convert_rpc_error(e),
         RemoteClientError::ClientNotFound => (
             StatusCode::NOT_FOUND,
-            other_error("Client not found").into(),
+            other_error_with_code("Client not found", "client_not_found").into(),
         ),
-        RemoteClientError::NotFound(msg) => (StatusCode::NOT_FOUND, other_error(msg).into()),
+        RemoteClientError::NotFound(msg) => (
+            StatusCode::NOT_FOUND,
+            other_error_with_code(msg, "not_found").into(),
+        ),
         RemoteClientError::Other(msg) => {
             (StatusCode::INTERNAL_SERVER_ERROR, other_error(msg).into())
         }
@@ -560,6 +550,35 @@ impl NetworkApi {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rpc_timeout_uses_display_message_and_stable_code() {
+        let elapsed = tokio::time::timeout(
+            std::time::Duration::from_millis(0),
+            std::future::pending::<()>(),
+        )
+        .await
+        .expect_err("expected timeout");
+        let (status, Json(body)) = crate::restful::convert_rpc_error(
+            easytier::proto::rpc_types::error::Error::Timeout(elapsed),
+        );
+
+        assert_eq!(status, StatusCode::GATEWAY_TIMEOUT);
+        assert_eq!(body.code.as_deref(), Some("rpc_timeout"));
+        assert!(!body.message.contains("Elapsed(())"));
+        assert!(
+            body.message.to_ascii_lowercase().contains("timeout"),
+            "unexpected message: {}",
+            body.message
+        );
+    }
+
+    #[test]
+    fn client_not_found_exposes_stable_code() {
+        let (status, Json(body)) = convert_error(RemoteClientError::ClientNotFound);
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert_eq!(body.code.as_deref(), Some("client_not_found"));
+    }
 
     #[test]
     fn revision_conflict_response_exposes_machine_readable_current_revision() {

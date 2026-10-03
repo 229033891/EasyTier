@@ -249,11 +249,13 @@ const myNodeInfoGroups = computed(() => {
     })
   }
 
+  if (my_node_info.virtual_ipv4?.address !== undefined) {
   groups.push({
     key: 'virtual_ip',
     titleKey: 'node_info_group_virtual_ip',
     chips: [chip(ipv4InetToString(my_node_info.virtual_ipv4))],
   })
+  }
 
   const udpNatType: NatType | undefined = my_node_info.stun_info?.udp_nat_type
   if (udpNatType !== undefined) {
@@ -784,24 +786,27 @@ const eventLogContent = computed(() => {
   color: var(--text-color, #1e293b);
 }
 
-/* 节点详情分组：与 Status 其它面板共用 surface / text token */
+/* 节点详情分组：行高随 chip 内容自适应（1 行或多行） */
 .node-detail-groups {
   padding-right: 0.1rem;
 }
 
 .node-info-group {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: flex-start;
-  gap: 0.35rem 0.5rem;
+  display: grid;
+  grid-template-columns: 6.5rem minmax(0, 1fr) auto;
+  align-items: start;
+  column-gap: 0.5rem;
+  row-gap: 0.35rem;
   border: 1px solid var(--et-border-color, #e2e8f0);
   border-radius: calc(var(--et-radius, 0.75rem) - 0.25rem);
   background: var(--surface-50, #f8fafc);
   padding: 0.35rem 0.5rem 0.4rem;
+  height: auto;
+  min-height: 0;
 }
 
 .node-info-group-title {
-  flex: 0 0 6.5rem;
+  grid-column: 1;
   min-width: 0;
   padding-top: 0.15rem;
   font-size: var(--et-fs-meta, 0.75rem);
@@ -819,22 +824,24 @@ const eventLogContent = computed(() => {
 }
 
 .node-info-group-chips {
-  flex: 1 1 8rem;
+  grid-column: 2;
   min-width: 0;
   display: flex;
   flex-wrap: wrap;
   align-items: flex-start;
+  align-content: flex-start;
   gap: 0.3rem;
+  height: auto;
 }
 
 .node-info-group-copy {
-  flex: 0 0 auto;
-  align-self: flex-start;
+  grid-column: 3;
+  align-self: start;
 }
 
 /*
  * 标签用次要色、数值用正文色（回退色保证 Android WebView 可见）。
- * 禁止 flex-shrink，避免单行被压成 0 宽。
+ * 禁止 flex-shrink，避免单行被压成 0 宽；过长 chip 可在容器内断行。
  */
 .node-info-chip {
   display: inline-block;
@@ -852,8 +859,8 @@ const eventLogContent = computed(() => {
   border: 1px solid var(--et-border-color, #e2e8f0);
   border-radius: 0.375rem;
   white-space: normal;
-  overflow-wrap: break-word;
-  word-break: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .status-subcard {
@@ -943,12 +950,13 @@ const eventLogContent = computed(() => {
 
 @media (max-width: 640px) {
   .node-info-group {
-    align-items: center;
+    /* 窄屏：标题+复制同一行，chip 区占满下一行并随内容长高 */
+    grid-template-columns: minmax(0, 1fr) auto;
     padding: 0.45rem 0.55rem;
   }
 
   .node-info-group-title {
-    flex: 1 1 auto;
+    grid-column: 1;
     padding-top: 0;
     font-size: var(--et-fs-meta, 0.75rem);
     text-transform: none;
@@ -959,11 +967,11 @@ const eventLogContent = computed(() => {
   }
 
   .node-info-group-copy {
-    margin-left: auto;
+    grid-column: 2;
   }
 
   .node-info-group-chips {
-    flex: 1 1 100%;
+    grid-column: 1 / -1;
     width: 100%;
   }
 }

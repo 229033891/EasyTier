@@ -502,6 +502,9 @@ web:
     back_to_login: Back to Login
     login: Login
     sso_login: "SSO Login"
+    failed: Login Failed
+    invalid_credentials: Invalid username or password
+    unknown_error: Login failed. Please try again later.
 
   register:
     title: Register
@@ -678,8 +681,19 @@ web:
     start_failed: Failed to start network
     stop_failed: Failed to stop network
     load_config_failed: Failed to load network config
+    error_timeout: Operation timed out. The device may still be stopping a previous network or busy with another task. Wait and retry; if the network is already running, check the Status page.
+    error_device_offline: The device is offline or not connected. Bring it online and try again.
+    error_not_found: The network or resource was not found. Refresh and try again.
+    error_revision_conflict: The config was updated by another operation. Refresh and try again.
+    error_ownership_conflict: This network is managed by another source and cannot be overwritten.
+    error_unauthorized: Unauthorized or session expired. Please sign in again.
+    error_db: Database operation failed. Please try again later.
+    error_internal: Internal server error. Please try again later.
+    error_unknown: The operation failed. Please try again later.
     import_config: Import Config
     import_config_tip: Import a local file and overwrite the current network config
+    import_config_success: Config file imported successfully
+    import_config_failed: Failed to import config
     create_new: Create New Network
     add_network: Add Network
     add_network_tip: Create a blank network config and open the editor

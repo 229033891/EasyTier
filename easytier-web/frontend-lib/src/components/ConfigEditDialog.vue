@@ -3,6 +3,7 @@ import { onMounted, ref, watch } from 'vue';
 import { NetworkConfig } from '../types/network';
 import { Button, Dialog, Textarea, useToast } from 'primevue'
 import { TOAST_LIFE } from '../modules/toast'
+import { formatApiErrorDetail } from '../modules/utils'
 import { useI18n } from 'vue-i18n'
 
 const { t } = useI18n()
@@ -56,7 +57,7 @@ async function refreshConfig(newVisible: boolean, config: NetworkConfig | undefi
         toast.add({
             severity: 'error',
             summary: t('config_generation_failed'),
-            detail: e instanceof Error ? e.message : String(e),
+            detail: formatApiErrorDetail(e, t),
             life: TOAST_LIFE.error,
         })
         tomlConfig.value = '';
@@ -85,7 +86,7 @@ const handleConfigSave = async () => {
         toast.add({
             severity: 'error',
             summary: t('web.device_management.save_failed'),
-            detail: e instanceof Error ? e.message : String(e),
+            detail: formatApiErrorDetail(e, t),
             life: TOAST_LIFE.error,
         })
     } finally {

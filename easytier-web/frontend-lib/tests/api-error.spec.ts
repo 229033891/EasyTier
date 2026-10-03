@@ -1,0 +1,77 @@
+import { describe, expect, it } from 'vitest'
+import {
+  classifyApiError,
+  extractApiErrorPayload,
+  formatApiErrorDetail,
+} from '../src/modules/utils'
+
+describe('API error formatting', () => {
+  it('extracts message/code from axios-style response bodies', () => {
+    expect(
+      extractApiErrorPayload({
+        response: {
+          data: {
+            message: 'Timeout(Elapsed(()))',
+            code: 'rpc_timeout',
+          },
+        },
+      }),
+    ).toEqual({
+      message: 'Timeout(Elapsed(()))',
+      code: 'rpc_timeout',
+    })
+  })
+
+  it('unwraps JSON-string message blobs instead of showing raw JSON', () => {
+    expect(
+      extractApiErrorPayload({
+        response: {
+          data: '{"message":"Timeout(Elapsed(()))"}',
+        },
+      }),
+    ).toEqual({
+      message: 'Timeout(Elapsed(()))',
+      code: undefined,
+    })
+  })
+
+  it('classifies timeout errors from code or legacy Debug text', () => {
+    expect(
+      classifyApiError({ message: 'Timeout: deadline has elapsed', code: 'rpc_timeout' }),
+    ).toBe('timeout')
+    expect(classifyApiError({ message: 'Timeout(Elapsed(()))' })).toBe('timeout')
+    expect(classifyApiError({ message: 'RPC Error: Timeout(Elapsed(()))' })).toBe('timeout')
+  })
+
+  it('maps known failures to localized copy', () => {
+    const t = (key: string) => `i18n:${key}`
+
+    expect(
+      formatApiErrorDetail(
+        { response: { data: { message: 'Timeout(Elapsed(()))', code: 'rpc_timeout' } } },
+        t,
+      ),
+    ).toBe('i18n:web.device_management.error_timeout')
+
+    expect(
+      formatApiErrorDetail(
+        { response: { data: { message: 'Client not found', code: 'client_not_found' } } },
+        t,
+      ),
+    ).toBe('i18n:web.device_management.error_device_offline')
+
+    expect(
+      formatApiErrorDetail(
+        { response: { data: { message: 'custom backend detail' } } },
+        t,
+      ),
+    ).toBe('custom backend detail')
+
+    expect(
+      formatApiErrorDetail(
+        { response: { data: { message: 'Database operation failed', code: 'db_error' } } },
+        t,
+      ),
+    ).toBe('i18n:web.device_management.error_db')
+  })
+})

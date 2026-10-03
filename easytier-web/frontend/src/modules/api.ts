@@ -184,14 +184,14 @@ export class ApiClient {
             console.log("login response:", response);
             return { success: true, message: 'Login success', };
         } catch (error) {
-            if (error instanceof AxiosError) {
-                if (error.response?.status === 401) {
-                    return { success: false, message: 'Invalid username or password', };
-                } else {
-                    return { success: false, message: 'Unknown error, status code: ' + error.response?.status, };
-                }
+            if (error instanceof AxiosError && error.response?.status === 401) {
+                return { success: false, message: 'invalid_credentials' };
             }
-            return { success: false, message: 'Unknown error, error: ' + error, };
+            const detail = Utils.extractApiErrorPayload(error).message;
+            return {
+                success: false,
+                message: detail || 'unknown_error',
+            };
         }
     }
 
@@ -398,10 +398,7 @@ class WebRemoteClient implements Api.RemoteClient {
             });
             return response;
         } catch (error) {
-            if (error instanceof AxiosError) {
-                return { error: error.response?.data };
-            }
-            return { error: 'Unknown error: ' + error };
+            return { error: Utils.extractApiErrorPayload(error).message || 'Unknown error' };
         }
     }
     async parse_config(toml_config: string): Promise<Api.ParseConfigResponse> {
@@ -412,10 +409,7 @@ class WebRemoteClient implements Api.RemoteClient {
             }
             return response;
         } catch (error) {
-            if (error instanceof AxiosError) {
-                return { error: error.response?.data };
-            }
-            return { error: 'Unknown error: ' + error };
+            return { error: Utils.extractApiErrorPayload(error).message || 'Unknown error' };
         }
     }
     async get_network_metas(instance_ids: string[]): Promise<Api.GetNetworkMetasResponse> {

@@ -8,7 +8,7 @@ use axum_login::login_required;
 use easytier::proto::common::Void;
 
 use super::{
-    AppStateInner, HttpHandleError, other_error,
+    AppStateInner, HttpHandleError, other_error, other_error_with_code,
     users::{AdminCreateUser, AuthSession, Backend, ChangePassword, MeResponse, UserInfo},
 };
 
@@ -35,10 +35,16 @@ async fn require_admin(auth_session: &AuthSession) -> Result<(), HttpHandleError
             StatusCode::FORBIDDEN,
             Json::from(other_error("Admin permission required")),
         )),
-        Err(e) => Err((
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json::from(other_error(format!("{:?}", e))),
-        )),
+        Err(e) => {
+            tracing::error!("Failed to check admin permission: {e:?}");
+            Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json::from(other_error_with_code(
+                    "Failed to check admin permission",
+                    "internal_error",
+                )),
+            ))
+        }
     }
 }
 
@@ -55,9 +61,13 @@ async fn get_me(auth_session: AuthSession) -> Result<Json<MeResponse>, HttpHandl
         .user_is_admin(user)
         .await
         .map_err(|e| {
+            tracing::error!("Failed to check admin permission: {e:?}");
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json::from(other_error(format!("{:?}", e))),
+                Json::from(other_error_with_code(
+                    "Failed to check admin permission",
+                    "internal_error",
+                )),
             )
         })?;
 
@@ -79,10 +89,13 @@ async fn list_users(auth_session: AuthSession) -> Result<Json<Vec<UserInfo>>, Ht
 
     match auth_session.backend.list_users().await {
         Ok(users) => Ok(Json(users)),
-        Err(e) => Err((
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json::from(other_error(format!("{:?}", e))),
-        )),
+        Err(e) => {
+            tracing::error!("Failed to list users: {e:?}");
+            Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json::from(other_error_with_code("Failed to list users", "internal_error")),
+            ))
+        }
     }
 }
 
@@ -95,10 +108,10 @@ async fn create_user(
     match auth_session.backend.create_user_by_admin(&req).await {
         Ok(user) => Ok(Json(user)),
         Err(e) => {
-            tracing::error!("Failed to create user: {:?}", e);
+            tracing::error!("Failed to create user: {e:?}");
             Err((
                 StatusCode::BAD_REQUEST,
-                Json::from(other_error(format!("{:?}", e))),
+                Json::from(other_error_with_code(format!("{e:#}"), "bad_request")),
             ))
         }
     }
@@ -120,10 +133,10 @@ async fn delete_user(
     match auth_session.backend.delete_user(id, actor.db_user.id).await {
         Ok(()) => Ok(Json(Void::default())),
         Err(e) => {
-            tracing::error!("Failed to delete user {}: {:?}", id, e);
+            tracing::error!("Failed to delete user {id}: {e:?}");
             Err((
                 StatusCode::BAD_REQUEST,
-                Json::from(other_error(format!("{:?}", e))),
+                Json::from(other_error_with_code(format!("{e:#}"), "bad_request")),
             ))
         }
     }
@@ -146,10 +159,10 @@ async fn reset_password(
     match auth_session.backend.change_password(id, &req).await {
         Ok(()) => Ok(Json(Void::default())),
         Err(e) => {
-            tracing::error!("Failed to reset password for user {}: {:?}", id, e);
+            tracing::error!("Failed to reset password for user {id}: {e:?}");
             Err((
                 StatusCode::BAD_REQUEST,
-                Json::from(other_error(format!("{:?}", e))),
+                Json::from(other_error_with_code(format!("{e:#}"), "bad_request")),
             ))
         }
     }

@@ -56,18 +56,7 @@ const toast = useToast();
 const confirm = useConfirm();
 
 function errorDetail(error: unknown): string {
-    const responseData = (error as { response?: { data?: unknown } } | null)?.response?.data;
-    if (typeof responseData === 'string') {
-        return responseData;
-    }
-    if (responseData !== undefined) {
-        try {
-            return JSON.stringify(responseData);
-        } catch {
-            return String(responseData);
-        }
-    }
-    return error instanceof Error ? error.message : String(error);
+    return Utils.formatApiErrorDetail(error, t);
 }
 
 const configFile = ref();
@@ -476,7 +465,7 @@ const confirmDeleteNetwork = () => {
                 toast.add({
                     severity: 'error',
                     summary: t('web.device_management.delete_network'),
-                    detail: String(e),
+                    detail: errorDetail(e),
                     life: TOAST_LIFE.error,
                 });
             }
@@ -582,7 +571,12 @@ const cancelEditNetwork = () => {
 
 const editNetwork = async () => {
     if (!instanceId.value) {
-        toast.add({ severity: 'error', summary: 'Error', detail: 'No network instance selected', life: TOAST_LIFE.error });
+        toast.add({
+            severity: 'error',
+            summary: t('web.common.error'),
+            detail: t('web.device_management.no_network_selected'),
+            life: TOAST_LIFE.error,
+        });
         return;
     }
 
@@ -639,7 +633,12 @@ const loadCurrentNetworkInfo = async () => {
 
 const exportConfig = async () => {
     if (!instanceId.value) {
-        toast.add({ severity: 'error', summary: 'Error', detail: 'No network instance selected', life: TOAST_LIFE.error });
+        toast.add({
+            severity: 'error',
+            summary: t('web.common.error'),
+            detail: t('web.device_management.no_network_selected'),
+            life: TOAST_LIFE.error,
+        });
         return;
     }
 
@@ -648,7 +647,7 @@ const exportConfig = async () => {
         const { instance_id, ...networkConfig } = await props.api.get_network_config(targetInstanceId);
         let { toml_config: tomlConfig, error } = await props.api.generate_config(networkConfig as NetworkTypes.NetworkConfig);
         if (error) {
-            throw { response: { data: error } };
+            throw { response: { data: { message: typeof error === 'string' ? error : String(error) } } };
         }
         if (instanceId.value !== targetInstanceId) {
             return;
@@ -677,7 +676,13 @@ const handleFileUpload = (event: Event) => {
             if (!tomlConfig) return;
             const resp = await props.api.parse_config(tomlConfig);
             if (resp.error) {
-                throw resp.error;
+                throw {
+                    response: {
+                        data: {
+                            message: typeof resp.error === 'string' ? resp.error : String(resp.error),
+                        },
+                    },
+                };
             }
 
             const config = resp.config;
@@ -688,9 +693,19 @@ const handleFileUpload = (event: Event) => {
 
             config.instance_id = targetInstanceId ?? config.instance_id;
             currentNetworkConfig.value = config;
-            toast.add({ severity: 'success', summary: 'Import Success', detail: "Config file import success", life: TOAST_LIFE.success });
+            toast.add({
+                severity: 'success',
+                summary: t('web.common.success'),
+                detail: t('web.device_management.import_config_success'),
+                life: TOAST_LIFE.success,
+            });
         } catch (error) {
-            toast.add({ severity: 'error', summary: 'Error', detail: 'Config file parse error: ' + error, life: TOAST_LIFE.error });
+            toast.add({
+                severity: 'error',
+                summary: t('web.common.error'),
+                detail: t('web.device_management.import_config_failed') + ': ' + errorDetail(error),
+                life: TOAST_LIFE.error,
+            });
         }
         configFile.value.value = null;
     }

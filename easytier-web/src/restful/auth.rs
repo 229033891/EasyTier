@@ -44,10 +44,13 @@ mod put {
             .change_password(auth_session.user.as_ref().unwrap().id(), &req)
             .await
         {
-            tracing::error!("Failed to change password: {:?}", e);
+            tracing::error!("Failed to change password: {e:?}");
             return Err((
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json::from(other_error(format!("{:?}", e))),
+                Json::from(crate::restful::other_error_with_code(
+                    "Failed to change password",
+                    "auth_error",
+                )),
             ));
         }
 
@@ -78,17 +81,25 @@ mod post {
                 ));
             }
             Err(e) => {
+                tracing::error!("Failed to authenticate: {e:?}");
                 return Err((
                     StatusCode::INTERNAL_SERVER_ERROR,
-                    Json::from(other_error(format!("{:?}", e))),
+                    Json::from(crate::restful::other_error_with_code(
+                        "Authentication failed",
+                        "auth_error",
+                    )),
                 ));
             }
         };
 
         if let Err(e) = auth_session.login(&user).await {
+            tracing::error!("Failed to create login session: {e:?}");
             return Err((
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json::from(other_error(format!("{:?}", e))),
+                Json::from(crate::restful::other_error_with_code(
+                    "Failed to create login session",
+                    "auth_error",
+                )),
             ));
         }
 
@@ -107,10 +118,13 @@ mod get {
         match auth_session.logout().await {
             Ok(_) => Ok(Json(Void::default())),
             Err(e) => {
-                tracing::error!("Failed to logout: {:?}", e);
+                tracing::error!("Failed to logout: {e:?}");
                 Err((
                     StatusCode::INTERNAL_SERVER_ERROR,
-                    Json::from(other_error(format!("{:?}", e))),
+                    Json::from(crate::restful::other_error_with_code(
+                        "Failed to logout",
+                        "auth_error",
+                    )),
                 ))
             }
         }

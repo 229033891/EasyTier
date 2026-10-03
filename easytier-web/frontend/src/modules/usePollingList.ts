@@ -36,7 +36,12 @@ export function usePollingList<T>(options: PollingListOptions<T>) {
         try {
             await load();
         } catch (e) {
-            toast.add({ severity: 'error', summary: t(errorSummaryKey), detail: String(e), life: TOAST_LIFE.error });
+            toast.add({
+                severity: 'error',
+                summary: t(errorSummaryKey),
+                detail: Utils.formatApiErrorDetail(e, t),
+                life: TOAST_LIFE.error,
+            });
             console.error(e);
         }
     }, interval);

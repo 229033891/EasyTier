@@ -90,7 +90,7 @@ async function refreshConfigServerConnection() {
   catch (e) {
     configServerConnected.value = false
     if (currentMode.value.mode === 'service') {
-      configServerLastError.value = e instanceof Error ? e.message : String(e)
+      configServerLastError.value = Utils.formatApiErrorDetail(e, t)
     }
     console.error('Failed to refresh config server connection', e)
   }
@@ -218,7 +218,7 @@ async function onModeSave() {
       toast.add({
         severity: 'error',
         summary: t('error'),
-        detail: e instanceof Error ? e.message : String(e),
+        detail: Utils.formatApiErrorDetail(e, t),
         life: TOAST_LIFE.severe,
       })
       console.error('Error switching mode', e, prev, next)
@@ -280,7 +280,12 @@ async function onUninstallService() {
         toast.add({ severity: 'success', summary: t('web.common.success'), detail: t('mode.uninstall_service_success'), life: TOAST_LIFE.success })
         modeDialogVisible.value = false
       } catch (e: any) {
-        toast.add({ severity: 'error', summary: t('error'), detail: e, life: TOAST_LIFE.severe })
+        toast.add({
+          severity: 'error',
+          summary: t('error'),
+          detail: Utils.formatApiErrorDetail(e, t),
+          life: TOAST_LIFE.severe,
+        })
         console.error("Error uninstalling service", e)
       } finally {
         isModeSaving.value = false
@@ -312,7 +317,12 @@ async function onStopService() {
     modeDialogVisible.value = false
   }
   catch (e: any) {
-    toast.add({ severity: 'error', summary: t('error'), detail: e, life: TOAST_LIFE.severe })
+    toast.add({
+      severity: 'error',
+      summary: t('error'),
+      detail: Utils.formatApiErrorDetail(e, t),
+      life: TOAST_LIFE.severe,
+    })
     console.error("Error stopping service", e)
   }
   finally {
@@ -441,22 +451,20 @@ async function initWithMode(mode: Mode) {
         await connectRpcWithRetries(false, url, retrys)
       }
       catch (e2) {
-        const errMsg = e2 instanceof Error ? e2.message : String(e2)
         toast.add({
           severity: 'error',
           summary: t('error'),
-          detail: t('mode.rpc_connection_failed', { error: errMsg }),
+          detail: t('mode.rpc_connection_failed', { error: Utils.formatApiErrorDetail(e2, t) }),
           life: TOAST_LIFE.severe,
         })
         throw e2
       }
     }
     else {
-      const errMsg = e instanceof Error ? e.message : String(e)
       toast.add({
         severity: 'error',
         summary: t('error'),
-        detail: t('mode.rpc_connection_failed', { error: errMsg }),
+        detail: t('mode.rpc_connection_failed', { error: Utils.formatApiErrorDetail(e, t) }),
         life: TOAST_LIFE.severe,
       })
       throw e
@@ -472,7 +480,7 @@ async function initWithMode(mode: Mode) {
     }
     catch (e: any) {
       configServerConnected.value = false
-      configServerLastError.value = e instanceof Error ? e.message : String(e)
+      configServerLastError.value = Utils.formatApiErrorDetail(e, t)
       console.error('Failed to init web client', e)
     }
   }
@@ -566,7 +574,7 @@ async function handleMobileVpnTileAction(action: 'start' | 'stop') {
     toast.add({
       severity: 'error',
       summary: t('error'),
-      detail: t('vpn_tile_action_failed', { error: String(error) }),
+      detail: t('vpn_tile_action_failed', { error: Utils.formatApiErrorDetail(error, t) }),
       life: TOAST_LIFE.severe,
     })
   }
@@ -676,7 +684,7 @@ async function onLoggingSave() {
     toast.add({
       severity: 'error',
       summary: t('error'),
-      detail: e instanceof Error ? e.message : String(e),
+      detail: Utils.formatApiErrorDetail(e, t),
       life: TOAST_LIFE.severe,
     })
     console.error('Error saving logging level', e)
@@ -694,7 +702,7 @@ async function openLoggingDir() {
     toast.add({
       severity: 'error',
       summary: t('error'),
-      detail: e instanceof Error ? e.message : String(e),
+      detail: Utils.formatApiErrorDetail(e, t),
       life: TOAST_LIFE.severe,
     })
   }
@@ -709,7 +717,7 @@ async function copyLoggingDir() {
     toast.add({
       severity: 'error',
       summary: t('error'),
-      detail: e instanceof Error ? e.message : String(e),
+      detail: Utils.formatApiErrorDetail(e, t),
       life: TOAST_LIFE.severe,
     })
   }

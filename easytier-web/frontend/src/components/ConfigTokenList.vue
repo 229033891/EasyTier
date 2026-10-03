@@ -1,8 +1,7 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue';
-import { TOAST_LIFE } from 'easytier-frontend-lib'
+import { TOAST_LIFE, Utils, tooltipDirective } from 'easytier-frontend-lib'
 import { Button, InputText, Select, useConfirm, useToast } from 'primevue';
-import { tooltipDirective } from 'easytier-frontend-lib';
 import { useI18n } from 'vue-i18n';
 import ApiClient, { ConfigTokenInfo, UserInfo } from '../modules/api';
 import ListPageShell from './ListPageShell.vue';
@@ -12,6 +11,7 @@ const vTooltip = tooltipDirective;
 const { t } = useI18n();
 const toast = useToast();
 const confirm = useConfirm();
+const errorDetail = (error: unknown) => Utils.formatApiErrorDetail(error, t);
 
 const props = defineProps<{
     api: ApiClient;
@@ -46,7 +46,7 @@ const load = async () => {
         toast.add({
             severity: 'error',
             summary: t('web.common.error'),
-            detail: e?.response?.data?.message || String(e),
+            detail: errorDetail(e),
             life: TOAST_LIFE.error,
         });
     }
@@ -81,7 +81,7 @@ const createToken = async () => {
         toast.add({
             severity: 'error',
             summary: t('web.config_tokens.create_failed'),
-            detail: e?.response?.data?.message || String(e),
+            detail: errorDetail(e),
             life: TOAST_LIFE.error,
         });
     } finally {
@@ -120,7 +120,7 @@ const submitEdit = async () => {
         toast.add({
             severity: 'error',
             summary: t('web.config_tokens.update_failed'),
-            detail: e?.response?.data?.message || String(e),
+            detail: errorDetail(e),
             life: TOAST_LIFE.error,
         });
     } finally {
@@ -155,7 +155,7 @@ const confirmDelete = (row: ConfigTokenInfo) => {
                 toast.add({
                     severity: 'error',
                     summary: t('web.config_tokens.delete_failed'),
-                    detail: e?.response?.data?.message || String(e),
+                    detail: errorDetail(e),
                     life: TOAST_LIFE.error,
                 });
             }

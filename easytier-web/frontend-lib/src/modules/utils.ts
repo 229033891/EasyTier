@@ -81,6 +81,149 @@ export function formatClientUrl(clientUrl: string | null | undefined): string {
     return clientUrl;
 }
 
+export type ApiErrorKind =
+    | 'timeout'
+    | 'client_not_found'
+    | 'not_found'
+    | 'revision_conflict'
+    | 'ownership_conflict'
+    | 'unauthorized'
+    | 'db_error'
+    | 'internal_error'
+    | 'unknown'
+
+export interface ApiErrorPayload {
+    message: string
+    code?: string
+}
+
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+    if (value && typeof value === 'object') {
+        return value as Record<string, unknown>
+    }
+    return undefined
+}
+
+function readStringField(record: Record<string, unknown> | undefined, key: string): string | undefined {
+    const value = record?.[key]
+    return typeof value === 'string' && value.trim() ? value : undefined
+}
+
+/** Unwrap axios / Tauri / plain API error bodies into `{ message, code? }`. */
+export function extractApiErrorPayload(error: unknown): ApiErrorPayload {
+    const axiosData = asRecord(asRecord(error)?.response)?.data
+    const candidates: unknown[] = [
+        axiosData,
+        asRecord(error)?.data,
+        error,
+    ]
+
+    for (const candidate of candidates) {
+        if (typeof candidate === 'string') {
+            const trimmed = candidate.trim()
+            if (!trimmed) {
+                continue
+            }
+            if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+                try {
+                    const parsed = JSON.parse(trimmed) as unknown
+                    const record = asRecord(parsed)
+                    const message = readStringField(record, 'message')
+                    if (message) {
+                        return {
+                            message,
+                            code: readStringField(record, 'code'),
+                        }
+                    }
+                } catch {
+                    // keep raw string
+                }
+            }
+            return { message: trimmed }
+        }
+
+        const record = asRecord(candidate)
+        const message = readStringField(record, 'message')
+        if (message) {
+            return {
+                message,
+                code: readStringField(record, 'code'),
+            }
+        }
+    }
+
+    if (error instanceof Error && error.message.trim()) {
+        return { message: error.message }
+    }
+
+    return { message: String(error ?? '') }
+}
+
+export function classifyApiError(payload: ApiErrorPayload): ApiErrorKind {
+    const code = (payload.code ?? '').trim().toLowerCase()
+    switch (code) {
+        case 'rpc_timeout':
+            return 'timeout'
+        case 'client_not_found':
+            return 'client_not_found'
+        case 'not_found':
+            return 'not_found'
+        case 'managed_config_revision_conflict':
+            return 'revision_conflict'
+        case 'managed_config_ownership_conflict':
+            return 'ownership_conflict'
+        case 'db_error':
+            return 'db_error'
+        case 'internal_error':
+        case 'auth_error':
+            return 'internal_error'
+        default:
+            break
+    }
+
+    const message = payload.message
+    if (/timeout|Elapsed\(\(\)\)|deadline has elapsed|timed?\s*out/i.test(message)) {
+        return 'timeout'
+    }
+    if (/client not found/i.test(message)) {
+        return 'client_not_found'
+    }
+    if (/unauthorized|not logged in|no such user/i.test(message)) {
+        return 'unauthorized'
+    }
+    if (/revision conflict|config revision/i.test(message)) {
+        return 'revision_conflict'
+    }
+    if (/ownership conflict/i.test(message)) {
+        return 'ownership_conflict'
+    }
+    return 'unknown'
+}
+
+const API_ERROR_I18N_KEYS: Record<Exclude<ApiErrorKind, 'unknown'>, string> = {
+    timeout: 'web.device_management.error_timeout',
+    client_not_found: 'web.device_management.error_device_offline',
+    not_found: 'web.device_management.error_not_found',
+    revision_conflict: 'web.device_management.error_revision_conflict',
+    ownership_conflict: 'web.device_management.error_ownership_conflict',
+    unauthorized: 'web.device_management.error_unauthorized',
+    db_error: 'web.device_management.error_db',
+    internal_error: 'web.device_management.error_internal',
+}
+
+/** Map API/RPC failures to localized, actionable copy for toasts. */
+export function formatApiErrorDetail(
+    error: unknown,
+    t: (key: string) => string,
+): string {
+    const payload = extractApiErrorPayload(error)
+    const kind = classifyApiError(payload)
+    if (kind !== 'unknown') {
+        return t(API_ERROR_I18N_KEYS[kind])
+    }
+    return payload.message.trim() || t('web.device_management.error_unknown')
+}
+
 export function StrToUuid(uuid: string): UUID {
     const hex = uuid.replace(/-/g, '');
     if (!/^[0-9a-fA-F]{32}$/.test(hex)) {

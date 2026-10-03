@@ -1,10 +1,12 @@
 <script lang="ts" setup>
 import { computed, inject, ref } from 'vue';
-import { Card, Password, Button } from 'primevue';
+import { Card, Password, Button, useToast } from 'primevue';
+import { TOAST_LIFE, Utils } from 'easytier-frontend-lib'
 import { useI18n } from 'vue-i18n';
 import ApiClient from '../modules/api';
 
 const { t } = useI18n();
+const toast = useToast();
 const dialogRef = inject<any>('dialogRef');
 
 const api = computed<ApiClient>(() => dialogRef.value.data.api);
@@ -18,6 +20,13 @@ const changePassword = async () => {
     try {
         await api.value.change_password(password.value);
         dialogRef.value.close();
+    } catch (e) {
+        toast.add({
+            severity: 'error',
+            summary: t('web.common.error'),
+            detail: Utils.formatApiErrorDetail(e, t),
+            life: TOAST_LIFE.error,
+        });
     } finally {
         submitting.value = false;
     }

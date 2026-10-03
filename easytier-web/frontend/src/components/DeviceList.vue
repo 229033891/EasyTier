@@ -11,6 +11,7 @@ import { loadMergedDevices } from '../modules/deviceArchive';
 import { usePollingList } from '../modules/usePollingList';
 
 const { t } = useI18n()
+const errorDetail = (error: unknown) => Utils.formatApiErrorDetail(error, t)
 
 declare const window: Window & typeof globalThis;
 
@@ -77,7 +78,7 @@ const saveRename = async () => {
         toast.add({
             severity: 'error',
             summary: t('web.device.rename_failed'),
-            detail: String(e),
+            detail: errorDetail(e),
             life: TOAST_LIFE.error,
         });
     } finally {
@@ -174,7 +175,7 @@ const confirmMerge = () => {
                 toast.add({
                     severity: 'error',
                     summary: t('web.device.merge_failed'),
-                    detail: e?.response?.data?.message || String(e),
+                    detail: errorDetail(e),
                     life: TOAST_LIFE.error,
                 });
             } finally {
@@ -221,7 +222,7 @@ const confirmRetire = (device: Utils.DeviceInfo) => {
                 toast.add({
                     severity: 'error',
                     summary: t('web.device.retire_failed'),
-                    detail: e?.response?.data?.message || String(e),
+                    detail: errorDetail(e),
                     life: TOAST_LIFE.error,
                 });
             }

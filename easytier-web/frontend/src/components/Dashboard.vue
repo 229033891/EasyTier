@@ -24,7 +24,12 @@ const periodFunc = new Utils.PeriodicTask(async () => {
     try {
         await loadSummary();
     } catch (e) {
-        toast.add({ severity: 'error', summary: t('web.dashboard.load_failed'), detail: String(e), life: TOAST_LIFE.error });
+        toast.add({
+            severity: 'error',
+            summary: t('web.dashboard.load_failed'),
+            detail: Utils.formatApiErrorDetail(e, t),
+            life: TOAST_LIFE.error,
+        });
         console.error(e);
     }
 }, 1000);

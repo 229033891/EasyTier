@@ -40,7 +40,16 @@ const onSubmit = async () => {
                 params: { apiHost: btoa(apiHost.value) },
             });
         } else {
-            toast.add({ severity: 'error', summary: 'Login Failed', detail: ret.message, life: TOAST_LIFE.error });
+            const detailKey = `web.login.${ret.message}`
+            const detail = ['invalid_credentials', 'unknown_error'].includes(ret.message)
+                ? t(detailKey)
+                : (ret.message || t('web.login.unknown_error'))
+            toast.add({
+                severity: 'error',
+                summary: t('web.login.failed'),
+                detail,
+                life: TOAST_LIFE.error,
+            });
         }
     } finally {
         submitting.value = false;

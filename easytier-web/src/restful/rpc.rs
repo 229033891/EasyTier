@@ -9,7 +9,7 @@ use easytier::proto::rpc_types::controller::BaseController;
 
 use crate::db::UserIdInDb;
 
-use super::{AppState, HttpHandleError, other_error};
+use super::{AppState, HttpHandleError, convert_rpc_error, other_error};
 
 #[derive(Debug, serde::Deserialize)]
 pub struct ProxyRpcRequest {
@@ -149,10 +149,7 @@ async fn handle_proxy_rpc_by_session(
 
     match resp {
         Ok(v) => Ok(Json(v)),
-        Err(e) => Err((
-            StatusCode::INTERNAL_SERVER_ERROR,
-            other_error(format!("RPC Error: {:?}", e)).into(),
-        )),
+        Err(e) => Err(convert_rpc_error(e)),
     }
 }
 

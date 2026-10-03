@@ -138,10 +138,38 @@ pub fn other_error<T: ToString>(error_message: T) -> Error {
     }
 }
 
+pub fn other_error_with_code<M: ToString, C: Into<String>>(error_message: M, code: C) -> Error {
+    Error {
+        message: error_message.to_string(),
+        code: Some(code.into()),
+        current_config_revision: None,
+    }
+}
+
+/// Prefer Display for client responses; keep Debug only in server logs.
 pub fn convert_db_error(e: DbErr) -> HttpHandleError {
+    tracing::error!(error = %e, "database error");
     (
         StatusCode::INTERNAL_SERVER_ERROR,
-        other_error(format!("DB Error: {:#}", e)).into(),
+        other_error_with_code("Database operation failed", "db_error").into(),
+    )
+}
+
+pub fn convert_rpc_error(e: RpcError) -> HttpHandleError {
+    let (status_code, code) = match &e {
+        RpcError::ExecutionError(_) => (StatusCode::BAD_REQUEST, Some("rpc_execution")),
+        RpcError::Timeout(_) => (StatusCode::GATEWAY_TIMEOUT, Some("rpc_timeout")),
+        RpcError::TunnelError(_) => (StatusCode::BAD_GATEWAY, Some("rpc_tunnel")),
+        RpcError::Shutdown => (StatusCode::BAD_GATEWAY, Some("rpc_shutdown")),
+        _ => (StatusCode::BAD_GATEWAY, Some("rpc_error")),
+    };
+    (
+        status_code,
+        Json(Error {
+            message: e.to_string(),
+            code: code.map(str::to_string),
+            current_config_revision: None,
+        }),
     )
 }
 
@@ -343,7 +371,7 @@ impl RestfulServer {
             }
             .into()),
             Err(e) => Ok(GenerateConfigResponse {
-                error: Some(format!("{:?}", e)),
+                error: Some(format!("{e:#}")),
                 toml_config: None,
             }
             .into()),
@@ -362,7 +390,7 @@ impl RestfulServer {
             }
             .into()),
             Err(e) => Ok(ParseConfigResponse {
-                error: Some(format!("{:?}", e)),
+                error: Some(format!("{e:#}")),
                 config: None,
             }
             .into()),
