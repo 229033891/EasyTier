@@ -1,6 +1,12 @@
 use std::net::{IpAddr, SocketAddr, ToSocketAddrs as _};
 #[cfg(feature = "dns-resolver")]
-use std::{future::Future, io, pin::Pin, sync::{Arc, LazyLock}, time::Duration};
+use std::{
+    future::Future,
+    io,
+    pin::Pin,
+    sync::{Arc, LazyLock},
+    time::Duration,
+};
 
 use anyhow::Context;
 use async_trait::async_trait;
@@ -64,12 +70,14 @@ fn resolver_config() -> (ResolverConfig, ResolverOpts) {
 }
 
 #[cfg(feature = "dns-resolver")]
-static RESOLVER: LazyLock<Arc<Resolver<GenericConnector<TokioRuntimeProvider>>>> = LazyLock::new(|| {
-    let (config, options) = resolver_config();
-    let builder = TokioResolver::builder_with_config(config, TokioConnectionProvider::default())
-        .with_options(options);
-    Arc::new(builder.build())
-});
+static RESOLVER: LazyLock<Arc<Resolver<GenericConnector<TokioRuntimeProvider>>>> =
+    LazyLock::new(|| {
+        let (config, options) = resolver_config();
+        let builder =
+            TokioResolver::builder_with_config(config, TokioConnectionProvider::default())
+                .with_options(options);
+        Arc::new(builder.build())
+    });
 
 #[cfg(feature = "dns-resolver")]
 const SYSTEM_DNS_LOOKUP_TIMEOUT: Duration = Duration::from_millis(800);

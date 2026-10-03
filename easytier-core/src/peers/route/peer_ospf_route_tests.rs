@@ -681,8 +681,7 @@ async fn update_my_conn_info_skips_interface_scan_when_topology_is_unchanged() {
 
 #[tokio::test]
 async fn shutdown_withdrawal_preserves_local_physical_routes() {
-    let (route, _peer_rpc) =
-        test_route_with_admin_peer(Arc::new(NoopPeerContext::default())).await;
+    let (route, _peer_rpc) = test_route_with_admin_peer(Arc::new(NoopPeerContext::default())).await;
 
     assert!(route.service_impl.update_my_infos().await);
     assert_eq!(
@@ -940,9 +939,7 @@ async fn missing_peer_resync_recovers_expired_multihop_route() {
                 .into(),
             );
         }
-        for (peer_id, neighbors) in
-            [(1, vec![2]), (2, vec![1, 3]), (3, vec![2, 4]), (4, vec![3])]
-        {
+        for (peer_id, neighbors) in [(1, vec![2]), (2, vec![1, 3]), (3, vec![2, 4]), (4, vec![3])] {
             install_conn_row(&sender, peer_id, neighbors.clone());
             install_conn_row(service, peer_id, neighbors);
         }
@@ -1432,8 +1429,7 @@ async fn stale_non_initiator_sync_does_not_create_session() {
 
 #[tokio::test]
 async fn stale_non_initiator_sync_preserves_newer_session_generation() {
-    let (route, _peer_rpc) =
-        test_route_with_admin_peer(Arc::new(NoopPeerContext::default())).await;
+    let (route, _peer_rpc) = test_route_with_admin_peer(Arc::new(NoopPeerContext::default())).await;
     let session = route.service_impl.get_or_create_session(2);
 
     route

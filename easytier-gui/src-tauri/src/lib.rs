@@ -71,11 +71,9 @@ struct RpcServer {
     _server: ApiRpcServer<BoxedTunnelListener>,
     bind_url: Option<url::Url>,
 }
-static RPC_SERVER: LazyLock<Mutex<Option<RpcServer>>> =
-    LazyLock::new(|| Mutex::new(None));
+static RPC_SERVER: LazyLock<Mutex<Option<RpcServer>>> = LazyLock::new(|| Mutex::new(None));
 
-static WEB_CLIENT: LazyLock<RwLock<Option<WebClient>>> =
-    LazyLock::new(|| RwLock::new(None));
+static WEB_CLIENT: LazyLock<RwLock<Option<WebClient>>> = LazyLock::new(|| RwLock::new(None));
 
 macro_rules! get_client_manager {
     () => {{
@@ -647,11 +645,13 @@ async fn init_rpc_connection(
             *client_manager_guard = None;
 
             let tunnel: BoxedTunnelListener = match desired_kind {
-                RpcServerKind::Ring => bind_ring_tunnel_with_retry(
-                    instance_manager.process_runtime().as_ref(),
-                    *RPC_RING_UUID.deref(),
-                )
-                .await?,
+                RpcServerKind::Ring => {
+                    bind_ring_tunnel_with_retry(
+                        instance_manager.process_runtime().as_ref(),
+                        *RPC_RING_UUID.deref(),
+                    )
+                    .await?
+                }
                 RpcServerKind::Tcp => {
                     let bind_url = bind_url.as_ref().expect("tcp rpc must have bind url");
                     Box::new(runtime_rpc_listener(resolve_rpc_bind_url(bind_url).await?))
@@ -661,8 +661,8 @@ async fn init_rpc_connection(
             // IP whitelist only applies to TCP portals. Ring tunnels use ring://uuid
             // (no IP host); ManagementRpcServerHook would reject every client and leave
             // the GUI stuck on "无法连接至远程客户端". Match main: no whitelist for ring.
-            let mut rpc_server = ApiRpcServer::from_tunnel(tunnel, instance_manager.clone())
-                .with_rx_timeout(None);
+            let mut rpc_server =
+                ApiRpcServer::from_tunnel(tunnel, instance_manager.clone()).with_rx_timeout(None);
             if desired_kind == RpcServerKind::Tcp {
                 let allow_lan = bind_url
                     .as_ref()

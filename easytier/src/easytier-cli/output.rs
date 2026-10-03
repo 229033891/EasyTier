@@ -112,14 +112,14 @@ where
     widths
 }
 
-fn text_width(text: &str) -> usize {
+pub(crate) fn text_width(text: &str) -> usize {
     text.split('\n')
         .map(UnicodeWidthStr::width)
         .max()
         .unwrap_or(0)
 }
 
-fn header_indices(headers: &[String], names: &[&str]) -> Vec<usize> {
+pub(crate) fn header_indices(headers: &[String], names: &[&str]) -> Vec<usize> {
     let mut indices = Vec::new();
     for name in names {
         if let Some(index) = headers
@@ -133,7 +133,7 @@ fn header_indices(headers: &[String], names: &[&str]) -> Vec<usize> {
     indices
 }
 
-fn select_columns_to_drop(
+pub(crate) fn select_columns_to_drop(
     terminal_width: Option<usize>,
     drop_indices: &[usize],
     col_widths: &[usize],

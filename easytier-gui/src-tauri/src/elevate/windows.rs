@@ -9,9 +9,7 @@ use std::mem;
 use std::os::windows::process::ExitStatusExt;
 use std::process::{ExitStatus, Output};
 use windows::Win32::Foundation::HANDLE;
-use windows::Win32::Security::{
-    GetTokenInformation, TOKEN_ELEVATION, TOKEN_QUERY, TokenElevation,
-};
+use windows::Win32::Security::{GetTokenInformation, TOKEN_ELEVATION, TOKEN_QUERY, TokenElevation};
 use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
 use windows::Win32::UI::Shell::ShellExecuteW;
 use windows::Win32::UI::WindowsAndMessaging::SW_HIDE;

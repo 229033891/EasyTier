@@ -32,15 +32,7 @@ fn format_win_error(error: WIN32_ERROR) -> String {
     let flags = FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS;
 
     unsafe {
-        FormatMessageW(
-            flags,
-            None,
-            code,
-            0,
-            PWSTR(buffer.as_mut_ptr()),
-            size,
-            None,
-        );
+        FormatMessageW(flags, None, code, 0, PWSTR(buffer.as_mut_ptr()), size, None);
     }
     let str_end = buffer.iter().position(|&b| b == 0).unwrap_or(buffer.len());
     format!(

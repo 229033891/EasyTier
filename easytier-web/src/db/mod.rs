@@ -1449,11 +1449,7 @@ impl Db {
     ///
     /// Peer connection history is left intact so charts for past sessions remain.
     /// Returns `true` when an archive row was deleted.
-    pub async fn delete_device(
-        &self,
-        user_id: UserIdInDb,
-        device_id: Uuid,
-    ) -> Result<bool, DbErr> {
+    pub async fn delete_device(&self, user_id: UserIdInDb, device_id: Uuid) -> Result<bool, DbErr> {
         let mut transaction = self
             .db
             .begin_with("BEGIN IMMEDIATE")
@@ -1476,10 +1472,7 @@ impl Db {
 
         // Do not wipe configs on a "not found" path — REST maps false → 404.
         if !deleted {
-            transaction
-                .rollback()
-                .await
-                .map_err(sqlx_db_error)?;
+            transaction.rollback().await.map_err(sqlx_db_error)?;
             return Ok(false);
         }
 
@@ -1548,10 +1541,7 @@ impl Db {
             src_last_seen,
         )) = source
         else {
-            transaction
-                .rollback()
-                .await
-                .map_err(sqlx_db_error)?;
+            transaction.rollback().await.map_err(sqlx_db_error)?;
             return Err(DbErr::Custom("source device not found".to_string()));
         };
 

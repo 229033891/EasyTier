@@ -31,8 +31,7 @@ thread_local! {
 
 static CONFIG_SERVER_CLIENT: LazyLock<Mutex<Option<ManagedConfigServerClient>>> =
     LazyLock::new(|| Mutex::new(None));
-static CONFIG_SERVER_CLIENT_ACTIVE: LazyLock<AtomicBool> =
-    LazyLock::new(|| AtomicBool::new(false));
+static CONFIG_SERVER_CLIENT_ACTIVE: LazyLock<AtomicBool> = LazyLock::new(|| AtomicBool::new(false));
 static CONFIG_SERVER_CLIENT_STOPPING: LazyLock<AtomicBool> =
     LazyLock::new(|| AtomicBool::new(false));
 static LAST_CONFIG_SERVER_CALLBACK_ERROR: LazyLock<Mutex<Option<String>>> =

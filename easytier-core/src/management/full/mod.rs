@@ -39,6 +39,10 @@ use super::{
 #[cfg(feature = "management")]
 pub use compiled::register_instance_management_rpc;
 pub use config_patch::{ConfigPatchPersistence, apply_config_patch};
+pub use config_server_status::{
+    ConfigServerStatusSnapshot, clear as clear_config_server_status,
+    snapshot as config_server_status,
+};
 pub use instance_info::network_instance_running_info;
 #[cfg(feature = "management")]
 pub use logger_rpc::{
@@ -50,10 +54,6 @@ pub use process_rpc::{
 };
 #[cfg(target_os = "wasi")]
 pub(crate) use web_client::WebClientBackend;
-pub use config_server_status::{
-    ConfigServerStatusSnapshot, clear as clear_config_server_status,
-    snapshot as config_server_status,
-};
 pub use web_client::{ConfigServerEndpoint, WebClient, WebClientConfig};
 
 #[cfg(feature = "management")]

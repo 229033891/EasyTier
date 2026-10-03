@@ -25,8 +25,7 @@ type CoreDataPlaneSession = DataPlaneSession<NativeInstanceHost>;
 static NEXT_SESSION_HANDLE: AtomicU64 = AtomicU64::new(1);
 static SESSIONS: LazyLock<Mutex<HashMap<u64, Arc<NativeDataPlaneSession>>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
-static DATA_PLANE_USAGE_LOCK: LazyLock<RwLock<()>> =
-    LazyLock::new(|| RwLock::new(()));
+static DATA_PLANE_USAGE_LOCK: LazyLock<RwLock<()>> = LazyLock::new(|| RwLock::new(()));
 
 #[derive(Debug)]
 pub(super) struct NativeDataPlaneError {

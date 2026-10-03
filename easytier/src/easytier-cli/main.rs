@@ -683,12 +683,12 @@ mod tests {
         .map(str::to_string);
         let col_widths = headers
             .iter()
-            .map(|header| text_width(header))
+            .map(|header| output::text_width(header))
             .collect::<Vec<_>>();
-        let drop_indices = header_indices(&headers, ROUTE_DROP_COLUMNS);
+        let drop_indices = output::header_indices(&headers, ROUTE_DROP_COLUMNS);
 
         let (active, dropped, total_width) =
-            select_columns_to_drop(Some(79), &drop_indices, &col_widths);
+            output::select_columns_to_drop(Some(79), &drop_indices, &col_widths);
 
         let proxy_index = headers
             .iter()

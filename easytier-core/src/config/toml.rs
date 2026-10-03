@@ -1626,7 +1626,10 @@ tcp_stun_servers = []
     fn legacy_webhook_source_is_accepted_as_web() {
         // 旧版本把来源写成 "webhook"；升级后 core 若只认 "web"，整份 TOML 就会解析
         // 失败，节点启动即退出（服务化部署下表现为 Windows 服务无限重启）。
-        assert_eq!("webhook".parse::<ConfigSource>().unwrap(), ConfigSource::Web);
+        assert_eq!(
+            "webhook".parse::<ConfigSource>().unwrap(),
+            ConfigSource::Web
+        );
         assert_eq!("web".parse::<ConfigSource>().unwrap(), ConfigSource::Web);
         assert_eq!("user".parse::<ConfigSource>().unwrap(), ConfigSource::User);
 
