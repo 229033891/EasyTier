@@ -674,20 +674,16 @@ impl OspfRouteTable {
     fn lookup_proxy_peer(&self, ip: &IpAddr, allow_default: bool) -> Option<PeerId> {
         match ip {
             IpAddr::V4(ipv4) => {
-                let (cidr, pv) = self
-                    .cidr_peer_id_map
-                    .load()
-                    .get_lpm(&Ipv4Cidr::new(*ipv4, 32).unwrap())?;
+                let map = self.cidr_peer_id_map.load();
+                let (cidr, pv) = map.get_lpm(&Ipv4Cidr::new(*ipv4, 32).unwrap())?;
                 if !allow_default && cidr.network_length() == 0 {
                     return None;
                 }
                 Some(pv.peer_id)
             }
             IpAddr::V6(ipv6) => {
-                let (cidr, pv) = self
-                    .cidr_v6_peer_id_map
-                    .load()
-                    .get_lpm(&Ipv6Cidr::new(*ipv6, 128).unwrap())?;
+                let map = self.cidr_v6_peer_id_map.load();
+                let (cidr, pv) = map.get_lpm(&Ipv6Cidr::new(*ipv6, 128).unwrap())?;
                 if !allow_default && cidr.network_length() == 0 {
                     return None;
                 }
