@@ -254,8 +254,7 @@ async fn runtime_updates_retain_manager_owned_peer_identity() {
 #[tokio::test]
 async fn portable_peer_manager_rejects_requested_unavailable_zstd() {
     let mut config = PortablePeerManagerConfig::new(portable_runtime_config("portable-net"));
-    config.snapshot.flags.data_compress_algo =
-        crate::proto::common::CompressionAlgoPb::Zstd.into();
+    config.snapshot.flags.data_compress_algo = crate::proto::common::CompressionAlgoPb::Zstd.into();
 
     let error = build_portable_config_for_test(config).err().unwrap();
 
@@ -586,8 +585,7 @@ async fn portable_peer_manager_auth_uses_managed_credentials() {
 #[tokio::test]
 async fn portable_host_policy_controls_local_exit_node_fallback() {
     let external_ipv4 = Ipv4Addr::new(203, 0, 113, 10);
-    let default_core =
-        build_portable_for_test(portable_runtime_config("portable-net")).unwrap();
+    let default_core = build_portable_for_test(portable_runtime_config("portable-net")).unwrap();
     assert_eq!(
         default_core.get_msg_dst_peer_ipv4(&external_ipv4).await,
         (Vec::new(), false)
@@ -608,10 +606,8 @@ async fn portable_peer_manager_rejects_inconsistent_network_names() {
     runtime.core.node.network_name = "node-net".to_owned();
     let (packet_tx, _packet_rx) = host_packet_channel();
 
-    let result = PeerManagerCore::new_portable_for_test(
-        PortablePeerManagerConfig::new(runtime),
-        packet_tx,
-    );
+    let result =
+        PeerManagerCore::new_portable_for_test(PortablePeerManagerConfig::new(runtime), packet_tx);
 
     assert!(result.is_err());
 }
@@ -780,8 +776,7 @@ fn resolved_remote_addr_check_rejects_virtual_network_ip() {
     });
     let resolved_remote_addr = resolved_remote_addr_from_url(Some("tcp://10.144.0.2:1234"));
 
-    let err =
-        check_resolved_remote_addr_not_from_virtual_network(&context, resolved_remote_addr);
+    let err = check_resolved_remote_addr_not_from_virtual_network(&context, resolved_remote_addr);
 
     assert!(matches!(err, Err(Error::Other(_))));
 }
@@ -815,8 +810,7 @@ fn resolved_remote_addr_check_allows_loopback_inside_virtual_network() {
     });
     let resolved_remote_addr = resolved_remote_addr_from_url(Some("tcp://127.0.0.1:1234"));
 
-    let ret =
-        check_resolved_remote_addr_not_from_virtual_network(&context, resolved_remote_addr);
+    let ret = check_resolved_remote_addr_not_from_virtual_network(&context, resolved_remote_addr);
 
     assert!(ret.is_ok());
 }
@@ -858,8 +852,7 @@ fn disable_relay_data_inspects_foreign_network_inner_packet_type() {
 
     let mut rpc_packet = ZCPacket::new_with_payload(b"rpc");
     rpc_packet.fill_peer_manager_hdr(1, 2, PacketType::RpcReq as u8);
-    let mut foreign_rpc_packet =
-        ZCPacket::new_for_foreign_network(&network_name, 2, &rpc_packet);
+    let mut foreign_rpc_packet = ZCPacket::new_for_foreign_network(&network_name, 2, &rpc_packet);
     foreign_rpc_packet.fill_peer_manager_hdr(10, 20, PacketType::ForeignNetworkPacket as u8);
 
     assert_eq!(
@@ -870,8 +863,7 @@ fn disable_relay_data_inspects_foreign_network_inner_packet_type() {
 
     let mut data_packet = ZCPacket::new_with_payload(b"data");
     data_packet.fill_peer_manager_hdr(1, 2, PacketType::Data as u8);
-    let mut foreign_data_packet =
-        ZCPacket::new_for_foreign_network(&network_name, 2, &data_packet);
+    let mut foreign_data_packet = ZCPacket::new_for_foreign_network(&network_name, 2, &data_packet);
     foreign_data_packet.fill_peer_manager_hdr(10, 20, PacketType::ForeignNetworkPacket as u8);
 
     assert_eq!(

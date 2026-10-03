@@ -300,7 +300,10 @@ impl RestfulServer {
             .await
             .map_err(convert_db_error)?;
         if !deleted {
-            return Err((StatusCode::NOT_FOUND, other_error("Device not found").into()));
+            return Err((
+                StatusCode::NOT_FOUND,
+                other_error("Device not found").into(),
+            ));
         }
         Ok(())
     }
@@ -348,14 +351,12 @@ impl RestfulServer {
                     .await;
                 Ok(())
             }
-            Err(DbErr::Custom(msg)) if msg == "source device not found" => Err((
-                StatusCode::NOT_FOUND,
-                other_error(msg).into(),
-            )),
-            Err(DbErr::Custom(msg)) if msg.contains("must be different") => Err((
-                StatusCode::BAD_REQUEST,
-                other_error(msg).into(),
-            )),
+            Err(DbErr::Custom(msg)) if msg == "source device not found" => {
+                Err((StatusCode::NOT_FOUND, other_error(msg).into()))
+            }
+            Err(DbErr::Custom(msg)) if msg.contains("must be different") => {
+                Err((StatusCode::BAD_REQUEST, other_error(msg).into()))
+            }
             Err(e) => Err(convert_db_error(e)),
         }
     }
@@ -473,14 +474,10 @@ impl RestfulServer {
             .route("/api/v1/summary", get(Self::handle_get_summary))
             .route("/api/v1/sessions", get(Self::handle_list_all_sessions))
             .route("/api/v1/devices", get(Self::handle_list_devices))
-            .route(
-                "/api/v1/devices/merge",
-                post(Self::handle_merge_devices),
-            )
+            .route("/api/v1/devices/merge", post(Self::handle_merge_devices))
             .route(
                 "/api/v1/devices/{device-id}",
-                put(Self::handle_update_device_display_name)
-                    .delete(Self::handle_delete_device),
+                put(Self::handle_update_device_display_name).delete(Self::handle_delete_device),
             )
             .merge(NetworkApi::build_route())
             .merge(peer_history::PeerHistoryApi::build_route())

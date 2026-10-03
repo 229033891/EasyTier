@@ -6,7 +6,7 @@
 use cidr::{Ipv4Inet, Ipv6Inet};
 use std::net::{Ipv4Addr, Ipv6Addr};
 use windows::Win32::Networking::WinSock::{
-    AF_INET, AF_INET6, IN6_ADDR, IN6_ADDR_0, IN_ADDR, IN_ADDR_0, SOCKADDR_IN, SOCKADDR_IN6,
+    AF_INET, AF_INET6, IN_ADDR, IN_ADDR_0, IN6_ADDR, IN6_ADDR_0, SOCKADDR_IN, SOCKADDR_IN6,
 };
 
 #[derive(Hash, Eq, PartialEq, Debug)]

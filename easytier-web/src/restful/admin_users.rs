@@ -93,7 +93,10 @@ async fn list_users(auth_session: AuthSession) -> Result<Json<Vec<UserInfo>>, Ht
             tracing::error!("Failed to list users: {e:?}");
             Err((
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json::from(other_error_with_code("Failed to list users", "internal_error")),
+                Json::from(other_error_with_code(
+                    "Failed to list users",
+                    "internal_error",
+                )),
             ))
         }
     }

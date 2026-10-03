@@ -15,6 +15,8 @@ use easytier_proto::{
     rpc_types::{self, controller::BaseController},
 };
 
+#[cfg(feature = "web-client")]
+use crate::config::toml::{ConfigLoader as _, TomlConfig};
 use crate::{
     config::{IpPrefix, ProxyNetworkConfig},
     connectivity::manual::{ManualConnectorSnapshot, ManualConnectorStatus},
@@ -24,8 +26,6 @@ use crate::{
     },
     peers::{context::TrustedKeySource, foreign_network::ForeignNetworkEntryInfo},
 };
-#[cfg(feature = "web-client")]
-use crate::config::toml::{ConfigLoader as _, TomlConfig};
 
 use super::resolve_instance;
 #[cfg(feature = "web-client")]

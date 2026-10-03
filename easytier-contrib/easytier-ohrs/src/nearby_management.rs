@@ -34,11 +34,11 @@ use easytier_proto::{
         CollectNetworkInfoRequest, CollectNetworkInfoResponse, DeleteNetworkInstanceRequest,
         DeleteNetworkInstanceResponse, GetConfigServerStatusRequest, GetConfigServerStatusResponse,
         GetNetworkInstanceConfigRequest, GetNetworkInstanceConfigResponse,
-        ListNetworkInstanceMetaRequest, ListNetworkInstanceMetaResponse, ListNetworkInstanceRequest,
-        ListNetworkInstanceResponse, RetainNetworkInstanceRequest, RetainNetworkInstanceResponse,
-        RunNetworkInstanceRequest, RunNetworkInstanceResponse, ValidateConfigRequest,
-        ValidateConfigResponse, WebClientService, WebClientServiceClientFactory,
-        WebClientServiceServer,
+        ListNetworkInstanceMetaRequest, ListNetworkInstanceMetaResponse,
+        ListNetworkInstanceRequest, ListNetworkInstanceResponse, RetainNetworkInstanceRequest,
+        RetainNetworkInstanceResponse, RunNetworkInstanceRequest, RunNetworkInstanceResponse,
+        ValidateConfigRequest, ValidateConfigResponse, WebClientService,
+        WebClientServiceClientFactory, WebClientServiceServer,
     },
     common::TunnelInfo,
     rpc_types::{controller::BaseController, error::Error as RpcError},
@@ -110,13 +110,12 @@ struct NearbyHostCommandState {
     completions: HashMap<String, oneshot::Sender<Result<(), String>>>,
 }
 
-static NEARBY_HOST_COMMANDS: LazyLock<Mutex<NearbyHostCommandState>> =
-    LazyLock::new(|| {
-        Mutex::new(NearbyHostCommandState {
-            queued: VecDeque::new(),
-            completions: HashMap::new(),
-        })
-    });
+static NEARBY_HOST_COMMANDS: LazyLock<Mutex<NearbyHostCommandState>> = LazyLock::new(|| {
+    Mutex::new(NearbyHostCommandState {
+        queued: VecDeque::new(),
+        completions: HashMap::new(),
+    })
+});
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum NearbyRole {

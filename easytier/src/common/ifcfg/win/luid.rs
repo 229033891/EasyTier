@@ -156,7 +156,9 @@ impl InterfaceLuid {
         for i in 0..num_entries {
             let current_entry = unsafe { x_table.add(i as _) };
             if unsafe { (*current_entry).InterfaceLuid.Value } == self_value {
-                unsafe { let _ = DeleteUnicastIpAddressEntry(current_entry); };
+                unsafe {
+                    let _ = DeleteUnicastIpAddressEntry(current_entry);
+                };
             }
         }
 
@@ -373,10 +375,6 @@ impl InterfaceLuid {
         row.NlMtu = mtu;
 
         let ret = unsafe { SetIpInterfaceEntry(&mut row) };
-        if ret == NO_ERROR {
-            Ok(())
-        } else {
-            Err(ret)
-        }
+        if ret == NO_ERROR { Ok(()) } else { Err(ret) }
     }
 }

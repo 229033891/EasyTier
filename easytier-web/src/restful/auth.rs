@@ -31,7 +31,7 @@ mod put {
     use axum_login::AuthUser;
     use easytier::proto::common::Void;
 
-    use crate::restful::{HttpHandleError, other_error, users::ChangePassword};
+    use crate::restful::{HttpHandleError, users::ChangePassword};
 
     use super::*;
 

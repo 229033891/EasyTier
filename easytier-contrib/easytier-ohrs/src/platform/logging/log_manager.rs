@@ -3,8 +3,8 @@ use std::collections::VecDeque;
 use std::fs::{self, Metadata, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::sync::{LazyLock, Mutex};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{LazyLock, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 const LOG_DIR_NAME: &str = "easytier-logs";

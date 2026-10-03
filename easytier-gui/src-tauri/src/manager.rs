@@ -405,10 +405,20 @@ impl GUIClientManager {
                         let instance_id_str = instance_id_clone.to_string();
                         loop {
                             match event_receiver.recv().await {
-                                Ok(easytier::common::global_ctx::GlobalCtxEvent::DhcpIpv4Changed(_, _)) => {
+                                Ok(
+                                    easytier::common::global_ctx::GlobalCtxEvent::DhcpIpv4Changed(
+                                        _,
+                                        _,
+                                    ),
+                                ) => {
                                     let _ = app_clone.emit("dhcp_ip_changed", &instance_id_str);
                                 }
-                                Ok(easytier::common::global_ctx::GlobalCtxEvent::ProxyCidrsUpdated(_, _)) => {
+                                Ok(
+                                    easytier::common::global_ctx::GlobalCtxEvent::ProxyCidrsUpdated(
+                                        _,
+                                        _,
+                                    ),
+                                ) => {
                                     let _ = app_clone.emit("proxy_cidrs_updated", &instance_id_str);
                                 }
                                 Ok(_) => {}

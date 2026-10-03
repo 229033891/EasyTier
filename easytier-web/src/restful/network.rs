@@ -551,8 +551,8 @@ impl NetworkApi {
 mod tests {
     use super::*;
 
-    #[test]
-    fn rpc_timeout_uses_display_message_and_stable_code() {
+    #[tokio::test]
+    async fn rpc_timeout_uses_display_message_and_stable_code() {
         let elapsed = tokio::time::timeout(
             std::time::Duration::from_millis(0),
             std::future::pending::<()>(),
