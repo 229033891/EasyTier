@@ -486,7 +486,7 @@ fn interface_name_from_index(index: u32) -> String {
 
 fn sockaddr_inet_to_ipaddr(addr: &SOCKADDR_INET) -> Option<IpAddr> {
     unsafe {
-        match ADDRESS_FAMILY(addr.si_family as u32) {
+        match addr.si_family {
             AF_INET => {
                 let v4 = addr.Ipv4.sin_addr.S_un.S_addr;
                 Some(IpAddr::V4(Ipv4Addr::from(u32::from_be(v4))))
