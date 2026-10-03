@@ -569,7 +569,7 @@ const eventLogContent = computed(() => {
         <!-- 节点详情：与「节点信息」同级的一级面板，不再嵌在「当前节点信息」内 -->
         <Panel v-if="myNodeInfo" v-model:collapsed="panelCollapsed.nodeDetails" :header="t('node_info_details')"
           toggleable :pt="panelHeaderPt('nodeDetails')">
-          <div class="node-detail-groups flex flex-col gap-1.5 max-h-72 overflow-auto">
+          <div class="node-detail-groups">
             <div v-for="group in myNodeInfoGroups" :key="group.key" class="node-info-group">
               <span class="node-info-group-title" :title="t(group.titleKey)">
                 {{ t(group.titleKey) }}
@@ -788,7 +788,14 @@ const eventLogContent = computed(() => {
 
 /* 节点详情分组：行高随 chip 内容自适应（1 行或多行） */
 .node-detail-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 0.375rem;
   padding-right: 0.1rem;
+  /* Desktop/GUI: keep a compact scroll area. */
+  max-height: 18rem;
+  overflow: auto;
+  overscroll-behavior: contain;
 }
 
 .node-info-group {
@@ -801,8 +808,8 @@ const eventLogContent = computed(() => {
   border-radius: calc(var(--et-radius, 0.75rem) - 0.25rem);
   background: var(--surface-50, #f8fafc);
   padding: 0.35rem 0.5rem 0.4rem;
-  /* Do not shrink inside .node-detail-groups (flex column + max-height).
-     min-height:0 + default flex-shrink crushed rows and overlapped chips on Android WebView. */
+  /* Never shrink inside the flex column — Android Chrome/WebView otherwise
+     crushes rows so chips and copy buttons overlap. */
   height: auto;
   min-height: auto;
   flex: 0 0 auto;
@@ -952,6 +959,12 @@ const eventLogContent = computed(() => {
 }
 
 @media (max-width: 640px) {
+  /* Mobile web console / Android: avoid nested scroll; let the page scroll. */
+  .node-detail-groups {
+    max-height: none;
+    overflow: visible;
+  }
+
   .node-info-group {
     /* Narrow: title + copy on row 1, chips full-width on row 2. */
     grid-template-columns: minmax(0, 1fr) auto;

@@ -574,8 +574,8 @@ const locationText = (device: Utils.DeviceInfo): string => {
     gap: 0.5rem;
 }
 
-/* Narrow screens: stack meta text and action buttons to avoid overlap. */
-@media (max-width: 480px) {
+/* Phone / Android web console: stack meta text and action buttons. */
+@media (max-width: 640px) {
     .device-card-meta-row {
         flex-wrap: wrap;
     }
