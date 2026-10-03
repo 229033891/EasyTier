@@ -689,6 +689,10 @@ web:
     error_unauthorized: Unauthorized or session expired. Please sign in again.
     error_db: Database operation failed. Please try again later.
     error_internal: Internal server error. Please try again later.
+    error_rpc_execution: The device could not perform this operation. Check the config and try again.
+    error_rpc_tunnel: The connection to the device was interrupted. Confirm it is online and try again.
+    error_rpc_shutdown: The device connection is shutting down. Please try again shortly.
+    error_rpc: Failed to communicate with the device. Please try again later.
     error_unknown: The operation failed. Please try again later.
     import_config: Import Config
     import_config_tip: Import a local file and overwrite the current network config

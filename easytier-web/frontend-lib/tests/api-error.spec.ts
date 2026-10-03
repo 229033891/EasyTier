@@ -73,5 +73,39 @@ describe('API error formatting', () => {
         t,
       ),
     ).toBe('i18n:web.device_management.error_db')
+
+    expect(
+      formatApiErrorDetail(
+        { response: { data: { message: 'Tunnel error: reset', code: 'rpc_tunnel' } } },
+        t,
+      ),
+    ).toBe('i18n:web.device_management.error_rpc_tunnel')
+
+    expect(
+      formatApiErrorDetail(
+        { response: { data: { message: 'Rust error: invalid listener', code: 'rpc_execution' } } },
+        t,
+      ),
+    ).toBe('i18n:web.device_management.error_rpc_execution')
+
+    expect(
+      formatApiErrorDetail(
+        { response: { data: { message: 'Shutdown', code: 'rpc_shutdown' } } },
+        t,
+      ),
+    ).toBe('i18n:web.device_management.error_rpc_shutdown')
+
+    expect(
+      formatApiErrorDetail(
+        { response: { data: { message: 'Decode error', code: 'rpc_error' } } },
+        t,
+      ),
+    ).toBe('i18n:web.device_management.error_rpc')
+  })
+
+  it('classifies legacy RPC display text without codes', () => {
+    expect(classifyApiError({ message: 'Tunnel error: connection reset' })).toBe('rpc_tunnel')
+    expect(classifyApiError({ message: 'Rust error: bad config' })).toBe('rpc_execution')
+    expect(classifyApiError({ message: 'Shutdown' })).toBe('rpc_shutdown')
   })
 })

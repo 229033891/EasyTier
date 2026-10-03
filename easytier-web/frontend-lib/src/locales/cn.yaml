@@ -690,6 +690,10 @@ web:
     error_unauthorized: 未授权或登录已过期，请重新登录。
     error_db: 数据库操作失败，请稍后重试。
     error_internal: 服务器内部错误，请稍后重试。
+    error_rpc_execution: 设备无法执行该操作，请检查配置后重试。
+    error_rpc_tunnel: 与设备的连接已中断，请确认设备在线后重试。
+    error_rpc_shutdown: 设备连接正在关闭，请稍后重试。
+    error_rpc: 与设备通信失败，请稍后重试。
     error_unknown: 操作失败，请稍后重试。
     import_config: 导入配置
     import_config_tip: 从本地文件导入并覆盖当前网络配置

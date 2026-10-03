@@ -296,7 +296,7 @@ const sortDevices = (devices: Array<Utils.DeviceInfo> | undefined) => {
                 result = a.hostname.localeCompare(b.hostname);
                 break;
             case 'version':
-                result = a.easytier_version.localeCompare(b.easytier_version);
+                result = (a.easytier_version || '').localeCompare(b.easytier_version || '');
                 break;
             case 'networks':
                 result = a.running_network_count - b.running_network_count;
@@ -550,9 +550,44 @@ const locationText = (device: Utils.DeviceInfo): string => {
     }
 }
 
+.device-card-meta-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem 0.75rem;
+    min-width: 0;
+}
+
+.device-card-meta {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    min-width: 0;
+    flex: 1 1 auto;
+    font-size: var(--et-fs-body, 0.875rem);
+}
+
 .device-card-actions {
+    display: flex;
     flex-shrink: 0;
     align-items: center;
+    gap: 0.5rem;
+}
+
+/* Narrow screens: stack meta text and action buttons to avoid overlap. */
+@media (max-width: 480px) {
+    .device-card-meta-row {
+        flex-wrap: wrap;
+    }
+
+    .device-card-meta {
+        flex: 1 1 100%;
+        max-width: 100%;
+    }
+
+    .device-card-actions {
+        margin-left: auto;
+    }
 }
 
 .device-count-badge {
@@ -578,9 +613,10 @@ const locationText = (device: Utils.DeviceInfo): string => {
     font-size: var(--et-fs-body);
     line-height: 1.25rem;
     opacity: 0.9;
-    display: inline-flex;
-    align-items: center;
-    gap: var(--et-space-1);
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .location-separator {
@@ -735,14 +771,14 @@ const locationText = (device: Utils.DeviceInfo): string => {
                                 >
                                     {{ isDeviceOnline(device) ? t('web.device.online') : t('web.device.offline') }}
                                 </span>
-                                <div class="text-xs version-badge" v-tooltip.top="`EasyTier ${device.easytier_version}`">
-                                    v{{ device.easytier_version.split('-')[0] || '—' }}
+                                <div class="text-xs version-badge" v-tooltip.top="`EasyTier ${device.easytier_version || '—'}`">
+                                    v{{ (device.easytier_version || '').split('-')[0] || '—' }}
                                 </div>
                             </div>
                         </div>
 
-                        <div class="flex justify-between items-center">
-                            <div class="text-sm truncate card-subtitle max-w-[60%] flex items-center gap-2"
+                        <div class="device-card-meta-row">
+                            <div class="card-subtitle device-card-meta"
                                 v-tooltip.top="isDeviceOnline(device)
                                     ? locationText(device)
                                     : (device.report_time
@@ -767,7 +803,7 @@ const locationText = (device: Utils.DeviceInfo): string => {
                                 </span>
                             </div>
 
-                            <div class="device-card-actions flex items-center gap-2">
+                            <div class="device-card-actions">
                                 <!-- 运行中虚拟网数量（悬停样式与按钮一致） -->
                                 <span
                                     class="et-icon-action et-icon-action--primary device-count-badge"

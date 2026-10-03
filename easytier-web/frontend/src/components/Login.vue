@@ -32,18 +32,18 @@ const onSubmit = async () => {
     try {
         saveApiHost(apiHost.value);
         const credential: Credential = { username: username.value, password: password.value, };
-        let ret = await api.value?.login(credential);
-        if (ret.success) {
+        const ret = await api.value.login(credential);
+        if (ret?.success) {
             localStorage.setItem('apiHost', btoa(apiHost.value));
             router.push({
                 name: 'dashboard',
                 params: { apiHost: btoa(apiHost.value) },
             });
         } else {
-            const detailKey = `web.login.${ret.message}`
-            const detail = ['invalid_credentials', 'unknown_error'].includes(ret.message)
-                ? t(detailKey)
-                : (ret.message || t('web.login.unknown_error'))
+            const message = ret?.message || 'unknown_error'
+            const detail = ['invalid_credentials', 'unknown_error'].includes(message)
+                ? t(`web.login.${message}`)
+                : message
             toast.add({
                 severity: 'error',
                 summary: t('web.login.failed'),

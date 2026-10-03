@@ -90,6 +90,10 @@ export type ApiErrorKind =
     | 'unauthorized'
     | 'db_error'
     | 'internal_error'
+    | 'rpc_execution'
+    | 'rpc_tunnel'
+    | 'rpc_shutdown'
+    | 'rpc_error'
     | 'unknown'
 
 export interface ApiErrorPayload {
@@ -164,6 +168,14 @@ export function classifyApiError(payload: ApiErrorPayload): ApiErrorKind {
     switch (code) {
         case 'rpc_timeout':
             return 'timeout'
+        case 'rpc_execution':
+            return 'rpc_execution'
+        case 'rpc_tunnel':
+            return 'rpc_tunnel'
+        case 'rpc_shutdown':
+            return 'rpc_shutdown'
+        case 'rpc_error':
+            return 'rpc_error'
         case 'client_not_found':
             return 'client_not_found'
         case 'not_found':
@@ -184,6 +196,15 @@ export function classifyApiError(payload: ApiErrorPayload): ApiErrorKind {
     const message = payload.message
     if (/timeout|Elapsed\(\(\)\)|deadline has elapsed|timed?\s*out/i.test(message)) {
         return 'timeout'
+    }
+    if (/tunnel error|tunnel (closed|disconnected|reset)/i.test(message)) {
+        return 'rpc_tunnel'
+    }
+    if (/\bshutdown\b/i.test(message)) {
+        return 'rpc_shutdown'
+    }
+    if (/^rust error:|^execution error:|rpc error:/i.test(message)) {
+        return 'rpc_execution'
     }
     if (/client not found/i.test(message)) {
         return 'client_not_found'
@@ -209,6 +230,10 @@ const API_ERROR_I18N_KEYS: Record<Exclude<ApiErrorKind, 'unknown'>, string> = {
     unauthorized: 'web.device_management.error_unauthorized',
     db_error: 'web.device_management.error_db',
     internal_error: 'web.device_management.error_internal',
+    rpc_execution: 'web.device_management.error_rpc_execution',
+    rpc_tunnel: 'web.device_management.error_rpc_tunnel',
+    rpc_shutdown: 'web.device_management.error_rpc_shutdown',
+    rpc_error: 'web.device_management.error_rpc',
 }
 
 /** Map API/RPC failures to localized, actionable copy for toasts. */
@@ -278,11 +303,12 @@ export function buildDeviceInfo(device: any): DeviceInfo {
     let dev_info: DeviceInfo = {
         hostname: reported,
         reported_hostname: reported,
-        public_ip: device.client_url,
+        public_ip: device.client_url ?? '',
         running_network_instances: runningInstances.map((instance: any) => UuidToStr(instance)),
         running_network_count: runningInstances.length,
-        report_time: device.info?.report_time,
-        easytier_version: device.info?.easytier_version,
+        report_time: device.info?.report_time ?? '',
+        // Keep a string so template `.split` never throws on missing heartbeat fields.
+        easytier_version: device.info?.easytier_version ?? '',
         machine_id: UuidToStr(device.info?.machine_id),
         location: device.location,
         online: true,
