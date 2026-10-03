@@ -37,9 +37,9 @@
 ## 2. 推荐发版流水线
 
 ```text
-dev / dev-en  ──(手动)──►  ET Linux / Windows / Android
+dev  ──(手动)──►  ET Linux / Windows / Android
        │                      │
-       │                      └─► ET Docker（填 Linux run_id，打 tag 如 dev-en）
+       │                      └─► ET Docker（填 Linux run_id，打 tag 如 dev）
        │
 releases/vX.Y.Z ──(push)──► ET Linux + Windows + Android（并行 Artifact）
        │
@@ -147,7 +147,7 @@ sudo bash script/easytier-install.sh update
 # 先有一次成功的 ET Linux（Artifact: ET-linux-x86_64）
 gh workflow run "ET Docker" --ref <branch> \
   -f run_id=<Linux_run_id> \
-  -f image_tag=dev-en \
+  -f image_tag=dev \
   -f mark_latest=false \
   -f mark_unstable=true
 ```

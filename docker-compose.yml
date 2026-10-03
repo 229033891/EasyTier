@@ -2,9 +2,9 @@
 #
 # 镜像来源（任选其一，替换 <owner> / tag）：
 #   ghcr.io/229033891/et:v2.7.0         # 正式 Release 对应 tag
-#   ghcr.io/229033891/et:dev-en         # 开发验证（ET Docker 手动打）
+#   ghcr.io/229033891/et:dev            # 开发验证（ET Docker 手动打）
 #   ghcr.io/229033891/et:latest         # 仅 main 流水线 mark_latest 时
-# 国内加速示例：m.daocloud.io/ghcr.io/229033891/et:dev-en
+# 国内加速示例：m.daocloud.io/ghcr.io/229033891/et:dev
 # 安装/升级总方案：docs/roadmap/github-release-install.md
 #
 # 从旧版 easytier/easytier:latest 迁移注意：
@@ -18,7 +18,7 @@
 
 services:
   console:
-    image: ghcr.io/229033891/et:dev-en
+    image: ghcr.io/229033891/et:dev
     container_name: et-console
     restart: unless-stopped
     # 镜像默认 ENTRYPOINT 为 ET-core；控制台需改为 ET-web-embed
@@ -38,7 +38,7 @@ services:
       - ./et-console-data:/app/data
 
   node:
-    image: ghcr.io/229033891/et:dev-en
+    image: ghcr.io/229033891/et:dev
     container_name: et-node
     profiles: ["node"]
     restart: unless-stopped

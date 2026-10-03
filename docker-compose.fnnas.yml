@@ -2,7 +2,7 @@ version: "3.8"
 
 services:
   easytier-core:
-    image: ghcr.io/229033891/et:dev-en
+    image: ghcr.io/229033891/et:dev
     container_name: easytier-core
     hostname: FNNAS
     restart: unless-stopped
