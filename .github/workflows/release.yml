@@ -1,77 +1,161 @@
 name: ET Release
 
+# Low-risk Draft Release aggregator:
+# - Prefer auto-discovering the latest successful ET Linux / Windows / Android
+#   runs on a given branch (typically releases/vX.Y.Z).
+# - Explicit run_id inputs still override discovery.
+# - Always creates a DRAFT GitHub Release; never marks latest automatically.
+# Publish the draft manually after checking assets and SHAs.
+
 on:
   workflow_dispatch:
     inputs:
-      core_run_id:
-        description: 'The run id of ET Linux Action in EasyTier repo'
-        type: number
-        required: true
-      gui_run_id:
-        description: 'The run id of ET Windows Action in EasyTier repo'
-        type: number
-        required: true
-      mobile_run_id:
-        description: 'The run id of ET Android Action in EasyTier repo'
-        type: number
-        required: true
-      openwrt_run_id:
-        description: 'The run id of ET OpenWrt Action in EasyTier repo'
-        type: number
-        required: false
-        default: 0
       version:
-        description: 'Version for this release'
+        description: 'Version / tag for this release (e.g. v2.7.0)'
         type: string
         default: 'v2.7.0'
         required: true
-      make_latest:
-        description: 'Mark this release as latest'
-        type: boolean
-        default: true
-        required: true
+      source_branch:
+        description: 'Branch used to find latest successful builds when run_id is empty (e.g. releases/v2.7.0)'
+        type: string
+        required: false
+        default: ''
+      core_run_id:
+        description: 'Optional override: ET Linux run id (0 = auto-discover)'
+        type: number
+        required: false
+        default: 0
+      gui_run_id:
+        description: 'Optional override: ET Windows run id (0 = auto-discover)'
+        type: number
+        required: false
+        default: 0
+      mobile_run_id:
+        description: 'Optional override: ET Android run id (0 = auto-discover)'
+        type: number
+        required: false
+        default: 0
+      openwrt_run_id:
+        description: 'Optional: ET OpenWrt run id (0 = skip)'
+        type: number
+        required: false
+        default: 0
 
 permissions:
   contents: write
+  actions: read
 
 jobs:
   release:
     runs-on: ubuntu-latest
     steps:
-      -
-        name: Checkout
+      - name: Checkout
         uses: actions/checkout@v5
+
+      - name: Resolve artifact run ids
+        id: resolve
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SOURCE_BRANCH: ${{ inputs.source_branch }}
+          CORE_RUN_ID: ${{ inputs.core_run_id }}
+          GUI_RUN_ID: ${{ inputs.gui_run_id }}
+          MOBILE_RUN_ID: ${{ inputs.mobile_run_id }}
+          OPENWRT_RUN_ID: ${{ inputs.openwrt_run_id }}
+        run: |
+          set -euo pipefail
+
+          branch="${SOURCE_BRANCH}"
+          if [ -z "$branch" ]; then
+            branch="${GITHUB_REF_NAME}"
+          fi
+          echo "Using source_branch=${branch}"
+
+          resolve_run() {
+            local workflow="$1"
+            local id
+            id="$(gh run list \
+              --workflow "$workflow" \
+              --branch "$branch" \
+              --status success \
+              --limit 1 \
+              --json databaseId,headSha,displayTitle,url \
+              --jq '.[0].databaseId // empty')"
+            if [ -z "$id" ]; then
+              echo "::error::No successful run found for workflow '${workflow}' on branch '${branch}'"
+              exit 1
+            fi
+            echo "$id"
+          }
+
+          describe_run() {
+            local id="$1"
+            gh run view "$id" --json databaseId,headSha,displayTitle,url,workflowName \
+              --jq '"\(.workflowName) run \(.databaseId) sha=\(.headSha) \(.url)"'
+          }
+
+          if [ "${CORE_RUN_ID}" = "0" ] || [ -z "${CORE_RUN_ID}" ]; then
+            CORE_RUN_ID="$(resolve_run "ET Linux")"
+          fi
+          if [ "${GUI_RUN_ID}" = "0" ] || [ -z "${GUI_RUN_ID}" ]; then
+            GUI_RUN_ID="$(resolve_run "ET Windows")"
+          fi
+          if [ "${MOBILE_RUN_ID}" = "0" ] || [ -z "${MOBILE_RUN_ID}" ]; then
+            MOBILE_RUN_ID="$(resolve_run "ET Android")"
+          fi
+
+          {
+            echo "### Source runs"
+            echo
+            echo "- branch: \`${branch}\`"
+            echo "- $(describe_run "$CORE_RUN_ID")"
+            echo "- $(describe_run "$GUI_RUN_ID")"
+            echo "- $(describe_run "$MOBILE_RUN_ID")"
+            if [ "${OPENWRT_RUN_ID}" != "0" ] && [ -n "${OPENWRT_RUN_ID}" ]; then
+              echo "- $(describe_run "$OPENWRT_RUN_ID")"
+            fi
+            echo
+            echo "This release was created as a **draft**. Review assets, then publish manually."
+          } > release_body.md
+
+          echo "core_run_id=${CORE_RUN_ID}" >> "$GITHUB_OUTPUT"
+          echo "gui_run_id=${GUI_RUN_ID}" >> "$GITHUB_OUTPUT"
+          echo "mobile_run_id=${MOBILE_RUN_ID}" >> "$GITHUB_OUTPUT"
+          echo "openwrt_run_id=${OPENWRT_RUN_ID}" >> "$GITHUB_OUTPUT"
+          echo "source_branch=${branch}" >> "$GITHUB_OUTPUT"
+
+          echo "Resolved:"
+          cat release_body.md
 
       - name: Download Core Artifact
         uses: dawidd6/action-download-artifact@v11
         with:
-          github_token: ${{secrets.GITHUB_TOKEN}}
-          run_id: ${{ inputs.core_run_id }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          run_id: ${{ steps.resolve.outputs.core_run_id }}
           repo: ${{ github.repository }}
           path: release_assets
 
       - name: Download GUI Artifact
         uses: dawidd6/action-download-artifact@v11
         with:
-          github_token: ${{secrets.GITHUB_TOKEN}}
-          run_id: ${{ inputs.gui_run_id }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          run_id: ${{ steps.resolve.outputs.gui_run_id }}
           repo: ${{ github.repository }}
           path: release_assets_nozip
 
       - name: Download Mobile Artifact
         uses: dawidd6/action-download-artifact@v11
         with:
-          github_token: ${{secrets.GITHUB_TOKEN}}
-          run_id: ${{ inputs.mobile_run_id }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          run_id: ${{ steps.resolve.outputs.mobile_run_id }}
           repo: ${{ github.repository }}
           path: release_assets_nozip
 
       - name: Download OpenWrt Artifact
-        if: ${{ inputs.openwrt_run_id > 0 }}
+        if: ${{ steps.resolve.outputs.openwrt_run_id != '0' && steps.resolve.outputs.openwrt_run_id != '' }}
         uses: dawidd6/action-download-artifact@v11
         with:
-          github_token: ${{secrets.GITHUB_TOKEN}}
-          run_id: ${{ inputs.openwrt_run_id }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          run_id: ${{ steps.resolve.outputs.openwrt_run_id }}
           repo: ${{ github.repository }}
           path: release_assets
 
@@ -107,12 +191,15 @@ jobs:
             done
           fi
 
-      - name: Release
+      - name: Create draft GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           name: ${{ inputs.version }}
+          tag_name: ${{ inputs.version }}
           draft: true
+          prerelease: false
+          make_latest: false
+          body_path: release_body.md
           files: |
             ./zipped_assets/*
           token: ${{ secrets.GITHUB_TOKEN }}
-          tag_name: ${{ inputs.version }}
