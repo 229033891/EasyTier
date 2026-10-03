@@ -2,12 +2,13 @@
 
 ## Status
 
-- 状态：Active（方案文档；与现有脚本并存）
-- 日期：2026-10-02
+- Status: **Roadmap**（方案文档；与现有脚本并存）
+- 最近审阅：2026-10-03
 - 目标：后续**以 GitHub Actions / Release / GHCR 为唯一发版来源**，统一安装与升级路径
+- 索引：[`../README.md`](../README.md)
 - 配套：
-  - `docs/easytier-deploy.md`（Linux 交互脚本用法）
-  - `docs/easytier-web-upgrade-guide.md`（控制台保库升级）
+  - [`../ops/deploy-install.md`](../ops/deploy-install.md)（Linux 交互脚本用法）
+  - [`../ops/web-upgrade.md`](../ops/web-upgrade.md)（控制台保库升级）
   - `docker-compose.yml`（Docker 部署示例）
   - `script/easytier-install.sh` / `script/install.ps1`
 
@@ -53,7 +54,7 @@ releases/vX.Y.Z ──(push)──► ET Linux + Windows + …
 
 ### 3.1 Linux 控制台 / 节点（二进制，推荐生产）
 
-入口：`script/easytier-install.sh`（文档：`docs/easytier-deploy.md`）
+入口：`script/easytier-install.sh`（文档：[`../ops/deploy-install.md`](../ops/deploy-install.md)）
 
 | 模式 | 安装 | 升级 |
 |------|------|------|

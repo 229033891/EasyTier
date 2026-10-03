@@ -2,13 +2,27 @@
 
 ## Status
 
-Accepted.
+- Status: **Current**（主体已落地；下文部分段落仍保留规划期措辞，阅读时以代码为准）
+- Last reviewed: 2026-10-03
+- Index: [`../README.md`](../README.md)
 
-This document is the implementation plan for restructuring the EasyTier data
-plane and exposing it through native FFI and the `easytier-go` module. It
-describes a target architecture, not the current implementation.
+**相对原文「target, not current」的校正（2026-10-03）：**
 
-The implementation scope is:
+| 原文表述 | 现状 |
+|----------|------|
+| DataPlaneRuntime 尚未落地 | `easytier-core` 已有 `DataPlaneRuntime`、SOCKS5/端口转发 Adapter、路由策略 |
+| Go 未接 smoltcp 数据面 | `easytier-go` 已通过 ABI 暴露标准 `net` 接口（Overlay/smoltcp 路径） |
+| FFI 仍为旧 per-op 模型 | `easytier-ffi` / 相关 ABI 文档描述 completion-queue 风格 |
+
+剩余缺口（若与下方 Definition of done 冲突，以仓库代码与测试为准）：WASI/KCP 排除项、文档内未勾选的 DoD 条目。大规模删改历史章节暂缓，避免丢失决策记录。
+
+---
+
+Historical plan header (kept for context): this document began as the
+implementation plan for restructuring the EasyTier data plane and exposing it
+through native FFI and the `easytier-go` module.
+
+The original implementation scope was:
 
 - `easytier-core`;
 - the native `easytier` composition that injects the existing optional KCP

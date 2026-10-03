@@ -2,14 +2,16 @@
 
 ## Status
 
-- 状态：Active
+- Status: **Ops**
+- 最近审阅：2026-10-03
 - 适用范围：已部署的 `easytier-web` / `easytier-web-embed` 原地升级
 - 命名约定：产品正式名统一为 **`easytier-web`**（不使用 controller 等别名）
 - 核心目标：**保留 SQLite 业务数据**，升级后账号、网络配置、设备与会话相关数据仍可用
+- 索引：[`../README.md`](../README.md)
 - 配套文档：
-  - `docs/easytier-web-evolution-roadmap.md`（Web 演进路线）
-  - `docs/easytier-web-build-and-deploy.md`（打包与 Win/Linux 部署）
-  - `docs/easytier-product-map.md`（全产品地图）
+  - [`../roadmap/web-evolution.md`](../roadmap/web-evolution.md)（Web 演进路线）
+  - [`web-build-deploy.md`](./web-build-deploy.md)（打包与 Win/Linux 部署）
+  - [`../current/product-map.md`](../current/product-map.md)（全产品地图）
 
 ---
 

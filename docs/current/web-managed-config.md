@@ -2,10 +2,12 @@
 
 ## Status
 
-- 状态：Implemented（核心协议、持久化与 Session 增量收敛）
+- Status: **Current**（核心协议、持久化与 Session 增量收敛已落地）
+- 最近审阅：2026-10-03
 - 实施范围：EasyTier Web 的 HTTP 接收、校验、SQLite 持久化和 Session 运行态收敛
-- 上游依赖：后续由 Console 计算并发送 Patch
+- 上游依赖：后续由 Console 计算并发送 Patch（见 [`../roadmap/web-evolution.md`](../roadmap/web-evolution.md)）
 - 兼容要求：保留现有 Full PUT
+- 索引：[`../README.md`](../README.md)
 
 本文记录当前接收端方案。Session 合并已持久化 Patch 的 touched instance IDs，
 并在运行态收敛时读取这些实例的最新持久化状态。重启、通知丢失或无法安全判断

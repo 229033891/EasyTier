@@ -2,12 +2,15 @@
 
 ## Status
 
-- 状态：Active（帮助理解 monorepo 内各产品/组件职责与关系）
+- Status: **Current**
+- 最近审阅：2026-10-03
+- 状态说明：帮助理解 monorepo 内各产品/组件职责与关系
 - 范围：仓库内主要 crate、前端包与贡献组件
+- 索引：[`../README.md`](../README.md)
 - 配套文档：
-  - `docs/core-architecture.md`（core 架构细节）
-  - `docs/easytier-web-evolution-roadmap.md`（Web 演进路线）
-  - `docs/easytier-web-upgrade-guide.md`（Web 升级保库）
+  - [`architecture.md`](./architecture.md)（core 架构细节）
+  - [`../roadmap/web-evolution.md`](../roadmap/web-evolution.md)（Web 演进路线）
+  - [`../ops/web-upgrade.md`](../ops/web-upgrade.md)（Web 升级保库）
 
 ---
 
@@ -100,7 +103,7 @@ easytier           （Windows / Linux 等原生宿主 · 库+二进制入口）
 - 理解「在 Win/Linux 上怎么跑起来、CLI 从哪来」→ 看 **`easytier` crate**
 - 用户机器上跑的节点进程 → 通常叫 **`easytier-core` 二进制**
 
-架构权威说明见：`docs/core-architecture.md`。
+架构权威说明见：[`architecture.md`](./architecture.md)。
 
 ---
 
@@ -151,7 +154,7 @@ easytier-proto  ←  easytier-core  ←  easytier
 - `easytier-web`：API + 配置服务器（可不嵌前端）
 - `easytier-web-embed`：同上并嵌入前端静态资源（单文件部署常用）
 
-数据与升级：见 `docs/easytier-web-upgrade-guide.md`（**换程序不换库**）。
+数据与升级：见 [`../ops/web-upgrade.md`](../ops/web-upgrade.md)（**换程序不换库**）。
 
 ---
 
@@ -204,7 +207,7 @@ easytier-proto  ←  easytier-core  ←  easytier
 | 短期冻结、保持兼容 | `easytier` / `easytier-core`（节点侧行为与协议） |
 | 二者运行时关系 | `easytier-web` 管配置；节点跑网络；经配置协议对接，进程分离 |
 
-详见：`docs/easytier-web-evolution-roadmap.md`。
+详见：[`../roadmap/web-evolution.md`](../roadmap/web-evolution.md)。
 
 ---
 
@@ -223,6 +226,6 @@ easytier-proto  ←  easytier-core  ←  easytier
 ## 11. 修订方式
 
 1. 新增用户可交付产物或调整职责边界时，更新本文第 4–7 节。
-2. `easytier` / `easytier-core` 分层原则以 `docs/core-architecture.md` 为准；本文只做产品向说明。
+2. `easytier` / `easytier-core` 分层原则以 [`architecture.md`](./architecture.md) 为准；本文只做产品向说明。
 3. `easytier-web` 单独演进与升级流程不在此展开，回链到 `easytier-web-*` 专用文档。
 4. 产品正式名变更时，先改第 1 节术语约定，再全文替换。

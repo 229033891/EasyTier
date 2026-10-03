@@ -2,12 +2,15 @@
 
 ## Status
 
-- 状态：**Draft / 仅设计，不实现代码**
+- Status: **Roadmap**（Draft / 仅设计，尚未按本文改代码）
 - 日期：2026-10-03
+- 最近审阅：2026-10-03
 - 目标读者：产品决策 + 后续实现
+- 索引：[`../README.md`](../README.md)
+- **现状行为（已实现）**：[`../current/traffic-steering.md`](../current/traffic-steering.md)
 - 输入文档：
   - 出口节点选路与系统路由缺口（会话分析）
-  - [`domain-proxy-cidr-design-2026-10-02.md`](./domain-proxy-cidr-design-2026-10-02.md)（域名驱动子网代理草案）
+  - [`domain-proxy.md`](./domain-proxy.md)（域名驱动子网代理草案）
 - 决策原则：**用户要结果（上网能走对出口、域名能打中代理、路由能装能删），在正确性与性能可接受的前提下选定默认语义，避免两套机制互相抢流量却不说清优先级。**
 
 ---

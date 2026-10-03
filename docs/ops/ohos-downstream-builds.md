@@ -1,5 +1,11 @@
 # HarmonyOS HAR delivery
 
+## Status
+
+- Status: **Ops**
+- Last reviewed: 2026-10-03
+- Index: [`../README.md`](../README.md)
+
 The `ohos` workflow builds the Core HAR on pushes, pull requests, tags, and
 manual runs. Every successful run retains a short-lived HAR artifact, while
 publication to the private OHPM registry is deliberately restricted:

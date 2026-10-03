@@ -1,10 +1,16 @@
 # EasyTier 部署脚本
 
+## Status
+
+- Status: **Ops**
+- 最近审阅：2026-10-03
+- 索引：[`../README.md`](../README.md)
+
 一键安装 / 更新 / 备份 / 恢复自托管控制台与节点。**默认全程交互式**，无需记忆命令行参数。
 
 脚本位置：`script/easytier-install.sh`（配套静态检查：`script/check-easytier-install.sh`）。
 
-总方案（GitHub 产物 / Docker / 升级清单）：`docs/github-install-upgrade-scheme-2026-10-02.md`。
+总方案（GitHub 产物 / Docker / 升级清单）：[`../roadmap/github-release-install.md`](../roadmap/github-release-install.md)。
 
 ## 远程一键安装（VPS）
 

@@ -2,12 +2,14 @@
 
 ## Status
 
-- 状态：Active
+- Status: **Ops**
+- 最近审阅：2026-10-03
 - 适用范围：修改 `easytier-web` 后如何打出可在 **Windows / Linux** 部署的产物
 - 命名：产品正式名为 **`easytier-web`**
+- 索引：[`../README.md`](../README.md)
 - 配套：
-  - `docs/easytier-web-upgrade-guide.md`（现网升级与保库）
-  - `docs/easytier-web-evolution-roadmap.md`（演进路线）
+  - [`web-upgrade.md`](./web-upgrade.md)（现网升级与保库）
+  - [`../roadmap/web-evolution.md`](../roadmap/web-evolution.md)（演进路线）
 
 ---
 
@@ -214,7 +216,7 @@ chmod +x ./easytier-web-embed
 4. **同一 `--db` 路径**启动  
 5. 验证登录与节点  
 
-细节：`docs/easytier-web-upgrade-guide.md`。
+细节：[`web-upgrade.md`](./web-upgrade.md)。
 
 ---
 

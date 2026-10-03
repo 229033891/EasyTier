@@ -550,9 +550,44 @@ const locationText = (device: Utils.DeviceInfo): string => {
     }
 }
 
+.device-card-meta-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem 0.75rem;
+    min-width: 0;
+}
+
+.device-card-meta {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    min-width: 0;
+    flex: 1 1 auto;
+    font-size: var(--et-fs-body, 0.875rem);
+}
+
 .device-card-actions {
+    display: flex;
     flex-shrink: 0;
     align-items: center;
+    gap: 0.5rem;
+}
+
+/* 窄屏：状态/位置单独一行，操作按钮换到下一行右对齐，避免与长文案重叠 */
+@media (max-width: 480px) {
+    .device-card-meta-row {
+        flex-wrap: wrap;
+    }
+
+    .device-card-meta {
+        flex: 1 1 100%;
+        max-width: 100%;
+    }
+
+    .device-card-actions {
+        margin-left: auto;
+    }
 }
 
 .device-count-badge {
@@ -578,9 +613,10 @@ const locationText = (device: Utils.DeviceInfo): string => {
     font-size: var(--et-fs-body);
     line-height: 1.25rem;
     opacity: 0.9;
-    display: inline-flex;
-    align-items: center;
-    gap: var(--et-space-1);
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .location-separator {
@@ -741,8 +777,8 @@ const locationText = (device: Utils.DeviceInfo): string => {
                             </div>
                         </div>
 
-                        <div class="flex justify-between items-center">
-                            <div class="text-sm truncate card-subtitle max-w-[60%] flex items-center gap-2"
+                        <div class="device-card-meta-row">
+                            <div class="card-subtitle device-card-meta"
                                 v-tooltip.top="isDeviceOnline(device)
                                     ? locationText(device)
                                     : (device.report_time
@@ -767,7 +803,7 @@ const locationText = (device: Utils.DeviceInfo): string => {
                                 </span>
                             </div>
 
-                            <div class="device-card-actions flex items-center gap-2">
+                            <div class="device-card-actions">
                                 <!-- 运行中虚拟网数量（悬停样式与按钮一致） -->
                                 <span
                                     class="et-icon-action et-icon-action--primary device-count-badge"

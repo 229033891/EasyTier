@@ -2,20 +2,23 @@
 
 ## Status
 
-- 状态：Active（作为 `easytier-web` 后续开发与升级的指导文档）
+- Status: **Roadmap**
+- 最近审阅：2026-10-03
+- 状态说明：Active（作为 `easytier-web` 后续开发与升级的指导文档）
 - 适用范围：`easytier-web`（配置服务器 + REST API + 浏览器 UI）
-- 命名约定：产品正式名统一为 **`easytier-web`**（不使用 controller 等别名）；见 `docs/easytier-product-map.md` 第 1 节
+- 命名约定：产品正式名统一为 **`easytier-web`**（不使用 controller 等别名）；见 [`../current/product-map.md`](../current/product-map.md) 第 1 节
 - 短期约束：**不修改** `easytier` / `easytier-core`，仅演进 `easytier-web`
 - 兼容目标：与当前已发布的 `easytier` / `easytier-core` **运行时百分百兼容**
 - 部署目标：支持 **Windows** 与 **Linux** 独立部署、独立升级
+- 索引：[`../README.md`](../README.md)
 
 相关文档：
 
-- `docs/easytier-product-map.md`（全产品/组件地图；含 easytier 与 easytier-core 区别）
-- `docs/easytier-web-build-and-deploy.md`（打包与 Win/Linux 部署）
-- `docs/easytier-web-upgrade-guide.md`（现网 web 部署升级与保库）
-- `docs/easytier-web-managed-config-sync-plan.md`（managed config 增量同步）
-- `docs/core-architecture.md`（core 架构边界，本路线短期不改 core）
+- [`../current/product-map.md`](../current/product-map.md)（全产品/组件地图）
+- [`../ops/web-build-deploy.md`](../ops/web-build-deploy.md)（打包与 Win/Linux 部署）
+- [`../ops/web-upgrade.md`](../ops/web-upgrade.md)（现网 web 部署升级与保库）
+- [`../current/web-managed-config.md`](../current/web-managed-config.md)（managed config 增量同步）
+- [`../current/architecture.md`](../current/architecture.md)（core 架构边界，本路线短期不改 core）
 
 ---
 
@@ -169,7 +172,7 @@ easytier-core 节点 --(udp/tcp/ws)--->  easytier-web :22020 (默认配置服务
 
 ### 5.2 独立升级步骤（原则）
 
-详细操作见：`docs/easytier-web-upgrade-guide.md`。
+详细操作见：[`../ops/web-upgrade.md`](../ops/web-upgrade.md)。
 
 原则摘要：
 

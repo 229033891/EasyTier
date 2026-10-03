@@ -5,7 +5,7 @@
 #   ghcr.io/229033891/et:dev-en         # 开发验证（ET Docker 手动打）
 #   ghcr.io/229033891/et:latest         # 仅 main 流水线 mark_latest 时
 # 国内加速示例：m.daocloud.io/ghcr.io/229033891/et:dev-en
-# 安装/升级总方案：docs/github-install-upgrade-scheme-2026-10-02.md
+# 安装/升级总方案：docs/roadmap/github-release-install.md
 #
 # 从旧版 easytier/easytier:latest 迁移注意：
 #   1. 镜像名改为 ghcr.io/<owner>/et:<tag>（产物前缀 ET-*，ENTRYPOINT 已是 ET-core）

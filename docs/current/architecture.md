@@ -1,6 +1,12 @@
 # EasyTier Core Architecture
 
-## Status and scope
+## Status
+
+- Status: **Current**
+- Last reviewed: 2026-10-03
+- Index: [`../README.md`](../README.md)
+
+## Scope
 
 This document describes the current architecture after the portable-core
 refactor. It is the source of truth for ownership, dependency direction,

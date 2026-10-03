@@ -1,5 +1,11 @@
 # Host socket protection
 
+## Status
+
+- Status: **Current**
+- Last reviewed: 2026-10-03
+- Index: [`../README.md`](../README.md)
+
 VPN bypass is a socket-creation requirement, not an operation on a socket that
 core has already connected. Core and WASI guests never need an OS file descriptor.
 

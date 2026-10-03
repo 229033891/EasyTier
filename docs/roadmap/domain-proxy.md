@@ -2,12 +2,15 @@
 
 ## Status
 
-- 状态：**Draft / 暂缓实现**
-- 日期：2026-10-02
+- Status: **Roadmap**（Draft / 暂缓实现）
+- 最近审阅：2026-10-03
 - 适用范围：`easytier-core` 子网代理（`proxy_cidrs`）+ MagicDNS / 解析覆盖
 - 相关现状：子网代理仅支持 IP/CIDR 清单；MagicDNS 已有 A 记录同步能力雏形
 - 决策：先文档立项，**当前不实现代码**
-- **更新（2026-10-03）**：与出口节点 / 系统路由的交界、统一优先级与分阶段顺序，见 [`traffic-steering-unified-design-2026-10-03.md`](./traffic-steering-unified-design-2026-10-03.md)。本文仍是域名子系统的权威细节；全局导流以统一设计为准。
+- 索引：[`../README.md`](../README.md)
+- **全局导流 / 与出口交界**：[`traffic-steering-vNext.md`](./traffic-steering-vNext.md)
+- **出口与 CIDR 现状**：[`../current/traffic-steering.md`](../current/traffic-steering.md)
+- 本文仍是域名子系统的权威细节。
 
 ---
 
