@@ -307,6 +307,11 @@ impl CoreInstanceConfig {
             manual_routes: config
                 .get_routes()
                 .map(|routes| routes.into_iter().collect::<BTreeSet<_>>()),
+            exit_nodes: if host.ignore_unsupported_config && !host.proxy_enabled {
+                Vec::new()
+            } else {
+                config.get_exit_nodes()
+            },
             proxy: ProxyRuntimeConfig {
                 enable_exit_node: flags.enable_exit_node || host.force_exit_node,
                 no_tun: flags.no_tun,
@@ -709,6 +714,7 @@ data_compress_algo = "Zstd"
                 .is_empty()
         );
         assert!(normalized.peer.exit_nodes.is_empty());
+        assert!(normalized.connectivity.runtime.exit_nodes.is_empty());
         assert!(!normalized.connectivity.runtime.proxy.enable_exit_node);
         assert!(
             !normalized
@@ -735,5 +741,15 @@ data_compress_algo = "Zstd"
                 CompressionAlgoPb::None as i32
             }
         );
+    }
+
+    #[test]
+    fn exit_nodes_are_copied_into_runtime_services() {
+        let config = TomlConfig::default();
+        let exit = "10.144.144.2".parse().unwrap();
+        config.set_exit_nodes(vec![exit]);
+        let normalized = CoreInstanceConfig::from_toml(&config).unwrap();
+        assert_eq!(normalized.peer.exit_nodes, vec![exit]);
+        assert_eq!(normalized.connectivity.runtime.exit_nodes, vec![exit]);
     }
 }

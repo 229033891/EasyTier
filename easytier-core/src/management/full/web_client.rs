@@ -164,6 +164,10 @@ pub(crate) trait WebClientBackend: Send + Sync + 'static {
 
     fn failed_instance_ids(&self) -> Vec<uuid::Uuid>;
 
+    fn user_disabled_web_instance_ids(&self) -> Vec<uuid::Uuid> {
+        Vec::new()
+    }
+
     fn instance_state_generation(&self) -> usize {
         0
     }
@@ -215,6 +219,10 @@ where
 
     fn failed_instance_ids(&self) -> Vec<uuid::Uuid> {
         self.instances.failed_instance_ids()
+    }
+
+    fn user_disabled_web_instance_ids(&self) -> Vec<uuid::Uuid> {
+        self.instances.user_disabled_web_instance_ids()
     }
 
     fn instance_state_generation(&self) -> usize {
@@ -434,6 +442,7 @@ fn build_heartbeat_request(
     runtime_id: uuid::Uuid,
     running_network_instances: Vec<uuid::Uuid>,
     failed_network_instances: Vec<uuid::Uuid>,
+    disabled_network_instances: Vec<uuid::Uuid>,
 ) -> HeartbeatRequest {
     HeartbeatRequest {
         machine_id: Some(config.machine_id.into()),
@@ -453,6 +462,11 @@ fn build_heartbeat_request(
             .map(Into::into)
             .collect(),
         support_heartbeat_policy: true,
+        support_user_disabled_instances: true,
+        disabled_network_instances: disabled_network_instances
+            .into_iter()
+            .map(Into::into)
+            .collect(),
     }
 }
 
@@ -512,6 +526,8 @@ impl WebClientSession {
                 };
                 let observed_generation = controller.backend.instance_state_generation();
                 let failed_network_instances = controller.backend.failed_instance_ids();
+                let disabled_network_instances =
+                    controller.backend.user_disabled_web_instance_ids();
                 let running_network_instances = match controller.backend.instance_ids().await {
                     Ok(instance_ids) => {
                         running_instances_for_heartbeat(instance_ids, &failed_network_instances)
@@ -526,6 +542,7 @@ impl WebClientSession {
                     controller.runtime_id,
                     running_network_instances,
                     failed_network_instances,
+                    disabled_network_instances,
                 );
 
                 match client
@@ -734,6 +751,7 @@ mod tests {
         let runtime_id = uuid::Uuid::new_v4();
         let registered = uuid::Uuid::new_v4();
         let failed = uuid::Uuid::new_v4();
+        let disabled = uuid::Uuid::new_v4();
         let request = build_heartbeat_request(
             &WebClientConfig {
                 token: "token".to_owned(),
@@ -746,6 +764,7 @@ mod tests {
             runtime_id,
             vec![registered],
             vec![failed],
+            vec![disabled],
         );
 
         assert_eq!(request.inst_id.map(uuid::Uuid::from), Some(runtime_id));
@@ -766,6 +785,15 @@ mod tests {
             vec![failed]
         );
         assert!(request.support_heartbeat_policy);
+        assert!(request.support_user_disabled_instances);
+        assert_eq!(
+            request
+                .disabled_network_instances
+                .into_iter()
+                .map(uuid::Uuid::from)
+                .collect::<Vec<_>>(),
+            vec![disabled]
+        );
     }
 
     #[test]

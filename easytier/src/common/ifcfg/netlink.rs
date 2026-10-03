@@ -349,7 +349,10 @@ impl IfConfiguerTrait for NetlinkIfConfiger {
         let message = RouteMessageBuilder::new(libc::AF_INET as u8)
             .destination(IpAddr::V4(address), cidr_prefix)
             .oif(Self::get_interface_index(name)?)
-            .priority(cost.unwrap_or(65535) as u32)
+            .priority(
+                cost.map(|v| v as u32)
+                    .unwrap_or_else(|| super::implicit_route_metric(cidr_prefix, 65535, 50)),
+            )
             .table(libc::RT_TABLE_MAIN.into())
             .static_protocol()
             .universe_scope()
@@ -493,7 +496,10 @@ impl IfConfiguerTrait for NetlinkIfConfiger {
     ) -> Result<(), Error> {
         let mut builder = RouteMessageBuilder::new(libc::AF_INET6 as u8)
             .oif(Self::get_interface_index(name)?)
-            .priority(cost.unwrap_or(65535) as u32)
+            .priority(
+                cost.map(|v| v as u32)
+                    .unwrap_or_else(|| super::implicit_route_metric(cidr_prefix, 65535, 50)),
+            )
             .table(libc::RT_TABLE_MAIN.into())
             .static_protocol()
             .universe_scope()
@@ -535,6 +541,10 @@ impl IfConfiguerTrait for NetlinkIfConfiger {
         }
 
         Ok(())
+    }
+
+    fn specific_route_metric(&self) -> i32 {
+        65535
     }
 }
 

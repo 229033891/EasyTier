@@ -1750,6 +1750,10 @@ impl PeerManagerCore {
         *self.exit_nodes.write().await = exit_nodes;
     }
 
+    pub async fn configured_exit_nodes(&self) -> Vec<IpAddr> {
+        self.exit_nodes.read().await.clone()
+    }
+
     fn reload_acl(&self, acl: Option<&crate::proto::acl::Acl>) {
         self.acl_filter.reload_rules(acl);
     }
@@ -2722,6 +2726,11 @@ impl PeerOutboundPacketRouter {
             .collect()
     }
 
+    async fn resolve_exit_node_peer(&self) -> Option<PeerId> {
+        let exit_nodes = self.exit_nodes.read().await;
+        self.peers.resolve_exit_node_peer(&exit_nodes).await
+    }
+
     pub async fn get_msg_dst_peer_ipv4(&self, ipv4_addr: &Ipv4Addr) -> (Vec<PeerId>, bool) {
         let mut is_exit_node = false;
         let mut dst_peers = vec![];
@@ -2736,15 +2745,15 @@ impl PeerOutboundPacketRouter {
             .context
             .is_ip_in_same_network(&std::net::IpAddr::V4(*ipv4_addr))
         {
-            for exit_node in self.exit_nodes.read().await.iter() {
-                let IpAddr::V4(exit_node) = exit_node else {
-                    continue;
-                };
-                if let Some(peer_id) = self.peers.get_peer_id_by_ipv4(exit_node).await {
-                    dst_peers.push(peer_id);
-                    is_exit_node = true;
-                    break;
-                }
+            if let Some(peer_id) = self.resolve_exit_node_peer().await {
+                dst_peers.push(peer_id);
+                is_exit_node = true;
+            } else if let Some(peer_id) = self
+                .route
+                .get_peer_id_for_default_route_proxy(&IpAddr::V4(*ipv4_addr))
+                .await
+            {
+                dst_peers.push(peer_id);
             }
         }
         if self.host_routing.local_exit_node_fallback
@@ -2770,21 +2779,19 @@ impl PeerOutboundPacketRouter {
             dst_peers.extend(self.peers.list_routes().await.iter().map(|x| *x.key()));
         } else if let Some(peer_id) = self.peers.get_peer_id_by_ipv6(ipv6_addr).await {
             dst_peers.push(peer_id);
-        } else if !ipv6_addr.is_unicast_link_local()
-            && let Some(peer_id) = self.route.get_public_ipv6_gateway_peer_id().await
-        {
-            dst_peers.push(peer_id);
         } else if !ipv6_addr.is_unicast_link_local() {
             // NOTE: never route link local address to exit node.
-            for exit_node in self.exit_nodes.read().await.iter() {
-                let IpAddr::V6(exit_node) = exit_node else {
-                    continue;
-                };
-                if let Some(peer_id) = self.peers.get_peer_id_by_ipv6(exit_node).await {
-                    dst_peers.push(peer_id);
-                    is_exit_node = true;
-                    break;
-                }
+            if let Some(peer_id) = self.resolve_exit_node_peer().await {
+                dst_peers.push(peer_id);
+                is_exit_node = true;
+            } else if let Some(peer_id) = self.route.get_public_ipv6_gateway_peer_id().await {
+                dst_peers.push(peer_id);
+            } else if let Some(peer_id) = self
+                .route
+                .get_peer_id_for_default_route_proxy(&IpAddr::V6(*ipv6_addr))
+                .await
+            {
+                dst_peers.push(peer_id);
             }
         }
 

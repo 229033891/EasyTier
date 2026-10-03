@@ -213,11 +213,12 @@ fn log_event(instance_id: Uuid, event: GlobalCtxEvent) {
         GlobalCtxEvent::ConfigPatched(patch) => {
             event!(info, ?patch, "[{}] config patched", instance_id);
         }
-        GlobalCtxEvent::ProxyCidrsUpdated(added, removed) => {
+        GlobalCtxEvent::ProxyCidrsUpdated(added, removed, local_exit_default) => {
             event!(
                 info,
                 ?added,
                 ?removed,
+                local_exit_default,
                 "[{}] proxy CIDRs updated",
                 instance_id
             );

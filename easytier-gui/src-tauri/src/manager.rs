@@ -417,6 +417,7 @@ impl GUIClientManager {
                                     easytier::common::global_ctx::GlobalCtxEvent::ProxyCidrsUpdated(
                                         _,
                                         _,
+                                        _,
                                     ),
                                 ) => {
                                     let _ = app_clone.emit("proxy_cidrs_updated", &instance_id_str);

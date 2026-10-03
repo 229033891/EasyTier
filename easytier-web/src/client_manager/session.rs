@@ -497,6 +497,49 @@ fn should_notify_webhook_validation(heartbeat_count: u32) -> bool {
     heartbeat_count % WEBHOOK_VALIDATION_HEARTBEAT_INTERVAL == 1
 }
 
+async fn sync_client_disabled_network_state(
+    db: &crate::db::Db,
+    user_id: i32,
+    machine_id: uuid::Uuid,
+    req: &HeartbeatRequest,
+) -> Result<(), sea_orm::DbErr> {
+    let disabled = req
+        .disabled_network_instances
+        .iter()
+        .cloned()
+        .map(uuid::Uuid::from)
+        .collect::<HashSet<_>>();
+    let running = req
+        .running_network_instances
+        .iter()
+        .cloned()
+        .map(uuid::Uuid::from)
+        .collect::<HashSet<_>>();
+    let configs = db
+        .list_network_configs(
+            (user_id, machine_id),
+            easytier_core::management::remote_client::ListNetworkProps::All,
+        )
+        .await?;
+    for config in configs {
+        if super::managed_config::PersistedConfigSource::from_db(&config.source)
+            != super::managed_config::PersistedConfigSource::Web
+        {
+            continue;
+        }
+        let Ok(instance_id) = uuid::Uuid::parse_str(&config.network_instance_id) else {
+            continue;
+        };
+        let want_disabled = disabled.contains(&instance_id) && !running.contains(&instance_id);
+        if config.disabled == want_disabled {
+            continue;
+        }
+        db.update_network_config_state((user_id, machine_id), instance_id, want_disabled)
+            .await?;
+    }
+    Ok(())
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct HeartbeatIdentity {
     token: String,
@@ -843,6 +886,18 @@ impl SessionRpcService {
                 return Err(anyhow::anyhow!("User not found by token").into());
             }
         };
+
+        if req.support_user_disabled_instances
+            && let Err(e) =
+                sync_client_disabled_network_state(storage.db(), user_id, machine_id, &req).await
+        {
+            tracing::warn!(
+                %machine_id,
+                user_id,
+                ?e,
+                "failed to sync user-disabled network instances from heartbeat"
+            );
+        }
 
         let (storage_token, notifier, runtime_req, session_epoch, validation_notify) = {
             let mut data = self.data.write().await;
@@ -1216,6 +1271,77 @@ mod tests {
             user_token: token.to_string(),
             ..Default::default()
         }
+    }
+
+    #[tokio::test]
+    async fn heartbeat_disabled_list_is_authoritative_for_web_source_rows() {
+        use easytier::common::config::{ConfigSource, NetworkConfig};
+        use easytier_core::management::remote_client::Storage as _;
+
+        let db = crate::db::Db::memory_db().await;
+        let user_id = db.auto_create_user("disable-sync-token").await.unwrap().id;
+        let machine_id = uuid::Uuid::new_v4();
+        let web_inst = uuid::Uuid::new_v4();
+        let user_inst = uuid::Uuid::new_v4();
+        db.insert_or_update_user_network_config(
+            (user_id, machine_id),
+            web_inst,
+            NetworkConfig {
+                network_name: Some("web".to_string()),
+                ..Default::default()
+            },
+            ConfigSource::Web,
+        )
+        .await
+        .unwrap();
+        db.insert_or_update_user_network_config(
+            (user_id, machine_id),
+            user_inst,
+            NetworkConfig {
+                network_name: Some("user".to_string()),
+                ..Default::default()
+            },
+            ConfigSource::User,
+        )
+        .await
+        .unwrap();
+
+        let req = HeartbeatRequest {
+            support_user_disabled_instances: true,
+            disabled_network_instances: vec![web_inst.into()],
+            ..Default::default()
+        };
+        sync_client_disabled_network_state(&db, user_id, machine_id, &req)
+            .await
+            .unwrap();
+
+        let web_row = db
+            .get_network_config((user_id, machine_id), &web_inst.to_string())
+            .await
+            .unwrap()
+            .unwrap();
+        let user_row = db
+            .get_network_config((user_id, machine_id), &user_inst.to_string())
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(web_row.disabled);
+        assert!(!user_row.disabled);
+
+        let enable_req = HeartbeatRequest {
+            support_user_disabled_instances: true,
+            disabled_network_instances: vec![],
+            ..Default::default()
+        };
+        sync_client_disabled_network_state(&db, user_id, machine_id, &enable_req)
+            .await
+            .unwrap();
+        let web_row = db
+            .get_network_config((user_id, machine_id), &web_inst.to_string())
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(!web_row.disabled);
     }
 
     async fn failure_state_test_data() -> SessionData {

@@ -127,9 +127,11 @@ impl CoreEventSink for GlobalCtx {
                 mapped_listener,
                 backend,
             },
-            CoreEvent::ProxyCidrsUpdated { added, removed } => {
-                GlobalCtxEvent::ProxyCidrsUpdated(added, removed)
-            }
+            CoreEvent::ProxyCidrsUpdated {
+                added,
+                removed,
+                local_exit_default,
+            } => GlobalCtxEvent::ProxyCidrsUpdated(added, removed, local_exit_default),
             CoreEvent::PublicIpv6LeaseChanged { old, new } => {
                 GlobalCtxEvent::PublicIpv6Changed(old, new)
             }

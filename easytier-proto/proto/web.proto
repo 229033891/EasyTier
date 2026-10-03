@@ -24,6 +24,11 @@ message HeartbeatRequest {
   bool support_config_source = 9;
   repeated common.UUID failed_network_instances = 10;
   bool support_heartbeat_policy = 11;
+  // When true, disabled_network_instances is the client's full set of
+  // user-disabled web-managed instance IDs. Older clients leave this false
+  // so the server must not treat an empty list as "enable everything".
+  bool support_user_disabled_instances = 12;
+  repeated common.UUID disabled_network_instances = 13;
 }
 
 message HeartbeatResponse {

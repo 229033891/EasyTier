@@ -1690,3 +1690,45 @@ fn builds_next_hop_and_proxy_lookup_from_snapshot() {
         Some(3)
     );
 }
+
+#[test]
+fn default_proxy_cidr_is_excluded_from_specific_lookup() {
+    let mut remote_proxy_peer = peer(3);
+    remote_proxy_peer.info.proxy_cidrs.push("0.0.0.0/0".into());
+    remote_proxy_peer
+        .info
+        .proxy_cidrs
+        .push("10.10.0.0/16".into());
+
+    let snapshot = OspfRouteSnapshot {
+        peer_infos: vec![peer(1), peer(2), remote_proxy_peer],
+        conn_map: vec![connected(1, [2]), connected(2, [1, 3]), connected(3, [2])],
+        suppressed_peer_ids: BTreeSet::new(),
+        version: 1,
+    };
+
+    let table = OspfRouteTable::new();
+    table.build_from_snapshot(
+        1,
+        &snapshot,
+        NextHopPolicy::LeastHop,
+        &DefaultRouteCostCalculator,
+    );
+
+    assert_eq!(
+        table.get_peer_id_for_proxy(&"10.10.1.1".parse::<IpAddr>().unwrap()),
+        Some(3)
+    );
+    assert_eq!(
+        table.get_peer_id_for_proxy(&"8.8.8.8".parse::<IpAddr>().unwrap()),
+        None
+    );
+    assert_eq!(
+        table.get_peer_id_for_default_route_proxy(&"8.8.8.8".parse::<IpAddr>().unwrap()),
+        Some(3)
+    );
+    assert_eq!(
+        table.get_peer_id_for_default_route_proxy(&"10.10.1.1".parse::<IpAddr>().unwrap()),
+        None
+    );
+}

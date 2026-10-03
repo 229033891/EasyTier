@@ -5,12 +5,13 @@ use std::{
     pin::Pin,
     sync::Arc,
     task::{Context, Poll},
+    time::Duration,
 };
 
 use crate::common::{
     error::Error,
     global_ctx::{ArcGlobalCtx, GlobalCtxEvent},
-    ifcfg::{IfConfiger, IfConfiguerTrait},
+    ifcfg::{IfConfiger, IfConfiguerTrait, route_op_already_satisfied},
 };
 
 use easytier_core::{
@@ -952,49 +953,231 @@ impl NicCtx {
         ifname: &str,
         net_ns: &crate::common::netns::NetNS,
         cur_proxy_cidrs: &mut BTreeSet<cidr::Ipv4Cidr>,
+        exit_ipv6_default_installed: &mut bool,
+        ipv4_default_uses_exit_metric: &mut bool,
+        restore_public_ipv6_default: bool,
+        local_exit_default: bool,
         added: Vec<cidr::Ipv4Cidr>,
         removed: Vec<cidr::Ipv4Cidr>,
     ) {
-        tracing::debug!(?added, ?removed, "applying proxy_cidrs route changes");
+        tracing::debug!(?added, ?removed, local_exit_default, "applying proxy_cidrs route changes");
 
-        // Remove routes
         for cidr in removed {
             if !cur_proxy_cidrs.contains(&cidr) {
                 continue;
             }
             let _g = net_ns.guard();
-            let ret = ifcfg
+            match ifcfg
                 .remove_ipv4_route(ifname, cidr.first_address(), cidr.network_length())
-                .await;
-
-            if ret.is_err() {
-                tracing::trace!(
-                    cidr = ?cidr,
-                    err = ?ret,
-                    "remove route failed.",
-                );
+                .await
+            {
+                Ok(()) => {
+                    cur_proxy_cidrs.remove(&cidr);
+                }
+                Err(err) if route_op_already_satisfied(&err) => {
+                    cur_proxy_cidrs.remove(&cidr);
+                }
+                Err(err) => {
+                    tracing::warn!(
+                        cidr = ?cidr,
+                        ifname,
+                        ?err,
+                        "remove ipv4 route failed; will retry"
+                    );
+                }
             }
-            cur_proxy_cidrs.remove(&cidr);
         }
 
-        // Add routes
         for cidr in added {
             if cur_proxy_cidrs.contains(&cidr) {
                 continue;
             }
+            let cost = if cidr.network_length() == 0 && !local_exit_default {
+                Some(ifcfg.specific_route_metric())
+            } else {
+                None
+            };
             let _g = net_ns.guard();
-            let ret = ifcfg
-                .add_ipv4_route(ifname, cidr.first_address(), cidr.network_length(), None)
-                .await;
-
-            if ret.is_err() {
-                tracing::trace!(
-                    cidr = ?cidr,
-                    err = ?ret,
-                    "add route failed.",
-                );
+            match ifcfg
+                .add_ipv4_route(ifname, cidr.first_address(), cidr.network_length(), cost)
+                .await
+            {
+                Ok(()) => {
+                    cur_proxy_cidrs.insert(cidr);
+                    if cidr.network_length() == 0 {
+                        *ipv4_default_uses_exit_metric = local_exit_default;
+                    }
+                }
+                Err(err) if route_op_already_satisfied(&err) => {
+                    cur_proxy_cidrs.insert(cidr);
+                    if cidr.network_length() == 0 {
+                        *ipv4_default_uses_exit_metric = local_exit_default;
+                    }
+                }
+                Err(err) => {
+                    tracing::warn!(
+                        cidr = ?cidr,
+                        ifname,
+                        ?err,
+                        "add ipv4 route failed; will retry"
+                    );
+                }
             }
-            cur_proxy_cidrs.insert(cidr);
+        }
+
+        Self::reconcile_ipv4_default_metric(
+            ifcfg,
+            ifname,
+            net_ns,
+            cur_proxy_cidrs,
+            ipv4_default_uses_exit_metric,
+            local_exit_default,
+        )
+        .await;
+
+        Self::reconcile_exit_ipv6_default(
+            ifcfg,
+            ifname,
+            net_ns,
+            cur_proxy_cidrs,
+            exit_ipv6_default_installed,
+            restore_public_ipv6_default,
+            local_exit_default,
+        )
+        .await;
+    }
+
+    async fn reconcile_ipv4_default_metric(
+        ifcfg: &impl IfConfiguerTrait,
+        ifname: &str,
+        net_ns: &crate::common::netns::NetNS,
+        cur_proxy_cidrs: &mut BTreeSet<cidr::Ipv4Cidr>,
+        ipv4_default_uses_exit_metric: &mut bool,
+        local_exit_default: bool,
+    ) {
+        let Some(default) = cur_proxy_cidrs
+            .iter()
+            .copied()
+            .find(|cidr| cidr.network_length() == 0)
+        else {
+            *ipv4_default_uses_exit_metric = false;
+            return;
+        };
+        if *ipv4_default_uses_exit_metric == local_exit_default {
+            return;
+        }
+
+        let _g = net_ns.guard();
+        let remove = ifcfg
+            .remove_ipv4_route(ifname, default.first_address(), 0)
+            .await;
+        if let Err(err) = remove
+            && !route_op_already_satisfied(&err)
+        {
+            tracing::warn!(
+                ifname,
+                ?err,
+                "replace ipv4 default route metric failed on remove; will retry"
+            );
+            return;
+        }
+        // Remove succeeded (or was already gone): immediately reflect the kernel
+        // state so that the retry ticker can detect the gap and re-add the route
+        // if the following add call fails.
+        cur_proxy_cidrs.remove(&default);
+        *ipv4_default_uses_exit_metric = false;
+
+        let cost = if local_exit_default {
+            None
+        } else {
+            Some(ifcfg.specific_route_metric())
+        };
+        match ifcfg
+            .add_ipv4_route(ifname, default.first_address(), 0, cost)
+            .await
+        {
+            Ok(()) => {
+                cur_proxy_cidrs.insert(default);
+                *ipv4_default_uses_exit_metric = local_exit_default;
+            }
+            Err(err) if route_op_already_satisfied(&err) => {
+                cur_proxy_cidrs.insert(default);
+                *ipv4_default_uses_exit_metric = local_exit_default;
+            }
+            Err(err) => tracing::warn!(
+                ifname,
+                ?err,
+                "replace ipv4 default route metric failed on add; will retry"
+            ),
+        }
+    }
+
+    async fn reconcile_exit_ipv6_default(
+        ifcfg: &impl IfConfiguerTrait,
+        ifname: &str,
+        net_ns: &crate::common::netns::NetNS,
+        cur_proxy_cidrs: &BTreeSet<cidr::Ipv4Cidr>,
+        exit_ipv6_default_installed: &mut bool,
+        restore_public_ipv6_default: bool,
+        local_exit_default: bool,
+    ) {
+        let want_exit_ipv6_default = local_exit_default
+            && cur_proxy_cidrs
+                .iter()
+                .any(|cidr| cidr.network_length() == 0);
+        if want_exit_ipv6_default == *exit_ipv6_default_installed {
+            return;
+        }
+
+        let _g = net_ns.guard();
+        if want_exit_ipv6_default {
+            match ifcfg
+                .add_ipv6_route(ifname, Ipv6Addr::UNSPECIFIED, 0, None)
+                .await
+            {
+                Ok(()) => *exit_ipv6_default_installed = true,
+                Err(err) if route_op_already_satisfied(&err) => {
+                    *exit_ipv6_default_installed = true;
+                }
+                Err(err) => tracing::warn!(
+                    ifname,
+                    ?err,
+                    "add IPv6 default route for exit node failed; will retry"
+                ),
+            }
+            return;
+        }
+
+        // Remove the exit IPv6 default; treat "already gone" as success.
+        if let Err(err) = ifcfg
+            .remove_ipv6_route(ifname, Ipv6Addr::UNSPECIFIED, 0)
+            .await
+        {
+            if !route_op_already_satisfied(&err) {
+                tracing::warn!(
+                    ifname,
+                    ?err,
+                    "remove IPv6 default route for exit node failed; will retry"
+                );
+                return;
+            }
+        }
+        // Remove succeeded or was already gone: update state and optionally restore
+        // the public IPv6 default route that the exit default had overridden.
+        *exit_ipv6_default_installed = false;
+        if restore_public_ipv6_default {
+            if let Err(err) = ifcfg
+                .add_ipv6_route(ifname, Ipv6Addr::UNSPECIFIED, 0, Some(5))
+                .await
+            {
+                if !route_op_already_satisfied(&err) {
+                    tracing::warn!(
+                        ifname,
+                        ?err,
+                        "failed to restore public IPv6 default route after removing exit default"
+                    );
+                }
+            }
         }
     }
 
@@ -1015,7 +1198,13 @@ impl NicCtx {
                 .remove_ipv6_route(ifname, route.address(), route.network_length())
                 .await;
             if ret.is_err() {
-                tracing::trace!(route = ?route, err = ?ret, "remove public ipv6 route failed");
+                let err = ret.err().unwrap();
+                if route_op_already_satisfied(&err) {
+                    cur_routes.remove(&route);
+                    continue;
+                }
+                tracing::warn!(route = ?route, err = ?err, "remove public ipv6 route failed; will retry");
+                continue;
             }
             cur_routes.remove(&route);
         }
@@ -1028,8 +1217,12 @@ impl NicCtx {
             let ret = ifcfg
                 .add_ipv6_route(ifname, route.address(), route.network_length(), None)
                 .await;
-            if ret.is_err() {
-                tracing::trace!(route = ?route, err = ?ret, "add public ipv6 route failed");
+            if let Err(err) = ret {
+                if route_op_already_satisfied(&err) {
+                    cur_routes.insert(route);
+                } else {
+                    tracing::warn!(route = ?route, err = ?err, "add public ipv6 route failed; will retry");
+                }
             } else {
                 cur_routes.insert(route);
             }
@@ -1046,60 +1239,122 @@ impl NicCtx {
         let mut event_receiver = global_ctx.subscribe();
 
         self.tasks.spawn(async move {
-            let mut cur_proxy_cidrs = BTreeSet::<cidr::Ipv4Cidr>::new();
+            let mut installed = BTreeSet::<cidr::Ipv4Cidr>::new();
+            let mut desired = BTreeSet::<cidr::Ipv4Cidr>::new();
+            let mut desired_local_exit_default = false;
+            let mut exit_ipv6_default_installed = false;
+            let mut ipv4_default_uses_exit_metric = false;
 
-            // Initial sync: get current proxy_cidrs state and apply routes
-            let Some(diff) = packet_plane.proxy_cidr_diff(&cur_proxy_cidrs).await else {
+            let Some(diff) = packet_plane.proxy_cidr_diff(&installed).await else {
                 tracing::error!("proxy CIDR monitor host is unavailable");
                 return;
             };
+            desired = diff.current;
+            desired_local_exit_default = diff.local_exit_default;
+            let restore_public_ipv6_default = packet_plane.public_ipv6_addr().await.is_some();
             Self::apply_route_changes(
                 &ifcfg,
                 &ifname,
                 &net_ns,
-                &mut cur_proxy_cidrs,
+                &mut installed,
+                &mut exit_ipv6_default_installed,
+                &mut ipv4_default_uses_exit_metric,
+                restore_public_ipv6_default,
+                desired_local_exit_default,
                 diff.added,
                 diff.removed,
             )
             .await;
 
+            let mut retry = tokio::time::interval(Duration::from_secs(1));
+            retry.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+            retry.tick().await;
+
             loop {
-                let event = match event_receiver.recv().await {
-                    Ok(event) => event,
-                    Err(tokio::sync::broadcast::error::RecvError::Closed) => {
-                        tracing::debug!("event bus closed, stopping proxy_cidrs route updater");
-                        break;
-                    }
-                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
-                        tracing::warn!(
-                            "event bus lagged in proxy_cidrs route updater, doing full sync"
-                        );
-                        event_receiver = event_receiver.resubscribe();
-                        // Full sync after lagged to recover consistent state
-                        let Some(diff) = packet_plane.proxy_cidr_diff(&cur_proxy_cidrs).await
-                        else {
-                            tracing::error!("proxy CIDR monitor host is unavailable");
-                            return;
+                tokio::select! {
+                    event = event_receiver.recv() => {
+                        let event = match event {
+                            Ok(event) => event,
+                            Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                                tracing::debug!("event bus closed, stopping proxy_cidrs route updater");
+                                break;
+                            }
+                            Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
+                                tracing::warn!(
+                                    "event bus lagged in proxy_cidrs route updater, doing full sync"
+                                );
+                                event_receiver = event_receiver.resubscribe();
+                                let Some(diff) = packet_plane.proxy_cidr_diff(&installed).await
+                                else {
+                                    tracing::error!("proxy CIDR monitor host is unavailable");
+                                    return;
+                                };
+                                desired = diff.current.clone();
+                                desired_local_exit_default = diff.local_exit_default;
+                                GlobalCtxEvent::ProxyCidrsUpdated(
+                                    diff.added,
+                                    diff.removed,
+                                    diff.local_exit_default,
+                                )
+                            }
                         };
-                        GlobalCtxEvent::ProxyCidrsUpdated(diff.added, diff.removed)
+
+                        match event {
+                            GlobalCtxEvent::ProxyCidrsUpdated(added, removed, local_exit_default) => {
+                                for cidr in &removed {
+                                    desired.remove(cidr);
+                                }
+                                desired.extend(added.iter().copied());
+                                desired_local_exit_default = local_exit_default;
+                                let restore_public_ipv6_default =
+                                    packet_plane.public_ipv6_addr().await.is_some();
+                                Self::apply_route_changes(
+                                    &ifcfg,
+                                    &ifname,
+                                    &net_ns,
+                                    &mut installed,
+                                    &mut exit_ipv6_default_installed,
+                                    &mut ipv4_default_uses_exit_metric,
+                                    restore_public_ipv6_default,
+                                    desired_local_exit_default,
+                                    added,
+                                    removed,
+                                )
+                                .await;
+                            }
+                            _ => {}
+                        }
                     }
-                };
-
-                // Only handle ProxyCidrsUpdated events
-                let (added, removed) = match event {
-                    GlobalCtxEvent::ProxyCidrsUpdated(added, removed) => (added, removed),
-                    _ => continue,
-                };
-
-                Self::apply_route_changes(
-                    &ifcfg,
-                    &ifname,
-                    &net_ns,
-                    &mut cur_proxy_cidrs,
-                    added,
-                    removed,
-                )
-                .await;
+                    _ = retry.tick() => {
+                        let added = desired.difference(&installed).copied().collect::<Vec<_>>();
+                        let removed = installed.difference(&desired).copied().collect::<Vec<_>>();
+                        let has_default =
+                            installed.iter().any(|cidr| cidr.network_length() == 0);
+                        let want_exit_default = desired_local_exit_default && has_default;
+                        if added.is_empty()
+                            && removed.is_empty()
+                            && exit_ipv6_default_installed == want_exit_default
+                            && ipv4_default_uses_exit_metric == want_exit_default
+                        {
+                            continue;
+                        }
+                        let restore_public_ipv6_default =
+                            packet_plane.public_ipv6_addr().await.is_some();
+                        Self::apply_route_changes(
+                            &ifcfg,
+                            &ifname,
+                            &net_ns,
+                            &mut installed,
+                            &mut exit_ipv6_default_installed,
+                            &mut ipv4_default_uses_exit_metric,
+                            restore_public_ipv6_default,
+                            desired_local_exit_default,
+                            added,
+                            removed,
+                        )
+                        .await;
+                    }
+                }
             }
         });
 

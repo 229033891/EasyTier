@@ -73,6 +73,7 @@ pub enum CoreEvent {
     ProxyCidrsUpdated {
         added: Vec<Ipv4Cidr>,
         removed: Vec<Ipv4Cidr>,
+        local_exit_default: bool,
     },
     PublicIpv6LeaseChanged {
         old: Option<Ipv6Inet>,

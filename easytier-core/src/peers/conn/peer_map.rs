@@ -1,6 +1,6 @@
 use std::{
     collections::{BTreeSet, HashMap, HashSet},
-    net::{Ipv4Addr, Ipv6Addr},
+    net::{IpAddr, Ipv4Addr, Ipv6Addr},
     sync::Arc,
 };
 
@@ -254,6 +254,26 @@ impl PeerMap {
             let peer_id = route.get_peer_id_by_ipv6(ipv6).await;
             if peer_id.is_some() {
                 return peer_id;
+            }
+        }
+        None
+    }
+
+    pub async fn resolve_exit_node_peer(&self, exit_nodes: &[IpAddr]) -> Option<PeerId> {
+        for exit_node in exit_nodes {
+            let peer_id = match exit_node {
+                IpAddr::V4(ip) => self.get_peer_id_by_ipv4(ip).await,
+                IpAddr::V6(ip) => self.get_peer_id_by_ipv6(ip).await,
+            };
+            let Some(peer_id) = peer_id else {
+                continue;
+            };
+            if self
+                .get_gateway_peer_id(peer_id, NextHopPolicy::LeastHop)
+                .await
+                .is_some()
+            {
+                return Some(peer_id);
             }
         }
         None

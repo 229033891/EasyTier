@@ -20,7 +20,7 @@ impl IfConfiguerTrait for MacIfConfiger {
                 address,
                 cidr_to_subnet_mask(cidr_prefix),
                 name,
-                cost.unwrap_or(7)
+                cost.unwrap_or(super::implicit_route_metric(cidr_prefix, 7, 1) as i32)
             )
             .as_str(),
         )
@@ -104,17 +104,11 @@ impl IfConfiguerTrait for MacIfConfiger {
         cidr_prefix: u8,
         cost: Option<i32>,
     ) -> Result<(), Error> {
-        let cmd = if let Some(cost) = cost {
-            format!(
-                "route -n add -inet6 {}/{} -interface {} -hopcount {}",
-                address, cidr_prefix, name, cost
-            )
-        } else {
-            format!(
-                "route -n add -inet6 {}/{} -interface {}",
-                address, cidr_prefix, name
-            )
-        };
+        let hopcount = cost.unwrap_or(super::implicit_route_metric(cidr_prefix, 7, 1) as i32);
+        let cmd = format!(
+            "route -n add -inet6 {}/{} -interface {} -hopcount {}",
+            address, cidr_prefix, name, hopcount
+        );
         run_shell_cmd(cmd.as_str()).await
     }
 
@@ -132,5 +126,9 @@ impl IfConfiguerTrait for MacIfConfiger {
             .as_str(),
         )
         .await
+    }
+
+    fn specific_route_metric(&self) -> i32 {
+        7
     }
 }

@@ -148,6 +148,15 @@ where
         }
     }
 
+    fn mark_user_disabled_web_instances(&self, instance_ids: &[uuid::Uuid]) {
+        for instance_id in instance_ids {
+            if self.instances.config_source(*instance_id) == Some(ConfigSource::Web) {
+                self.instances
+                    .mark_user_disabled_web_instance(*instance_id);
+            }
+        }
+    }
+
     async fn is_remote_removable(&self, control: &ConfigFileControl) -> bool {
         if control.is_read_only() || !control.is_deletable() {
             return false;
@@ -228,6 +237,16 @@ where
             config.set_id(instance_id);
         }
         let _mutation = self.mutation_lock.lock().await;
+        if overwrite {
+            self.instances
+                .clear_user_disabled_web_instance(instance_id);
+        } else if self.instances.is_user_disabled_web_instance(instance_id) {
+            tracing::info!(
+                %instance_id,
+                "skip auto-run of user-disabled web-managed instance"
+            );
+            return Ok(instance_id);
+        }
         let remote_managed = self.hooks.manages_remote_config_instances();
 
         let mut replacing = false;
@@ -347,6 +366,12 @@ where
     ) -> anyhow::Result<InstanceMutationResult> {
         let before = self.instances.instance_ids();
         if !self.hooks.manages_remote_config_instances() {
+            let removed = before
+                .iter()
+                .copied()
+                .filter(|id| !retained.contains(id))
+                .collect::<Vec<_>>();
+            self.mark_user_disabled_web_instances(&removed);
             let remaining = self.instances.retain_network_instances(&retained).await?;
             let remaining_set = remaining.iter().copied().collect::<HashSet<_>>();
             let removed = before
@@ -376,6 +401,7 @@ where
                 retained.insert(instance_id);
             }
         }
+        self.mark_user_disabled_web_instances(&removed);
         let remaining = self
             .instances
             .retain_network_instances(&retained.into_iter().collect::<Vec<_>>())
@@ -414,6 +440,7 @@ where
                 files.extend(control.path);
             }
         }
+        self.mark_user_disabled_web_instances(&removed);
         let remaining = self
             .instances
             .delete_network_instances(removed.clone())

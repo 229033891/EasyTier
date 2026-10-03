@@ -2,9 +2,10 @@
 
 ## Status
 
-- Status: **Roadmap**（Draft / 仅设计，尚未按本文改代码）
+- Status: **Roadmap**（域名代理、路由状态可观测仍待做）
 - 日期：2026-10-03
 - 最近审阅：2026-10-03
+- **已落地（现状文档为准）**：客户端在出口 **可解析且有下一跳** 时本机安装 `0.0.0.0/0`/`::/0`；出口不可达则卸默认路由；`add`/`remove` 仅成功记账并周期性重试；出口机不因 `enable_exit_node` 向 OSPF 通告默认路由；L3 在可解析出口时优先 `exit_nodes` 并打 `exit_node` 标志。见 [`../current/traffic-steering.md`](../current/traffic-steering.md)。
 - 目标读者：产品决策 + 后续实现
 - 索引：[`../README.md`](../README.md)
 - **现状行为（已实现）**：[`../current/traffic-steering.md`](../current/traffic-steering.md)
@@ -175,14 +176,7 @@ B 必须走 MagicDNS / 节点 DNS 覆盖；否则仅 CIDR 生效，二次解析�
 
 ### 5.2 失败语义（修现状缺陷）
 
-当前 `apply_route_changes`：OS `add`/`remove` 失败仍更新内存集合 → 「装不上却以为装上了 / 删不掉却以为删了」。
-
-统一改为：
-
-1. **仅成功时**更新「已安装集合」；
-2. 失败打 **warn**（含 ifname、cidr、owner、错误）；
-3. 周期性或事件驱动 **reconcile 重试**（有上限与退避）；
-4. 对外可观测：RPC/状态页可展示「期望路由 vs 已安装 vs 最后错误」（可与域名生效表同期做）。
+`apply_route_changes`：**仅成功时**更新已安装集合；失败打 warn；路由同步任务约每秒用期望集合 reconcile 重试。RPC/状态页展示「期望 vs 已安装 vs 最后错误」仍待做。
 
 ### 5.3 性能与安全护栏
 

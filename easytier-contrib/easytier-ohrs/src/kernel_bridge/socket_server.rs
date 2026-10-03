@@ -120,7 +120,7 @@ fn event_needs_tun_refresh(event: &GlobalCtxEvent) -> bool {
     matches!(
         event,
         GlobalCtxEvent::DhcpIpv4Changed(_, _)
-            | GlobalCtxEvent::ProxyCidrsUpdated(_, _)
+            | GlobalCtxEvent::ProxyCidrsUpdated(_, _, _)
             | GlobalCtxEvent::PublicIpv6RoutesUpdated(_, _)
     )
 }

@@ -64,7 +64,7 @@ pub enum GlobalCtxEvent {
     #[cfg(feature = "management")]
     ConfigPatched(InstanceConfigPatch),
 
-    ProxyCidrsUpdated(Vec<cidr::Ipv4Cidr>, Vec<cidr::Ipv4Cidr>), // (added, removed)
+    ProxyCidrsUpdated(Vec<cidr::Ipv4Cidr>, Vec<cidr::Ipv4Cidr>, bool), // (added, removed, local exit default)
 
     UdpBroadcastRelayStartResult {
         capture_backend: Option<String>,

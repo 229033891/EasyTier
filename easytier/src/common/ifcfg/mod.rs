@@ -29,6 +29,64 @@ use tokio::process::Command;
 
 use super::error::Error;
 
+/// Cost used when the caller does not pass an explicit route metric.
+/// Prefix `/0` (default route) uses `default_route` so TUN can win over a
+/// typical LAN default; more-specific CIDRs keep `specific` so they do not
+/// steal on-link or host routes.
+pub(crate) fn implicit_route_metric(cidr_prefix: u8, specific: u32, default_route: u32) -> u32 {
+    if cidr_prefix == 0 {
+        default_route
+    } else {
+        specific
+    }
+}
+
+/// Treat "already present" / "already gone" as success so reconcile can stop retrying.
+pub(crate) fn route_op_already_satisfied(err: &Error) -> bool {
+    match err {
+        Error::NotFound => true,
+        Error::IOError(io_err) => io_error_already_satisfied(io_err),
+        Error::AnyhowError(anyhow_err) => {
+            if let Some(io_err) = anyhow_err.downcast_ref::<std::io::Error>() {
+                return io_error_already_satisfied(io_err);
+            }
+            error_text_already_satisfied(&anyhow_err.to_string())
+        }
+        Error::ShellCommandError(text) => error_text_already_satisfied(text),
+        _ => false,
+    }
+}
+
+fn io_error_already_satisfied(err: &std::io::Error) -> bool {
+    if matches!(
+        err.kind(),
+        std::io::ErrorKind::AlreadyExists | std::io::ErrorKind::NotFound
+    ) {
+        return true;
+    }
+    match err.raw_os_error() {
+        #[cfg(windows)]
+        Some(183 | 1168 | 2 | 3) => true,
+        #[cfg(unix)]
+        Some(17 | 2 | 3) => true,
+        _ => false,
+    }
+}
+
+fn error_text_already_satisfied(text: &str) -> bool {
+    let text = text.to_ascii_lowercase();
+    text.contains("(code: 183)")
+        || text.contains("(code: 1168)")
+        || text.contains("file exists")
+        || text.contains("already exists")
+        || text.contains("object already exists")
+        || text.contains("not in table")
+        || text.contains("not found")
+        || text.contains("cannot find")
+        || text.contains("no such process")
+        || text.contains("no such file")
+}
+
 #[async_trait]
 pub trait IfConfiguerTrait: Send + Sync {
     async fn add_ipv4_route(
@@ -95,6 +153,11 @@ pub trait IfConfiguerTrait: Send + Sync {
     }
     async fn set_mtu(&self, _name: &str, _mtu: u32) -> Result<(), Error> {
         Ok(())
+    }
+
+    /// Metric used for non-exit (more-specific or peer-advertised `/0`) routes.
+    fn specific_route_metric(&self) -> i32 {
+        9000
     }
 }
 
@@ -220,4 +283,45 @@ pub(crate) fn list_ipv6_ndp_proxy(
     name: &str,
 ) -> Result<std::collections::BTreeSet<Ipv6Addr>, Error> {
     netlink::NetlinkIfConfiger::list_ipv6_ndp_proxy(name)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::implicit_route_metric;
+
+    #[test]
+    fn default_prefix_uses_default_route_metric() {
+        assert_eq!(implicit_route_metric(0, 9000, 1), 1);
+        assert_eq!(implicit_route_metric(0, 65535, 50), 50);
+    }
+
+    #[test]
+    fn specific_prefix_keeps_high_metric() {
+        assert_eq!(implicit_route_metric(24, 9000, 1), 9000);
+        assert_eq!(implicit_route_metric(32, 65535, 50), 65535);
+    }
+
+    #[test]
+    fn already_exists_and_not_found_are_idempotent() {
+        use super::{Error, route_op_already_satisfied};
+
+        assert!(route_op_already_satisfied(&Error::NotFound));
+        #[cfg(unix)]
+        assert!(route_op_already_satisfied(&Error::IOError(
+            std::io::Error::from_raw_os_error(17)
+        )));
+        #[cfg(windows)]
+        assert!(route_op_already_satisfied(&Error::IOError(
+            std::io::Error::from_raw_os_error(183)
+        )));
+        assert!(route_op_already_satisfied(&Error::AnyhowError(anyhow::anyhow!(
+            "Failed to add route: already exists (code: 183)"
+        ))));
+        assert!(route_op_already_satisfied(&Error::ShellCommandError(
+            "route: not in table".to_string()
+        )));
+        assert!(!route_op_already_satisfied(&Error::AnyhowError(
+            anyhow::anyhow!("access denied (code: 5)")
+        )));
+    }
 }

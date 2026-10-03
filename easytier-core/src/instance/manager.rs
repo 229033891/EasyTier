@@ -1,7 +1,7 @@
 //! Canonical process-level ownership and lifecycle for EasyTier instances.
 
 use std::{
-    collections::{HashMap, hash_map::Entry},
+    collections::{HashMap, HashSet, hash_map::Entry},
     error::Error,
     fmt,
     path::PathBuf,
@@ -260,6 +260,32 @@ pub struct InstanceManager<F: InstanceFactory> {
     runtime_handle: Option<tokio::runtime::Handle>,
     active_stops: Arc<AtomicUsize>,
     instance_state_changes: Arc<InstanceStateChanges>,
+    user_disabled_web_instances: Mutex<HashSet<Uuid>>,
+}
+
+const USER_DISABLED_WEB_INSTANCES_FILE: &str = ".user-disabled-web-instances";
+
+fn parse_user_disabled_web_instances(contents: &str) -> HashSet<Uuid> {
+    contents
+        .lines()
+        .filter_map(|line| {
+            let line = line.trim();
+            if line.is_empty() || line.starts_with('#') {
+                None
+            } else {
+                Uuid::parse_str(line).ok()
+            }
+        })
+        .collect()
+}
+
+fn render_user_disabled_web_instances(ids: &HashSet<Uuid>) -> String {
+    let mut ids = ids.iter().copied().collect::<Vec<_>>();
+    ids.sort_unstable();
+    ids.into_iter()
+        .map(|id| id.to_string())
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 impl<F: InstanceFactory> InstanceManager<F> {
@@ -275,12 +301,86 @@ impl<F: InstanceFactory> InstanceManager<F> {
             runtime_handle,
             active_stops: Arc::new(AtomicUsize::new(0)),
             instance_state_changes: Arc::new(InstanceStateChanges::default()),
+            user_disabled_web_instances: Mutex::new(HashSet::new()),
         }
     }
 
     pub fn with_config_path(mut self, config_dir: Option<PathBuf>) -> Self {
         self.config_dir = config_dir;
+        self.reload_user_disabled_web_instances();
         self
+    }
+
+    fn user_disabled_web_instances_path(&self) -> Option<PathBuf> {
+        Some(
+            self.config_dir
+                .as_ref()?
+                .join(USER_DISABLED_WEB_INSTANCES_FILE),
+        )
+    }
+
+    fn reload_user_disabled_web_instances(&self) {
+        let Some(path) = self.user_disabled_web_instances_path() else {
+            return;
+        };
+        let Ok(contents) = std::fs::read_to_string(&path) else {
+            return;
+        };
+        let loaded = parse_user_disabled_web_instances(&contents);
+        if let Ok(mut guard) = self.user_disabled_web_instances.lock() {
+            *guard = loaded;
+        }
+    }
+
+    fn persist_user_disabled_web_instances(&self) {
+        let Some(path) = self.user_disabled_web_instances_path() else {
+            return;
+        };
+        let Ok(guard) = self.user_disabled_web_instances.lock() else {
+            return;
+        };
+        let rendered = render_user_disabled_web_instances(&guard);
+        if let Err(error) = std::fs::write(&path, rendered) {
+            tracing::warn!(
+                %error,
+                path = %path.display(),
+                "failed to persist user-disabled web instances"
+            );
+        }
+    }
+
+    pub fn user_disabled_web_instance_ids(&self) -> Vec<Uuid> {
+        self.user_disabled_web_instances
+            .lock()
+            .map(|guard| guard.iter().copied().collect())
+            .unwrap_or_default()
+    }
+
+    pub fn is_user_disabled_web_instance(&self, instance_id: Uuid) -> bool {
+        self.user_disabled_web_instances
+            .lock()
+            .map(|guard| guard.contains(&instance_id))
+            .unwrap_or(false)
+    }
+
+    pub fn mark_user_disabled_web_instance(&self, instance_id: Uuid) {
+        let Ok(mut guard) = self.user_disabled_web_instances.lock() else {
+            return;
+        };
+        if guard.insert(instance_id) {
+            drop(guard);
+            self.persist_user_disabled_web_instances();
+        }
+    }
+
+    pub fn clear_user_disabled_web_instance(&self, instance_id: Uuid) {
+        let Ok(mut guard) = self.user_disabled_web_instances.lock() else {
+            return;
+        };
+        if guard.remove(&instance_id) {
+            drop(guard);
+            self.persist_user_disabled_web_instances();
+        }
     }
 
     pub fn create(
@@ -758,5 +858,21 @@ mod tests {
         assert_eq!(drops.load(Ordering::SeqCst), 0);
         drop(snapshot);
         assert_eq!(drops.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn user_disabled_file_round_trips_sorted_unique_ids() {
+        let first = Uuid::parse_str("11111111-1111-1111-1111-111111111111").unwrap();
+        let second = Uuid::parse_str("22222222-2222-2222-2222-222222222222").unwrap();
+        let mut ids = HashSet::new();
+        ids.insert(second);
+        ids.insert(first);
+        let rendered = render_user_disabled_web_instances(&ids);
+        assert_eq!(
+            rendered,
+            "11111111-1111-1111-1111-111111111111\n22222222-2222-2222-2222-222222222222"
+        );
+        let parsed = parse_user_disabled_web_instances(&format!("# comment\n{rendered}\n\n"));
+        assert_eq!(parsed, ids);
     }
 }

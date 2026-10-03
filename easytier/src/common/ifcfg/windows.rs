@@ -191,7 +191,9 @@ impl IfConfiguerTrait for WindowsIfConfiger {
         luid.add_routes_ipv4([RouteDataIpv4 {
             destination: Ipv4Inet::new(address, cidr_prefix).unwrap(),
             next_hop: Ipv4Addr::UNSPECIFIED,
-            metric: cost.unwrap_or(9000) as u32,
+            metric: cost
+                .map(|v| v as u32)
+                .unwrap_or_else(|| super::implicit_route_metric(cidr_prefix, 9000, 1)),
         }])
         .map_err(|e| anyhow::anyhow!("Failed to add route: {}", format_win_error(e)))?;
         Ok(())
@@ -279,7 +281,9 @@ impl IfConfiguerTrait for WindowsIfConfiger {
         luid.add_routes_ipv6([RouteDataIpv6 {
             destination: Ipv6Inet::new(address, cidr_prefix).unwrap(),
             next_hop: Ipv6Addr::UNSPECIFIED,
-            metric: cost.unwrap_or(9000) as u32,
+            metric: cost
+                .map(|v| v as u32)
+                .unwrap_or_else(|| super::implicit_route_metric(cidr_prefix, 9000, 1)),
         }])
         .map_err(|e| anyhow::anyhow!("Failed to add route: {}", format_win_error(e)))?;
         Ok(())
@@ -306,7 +310,9 @@ impl IfConfiguerTrait for WindowsIfConfiger {
         .map_err(|e| anyhow::anyhow!("Failed to delete route: {}", format_win_error(e)))?;
         Ok(())
     }
+
 }
+
 
 pub struct RegistryManager;
 

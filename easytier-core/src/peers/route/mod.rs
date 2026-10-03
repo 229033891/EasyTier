@@ -130,6 +130,12 @@ pub trait Route {
         None
     }
 
+    /// Longest-prefix proxy match that is exactly `0.0.0.0/0` or `::/0`.
+    /// Used only after VIP, more-specific CIDRs, and `exit_nodes` have missed.
+    async fn get_peer_id_for_default_route_proxy(&self, _ip: &std::net::IpAddr) -> Option<PeerId> {
+        None
+    }
+
     async fn get_peer_id_by_ip(&self, ip: &std::net::IpAddr) -> Option<PeerId> {
         match ip {
             std::net::IpAddr::V4(v4) => self.get_peer_id_by_ipv4(v4).await,

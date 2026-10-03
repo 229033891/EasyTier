@@ -1411,20 +1411,29 @@ fn win_service_event_loop(
     use tokio::runtime::Runtime;
     use windows_service::service::*;
 
-    let normal_status = ServiceStatus {
-        service_type: ServiceType::OWN_PROCESS,
-        current_state: ServiceState::Running,
-        controls_accepted: ServiceControlAccept::STOP,
-        exit_code: ServiceExitCode::Win32(0),
-        checkpoint: 0,
-        wait_hint: Duration::default(),
-        process_id: None,
-    };
     let error_status = ServiceStatus {
         service_type: ServiceType::OWN_PROCESS,
         current_state: ServiceState::Stopped,
         controls_accepted: ServiceControlAccept::empty(),
         exit_code: ServiceExitCode::ServiceSpecific(1u32),
+        checkpoint: 0,
+        wait_hint: Duration::default(),
+        process_id: None,
+    };
+    let stop_pending_status = ServiceStatus {
+        service_type: ServiceType::OWN_PROCESS,
+        current_state: ServiceState::StopPending,
+        controls_accepted: ServiceControlAccept::empty(),
+        exit_code: ServiceExitCode::Win32(0),
+        checkpoint: 1,
+        wait_hint: Duration::from_secs(20),
+        process_id: None,
+    };
+    let stopped_status = ServiceStatus {
+        service_type: ServiceType::OWN_PROCESS,
+        current_state: ServiceState::Stopped,
+        controls_accepted: ServiceControlAccept::empty(),
+        exit_code: ServiceExitCode::Win32(0),
         checkpoint: 0,
         wait_hint: Duration::default(),
         process_id: None,
@@ -1437,7 +1446,7 @@ fn win_service_event_loop(
                 res = run_main(cli) => {
                     match res {
                         Ok(_) => {
-                            status_handle.set_service_status(normal_status).unwrap();
+                            let _ = status_handle.set_service_status(stopped_status);
                             std::process::exit(0);
                         }
                         Err(error) => {
@@ -1452,7 +1461,8 @@ fn win_service_event_loop(
                     }
                 },
                 _ = stop_notify.notified() => {
-                    _ = status_handle.set_service_status(normal_status);
+                    let _ = status_handle.set_service_status(stop_pending_status);
+                    let _ = status_handle.set_service_status(stopped_status);
                     std::process::exit(0);
                 }
             }

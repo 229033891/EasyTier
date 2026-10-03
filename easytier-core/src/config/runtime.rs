@@ -1,6 +1,6 @@
 //! Atomic runtime configuration owned by one core instance.
 
-use std::{collections::BTreeSet, sync::Arc};
+use std::{collections::BTreeSet, net::IpAddr, sync::Arc};
 
 use arc_swap::ArcSwap;
 use cidr::Ipv4Cidr;
@@ -19,6 +19,10 @@ pub struct CoreRuntimeConfig {
     pub gateway: GatewayRuntimeConfig,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub manual_routes: Option<BTreeSet<Ipv4Cidr>>,
+    /// Local exit-node VIPs. Non-empty means this node should install TUN default
+    /// routes; it is not flooded via OSPF as `0.0.0.0/0`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub exit_nodes: Vec<IpAddr>,
     pub proxy: ProxyRuntimeConfig,
     #[serde(default)]
     pub public_ipv6_auto: bool,
@@ -32,6 +36,7 @@ impl Default for CoreRuntimeConfig {
             dhcp_ipv4: false,
             gateway: GatewayRuntimeConfig::default(),
             manual_routes: None,
+            exit_nodes: Vec::new(),
             proxy: ProxyRuntimeConfig::default(),
             public_ipv6_auto: false,
             public_ipv6_provider: PublicIpv6ProviderConfig {
