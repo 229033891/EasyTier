@@ -6,6 +6,7 @@ use crate::{
     config::runtime::CoreRuntimeConfigStore,
     gateway::magic_dns::{MagicDnsRouteSnapshot, MagicDnsRouteSource},
     gateway::proxy::cidr_monitor::{ProxyCidrDiff, collect_proxy_cidr_diff},
+    gateway::proxy::underlay_exclude::collect_underlay_exclude_ips,
     host::packet::HostPacket,
     peers::peer_manager::PeerManagerCore,
 };
@@ -72,6 +73,15 @@ impl CorePacketPlane {
             collect_proxy_cidr_diff(self.peer_manager.as_ref(), &self.runtime_config, previous)
                 .await,
         )
+    }
+
+    /// Already-resolved underlay destinations that must not follow the TUN
+    /// exit-node default route (peer tunnel remotes + peer STUN public IPs).
+    pub async fn underlay_exclude_ips(&self) -> BTreeSet<IpAddr> {
+        if !self.proxy_cidr_monitor_available {
+            return BTreeSet::new();
+        }
+        collect_underlay_exclude_ips(self.peer_manager.as_ref()).await
     }
 
     pub async fn public_ipv6_routes(&self) -> BTreeSet<cidr::Ipv6Inet> {

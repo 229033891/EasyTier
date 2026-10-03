@@ -1,8 +1,9 @@
-use std::net::Ipv4Addr;
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
 use super::{Error, IfConfiguerTrait, cidr_to_subnet_mask, run_shell_cmd};
 use async_trait::async_trait;
 use cidr::{Ipv4Inet, Ipv6Inet};
+use tokio::process::Command;
 
 pub struct MacIfConfiger {}
 #[async_trait]
@@ -131,4 +132,143 @@ impl IfConfiguerTrait for MacIfConfiger {
     fn specific_route_metric(&self) -> i32 {
         7
     }
+
+    async fn find_ipv4_physical_default(
+        &self,
+        exclude_ifname: &str,
+    ) -> Result<Option<super::PhysicalDefaultRoute>, Error> {
+        find_darwin_default("inet", exclude_ifname).await
+    }
+
+    async fn find_ipv6_physical_default(
+        &self,
+        exclude_ifname: &str,
+    ) -> Result<Option<super::PhysicalDefaultRoute>, Error> {
+        find_darwin_default("inet6", exclude_ifname).await
+    }
+
+    async fn add_ipv4_host_route(
+        &self,
+        dest: Ipv4Addr,
+        via: &super::PhysicalDefaultRoute,
+        cost: Option<i32>,
+    ) -> Result<(), Error> {
+        let hopcount = cost.unwrap_or(1);
+        let cmd = match via.gateway {
+            Some(gw) => format!(
+                "route -n add -host {} {} -hopcount {}",
+                dest, gw, hopcount
+            ),
+            None => format!(
+                "route -n add -host {} -interface {} -hopcount {}",
+                dest, via.ifname, hopcount
+            ),
+        };
+        run_shell_cmd(cmd.as_str()).await
+    }
+
+    async fn remove_ipv4_host_route(
+        &self,
+        dest: Ipv4Addr,
+        via: &super::PhysicalDefaultRoute,
+    ) -> Result<(), Error> {
+        let cmd = match via.gateway {
+            Some(gw) => format!("route -n delete -host {} {}", dest, gw),
+            None => format!(
+                "route -n delete -host {} -interface {}",
+                dest, via.ifname
+            ),
+        };
+        run_shell_cmd(cmd.as_str()).await
+    }
+
+    async fn add_ipv6_host_route(
+        &self,
+        dest: Ipv6Addr,
+        via: &super::PhysicalDefaultRoute,
+        cost: Option<i32>,
+    ) -> Result<(), Error> {
+        let hopcount = cost.unwrap_or(1);
+        let cmd = match via.gateway {
+            Some(gw) => format!(
+                "route -n add -inet6 -host {} {} -hopcount {}",
+                dest, gw, hopcount
+            ),
+            None => format!(
+                "route -n add -inet6 -host {} -interface {} -hopcount {}",
+                dest, via.ifname, hopcount
+            ),
+        };
+        run_shell_cmd(cmd.as_str()).await
+    }
+
+    async fn remove_ipv6_host_route(
+        &self,
+        dest: Ipv6Addr,
+        via: &super::PhysicalDefaultRoute,
+    ) -> Result<(), Error> {
+        let cmd = match via.gateway {
+            Some(gw) => format!("route -n delete -inet6 -host {} {}", dest, gw),
+            None => format!(
+                "route -n delete -inet6 -host {} -interface {}",
+                dest, via.ifname
+            ),
+        };
+        run_shell_cmd(cmd.as_str()).await
+    }
+}
+
+async fn find_darwin_default(
+    family: &str,
+    exclude_ifname: &str,
+) -> Result<Option<super::PhysicalDefaultRoute>, Error> {
+    let output = if family == "inet6" {
+        Command::new("route")
+            .args(["-n", "get", "-inet6", "default"])
+            .output()
+            .await
+    } else {
+        Command::new("route")
+            .args(["-n", "get", "default"])
+            .output()
+            .await
+    }
+    .map_err(Error::from)?;
+    if !output.status.success() {
+        return Ok(None);
+    }
+    let text = String::from_utf8_lossy(&output.stdout);
+    let mut gateway = None;
+    let mut ifname = None;
+    for line in text.lines() {
+        let line = line.trim();
+        if let Some(rest) = line.strip_prefix("gateway:") {
+            gateway = rest.trim().parse().ok();
+        } else if let Some(rest) = line.strip_prefix("interface:") {
+            ifname = Some(rest.trim().to_string());
+        }
+    }
+    let Some(ifname) = ifname else {
+        return Ok(None);
+    };
+    if ifname == exclude_ifname {
+        return Ok(None);
+    }
+    let ifindex = {
+        use network_interface::NetworkInterfaceConfig as _;
+        network_interface::NetworkInterface::show()
+            .ok()
+            .and_then(|ifaces| {
+                ifaces
+                    .into_iter()
+                    .find(|iface| iface.name == ifname)
+                    .map(|iface| iface.index)
+            })
+            .unwrap_or(0)
+    };
+    Ok(Some(super::PhysicalDefaultRoute {
+        ifindex,
+        ifname,
+        gateway,
+    }))
 }

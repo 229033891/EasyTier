@@ -35,6 +35,7 @@ const IFA_BROADCAST: u16 = 4;
 
 const RTA_DST: u16 = 1;
 const RTA_SRC: u16 = 2;
+const RTA_GATEWAY: u16 = 5;
 const RTA_OIF: u16 = 4;
 const RTA_PRIORITY: u16 = 6;
 const RTA_TABLE: u16 = 15;
@@ -341,6 +342,7 @@ pub(crate) struct RouteMessage {
     attributes: Vec<Attribute>,
     destination: Option<IpAddr>,
     source: Option<IpAddr>,
+    gateway: Option<IpAddr>,
     oif: Option<u32>,
 }
 
@@ -369,8 +371,19 @@ impl RouteMessage {
         self.source.as_ref()
     }
 
+    pub(crate) fn gateway(&self) -> Option<&IpAddr> {
+        self.gateway.as_ref()
+    }
+
     pub(crate) fn oif(&self) -> Option<u32> {
         self.oif
+    }
+
+    pub(crate) fn priority(&self) -> Option<u32> {
+        self.attributes
+            .iter()
+            .find(|attribute| attribute.kind & NLA_TYPE_MASK == RTA_PRIORITY)
+            .and_then(|attribute| read_u32(&attribute.value).ok())
     }
 }
 
@@ -401,6 +414,10 @@ impl NetlinkDecode for RouteMessage {
             .iter()
             .find(|attribute| attribute.kind & NLA_TYPE_MASK == RTA_OIF)
             .and_then(|attribute| read_u32(&attribute.value).ok());
+        let gateway = attributes
+            .iter()
+            .find(|attribute| attribute.kind & NLA_TYPE_MASK == RTA_GATEWAY)
+            .and_then(|attribute| parse_ip(family, &attribute.value));
 
         Ok(Self {
             family,
@@ -415,6 +432,7 @@ impl NetlinkDecode for RouteMessage {
             attributes,
             destination,
             source,
+            gateway,
             oif,
         })
     }
@@ -458,6 +476,7 @@ impl RouteMessageBuilder {
                 attributes: Vec::new(),
                 destination: None,
                 source: None,
+                gateway: None,
                 oif: None,
             },
         }
@@ -469,6 +488,14 @@ impl RouteMessageBuilder {
         self.message
             .attributes
             .push(Attribute::new(RTA_DST, ip_bytes(address)));
+        self
+    }
+
+    pub(crate) fn gateway(mut self, address: IpAddr) -> Self {
+        self.message.gateway = Some(address);
+        self.message
+            .attributes
+            .push(Attribute::new(RTA_GATEWAY, ip_bytes(address)));
         self
     }
 

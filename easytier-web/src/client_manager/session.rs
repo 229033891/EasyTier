@@ -503,6 +503,8 @@ async fn sync_client_disabled_network_state(
     machine_id: uuid::Uuid,
     req: &HeartbeatRequest,
 ) -> Result<(), sea_orm::DbErr> {
+    use easytier_core::management::remote_client::Storage as _;
+
     let disabled = req
         .disabled_network_instances
         .iter()

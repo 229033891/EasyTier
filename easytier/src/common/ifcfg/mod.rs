@@ -17,7 +17,7 @@ mod win;
 #[cfg(target_os = "windows")]
 mod windows;
 
-use std::net::{Ipv4Addr, Ipv6Addr};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
 use async_trait::async_trait;
 use cidr::{Ipv4Inet, Ipv6Inet};
@@ -39,6 +39,15 @@ pub(crate) fn implicit_route_metric(cidr_prefix: u8, specific: u32, default_rout
     } else {
         specific
     }
+}
+
+/// Physical (non-TUN) default route used to pin underlay host routes so peer
+/// tunnels / STUN stay off the exit-node TUN default.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PhysicalDefaultRoute {
+    pub ifindex: u32,
+    pub ifname: String,
+    pub gateway: Option<IpAddr>,
 }
 
 /// Treat "already present" / "already gone" as success so reconcile can stop retrying.
@@ -158,6 +167,56 @@ pub trait IfConfiguerTrait: Send + Sync {
     /// Metric used for non-exit (more-specific or peer-advertised `/0`) routes.
     fn specific_route_metric(&self) -> i32 {
         9000
+    }
+
+    /// Find the best IPv4 default route that is **not** on `exclude_ifname` (TUN).
+    async fn find_ipv4_physical_default(
+        &self,
+        _exclude_ifname: &str,
+    ) -> Result<Option<PhysicalDefaultRoute>, Error> {
+        Ok(None)
+    }
+
+    async fn find_ipv6_physical_default(
+        &self,
+        _exclude_ifname: &str,
+    ) -> Result<Option<PhysicalDefaultRoute>, Error> {
+        Ok(None)
+    }
+
+    /// Host `/32` via the captured physical default (never on TUN).
+    async fn add_ipv4_host_route(
+        &self,
+        _dest: Ipv4Addr,
+        _via: &PhysicalDefaultRoute,
+        _cost: Option<i32>,
+    ) -> Result<(), Error> {
+        Ok(())
+    }
+
+    async fn remove_ipv4_host_route(
+        &self,
+        _dest: Ipv4Addr,
+        _via: &PhysicalDefaultRoute,
+    ) -> Result<(), Error> {
+        Ok(())
+    }
+
+    async fn add_ipv6_host_route(
+        &self,
+        _dest: Ipv6Addr,
+        _via: &PhysicalDefaultRoute,
+        _cost: Option<i32>,
+    ) -> Result<(), Error> {
+        Ok(())
+    }
+
+    async fn remove_ipv6_host_route(
+        &self,
+        _dest: Ipv6Addr,
+        _via: &PhysicalDefaultRoute,
+    ) -> Result<(), Error> {
+        Ok(())
     }
 }
 

@@ -546,6 +546,132 @@ impl IfConfiguerTrait for NetlinkIfConfiger {
     fn specific_route_metric(&self) -> i32 {
         65535
     }
+
+    async fn find_ipv4_physical_default(
+        &self,
+        exclude_ifname: &str,
+    ) -> Result<Option<super::PhysicalDefaultRoute>, Error> {
+        Self::find_physical_default(libc::AF_INET as u8, exclude_ifname)
+    }
+
+    async fn find_ipv6_physical_default(
+        &self,
+        exclude_ifname: &str,
+    ) -> Result<Option<super::PhysicalDefaultRoute>, Error> {
+        Self::find_physical_default(libc::AF_INET6 as u8, exclude_ifname)
+    }
+
+    async fn add_ipv4_host_route(
+        &self,
+        dest: Ipv4Addr,
+        via: &super::PhysicalDefaultRoute,
+        cost: Option<i32>,
+    ) -> Result<(), Error> {
+        let mut builder = RouteMessageBuilder::new(libc::AF_INET as u8)
+            .destination(IpAddr::V4(dest), 32)
+            .oif(via.ifindex)
+            .priority(cost.map(|v| v as u32).unwrap_or(1))
+            .table(libc::RT_TABLE_MAIN.into())
+            .static_protocol()
+            .universe_scope()
+            .route_type(RouteType::Unicast);
+        if let Some(IpAddr::V4(gw)) = via.gateway {
+            builder = builder.gateway(IpAddr::V4(gw));
+        }
+        let message = builder.build();
+        let request = message_request(
+            RTM_NEWROUTE,
+            NLM_F_ACK | NLM_F_CREATE | NLM_F_EXCL | NLM_F_REQUEST,
+            &message,
+        )?;
+        send_netlink_req_and_wait_ack(request)
+    }
+
+    async fn remove_ipv4_host_route(
+        &self,
+        dest: Ipv4Addr,
+        via: &super::PhysicalDefaultRoute,
+    ) -> Result<(), Error> {
+        self.remove_ipv4_route(&via.ifname, dest, 32).await
+    }
+
+    async fn add_ipv6_host_route(
+        &self,
+        dest: Ipv6Addr,
+        via: &super::PhysicalDefaultRoute,
+        cost: Option<i32>,
+    ) -> Result<(), Error> {
+        let mut builder = RouteMessageBuilder::new(libc::AF_INET6 as u8)
+            .destination(IpAddr::V6(dest), 128)
+            .oif(via.ifindex)
+            .priority(cost.map(|v| v as u32).unwrap_or(1))
+            .table(libc::RT_TABLE_MAIN.into())
+            .static_protocol()
+            .universe_scope()
+            .route_type(RouteType::Unicast);
+        if let Some(IpAddr::V6(gw)) = via.gateway {
+            builder = builder.gateway(IpAddr::V6(gw));
+        }
+        let message = builder.build();
+        let request = message_request(
+            RTM_NEWROUTE,
+            NLM_F_ACK | NLM_F_CREATE | NLM_F_EXCL | NLM_F_REQUEST,
+            &message,
+        )?;
+        send_netlink_req_and_wait_ack(request)
+    }
+
+    async fn remove_ipv6_host_route(
+        &self,
+        dest: Ipv6Addr,
+        via: &super::PhysicalDefaultRoute,
+    ) -> Result<(), Error> {
+        self.remove_ipv6_route(&via.ifname, dest, 128).await
+    }
+}
+
+impl NetlinkIfConfiger {
+    fn find_physical_default(
+        family: u8,
+        exclude_ifname: &str,
+    ) -> Result<Option<super::PhysicalDefaultRoute>, Error> {
+        let exclude_index = Self::get_interface_index(exclude_ifname).ok();
+        let mut best: Option<(u32, super::PhysicalDefaultRoute)> = None;
+        for msg in Self::list_route_messages(family)? {
+            if msg.dst_len() != 0 || msg.route_type() != RouteType::Unicast {
+                continue;
+            }
+            let Some(ifindex) = msg.oif() else {
+                continue;
+            };
+            if exclude_index == Some(ifindex) {
+                continue;
+            }
+            let metric = msg.priority().unwrap_or(0);
+            let ifname = interface_name_from_index(ifindex)
+                .unwrap_or_else(|| format!("if{ifindex}"));
+            let route = super::PhysicalDefaultRoute {
+                ifindex,
+                ifname,
+                gateway: msg.gateway().copied(),
+            };
+            match &best {
+                Some((best_metric, _)) if metric >= *best_metric => {}
+                _ => best = Some((metric, route)),
+            }
+        }
+        Ok(best.map(|(_, route)| route))
+    }
+}
+
+fn interface_name_from_index(index: u32) -> Option<String> {
+    use network_interface::NetworkInterfaceConfig as _;
+    network_interface::NetworkInterface::show().ok().and_then(|ifaces| {
+        ifaces
+            .into_iter()
+            .find(|iface| iface.index == index)
+            .map(|iface| iface.name)
+    })
 }
 
 #[cfg(test)]

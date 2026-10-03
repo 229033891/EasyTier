@@ -5,12 +5,13 @@ use async_trait::async_trait;
 use cidr::{Ipv4Inet, Ipv6Inet};
 use std::{
     io,
-    net::{Ipv4Addr, Ipv6Addr},
+    net::{IpAddr, Ipv4Addr, Ipv6Addr},
 };
 use windows::Win32::NetworkManagement::IpHelper::INTERNAL_IF_OPER_STATUS;
 use windows::Win32::{
     Foundation::{NO_ERROR, WIN32_ERROR},
     NetworkManagement::IpHelper::{GetIfEntry, MIB_IFROW, SetIfEntry},
+    Networking::WinSock::{ADDRESS_FAMILY, AF_INET, AF_INET6, SOCKADDR_INET},
     System::Diagnostics::Debug::{
         FORMAT_MESSAGE_FROM_SYSTEM, FORMAT_MESSAGE_IGNORE_INSERTS, FormatMessageW,
     },
@@ -311,8 +312,193 @@ impl IfConfiguerTrait for WindowsIfConfiger {
         Ok(())
     }
 
+    fn specific_route_metric(&self) -> i32 {
+        9000
+    }
+
+    async fn find_ipv4_physical_default(
+        &self,
+        exclude_ifname: &str,
+    ) -> Result<Option<super::PhysicalDefaultRoute>, Error> {
+        Self::find_physical_default(AF_INET, exclude_ifname)
+    }
+
+    async fn find_ipv6_physical_default(
+        &self,
+        exclude_ifname: &str,
+    ) -> Result<Option<super::PhysicalDefaultRoute>, Error> {
+        Self::find_physical_default(AF_INET6, exclude_ifname)
+    }
+
+    async fn add_ipv4_host_route(
+        &self,
+        dest: Ipv4Addr,
+        via: &super::PhysicalDefaultRoute,
+        cost: Option<i32>,
+    ) -> Result<(), Error> {
+        let luid = InterfaceLuid::luid_from_index(via.ifindex).map_err(|e| {
+            anyhow::anyhow!("Failed to get interface luid: {}", format_win_error(e))
+        })?;
+        let next_hop = match via.gateway {
+            Some(IpAddr::V4(ip)) => ip,
+            Some(IpAddr::V6(_)) => {
+                return Err(anyhow::anyhow!("IPv4 host route requires IPv4 gateway").into());
+            }
+            None => Ipv4Addr::UNSPECIFIED,
+        };
+        luid.add_route_ipv4(
+            &Ipv4Inet::new(dest, 32).unwrap(),
+            &next_hop,
+            cost.map(|v| v as u32).unwrap_or(1),
+        )
+        .map_err(|e| anyhow::anyhow!("Failed to add host route: {}", format_win_error(e)))?;
+        Ok(())
+    }
+
+    async fn remove_ipv4_host_route(
+        &self,
+        dest: Ipv4Addr,
+        via: &super::PhysicalDefaultRoute,
+    ) -> Result<(), Error> {
+        let luid = InterfaceLuid::luid_from_index(via.ifindex).map_err(|e| {
+            anyhow::anyhow!("Failed to get interface luid: {}", format_win_error(e))
+        })?;
+        let next_hop = match via.gateway {
+            Some(IpAddr::V4(ip)) => ip,
+            _ => Ipv4Addr::UNSPECIFIED,
+        };
+        luid.delete_route_ipv4(&Ipv4Inet::new(dest, 32).unwrap(), &next_hop)
+            .map_err(|e| anyhow::anyhow!("Failed to delete host route: {}", format_win_error(e)))?;
+        Ok(())
+    }
+
+    async fn add_ipv6_host_route(
+        &self,
+        dest: Ipv6Addr,
+        via: &super::PhysicalDefaultRoute,
+        cost: Option<i32>,
+    ) -> Result<(), Error> {
+        let luid = InterfaceLuid::luid_from_index(via.ifindex).map_err(|e| {
+            anyhow::anyhow!("Failed to get interface luid: {}", format_win_error(e))
+        })?;
+        let next_hop = match via.gateway {
+            Some(IpAddr::V6(ip)) => ip,
+            Some(IpAddr::V4(_)) => {
+                return Err(anyhow::anyhow!("IPv6 host route requires IPv6 gateway").into());
+            }
+            None => Ipv6Addr::UNSPECIFIED,
+        };
+        luid.add_route_ipv6(
+            &Ipv6Inet::new(dest, 128).unwrap(),
+            &next_hop,
+            cost.map(|v| v as u32).unwrap_or(1),
+        )
+        .map_err(|e| anyhow::anyhow!("Failed to add host route: {}", format_win_error(e)))?;
+        Ok(())
+    }
+
+    async fn remove_ipv6_host_route(
+        &self,
+        dest: Ipv6Addr,
+        via: &super::PhysicalDefaultRoute,
+    ) -> Result<(), Error> {
+        let luid = InterfaceLuid::luid_from_index(via.ifindex).map_err(|e| {
+            anyhow::anyhow!("Failed to get interface luid: {}", format_win_error(e))
+        })?;
+        let next_hop = match via.gateway {
+            Some(IpAddr::V6(ip)) => ip,
+            _ => Ipv6Addr::UNSPECIFIED,
+        };
+        luid.delete_route_ipv6(&Ipv6Inet::new(dest, 128).unwrap(), &next_hop)
+            .map_err(|e| anyhow::anyhow!("Failed to delete host route: {}", format_win_error(e)))?;
+        Ok(())
+    }
 }
 
+impl WindowsIfConfiger {
+    fn find_physical_default(
+        family: ADDRESS_FAMILY,
+        exclude_ifname: &str,
+    ) -> Result<Option<super::PhysicalDefaultRoute>, Error> {
+        use windows::Win32::NetworkManagement::IpHelper::{
+            FreeMibTable, GetIpForwardTable2, MIB_IPFORWARD_TABLE2,
+        };
+
+        let exclude_index = Self::get_interface_index(exclude_ifname);
+        let mut table: *mut MIB_IPFORWARD_TABLE2 = std::ptr::null_mut();
+        let status = unsafe { GetIpForwardTable2(family, &mut table) };
+        if status != NO_ERROR {
+            return Err(anyhow::anyhow!(
+                "GetIpForwardTable2 failed: {}",
+                format_win_error(status)
+            )
+            .into());
+        }
+        if table.is_null() {
+            return Ok(None);
+        }
+
+        let mut best: Option<(u32, u32, Option<IpAddr>, String)> = None;
+        unsafe {
+            let table_ref = &*table;
+            let rows =
+                std::slice::from_raw_parts(table_ref.Table.as_ptr(), table_ref.NumEntries as usize);
+            for row in rows {
+                if row.DestinationPrefix.PrefixLength != 0 {
+                    continue;
+                }
+                if exclude_index == Some(row.InterfaceIndex) {
+                    continue;
+                }
+                let gateway = sockaddr_inet_to_ipaddr(&row.NextHop);
+                let metric = row.Metric;
+                let ifname = interface_name_from_index(row.InterfaceIndex);
+                match &best {
+                    Some((best_metric, _, _, _)) if metric >= *best_metric => {}
+                    _ => {
+                        best = Some((metric, row.InterfaceIndex, gateway, ifname));
+                    }
+                }
+            }
+            FreeMibTable(table as *const _);
+        }
+
+        Ok(best.map(|(_, ifindex, gateway, ifname)| super::PhysicalDefaultRoute {
+            ifindex,
+            ifname,
+            gateway,
+        }))
+    }
+}
+
+fn interface_name_from_index(index: u32) -> String {
+    use network_interface::NetworkInterfaceConfig as _;
+    network_interface::NetworkInterface::show()
+        .ok()
+        .and_then(|ifaces| {
+            ifaces
+                .into_iter()
+                .find(|iface| iface.index == index)
+                .map(|iface| iface.name)
+        })
+        .unwrap_or_else(|| format!("if{index}"))
+}
+
+fn sockaddr_inet_to_ipaddr(addr: &SOCKADDR_INET) -> Option<IpAddr> {
+    unsafe {
+        match ADDRESS_FAMILY(addr.si_family as u32) {
+            AF_INET => {
+                let v4 = addr.Ipv4.sin_addr.S_un.S_addr;
+                Some(IpAddr::V4(Ipv4Addr::from(u32::from_be(v4))))
+            }
+            AF_INET6 => {
+                let bytes = addr.Ipv6.sin6_addr.u.Byte;
+                Some(IpAddr::V6(Ipv6Addr::from(bytes)))
+            }
+            _ => None,
+        }
+    }
+}
 
 pub struct RegistryManager;
 
