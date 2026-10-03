@@ -568,9 +568,11 @@ mod tests {
         let file = FileSink::from_config(config, true).unwrap();
         let logger = std::sync::Arc::new(Logger::new(TargetFilter::off(), file));
 
+        // File sink defaults to Warn when no explicit level is set, but
+        // RUST_LOG=debug (set above) still raises the effective max level.
         assert_eq!(
             logger.active_max_level.load(Ordering::Relaxed),
-            level_rank(LevelFilter::Warn)
+            level_rank(LevelFilter::Debug)
         );
 
         let barrier = std::sync::Arc::new(std::sync::Barrier::new(9));
