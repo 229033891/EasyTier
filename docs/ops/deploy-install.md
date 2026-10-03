@@ -112,6 +112,20 @@ sudo bash script/easytier-install.sh uninstall
 
 `update` / `restore` / `uninstall` 在终端下会二次确认；`restore` 有多份备份时可从列表选择。
 
+## 从某次 Actions 产物升级（未发 Release 时）
+
+正式环境优先 `easytier-install.sh update`（读 Release）。若要用**某次 ET Linux 成功 run** 的 artifact（例如 `ET Linux #19`）更新已装的控制台 / core：
+
+```bash
+# 服务器上需已安装 gh 并登录：apt install gh && gh auth login
+sudo bash script/update-from-actions.sh
+# 或指定 run：
+sudo RUN_ID=37098657441 bash script/update-from-actions.sh
+```
+
+脚本会：下载 `ET-linux-x86_64` → 备份 `et.db` → 停 `ET-web` / `ET-core@*` → 替换 `ET-core` / `ET-cli` / `ET-web-embed` → 重启。**不改数据库与 systemd 参数。**
+Artifact 需登录 GitHub（公开仓也一样），且有过期时间。
+
 ## 下载源（国内）
 
 安装或更新时会询问下载源，一般选 **1) 自动** 即可：
