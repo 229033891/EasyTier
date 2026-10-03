@@ -1,106 +1,334 @@
 name: ET Release
 
+# Auto: when ET Linux / Windows / Android succeed on releases/v*,
+#        wait until all three share the same head SHA, then Publish a Release.
+# Manual: workflow_dispatch still works (optional draft).
+#
+# Note: workflow_run uses the workflow file from the default branch (main).
+
 on:
+  workflow_run:
+    workflows: ["ET Linux", "ET Windows", "ET Android"]
+    types: [completed]
   workflow_dispatch:
     inputs:
+      version:
+        description: 'Version / tag (e.g. v2.7.1); empty = derive from source_branch'
+        type: string
+        default: ''
+        required: false
+      source_branch:
+        description: 'Branch to collect builds from (e.g. releases/v2.7.1)'
+        type: string
+        required: false
+        default: ''
       core_run_id:
-        description: 'The run id of ET Linux Action in EasyTier repo'
-        type: number
-        required: true
-      gui_run_id:
-        description: 'The run id of ET Windows Action in EasyTier repo'
-        type: number
-        required: true
-      mobile_run_id:
-        description: 'The run id of ET Android Action in EasyTier repo'
-        type: number
-        required: true
-      openwrt_run_id:
-        description: 'The run id of ET OpenWrt Action in EasyTier repo'
+        description: 'Optional override: ET Linux run id (0 = auto)'
         type: number
         required: false
         default: 0
-      version:
-        description: 'Version for this release'
-        type: string
-        default: 'v2.7.0'
-        required: true
-      make_latest:
-        description: 'Mark this release as latest'
+      gui_run_id:
+        description: 'Optional override: ET Windows run id (0 = auto)'
+        type: number
+        required: false
+        default: 0
+      mobile_run_id:
+        description: 'Optional override: ET Android run id (0 = auto)'
+        type: number
+        required: false
+        default: 0
+      openwrt_run_id:
+        description: 'Optional: ET OpenWrt run id (0 = auto-include if same SHA, -1 = skip)'
+        type: number
+        required: false
+        default: 0
+      publish:
+        description: 'Publish Release (false = draft only)'
         type: boolean
+        required: false
         default: true
-        required: true
+
+concurrency:
+  # One release attempt per branch+sha (or manual version)
+  group: et-release-${{ github.event.workflow_run.head_branch || github.event.inputs.source_branch || github.ref }}-${{ github.event.workflow_run.head_sha || github.sha }}
+  cancel-in-progress: false
 
 permissions:
   contents: write
+  actions: read
 
 jobs:
   release:
     runs-on: ubuntu-latest
+    # Auto path: only successful non-PR builds on releases/v*
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (
+        github.event_name == 'workflow_run' &&
+        github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.event != 'pull_request' &&
+        startsWith(github.event.workflow_run.head_branch, 'releases/v')
+      )
     steps:
-      -
-        name: Checkout
+      - name: Checkout
         uses: actions/checkout@v5
 
+      - name: Resolve artifact run ids
+        id: resolve
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          EVENT_NAME: ${{ github.event_name }}
+          WR_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          WR_SHA: ${{ github.event.workflow_run.head_sha }}
+          INPUT_VERSION: ${{ github.event.inputs.version }}
+          INPUT_BRANCH: ${{ github.event.inputs.source_branch }}
+          CORE_RUN_ID: ${{ github.event.inputs.core_run_id || 0 }}
+          GUI_RUN_ID: ${{ github.event.inputs.gui_run_id || 0 }}
+          MOBILE_RUN_ID: ${{ github.event.inputs.mobile_run_id || 0 }}
+          OPENWRT_RUN_ID: ${{ github.event.inputs.openwrt_run_id || 0 }}
+          PUBLISH_INPUT: ${{ github.event.inputs.publish }}
+        run: |
+          set -euo pipefail
+
+          publish="true"
+          if [ "${EVENT_NAME}" = "workflow_dispatch" ] && [ "${PUBLISH_INPUT}" = "false" ]; then
+            publish="false"
+          fi
+
+          if [ "${EVENT_NAME}" = "workflow_run" ]; then
+            branch="${WR_BRANCH}"
+            sha="${WR_SHA}"
+          else
+            branch="${INPUT_BRANCH}"
+            if [ -z "$branch" ]; then
+              branch="${GITHUB_REF_NAME}"
+            fi
+            sha=""
+          fi
+
+          if [[ ! "$branch" =~ ^releases/v ]]; then
+            echo "::error::source_branch must look like releases/vX.Y.Z (got: ${branch})"
+            exit 1
+          fi
+
+          version="${INPUT_VERSION}"
+          if [ -z "$version" ]; then
+            version="${branch#releases/}"
+          fi
+          if [[ ! "$version" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-].*)?$ ]]; then
+            echo "::error::version must look like vX.Y.Z (got: ${version})"
+            exit 1
+          fi
+
+          # Skip if a non-draft release already exists for this tag
+          if gh release view "$version" --json isDraft --jq '.isDraft' 2>/dev/null | grep -qx 'false'; then
+            echo "Release ${version} already published; nothing to do."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          resolve_run() {
+            local workflow="$1"
+            local want_sha="$2"
+            local id=""
+            if [ -n "$want_sha" ]; then
+              id="$(gh run list \
+                --workflow "$workflow" \
+                --branch "$branch" \
+                --status success \
+                --limit 30 \
+                --json databaseId,headSha \
+                --jq --arg sha "$want_sha" '[.[] | select(.headSha == $sha)][0].databaseId // empty')"
+            else
+              id="$(gh run list \
+                --workflow "$workflow" \
+                --branch "$branch" \
+                --status success \
+                --limit 1 \
+                --json databaseId,headSha \
+                --jq '.[0].databaseId // empty')"
+            fi
+            echo "$id"
+          }
+
+          describe_run() {
+            local id="$1"
+            gh run view "$id" --json databaseId,headSha,displayTitle,url,workflowName \
+              --jq '"\(.workflowName) run \(.databaseId) sha=\(.headSha) \(.url)"'
+          }
+
+          run_sha() {
+            gh run view "$1" --json headSha --jq .headSha
+          }
+
+          # Auto path: require Linux + Windows + Android on the SAME sha
+          if [ "${EVENT_NAME}" = "workflow_run" ]; then
+            CORE_RUN_ID="$(resolve_run "ET Linux" "$sha")"
+            GUI_RUN_ID="$(resolve_run "ET Windows" "$sha")"
+            MOBILE_RUN_ID="$(resolve_run "ET Android" "$sha")"
+
+            missing=()
+            [ -n "$CORE_RUN_ID" ] || missing+=("ET Linux")
+            [ -n "$GUI_RUN_ID" ] || missing+=("ET Windows")
+            [ -n "$MOBILE_RUN_ID" ] || missing+=("ET Android")
+            if [ "${#missing[@]}" -gt 0 ]; then
+              echo "Waiting for builds on ${branch} @ ${sha}: missing ${missing[*]}"
+              echo "skip=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+
+            # Optional OpenWrt (same SHA); do not block release
+            OPENWRT_RUN_ID="$(resolve_run "ET OpenWrt" "$sha" || true)"
+            [ -n "${OPENWRT_RUN_ID}" ] || OPENWRT_RUN_ID="0"
+          else
+            # Manual overrides / latest success on branch
+            if [ "${CORE_RUN_ID}" = "0" ] || [ -z "${CORE_RUN_ID}" ]; then
+              CORE_RUN_ID="$(resolve_run "ET Linux" "$sha")"
+            fi
+            if [ "${GUI_RUN_ID}" = "0" ] || [ -z "${GUI_RUN_ID}" ]; then
+              GUI_RUN_ID="$(resolve_run "ET Windows" "$sha")"
+            fi
+            if [ "${MOBILE_RUN_ID}" = "0" ] || [ -z "${MOBILE_RUN_ID}" ]; then
+              MOBILE_RUN_ID="$(resolve_run "ET Android" "$sha")"
+            fi
+            [ -n "$CORE_RUN_ID" ] || { echo "::error::No successful ET Linux run"; exit 1; }
+            [ -n "$GUI_RUN_ID" ] || { echo "::error::No successful ET Windows run"; exit 1; }
+            [ -n "$MOBILE_RUN_ID" ] || { echo "::error::No successful ET Android run"; exit 1; }
+
+            if [ "${OPENWRT_RUN_ID}" = "-1" ]; then
+              OPENWRT_RUN_ID="0"
+            elif [ "${OPENWRT_RUN_ID}" = "0" ] || [ -z "${OPENWRT_RUN_ID}" ]; then
+              # Prefer same SHA as Linux when auto-including OpenWrt
+              sha_core="$(run_sha "$CORE_RUN_ID")"
+              OPENWRT_RUN_ID="$(resolve_run "ET OpenWrt" "$sha_core" || true)"
+              [ -n "${OPENWRT_RUN_ID}" ] || OPENWRT_RUN_ID="0"
+            fi
+          fi
+
+          sha_core="$(run_sha "$CORE_RUN_ID")"
+          sha_gui="$(run_sha "$GUI_RUN_ID")"
+          sha_mobile="$(run_sha "$MOBILE_RUN_ID")"
+          if [ "$sha_core" != "$sha_gui" ] || [ "$sha_core" != "$sha_mobile" ]; then
+            echo "::error::Build SHAs differ: linux=${sha_core} windows=${sha_gui} android=${sha_mobile}"
+            exit 1
+          fi
+          target_sha="$sha_core"
+
+          {
+            echo "### EasyTier ${version}"
+            echo
+            echo "- branch: \`${branch}\`"
+            echo "- commit: \`${target_sha}\`"
+            echo "- $(describe_run "$CORE_RUN_ID")"
+            echo "- $(describe_run "$GUI_RUN_ID")"
+            echo "- $(describe_run "$MOBILE_RUN_ID")"
+            if [ "${OPENWRT_RUN_ID}" != "0" ] && [ -n "${OPENWRT_RUN_ID}" ]; then
+              echo "- $(describe_run "$OPENWRT_RUN_ID")"
+            fi
+            if [ "$publish" = "true" ]; then
+              echo
+              echo "Published automatically by **ET Release**."
+            else
+              echo
+              echo "Created as a **draft**. Review assets, then publish manually."
+            fi
+          } > release_body.md
+
+          {
+            echo "skip=false"
+            echo "version=${version}"
+            echo "target_sha=${target_sha}"
+            echo "publish=${publish}"
+            echo "core_run_id=${CORE_RUN_ID}"
+            echo "gui_run_id=${GUI_RUN_ID}"
+            echo "mobile_run_id=${MOBILE_RUN_ID}"
+            echo "openwrt_run_id=${OPENWRT_RUN_ID}"
+            echo "source_branch=${branch}"
+          } >> "$GITHUB_OUTPUT"
+
+          echo "Resolved:"
+          cat release_body.md
+
       - name: Download Core Artifact
+        if: steps.resolve.outputs.skip != 'true'
         uses: dawidd6/action-download-artifact@v11
         with:
-          github_token: ${{secrets.GITHUB_TOKEN}}
-          run_id: ${{ inputs.core_run_id }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          run_id: ${{ steps.resolve.outputs.core_run_id }}
           repo: ${{ github.repository }}
           path: release_assets
 
       - name: Download GUI Artifact
+        if: steps.resolve.outputs.skip != 'true'
         uses: dawidd6/action-download-artifact@v11
         with:
-          github_token: ${{secrets.GITHUB_TOKEN}}
-          run_id: ${{ inputs.gui_run_id }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          run_id: ${{ steps.resolve.outputs.gui_run_id }}
           repo: ${{ github.repository }}
           path: release_assets_nozip
 
       - name: Download Mobile Artifact
+        if: steps.resolve.outputs.skip != 'true'
         uses: dawidd6/action-download-artifact@v11
         with:
-          github_token: ${{secrets.GITHUB_TOKEN}}
-          run_id: ${{ inputs.mobile_run_id }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          run_id: ${{ steps.resolve.outputs.mobile_run_id }}
           repo: ${{ github.repository }}
           path: release_assets_nozip
 
       - name: Download OpenWrt Artifact
-        if: ${{ inputs.openwrt_run_id > 0 }}
+        if: >-
+          steps.resolve.outputs.skip != 'true' &&
+          steps.resolve.outputs.openwrt_run_id != '0' &&
+          steps.resolve.outputs.openwrt_run_id != ''
         uses: dawidd6/action-download-artifact@v11
         with:
-          github_token: ${{secrets.GITHUB_TOKEN}}
-          run_id: ${{ inputs.openwrt_run_id }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          run_id: ${{ steps.resolve.outputs.openwrt_run_id }}
           repo: ${{ github.repository }}
           path: release_assets
 
       - name: Zip release assets
+        if: steps.resolve.outputs.skip != 'true'
         env:
-          VERSION: ${{ inputs.version }}
+          VERSION: ${{ steps.resolve.outputs.version }}
         run: |
-          mkdir zipped_assets
+          set -euo pipefail
+          mkdir -p zipped_assets release_assets
 
-          find release_assets_nozip -type f -exec mv {} zipped_assets \;
-          ls -l -R ./zipped_assets
+          if [ -d release_assets_nozip ]; then
+            for d in release_assets_nozip/ET-windows-*; do
+              if [ -d "$d" ]; then
+                mv "$d" release_assets/
+              fi
+            done
+            find release_assets_nozip -type f -exec mv {} zipped_assets \;
+          fi
+          ls -l -R ./zipped_assets || true
 
-          cd release_assets
-          ls -l -R ./
-          chmod -R 755 .
-          for x in `ls`; do
-            # ET-openwrt-bins / ET-web-dashboard 是中间产物 (裸二进制 / 前端静态文件), 不发版
-            if [ "$x" = "ET-openwrt-bins" ] || [ "$x" = "ET-web-dashboard" ]; then
-              continue
-            fi
-            zip -r ../zipped_assets/$x-${VERSION}.zip $x;
-          done
+          if [ -d release_assets ]; then
+            cd release_assets
+            ls -l -R ./ || true
+            chmod -R 755 . || true
+            for x in `ls`; do
+              if [ "$x" = "ET-openwrt-bins" ] || [ "$x" = "ET-web-dashboard" ]; then
+                continue
+              fi
+              zip -r ../zipped_assets/$x-${VERSION}.zip $x
+            done
+          fi
 
-      - name: Release
+      - name: Create GitHub Release
+        if: steps.resolve.outputs.skip != 'true'
         uses: softprops/action-gh-release@v2
         with:
-          name: ${{ inputs.version }}
-          draft: true
+          name: ${{ steps.resolve.outputs.version }}
+          tag_name: ${{ steps.resolve.outputs.version }}
+          target_commitish: ${{ steps.resolve.outputs.target_sha }}
+          draft: ${{ steps.resolve.outputs.publish != 'true' }}
+          prerelease: false
+          make_latest: ${{ steps.resolve.outputs.publish == 'true' }}
+          body_path: release_body.md
           files: |
             ./zipped_assets/*
           token: ${{ secrets.GITHUB_TOKEN }}
-          tag_name: ${{ inputs.version }}
