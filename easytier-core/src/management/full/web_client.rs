@@ -428,9 +428,9 @@ impl<F> WebClient<F> {
         // system resolver (no VpnService protect); this only shrinks the race.
         #[cfg(not(any(target_os = "wasi", target_arch = "wasm32")))]
         {
-            let _ = tokio::spawn(async {
+            drop(tokio::spawn(async {
                 let _ = config_server_status::underlay_exclude_candidate_ips().await;
-            });
+            }));
         }
         let tasks = AbortOnDropHandle::new(tokio::spawn(web_client_routine(
             controller.clone(),

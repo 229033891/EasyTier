@@ -73,7 +73,8 @@ pub mod instance {
     use std::fmt::{Display, Formatter};
 
     include!(concat!(env!("OUT_DIR"), "/api.instance.rs"));
-    #[cfg(feature = "json-rpc")]
+    // Always include: `api.manage.serde` embeds instance types (Route,
+    // PeerRoutePair, …) whenever `web.serde` requires NetworkConfig serde.
     include!(concat!(env!("OUT_DIR"), "/api.instance.serde.rs"));
 
     impl From<crate::core_peer::peer::PeerConnStats> for PeerConnStats {

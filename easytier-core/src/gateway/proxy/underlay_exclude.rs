@@ -103,10 +103,7 @@ fn is_excludable_ipv4(ip: Ipv4Addr) -> bool {
 }
 
 fn is_excludable_ipv6(ip: Ipv6Addr) -> bool {
-    !(ip.is_unspecified()
-        || ip.is_loopback()
-        || ip.is_multicast()
-        || ip.is_unicast_link_local())
+    !(ip.is_unspecified() || ip.is_loopback() || ip.is_multicast() || ip.is_unicast_link_local())
 }
 
 #[cfg(test)]

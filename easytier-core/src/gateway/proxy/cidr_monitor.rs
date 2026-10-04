@@ -112,7 +112,7 @@ pub(crate) fn diff_proxy_cidrs(
     }
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
+#[allow(dead_code)]
 pub(crate) async fn collect_proxy_cidrs(
     peer_manager: &PeerManagerCore,
     config: &CoreInstanceRuntimeConfig,
