@@ -1148,7 +1148,7 @@ impl NicCtx {
             .await;
         }
 
-        let last_error = if desired == installed.as_ref() {
+        let last_error = if desired == installed {
             None
         } else {
             Some("proxy CIDR desired set not fully installed yet".to_string())
