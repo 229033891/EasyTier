@@ -17,6 +17,7 @@
     "createUpdaterArtifacts": false,
     "windows": {
       "nsis": {
+        "template": "./windows/installer.nsi",
         "installerHooks": "./windows/installer-hooks.nsh"
       }
     }
