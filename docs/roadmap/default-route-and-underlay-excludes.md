@@ -204,7 +204,7 @@ Android 可用 `VpnService.protect`；桌面端改为：TUN 就绪时登记 ifna
 
 1. **L2**：在期望集合层（`resolve_proxy_cidrs`）过滤对端 `0.0.0.0/0`，**不再**写入 OS（除非逃生阀）。  
 2. **仅** 期望集合含 TUN `/0` 时安装 underlay exclude（统一门控 `will_have_tun_default`）。  
-3. 非 exit `/0` 的高度量路径仅服务逃生阀；无逃生阀时 metric 翻转为 no-op。  
+3. 非 exit `/0` 的高度量路径仅服务逃生阀；无逃生阀时 metric 翻转为 no-op。有逃生阀时 `reconcile_ipv4_default_metric` **仍是活代码**（按旧/新 metric 精确删除后再装，避免 `already_satisfied` 误收敛）。  
 4. **L3**：保持对端 `/0` 作选路兜底。  
 5. 逃生+可观测：`allow_peer_default_without_exit`（默认 `false`）+ `proxy_cidr_route_sync` 状态摘要。  
 6. 已更新 [`../current/traffic-steering.md`](../current/traffic-steering.md)。

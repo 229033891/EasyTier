@@ -632,7 +632,7 @@ web:
     hostname: Display Name
     public_ip: Public IP
     # Remote endpoint of the device WebClient → easytier-web config-server session (not P2P / browser URL)
-    connection_addr: Config-server Session
+    connection_addr: Config-server Address
     connection_addr_help: Remote address of this device’s session to the easytier-web config server (protocol and port). Not a peer P2P address, and not the browser console URL.
     networks: Network Count
     last_report: Last Seen

@@ -25,9 +25,12 @@ the requirement as a no-op.
 - UDP transport, candidates, listeners, NAT egress and STUN request protection;
   HolePunchControl, local SOCKS/port-forward and port-lease sockets do not.
 - Low-level TCP/UDP bind options default to protection, including deserialization
-  of options without `need_protect`. The named local/TUN-facing constructors set
-  `false` explicitly. The UDP default keeps its historical purpose label for
-  socket setup; only the named `hole_punch_control()` constructor opts out.
+  of options without `need_protect`. Named local/TUN-facing constructors and
+  call sites that must stay on the VPN (for example hole-punch control senders)
+  set `need_protect: false` explicitly via `.with_need_protect(false)`.
+  `UdpBindOptions::hole_punch_control()` itself still defaults to protected;
+  the opt-out is at the call site, not the constructor.
+- The UDP default keeps its historical purpose label for socket setup.
 - `with_bind()` replaces the **entire** bind object. A local listener's replacement
   must retain its opt-out rather than inherit the protected default. A native
   adapter must honor explicit `false`, not silently change it based on `purpose`.

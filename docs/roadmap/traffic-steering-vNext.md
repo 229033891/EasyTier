@@ -22,9 +22,9 @@
 
 今天存在三条「看起来都能把流量弄出去」的能力，但职责交叉、文案夸大、失败不可见：
 
-| 能力 | 用户直觉 | 实际负责层 |
+| 能力 | 用户直觉 | 实际负责层（Roadmap 目标 / 注意 Current） |
 |------|----------|------------|
-| `exit_nodes` / `enable_exit_node` | 「配了出口，本机上网全走它」 | **仅 Peer 选路兜底**；不装系统默认路由 |
+| `exit_nodes` / `enable_exit_node` | 「配了出口，本机上网全走它」 | **Current（D+）已会装 TUN `/0`**；本文其余章节描述 vNext 统一模型。勿再按「仅 Peer 选路、不装系统默认」理解现状——以 [`../current/traffic-steering.md`](../current/traffic-steering.md) 为准 |
 | `proxy_cidrs` 子网代理 | 「宣告网段，对端自动有路由」 | OSPF 通告 + TUN **系统路由**同步 |
 | 域名访问目标 | 「填域名就能代理」 | 尚无；只有 IP/CIDR，且 B 侧 DNS 可能与 A 不一致 |
 

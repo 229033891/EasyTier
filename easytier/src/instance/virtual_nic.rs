@@ -12,8 +12,8 @@ use crate::common::{
     error::Error,
     global_ctx::{ArcGlobalCtx, GlobalCtxEvent},
     ifcfg::{
-        IfConfiger, IfConfiguerTrait, PhysicalDefaultRoute, route_add_already_satisfied,
-        route_remove_already_satisfied,
+        EXIT_IPV6_DEFAULT_METRIC, IfConfiger, IfConfiguerTrait, PUBLIC_IPV6_DEFAULT_METRIC,
+        PhysicalDefaultRoute, route_add_already_satisfied, route_remove_already_satisfied,
     },
 };
 
@@ -141,7 +141,11 @@ impl PacketProtocol {
 
     #[cfg(target_os = "windows")]
     fn into_pi_field(self) -> Result<u16, io::Error> {
-        unimplemented!()
+        // Windows TUN path never enables packet info today; keep a hard error
+        // instead of `unimplemented!` so a future enablement fails loudly.
+        Err(io::Error::other(
+            "Windows TUN packet-info headers are not supported",
+        ))
     }
 }
 
@@ -752,10 +756,15 @@ impl VirtualNic {
         Ok(())
     }
 
-    pub async fn remove_ipv6_route(&self, address: Ipv6Addr, cidr: u8) -> Result<(), Error> {
+    pub async fn remove_ipv6_route(
+        &self,
+        address: Ipv6Addr,
+        cidr: u8,
+        metric: Option<u32>,
+    ) -> Result<(), Error> {
         let _g = self.global_ctx.net_ns.guard();
         self.ifcfg
-            .remove_ipv6_route(self.ifname(), address, cidr)
+            .remove_ipv6_route(self.ifname(), address, cidr, metric)
             .await?;
         Ok(())
     }
@@ -975,9 +984,24 @@ impl NicCtx {
             if !cur_proxy_cidrs.contains(&cidr) {
                 continue;
             }
+            let metric = if cidr.network_length() == 0 {
+                // Must match the metric used when this `/0` was installed so we
+                // do not delete a peer/escape default when removing exit (or
+                // vice versa) on platforms that keep both.
+                Some(ifcfg.resolve_route_metric(
+                    0,
+                    if *ipv4_default_uses_exit_metric {
+                        None
+                    } else {
+                        Some(ifcfg.specific_route_metric())
+                    },
+                ))
+            } else {
+                None
+            };
             let _g = net_ns.guard();
             match ifcfg
-                .remove_ipv4_route(ifname, cidr.first_address(), cidr.network_length())
+                .remove_ipv4_route(ifname, cidr.first_address(), cidr.network_length(), metric)
                 .await
             {
                 Ok(()) => {
@@ -1202,9 +1226,21 @@ impl NicCtx {
             return;
         }
 
+        let old_cost = if *ipv4_default_uses_exit_metric {
+            None
+        } else {
+            Some(ifcfg.specific_route_metric())
+        };
+        let new_cost = if local_exit_default {
+            None
+        } else {
+            Some(ifcfg.specific_route_metric())
+        };
+        let old_metric = ifcfg.resolve_route_metric(0, old_cost);
+
         let _g = net_ns.guard();
         let remove = ifcfg
-            .remove_ipv4_route(ifname, default.first_address(), 0)
+            .remove_ipv4_route(ifname, default.first_address(), 0, Some(old_metric))
             .await;
         if let Err(err) = remove
             && !route_remove_already_satisfied(&err)
@@ -1222,28 +1258,47 @@ impl NicCtx {
         cur_proxy_cidrs.remove(&default);
         *ipv4_default_uses_exit_metric = false;
 
-        let cost = if local_exit_default {
-            None
-        } else {
-            Some(ifcfg.specific_route_metric())
-        };
-        match ifcfg
-            .add_ipv4_route(ifname, default.first_address(), 0, cost)
+        let add_ok = match ifcfg
+            .add_ipv4_route(ifname, default.first_address(), 0, new_cost)
             .await
         {
-            Ok(()) => {
-                cur_proxy_cidrs.insert(default);
-                *ipv4_default_uses_exit_metric = local_exit_default;
-            }
+            Ok(()) => true,
             Err(err) if route_add_already_satisfied(&err) => {
-                cur_proxy_cidrs.insert(default);
-                *ipv4_default_uses_exit_metric = local_exit_default;
+                // EEXIST may mean the *old* metric is still present. Force
+                // remove any `/0` on this iface and retry once so we do not
+                // mark the wrong metric as converged.
+                let _ = ifcfg
+                    .remove_ipv4_route(ifname, default.first_address(), 0, None)
+                    .await;
+                match ifcfg
+                    .add_ipv4_route(ifname, default.first_address(), 0, new_cost)
+                    .await
+                {
+                    Ok(()) => true,
+                    Err(err2) if route_add_already_satisfied(&err2) => true,
+                    Err(err2) => {
+                        tracing::warn!(
+                            ifname,
+                            ?err2,
+                            "replace ipv4 default route metric failed on forced re-add; will retry"
+                        );
+                        false
+                    }
+                }
             }
-            Err(err) => tracing::warn!(
-                ifname,
-                ?err,
-                "replace ipv4 default route metric failed on add; will retry"
-            ),
+            Err(err) => {
+                tracing::warn!(
+                    ifname,
+                    ?err,
+                    "replace ipv4 default route metric failed on add; will retry"
+                );
+                false
+            }
+        };
+
+        if add_ok {
+            cur_proxy_cidrs.insert(default);
+            *ipv4_default_uses_exit_metric = local_exit_default;
         }
     }
 
@@ -1265,9 +1320,17 @@ impl NicCtx {
         }
 
         let _g = net_ns.guard();
+        let exit_metric = ifcfg.resolve_route_metric(0, Some(EXIT_IPV6_DEFAULT_METRIC));
         if want_exit_ipv6_default {
+            // Distinct low metric so this wins over the public-provider `::/0`
+            // (metric 5) without deleting it; remove targets this metric only.
             match ifcfg
-                .add_ipv6_route(ifname, Ipv6Addr::UNSPECIFIED, 0, None)
+                .add_ipv6_route(
+                    ifname,
+                    Ipv6Addr::UNSPECIFIED,
+                    0,
+                    Some(EXIT_IPV6_DEFAULT_METRIC),
+                )
                 .await
             {
                 Ok(()) => *exit_ipv6_default_installed = true,
@@ -1283,9 +1346,9 @@ impl NicCtx {
             return;
         }
 
-        // Remove the exit IPv6 default; treat "already gone" as success.
+        // Remove only the exit IPv6 default; leave the public-provider `::/0`.
         if let Err(err) = ifcfg
-            .remove_ipv6_route(ifname, Ipv6Addr::UNSPECIFIED, 0)
+            .remove_ipv6_route(ifname, Ipv6Addr::UNSPECIFIED, 0, Some(exit_metric))
             .await
             && !route_remove_already_satisfied(&err)
         {
@@ -1297,11 +1360,16 @@ impl NicCtx {
             return;
         }
         // Remove succeeded or was already gone: update state and optionally restore
-        // the public IPv6 default route that the exit default had overridden.
+        // the public IPv6 default route if the exit path had been the only writer.
         *exit_ipv6_default_installed = false;
         if restore_public_ipv6_default
             && let Err(err) = ifcfg
-                .add_ipv6_route(ifname, Ipv6Addr::UNSPECIFIED, 0, Some(5))
+                .add_ipv6_route(
+                    ifname,
+                    Ipv6Addr::UNSPECIFIED,
+                    0,
+                    Some(PUBLIC_IPV6_DEFAULT_METRIC),
+                )
                 .await
             && !route_add_already_satisfied(&err)
         {
@@ -1548,7 +1616,7 @@ impl NicCtx {
             }
             let _g = net_ns.guard();
             let ret = ifcfg
-                .remove_ipv6_route(ifname, route.address(), route.network_length())
+                .remove_ipv6_route(ifname, route.address(), route.network_length(), None)
                 .await;
             if ret.is_err() {
                 let err = ret.err().unwrap();
@@ -1861,7 +1929,11 @@ impl NicCtx {
                     tracing::warn!(addr = ?addr, ?err, "failed to add public ipv6 address");
                 }
                 if let Err(err) = nic
-                    .add_ipv6_route_with_cost(Ipv6Addr::UNSPECIFIED, 0, Some(5))
+                    .add_ipv6_route_with_cost(
+                        Ipv6Addr::UNSPECIFIED,
+                        0,
+                        Some(PUBLIC_IPV6_DEFAULT_METRIC),
+                    )
                     .await
                 {
                     tracing::warn!(route = %Ipv6Addr::UNSPECIFIED, prefix = 0, ?err, "failed to add default public ipv6 route");
@@ -1890,7 +1962,14 @@ impl NicCtx {
                     tracing::warn!(?err, "failed to bring public ipv6 nic link up");
                 }
                 if let Some(old) = old {
-                    if let Err(err) = nic.remove_ipv6_route(Ipv6Addr::UNSPECIFIED, 0).await {
+                    if let Err(err) = nic
+                        .remove_ipv6_route(
+                            Ipv6Addr::UNSPECIFIED,
+                            0,
+                            Some(PUBLIC_IPV6_DEFAULT_METRIC as u32),
+                        )
+                        .await
+                    {
                         tracing::warn!(route = %Ipv6Addr::UNSPECIFIED, prefix = 0, ?err, "failed to remove default public ipv6 route");
                     }
                     if let Err(err) = nic.remove_ipv6(Some(old)).await {
@@ -1903,7 +1982,11 @@ impl NicCtx {
                         tracing::warn!(addr = ?new, ?err, "failed to add public ipv6 address");
                     }
                     if let Err(err) = nic
-                        .add_ipv6_route_with_cost(Ipv6Addr::UNSPECIFIED, 0, Some(5))
+                        .add_ipv6_route_with_cost(
+                            Ipv6Addr::UNSPECIFIED,
+                            0,
+                            Some(PUBLIC_IPV6_DEFAULT_METRIC),
+                        )
                         .await
                     {
                         tracing::warn!(route = %Ipv6Addr::UNSPECIFIED, prefix = 0, ?err, "failed to add default public ipv6 route");
@@ -1938,7 +2021,7 @@ impl NicCtx {
                         // remove the 10.0.0.0/24 route (which is added by rust-tun by default)
                         let _ = nic
                             .ifcfg
-                            .remove_ipv4_route(nic.ifname(), "10.0.0.0".parse().unwrap(), 24)
+                            .remove_ipv4_route(nic.ifname(), "10.0.0.0".parse().unwrap(), 24, None)
                             .await;
                     }
 

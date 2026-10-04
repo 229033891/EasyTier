@@ -385,6 +385,15 @@ impl RouteMessage {
             .find(|attribute| attribute.kind & NLA_TYPE_MASK == RTA_PRIORITY)
             .and_then(|attribute| read_u32(&attribute.value).ok())
     }
+
+    /// Effective routing table id (RTA_TABLE when present, else header `table`).
+    pub(crate) fn table_id(&self) -> u32 {
+        self.attributes
+            .iter()
+            .find(|attribute| attribute.kind & NLA_TYPE_MASK == RTA_TABLE)
+            .and_then(|attribute| read_u32(&attribute.value).ok())
+            .unwrap_or(u32::from(self.table))
+    }
 }
 
 impl RouteMessage {

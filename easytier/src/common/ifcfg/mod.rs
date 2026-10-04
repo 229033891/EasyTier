@@ -41,6 +41,13 @@ pub(crate) fn implicit_route_metric(cidr_prefix: u8, specific: u32, default_rout
     }
 }
 
+/// Public IPv6 provider default (`::/0`) metric. Must be higher than
+/// [`EXIT_IPV6_DEFAULT_METRIC`] so an exit-node default wins while both exist.
+pub(crate) const PUBLIC_IPV6_DEFAULT_METRIC: i32 = 5;
+/// Exit-node IPv6 default (`::/0`) metric. Kept distinct from
+/// [`PUBLIC_IPV6_DEFAULT_METRIC`] so netlink deletes can target one writer.
+pub(crate) const EXIT_IPV6_DEFAULT_METRIC: i32 = 1;
+
 /// Physical (non-TUN) default route used to pin underlay host routes so peer
 /// tunnels / STUN stay off the exit-node TUN default.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -138,11 +145,15 @@ pub trait IfConfiguerTrait: Send + Sync {
     ) -> Result<(), Error> {
         Ok(())
     }
+    /// Remove an IPv4 route. When `metric` is `Some`, only a route with that
+    /// priority is deleted (needed when exit and peer `/0` share a destination
+    /// with different metrics). `None` deletes the first matching dest/oif.
     async fn remove_ipv4_route(
         &self,
         _name: &str,
         _address: Ipv4Addr,
         _cidr_prefix: u8,
+        _metric: Option<u32>,
     ) -> Result<(), Error> {
         Ok(())
     }
@@ -163,11 +174,13 @@ pub trait IfConfiguerTrait: Send + Sync {
     ) -> Result<(), Error> {
         Ok(())
     }
+    /// Remove an IPv6 route. See [`Self::remove_ipv4_route`] for `metric`.
     async fn remove_ipv6_route(
         &self,
         _name: &str,
         _address: Ipv6Addr,
         _cidr_prefix: u8,
+        _metric: Option<u32>,
     ) -> Result<(), Error> {
         Ok(())
     }
@@ -198,6 +211,22 @@ pub trait IfConfiguerTrait: Send + Sync {
     /// Metric used for non-exit (more-specific or peer-advertised `/0`) routes.
     fn specific_route_metric(&self) -> i32 {
         9000
+    }
+
+    /// Metric used when `add_*_route` is called with `cost: None` for a `/0`.
+    fn default_route_metric(&self) -> i32 {
+        1
+    }
+
+    /// Resolve the kernel priority that `add_*_route` would install for `cost`.
+    fn resolve_route_metric(&self, cidr_prefix: u8, cost: Option<i32>) -> u32 {
+        cost.map(|v| v as u32).unwrap_or_else(|| {
+            implicit_route_metric(
+                cidr_prefix,
+                self.specific_route_metric() as u32,
+                self.default_route_metric() as u32,
+            )
+        })
     }
 
     /// Find the best IPv4 default route that is **not** on `exclude_ifname` (TUN).

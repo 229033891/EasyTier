@@ -121,7 +121,12 @@ impl TryFrom<&Record> for rr::Record {
                     minimum,
                 )));
             }
-            _ => todo!(),
+            _ => {
+                return Err(anyhow::anyhow!(
+                    "unsupported DNS record type in zone config: {:?}",
+                    value.rr_type
+                ));
+            }
         }
         Ok(record)
     }

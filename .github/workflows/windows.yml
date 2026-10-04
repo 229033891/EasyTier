@@ -45,7 +45,7 @@ jobs:
         }}
     steps:
       - id: skip_check
-        uses: fkirc/skip-duplicate-actions@v5
+        uses: fkirc/skip-duplicate-actions@v5.3.1
         with:
           concurrent_skipping: 'same_content_newer'
           skip_after_successful_duplicate: 'true'
@@ -102,7 +102,7 @@ jobs:
           pnpm-setup-wasm: 'false'
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@v2.7.8
         with:
           # The prefix cache key, this can be changed to start a new cache manually.
           # default: "v0-rust"
@@ -165,7 +165,7 @@ jobs:
 
       - name: Build GUI
         if: ${{ matrix.GUI_TARGET != '' && (!contains(matrix.GUI_TARGET, 'darwin') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository)) }}
-        uses: tauri-apps/tauri-action@v0
+        uses: tauri-apps/tauri-action@v0.5.23
         with:
           projectPath: ./easytier-gui
           args: --verbose --target ${{ matrix.GUI_TARGET }} --config tauri.ci.conf.json
@@ -173,7 +173,7 @@ jobs:
       - name: Build GUI (signed and notarized)
         if: ${{ contains(matrix.GUI_TARGET, 'darwin') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
         timeout-minutes: 60
-        uses: tauri-apps/tauri-action@v0
+        uses: tauri-apps/tauri-action@v0.5.23
         env:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}

@@ -39,9 +39,20 @@ mod put {
         mut auth_session: AuthSession,
         Json(req): Json<ChangePassword>,
     ) -> Result<Json<Void>, HttpHandleError> {
+        let user_id = auth_session
+            .user
+            .as_ref()
+            .ok_or((
+                StatusCode::UNAUTHORIZED,
+                Json::from(crate::restful::other_error_with_code(
+                    "Not authenticated",
+                    "unauthorized",
+                )),
+            ))?
+            .id();
         if let Err(e) = auth_session
             .backend
-            .change_password(auth_session.user.as_ref().unwrap().id(), &req)
+            .change_password(user_id, &req)
             .await
         {
             tracing::error!("Failed to change password: {e:?}");

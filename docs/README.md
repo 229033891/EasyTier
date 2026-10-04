@@ -63,6 +63,11 @@
 |------|------|
 | [data-plane-runtime-plan.md](./archive/data-plane-runtime-plan.md) | DataPlane 原实现计划全文（已由 Current 摘要替代日常阅读） |
 | [service-mode-web-config-sync-and-select-ui-2026-10-04.md](./archive/service-mode-web-config-sync-and-select-ui-2026-10-04.md) | 服务模式 web-owned 同步修复 + 配置页协议下拉复查 |
+| [kcp-control-reliability-design-2026-09-14.md](./archive/kcp-control-reliability-design-2026-09-14.md) | KCP 控制报文可靠性设计 |
+| [kcp-control-reliability-validation-2026-09-14.md](./archive/kcp-control-reliability-validation-2026-09-14.md) | KCP 控制报文可靠性验证 |
+| [tcp-proxy-flow-key-validation-2026-09-13.md](./archive/tcp-proxy-flow-key-validation-2026-09-13.md) | TCP proxy flow-key 验证 |
+| [tcp-proxy-half-close-validation-2026-09-14.md](./archive/tcp-proxy-half-close-validation-2026-09-14.md) | TCP proxy 半关闭验证 |
+| [quic-proxy-memory-benchmark-2026-07-27.md](./archive/quic-proxy-memory-benchmark-2026-07-27.md) | QUIC proxy 内存 benchmark |
 
 ---
 

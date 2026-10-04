@@ -205,6 +205,7 @@ impl IfConfiguerTrait for WindowsIfConfiger {
         name: &str,
         address: Ipv4Addr,
         cidr_prefix: u8,
+        _metric: Option<u32>,
     ) -> Result<(), Error> {
         let Some(if_index) = Self::get_interface_index(name) else {
             return Err(Error::NotFound);
@@ -295,6 +296,7 @@ impl IfConfiguerTrait for WindowsIfConfiger {
         name: &str,
         address: Ipv6Addr,
         cidr_prefix: u8,
+        _metric: Option<u32>,
     ) -> Result<(), Error> {
         let Some(if_index) = Self::get_interface_index(name) else {
             return Err(Error::NotFound);
@@ -314,6 +316,10 @@ impl IfConfiguerTrait for WindowsIfConfiger {
 
     fn specific_route_metric(&self) -> i32 {
         9000
+    }
+
+    fn default_route_metric(&self) -> i32 {
+        1
     }
 
     async fn find_ipv4_physical_default(

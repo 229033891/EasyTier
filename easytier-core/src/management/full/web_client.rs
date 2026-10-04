@@ -264,9 +264,12 @@ struct WebClientController {
     /// Bumped when a local report updates the revision cache so in-flight
     /// heartbeats cannot clobber a fresher CAS result.
     revision_generation: std::sync::atomic::AtomicU64,
-    /// Client-minted revision of the last unconfirmed local report, so retrying
-    /// the same edit reuses it and stays idempotent on the console.
-    pending_report: StdMutex<Option<PendingReport>>,
+    /// Client-minted revision of the last unconfirmed local report per instance,
+    /// so retrying the same edit reuses it and stays idempotent on the console.
+    /// Keyed by instance id so concurrent multi-instance reports do not clobber
+    /// each other's pending revision (which previously caused false
+    /// `RevisionConflict`).
+    pending_report: StdMutex<std::collections::HashMap<String, PendingReport>>,
 }
 
 /// A `config_revision` minted for a local report that has no definitive answer yet.
@@ -312,30 +315,28 @@ impl WebClientController {
         let Ok(mut guard) = self.pending_report.lock() else {
             return uuid::Uuid::new_v4().to_string();
         };
-        if let Some(pending) = guard.as_ref()
-            && pending.instance_id == instance_id
+        if let Some(pending) = guard.get(instance_id)
             && pending.expected_revision == expected_revision
         {
             return pending.config_revision.clone();
         }
         let config_revision = uuid::Uuid::new_v4().to_string();
-        *guard = Some(PendingReport {
-            instance_id: instance_id.to_owned(),
-            expected_revision: expected_revision.to_owned(),
-            config_revision: config_revision.clone(),
-        });
+        guard.insert(
+            instance_id.to_owned(),
+            PendingReport {
+                instance_id: instance_id.to_owned(),
+                expected_revision: expected_revision.to_owned(),
+                config_revision: config_revision.clone(),
+            },
+        );
         config_revision
     }
 
     /// Drop the pending report after a definitive answer. Transient failures keep
     /// it so the next attempt reuses the same revision.
     fn clear_pending_report(&self, instance_id: &str) {
-        if let Ok(mut guard) = self.pending_report.lock()
-            && guard
-                .as_ref()
-                .is_some_and(|pending| pending.instance_id == instance_id)
-        {
-            *guard = None;
+        if let Ok(mut guard) = self.pending_report.lock() {
+            guard.remove(instance_id);
         }
     }
 }
@@ -409,7 +410,7 @@ impl<F> WebClient<F> {
             managed_config_revision: StdMutex::new(None),
             active_rpc: StdMutex::new(None),
             revision_generation: std::sync::atomic::AtomicU64::new(0),
-            pending_report: StdMutex::new(None),
+            pending_report: StdMutex::new(std::collections::HashMap::new()),
         });
         let connected = Arc::new(AtomicBool::new(false));
         // Install the report client before advertising enabled status so
@@ -1140,7 +1141,7 @@ mod tests {
             managed_config_revision: StdMutex::new(None),
             active_rpc: StdMutex::new(None),
             revision_generation: std::sync::atomic::AtomicU64::new(0),
-            pending_report: StdMutex::new(None),
+            pending_report: StdMutex::new(std::collections::HashMap::new()),
         }
     }
 
@@ -1201,6 +1202,28 @@ mod tests {
             controller.revision_for_report("instance-a", "expected-1"),
             first,
             "a confirmed report starts a new revision"
+        );
+    }
+
+    #[test]
+    fn concurrent_instance_reports_keep_independent_pending_revisions() {
+        let controller = test_controller();
+
+        let a = controller.revision_for_report("instance-a", "expected-1");
+        let b = controller.revision_for_report("instance-b", "expected-1");
+        assert_ne!(a, b);
+        assert_eq!(
+            controller.revision_for_report("instance-a", "expected-1"),
+            a,
+            "instance-a pending must survive a concurrent instance-b report"
+        );
+        assert_eq!(controller.revision_for_report("instance-b", "expected-1"), b);
+
+        controller.clear_pending_report("instance-a");
+        assert_eq!(
+            controller.revision_for_report("instance-b", "expected-1"),
+            b,
+            "clearing instance-a must not drop instance-b pending"
         );
     }
 }

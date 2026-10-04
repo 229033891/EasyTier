@@ -143,7 +143,8 @@ impl From<IpAddr> for std::net::IpAddr {
         match value.ip {
             Some(ip_addr::Ip::Ipv4(v4)) => std::net::IpAddr::V4(v4.into()),
             Some(ip_addr::Ip::Ipv6(v6)) => std::net::IpAddr::V6(v6.into()),
-            None => panic!("IpAddr is None"),
+            // Malformed wire / older peers: never panic on the hot path.
+            None => std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED),
         }
     }
 }
@@ -168,7 +169,10 @@ impl From<Ipv4Inet> for cidr::Ipv4Inet {
             value.address.unwrap_or_default().into(),
             value.network_length as u8,
         )
-        .unwrap()
+        .unwrap_or_else(|_| {
+            cidr::Ipv4Inet::new(std::net::Ipv4Addr::UNSPECIFIED, 32)
+                .expect("UNSPECIFIED/32 is valid")
+        })
     }
 }
 
@@ -178,7 +182,10 @@ impl From<Ipv4Inet> for cidr::Ipv4Cidr {
             value.address.unwrap_or_default().into(),
             value.network_length as u8,
         )
-        .unwrap()
+        .unwrap_or_else(|_| {
+            cidr::Ipv4Cidr::new(std::net::Ipv4Addr::UNSPECIFIED, 32)
+                .expect("UNSPECIFIED/32 is valid")
+        })
     }
 }
 
@@ -213,7 +220,10 @@ impl From<Ipv6Inet> for cidr::Ipv6Inet {
             value.address.unwrap_or_default().into(),
             value.network_length as u8,
         )
-        .unwrap()
+        .unwrap_or_else(|_| {
+            cidr::Ipv6Inet::new(std::net::Ipv6Addr::UNSPECIFIED, 128)
+                .expect("UNSPECIFIED/128 is valid")
+        })
     }
 }
 
@@ -251,7 +261,10 @@ impl From<IpInet> for cidr::IpInet {
         match value.ip {
             Some(ip_inet::Ip::Ipv4(v4)) => cidr::IpInet::V4(v4.into()),
             Some(ip_inet::Ip::Ipv6(v6)) => cidr::IpInet::V6(v6.into()),
-            None => panic!("IpInet is None"),
+            None => cidr::IpInet::V4(
+                cidr::Ipv4Inet::new(std::net::Ipv4Addr::UNSPECIFIED, 32)
+                    .expect("UNSPECIFIED/32 is valid"),
+            ),
         }
     }
 }

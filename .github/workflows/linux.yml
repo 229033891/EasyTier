@@ -44,7 +44,7 @@ jobs:
         }}
     steps:
       - id: skip_check
-        uses: fkirc/skip-duplicate-actions@v5
+        uses: fkirc/skip-duplicate-actions@v5.3.1
         with:
           concurrent_skipping: 'same_content_newer'
           skip_after_successful_duplicate: 'true'
@@ -125,7 +125,7 @@ jobs:
           pnpm: false
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@v2.7.8
         with:
           # The prefix cache key, this can be changed to start a new cache manually.
           # default: "v0-rust"

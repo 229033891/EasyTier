@@ -229,16 +229,16 @@ impl Route for DisabledRoute {
 
     // TODO: rewrite route management, remove this
     async fn list_proxy_cidrs(&self) -> BTreeSet<Ipv4Cidr> {
-        unimplemented!()
+        BTreeSet::new()
     }
 
     // TODO: rewrite route management, remove this
     async fn list_proxy_cidrs_v6(&self) -> BTreeSet<Ipv6Cidr> {
-        unimplemented!()
+        BTreeSet::new()
     }
 
     async fn list_public_ipv6_routes(&self) -> BTreeSet<Ipv6Inet> {
-        unimplemented!()
+        BTreeSet::new()
     }
 
     async fn get_my_public_ipv6_addr(&self) -> Option<Ipv6Inet> {

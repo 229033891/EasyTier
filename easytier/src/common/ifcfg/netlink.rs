@@ -371,6 +371,7 @@ impl IfConfiguerTrait for NetlinkIfConfiger {
         name: &str,
         address: Ipv4Addr,
         cidr_prefix: u8,
+        metric: Option<u32>,
     ) -> Result<(), Error> {
         let routes = Self::list_routes()?;
         let ifidx = NetlinkIfConfiger::get_interface_index(name)?;
@@ -380,14 +381,21 @@ impl IfConfiguerTrait for NetlinkIfConfiger {
                 .destination()
                 .copied()
                 .unwrap_or(IpAddr::V4(Ipv4Addr::UNSPECIFIED));
-            if destination == IpAddr::V4(address)
-                && msg.dst_len() == cidr_prefix
-                && msg.oif() == Some(ifidx)
+            if destination != IpAddr::V4(address)
+                || msg.dst_len() != cidr_prefix
+                || msg.oif() != Some(ifidx)
             {
-                let request = message_request(RTM_DELROUTE, NLM_F_ACK | NLM_F_REQUEST, &msg)?;
-                send_netlink_req_and_wait_ack(request)?;
-                return Ok(());
+                continue;
             }
+            if let Some(want) = metric {
+                let got = msg.priority().unwrap_or(0);
+                if got != want {
+                    continue;
+                }
+            }
+            let request = message_request(RTM_DELROUTE, NLM_F_ACK | NLM_F_REQUEST, &msg)?;
+            send_netlink_req_and_wait_ack(request)?;
+            return Ok(());
         }
 
         Ok(())
@@ -521,6 +529,7 @@ impl IfConfiguerTrait for NetlinkIfConfiger {
         name: &str,
         address: std::net::Ipv6Addr,
         cidr_prefix: u8,
+        metric: Option<u32>,
     ) -> Result<(), Error> {
         let routes = Self::list_route_messages(libc::AF_INET6 as u8)?;
         let ifidx = NetlinkIfConfiger::get_interface_index(name)?;
@@ -533,6 +542,7 @@ impl IfConfiguerTrait for NetlinkIfConfiger {
             if destination == IpAddr::V6(address)
                 && msg.dst_len() == cidr_prefix
                 && msg.oif() == Some(ifidx)
+                && metric.is_none_or(|want| msg.priority().unwrap_or(0) == want)
             {
                 let request = message_request(RTM_DELROUTE, NLM_F_ACK | NLM_F_REQUEST, &msg)?;
                 send_netlink_req_and_wait_ack(request)?;
@@ -545,6 +555,10 @@ impl IfConfiguerTrait for NetlinkIfConfiger {
 
     fn specific_route_metric(&self) -> i32 {
         65535
+    }
+
+    fn default_route_metric(&self) -> i32 {
+        50
     }
 
     async fn find_ipv4_physical_default(
@@ -592,7 +606,7 @@ impl IfConfiguerTrait for NetlinkIfConfiger {
         dest: Ipv4Addr,
         via: &super::PhysicalDefaultRoute,
     ) -> Result<(), Error> {
-        self.remove_ipv4_route(&via.ifname, dest, 32).await
+        self.remove_ipv4_route(&via.ifname, dest, 32, None).await
     }
 
     async fn add_ipv6_host_route(
@@ -626,7 +640,7 @@ impl IfConfiguerTrait for NetlinkIfConfiger {
         dest: Ipv6Addr,
         via: &super::PhysicalDefaultRoute,
     ) -> Result<(), Error> {
-        self.remove_ipv6_route(&via.ifname, dest, 128).await
+        self.remove_ipv6_route(&via.ifname, dest, 128, None).await
     }
 }
 
@@ -638,7 +652,15 @@ impl NetlinkIfConfiger {
         let exclude_index = Self::get_interface_index(exclude_ifname).ok();
         let mut best: Option<(u32, super::PhysicalDefaultRoute)> = None;
         for msg in Self::list_route_messages(family)? {
-            if msg.dst_len() != 0 || msg.route_type() != RouteType::Unicast {
+            // Only main-table, source-less defaults. Policy routes like
+            // `default from <src>` (src_len != 0 / RTA_SRC) must not become the
+            // underlay exclude next hop — that pins peer tunnels to the wrong gw.
+            if msg.dst_len() != 0
+                || msg.src_len() != 0
+                || msg.source().is_some()
+                || msg.table_id() != u32::from(libc::RT_TABLE_MAIN)
+                || msg.route_type() != RouteType::Unicast
+            {
                 continue;
             }
             let Some(ifindex) = msg.oif() else {
@@ -823,7 +845,7 @@ mod tests {
         assert!(routes.contains(&IpAddr::V4("10.5.5.0".parse().unwrap())));
 
         ifcfg
-            .remove_ipv4_route(DUMMY_IFACE_NAME, "10.5.5.0".parse().unwrap(), 24)
+            .remove_ipv4_route(DUMMY_IFACE_NAME, "10.5.5.0".parse().unwrap(), 24, None)
             .await
             .unwrap();
         let routes = NetlinkIfConfiger::list_routes()
@@ -927,7 +949,7 @@ mod tests {
         assert!(has_route(&routes));
 
         ifcfg
-            .remove_ipv6_route(&iface, route_addr, 56)
+            .remove_ipv6_route(&iface, route_addr, 56, None)
             .await
             .unwrap();
 

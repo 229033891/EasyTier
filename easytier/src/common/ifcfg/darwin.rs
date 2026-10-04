@@ -33,7 +33,10 @@ impl IfConfiguerTrait for MacIfConfiger {
         name: &str,
         address: Ipv4Addr,
         cidr_prefix: u8,
+        _metric: Option<u32>,
     ) -> Result<(), Error> {
+        // Darwin `route delete` cannot filter by hopcount reliably; dest+iface
+        // is unique enough for our TUN defaults (exit vs peer share one iface).
         run_shell_cmd(
             format!(
                 "route -n delete {} -netmask {} -interface {}",
@@ -118,6 +121,7 @@ impl IfConfiguerTrait for MacIfConfiger {
         name: &str,
         address: std::net::Ipv6Addr,
         cidr_prefix: u8,
+        _metric: Option<u32>,
     ) -> Result<(), Error> {
         run_shell_cmd(
             format!(
@@ -131,6 +135,10 @@ impl IfConfiguerTrait for MacIfConfiger {
 
     fn specific_route_metric(&self) -> i32 {
         7
+    }
+
+    fn default_route_metric(&self) -> i32 {
+        1
     }
 
     async fn find_ipv4_physical_default(
