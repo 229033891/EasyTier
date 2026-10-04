@@ -174,9 +174,12 @@ select {
 .p-inputtext::placeholder,
 .p-inputnumber-input::placeholder,
 .p-password-input::placeholder,
+.p-textarea::placeholder,
 .p-autocomplete-input::placeholder,
 .p-autocomplete .p-inputtext::placeholder,
-.p-autocomplete-input-multiple input::placeholder {
+.p-autocomplete-input-multiple input::placeholder,
+.p-select-filter::placeholder,
+.p-multiselect-filter::placeholder {
   color: var(--et-placeholder-color, #a8b5c5) !important;
   -webkit-text-fill-color: var(--et-placeholder-color, #a8b5c5) !important;
   opacity: 1 !important;
@@ -184,7 +187,9 @@ select {
 
 .p-placeholder,
 .p-select .p-placeholder,
+.p-select-label.p-placeholder,
 .p-multiselect .p-placeholder,
+.p-multiselect-label.p-placeholder,
 .p-autocomplete .p-placeholder {
   color: var(--et-placeholder-color, #a8b5c5) !important;
 }

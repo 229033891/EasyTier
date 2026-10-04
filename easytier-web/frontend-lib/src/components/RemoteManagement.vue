@@ -848,7 +848,7 @@ onUnmounted(() => {
                                         :severity="isRunning(slotProps.value.uuid) ? 'success' : 'danger'"
                                         :value="t(isRunning(slotProps.value.uuid) ? 'network_running' : 'network_stopped')" />
                                 </div>
-                                <span v-else>{{ slotProps.placeholder }}</span>
+                                <span v-else class="network-select-placeholder">{{ slotProps.placeholder }}</span>
                             </template>
                             <template #option="slotProps">
                                 <div class="flex flex-col items-start content-center max-w-full">
@@ -1062,6 +1062,10 @@ onUnmounted(() => {
 .network-instance-label {
     font-size: var(--et-fs-body, 0.875rem);
     color: var(--text-color-secondary, #64748b);
+}
+
+.network-select-placeholder {
+    color: var(--et-placeholder-color, #a8b5c5);
 }
 
 .network-toolbar {
