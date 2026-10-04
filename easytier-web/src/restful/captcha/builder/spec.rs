@@ -10,31 +10,31 @@ use super::super::{CaptchaFont, NewCaptcha};
 use ab_glyph::{FontArc, PxScale};
 use image::{ImageBuffer, Rgba};
 use imageproc::drawing;
-use rand::{Rng, rngs::ThreadRng};
+use rand::{RngExt, rngs::ThreadRng};
 use std::io::{Cursor, Write};
 use std::sync::Arc;
 
 mod color {
     use image::Rgba;
-    use rand::{Rng, rngs::ThreadRng};
+    use rand::{RngExt, rngs::ThreadRng};
     pub fn gen_background_color(rng: &mut ThreadRng) -> Rgba<u8> {
-        let red = rng.gen_range(200..=255);
-        let green = rng.gen_range(200..=255);
-        let blue = rng.gen_range(200..=255);
-        //let a=rng.gen_range(0..255);
+        let red = rng.random_range(200..=255);
+        let green = rng.random_range(200..=255);
+        let blue = rng.random_range(200..=255);
+        //let a=rng.random_range(0..255);
         Rgba([red, green, blue, 255])
     }
     pub fn gen_text_color(rng: &mut ThreadRng) -> Rgba<u8> {
-        let red = rng.gen_range(0..=150);
-        let green = rng.gen_range(0..=150);
-        let blue = rng.gen_range(0..=150);
+        let red = rng.random_range(0..=150);
+        let green = rng.random_range(0..=150);
+        let blue = rng.random_range(0..=150);
         Rgba([red, green, blue, 255])
     }
 
     pub fn gen_line_color(rng: &mut ThreadRng) -> Rgba<u8> {
-        let red = rng.gen_range(100..=255);
-        let green = rng.gen_range(100..=255);
-        let blue = rng.gen_range(100..=255);
+        let red = rng.random_range(100..=255);
+        let green = rng.random_range(100..=255);
+        let blue = rng.random_range(100..=255);
         Rgba([red, green, blue, 255])
     }
 }
@@ -89,12 +89,12 @@ impl<'b> CaptchaBuilder<'b> {
     ) {
         //println!("phrase={}", phrase);
         //println!("width={}, height={}", self.width, self.height);
-        let font_size = (self.width as f32) / (self.length as f32) - rng.gen_range(1.0..=4.0);
+        let font_size = (self.width as f32) / (self.length as f32) - rng.random_range(1.0..=4.0);
         let scale = PxScale::from(font_size);
         if self.fonts.is_empty() {
             panic!("no fonts loaded");
         }
-        let font_index = rng.gen_range(0..self.fonts.len());
+        let font_index = rng.random_range(0..self.fonts.len());
         let font = self.fonts[font_index].as_ref();
         let (text_width, text_height) = drawing::text_size(scale, font, phrase);
         let node_width = text_width / self.length;
@@ -104,7 +104,7 @@ impl<'b> CaptchaBuilder<'b> {
         //
         for s in phrase.chars() {
             let text_color = color::gen_text_color(rng);
-            let offset = rng.gen_range(-5..=5);
+            let offset = rng.random_range(-5..=5);
             //println!("x={}, y={}", x, y);
             drawing::draw_text_mut(
                 image,
@@ -121,21 +121,21 @@ impl<'b> CaptchaBuilder<'b> {
 
     fn draw_line(&self, image: &mut ImageBuffer<Rgba<u8>, Vec<u8>>, rng: &mut ThreadRng) {
         let line_color = color::gen_line_color(rng);
-        let is_h = rng.r#gen();
+        let is_h = rng.random();
         let (start, end) = if is_h {
-            let xa = rng.gen_range(0.0..(self.width as f32) / 2.0);
-            let ya = rng.gen_range(0.0..(self.height as f32));
-            let xb = rng.gen_range((self.width as f32) / 2.0..(self.width as f32));
-            let yb = rng.gen_range(0.0..(self.height as f32));
+            let xa = rng.random_range(0.0..(self.width as f32) / 2.0);
+            let ya = rng.random_range(0.0..(self.height as f32));
+            let xb = rng.random_range((self.width as f32) / 2.0..(self.width as f32));
+            let yb = rng.random_range(0.0..(self.height as f32));
             ((xa, ya), (xb, yb))
         } else {
-            let xa = rng.gen_range(0.0..(self.width as f32));
-            let ya = rng.gen_range(0.0..(self.height as f32) / 2.0);
-            let xb = rng.gen_range(0.0..(self.width as f32));
-            let yb = rng.gen_range((self.height as f32) / 2.0..(self.height as f32));
+            let xa = rng.random_range(0.0..(self.width as f32));
+            let ya = rng.random_range(0.0..(self.height as f32) / 2.0);
+            let xb = rng.random_range(0.0..(self.width as f32));
+            let yb = rng.random_range((self.height as f32) / 2.0..(self.height as f32));
             ((xa, ya), (xb, yb))
         };
-        let thickness = rng.gen_range(2..4);
+        let thickness = rng.random_range(2..4);
         for i in 0..thickness {
             let offset = i as f32;
             if is_h {
@@ -158,11 +158,11 @@ impl<'b> CaptchaBuilder<'b> {
 
     fn draw_ellipse(&self, image: &mut ImageBuffer<Rgba<u8>, Vec<u8>>, rng: &mut ThreadRng) {
         let line_color = color::gen_line_color(rng);
-        let thickness = rng.gen_range(2..4);
+        let thickness = rng.random_range(2..4);
         for i in 0..thickness {
             let center = (
-                rng.gen_range(-(self.width as i32) / 4..(self.width as i32) * 5 / 4),
-                rng.gen_range(-(self.height as i32) / 4..(self.height as i32) * 5 / 4),
+                rng.random_range(-(self.width as i32) / 4..(self.width as i32) * 5 / 4),
+                rng.random_range(-(self.height as i32) / 4..(self.height as i32) * 5 / 4),
             );
             drawing::draw_hollow_ellipse_mut(
                 image,
@@ -175,7 +175,7 @@ impl<'b> CaptchaBuilder<'b> {
     }
 
     fn build_image(&self, phrase: String) -> ImageBuffer<Rgba<u8>, Vec<u8>> {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         let bgc = match self.background_color {
             Some(v) => v,
             None => color::gen_background_color(&mut rng),
@@ -186,12 +186,12 @@ impl<'b> CaptchaBuilder<'b> {
         let effects = match self.max_behind_lines {
             Some(s) => {
                 if s > 0 {
-                    rng.gen_range(square / 3000..square / 2000).min(s)
+                    rng.random_range(square / 3000..square / 2000).min(s)
                 } else {
                     0
                 }
             }
-            None => rng.gen_range(square / 3000..square / 2000),
+            None => rng.random_range(square / 3000..square / 2000),
         };
         for _ in 0..effects {
             self.draw_line(&mut image, &mut rng);
@@ -202,12 +202,12 @@ impl<'b> CaptchaBuilder<'b> {
         let effects = match self.max_front_lines {
             Some(s) => {
                 if s > 0 {
-                    rng.gen_range(square / 3000..=square / 2000).min(s)
+                    rng.random_range(square / 3000..=square / 2000).min(s)
                 } else {
                     0
                 }
             }
-            None => rng.gen_range(square / 3000..=square / 2000),
+            None => rng.random_range(square / 3000..=square / 2000),
         };
         for _ in 0..effects {
             self.draw_line(&mut image, &mut rng);
@@ -216,12 +216,12 @@ impl<'b> CaptchaBuilder<'b> {
         let effects = match self.max_front_lines {
             Some(s) => {
                 if s > 0 {
-                    rng.gen_range(square / 4000..=square / 3000).min(s)
+                    rng.random_range(square / 4000..=square / 3000).min(s)
                 } else {
                     0
                 }
             }
-            None => rng.gen_range(square / 4000..=square / 3000),
+            None => rng.random_range(square / 4000..=square / 3000),
         };
         for _ in 0..effects {
             self.draw_ellipse(&mut image, &mut rng);

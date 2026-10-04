@@ -1,4 +1,4 @@
-use zerocopy::{AsBytes as _, FromBytes as _};
+use zerocopy::{FromBytes as _, IntoBytes as _};
 
 use super::{COMPRESSOR_TAIL_SIZE, CompressorAlgo, CompressorTail, ZCPacket};
 
@@ -104,9 +104,10 @@ impl Compressor for DefaultCompressor {
 
         let text_len = payload_len - COMPRESSOR_TAIL_SIZE;
 
-        let tail = CompressorTail::ref_from_suffix(zc_packet.payload())
-            .unwrap()
-            .clone();
+        let (_, tail) = CompressorTail::ref_from_suffix(zc_packet.payload())
+            .ok()
+            .unwrap();
+        let tail = tail.clone();
 
         let algo = tail
             .get_algo()

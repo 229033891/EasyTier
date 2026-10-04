@@ -16,7 +16,7 @@ use easytier_core::{
     socket::SocketListener,
     tunnel::Tunnel,
 };
-use rand::{Rng, rngs::OsRng};
+use rand::RngExt;
 use tokio::{net::UdpSocket, task::JoinSet};
 use x25519_dalek::StaticSecret;
 
@@ -1176,14 +1176,14 @@ pub async fn subnet_proxy_loop_prevention_test() {
 
 async fn subnet_proxy_test_udp(listen_ip: &str, target_ip: &str, timeout: Duration) {
     use crate::tunnel::common::tests::_tunnel_pingpong_netns_with_timeout;
-    use rand::Rng;
+    use rand::RngExt;
 
     let udp_listener = core_udp_listener(format!("udp://{}:22233", listen_ip).parse().unwrap());
     let udp_connector = core_udp_dialer(format!("udp://{}:22233", target_ip).parse().unwrap());
 
     // NOTE: this should not excced udp tunnel max buffer size
     let mut buf = vec![0; 7 * 1024];
-    rand::thread_rng().fill(&mut buf[..]);
+    rand::rng().fill(&mut buf[..]);
 
     let ns_name = if target_ip == "10.144.144.3" {
         "net_c"
@@ -1207,7 +1207,7 @@ async fn subnet_proxy_test_udp(listen_ip: &str, target_ip: &str, timeout: Durati
     let udp_connector = core_udp_dialer(format!("udp://{}:22233", target_ip).parse().unwrap());
 
     let mut buf = vec![0; 1024];
-    rand::thread_rng().fill(&mut buf[..]);
+    rand::rng().fill(&mut buf[..]);
 
     let result = _tunnel_pingpong_netns_with_timeout(
         udp_listener,
@@ -1223,13 +1223,13 @@ async fn subnet_proxy_test_udp(listen_ip: &str, target_ip: &str, timeout: Durati
 
 async fn subnet_proxy_test_tcp(listen_ip: &str, connect_ip: &str, timeout: Duration) {
     use crate::tunnel::common::tests::_tunnel_pingpong_netns_with_timeout;
-    use rand::Rng;
+    use rand::RngExt;
 
     let tcp_listener = core_tcp_listener(format!("tcp://{listen_ip}:22223").parse().unwrap());
     let tcp_connector = core_tcp_dialer(format!("tcp://{}:22223", connect_ip).parse().unwrap());
 
     let mut buf = vec![0; 32];
-    rand::thread_rng().fill(&mut buf[..]);
+    rand::rng().fill(&mut buf[..]);
 
     let ns_name = if connect_ip == "10.144.144.3" {
         "net_c"
@@ -1955,7 +1955,7 @@ pub async fn wireguard_vpn_portal(#[values(true, false)] test_v6: bool) {
 #[tokio::test]
 #[serial_test::serial]
 pub async fn wireguard_vpn_portal_multi_client() {
-    use rand::Rng as _;
+    use rand::RngExt as _;
     use tokio::{
         io::{AsyncReadExt, AsyncWriteExt},
         net::{TcpListener, TcpStream},
@@ -2048,7 +2048,7 @@ pub async fn wireguard_vpn_portal_multi_client() {
     // TCP 数据面：node1 侧看到的连接源地址必须是 client-a 的虚拟 IP，
     // 并做一段随机数据回环，验证传输层校验和保持不变。
     let mut buf = vec![0u8; 1024];
-    rand::thread_rng().fill(&mut buf[..]);
+    rand::rng().fill(&mut buf[..]);
     let expected = buf.clone();
     let echo_task = tokio::spawn(async move {
         let net_ns = NetNS::new(Some("net_a".into()));
@@ -2450,7 +2450,7 @@ pub async fn wireguard_vpn_portal_dynamic_clients() {
 pub async fn socks5_vpn_portal(
     #[values("10.144.144.1", "10.144.144.3", "10.1.2.4")] dst_addr: &str,
 ) {
-    use rand::Rng as _;
+    use rand::RngExt as _;
     use tokio::{
         io::{AsyncReadExt, AsyncWriteExt},
         net::{TcpListener, TcpStream},
@@ -2472,7 +2472,7 @@ pub async fn socks5_vpn_portal(
     .await;
 
     let mut buf = vec![0u8; 1024];
-    rand::thread_rng().fill(&mut buf[..]);
+    rand::rng().fill(&mut buf[..]);
 
     let buf_clone = buf.clone();
     let dst_addr_clone = dst_addr.to_owned();
@@ -2730,7 +2730,7 @@ pub async fn port_forward_test(
     let tcp_connector = core_tcp_dialer("tcp://127.0.0.1:23456".parse().unwrap());
 
     let mut buf = vec![0; buf_size as usize];
-    rand::thread_rng().fill(&mut buf[..]);
+    rand::rng().fill(&mut buf[..]);
 
     _tunnel_pingpong_netns_with_timeout(
         tcp_listener,
@@ -2747,7 +2747,7 @@ pub async fn port_forward_test(
     let tcp_connector = core_tcp_dialer("tcp://127.0.0.1:23457".parse().unwrap());
 
     let mut buf = vec![0; buf_size as usize];
-    rand::thread_rng().fill(&mut buf[..]);
+    rand::rng().fill(&mut buf[..]);
 
     _tunnel_pingpong_netns_with_timeout(
         tcp_listener,
@@ -2764,7 +2764,7 @@ pub async fn port_forward_test(
     let udp_connector = core_udp_dialer("udp://127.0.0.1:23458".parse().unwrap());
 
     let mut buf = vec![0; buf_size as usize];
-    rand::thread_rng().fill(&mut buf[..]);
+    rand::rng().fill(&mut buf[..]);
 
     _tunnel_pingpong_netns_with_timeout(
         udp_listener,
@@ -2781,7 +2781,7 @@ pub async fn port_forward_test(
     let udp_connector = core_udp_dialer("udp://127.0.0.1:23459".parse().unwrap());
 
     let mut buf = vec![0; buf_size as usize];
-    rand::thread_rng().fill(&mut buf[..]);
+    rand::rng().fill(&mut buf[..]);
 
     _tunnel_pingpong_netns_with_timeout(
         udp_listener,
@@ -2883,7 +2883,7 @@ pub async fn port_forward_with_inbound_default_drop_acl_test(
             core_tcp_dialer(format!("tcp://127.0.0.1:{bind_port}").parse().unwrap());
 
         let mut buf = vec![0; 64];
-        rand::thread_rng().fill(&mut buf[..]);
+        rand::rng().fill(&mut buf[..]);
 
         let result = _tunnel_pingpong_netns_with_timeout(
             tcp_listener,
@@ -3143,7 +3143,7 @@ pub async fn acl_rule_test_inbound(
     #[values(true, false)] enable_quic_proxy: bool,
 ) {
     use crate::tunnel::common::tests::_tunnel_pingpong_netns_with_timeout;
-    use rand::Rng;
+    use rand::RngExt;
     let insts = init_three_node_ex(
         "udp",
         |cfg| {
@@ -3233,7 +3233,7 @@ pub async fn acl_rule_test_inbound(
 
         // 4. 构造测试数据
         let mut buf = vec![0; 32];
-        rand::thread_rng().fill(&mut buf[..]);
+        rand::rng().fill(&mut buf[..]);
 
         // 5. 8081 应该可以 pingpong 成功
         let result = _tunnel_pingpong_netns_with_timeout(
@@ -3291,7 +3291,7 @@ pub async fn acl_rule_test_inbound(
 
         // 3. 构造测试数据
         let mut buf = vec![0; 32];
-        rand::thread_rng().fill(&mut buf[..]);
+        rand::rng().fill(&mut buf[..]);
 
         // 4. 8081 应该可以 pingpong 成功
         let result = _tunnel_pingpong_netns_with_timeout(
@@ -3376,7 +3376,7 @@ pub async fn acl_rule_test_subnet_proxy(
     #[values(true, false)] enable_quic_proxy: bool,
 ) {
     use crate::tunnel::common::tests::_tunnel_pingpong_netns_with_timeout;
-    use rand::Rng;
+    use rand::RngExt;
 
     let insts = init_three_node_ex(
         "udp",
@@ -3483,7 +3483,7 @@ pub async fn acl_rule_test_subnet_proxy(
         let connector_8082 = core_tcp_dialer("tcp://10.1.2.4:8082".parse().unwrap());
 
         let mut buf = vec![0; 32];
-        rand::thread_rng().fill(&mut buf[..]);
+        rand::rng().fill(&mut buf[..]);
 
         // 8082 应该可以连接成功（不被 ACL 拦截）
         let result = _tunnel_pingpong_netns_with_timeout(
@@ -3542,7 +3542,7 @@ pub async fn acl_rule_test_subnet_proxy(
         let connector_8082 = core_udp_dialer("udp://10.1.2.4:8082".parse().unwrap());
 
         let mut buf = vec![0; 32];
-        rand::thread_rng().fill(&mut buf[..]);
+        rand::rng().fill(&mut buf[..]);
 
         // 8082 应该可以连接成功
         let result = _tunnel_pingpong_netns_with_timeout(
@@ -3712,7 +3712,7 @@ pub async fn acl_group_base_test(
     #[values(true, false)] enable_quic_proxy: bool,
 ) {
     use crate::tunnel::common::tests::_tunnel_pingpong_netns_with_timeout;
-    use rand::Rng;
+    use rand::RngExt;
 
     // 构造 ACL 配置，包含组信息
     use crate::proto::acl::*;
@@ -3849,7 +3849,7 @@ pub async fn acl_group_base_test(
 
     // 构造测试数据
     let mut buf = vec![0; 32];
-    rand::thread_rng().fill(&mut buf[..]);
+    rand::rng().fill(&mut buf[..]);
 
     // 测试1: inst1 (admin组) 访问8080 - 应该成功
     let result = _tunnel_pingpong_netns_with_timeout(
@@ -4139,7 +4139,7 @@ pub async fn acl_group_self_test(
     #[values(true, false)] enable_quic_proxy: bool,
 ) {
     use crate::tunnel::common::tests::_tunnel_pingpong_netns_with_timeout;
-    use rand::Rng;
+    use rand::RngExt;
 
     // 构造 ACL 配置，包含组信息
     use crate::proto::acl::*;
@@ -4247,7 +4247,7 @@ pub async fn acl_group_self_test(
 
     // 构造测试数据
     let mut buf = vec![0; 32];
-    rand::thread_rng().fill(&mut buf[..]);
+    rand::rng().fill(&mut buf[..]);
 
     // 测试1: inst1 (admin组) 访问inst3 (admin组) - 应该成功
     let result = _tunnel_pingpong_netns_with_timeout(
@@ -4328,7 +4328,7 @@ pub async fn whitelist_test(
     .await;
 
     use crate::tunnel::common::tests::_tunnel_pingpong_netns_with_timeout;
-    use rand::Rng;
+    use rand::RngExt;
 
     let make_listener =
         |protocol: &str, port: u16| -> Box<dyn SocketListener<Accepted = Box<dyn Tunnel>> + Sync> {
@@ -4356,7 +4356,7 @@ pub async fn whitelist_test(
     };
 
     let mut buf = vec![0; 32];
-    rand::thread_rng().fill(&mut buf[..]);
+    rand::rng().fill(&mut buf[..]);
 
     for p in &["tcp", "udp"] {
         _tunnel_pingpong_netns_with_timeout(
@@ -4547,7 +4547,7 @@ pub async fn config_patch_test() {
         .unwrap();
 
     let mut buf = vec![0; 32];
-    rand::thread_rng().fill(&mut buf[..]);
+    rand::rng().fill(&mut buf[..]);
     let tcp_listener = core_tcp_listener("tcp://0.0.0.0:23457".parse().unwrap());
     let tcp_connector = core_tcp_dialer("tcp://127.0.0.1:23458".parse().unwrap());
     let result = _tunnel_pingpong_netns_with_timeout(
@@ -4735,7 +4735,7 @@ pub fn generate_secure_mode_config_with_key(
 
 /// Generate SecureModeConfig with random x25519 keypair
 pub fn generate_secure_mode_config() -> SecureModeConfig {
-    let private = StaticSecret::random_from_rng(OsRng);
+    let private = StaticSecret::random();
     generate_secure_mode_config_with_key(&private)
 }
 

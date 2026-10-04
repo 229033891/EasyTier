@@ -37,7 +37,7 @@ use easytier_core::{
     tunnel::wrapper::TunnelWrapper,
 };
 use futures::{SinkExt, StreamExt};
-use rand::RngCore;
+use rand::RngExt as _;
 use tokio::{
     sync::{Mutex, mpsc::unbounded_channel},
     task::JoinSet,
@@ -401,7 +401,7 @@ impl WgPeer {
                 PublicKey::from(<[u8; 32]>::try_from(config.peer_public_key()).unwrap()),
                 None,
                 None,
-                rand::thread_rng().next_u32(),
+                rand::rng().random::<u32>(),
                 None,
             ))),
 

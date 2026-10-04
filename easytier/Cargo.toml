@@ -294,7 +294,7 @@ maplit = "1.0.2"
 tempfile.workspace = true
 stun_codec.workspace = true
 bytecodec.workspace = true
-x25519-dalek = { workspace = true, features = ["static_secrets"] }
+x25519-dalek = { workspace = true, features = ["static_secrets", "getrandom"] }
 smoltcp = { workspace = true, features = [
     "std",
     "medium-ethernet",

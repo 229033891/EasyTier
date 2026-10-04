@@ -689,7 +689,7 @@ mod tests {
     use crate::socket::fake_tcp::packet::{MacAddr, TCP_FLAG_SYN, build_tcp_packet};
     use crate::socket::fake_tcp::stack::Tun;
     use pnet_datalink as datalink;
-    use rand::Rng;
+    use rand::RngExt;
     use serial_test::serial;
     use std::env;
     use std::process::Command;
@@ -761,7 +761,7 @@ mod tests {
 
     impl TestTun {
         fn create() -> io::Result<Self> {
-            let name = format!("etlb{}", rand::thread_rng().gen_range(10000..99999));
+            let name = format!("etlb{}", rand::rng().random_range(10000..99999));
             let path = CString::new(TUN_DEV_PATH)
                 .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "invalid tun path"))?;
             let fd = unsafe { libc::open(path.as_ptr(), libc::O_RDWR | libc::O_CLOEXEC) };
@@ -867,7 +867,7 @@ mod tests {
 
     impl TestVeth {
         fn create() -> io::Result<Self> {
-            let suffix = rand::thread_rng().gen_range(10000..99999);
+            let suffix = rand::rng().random_range(10000..99999);
             let capture_name = format!("elbc{suffix}");
             let sender_name = format!("elbs{suffix}");
             run_ip(&[

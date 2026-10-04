@@ -22,7 +22,6 @@ use prost::Message;
 use tokio::{sync::broadcast, task::JoinSet};
 
 use tracing::Instrument;
-use zerocopy::AsBytes;
 
 use snow::{HandshakeState, params::NoiseParams};
 

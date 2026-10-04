@@ -107,7 +107,7 @@ pub fn normalize_secure_mode_config(
     }
 
     let private_key = if config.local_private_key.is_none() {
-        let private = x25519_dalek::StaticSecret::random_from_rng(rand::rngs::OsRng);
+        let private = x25519_dalek::StaticSecret::random();
         config.local_private_key = Some(BASE64_STANDARD.encode(private.as_bytes()));
         private
     } else {

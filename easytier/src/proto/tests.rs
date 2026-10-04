@@ -191,9 +191,9 @@ impl TestContext {
 }
 
 fn random_string(len: usize) -> String {
-    use rand::Rng;
-    use rand::distributions::Alphanumeric;
-    let mut rng = rand::thread_rng();
+    use rand::RngExt;
+    use rand::distr::Alphanumeric;
+    let mut rng = rand::rng();
     let s: Vec<u8> = std::iter::repeat(())
         .map(|()| rng.sample(Alphanumeric))
         .take(len)

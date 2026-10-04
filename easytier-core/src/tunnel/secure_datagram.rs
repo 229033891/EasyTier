@@ -9,7 +9,7 @@ use std::{
 use anyhow::anyhow;
 use atomic_shim::AtomicU64;
 use hmac::{Hmac, KeyInit as _, Mac as _};
-use rand::RngCore as _;
+use rand::TryRng as _;
 use sha2::Sha256;
 use zerocopy::FromBytes;
 
@@ -307,7 +307,9 @@ impl SecureDatagramSession {
 
     pub fn new_root_key() -> [u8; 32] {
         let mut out = [0u8; 32];
-        rand::rngs::OsRng.fill_bytes(&mut out);
+        rand::rngs::SysRng
+            .try_fill_bytes(&mut out)
+            .expect("system entropy unavailable");
         out
     }
 
@@ -482,7 +484,7 @@ impl SecureDatagramSession {
     }
 
     fn parse_tail(payload: &[u8]) -> Option<[u8; 12]> {
-        let tail = StandardAeadTail::ref_from_suffix(payload)?;
+        let (_, tail) = StandardAeadTail::ref_from_suffix(payload).ok()?;
         Some(tail.nonce)
     }
 

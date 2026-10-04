@@ -22,7 +22,6 @@ use easytier_core::{
     gateway::vpn_portal::{PortalClientConfig, PortalSession},
     socket::udp::VirtualUdpSocket,
 };
-use rand::rngs::OsRng;
 use tokio::{
     sync::{Mutex, mpsc, watch},
     task::JoinSet,
@@ -525,7 +524,7 @@ impl PortalEngine {
 }
 
 fn new_attached_identity_private_key() -> [u8; 32] {
-    StaticSecret::random_from_rng(OsRng).to_bytes()
+    StaticSecret::random().to_bytes()
 }
 
 fn is_handshake_initiation(packet: &[u8]) -> bool {

@@ -5,7 +5,10 @@ use bytes::Bytes;
 use http_body_util::{BodyExt as _, Empty};
 use hyper::{Request, header};
 use hyper_util::rt::TokioIo;
-use rand::{Rng as _, seq::SliceRandom};
+use rand::{
+    RngExt as _,
+    seq::{IndexedRandom, SliceRandom},
+};
 use rustls::pki_types::ServerName;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_rustls::TlsConnector;
@@ -298,7 +301,7 @@ fn resolve_http_redirect(location: &str) -> anyhow::Result<ResolvedHttpEndpoint>
         .query_pairs()
         .filter_map(|(_, value)| Url::parse(&value).ok())
         .collect::<Vec<_>>();
-    if let Some(url) = candidates.choose(&mut rand::thread_rng()).cloned() {
+    if let Some(url) = candidates.choose(&mut rand::rng()).cloned() {
         return Ok(ResolvedHttpEndpoint {
             url,
             source: HttpEndpointSource::RedirectQuery,
@@ -324,7 +327,7 @@ fn resolve_http_body(body: &str) -> anyhow::Result<ResolvedHttpEndpoint> {
         .map(str::trim)
         .filter(|line| !line.is_empty())
         .collect::<Vec<_>>();
-    candidates.shuffle(&mut rand::thread_rng());
+    candidates.shuffle(&mut rand::rng());
     for candidate in candidates {
         if let Ok(url) = Url::parse(candidate) {
             return Ok(ResolvedHttpEndpoint {
@@ -355,9 +358,15 @@ pub(crate) fn resolve_http_endpoint(
 }
 
 fn choose_weighted<T>(options: &[(T, u64)]) -> Option<&T> {
-    let total_weight = options.iter().map(|(_, weight)| *weight).sum();
-    let mut rng = rand::thread_rng();
-    let selected = rng.gen_range(0..total_weight);
+    // RFC 2782: zero total weight (e.g. all SRV priorities are 0, which is
+    // legal and common) falls back to a uniform random pick instead of
+    // panicking on an empty range. Attacker-influenced DNS must not crash us.
+    let total_weight: u64 = options.iter().map(|(_, weight)| *weight).sum();
+    if total_weight == 0 {
+        return options.choose(&mut rand::rng()).map(|(item, _)| item);
+    }
+    let mut rng = rand::rng();
+    let selected = rng.random_range(0..total_weight);
     let mut accumulated = 0;
 
     for (item, weight) in options {
@@ -382,14 +391,11 @@ pub(crate) async fn resolve_txt_endpoint(
         .split(' ')
         .filter_map(|candidate| Url::parse(candidate).ok())
         .collect::<Vec<_>>();
-    candidates
-        .choose(&mut rand::thread_rng())
-        .cloned()
-        .ok_or_else(|| {
-            anyhow::anyhow!(
-                "no valid URL found in TXT data {txt_data:?}; expected a space-separated URL list"
-            )
-        })
+    candidates.choose(&mut rand::rng()).cloned().ok_or_else(|| {
+        anyhow::anyhow!(
+            "no valid URL found in TXT data {txt_data:?}; expected a space-separated URL list"
+        )
+    })
 }
 
 fn srv_record_url(protocol: &str, record: DnsSrvRecord) -> anyhow::Result<(Url, u64)> {

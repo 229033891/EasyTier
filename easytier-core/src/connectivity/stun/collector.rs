@@ -531,7 +531,7 @@ fn sampled_servers(servers: &[String]) -> Vec<String> {
     servers
         .iter()
         .take(2)
-        .chain(servers.iter().skip(2).choose(&mut rand::thread_rng()))
+        .chain(servers.iter().skip(2).choose(&mut rand::rng()))
         .cloned()
         .collect()
 }

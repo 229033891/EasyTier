@@ -571,10 +571,10 @@ impl VirtualNic {
             if !dev_name.is_empty() {
                 config.tun_name(&dev_name);
             } else {
-                use rand::distributions::Distribution as _;
+                use rand::distr::Distribution as _;
                 let c = crate::arch::windows::interface_count()?;
-                let mut rng = rand::thread_rng();
-                let s: String = rand::distributions::Alphanumeric
+                let mut rng = rand::rng();
+                let s: String = rand::distr::Alphanumeric
                     .sample_iter(&mut rng)
                     .take(4)
                     .map(char::from)

@@ -1,6 +1,6 @@
 use aes_gcm::{AeadInOut, Aes128Gcm, Aes256Gcm, Key, KeyInit};
-use rand::{RngCore, rngs::OsRng};
-use zerocopy::{AsBytes, FromBytes};
+use rand::TryRng as _;
+use zerocopy::{FromBytes as _, IntoBytes as _};
 
 use crate::packet::{StandardAeadTail, ZCPacket};
 
@@ -46,9 +46,10 @@ impl Encryptor for AesGcmCipher {
 
         let text_len = payload_len - StandardAeadTail::SIZE;
 
-        let aes_tail = StandardAeadTail::ref_from_suffix(zc_packet.payload())
-            .unwrap()
-            .clone();
+        let (_, aes_tail) = StandardAeadTail::ref_from_suffix(zc_packet.payload())
+            .ok()
+            .unwrap();
+        let aes_tail = aes_tail.clone();
 
         let nonce = aes_tail.nonce.into();
         let tag = aes_tail.tag.into();
@@ -107,22 +108,32 @@ impl Encryptor for AesGcmCipher {
 
         let (tag, nonce) = match &self.cipher {
             AesGcmEnum::AES128GCM(aes_gcm) => {
-                let nonce = nonce.unwrap_or_else(|| {
-                    let mut nonce = [0u8; StandardAeadTail::NONCE_SIZE];
-                    OsRng.fill_bytes(&mut nonce);
-                    nonce.into()
-                });
+                let nonce = match nonce {
+                    Some(nonce) => nonce,
+                    None => {
+                        let mut bytes = [0u8; StandardAeadTail::NONCE_SIZE];
+                        rand::rngs::SysRng
+                            .try_fill_bytes(&mut bytes)
+                            .map_err(|_| Error::EncryptionFailed)?;
+                        bytes.into()
+                    }
+                };
                 (
                     aes_gcm.encrypt_inout_detached(&nonce, &[], zc_packet.mut_payload().into()),
                     nonce,
                 )
             }
             AesGcmEnum::AES256GCM(aes_gcm) => {
-                let nonce = nonce.unwrap_or_else(|| {
-                    let mut nonce = [0u8; StandardAeadTail::NONCE_SIZE];
-                    OsRng.fill_bytes(&mut nonce);
-                    nonce.into()
-                });
+                let nonce = match nonce {
+                    Some(nonce) => nonce,
+                    None => {
+                        let mut bytes = [0u8; StandardAeadTail::NONCE_SIZE];
+                        rand::rngs::SysRng
+                            .try_fill_bytes(&mut bytes)
+                            .map_err(|_| Error::EncryptionFailed)?;
+                        bytes.into()
+                    }
+                };
                 (
                     aes_gcm.encrypt_inout_detached(&nonce, &[], zc_packet.mut_payload().into()),
                     nonce,
@@ -187,7 +198,7 @@ mod tests {
 
         assert_eq!(packet1.payload(), packet2.payload());
 
-        let tail = StandardAeadTail::ref_from_suffix(packet1.payload()).unwrap();
+        let (_, tail) = StandardAeadTail::ref_from_suffix(packet1.payload()).unwrap();
         assert_eq!(tail.nonce, nonce);
 
         cipher.decrypt(&mut packet1).unwrap();

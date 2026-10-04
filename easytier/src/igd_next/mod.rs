@@ -24,7 +24,7 @@ use hyper::{
     header::{CONNECTION, CONTENT_LENGTH, CONTENT_TYPE, HOST},
 };
 use hyper_util::rt::TokioIo;
-use rand::Rng as _;
+use rand::RngExt as _;
 use tokio::time::timeout;
 
 pub(crate) use errors::AddAnyPortError;
@@ -481,5 +481,5 @@ impl Gateway {
 }
 
 fn random_port() -> u16 {
-    rand::thread_rng().gen_range(32_768..65_535)
+    rand::rng().random_range(32_768..65_535)
 }

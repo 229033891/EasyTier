@@ -69,10 +69,10 @@ impl FromUrl for SocketAddr {
             })
             .collect::<Vec<_>>();
 
-        use rand::seq::SliceRandom;
+        use rand::seq::IndexedRandom as _;
         // randomly select one address
         addrs
-            .choose(&mut rand::thread_rng())
+            .choose(&mut rand::rng())
             .copied()
             .ok_or(TunnelError::NoDnsRecordFound(ip_version))
     }

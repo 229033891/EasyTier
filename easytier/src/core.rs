@@ -1963,7 +1963,7 @@ enabled = true
     #[test]
     fn secure_mode_cli_flag_preserves_config_file_keypair() {
         use base64::{Engine as _, prelude::BASE64_STANDARD};
-        let private = x25519_dalek::StaticSecret::random_from_rng(rand::rngs::OsRng);
+        let private = x25519_dalek::StaticSecret::random();
         let cfg = TomlConfigLoader::new_from_str(&format!(
             r#"
 [secure_mode]
@@ -1999,7 +1999,7 @@ enabled = true
 "#,
         )
         .unwrap();
-        let cli_private = x25519_dalek::StaticSecret::random_from_rng(rand::rngs::OsRng);
+        let cli_private = x25519_dalek::StaticSecret::random();
 
         NetworkOptions {
             secure_mode: Some(true),

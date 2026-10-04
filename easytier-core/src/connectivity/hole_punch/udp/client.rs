@@ -8,7 +8,7 @@ use std::{
 
 use guarden::defer;
 use quanta::Instant;
-use rand::Rng;
+use rand::RngExt;
 use tokio::sync::RwLock;
 use tokio_util::task::AbortOnDropHandle;
 
@@ -380,7 +380,7 @@ where
             return Err(anyhow::anyhow!("failed to get public ips").into());
         }
 
-        let tid = rand::thread_rng().r#gen();
+        let tid = rand::rng().random();
         let packet = new_hole_punch_packet(tid, HOLE_PUNCH_PACKET_BODY_LEN).into_bytes();
         udp_array.add_intreast_tid(tid);
         defer! { udp_array.remove_intreast_tid(tid); }

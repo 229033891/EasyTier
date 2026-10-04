@@ -1,6 +1,6 @@
 use openssl::symm::{Cipher, Crypter, Mode};
-use rand::RngCore as _;
-use zerocopy::{AsBytes as _, FromBytes as _, FromZeroes as _};
+use rand::TryRng as _;
+use zerocopy::{FromBytes as _, FromZeros as _, IntoBytes as _};
 
 use crate::packet::{StandardAeadTail, ZCPacket};
 
@@ -59,7 +59,9 @@ impl Encryptor for OpenSslCipher {
         }
 
         let (cipher, key) = self.cipher_and_key();
-        let tail = StandardAeadTail::ref_from_suffix(packet.payload()).unwrap();
+        let (_, tail) = StandardAeadTail::ref_from_suffix(packet.payload())
+            .ok()
+            .unwrap();
         let mut decrypter = Crypter::new(cipher, Mode::Decrypt, key, Some(&tail.nonce))
             .map_err(|_| Error::DecryptionFailed)?;
         decrypter
@@ -104,7 +106,11 @@ impl Encryptor for OpenSslCipher {
             Some(nonce) => {
                 tail.nonce = nonce.try_into().map_err(|_| Error::EncryptionFailed)?;
             }
-            None => rand::thread_rng().fill_bytes(&mut tail.nonce),
+            None => {
+                rand::rngs::SysRng
+                    .try_fill_bytes(&mut tail.nonce)
+                    .map_err(|_| Error::EncryptionFailed)?;
+            }
         }
 
         let mut encrypter = Crypter::new(cipher, Mode::Encrypt, key, Some(&tail.nonce))

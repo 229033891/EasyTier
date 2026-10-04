@@ -2,7 +2,7 @@ use std::{collections::HashSet, sync::Arc, time::Duration};
 
 use async_trait::async_trait;
 use cidr::Ipv4Inet;
-use rand::Rng;
+use rand::RngExt;
 use tokio_util::task::AbortOnDropHandle;
 
 use crate::{
@@ -275,7 +275,7 @@ impl DhcpIpv4Service {
             loop {
                 crate::foundation::time::sleep(next_sleep).await;
                 next_sleep = if service.reconcile_once().await {
-                    Duration::from_secs(rand::thread_rng().gen_range(5..10))
+                    Duration::from_secs(rand::rng().random_range(5..10))
                 } else {
                     Duration::from_secs(1)
                 };

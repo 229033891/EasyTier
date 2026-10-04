@@ -1,6 +1,6 @@
 use chacha20poly1305::{AeadInOut, ChaCha20Poly1305, Key, KeyInit};
-use rand::{RngCore, rngs::OsRng};
-use zerocopy::{AsBytes, FromBytes};
+use rand::TryRng as _;
+use zerocopy::{FromBytes as _, IntoBytes as _};
 
 use crate::packet::{StandardAeadTail, ZCPacket};
 
@@ -34,9 +34,10 @@ impl Encryptor for ChaCha20Cipher {
 
         let text_len = payload_len - StandardAeadTail::SIZE;
 
-        let tail = StandardAeadTail::ref_from_suffix(zc_packet.payload())
-            .unwrap()
-            .clone();
+        let (_, tail) = StandardAeadTail::ref_from_suffix(zc_packet.payload())
+            .ok()
+            .unwrap();
+        let tail = tail.clone();
 
         let nonce = tail.nonce.into();
         let tag = tail.tag.into();
@@ -80,12 +81,17 @@ impl Encryptor for ChaCha20Cipher {
                     .map(Into::into)
                     .map_err(|_| Error::EncryptionFailed)
             })
-            .transpose()?
-            .unwrap_or_else(|| {
-                let mut nonce = [0u8; StandardAeadTail::NONCE_SIZE];
-                OsRng.fill_bytes(&mut nonce);
-                nonce.into()
-            });
+            .transpose()?;
+        let nonce = match nonce {
+            Some(nonce) => nonce,
+            None => {
+                let mut bytes = [0u8; StandardAeadTail::NONCE_SIZE];
+                rand::rngs::SysRng
+                    .try_fill_bytes(&mut bytes)
+                    .map_err(|_| Error::EncryptionFailed)?;
+                bytes.into()
+            }
+        };
 
         let tag = self
             .cipher
@@ -150,7 +156,7 @@ mod tests {
 
         assert_eq!(packet1.payload(), packet2.payload());
 
-        let tail = StandardAeadTail::ref_from_suffix(packet1.payload()).unwrap();
+        let (_, tail) = StandardAeadTail::ref_from_suffix(packet1.payload()).unwrap();
         assert_eq!(tail.nonce, nonce);
 
         cipher.decrypt(&mut packet1).unwrap();

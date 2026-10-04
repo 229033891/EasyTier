@@ -4,7 +4,7 @@ use std::{
 };
 
 use bytes::BytesMut;
-use zerocopy::{AsBytes, FromBytes};
+use zerocopy::{FromBytes, IntoBytes};
 
 use crate::packet::{
     UDP_TUNNEL_HEADER_SIZE, UDPTunnelHeader, UdpPacketType, V4HolePunchPacket, V6HolePunchPacket,
@@ -127,7 +127,7 @@ pub fn new_v4_hole_punch_packet(dst: &SocketAddrV4) -> ZCPacket {
 }
 
 pub fn extract_dst_addr_from_v4_hole_punch_packet(buf: &[u8]) -> Option<SocketAddrV4> {
-    let body = V4HolePunchPacket::ref_from_prefix(buf)?;
+    let (body, _) = V4HolePunchPacket::ref_from_prefix(buf).ok()?;
     let ip = Ipv4Addr::from(body.dst_ipv4);
     Some(SocketAddrV4::new(ip, body.dst_port.get()))
 }
@@ -135,7 +135,7 @@ pub fn extract_dst_addr_from_v4_hole_punch_packet(buf: &[u8]) -> Option<SocketAd
 pub fn extract_v6_hole_punch_packet(
     buf: &[u8],
 ) -> Option<(SocketAddrV6, Option<PreferredIpv6Source>)> {
-    let body = V6HolePunchPacket::ref_from_prefix(buf)?;
+    let (body, _) = V6HolePunchPacket::ref_from_prefix(buf).ok()?;
     let ip = Ipv6Addr::from(body.dst_ipv6);
     let preferred_src_ipv6 = Ipv6Addr::from(body.preferred_src_ipv6);
     let preferred_src = (!preferred_src_ipv6.is_unspecified()).then_some(PreferredIpv6Source {
@@ -311,7 +311,7 @@ pub(super) fn inspect_easytier_udp_datagram(
         return Err(EasyTierUdpDatagramInspectError::TooSmall { datagram_size });
     }
 
-    let header = UDPTunnelHeader::ref_from_prefix(data).unwrap();
+    let (header, _) = UDPTunnelHeader::ref_from_prefix(data).unwrap();
     let header_len = header.len.get() as usize;
     let real_len = datagram_size - UDP_TUNNEL_HEADER_SIZE;
     if header_len != real_len {

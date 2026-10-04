@@ -13,7 +13,7 @@ use anyhow::Context as _;
 use async_trait::async_trait;
 use dashmap::DashMap;
 use quanta::Instant;
-use rand::Rng as _;
+use rand::RngExt as _;
 use tokio::task::JoinSet;
 use tokio_util::task::AbortOnDropHandle;
 
@@ -309,7 +309,7 @@ where
             attempts,
             "tcp hole punch server connect attempt failed"
         );
-        let sleep_ms = rand::thread_rng().gen_range(10..100);
+        let sleep_ms = rand::rng().random_range(10..100);
         crate::foundation::time::sleep(Duration::from_millis(sleep_ms)).await;
     }
 

@@ -1,7 +1,7 @@
 use std::{fmt, marker::PhantomData, sync::Arc};
 
 use async_trait::async_trait;
-use rand::seq::SliceRandom as _;
+use rand::seq::IndexedRandom as _;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use url::Url;
 
@@ -565,7 +565,7 @@ async fn resolve_listener_addr(
         dns,
     )
     .await?
-    .choose(&mut rand::thread_rng())
+    .choose(&mut rand::rng())
     .copied()
     .ok_or_else(|| anyhow::anyhow!("listener has no resolved address: {url}"))
 }

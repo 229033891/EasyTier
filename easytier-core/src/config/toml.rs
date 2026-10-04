@@ -1706,7 +1706,7 @@ enabled = true
 
     #[test]
     fn test_toml_secure_mode_derives_public_key_from_private_key() {
-        let private = x25519_dalek::StaticSecret::random_from_rng(rand::rngs::OsRng);
+        let private = x25519_dalek::StaticSecret::random();
         let config = TomlConfigLoader::new_from_str(&format!(
             r#"
 [secure_mode]
@@ -1728,10 +1728,8 @@ local_private_key = "{}"
 
     #[test]
     fn test_toml_secure_mode_rejects_mismatched_keypair() {
-        let private = x25519_dalek::StaticSecret::random_from_rng(rand::rngs::OsRng);
-        let other_public = x25519_dalek::PublicKey::from(
-            &x25519_dalek::StaticSecret::random_from_rng(rand::rngs::OsRng),
-        );
+        let private = x25519_dalek::StaticSecret::random();
+        let other_public = x25519_dalek::PublicKey::from(&x25519_dalek::StaticSecret::random());
         let error = TomlConfigLoader::new_from_str(&format!(
             r#"
 [secure_mode]

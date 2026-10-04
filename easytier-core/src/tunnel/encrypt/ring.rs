@@ -1,6 +1,6 @@
-use rand::RngCore as _;
+use rand::TryRng as _;
 use ring::aead::{self, LessSafeKey, UnboundKey};
-use zerocopy::{AsBytes as _, FromBytes as _, FromZeroes as _};
+use zerocopy::{FromBytes as _, FromZeros as _, IntoBytes as _};
 
 use crate::packet::{StandardAeadTail, ZCPacket};
 
@@ -88,7 +88,9 @@ impl Encryptor for RingCipher {
         }
 
         let text_and_tag_len = payload_len - StandardAeadTail::SIZE + StandardAeadTail::TAG_SIZE;
-        let tail = StandardAeadTail::ref_from_suffix(packet.payload()).unwrap();
+        let (_, tail) = StandardAeadTail::ref_from_suffix(packet.payload())
+            .ok()
+            .unwrap();
         let nonce = aead::Nonce::assume_unique_for_key(tail.nonce);
 
         self.cipher
@@ -127,7 +129,11 @@ impl Encryptor for RingCipher {
             Some(nonce) => {
                 tail.nonce = nonce.try_into().map_err(|_| Error::EncryptionFailed)?;
             }
-            None => rand::thread_rng().fill_bytes(&mut tail.nonce),
+            None => {
+                rand::rngs::SysRng
+                    .try_fill_bytes(&mut tail.nonce)
+                    .map_err(|_| Error::EncryptionFailed)?;
+            }
         }
 
         let nonce = aead::Nonce::assume_unique_for_key(tail.nonce);

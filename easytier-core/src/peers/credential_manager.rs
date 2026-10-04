@@ -353,7 +353,7 @@ impl CredentialManager {
     }
 
     fn build_entry(grant: CredentialGrant, ttl: Duration) -> (CredentialEntry, String) {
-        let private = StaticSecret::random_from_rng(rand::rngs::OsRng);
+        let private = StaticSecret::random();
         let public = PublicKey::from(&private);
         let pubkey = BASE64_STANDARD.encode(public.as_bytes());
         let secret = BASE64_STANDARD.encode(private.as_bytes());

@@ -12,7 +12,7 @@ use async_trait::async_trait;
 use dashmap::DashSet;
 use percent_encoding::percent_decode_str;
 use quanta::Instant;
-use rand::seq::SliceRandom;
+use rand::seq::IndexedRandom;
 use serde::{Deserialize, Serialize};
 use tokio::task::JoinSet;
 use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
@@ -223,7 +223,7 @@ where
                 self.dns.as_ref(),
             )
             .await?
-            .choose(&mut rand::thread_rng())
+            .choose(&mut rand::rng())
             .copied()
             .ok_or(TunnelError::NoDnsRecordFound(ip_version))?;
             connect_resolved(
@@ -975,7 +975,7 @@ where
         return Err(TunnelError::NoDnsRecordFound(ip_version).into());
     }
     usable
-        .choose(&mut rand::thread_rng())
+        .choose(&mut rand::rng())
         .copied()
         .ok_or_else(|| TunnelError::NoDnsRecordFound(ip_version).into())
 }

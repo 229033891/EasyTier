@@ -1,7 +1,7 @@
 use std::{fmt, net::SocketAddr, sync::Arc};
 
 use async_trait::async_trait;
-use rand::seq::SliceRandom as _;
+use rand::seq::IndexedRandom as _;
 use url::Url;
 
 use crate::{
@@ -93,7 +93,7 @@ where
             self.dns.as_ref(),
         )
         .await?
-        .choose(&mut rand::thread_rng())
+        .choose(&mut rand::rng())
         .copied()
         .ok_or(TunnelError::NoDnsRecordFound(self.ip_version))?;
         let socket = transport::connect_tcp(
@@ -247,7 +247,7 @@ where
             self.dns.as_ref(),
         )
         .await?
-        .choose(&mut rand::thread_rng())
+        .choose(&mut rand::rng())
         .copied()
         .ok_or(TunnelError::NoDnsRecordFound(self.ip_version))?;
         let bind_addrs = udp_bind_addrs_for_remote(remote_addr, &self.bind_addrs);

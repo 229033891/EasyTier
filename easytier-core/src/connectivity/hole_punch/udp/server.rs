@@ -10,7 +10,7 @@ use std::{
 use anyhow::Context;
 use crossbeam::atomic::AtomicCell;
 use quanta::Instant;
-use rand::{Rng, seq::SliceRandom as _};
+use rand::{RngExt, seq::SliceRandom as _};
 use tokio::{
     sync::{Mutex, RwLock, RwLockReadGuard},
     task::JoinSet,
@@ -77,7 +77,7 @@ where
             Arc::new(UdpHolePunchServerCommon::new(runtime, stun, transport_sink));
         let both_easy_sym_server = UdpBothEasySymPunchServer::new(both_easy_sym_common);
         let mut shuffled_port_vec: Vec<u16> = (1..=65535).collect();
-        shuffled_port_vec.shuffle(&mut rand::thread_rng());
+        shuffled_port_vec.shuffle(&mut rand::rng());
 
         Self {
             sym_punch_lock,
@@ -222,7 +222,7 @@ where
 
         let last_port_index = request.port_index as usize;
         let round = request.round.max(1);
-        let mut max_k2: u32 = rand::thread_rng().gen_range(600..800);
+        let mut max_k2: u32 = rand::rng().random_range(600..800);
         if round > 2 {
             max_k2 = (max_k2 * 2 / round).max(MAX_K1_FOR_RANDOM_HARD_SYM);
         }

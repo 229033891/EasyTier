@@ -1,5 +1,5 @@
 use bytes::BytesMut;
-use rand::{Rng, SeedableRng};
+use rand::RngExt as _;
 use zerocopy::FromBytes as _;
 
 use super::{UDP_TUNNEL_HEADER_SIZE, UDPTunnelHeader, UdpPacketType, ZCPacket, ZCPacketType};
@@ -21,9 +21,8 @@ where
 }
 
 pub(crate) fn new_hole_punch_packet(tid: u32, buf_len: u16) -> ZCPacket {
-    let mut rng = rand::rngs::StdRng::from_entropy();
     let mut buf = vec![0u8; buf_len as usize];
-    rng.fill(&mut buf[..]);
+    rand::rng().fill(&mut buf[..]);
     new_udp_packet(
         |header| {
             header.msg_type = UdpPacketType::HolePunch as u8;
@@ -39,7 +38,7 @@ pub(crate) fn hole_punch_packet_tid(data: &[u8], body_len: u16) -> Option<u32> {
         return None;
     }
 
-    let header = UDPTunnelHeader::ref_from_prefix(data)?;
+    let (header, _) = UDPTunnelHeader::ref_from_prefix(data).ok()?;
     let valid = header.msg_type == UdpPacketType::HolePunch as u8 && header.len.get() == body_len;
 
     valid.then(|| header.conn_id.get())

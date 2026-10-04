@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use rand::RngCore as _;
+use rand::TryRng as _;
 use zerocopy::FromBytes as _;
 
 use crate::{
@@ -85,9 +85,10 @@ impl Encryptor for WasiHostAead {
         }
 
         let text_len = payload_len - StandardAeadTail::SIZE;
-        let tail = StandardAeadTail::ref_from_suffix(packet.payload())
-            .unwrap()
-            .clone();
+        let (_, tail) = StandardAeadTail::ref_from_suffix(packet.payload())
+            .ok()
+            .unwrap();
+        let tail = tail.clone();
         let status = self.call(
             true,
             &tail.nonce,
@@ -128,7 +129,11 @@ impl Encryptor for WasiHostAead {
             Some(nonce) => {
                 nonce_bytes = nonce.try_into().map_err(|_| Error::EncryptionFailed)?;
             }
-            None => rand::thread_rng().fill_bytes(&mut nonce_bytes),
+            None => {
+                rand::rngs::SysRng
+                    .try_fill_bytes(&mut nonce_bytes)
+                    .map_err(|_| Error::EncryptionFailed)?;
+            }
         }
 
         let text_len = packet.payload().len();

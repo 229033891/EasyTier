@@ -8,7 +8,7 @@ use std::{
 use anyhow::Context;
 use async_trait::async_trait;
 use quanta::Instant;
-use rand::Rng;
+use rand::RngExt;
 use serde::{Deserialize, Serialize};
 use tokio::task::JoinSet;
 use url::{Host, Url};
@@ -611,8 +611,8 @@ where
             let base = backoffs_ms[attempt];
             let delta = base >> 1;
             let delay_ms = {
-                let mut rng = rand::thread_rng();
-                base + rng.gen_range(-delta..delta)
+                let mut rng = rand::rng();
+                base + rng.random_range(-delta..delta)
             };
             crate::foundation::time::sleep(Duration::from_millis(delay_ms as u64)).await;
         }

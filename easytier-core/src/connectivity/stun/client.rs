@@ -131,7 +131,7 @@ where
                         .into_iter()
                         .filter(|ip| ip.is_ipv6() == self.use_ipv6)
                         .map(|ip| SocketAddr::new(ip, port))
-                        .choose_multiple(&mut rand::thread_rng(), self.max_ip_per_domain as usize);
+                        .sample(&mut rand::rng(), self.max_ip_per_domain as usize);
                 }
                 Err(error) => {
                     tracing::warn!(?host, ?error, "lookup host for stun failed");

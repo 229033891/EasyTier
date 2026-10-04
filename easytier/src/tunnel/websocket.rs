@@ -22,7 +22,7 @@ use tokio::{net::TcpListener, time::timeout};
 use tokio_rustls::TlsAcceptor;
 use tokio_util::either::Either;
 use tokio_websockets::{ClientBuilder, Limits, MaybeTlsStream, Message, ServerBuilder};
-use zerocopy::AsBytes as _;
+use zerocopy::IntoBytes as _;
 
 pub(crate) const CONNECT_TIMEOUT: Duration = Duration::from_secs(20);
 pub(crate) const SERVER_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(3);

@@ -66,7 +66,7 @@ impl<R> FramedReader<R> {
             return None;
         }
 
-        let header = TCPTunnelHeader::ref_from_prefix(&buf[..]).unwrap();
+        let (header, _) = TCPTunnelHeader::ref_from_prefix(&buf[..]).unwrap();
         let body_len = header.len.get() as usize;
         if body_len > max_packet_size {
             return Some(Err(TunnelError::InvalidPacket("body too long".to_owned())));
