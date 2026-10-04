@@ -129,6 +129,7 @@ config_saved: Configuration saved
 my_node_info: My Node Info
 node_info_group_peer_id: Peer ID
 node_info_group_tun_device: TUN Device
+node_info_group_proxy_cidr_route_sync: Proxy CIDR Route Sync
 node_info_group_virtual_ip: Virtual IP
 node_info_group_udp_nat_type: UDP NAT Type
 node_info_group_local_ip: Local IP
@@ -269,6 +270,12 @@ enable_exit_node_help: |-
   Let this node act as an exit node: other nodes can forward all their internet traffic here and egress through this host.
   Useful when this host has a stable public uplink that others can share.
   Note: it only takes effect when the client side lists this node under "Exit Nodes". Relaying other people's traffic consumes this host's bandwidth — scope it deliberately.
+
+allow_peer_default_without_exit: Allow Peer Default Without Exit
+allow_peer_default_without_exit_help: |-
+  Escape hatch: install a peer-advertised 0.0.0.0/0 into the OS route table even when this node has no reachable Exit Nodes entry.
+  Default is off — peer /0 stays L3-only unless you enable this or configure Exit Nodes.
+  Caution: on mobile (Android / OHOS) this becomes a real full-tunnel VPN with no metric demotion.
 
 relay_all_peer_rpc: Relay RPC Packets
 relay_all_peer_rpc_help: |-

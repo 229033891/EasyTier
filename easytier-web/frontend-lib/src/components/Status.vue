@@ -249,6 +249,15 @@ const myNodeInfoGroups = computed(() => {
     })
   }
 
+  const routeSync = props.curNetworkInst.detail?.proxy_cidr_route_sync
+  if (routeSync) {
+    groups.push({
+      key: 'proxy_cidr_route_sync',
+      titleKey: 'node_info_group_proxy_cidr_route_sync',
+      chips: [chip(routeSync)],
+    })
+  }
+
   if (my_node_info.virtual_ipv4?.address !== undefined) {
   groups.push({
     key: 'virtual_ip',

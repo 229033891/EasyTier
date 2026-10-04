@@ -32,6 +32,7 @@ const CONFIG_FLAG_FIELDS = [
   'bind_device',
   'no_tun',
   'enable_exit_node',
+  'allow_peer_default_without_exit',
   'relay_all_peer_rpc',
   'disable_relay_data',
   'need_p2p',

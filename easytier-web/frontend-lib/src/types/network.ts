@@ -389,6 +389,8 @@ export interface NetworkInstanceRunningInfo {
   peer_route_pairs: PeerRoutePair[]
   running: boolean
   error_msg?: string
+  /** Desktop L2 sync summary: desired vs installed proxy CIDRs. */
+  proxy_cidr_route_sync?: string
 }
 
 export interface Ipv4Addr {

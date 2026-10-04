@@ -198,6 +198,7 @@ const bool_flags: BoolFlag[] = [
   { field: 'lazy_p2p', help: 'lazy_p2p_help', group: 'connectivity' },
   { field: 'need_p2p', help: 'need_p2p_help', group: 'connectivity' },
   { field: 'enable_exit_node', help: 'enable_exit_node_help', group: 'connectivity' },
+  { field: 'allow_peer_default_without_exit', help: 'allow_peer_default_without_exit_help', group: 'connectivity' },
   { field: 'relay_all_peer_rpc', help: 'relay_all_peer_rpc_help', group: 'connectivity' },
   { field: 'disable_relay_data', help: 'disable_relay_data_help', group: 'connectivity' },
   { field: 'prefer_peer_relay', help: 'prefer_peer_relay_help', group: 'connectivity' },

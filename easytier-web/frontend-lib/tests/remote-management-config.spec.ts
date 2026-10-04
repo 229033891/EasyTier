@@ -19,6 +19,7 @@ const BOOLEAN_CONFIG_FIELDS = [
   'bind_device',
   'no_tun',
   'enable_exit_node',
+  'allow_peer_default_without_exit',
   'relay_all_peer_rpc',
   'multi_thread',
   'enable_relay_network_whitelist',

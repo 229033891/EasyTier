@@ -130,6 +130,7 @@ use_latency_first: 延迟优先模式
 my_node_info: 当前节点信息
 node_info_group_peer_id: Peer ID
 node_info_group_tun_device: TUN 设备
+node_info_group_proxy_cidr_route_sync: 代理 CIDR 路由同步
 node_info_group_virtual_ip: Virtual IP
 node_info_group_udp_nat_type: UDP NAT Type
 node_info_group_local_ip: Local IP
@@ -270,6 +271,12 @@ enable_exit_node_help: |-
   允许本节点充当「出口节点」：其他节点可以把全部上网流量转发到本节点，由本节点代为出网。
   适合本机有稳定公网出口，想让其他节点借用这条出口的场景。
   注意：需要在客户端侧把本节点填进「出口节点列表」才会生效；转发他人流量会消耗本机带宽，请自行控制使用范围。
+
+allow_peer_default_without_exit: 无出口时允许对端默认路由
+allow_peer_default_without_exit_help: |-
+  逃生阀：即使本机没有可到达的「出口节点」，也把对端通告的 0.0.0.0/0 写入系统路由表。
+  默认关闭——对端 /0 只保留在 L3 选路，除非开启本项或配置了可达的出口节点。
+  注意：在移动端（Android / OHOS）上这会变成真正的全隧道 VPN（没有桌面端那种高度量降权）。
 
 relay_all_peer_rpc: 转发RPC包
 relay_all_peer_rpc_help: |-
