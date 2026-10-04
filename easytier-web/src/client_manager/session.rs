@@ -24,8 +24,7 @@ use tokio::sync::{Notify, RwLock, broadcast};
 use tokio_util::task::AbortOnDropHandle;
 
 use super::{
-    HeartbeatPolicy,
-    managed_config,
+    HeartbeatPolicy, managed_config,
     storage::{Storage, StorageToken, WeakRefStorage},
 };
 use crate::FeatureFlags;
@@ -560,11 +559,7 @@ impl SessionRpcService {
             let Some(token) = data.storage_token.as_ref() else {
                 return conflict("invalid_request", None);
             };
-            (
-                token.token.clone(),
-                token.machine_id,
-                token.user_id,
-            )
+            (token.token.clone(), token.machine_id, token.user_id)
         };
 
         let Some(machine_id) = req.machine_id.map(uuid::Uuid::from) else {
@@ -602,12 +597,7 @@ impl SessionRpcService {
         let target = req.config_revision.trim().to_string();
 
         match managed_config::report_client_web_config(
-            &storage,
-            user_id,
-            machine_id,
-            upsert,
-            &expected,
-            &target,
+            &storage, user_id, machine_id, upsert, &expected, &target,
         )
         .await
         {
@@ -645,14 +635,10 @@ impl SessionRpcService {
             }
             Err(error) => {
                 if let Some(managed_config::ManagedConfigError::RevisionConflict {
-                    current,
-                    ..
+                    current, ..
                 }) = error.downcast_ref()
                 {
-                    return conflict(
-                        "managed_config_revision_conflict",
-                        current.clone(),
-                    );
+                    return conflict("managed_config_revision_conflict", current.clone());
                 }
                 if let Some(managed_config::ManagedConfigError::OwnershipConflict { .. }) =
                     error.downcast_ref()
@@ -665,8 +651,7 @@ impl SessionRpcService {
                         .flatten();
                     return conflict("managed_config_ownership_conflict", current);
                 }
-                if let Some(managed_config::ManagedConfigError::Invalid(msg)) =
-                    error.downcast_ref()
+                if let Some(managed_config::ManagedConfigError::Invalid(msg)) = error.downcast_ref()
                 {
                     return invalid(msg);
                 }
@@ -1016,9 +1001,9 @@ impl SessionRpcService {
             (notify, runtime_notify, device_upsert)
         };
 
-        let revision_identity = device_upsert.as_ref().map(|(token, _, _, _)| {
-            (token.user_id, token.machine_id)
-        });
+        let revision_identity = device_upsert
+            .as_ref()
+            .map(|(token, _, _, _)| (token.user_id, token.machine_id));
         if let Some((storage_token, hostname, version, report_time)) = device_upsert
             && let Err(e) = storage
                 .db()
@@ -1185,7 +1170,11 @@ impl SessionRpcService {
             notify.notify_one();
         }
         Ok(self
-            .heartbeat_response_with_revision(&storage, storage_token.user_id, storage_token.machine_id)
+            .heartbeat_response_with_revision(
+                &storage,
+                storage_token.user_id,
+                storage_token.machine_id,
+            )
             .await)
     }
 }

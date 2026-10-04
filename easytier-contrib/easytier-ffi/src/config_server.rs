@@ -497,14 +497,14 @@ pub(crate) unsafe fn report_network_config(config_json: *const std::ffi::c_char)
             return -1;
         }
     };
-    let config: easytier::proto::api::manage::NetworkConfig = match serde_json::from_str(&config_json)
-    {
-        Ok(config) => config,
-        Err(error) => {
-            set_error_msg(&format!("failed to parse network config JSON: {error}"));
-            return -1;
-        }
-    };
+    let config: easytier::proto::api::manage::NetworkConfig =
+        match serde_json::from_str(&config_json) {
+            Ok(config) => config,
+            Err(error) => {
+                set_error_msg(&format!("failed to parse network config JSON: {error}"));
+                return -1;
+            }
+        };
 
     let guard = match CONFIG_SERVER_CLIENT.lock() {
         Ok(guard) => guard,

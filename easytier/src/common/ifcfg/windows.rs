@@ -428,11 +428,9 @@ impl WindowsIfConfiger {
         let mut table: *mut MIB_IPFORWARD_TABLE2 = std::ptr::null_mut();
         let status = unsafe { GetIpForwardTable2(family, &mut table) };
         if status != NO_ERROR {
-            return Err(anyhow::anyhow!(
-                "GetIpForwardTable2 failed: {}",
-                format_win_error(status)
-            )
-            .into());
+            return Err(
+                anyhow::anyhow!("GetIpForwardTable2 failed: {}", format_win_error(status)).into(),
+            );
         }
         if table.is_null() {
             return Ok(None);
@@ -463,11 +461,13 @@ impl WindowsIfConfiger {
             FreeMibTable(table as *const _);
         }
 
-        Ok(best.map(|(_, ifindex, gateway, ifname)| super::PhysicalDefaultRoute {
-            ifindex,
-            ifname,
-            gateway,
-        }))
+        Ok(best.map(
+            |(_, ifindex, gateway, ifname)| super::PhysicalDefaultRoute {
+                ifindex,
+                ifname,
+                gateway,
+            },
+        ))
     }
 }
 

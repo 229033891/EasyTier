@@ -648,8 +648,8 @@ impl NetlinkIfConfiger {
                 continue;
             }
             let metric = msg.priority().unwrap_or(0);
-            let ifname = interface_name_from_index(ifindex)
-                .unwrap_or_else(|| format!("if{ifindex}"));
+            let ifname =
+                interface_name_from_index(ifindex).unwrap_or_else(|| format!("if{ifindex}"));
             let route = super::PhysicalDefaultRoute {
                 ifindex,
                 ifname,
@@ -666,12 +666,14 @@ impl NetlinkIfConfiger {
 
 fn interface_name_from_index(index: u32) -> Option<String> {
     use network_interface::NetworkInterfaceConfig as _;
-    network_interface::NetworkInterface::show().ok().and_then(|ifaces| {
-        ifaces
-            .into_iter()
-            .find(|iface| iface.index == index)
-            .map(|iface| iface.name)
-    })
+    network_interface::NetworkInterface::show()
+        .ok()
+        .and_then(|ifaces| {
+            ifaces
+                .into_iter()
+                .find(|iface| iface.index == index)
+                .map(|iface| iface.name)
+        })
 }
 
 #[cfg(test)]

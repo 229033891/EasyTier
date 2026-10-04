@@ -963,7 +963,12 @@ impl NicCtx {
         added: Vec<cidr::Ipv4Cidr>,
         removed: Vec<cidr::Ipv4Cidr>,
     ) {
-        tracing::debug!(?added, ?removed, local_exit_default, "applying proxy_cidrs route changes");
+        tracing::debug!(
+            ?added,
+            ?removed,
+            local_exit_default,
+            "applying proxy_cidrs route changes"
+        );
 
         for cidr in removed {
             if !cur_proxy_cidrs.contains(&cidr) {

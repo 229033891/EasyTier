@@ -1,13 +1,13 @@
 pub mod cidr_monitor;
 pub(crate) mod cidr_table;
 pub mod icmp_host;
-pub(crate) mod underlay_exclude;
 #[cfg(feature = "proxy-packet")]
 pub(crate) mod proxy_acl;
 #[cfg(feature = "proxy-packet")]
 pub(crate) mod service;
 #[cfg(feature = "proxy-packet")]
 pub mod traits;
+pub(crate) mod underlay_exclude;
 #[cfg_attr(not(feature = "wrapped-transport"), allow(dead_code))]
 pub mod wrapped_transport;
 

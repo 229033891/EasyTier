@@ -139,10 +139,7 @@ pub(crate) fn is_config_server_client_connected_jni(_env: JNIEnv, _class: JClass
     }
 }
 
-pub(crate) fn report_network_config_jni(
-    env: &mut JNIEnv,
-    config_json: JString,
-) -> jint {
+pub(crate) fn report_network_config_jni(env: &mut JNIEnv, config_json: JString) -> jint {
     if in_config_server_callback() {
         error::throw_exception(
             env,

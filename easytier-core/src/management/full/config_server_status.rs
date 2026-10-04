@@ -26,7 +26,6 @@ pub struct ConfigServerStatusSnapshot {
 
 #[derive(Clone, Default)]
 struct DnsCache {
-    host: String,
     ips: BTreeSet<IpAddr>,
     fetched_at: Option<Instant>,
 }
@@ -48,7 +47,6 @@ static STATUS: RwLock<Status> = RwLock::new(Status {
     },
     resolved_ips: BTreeSet::new(),
     dns_cache: DnsCache {
-        host: String::new(),
         ips: BTreeSet::new(),
         fetched_at: None,
     },
@@ -144,42 +142,44 @@ pub async fn underlay_exclude_candidate_ips() -> BTreeSet<IpAddr> {
         return ips;
     }
 
-    let lookup = tokio::time::timeout(
-        DNS_LOOKUP_TIMEOUT,
-        tokio::net::lookup_host((host.as_str(), 0)),
-    )
-    .await;
-    match lookup {
-        Ok(Ok(addrs)) => {
-            let mut resolved = BTreeSet::new();
-            for addr in addrs {
-                resolved.insert(addr.ip());
-            }
-            {
-                let mut status = STATUS.write();
-                if status.snapshot.endpoint_host.as_deref() == Some(host.as_str()) {
-                    status.dns_cache = DnsCache {
-                        host: host.clone(),
-                        ips: resolved.clone(),
-                        fetched_at: Some(Instant::now()),
-                    };
+    #[cfg(not(target_os = "wasi"))]
+    {
+        let lookup = tokio::time::timeout(
+            DNS_LOOKUP_TIMEOUT,
+            tokio::net::lookup_host((host.as_str(), 0)),
+        )
+        .await;
+        match lookup {
+            Ok(Ok(addrs)) => {
+                let mut resolved = BTreeSet::new();
+                for addr in addrs {
+                    resolved.insert(addr.ip());
                 }
+                {
+                    let mut status = STATUS.write();
+                    if status.snapshot.endpoint_host.as_deref() == Some(host.as_str()) {
+                        status.dns_cache = DnsCache {
+                            ips: resolved.clone(),
+                            fetched_at: Some(Instant::now()),
+                        };
+                    }
+                }
+                ips.extend(resolved);
             }
-            ips.extend(resolved);
-        }
-        Ok(Err(err)) => {
-            tracing::warn!(%host, %err, "config-server DNS lookup failed for underlay exclude");
-            let stale = STATUS.read().dns_cache.ips.clone();
-            ips.extend(stale);
-        }
-        Err(_) => {
-            tracing::warn!(
-                %host,
-                timeout_ms = DNS_LOOKUP_TIMEOUT.as_millis(),
-                "config-server DNS lookup timed out for underlay exclude"
-            );
-            let stale = STATUS.read().dns_cache.ips.clone();
-            ips.extend(stale);
+            Ok(Err(err)) => {
+                tracing::warn!(%host, %err, "config-server DNS lookup failed for underlay exclude");
+                let stale = STATUS.read().dns_cache.ips.clone();
+                ips.extend(stale);
+            }
+            Err(_) => {
+                tracing::warn!(
+                    %host,
+                    timeout_ms = DNS_LOOKUP_TIMEOUT.as_millis(),
+                    "config-server DNS lookup timed out for underlay exclude"
+                );
+                let stale = STATUS.read().dns_cache.ips.clone();
+                ips.extend(stale);
+            }
         }
     }
 

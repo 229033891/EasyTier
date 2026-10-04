@@ -467,9 +467,7 @@ impl<F> WebClient<F> {
         // Retrying the same edit must reuse the same target revision: the console
         // answers an already-applied revision with `AlreadyApplied`, while a fresh
         // revision after a lost response would surface as a bogus conflict.
-        let config_revision = self
-            .controller
-            .revision_for_report(&instance_id, &expected);
+        let config_revision = self.controller.revision_for_report(&instance_id, &expected);
         let client = rpc
             .rpc_client()
             .scoped_client::<WebServerServiceClientFactory<BaseController>>(1, 1, String::new());
@@ -750,9 +748,7 @@ impl WebClientSession {
                 let Some(controller) = controller.upgrade() else {
                     break;
                 };
-                let revision_generation = controller
-                    .revision_generation
-                    .load(Ordering::Acquire);
+                let revision_generation = controller.revision_generation.load(Ordering::Acquire);
                 let observed_generation = controller.backend.instance_state_generation();
                 let failed_network_instances = controller.backend.failed_instance_ids();
                 let disabled_network_instances =

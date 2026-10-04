@@ -112,6 +112,7 @@ pub(crate) fn diff_proxy_cidrs(
     }
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) async fn collect_proxy_cidrs(
     peer_manager: &PeerManagerCore,
     config: &CoreInstanceRuntimeConfig,
@@ -143,6 +144,7 @@ async fn collect_proxy_cidr_state(
     (current, local_exit_default)
 }
 
+#[cfg(test)]
 fn resolve_proxy_cidrs_from_runtime(
     peer_routes: BTreeSet<Ipv4Cidr>,
     config: &CoreInstanceRuntimeConfig,
@@ -293,11 +295,7 @@ mod tests {
                 ..Default::default()
             },
         );
-        let diff = diff_proxy_cidrs(
-            &cidrs(&["10.0.0.0/8", "172.16.0.0/12"]),
-            current,
-            false,
-        );
+        let diff = diff_proxy_cidrs(&cidrs(&["10.0.0.0/8", "172.16.0.0/12"]), current, false);
 
         assert_eq!(diff.current, cidrs(&["10.0.0.0/8"]));
         assert!(diff.added.is_empty());
@@ -392,10 +390,8 @@ mod tests {
                 ..Default::default()
             },
         );
-        let without_exit = resolve_proxy_cidrs(
-            cidrs(&["10.0.0.0/8"]),
-            ProxyCidrConfigSnapshot::default(),
-        );
+        let without_exit =
+            resolve_proxy_cidrs(cidrs(&["10.0.0.0/8"]), ProxyCidrConfigSnapshot::default());
         let diff = diff_proxy_cidrs(&with_exit, without_exit, false);
         assert_eq!(diff.removed, vec![ipv4_default_cidr()]);
         assert!(diff.added.is_empty());

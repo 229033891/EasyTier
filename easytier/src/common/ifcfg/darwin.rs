@@ -155,10 +155,7 @@ impl IfConfiguerTrait for MacIfConfiger {
     ) -> Result<(), Error> {
         let hopcount = cost.unwrap_or(1);
         let cmd = match via.gateway {
-            Some(gw) => format!(
-                "route -n add -host {} {} -hopcount {}",
-                dest, gw, hopcount
-            ),
+            Some(gw) => format!("route -n add -host {} {} -hopcount {}", dest, gw, hopcount),
             None => format!(
                 "route -n add -host {} -interface {} -hopcount {}",
                 dest, via.ifname, hopcount
@@ -174,10 +171,7 @@ impl IfConfiguerTrait for MacIfConfiger {
     ) -> Result<(), Error> {
         let cmd = match via.gateway {
             Some(gw) => format!("route -n delete -host {} {}", dest, gw),
-            None => format!(
-                "route -n delete -host {} -interface {}",
-                dest, via.ifname
-            ),
+            None => format!("route -n delete -host {} -interface {}", dest, via.ifname),
         };
         run_shell_cmd(cmd.as_str()).await
     }

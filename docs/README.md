@@ -35,6 +35,7 @@
 | [discussion-proposal-2026-10.md](./roadmap/discussion-proposal-2026-10.md) | **路线整合讨论稿**（排序 / αβγ 节奏 / 待决清单） |
 | [market-comparison-2026-10.md](./roadmap/market-comparison-2026-10.md) | **市场对比**（Tailscale / ZeroTier / 蒲公英 / 华为 / VeloCloud） |
 | [traffic-steering-vNext.md](./roadmap/traffic-steering-vNext.md) | 出口默认路由、路由所有权、与域名导流统一设计 |
+| [default-route-and-underlay-excludes.md](./roadmap/default-route-and-underlay-excludes.md) | 默认路由 / underlay 排除：与 WG·OpenVPN 对比及方案 D |
 | [domain-proxy.md](./roadmap/domain-proxy.md) | 域名驱动子网代理 + DNS 答案同步 |
 | [multi-link-bonding.md](./roadmap/multi-link-bonding.md) | 多 PeerConn 并行分摊以提升带宽（Draft） |
 | [traffic-camouflage.md](./roadmap/traffic-camouflage.md) | 传输伪装 / 抗识别（wss 范式与 TLS 外观，Draft） |

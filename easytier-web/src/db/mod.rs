@@ -1083,8 +1083,8 @@ impl Db {
         network_config: &NetworkConfig,
         config_revision: &str,
     ) -> Result<ManagedConfigApplyResult, DbErr> {
-        let network_config =
-            serde_json::to_string(network_config).map_err(|error| DbErr::Json(error.to_string()))?;
+        let network_config = serde_json::to_string(network_config)
+            .map_err(|error| DbErr::Json(error.to_string()))?;
         let mut transaction = self
             .db
             .begin_with("BEGIN IMMEDIATE")

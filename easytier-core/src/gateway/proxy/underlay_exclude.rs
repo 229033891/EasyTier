@@ -21,10 +21,10 @@ pub async fn collect_underlay_exclude_ips(
 
     for snapshot in peer_manager.list_peer_snapshots().await {
         for conn in snapshot.conns {
-            if let Some(ip) = tunnel_underlay_ip(conn.tunnel.as_ref()) {
-                if should_exclude_ip(peer_manager, ip).await {
-                    ips.insert(ip);
-                }
+            if let Some(ip) = tunnel_underlay_ip(conn.tunnel.as_ref())
+                && should_exclude_ip(peer_manager, ip).await
+            {
+                ips.insert(ip);
             }
         }
     }

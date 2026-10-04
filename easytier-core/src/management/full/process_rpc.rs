@@ -151,8 +151,7 @@ where
     fn mark_user_disabled_web_instances(&self, instance_ids: &[uuid::Uuid]) {
         for instance_id in instance_ids {
             if self.instances.config_source(*instance_id) == Some(ConfigSource::Web) {
-                self.instances
-                    .mark_user_disabled_web_instance(*instance_id);
+                self.instances.mark_user_disabled_web_instance(*instance_id);
             }
         }
     }
@@ -238,8 +237,7 @@ where
         }
         let _mutation = self.mutation_lock.lock().await;
         if overwrite {
-            self.instances
-                .clear_user_disabled_web_instance(instance_id);
+            self.instances.clear_user_disabled_web_instance(instance_id);
         } else if self.instances.is_user_disabled_web_instance(instance_id) {
             tracing::info!(
                 %instance_id,
@@ -479,8 +477,7 @@ where
         }
         // Local intentional start clears any prior intentional-stop mark so an
         // unexpected later exit can be auto-recovered by the config server.
-        self.instances
-            .clear_user_disabled_web_instance(instance_id);
+        self.instances.clear_user_disabled_web_instance(instance_id);
         self.instances.run_network_instance(config, control)
     }
 

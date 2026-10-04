@@ -422,9 +422,9 @@ mod tests {
                 std::io::Error::from_raw_os_error(1168)
             )));
         }
-        assert!(route_add_already_satisfied(&Error::AnyhowError(anyhow::anyhow!(
-            "Failed to add route: already exists (code: 183)"
-        ))));
+        assert!(route_add_already_satisfied(&Error::AnyhowError(
+            anyhow::anyhow!("Failed to add route: already exists (code: 183)")
+        )));
         assert!(!route_add_already_satisfied(&Error::ShellCommandError(
             "route: not in table".to_string()
         )));

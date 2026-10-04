@@ -656,19 +656,18 @@ impl OspfRouteTable {
     }
 
     pub fn get_peer_id_for_default_route_proxy(&self, ip: &IpAddr) -> Option<PeerId> {
-        self.lookup_proxy_peer(ip, true)
-            .filter(|_| match ip {
-                IpAddr::V4(ipv4) => self
-                    .cidr_peer_id_map
-                    .load()
-                    .get_lpm(&Ipv4Cidr::new(*ipv4, 32).unwrap())
-                    .is_some_and(|(cidr, _)| cidr.network_length() == 0),
-                IpAddr::V6(ipv6) => self
-                    .cidr_v6_peer_id_map
-                    .load()
-                    .get_lpm(&Ipv6Cidr::new(*ipv6, 128).unwrap())
-                    .is_some_and(|(cidr, _)| cidr.network_length() == 0),
-            })
+        self.lookup_proxy_peer(ip, true).filter(|_| match ip {
+            IpAddr::V4(ipv4) => self
+                .cidr_peer_id_map
+                .load()
+                .get_lpm(&Ipv4Cidr::new(*ipv4, 32).unwrap())
+                .is_some_and(|(cidr, _)| cidr.network_length() == 0),
+            IpAddr::V6(ipv6) => self
+                .cidr_v6_peer_id_map
+                .load()
+                .get_lpm(&Ipv6Cidr::new(*ipv6, 128).unwrap())
+                .is_some_and(|(cidr, _)| cidr.network_length() == 0),
+        })
     }
 
     fn lookup_proxy_peer(&self, ip: &IpAddr, allow_default: bool) -> Option<PeerId> {

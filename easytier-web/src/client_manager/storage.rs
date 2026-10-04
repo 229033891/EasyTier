@@ -610,7 +610,9 @@ mod tests {
                 ManagedConfigPersistedChange {
                     expected_revision: "rev-a".to_string(),
                     target_revision: "rev-b".to_string(),
-                    dirty_instance_ids: std::collections::HashSet::from(["instance-a".to_string(),]),
+                    dirty_instance_ids: std::collections::HashSet::from(
+                        ["instance-a".to_string(),]
+                    ),
                 },
             ),
             RecordPatchOutcome::Recorded
@@ -651,7 +653,8 @@ mod tests {
     async fn record_patch_reports_already_applied_when_target_matches() {
         let storage = Storage::new(Db::memory_db().await);
         let machine_id = uuid::Uuid::new_v4();
-        let state = storage.bind_managed_runtime_state(1, machine_id, Some(uuid::Uuid::new_v4()), 1);
+        let state =
+            storage.bind_managed_runtime_state(1, machine_id, Some(uuid::Uuid::new_v4()), 1);
         {
             let mut state = state.lock().unwrap();
             state.applied_config_revision = Some("rev-b".to_string());

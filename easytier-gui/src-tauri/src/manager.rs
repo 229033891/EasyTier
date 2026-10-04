@@ -3,7 +3,7 @@
 use super::*;
 use async_trait::async_trait;
 use dashmap::{DashMap, DashSet};
-use easytier::common::config::{NetworkConfig, NetworkConfigExt};
+use easytier::common::config::{ConfigSource, NetworkConfig, NetworkConfigExt};
 use easytier::proto::api::logger::{LoggerRpc, LoggerRpcClientFactory, SetLoggerConfigRequest};
 use easytier::proto::api::manage::RunNetworkInstanceRequest;
 use easytier::proto::rpc::bidirect::BidirectRpcManager;
@@ -181,9 +181,7 @@ impl GUIStorage {
     }
 
     pub(crate) fn persisted_source(&self, inst_id: Uuid) -> Option<PersistedConfigSource> {
-        self.network_configs
-            .get(&inst_id)
-            .map(|entry| entry.source)
+        self.network_configs.get(&inst_id).map(|entry| entry.source)
     }
 }
 #[async_trait]

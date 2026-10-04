@@ -54,9 +54,7 @@ pub use process_rpc::{
 };
 #[cfg(target_os = "wasi")]
 pub(crate) use web_client::WebClientBackend;
-pub use web_client::{
-    ConfigServerEndpoint, ReportNetworkConfigError, WebClient, WebClientConfig,
-};
+pub use web_client::{ConfigServerEndpoint, ReportNetworkConfigError, WebClient, WebClientConfig};
 
 #[cfg(feature = "management")]
 pub use super::instance_rpc::full::call_instance_json_rpc;

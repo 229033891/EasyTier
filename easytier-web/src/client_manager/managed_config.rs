@@ -310,11 +310,7 @@ pub(super) async fn report_client_web_config(
         let expected =
             (!expected_config_revision.is_empty()).then(|| expected_config_revision.to_string());
         if current != expected {
-            return Err(ManagedConfigError::RevisionConflict {
-                expected,
-                current,
-            }
-            .into());
+            return Err(ManagedConfigError::RevisionConflict { expected, current }.into());
         }
 
         // Require an existing web-owned row before any write (no inventing).
@@ -343,7 +339,9 @@ pub(super) async fn report_client_web_config(
                     },
                 )
                 .await
-                .map_err(|error| anyhow::anyhow!("failed to apply managed config Patch: {error}"))?;
+                .map_err(|error| {
+                    anyhow::anyhow!("failed to apply managed config Patch: {error}")
+                })?;
             return map_apply_result(result);
         }
 

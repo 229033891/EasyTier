@@ -332,7 +332,8 @@ pub mod logger {
 
 pub mod manage {
     include!(concat!(env!("OUT_DIR"), "/api.manage.rs"));
-    #[cfg(feature = "json-rpc")]
+    // Always include: `web.serde` embeds `NetworkConfig` and is not gated on
+    // `json-rpc`, so manage serde must be available whenever `api` is enabled.
     include!(concat!(env!("OUT_DIR"), "/api.manage.serde.rs"));
 
     impl std::fmt::Debug for ManagedCredentialConfig {

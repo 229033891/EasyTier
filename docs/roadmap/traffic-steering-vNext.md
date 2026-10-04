@@ -10,6 +10,7 @@
 - 索引：[`../README.md`](../README.md)
 - **现状行为（已实现）**：[`../current/traffic-steering.md`](../current/traffic-steering.md)
 - **市场对比（Tailscale exit / subnet）**：[`market-comparison-2026-10.md`](./market-comparison-2026-10.md)
+- **默认路由 / underlay 排除讨论**：[`default-route-and-underlay-excludes.md`](./default-route-and-underlay-excludes.md)（建议去掉高 metric `/0`，exclude 仅 exit 门控）
 - 输入文档：
   - 出口节点选路与系统路由缺口（会话分析）
   - [`domain-proxy.md`](./domain-proxy.md)（域名驱动子网代理草案）
@@ -32,7 +33,7 @@
 1. **出口配了却像没路由**：`exit_nodes` 不触发 TUN `0.0.0.0/0`，OS 流量进不来。
 2. **路由删不干净 / 加不上还不重试**：`apply_route_changes` 失败仍改内存集合。
 3. **域名代理若只下发 CIDR**：B 用自己的 DNS 解析，IP 对不上 → 打不中（域名草案已论证）。
-4. **若有人宣告 `0.0.0.0/0`**：LPM 命中后 **整表跳过 `exit_nodes`**，且不打 `exit_node` 标志 → 排障困难。
+4. **若有人宣告 `0.0.0.0/0`**：IPv4 L3 的 LPM **显式排除 `/0`**（`get_peer_id_for_proxy` 对 `/0` 返回 `None`），所以 `exit_nodes` 不会被跳过；对端 `/0` 只在**出口列表为空/不可解析**时作为兜底命中，且不打 `exit_node` 标志 → 与 §3.1 表格一致，排障时需区分这两种命中。
 
 必须用**一层模型**把「谁负责把包送进 EasyTier」和「进了之后交给谁」拆开，再把域名、CIDR、出口放进同一优先级。
 
@@ -93,7 +94,7 @@
 | 3 | `exit_nodes` **配置列表顺序**，第一个 VIP 可解析的 peer | **true** | 真正的「出口节点」路径 |
 | 4 | （可选宿主）`local_exit_node_fallback` | true | OHOS 等 |
 
-IPv6：VIP →（Public IPv6 gateway）→ Proxy LPM → `exit_nodes`；链路本地不进出口。
+IPv6：VIP →（Public IPv6 gateway）→ Proxy LPM → `exit_nodes`；链路本地不进出口。注意 L2 不对称：对端宣告的 IPv6 proxy CIDR（含 `::/0`）**目前不写入任何 OS 路由**，只有本机出口才装 `::/0`。
 
 ### 3.1 与「出口默认路由」的配合（结果导向默认语义）
 
@@ -114,7 +115,7 @@ IPv6：VIP →（Public IPv6 gateway）→ Proxy LPM → `exit_nodes`；链路�
 | 情况 | 行为 |
 |------|------|
 | 对端已宣告更具体 CIDR / 域名 `/32` | L3 次序 2 命中 → **不走 exit 列表**（正确：内网/域名代理优先） |
-| 对端宣告了 `0.0.0.0/0` | L3 次序 2 命中 → **exit 列表被跳过**；流量走「子网代理默认路由」路径（无 `exit_node` 标志）。UI 警告：与本机 `exit_nodes` 语义冲突，建议只保留一种默认出口策略 |
+| 对端宣告了 `0.0.0.0/0` | L3 次序 2 的 LPM **排除 `/0`** → `exit_nodes` **不会被跳过**；顺序仍为「更具体 CIDR → `exit_nodes`（带 `exit_node` 标志）→ 对端 `/0`（无标志，兜底）」。**L2 侧平台相关**：桌面装高度量 `/0`（通常不生效，但无物理默认路由时会真实接管本机流量）；Android / OHOS 由各自 tun 路由机制直接生效（见 [`../current/traffic-steering.md`](../current/traffic-steering.md) §3 平台差异），UI 需按平台给出不同提示 |
 | `manual_routes` 开启 | L2 整表由手动列表接管；**不自动加出口默认路由** |
 
 ### 3.2 为何不采用「出口机通告 0.0.0.0/0」作为主方案
@@ -217,9 +218,10 @@ resolve = true                  # 动态；可选 dns =
 
 GUI/Web：
 
-- `exit_nodes` 旁注明：「将安装本机默认路由经虚拟网出站；与对端 `0.0.0.0/0` 代理冲突时以后者为准（LPM）。」
+- `exit_nodes` 旁注明：「将安装本机默认路由经虚拟网出站；对端宣告的 `0.0.0.0/0` 仅在出口列表不可用时兜底（LPM 排除 `/0`）。」
 - `proxy_domains` 旁注明：「需对端启用 MagicDNS/覆盖 DNS。」
-- 冲突检测：本机有 `exit_nodes` 且路由表中存在来自 peer 的 `0.0.0.0/0` → 警告。
+- 冲突检测：**应从 OSPF 通告（对端 `proxy_cidrs` 含 `0.0.0.0/0`）判断，不要从本机路由表判断**——一旦采纳 [`default-route-and-underlay-excludes.md`](./default-route-and-underlay-excludes.md) 的方案 D，桌面端将不再安装该路由，基于路由表的检测会把冲突判成「无冲突」；Android / OHOS 则始终会安装，反而不一致。
+- 若采纳方案 D，上述「后两者为准」的措辞需按平台改写（见 §3.1 表格与 [`../current/traffic-steering.md`](../current/traffic-steering.md) §3 平台差异）。
 
 ---
 
@@ -252,8 +254,9 @@ TTL/防抖、失败保留上次成功、与静态合并。
 2. **出口 + 内网 CIDR**：A 另宣告 `10.0.0.0/24`；B 访问 `10.0.0.5` 走 LPM 到 A（非 exit 标志）；访问 `8.8.8.8` 走 exit 标志。  
 3. **域名静态**：A 配 `nas.lan→10.0.0.5`；B 走覆盖 DNS 得同一 IP，流量经子网代理到 A。  
 4. **域名 + 出口**：清单内域名走 A 代理；清单外上网走 `exit_nodes`。  
-5. **冲突**：某 peer 宣告 `0.0.0.0/0` 时，B 若仍配 `exit_nodes`，UI 警告；实际按 LPM 走代理默认路由。  
+5. **冲突**：某 peer 宣告 `0.0.0.0/0` 时，B 若仍配 `exit_nodes`，UI 警告；**L3 实际仍走 `exit_nodes`**（LPM 排除 `/0`，对端 `/0` 仅兜底）；L2 是否出现 TUN `/0` 取决于平台（见 [`../current/traffic-steering.md`](../current/traffic-steering.md) §3 平台差异）。  
 6. **删路由**：对端撤销 CIDR 或本机清空出口后，对应 owner 的路由在重试后最终卸载。
+7. **无物理默认路由 + 对端 `/0`**（桌面）：高度量 TUN `/0` 会成为生效默认路由并接管本机流量；若采纳方案 D 需显式确认该行为可移除。
 
 ---
 
