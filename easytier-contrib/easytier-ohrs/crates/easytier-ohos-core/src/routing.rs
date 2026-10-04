@@ -79,8 +79,7 @@ fn local_exit_default(instance: &RuntimeInstanceState) -> bool {
             continue;
         }
         for route in &instance.routes {
-            if route_vip(route) == Some(exit_ip)
-                && route.next_hop_peer_id.is_some_and(|id| id > 0)
+            if route_vip(route) == Some(exit_ip) && route.next_hop_peer_id.is_some_and(|id| id > 0)
             {
                 return true;
             }
@@ -116,9 +115,7 @@ pub fn aggregate_tun_routes_with_policy(
         .iter()
         .flat_map(|route| route.proxy_cidrs.iter().cloned())
         .filter(|cidr| {
-            local_exit_default
-                || allow_peer_default_without_exit
-                || !is_default_ipv4_route(cidr)
+            local_exit_default || allow_peer_default_without_exit || !is_default_ipv4_route(cidr)
         })
         .collect::<Vec<_>>();
     let mut raw_routes = Vec::new();

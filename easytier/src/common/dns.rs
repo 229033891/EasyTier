@@ -32,9 +32,9 @@ use tokio::net::{TcpStream, UdpSocket};
 use tokio::sync::Semaphore;
 
 use super::error::Error;
-use super::netns::NetNS;
 #[cfg(feature = "dns-resolver")]
 use super::ifcfg::{IfConfiger, IfConfiguerTrait};
+use super::netns::NetNS;
 #[cfg(feature = "dns-resolver")]
 use crate::{
     socket::{tcp::create_tcp_socket, udp::create_udp_socket},
@@ -97,10 +97,11 @@ async fn physical_dns_bind_device(server_addr: SocketAddr) -> Option<String> {
         let cache = PHYSICAL_DNS_IF_CACHE
             .read()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if let Some((at, cached_v4, name)) = cache.as_ref() {
-            if *cached_v4 == want_v4 && at.elapsed() < PHYSICAL_DNS_IF_CACHE_TTL {
-                return Some(name.clone());
-            }
+        if let Some((at, cached_v4, name)) = cache.as_ref()
+            && *cached_v4 == want_v4
+            && at.elapsed() < PHYSICAL_DNS_IF_CACHE_TTL
+        {
+            return Some(name.clone());
         }
     }
 

@@ -234,19 +234,17 @@ fn parse_proto_url_host_ip(url: Option<&ProtoUrl>) -> Option<IpAddr> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::{Mutex, MutexGuard};
+    use tokio::sync::{Mutex, MutexGuard};
 
-    static TEST_LOCK: Mutex<()> = Mutex::new(());
+    static TEST_LOCK: Mutex<()> = Mutex::const_new(());
 
-    fn lock_status() -> MutexGuard<'static, ()> {
-        TEST_LOCK
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    async fn lock_status() -> MutexGuard<'static, ()> {
+        TEST_LOCK.lock().await
     }
 
     #[tokio::test]
     async fn host_dns_lookup_hook_is_used_for_hostname_endpoints() {
-        let _guard = lock_status();
+        let _guard = lock_status().await;
         clear();
         set_host_dns_lookup(Some(Arc::new(|_host| {
             Box::pin(async {
@@ -265,9 +263,9 @@ mod tests {
         clear();
     }
 
-    #[test]
-    fn status_transitions_clear_error_on_connect() {
-        let _guard = lock_status();
+    #[tokio::test]
+    async fn status_transitions_clear_error_on_connect() {
+        let _guard = lock_status().await;
         clear();
         mark_enabled();
         mark_error("boom");
@@ -295,7 +293,7 @@ mod tests {
 
     #[tokio::test]
     async fn set_endpoint_url_records_literal_ip() {
-        let _guard = lock_status();
+        let _guard = lock_status().await;
         clear();
         mark_enabled();
         set_endpoint_url(&Url::parse("udp://203.0.113.9:22020/token").unwrap());
@@ -311,7 +309,7 @@ mod tests {
 
     #[tokio::test]
     async fn set_endpoint_url_replaces_previous_resolved_ips() {
-        let _guard = lock_status();
+        let _guard = lock_status().await;
         clear();
         mark_enabled();
         set_endpoint_url(&Url::parse("udp://203.0.113.9:22020/token").unwrap());

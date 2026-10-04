@@ -40,9 +40,8 @@ use super::{
 pub use compiled::register_instance_management_rpc;
 pub use config_patch::{ConfigPatchPersistence, apply_config_patch};
 pub use config_server_status::{
-    ConfigServerStatusSnapshot, clear as clear_config_server_status,
-    set_host_dns_lookup, snapshot as config_server_status,
-    underlay_exclude_candidate_ips as config_server_underlay_ips,
+    ConfigServerStatusSnapshot, clear as clear_config_server_status, set_host_dns_lookup,
+    snapshot as config_server_status, underlay_exclude_candidate_ips as config_server_underlay_ips,
 };
 pub use instance_info::network_instance_running_info;
 #[cfg(feature = "management")]

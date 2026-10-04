@@ -253,10 +253,8 @@ impl GlobalCtx {
         self.set_tun_device_name(Some(name.clone()));
         #[cfg(feature = "dns-resolver")]
         {
-            if let Some(prev) = previous {
-                if prev != name {
-                    crate::common::dns::unregister_dns_tun_exclude(&prev);
-                }
+            if let Some(prev) = previous.filter(|prev| prev != &name) {
+                crate::common::dns::unregister_dns_tun_exclude(&prev);
             }
             crate::common::dns::register_dns_tun_exclude(name.clone());
         }
