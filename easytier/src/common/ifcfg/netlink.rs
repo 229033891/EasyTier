@@ -652,13 +652,20 @@ impl NetlinkIfConfiger {
         let exclude_index = Self::get_interface_index(exclude_ifname).ok();
         let mut best: Option<(u32, super::PhysicalDefaultRoute)> = None;
         for msg in Self::list_route_messages(family)? {
-            // Only main-table, source-less defaults. Policy routes like
-            // `default from <src>` (src_len != 0 / RTA_SRC) must not become the
-            // underlay exclude next hop — that pins peer tunnels to the wrong gw.
+            // Only source-less defaults. Policy routes like `default from <src>`
+            // (src_len != 0 / RTA_SRC) must not become the underlay exclude next
+            // hop — that pins peer tunnels to the wrong gw.
+            // Table filter is soft: accept MAIN and UNSPEC/0 (older dumps may
+            // omit table info); reject only when an explicit non-main table id
+            // is present.
+            let table = msg.table_id();
+            let explicit_non_main = table != 0
+                && table != u32::from(libc::RT_TABLE_UNSPEC)
+                && table != u32::from(libc::RT_TABLE_MAIN);
             if msg.dst_len() != 0
                 || msg.src_len() != 0
                 || msg.source().is_some()
-                || msg.table_id() != u32::from(libc::RT_TABLE_MAIN)
+                || explicit_non_main
                 || msg.route_type() != RouteType::Unicast
             {
                 continue;

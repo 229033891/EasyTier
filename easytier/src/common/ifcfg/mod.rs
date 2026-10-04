@@ -145,9 +145,13 @@ pub trait IfConfiguerTrait: Send + Sync {
     ) -> Result<(), Error> {
         Ok(())
     }
-    /// Remove an IPv4 route. When `metric` is `Some`, only a route with that
-    /// priority is deleted (needed when exit and peer `/0` share a destination
-    /// with different metrics). `None` deletes the first matching dest/oif.
+    /// Remove an IPv4 route matching destination / prefix / interface.
+    ///
+    /// `metric`:
+    /// - `Some(priority)` — **best-effort** exact priority match. Honored on
+    ///   Linux netlink; **ignored** on Windows / Darwin where the platform API
+    ///   cannot filter by metric (those backends delete by dest+iface only).
+    /// - `None` — delete the first matching dest/oif (any metric).
     async fn remove_ipv4_route(
         &self,
         _name: &str,
@@ -174,7 +178,8 @@ pub trait IfConfiguerTrait: Send + Sync {
     ) -> Result<(), Error> {
         Ok(())
     }
-    /// Remove an IPv6 route. See [`Self::remove_ipv4_route`] for `metric`.
+    /// Remove an IPv6 route. See [`Self::remove_ipv4_route`] for `metric`
+    /// semantics (exact priority on Linux; dest+iface only on Windows/Darwin).
     async fn remove_ipv6_route(
         &self,
         _name: &str,

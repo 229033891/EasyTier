@@ -1217,7 +1217,10 @@ mod tests {
             a,
             "instance-a pending must survive a concurrent instance-b report"
         );
-        assert_eq!(controller.revision_for_report("instance-b", "expected-1"), b);
+        assert_eq!(
+            controller.revision_for_report("instance-b", "expected-1"),
+            b
+        );
 
         controller.clear_pending_report("instance-a");
         assert_eq!(

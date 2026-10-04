@@ -30,8 +30,8 @@
 
 叠加后的真实痛点：
 
-1. **出口配了却像没路由**：`exit_nodes` 不触发 TUN `0.0.0.0/0`，OS 流量进不来。
-2. **路由删不干净 / 加不上还不重试**：`apply_route_changes` 失败仍改内存集合。
+1. **出口配了却像没路由（历史痛点；Current D+ 已修）**：旧实现里 `exit_nodes` 不装 TUN `/0`，OS 流量进不来。**今天**可解析的 `exit_nodes` 会装本机默认路由——见 [`../current/traffic-steering.md`](../current/traffic-steering.md)。下文仍讨论统一模型与剩余缺口。
+2. **路由删不干净 / 加不上还不重试（历史；Current 已改为仅成功时更新集合 + 周期重试）**：旧 `apply_route_changes` 失败仍改内存集合。
 3. **域名代理若只下发 CIDR**：B 用自己的 DNS 解析，IP 对不上 → 打不中（域名草案已论证）。
 4. **若有人宣告 `0.0.0.0/0`**：IPv4 L3 的 LPM **显式排除 `/0`**（`get_peer_id_for_proxy` 对 `/0` 返回 `None`），所以 `exit_nodes` 不会被跳过；对端 `/0` 只在**出口列表为空/不可解析**时作为兜底命中，且不打 `exit_node` 标志 → 与 §3.1 表格一致，排障时需区分这两种命中。
 
@@ -201,7 +201,7 @@ exit_nodes = ["10.126.126.1"]   # 非空 → 本机自动管 TUN 默认路由（
 # flags.enable_exit_node = true
 
 # —— 手工子网代理 ——
-proxy_networks = ["10.0.0.0/24"]
+proxy_cidrs = ["10.0.0.0/24"]
 
 # —— 域名代理（仅代理节点 A）——
 [[proxy_domains]]
@@ -213,7 +213,7 @@ name = "cdn.example.com"
 resolve = true                  # 动态；可选 dns =
 
 # —— 高级：整表手动 ——
-# routes = ["192.168.0.0/16"]  # 开启后接管 L2，不再自动加 exit 默认路由
+# manual_routes = ["192.168.0.0/16"]  # 开启后接管 L2，不再自动加 exit 默认路由
 ```
 
 GUI/Web：

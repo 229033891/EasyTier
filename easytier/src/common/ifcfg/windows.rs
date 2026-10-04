@@ -207,6 +207,9 @@ impl IfConfiguerTrait for WindowsIfConfiger {
         cidr_prefix: u8,
         _metric: Option<u32>,
     ) -> Result<(), Error> {
+        // Windows cannot delete by metric; API matches destination + next hop
+        // only. Exit vs public-provider `::/0` / IPv4 `/0` dual writers must
+        // therefore rely on a single installed default per iface on this OS.
         let Some(if_index) = Self::get_interface_index(name) else {
             return Err(Error::NotFound);
         };
@@ -298,6 +301,9 @@ impl IfConfiguerTrait for WindowsIfConfiger {
         cidr_prefix: u8,
         _metric: Option<u32>,
     ) -> Result<(), Error> {
+        // Same limitation as `remove_ipv4_route`: Windows cannot filter by
+        // metric, so exit vs public-provider dual `::/0` writers collapse to
+        // one route per interface on this OS.
         let Some(if_index) = Self::get_interface_index(name) else {
             return Err(Error::NotFound);
         };

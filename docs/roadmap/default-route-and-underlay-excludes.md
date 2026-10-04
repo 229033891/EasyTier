@@ -2,9 +2,10 @@
 
 ## Status
 
-- Status: **Shipped (Phase 1 + 1b + desktop DNS protect)** — 桌面期望集合过滤 + 逃生阀 + exclude 统一门控已落地；Android / OHOS / GUI 移动端同步过滤对端 `/0`；桌面 DNS 绑定物理默认网卡
+- Status: **Roadmap**（Phase 1 / 1b 桌面+移动 D+ 已落地，见 [`../current/traffic-steering.md`](../current/traffic-steering.md)；本文保留方案对比与剩余缺口）
 - 日期：2026-10-04
-- 最近审阅：2026-10-04（实现落地；桌面 DNS protect Phase-1 已落地；Phase 2 `/1+/1` 按需）
+- 最近审阅：2026-10-04
+- 状态说明：桌面期望集合过滤 + 逃生阀 + exclude 统一门控已落地；Android / OHOS / GUI 移动端同步过滤对端 `/0`；桌面 DNS 绑定物理默认网卡。Phase 2（/1+/1 覆盖）仍待按需。
 - 目标读者：产品决策 + 路由/出口实现
 - 索引：[`../README.md`](../README.md)
 - **现状行为**：[`../current/traffic-steering.md`](../current/traffic-steering.md)（已按 D+ 更新）

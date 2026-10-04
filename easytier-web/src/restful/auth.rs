@@ -50,11 +50,7 @@ mod put {
                 )),
             ))?
             .id();
-        if let Err(e) = auth_session
-            .backend
-            .change_password(user_id, &req)
-            .await
-        {
+        if let Err(e) = auth_session.backend.change_password(user_id, &req).await {
             tracing::error!("Failed to change password: {e:?}");
             return Err((
                 StatusCode::INTERNAL_SERVER_ERROR,

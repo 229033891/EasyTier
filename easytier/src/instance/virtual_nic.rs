@@ -725,6 +725,10 @@ impl VirtualNic {
         self.ifname.as_ref().unwrap().as_str()
     }
 
+    pub fn resolve_route_metric(&self, cidr_prefix: u8, cost: Option<i32>) -> u32 {
+        self.ifcfg.resolve_route_metric(cidr_prefix, cost)
+    }
+
     pub async fn link_up(&self) -> Result<(), Error> {
         let _g = self.global_ctx.net_ns.guard();
         self.ifcfg.set_link_status(self.ifname(), true).await?;
@@ -1275,7 +1279,17 @@ impl NicCtx {
                     .await
                 {
                     Ok(()) => true,
-                    Err(err2) if route_add_already_satisfied(&err2) => true,
+                    Err(err2) if route_add_already_satisfied(&err2) => {
+                        // Still present after a force-remove — likely a
+                        // third-party same-prefix route. Do not mark
+                        // converged; let the ticker keep retrying.
+                        tracing::warn!(
+                            ifname,
+                            ?err2,
+                            "replace ipv4 default route still EEXIST after force-remove; will retry"
+                        );
+                        false
+                    }
                     Err(err2) => {
                         tracing::warn!(
                             ifname,
@@ -1966,7 +1980,7 @@ impl NicCtx {
                         .remove_ipv6_route(
                             Ipv6Addr::UNSPECIFIED,
                             0,
-                            Some(PUBLIC_IPV6_DEFAULT_METRIC as u32),
+                            Some(nic.resolve_route_metric(0, Some(PUBLIC_IPV6_DEFAULT_METRIC))),
                         )
                         .await
                     {

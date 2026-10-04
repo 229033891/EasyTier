@@ -404,9 +404,9 @@ socks5_help: |-
 
 exit_nodes: Exit Nodes
 exit_nodes_help: |-
-  Exit node list: fill in the peer's virtual IPv4 address and all of this host's internet traffic is forwarded there to egress.
-  Priority follows list order — earlier entries win.
-  Note: the peer must have "Enable Exit Node" turned on or it will not work. A wrong address cuts off all internet access, so verify reachability first.
+  Exit node list: fill in the peer's virtual IPv4 address. This host installs a TUN default route and, once traffic enters the overlay, forwards internet traffic to the first reachable exit (with a next hop) in list order.
+  The peer must have "Enable Exit Node" turned on, or L3 will not accept that traffic.
+  Note: if installing/removing the system default or underlay excludes fails, the status page shows desired vs installed and the process retries periodically; internet access may be disrupted until routes land. A wrong or unreachable address cuts off all internet access — verify reachability first.
 
 port_forwards: Port Forward
 port_forwards_help: "forward local port to remote port in virtual network. e.g.: udp://0.0.0.0:12345/10.126.126.1:23456, means forward local udp port 12345 to 10.126.126.1:23456 in the virtual network. can specify multiple."

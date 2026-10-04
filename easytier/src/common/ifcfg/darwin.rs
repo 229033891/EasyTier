@@ -123,6 +123,8 @@ impl IfConfiguerTrait for MacIfConfiger {
         cidr_prefix: u8,
         _metric: Option<u32>,
     ) -> Result<(), Error> {
+        // Darwin `route delete` cannot filter by hopcount; dest+iface only
+        // (same as IPv4 remove above). Dual default writers share one slot.
         run_shell_cmd(
             format!(
                 "route -n delete -inet6 {}/{} -interface {}",
