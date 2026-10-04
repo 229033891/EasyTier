@@ -434,7 +434,7 @@ where
         if let Ok(Some(next_port_idx)) = punch_task_result {
             *last_port_idx = next_port_idx as usize;
         } else {
-            *last_port_idx = rand::random();
+            *last_port_idx = rand::random::<u64>() as usize;
         }
 
         Ok(ret_socket)

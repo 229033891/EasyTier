@@ -551,7 +551,7 @@ impl PeerConn {
         }
 
         let hs_req = req.encode_to_vec();
-        let mut zc_packet = ZCPacket::new_with_payload(hs_req.as_bytes());
+        let mut zc_packet = ZCPacket::new_with_payload(&hs_req);
         zc_packet.fill_peer_manager_hdr(
             self.my_peer_id,
             PeerId::default(),
