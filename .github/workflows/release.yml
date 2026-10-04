@@ -131,21 +131,28 @@ jobs:
             local workflow="$1"
             local want_sha="$2"
             local id=""
+            # NOTE: `gh --jq` does NOT accept `jq --arg`. Writing
+            #   --jq --arg sha "$want_sha" '...'
+            # makes gh treat `--arg` as the jq expression and `sha` as an
+            # unknown subcommand, so every lookup returns empty and the
+            # release is skipped ("missing ET Linux ET Windows ET Android")
+            # even when all builds succeeded. Use native `--commit` instead.
             if [ -n "$want_sha" ]; then
               id="$(gh run list \
                 --workflow "$workflow" \
                 --branch "$branch" \
+                --commit "$want_sha" \
                 --status success \
-                --limit 30 \
-                --json databaseId,headSha \
-                --jq --arg sha "$want_sha" '[.[] | select(.headSha == $sha)][0].databaseId // empty')"
+                --limit 5 \
+                --json databaseId,conclusion \
+                --jq '[.[] | select(.conclusion == "success")][0].databaseId // empty')"
             else
               id="$(gh run list \
                 --workflow "$workflow" \
                 --branch "$branch" \
                 --status success \
                 --limit 1 \
-                --json databaseId,headSha \
+                --json databaseId \
                 --jq '.[0].databaseId // empty')"
             fi
             echo "$id"
