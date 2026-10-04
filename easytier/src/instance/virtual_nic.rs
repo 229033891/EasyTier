@@ -31,7 +31,7 @@ use easytier_core::{
     },
 };
 
-use byteorder::WriteBytesExt as _;
+use byteorder::{NativeEndian, NetworkEndian, WriteBytesExt as _};
 use bytes::{Buf, BufMut, BytesMut};
 use cidr::{Ipv4Inet, Ipv6Inet};
 use futures::{SinkExt, Stream, StreamExt, lock::BiLock, ready};
@@ -45,7 +45,6 @@ use tokio_util::bytes::Bytes;
 #[cfg(target_os = "windows")]
 use tokio_util::task::AbortOnDropHandle;
 use tun::{AbstractDevice, AsyncDevice, Configuration, Layer};
-use zerocopy::{NativeEndian, NetworkEndian};
 
 #[cfg(target_os = "windows")]
 use crate::common::ifcfg::RegistryManager;
