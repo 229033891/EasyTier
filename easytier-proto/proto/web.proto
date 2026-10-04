@@ -1,6 +1,7 @@
 syntax = "proto3";
 
 import "common.proto";
+import "api_manage.proto";
 
 package web;
 
@@ -34,6 +35,8 @@ message HeartbeatRequest {
 message HeartbeatResponse {
   optional uint32 heartbeat_interval_ms = 1;
   optional uint32 heartbeat_timeout_ms = 2;
+  // Current persisted managed-config revision for this machine, if any.
+  optional string managed_config_revision = 3;
 }
 
 message GetFeatureRequest {}
@@ -42,7 +45,28 @@ message GetFeatureResponse {
   bool support_encryption = 1;
 }
 
+// Client → console: push an edited web-owned NetworkConfig with revision CAS.
+message ReportNetworkConfigRequest {
+  common.UUID machine_id = 1;
+  string user_token = 2;
+  api.manage.NetworkConfig config = 3;
+  // Must match the client's cached heartbeat revision (empty when none exists).
+  string expected_config_revision = 4;
+  // Client-minted target revision; must differ from expected_config_revision.
+  string config_revision = 5;
+}
+
+message ReportNetworkConfigResponse {
+  bool ok = 1;
+  string applied_config_revision = 2;
+  // On conflict, the server's current revision so the client can refresh.
+  string current_config_revision = 3;
+  // empty | managed_config_revision_conflict | managed_config_ownership_conflict | invalid_request
+  string error_code = 4;
+}
+
 service WebServerService {
   rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);
   rpc GetFeature(GetFeatureRequest) returns (GetFeatureResponse);
+  rpc ReportNetworkConfig(ReportNetworkConfigRequest) returns (ReportNetworkConfigResponse);
 }

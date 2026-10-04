@@ -179,6 +179,12 @@ impl GUIStorage {
         self.network_configs.insert(inst_id, config);
         self.save_configs(app)
     }
+
+    pub(crate) fn persisted_source(&self, inst_id: Uuid) -> Option<PersistedConfigSource> {
+        self.network_configs
+            .get(&inst_id)
+            .map(|entry| entry.source)
+    }
 }
 #[async_trait]
 impl Storage<AppHandle, GUIConfig, anyhow::Error> for GUIStorage {

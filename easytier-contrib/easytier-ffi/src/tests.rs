@@ -703,6 +703,7 @@ fn config_server_callback_context_rejects_nested_blocking_ffi_calls() {
         -1
     );
     assert_eq!(stop_config_server_client(), -1);
+    assert_eq!(unsafe { report_network_config(std::ptr::null()) }, -1);
 
     #[cfg(feature = "ffi-dataplane")]
     {
@@ -713,6 +714,12 @@ fn config_server_callback_context_rejects_nested_blocking_ffi_calls() {
         );
         assert_eq!(session, 0);
     }
+}
+
+#[test]
+fn report_network_config_rejects_null_json_pointer() {
+    assert_eq!(unsafe { report_network_config(std::ptr::null()) }, -1);
+    assert!(take_last_error().unwrap().contains("config_json is null"));
 }
 
 #[cfg(feature = "ffi-dataplane")]

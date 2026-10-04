@@ -81,6 +81,17 @@ impl WebClient {
     pub fn is_connected(&self) -> bool {
         self.inner.is_connected()
     }
+
+    pub fn managed_config_revision(&self) -> Option<String> {
+        self.inner.managed_config_revision()
+    }
+
+    pub async fn report_network_config(
+        &self,
+        config: easytier_proto::api::manage::NetworkConfig,
+    ) -> Result<(), easytier_core::management::ReportNetworkConfigError> {
+        self.inner.report_network_config(config).await
+    }
 }
 
 #[cfg(feature = "management")]

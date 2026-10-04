@@ -66,6 +66,14 @@ object EasyTierJNI {
     @JvmStatic external fun isConfigServerClientConnected(): Boolean
 
     /**
+     * 将客户端修改后的 Web 托管配置回写控制台（revision CAS）
+     * @param configJson `api.manage.NetworkConfig` 的 JSON
+     * @return 0 表示成功，-1 表示失败
+     * @throws RuntimeException 当未连接、冲突或校验失败时抛出异常
+     */
+    @JvmStatic external fun reportNetworkConfig(configJson: String): Int
+
+    /**
      * 保留指定的网络实例，停止其他实例
      * @param instanceNames 要保留的实例名称数组，传入 null 或空数组将停止所有实例
      * @return 0 表示成功，-1 表示失败

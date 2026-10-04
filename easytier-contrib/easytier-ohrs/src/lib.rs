@@ -713,6 +713,10 @@ pub(crate) fn run_network_instance_from_json(cfg_json: &str) -> bool {
         return false;
     }
 
+    // Local intentional start clears any prior intentional-stop mark so an
+    // unexpected later exit can be auto-recovered by the config server.
+    INSTANCE_MANAGER.clear_user_disabled_web_instance(inst_id);
+
     let config_control = nearby_management::runtime_management_config_control(inst_id);
     if !nearby_management::ensure_runtime_management_server_started() {
         return false;

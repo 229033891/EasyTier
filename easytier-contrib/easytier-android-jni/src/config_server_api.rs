@@ -1,8 +1,8 @@
 use std::ptr;
 
 use easytier_ffi::{
-    in_config_server_callback, is_config_server_client_connected, start_config_server_client,
-    stop_config_server_client,
+    in_config_server_callback, is_config_server_client_connected, report_network_config,
+    start_config_server_client, stop_config_server_client,
 };
 use jni::JNIEnv;
 use jni::objects::{JClass, JObject, JString};
@@ -137,4 +137,31 @@ pub(crate) fn is_config_server_client_connected_jni(_env: JNIEnv, _class: JClass
     } else {
         JNI_FALSE
     }
+}
+
+pub(crate) fn report_network_config_jni(
+    env: &mut JNIEnv,
+    config_json: JString,
+) -> jint {
+    if in_config_server_callback() {
+        error::throw_exception(
+            env,
+            "Cannot report network config from config server callback",
+        );
+        return -1;
+    }
+    let config_json = match jstring_to_cstring(env, &config_json) {
+        Ok(cstr) => cstr,
+        Err(e) => {
+            error::throw_exception(env, &format!("Invalid network config JSON: {}", e));
+            return -1;
+        }
+    };
+    let result = unsafe { report_network_config(config_json.as_ptr()) };
+    if result != 0
+        && let Some(error_msg) = error::get_last_error()
+    {
+        error::throw_exception(env, &error_msg);
+    }
+    result
 }

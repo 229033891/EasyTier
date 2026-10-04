@@ -23,7 +23,7 @@ use easytier::web_client::{self, WebClient};
 use easytier::{
     common::config::{NetworkConfig, NetworkConfigExt},
     common::{
-        config::{ConfigLoader, ConfigSource, FileLoggerConfig, LoggingConfig, TomlConfigLoader},
+        config::{ConfigLoader, FileLoggerConfig, LoggingConfig, TomlConfigLoader},
         log,
     },
     instance::factory::{NativeInstanceManager, native_instance_manager},
@@ -331,10 +331,57 @@ async fn save_network_config(app: AppHandle, cfg: NetworkConfig) -> Result<(), S
         .instance_id()
         .parse()
         .map_err(|e: uuid::Error| e.to_string())?;
-    get_client_manager!()?
-        .handle_save_network_config(app, instance_id, cfg)
+    let client_manager = get_client_manager!()?;
+    client_manager
+        .handle_save_network_config(app.clone(), instance_id, cfg.clone())
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+
+    let is_web = client_manager
+        .storage
+        .persisted_source(instance_id)
+        .is_some_and(|source| matches!(source, manager::PersistedConfigSource::Web));
+    if !is_web {
+        return Ok(());
+    }
+
+    let web_client_guard = WEB_CLIENT.read().await;
+    let Some(web_client) = web_client_guard.as_ref() else {
+        return Err(
+            "web-owned config saved locally but config-server client is not running; reconnect to sync"
+                .to_string(),
+        );
+    };
+    if !web_client.is_connected() {
+        return Err(
+            "web-owned config saved locally but config-server is disconnected; reconnect to sync"
+                .to_string(),
+        );
+    }
+
+    match web_client.report_network_config(cfg).await {
+        Ok(()) => Ok(()),
+        Err(easytier_core::management::ReportNetworkConfigError::NotConnected) => Err(
+            "web-owned config saved locally but config-server is disconnected; reconnect to sync"
+                .to_string(),
+        ),
+        Err(easytier_core::management::ReportNetworkConfigError::NotAuthorized) => Err(
+            "web-owned config saved locally but the config server rejected this session; sign in again to sync"
+                .to_string(),
+        ),
+        Err(easytier_core::management::ReportNetworkConfigError::RevisionConflict { .. }) => {
+            // Keep the local edit that was already persisted above. The client's
+            // revision cache was refreshed from the conflict response, so a retry
+            // can push this draft against the console's current revision; the user
+            // can still reload from the console if they prefer to discard it.
+            drop(web_client_guard);
+            Err(
+                "config revision conflict: your local edit was kept; retry to push it, or reload from the console to discard it"
+                    .to_string(),
+            )
+        }
+        Err(error) => Err(error.to_string()),
+    }
 }
 
 #[tauri::command]

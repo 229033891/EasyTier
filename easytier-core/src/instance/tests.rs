@@ -2107,6 +2107,94 @@ virtual_ip = "10.82.0.2/24"
 
     #[cfg(feature = "management")]
     #[tokio::test]
+    async fn delete_owned_marks_web_instances_as_user_disabled() {
+        use crate::{
+            config::toml::{ConfigLoader as _, ConfigSource, TomlConfig},
+            instance::manager::InstanceFactory,
+            management::{
+                ConfigFileControl, InstanceManager, InstanceMutationHooks, ProcessManagement,
+                UnsupportedConfigFileStorage,
+            },
+        };
+
+        struct ManagementTestFactory(Arc<CoreProcessRuntime>);
+
+        impl InstanceFactory for ManagementTestFactory {
+            type Instance = CoreInstance<TestHost>;
+            type CreateContext = ();
+            type Error = anyhow::Error;
+
+            fn create(
+                &self,
+                config: TomlConfig,
+                (): Self::CreateContext,
+            ) -> Result<Arc<Self::Instance>, Self::Error> {
+                let (packet_sink, _packet_receiver) = tokio::sync::mpsc::channel(16);
+                CoreInstance::from_toml(
+                    config,
+                    adapters_with_process_runtime(None, Arc::new(packet_sink), self.0.clone()),
+                )
+            }
+        }
+
+        impl crate::management::ProcessRuntimeProvider for ManagementTestFactory {
+            fn process_runtime(&self) -> Arc<CoreProcessRuntime> {
+                self.0.clone()
+            }
+        }
+
+        #[derive(Default)]
+        struct NoopHooks;
+
+        #[async_trait]
+        impl InstanceMutationHooks for NoopHooks {}
+
+        let instances = Arc::new(InstanceManager::new(
+            ManagementTestFactory(CoreProcessRuntime::new()),
+            Some(tokio::runtime::Handle::current()),
+        ));
+        let web_config = TomlConfig::default();
+        web_config.set_listeners(Vec::new());
+        web_config.set_network_config_source(Some(ConfigSource::Web));
+        let web_id = web_config.get_id();
+        instances
+            .run_network_instance(web_config, ConfigFileControl::STATIC_CONFIG)
+            .unwrap();
+
+        let local_config = TomlConfig::default();
+        local_config.set_listeners(Vec::new());
+        let local_id = local_config.get_id();
+        instances
+            .run_network_instance(local_config, ConfigFileControl::STATIC_CONFIG)
+            .unwrap();
+
+        let management = ProcessManagement::<ManagementTestFactory>::new(
+            instances.clone(),
+            Arc::new(NoopHooks),
+            Arc::new(UnsupportedConfigFileStorage),
+        );
+        management
+            .delete_owned_network_instances(vec![web_id, local_id])
+            .await
+            .unwrap();
+
+        assert!(instances.is_user_disabled_web_instance(web_id));
+        assert!(!instances.is_user_disabled_web_instance(local_id));
+        assert!(instances.instance_ids().is_empty());
+
+        let restart = TomlConfig::default();
+        restart.set_id(web_id);
+        restart.set_listeners(Vec::new());
+        restart.set_network_config_source(Some(ConfigSource::Web));
+        management
+            .run_owned_network_instance(restart, ConfigFileControl::STATIC_CONFIG)
+            .await
+            .unwrap();
+        assert!(!instances.is_user_disabled_web_instance(web_id));
+    }
+
+    #[cfg(feature = "management")]
+    #[tokio::test]
     async fn process_management_rpc_rolls_back_instance_and_file_on_hook_failure() {
         use std::{
             collections::HashMap,

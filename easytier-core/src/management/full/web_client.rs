@@ -1,15 +1,16 @@
 use std::collections::HashSet;
 use std::sync::{
-    Arc, Weak,
+    Arc, Mutex as StdMutex, Weak,
     atomic::{AtomicBool, Ordering},
 };
 
 use async_trait::async_trait;
 use easytier_proto::{
+    api::manage::NetworkConfig,
     rpc_types::controller::BaseController,
     web::{
         DeviceOsInfo, GetFeatureRequest, GetFeatureResponse, HeartbeatRequest, HeartbeatResponse,
-        WebServerServiceClientFactory,
+        ReportNetworkConfigRequest, WebServerServiceClientFactory,
     },
 };
 use tokio::{sync::Mutex, task::JoinSet};
@@ -168,6 +169,17 @@ pub(crate) trait WebClientBackend: Send + Sync + 'static {
         Vec::new()
     }
 
+    /// Whether this backend can accurately report intentional local stops.
+    ///
+    /// Fail-safe default: a backend that cannot enumerate user-disabled web-owned
+    /// instances keeps returning `false`, otherwise the config server reads the
+    /// always-empty list as "nothing is disabled" and auto-runs instances the
+    /// user stopped on purpose. Backends that do implement
+    /// [`Self::user_disabled_web_instance_ids`] must opt in explicitly.
+    fn support_user_disabled_instances(&self) -> bool {
+        false
+    }
+
     fn instance_state_generation(&self) -> usize {
         0
     }
@@ -225,6 +237,12 @@ where
         self.instances.user_disabled_web_instance_ids()
     }
 
+    fn support_user_disabled_instances(&self) -> bool {
+        // The instance manager tracks intentional local stops, so the heartbeat
+        // may report the disabled set as authoritative.
+        true
+    }
+
     fn instance_state_generation(&self) -> usize {
         self.instances.instance_state_generation()
     }
@@ -240,11 +258,107 @@ struct WebClientController {
     config: WebClientConfig,
     backend: Arc<dyn WebClientBackend>,
     runtime_id: uuid::Uuid,
+    managed_config_revision: StdMutex<Option<String>>,
+    active_rpc: StdMutex<Option<Arc<BidirectRpcManager>>>,
+    /// Bumped when a local report updates the revision cache so in-flight
+    /// heartbeats cannot clobber a fresher CAS result.
+    revision_generation: std::sync::atomic::AtomicU64,
+    /// Client-minted revision of the last unconfirmed local report, so retrying
+    /// the same edit reuses it and stays idempotent on the console.
+    pending_report: StdMutex<Option<PendingReport>>,
+}
+
+/// A `config_revision` minted for a local report that has no definitive answer yet.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PendingReport {
+    instance_id: String,
+    expected_revision: String,
+    config_revision: String,
+}
+
+impl WebClientController {
+    fn cached_revision(&self) -> Option<String> {
+        self.managed_config_revision
+            .lock()
+            .ok()
+            .and_then(|guard| guard.clone())
+    }
+
+    /// Cache a revision observed by a local report (applied or conflict) and bump
+    /// the generation so an in-flight heartbeat cannot write a staler value.
+    fn store_local_revision(&self, revision: Option<String>) {
+        if let Ok(mut guard) = self.managed_config_revision.lock() {
+            *guard = revision;
+            self.revision_generation.fetch_add(1, Ordering::AcqRel);
+        }
+    }
+
+    /// Cache the revision carried by a heartbeat, unless a local report landed
+    /// after that heartbeat sampled the generation.
+    fn store_heartbeat_revision(&self, sampled_generation: u64, revision: Option<String>) {
+        if let Ok(mut guard) = self.managed_config_revision.lock()
+            && self.revision_generation.load(Ordering::Acquire) == sampled_generation
+        {
+            *guard = revision;
+        }
+    }
+
+    /// Reuse the revision of an unresolved report for the same instance and
+    /// expected revision; otherwise mint a new one. The console treats an
+    /// identical target revision as already applied, so a retry after a lost
+    /// response must not look like a concurrent edit.
+    fn revision_for_report(&self, instance_id: &str, expected_revision: &str) -> String {
+        let Ok(mut guard) = self.pending_report.lock() else {
+            return uuid::Uuid::new_v4().to_string();
+        };
+        if let Some(pending) = guard.as_ref()
+            && pending.instance_id == instance_id
+            && pending.expected_revision == expected_revision
+        {
+            return pending.config_revision.clone();
+        }
+        let config_revision = uuid::Uuid::new_v4().to_string();
+        *guard = Some(PendingReport {
+            instance_id: instance_id.to_owned(),
+            expected_revision: expected_revision.to_owned(),
+            config_revision: config_revision.clone(),
+        });
+        config_revision
+    }
+
+    /// Drop the pending report after a definitive answer. Transient failures keep
+    /// it so the next attempt reuses the same revision.
+    fn clear_pending_report(&self, instance_id: &str) {
+        if let Ok(mut guard) = self.pending_report.lock()
+            && guard
+                .as_ref()
+                .is_some_and(|pending| pending.instance_id == instance_id)
+        {
+            *guard = None;
+        }
+    }
+}
+
+/// Error from reporting a client-edited web-owned config to the console.
+#[derive(Debug, thiserror::Error)]
+pub enum ReportNetworkConfigError {
+    #[error("config server is not connected")]
+    NotConnected,
+    #[error("config server rejected the session credentials")]
+    NotAuthorized,
+    #[error("managed config revision conflict (current={current:?})")]
+    RevisionConflict { current: Option<String> },
+    #[error("managed config ownership conflict")]
+    OwnershipConflict,
+    #[error("invalid report request: {0}")]
+    Invalid(String),
+    #[error(transparent)]
+    Rpc(#[from] easytier_proto::rpc_types::error::Error),
 }
 
 /// Portable config-server client. Hosts only supply identity and adapters.
 pub struct WebClient<F> {
-    _controller: Arc<WebClientController>,
+    controller: Arc<WebClientController>,
     _tasks: AbortOnDropHandle<()>,
     _manager_guard: Option<DaemonGuard>,
     connected: Arc<AtomicBool>,
@@ -301,6 +415,10 @@ impl<F> WebClient<F> {
             config,
             backend,
             runtime_id: uuid::Uuid::new_v4(),
+            managed_config_revision: StdMutex::new(None),
+            active_rpc: StdMutex::new(None),
+            revision_generation: std::sync::atomic::AtomicU64::new(0),
+            pending_report: StdMutex::new(None),
         });
         let connected = Arc::new(AtomicBool::new(false));
         config_server_status::mark_enabled();
@@ -312,7 +430,7 @@ impl<F> WebClient<F> {
         )));
 
         Self {
-            _controller: controller,
+            controller,
             _tasks: tasks,
             _manager_guard: manager_guard,
             connected,
@@ -323,6 +441,85 @@ impl<F> WebClient<F> {
 
     pub fn is_connected(&self) -> bool {
         self.connected.load(Ordering::Acquire)
+    }
+
+    pub fn managed_config_revision(&self) -> Option<String> {
+        self.controller.cached_revision()
+    }
+
+    /// Push a client-edited web-owned NetworkConfig to the console with CAS.
+    pub async fn report_network_config(
+        &self,
+        config: NetworkConfig,
+    ) -> Result<(), ReportNetworkConfigError> {
+        if !self.is_connected() {
+            return Err(ReportNetworkConfigError::NotConnected);
+        }
+        let rpc = self
+            .controller
+            .active_rpc
+            .lock()
+            .ok()
+            .and_then(|guard| guard.clone())
+            .ok_or(ReportNetworkConfigError::NotConnected)?;
+        let instance_id = config.instance_id().to_owned();
+        let expected = self.controller.cached_revision().unwrap_or_default();
+        // Retrying the same edit must reuse the same target revision: the console
+        // answers an already-applied revision with `AlreadyApplied`, while a fresh
+        // revision after a lost response would surface as a bogus conflict.
+        let config_revision = self
+            .controller
+            .revision_for_report(&instance_id, &expected);
+        let client = rpc
+            .rpc_client()
+            .scoped_client::<WebServerServiceClientFactory<BaseController>>(1, 1, String::new());
+        let response = client
+            .report_network_config(
+                BaseController::default(),
+                ReportNetworkConfigRequest {
+                    machine_id: Some(self.controller.config.machine_id.into()),
+                    user_token: self.controller.config.token.clone(),
+                    config: Some(config),
+                    expected_config_revision: expected,
+                    config_revision,
+                },
+            )
+            .await?;
+        if response.ok {
+            self.controller.clear_pending_report(&instance_id);
+            self.controller.store_local_revision(
+                Some(response.applied_config_revision).filter(|value| !value.is_empty()),
+            );
+            return Ok(());
+        }
+        let current = (!response.current_config_revision.is_empty())
+            .then(|| response.current_config_revision.clone());
+        match response.error_code.as_str() {
+            // The console owns the revision; refresh our cache so the caller can
+            // re-read the current config and retry against it.
+            "managed_config_revision_conflict" => {
+                self.controller.clear_pending_report(&instance_id);
+                self.controller.store_local_revision(current.clone());
+                Err(ReportNetworkConfigError::RevisionConflict { current })
+            }
+            "managed_config_ownership_conflict" => {
+                self.controller.clear_pending_report(&instance_id);
+                self.controller.store_local_revision(current);
+                Err(ReportNetworkConfigError::OwnershipConflict)
+            }
+            "not_authorized" => {
+                self.controller.clear_pending_report(&instance_id);
+                Err(ReportNetworkConfigError::NotAuthorized)
+            }
+            other => {
+                self.controller.clear_pending_report(&instance_id);
+                Err(ReportNetworkConfigError::Invalid(if other.is_empty() {
+                    "unknown report failure".to_owned()
+                } else {
+                    other.to_owned()
+                }))
+            }
+        }
     }
 }
 
@@ -435,7 +632,7 @@ async fn web_client_routine(
 }
 
 struct WebClientSession {
-    rpc: BidirectRpcManager,
+    rpc: Arc<BidirectRpcManager>,
     controller: Arc<WebClientController>,
     heartbeat_started: AtomicBool,
     tasks: Mutex<JoinSet<()>>,
@@ -458,6 +655,7 @@ fn build_heartbeat_request(
     running_network_instances: Vec<uuid::Uuid>,
     failed_network_instances: Vec<uuid::Uuid>,
     disabled_network_instances: Vec<uuid::Uuid>,
+    support_user_disabled_instances: bool,
 ) -> HeartbeatRequest {
     HeartbeatRequest {
         machine_id: Some(config.machine_id.into()),
@@ -477,7 +675,7 @@ fn build_heartbeat_request(
             .map(Into::into)
             .collect(),
         support_heartbeat_policy: true,
-        support_user_disabled_instances: true,
+        support_user_disabled_instances,
         disabled_network_instances: disabled_network_instances
             .into_iter()
             .map(Into::into)
@@ -502,14 +700,27 @@ async fn wait_for_next_heartbeat(
 
 impl WebClientSession {
     fn new(tunnel: Box<dyn Tunnel>, controller: Arc<WebClientController>) -> Self {
-        let rpc = BidirectRpcManager::new();
+        let rpc = Arc::new(BidirectRpcManager::new());
         rpc.run_with_tunnel(tunnel);
         controller.backend.register(rpc.rpc_server().registry());
+        if let Ok(mut guard) = controller.active_rpc.lock() {
+            *guard = Some(rpc.clone());
+        }
         Self {
             rpc,
             controller,
             heartbeat_started: AtomicBool::new(false),
             tasks: Mutex::new(JoinSet::new()),
+        }
+    }
+
+    fn clear_active_rpc_if_current(&self) {
+        if let Ok(mut guard) = self.controller.active_rpc.lock()
+            && guard
+                .as_ref()
+                .is_some_and(|active| Arc::ptr_eq(active, &self.rpc))
+        {
+            *guard = None;
         }
     }
 
@@ -539,10 +750,15 @@ impl WebClientSession {
                 let Some(controller) = controller.upgrade() else {
                     break;
                 };
+                let revision_generation = controller
+                    .revision_generation
+                    .load(Ordering::Acquire);
                 let observed_generation = controller.backend.instance_state_generation();
                 let failed_network_instances = controller.backend.failed_instance_ids();
                 let disabled_network_instances =
                     controller.backend.user_disabled_web_instance_ids();
+                let support_user_disabled_instances =
+                    controller.backend.support_user_disabled_instances();
                 let running_network_instances = match controller.backend.instance_ids().await {
                     Ok(instance_ids) => {
                         running_instances_for_heartbeat(instance_ids, &failed_network_instances)
@@ -558,6 +774,7 @@ impl WebClientSession {
                     running_network_instances,
                     failed_network_instances,
                     disabled_network_instances,
+                    support_user_disabled_instances,
                 );
 
                 match client
@@ -566,6 +783,11 @@ impl WebClientSession {
                 {
                     Ok(response) => {
                         tracing::debug!(?response, "config-server heartbeat response");
+                        // Skip stale heartbeats that raced a successful local report.
+                        controller.store_heartbeat_revision(
+                            revision_generation,
+                            response.managed_config_revision.clone(),
+                        );
                         let (next_policy, adjusted) = HeartbeatPolicy::from_response(&response);
                         if adjusted {
                             tracing::warn!(
@@ -604,6 +826,7 @@ impl WebClientSession {
             _ = self.rpc.wait() => {}
             _ = self.wait_routines() => {}
         }
+        self.clear_active_rpc_if_current();
     }
 
     async fn get_feature(
@@ -616,6 +839,12 @@ impl WebClientSession {
         client
             .get_feature(BaseController::default(), GetFeatureRequest {})
             .await
+    }
+}
+
+impl Drop for WebClientSession {
+    fn drop(&mut self) {
+        self.clear_active_rpc_if_current();
     }
 }
 
@@ -780,6 +1009,7 @@ mod tests {
             vec![registered],
             vec![failed],
             vec![disabled],
+            true,
         );
 
         assert_eq!(request.inst_id.map(uuid::Uuid::from), Some(runtime_id));
@@ -828,6 +1058,7 @@ mod tests {
         let (minimum, adjusted) = HeartbeatPolicy::from_response(&HeartbeatResponse {
             heartbeat_interval_ms: Some(1),
             heartbeat_timeout_ms: Some(1),
+            managed_config_revision: None,
         });
         assert!(adjusted);
         assert_eq!(
@@ -839,6 +1070,7 @@ mod tests {
         let (maximum, adjusted) = HeartbeatPolicy::from_response(&HeartbeatResponse {
             heartbeat_interval_ms: Some(u32::MAX),
             heartbeat_timeout_ms: Some(u32::MAX),
+            managed_config_revision: None,
         });
         assert!(adjusted);
         assert_eq!(
@@ -850,8 +1082,88 @@ mod tests {
         let (margin, adjusted) = HeartbeatPolicy::from_response(&HeartbeatResponse {
             heartbeat_interval_ms: Some(60_000),
             heartbeat_timeout_ms: Some(5_000),
+            managed_config_revision: None,
         });
         assert!(adjusted);
         assert_eq!(margin.timeout_ms, 65_000);
+    }
+
+    fn test_controller() -> WebClientController {
+        WebClientController {
+            config: WebClientConfig {
+                token: "token".to_owned(),
+                machine_id: uuid::Uuid::new_v4(),
+                hostname: "host".to_owned(),
+                device_os: DeviceOsInfo::default(),
+                easytier_version: "test".to_owned(),
+                secure_mode: false,
+            },
+            backend: Arc::new(ImmediateStateChangeBackend),
+            runtime_id: uuid::Uuid::new_v4(),
+            managed_config_revision: StdMutex::new(None),
+            active_rpc: StdMutex::new(None),
+            revision_generation: std::sync::atomic::AtomicU64::new(0),
+            pending_report: StdMutex::new(None),
+        }
+    }
+
+    #[test]
+    fn backends_that_cannot_report_disabled_instances_default_to_unsupported() {
+        // Fail-safe default: claiming support with an always-empty disabled list
+        // would let the console auto-run intentionally stopped instances.
+        assert!(!ImmediateStateChangeBackend.support_user_disabled_instances());
+    }
+
+    #[test]
+    fn heartbeat_revision_is_cached_when_no_local_report_raced() {
+        let controller = test_controller();
+        let sampled = controller.revision_generation.load(Ordering::Acquire);
+
+        controller.store_heartbeat_revision(sampled, Some("rev-from-heartbeat".to_owned()));
+
+        assert_eq!(
+            controller.cached_revision().as_deref(),
+            Some("rev-from-heartbeat")
+        );
+    }
+
+    #[test]
+    fn stale_heartbeat_cannot_clobber_a_fresher_local_report() {
+        let controller = test_controller();
+        // The heartbeat samples the generation before its RPC round trip...
+        let sampled = controller.revision_generation.load(Ordering::Acquire);
+        // ...and a local report lands while that heartbeat is in flight.
+        controller.store_local_revision(Some("rev-from-local-report".to_owned()));
+
+        controller.store_heartbeat_revision(sampled, Some("stale-heartbeat-rev".to_owned()));
+
+        assert_eq!(
+            controller.cached_revision().as_deref(),
+            Some("rev-from-local-report")
+        );
+    }
+
+    #[test]
+    fn retrying_the_same_edit_reuses_the_pending_revision() {
+        let controller = test_controller();
+
+        let first = controller.revision_for_report("instance-a", "expected-1");
+        assert_eq!(
+            controller.revision_for_report("instance-a", "expected-1"),
+            first,
+            "a retry of the same edit must stay idempotent on the console"
+        );
+        assert_ne!(
+            controller.revision_for_report("instance-a", "expected-2"),
+            first,
+            "a different expected revision is a different edit"
+        );
+
+        controller.clear_pending_report("instance-a");
+        assert_ne!(
+            controller.revision_for_report("instance-a", "expected-1"),
+            first,
+            "a confirmed report starts a new revision"
+        );
     }
 }

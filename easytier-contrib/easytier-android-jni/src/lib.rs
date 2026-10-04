@@ -19,6 +19,7 @@
 //!   start the managed remote config client.
 //! - `stopConfigServerClient()`: stop the managed client and release its Java callback.
 //! - `isConfigServerClientConnected()`: return whether the managed client is connected.
+//! - `reportNetworkConfig(configJson)`: push a client-edited NetworkConfig JSON to the console (CAS).
 //!
 //! Error API:
 //! - `getLastError()`: return the latest FFI/JNI error string for the calling thread.
@@ -268,4 +269,21 @@ pub extern "system" fn Java_com_easytier_jni_EasyTierJNI_isConfigServerClientCon
 ) -> jboolean {
     logger::init();
     config_server_api::is_config_server_client_connected_jni(env, class)
+}
+
+/// Push a client-edited NetworkConfig JSON to the console with revision CAS.
+///
+/// Java signature:
+/// `EasyTierJNI.reportNetworkConfig(configJson: String): Int`
+///
+/// Requires an active connected config-server client. On failure this returns
+/// `-1` and throws `RuntimeException`.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_easytier_jni_EasyTierJNI_reportNetworkConfig(
+    mut env: JNIEnv,
+    _class: JClass,
+    config_json: JString,
+) -> jint {
+    logger::init();
+    config_server_api::report_network_config_jni(&mut env, config_json)
 }

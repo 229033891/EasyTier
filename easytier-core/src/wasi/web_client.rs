@@ -269,6 +269,12 @@ impl WebClientBackend for WasiWebClientBackend {
     fn failed_instance_ids(&self) -> Vec<uuid::Uuid> {
         Vec::new()
     }
+
+    fn support_user_disabled_instances(&self) -> bool {
+        // Host-forwarded management does not expose a disabled-instance list yet.
+        // Claiming support with an always-empty list would clear intentional stops.
+        false
+    }
 }
 
 pub(super) struct WasiWebClientRuntime {

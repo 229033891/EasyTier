@@ -10,6 +10,7 @@ use crate::runtime::state::runtime_state::{
     runtime_instance_from_running_info,
 };
 use crate::{ASYNC_RUNTIME, INSTANCE_MANAGER, WEB_CLIENTS};
+use easytier::common::config::ConfigSource;
 
 pub(crate) fn start_kernel(
     config_id: String,
@@ -35,6 +36,12 @@ pub(crate) fn stop_kernel(
     let Some(instance_id) = parse_instance_uuid(&config_id) else {
         return false;
     };
+
+    // Intentional local stop of a web-managed instance: mark before delete so
+    // the config-server heartbeat can sync `disabled` and skip auto-run.
+    if INSTANCE_MANAGER.config_source(instance_id) == Some(ConfigSource::Web) {
+        INSTANCE_MANAGER.mark_user_disabled_web_instance(instance_id);
+    }
 
     let ret = ASYNC_RUNTIME
         .block_on(INSTANCE_MANAGER.delete_network_instances([instance_id]))

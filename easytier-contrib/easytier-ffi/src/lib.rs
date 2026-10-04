@@ -18,6 +18,7 @@
 //! - `start_config_server_client`: start the managed remote config client.
 //! - `stop_config_server_client`: stop the remote config client and its managed instances.
 //! - `is_config_server_client_connected`: report whether the client is connected.
+//! - `report_network_config`: push a client-edited NetworkConfig JSON to the console (CAS).
 //!
 //! Data plane APIs, enabled by the `ffi-dataplane` feature:
 //! - `data_plane_session_open` / `data_plane_session_close`: own one instance session.
@@ -306,6 +307,23 @@ pub extern "C" fn stop_config_server_client() -> c_int {
 #[cfg_attr(feature = "c-abi", unsafe(no_mangle))]
 pub extern "C" fn is_config_server_client_connected() -> c_int {
     config_server::is_config_server_client_connected()
+}
+
+/// Push a client-edited NetworkConfig to the console with revision CAS.
+///
+/// `config_json` must be a JSON document of `api.manage.NetworkConfig`. The
+/// config-server client must already be started and connected. Only existing
+/// web-owned instances can be reported; conflicts return `-1` with details in
+/// `get_error_msg`.
+///
+/// # Safety
+/// `config_json` must be a non-null pointer to a null-terminated UTF-8 string.
+///
+/// # Return
+/// Returns `0` on success, or `-1` on failure.
+#[cfg_attr(feature = "c-abi", unsafe(no_mangle))]
+pub unsafe extern "C" fn report_network_config(config_json: *const c_char) -> c_int {
+    unsafe { config_server::report_network_config(config_json) }
 }
 
 // ===== Data Plane API =====

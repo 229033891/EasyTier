@@ -1074,6 +1074,59 @@ impl Db {
         Ok(())
     }
 
+    /// Upsert one existing web-owned config and set the first managed revision
+    /// without Full Exact Set deletes of sibling web configs.
+    pub(crate) async fn bootstrap_single_web_config_revision(
+        &self,
+        (user_id, device_id): (UserIdInDb, Uuid),
+        instance_id: Uuid,
+        network_config: &NetworkConfig,
+        config_revision: &str,
+    ) -> Result<ManagedConfigApplyResult, DbErr> {
+        let network_config =
+            serde_json::to_string(network_config).map_err(|error| DbErr::Json(error.to_string()))?;
+        let mut transaction = self
+            .db
+            .begin_with("BEGIN IMMEDIATE")
+            .await
+            .map_err(sqlx_db_error)?;
+        let current_revision =
+            read_managed_config_revision(&mut transaction, user_id, device_id).await?;
+        if current_revision.is_some() {
+            let result = ManagedConfigApplyResult::RevisionConflict {
+                expected: None,
+                current: current_revision,
+            };
+            transaction.rollback().await.map_err(sqlx_db_error)?;
+            return Ok(result);
+        }
+        let source = read_config_source(&mut transaction, user_id, device_id, instance_id).await?;
+        if source.as_deref() != Some(ConfigSource::Web.as_str()) {
+            transaction.rollback().await.map_err(sqlx_db_error)?;
+            return Ok(ManagedConfigApplyResult::OwnershipConflict { instance_id });
+        }
+        let updated = upsert_network_config(
+            &mut transaction,
+            user_id,
+            device_id,
+            instance_id,
+            &network_config,
+            ConfigSource::Web,
+            true,
+        )
+        .await?;
+        if !updated {
+            transaction.rollback().await.map_err(sqlx_db_error)?;
+            return Ok(ManagedConfigApplyResult::OwnershipConflict { instance_id });
+        }
+        write_managed_config_revision(&mut transaction, user_id, device_id, config_revision)
+            .await?;
+        transaction.commit().await.map_err(sqlx_db_error)?;
+        Ok(ManagedConfigApplyResult::Applied {
+            deleted_web_instance_ids: Vec::new(),
+        })
+    }
+
     pub(crate) async fn apply_managed_config_update(
         &self,
         (user_id, device_id): (UserIdInDb, Uuid),

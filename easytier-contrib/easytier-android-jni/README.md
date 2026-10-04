@@ -191,6 +191,27 @@ String response = EasyTierJNI.callJsonRpc(
 );
 ```
 
+### 配置服务器（Web 托管配置回写）
+
+先 `startConfigServerClient`，在已连接时把客户端修改后的 `api.manage.NetworkConfig` JSON
+通过 `reportNetworkConfig` 回写控制台（revision CAS）。未连接、冲突或校验失败会抛
+`RuntimeException`。
+
+```java
+EasyTierJNI.startConfigServerClient(
+    "udp://user:token@console.example:22020",
+    "android-host",
+    machineId,
+    true,
+    eventJson -> { /* ConfigServerEventCallback */ }
+);
+
+if (EasyTierJNI.isConfigServerClientConnected()) {
+    // networkConfigJson: api.manage.NetworkConfig 的 protobuf JSON
+    int result = EasyTierJNI.reportNetworkConfig(networkConfigJson);
+}
+```
+
 ### VPN 服务集成
 
 如果您要在 Android VPN 服务中使用：

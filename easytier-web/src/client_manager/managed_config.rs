@@ -260,6 +260,112 @@ fn map_apply_result(result: ManagedConfigApplyResult) -> anyhow::Result<ManagedC
     }
 }
 
+/// Client-reported edit of an existing web-owned config with revision CAS.
+///
+/// - Non-empty `expected_config_revision`: Patch CAS (must match persisted).
+/// - Empty expected and empty persisted: bootstrap single-instance upsert + set
+///   revision without Full Exact Set deletes of sibling web configs.
+pub(super) async fn report_client_web_config(
+    storage: &Storage,
+    user_id: i32,
+    machine_id: uuid::Uuid,
+    upsert: crate::webhook::ManagedNetworkConfig,
+    expected_config_revision: &str,
+    config_revision: &str,
+) -> anyhow::Result<ManagedConfigApplyStatus> {
+    let config_revision = config_revision.trim();
+    let expected_config_revision = expected_config_revision.trim();
+    if config_revision.is_empty() {
+        return Err(
+            ManagedConfigError::Invalid("config_revision must not be empty".to_string()).into(),
+        );
+    }
+    if config_revision == expected_config_revision {
+        return Err(ManagedConfigError::Invalid(
+            "config_revision must differ from expected_config_revision".to_string(),
+        )
+        .into());
+    }
+
+    let normalized = normalize_desired_web_configs(vec![upsert])?;
+    let Some(upsert) = normalized.configs.into_iter().next() else {
+        return Err(ManagedConfigError::Invalid("missing network config".to_string()).into());
+    };
+    let instance_id = upsert.instance_id;
+
+    let key = (user_id, machine_id);
+    // This per-(user, machine) lock only serializes concurrent reports inside this
+    // process. Revision authority lives in the DB transaction below: both
+    // `apply_managed_config_update(Patch { .. })` and
+    // `bootstrap_single_web_config_revision` re-read the revision under
+    // BEGIN IMMEDIATE, so the CAS stays correct without this lock.
+    let reconcile_lock = managed_config_reconcile_lock(key);
+    let result = async {
+        let _guard = reconcile_lock.lock().await;
+        let current = storage
+            .db()
+            .get_managed_config_revision((user_id, machine_id))
+            .await
+            .map_err(|error| anyhow::anyhow!("failed to read managed config revision: {error}"))?;
+        let expected =
+            (!expected_config_revision.is_empty()).then(|| expected_config_revision.to_string());
+        if current != expected {
+            return Err(ManagedConfigError::RevisionConflict {
+                expected,
+                current,
+            }
+            .into());
+        }
+
+        // Require an existing web-owned row before any write (no inventing).
+        let existing = storage
+            .db()
+            .get_network_config((user_id, machine_id), &instance_id.to_string())
+            .await
+            .map_err(|error| anyhow::anyhow!("failed to load network config: {error}"))?;
+        let Some(existing) = existing else {
+            return Err(ManagedConfigError::OwnershipConflict { instance_id }.into());
+        };
+        if PersistedConfigSource::from_db(&existing.source) != PersistedConfigSource::Web {
+            return Err(ManagedConfigError::OwnershipConflict { instance_id }.into());
+        }
+
+        if current.is_some() {
+            let result = storage
+                .db()
+                .apply_managed_config_update(
+                    (user_id, machine_id),
+                    ManagedConfigUpdate::Patch {
+                        upserts: vec![upsert],
+                        delete_instance_ids: Vec::new(),
+                        target_revision: config_revision.to_string(),
+                        expected_revision: expected_config_revision.to_string(),
+                    },
+                )
+                .await
+                .map_err(|error| anyhow::anyhow!("failed to apply managed config Patch: {error}"))?;
+            return map_apply_result(result);
+        }
+
+        let result = storage
+            .db()
+            .bootstrap_single_web_config_revision(
+                (user_id, machine_id),
+                upsert.instance_id,
+                &upsert.network_config,
+                config_revision,
+            )
+            .await
+            .map_err(|error| {
+                anyhow::anyhow!("failed to bootstrap managed config revision: {error}")
+            })?;
+        map_apply_result(result)
+    }
+    .await;
+    remove_unused_managed_config_reconcile_lock(key, &reconcile_lock);
+    result
+}
+
 pub(super) async fn reconcile_web_source_configs(
     storage: &Storage,
     user_id: i32,
@@ -1230,6 +1336,189 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(updated.get_network_config_source(), ConfigSource::Web);
+    }
+
+    #[tokio::test]
+    async fn report_client_web_config_bootstraps_without_deleting_siblings() {
+        let storage = Storage::new(crate::db::Db::memory_db().await);
+        let user_id = storage
+            .db()
+            .auto_create_user("web-user-report-bootstrap")
+            .await
+            .unwrap()
+            .id;
+        let machine_id = uuid::Uuid::new_v4();
+        let target_id = uuid::Uuid::new_v4();
+        let sibling_id = uuid::Uuid::new_v4();
+
+        for (id, name) in [(target_id, "target"), (sibling_id, "sibling")] {
+            storage
+                .db()
+                .insert_or_update_user_network_config(
+                    (user_id, machine_id),
+                    id,
+                    NetworkConfig {
+                        instance_id: Some(id.to_string()),
+                        network_name: Some(name.to_string()),
+                        ..Default::default()
+                    },
+                    ConfigSource::Web,
+                )
+                .await
+                .unwrap();
+        }
+        assert_eq!(
+            storage
+                .db()
+                .get_managed_config_revision((user_id, machine_id))
+                .await
+                .unwrap(),
+            None
+        );
+
+        report_client_web_config(
+            &storage,
+            user_id,
+            machine_id,
+            managed_config(target_id, "target-edited"),
+            "",
+            "client-rev-1",
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            storage
+                .db()
+                .get_managed_config_revision((user_id, machine_id))
+                .await
+                .unwrap()
+                .as_deref(),
+            Some("client-rev-1")
+        );
+        let sibling = storage
+            .db()
+            .get_network_config((user_id, machine_id), &sibling_id.to_string())
+            .await
+            .unwrap();
+        assert!(sibling.is_some(), "sibling web config must remain");
+        let target = storage
+            .db()
+            .get_network_config((user_id, machine_id), &target_id.to_string())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            target.get_network_config().unwrap().network_name.as_deref(),
+            Some("target-edited")
+        );
+    }
+
+    #[tokio::test]
+    async fn report_client_web_config_cas_success_and_conflict() {
+        let storage = Storage::new(crate::db::Db::memory_db().await);
+        let user_id = storage
+            .db()
+            .auto_create_user("web-user-report-cas")
+            .await
+            .unwrap()
+            .id;
+        let machine_id = uuid::Uuid::new_v4();
+        let inst_id = uuid::Uuid::new_v4();
+
+        reconcile_web_source_configs(
+            &storage,
+            user_id,
+            machine_id,
+            vec![managed_config(inst_id, "base")],
+            Some("rev-1"),
+            ExpectedConfigRevision::Any,
+        )
+        .await
+        .unwrap();
+
+        report_client_web_config(
+            &storage,
+            user_id,
+            machine_id,
+            managed_config(inst_id, "cas-ok"),
+            "rev-1",
+            "rev-2",
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            storage
+                .db()
+                .get_managed_config_revision((user_id, machine_id))
+                .await
+                .unwrap()
+                .as_deref(),
+            Some("rev-2")
+        );
+
+        let err = report_client_web_config(
+            &storage,
+            user_id,
+            machine_id,
+            managed_config(inst_id, "stale"),
+            "rev-1",
+            "rev-3",
+        )
+        .await
+        .unwrap_err();
+        assert!(is_revision_conflict(&err));
+        assert_eq!(
+            storage
+                .db()
+                .get_managed_config_revision((user_id, machine_id))
+                .await
+                .unwrap()
+                .as_deref(),
+            Some("rev-2")
+        );
+    }
+
+    #[tokio::test]
+    async fn report_client_web_config_rejects_user_owned() {
+        let storage = Storage::new(crate::db::Db::memory_db().await);
+        let user_id = storage
+            .db()
+            .auto_create_user("web-user-report-ownership")
+            .await
+            .unwrap()
+            .id;
+        let machine_id = uuid::Uuid::new_v4();
+        let inst_id = uuid::Uuid::new_v4();
+        storage
+            .db()
+            .insert_or_update_user_network_config(
+                (user_id, machine_id),
+                inst_id,
+                NetworkConfig {
+                    instance_id: Some(inst_id.to_string()),
+                    network_name: Some("user-owned".to_string()),
+                    ..Default::default()
+                },
+                ConfigSource::User,
+            )
+            .await
+            .unwrap();
+
+        let err = report_client_web_config(
+            &storage,
+            user_id,
+            machine_id,
+            managed_config(inst_id, "hijack"),
+            "",
+            "rev-x",
+        )
+        .await
+        .unwrap_err();
+        assert!(matches!(
+            err.downcast_ref::<ManagedConfigError>(),
+            Some(ManagedConfigError::OwnershipConflict { .. })
+        ));
     }
 
     #[test]

@@ -84,6 +84,7 @@ impl HeartbeatPolicy {
         HeartbeatResponse {
             heartbeat_interval_ms: Some(self.interval.as_millis() as u32),
             heartbeat_timeout_ms: Some(self.timeout.as_millis() as u32),
+            managed_config_revision: None,
         }
     }
 
@@ -351,15 +352,18 @@ impl ClientManager {
                     .into_iter()
                     .map(|instance_id| instance_id.to_string()),
             );
-            let changed = self.storage.record_patch_managed_config_change(
-                user_id,
-                machine_id,
-                ManagedConfigPersistedChange {
-                    expected_revision: expected_config_revision,
-                    target_revision: config_revision,
-                    dirty_instance_ids,
-                },
-            );
+            let changed = self
+                .storage
+                .record_patch_managed_config_change(
+                    user_id,
+                    machine_id,
+                    ManagedConfigPersistedChange {
+                        expected_revision: expected_config_revision,
+                        target_revision: config_revision,
+                        dirty_instance_ids,
+                    },
+                )
+                .recorded();
             if changed && let Some(session) = self.get_session_by_machine_id(user_id, &machine_id) {
                 session
                     .notify_managed_runtime_state_changed(user_id, machine_id)

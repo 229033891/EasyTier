@@ -6,7 +6,7 @@ use crate::db::{Db, UserIdInDb};
 
 use super::session::{
     ManagedConfigPersistedChange, ManagedConfigReconcileHint, ManagedRuntimeState,
-    SharedManagedRuntimeState, record_managed_config_reconcile_hint,
+    RecordPatchOutcome, SharedManagedRuntimeState, record_managed_config_reconcile_hint,
 };
 
 // use this to maintain Storage
@@ -172,15 +172,15 @@ impl Storage {
         user_id: UserIdInDb,
         machine_id: uuid::Uuid,
         change: ManagedConfigPersistedChange,
-    ) -> bool {
+    ) -> RecordPatchOutcome {
         let Some(state) = self.current_managed_runtime_state(user_id, machine_id) else {
-            return false;
+            return RecordPatchOutcome::NoRuntimeState;
         };
         let mut state = state.lock().expect("managed runtime state lock poisoned");
         let target_already_applied =
             state.applied_config_revision.as_deref() == Some(change.target_revision.as_str());
         if target_already_applied && state.pending_managed_config_reconcile.is_none() {
-            return false;
+            return RecordPatchOutcome::AlreadyApplied;
         }
         if !target_already_applied {
             record_managed_config_reconcile_hint(
@@ -193,7 +193,7 @@ impl Storage {
             );
         }
         state.runtime_config_epoch = state.runtime_config_epoch.wrapping_add(1);
-        true
+        RecordPatchOutcome::Recorded
     }
 
     pub(super) fn invalidate_managed_runtime_state(
@@ -603,15 +603,18 @@ mod tests {
             state.known_runtime_base_revision = Some("rev-a".to_string());
         }
 
-        assert!(storage.record_patch_managed_config_change(
-            1,
-            machine_id,
-            ManagedConfigPersistedChange {
-                expected_revision: "rev-a".to_string(),
-                target_revision: "rev-b".to_string(),
-                dirty_instance_ids: std::collections::HashSet::from(["instance-a".to_string(),]),
-            },
-        ));
+        assert_eq!(
+            storage.record_patch_managed_config_change(
+                1,
+                machine_id,
+                ManagedConfigPersistedChange {
+                    expected_revision: "rev-a".to_string(),
+                    target_revision: "rev-b".to_string(),
+                    dirty_instance_ids: std::collections::HashSet::from(["instance-a".to_string(),]),
+                },
+            ),
+            RecordPatchOutcome::Recorded
+        );
 
         let reconnected = storage.bind_managed_runtime_state(1, machine_id, Some(runtime_id), 2);
         let state = reconnected.lock().unwrap();
@@ -624,6 +627,48 @@ mod tests {
             })
         );
         assert_eq!(state.runtime_config_epoch, 1);
+    }
+
+    #[tokio::test]
+    async fn record_patch_reports_no_runtime_state_before_bind() {
+        let storage = Storage::new(Db::memory_db().await);
+        let machine_id = uuid::Uuid::new_v4();
+        assert_eq!(
+            storage.record_patch_managed_config_change(
+                1,
+                machine_id,
+                ManagedConfigPersistedChange {
+                    expected_revision: "rev-a".to_string(),
+                    target_revision: "rev-b".to_string(),
+                    dirty_instance_ids: std::collections::HashSet::from(["instance-a".to_string()]),
+                },
+            ),
+            RecordPatchOutcome::NoRuntimeState
+        );
+    }
+
+    #[tokio::test]
+    async fn record_patch_reports_already_applied_when_target_matches() {
+        let storage = Storage::new(Db::memory_db().await);
+        let machine_id = uuid::Uuid::new_v4();
+        let state = storage.bind_managed_runtime_state(1, machine_id, Some(uuid::Uuid::new_v4()), 1);
+        {
+            let mut state = state.lock().unwrap();
+            state.applied_config_revision = Some("rev-b".to_string());
+            state.applied_config_revision_known = true;
+        }
+        assert_eq!(
+            storage.record_patch_managed_config_change(
+                1,
+                machine_id,
+                ManagedConfigPersistedChange {
+                    expected_revision: "rev-a".to_string(),
+                    target_revision: "rev-b".to_string(),
+                    dirty_instance_ids: std::collections::HashSet::from(["instance-a".to_string()]),
+                },
+            ),
+            RecordPatchOutcome::AlreadyApplied
+        );
     }
 
     #[tokio::test]

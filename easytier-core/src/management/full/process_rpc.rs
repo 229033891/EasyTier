@@ -477,6 +477,10 @@ where
         {
             anyhow::bail!("instance name {instance_name} already exists");
         }
+        // Local intentional start clears any prior intentional-stop mark so an
+        // unexpected later exit can be auto-recovered by the config server.
+        self.instances
+            .clear_user_disabled_web_instance(instance_id);
         self.instances.run_network_instance(config, control)
     }
 
@@ -514,6 +518,9 @@ where
         requested: Vec<uuid::Uuid>,
     ) -> anyhow::Result<InstanceMutationResult> {
         let before = self.instances.instance_ids();
+        // Intentional local stop (FFI/Android/iOS): mark web-managed instances
+        // before delete so heartbeat can sync `disabled` and skip auto-run.
+        self.mark_user_disabled_web_instances(&requested);
         let remaining = self.instances.delete_network_instances(requested).await?;
         let remaining_set = remaining.iter().copied().collect::<HashSet<_>>();
         let removed = before

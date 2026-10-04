@@ -479,3 +479,58 @@ pub(crate) fn is_config_server_client_connected() -> c_int {
         .map(i32::from)
         .unwrap_or(0)
 }
+
+/// Push a client-edited NetworkConfig (JSON) to the console with revision CAS.
+///
+/// # Safety
+/// `config_json` must be a non-null pointer to a null-terminated UTF-8 JSON
+/// document of `api.manage.NetworkConfig`.
+pub(crate) unsafe fn report_network_config(config_json: *const std::ffi::c_char) -> c_int {
+    if in_config_server_callback() {
+        set_error_msg("cannot report network config from config server callback");
+        return -1;
+    }
+    let config_json = match unsafe { c_str_to_string(config_json, "config_json") } {
+        Ok(value) => value,
+        Err(err) => {
+            set_error_msg(&err);
+            return -1;
+        }
+    };
+    let config: easytier::proto::api::manage::NetworkConfig = match serde_json::from_str(&config_json)
+    {
+        Ok(config) => config,
+        Err(error) => {
+            set_error_msg(&format!("failed to parse network config JSON: {error}"));
+            return -1;
+        }
+    };
+
+    let guard = match CONFIG_SERVER_CLIENT.lock() {
+        Ok(guard) => guard,
+        Err(error) => {
+            set_error_msg(&format!("failed to lock config server client: {error}"));
+            return -1;
+        }
+    };
+    let Some(managed) = guard.as_ref() else {
+        set_error_msg("config server client is not running");
+        return -1;
+    };
+    if !managed.client.is_connected() {
+        set_error_msg("config server client is not connected");
+        return -1;
+    }
+    let result = ffi_context()
+        .runtime
+        .block_on(managed.client.report_network_config(config));
+    drop(guard);
+
+    match result {
+        Ok(()) => 0,
+        Err(error) => {
+            set_error_msg(&error.to_string());
+            -1
+        }
+    }
+}

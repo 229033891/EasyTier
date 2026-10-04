@@ -929,10 +929,13 @@ async fn reconcile_desired_runtime_configs(
     let round = context.round;
     let mut outcome = ReconcileOutcome::default();
 
-    // After stale web-owned instances are removed, start every enabled
-    // config that the latest heartbeat did not report as running. When
-    // a managed config revision is pending, also reconcile running
-    // web-owned configs before reporting that revision as applied.
+    // After stale web-owned instances are removed, auto-start every enabled
+    // config that the latest heartbeat did not report as running. Intentional
+    // stops are excluded because they are stored with `disabled=true` and this
+    // round only loads EnabledOnly rows (console Stop, or client user-disabled
+    // sync when `support_user_disabled_instances`). When a managed config
+    // revision is pending, also reconcile running web-owned configs before
+    // reporting that revision as applied.
     for config in &round.local_configs {
         let source = PersistedConfigSource::from_db(&config.source);
         let is_running = round.running_inst_ids.contains(&config.network_instance_id);
@@ -1544,6 +1547,61 @@ mod tests {
                 &requested,
             )
             .is_empty()
+        );
+    }
+
+    #[tokio::test]
+    async fn auto_run_candidates_exclude_intentionally_disabled_configs() {
+        // Heartbeat reconcile builds its auto-run candidates with EnabledOnly, so
+        // an intentional stop (console Stop or client user-disabled sync, both
+        // stored as disabled=true) never reaches run_missing_network_config,
+        // while an unexpectedly stopped but enabled config still does.
+        use easytier_core::management::remote_client::Storage as _;
+
+        let storage =
+            crate::client_manager::storage::Storage::new(crate::db::Db::memory_db().await);
+        let db = storage.db();
+        let user_id = db
+            .auto_create_user("enabled-only-auto-run")
+            .await
+            .unwrap()
+            .id;
+        let machine_id = uuid::Uuid::new_v4();
+        let stopped_unexpectedly = uuid::Uuid::new_v4();
+        let stopped_on_purpose = uuid::Uuid::new_v4();
+        for instance_id in [stopped_unexpectedly, stopped_on_purpose] {
+            db.insert_or_update_user_network_config(
+                (user_id, machine_id),
+                instance_id,
+                NetworkConfig {
+                    instance_id: Some(instance_id.to_string()),
+                    ..Default::default()
+                },
+                easytier::common::config::ConfigSource::Web,
+            )
+            .await
+            .unwrap();
+        }
+        db.update_network_config_state((user_id, machine_id), stopped_on_purpose, true)
+            .await
+            .unwrap();
+
+        let candidates = db
+            .list_network_configs((user_id, machine_id), ListNetworkProps::EnabledOnly)
+            .await
+            .unwrap();
+        let ids: Vec<String> = candidates
+            .iter()
+            .map(|config| config.network_instance_id.clone())
+            .collect();
+
+        assert!(
+            ids.contains(&stopped_unexpectedly.to_string()),
+            "unexpected stops stay enabled and must be auto-started: {ids:?}"
+        );
+        assert!(
+            !ids.contains(&stopped_on_purpose.to_string()),
+            "intentional stops must not be auto-started: {ids:?}"
         );
     }
 

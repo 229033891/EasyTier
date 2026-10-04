@@ -14,7 +14,10 @@ use easytier::proto::{
     },
     rpc::bidirect::BidirectRpcManager,
     rpc_types::{self, controller::BaseController},
-    web::{HeartbeatRequest, HeartbeatResponse, WebServerService, WebServerServiceServer},
+    web::{
+        HeartbeatRequest, HeartbeatResponse, ReportNetworkConfigRequest,
+        ReportNetworkConfigResponse, WebServerService, WebServerServiceServer,
+    },
 };
 use easytier_core::tunnel::Tunnel;
 use tokio::sync::{Notify, RwLock, broadcast};
@@ -22,10 +25,11 @@ use tokio_util::task::AbortOnDropHandle;
 
 use super::{
     HeartbeatPolicy,
+    managed_config,
     storage::{Storage, StorageToken, WeakRefStorage},
 };
 use crate::FeatureFlags;
-use crate::webhook::SharedWebhookConfig;
+use crate::webhook::{ManagedNetworkConfig, SharedWebhookConfig};
 
 mod runtime_revision;
 mod webhook_validation;
@@ -53,6 +57,23 @@ pub(super) struct ManagedConfigPersistedChange {
     pub expected_revision: String,
     pub target_revision: String,
     pub dirty_instance_ids: HashSet<String>,
+}
+
+/// Outcome of recording a client-reported patch into the session runtime state.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum RecordPatchOutcome {
+    /// A reconcile hint was recorded (or the runtime epoch was bumped).
+    Recorded,
+    /// Target revision already applied and nothing pending — no-op.
+    AlreadyApplied,
+    /// No managed runtime state is bound yet (heartbeat has not established it).
+    NoRuntimeState,
+}
+
+impl RecordPatchOutcome {
+    pub(super) fn recorded(self) -> bool {
+        matches!(self, Self::Recorded)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -466,6 +487,194 @@ impl SessionRpcService {
     fn heartbeat_response(&self) -> HeartbeatResponse {
         self.heartbeat_policy.response()
     }
+
+    async fn heartbeat_response_with_revision(
+        &self,
+        storage: &Storage,
+        user_id: i32,
+        machine_id: uuid::Uuid,
+    ) -> HeartbeatResponse {
+        let mut response = self.heartbeat_policy.response();
+        match storage
+            .db()
+            .get_managed_config_revision((user_id, machine_id))
+            .await
+        {
+            Ok(revision) => response.managed_config_revision = revision,
+            Err(error) => {
+                tracing::warn!(
+                    user_id,
+                    %machine_id,
+                    ?error,
+                    "failed to load managed config revision for heartbeat"
+                );
+            }
+        }
+        response
+    }
+
+    async fn notify_runtime_after_client_report(&self) {
+        let notify = {
+            let data = self.data.read().await;
+            data.req.clone().map(|req| (data.notifier.clone(), req))
+        };
+        match notify {
+            Some((notifier, req)) => {
+                let _ = notifier.send(req);
+            }
+            // Nothing to hand to the runtime yet; convergence then waits for the
+            // next heartbeat, which is worth being able to see while debugging.
+            None => tracing::debug!(
+                "client-reported config arrived before any heartbeat request; waiting for the next heartbeat to reconcile"
+            ),
+        }
+    }
+
+    async fn handle_report_network_config(
+        &self,
+        req: ReportNetworkConfigRequest,
+    ) -> ReportNetworkConfigResponse {
+        let conflict = |code: &str, current: Option<String>| ReportNetworkConfigResponse {
+            ok: false,
+            applied_config_revision: String::new(),
+            current_config_revision: current.unwrap_or_default(),
+            error_code: code.to_owned(),
+        };
+        let invalid = |msg: &str| {
+            tracing::warn!(error = %msg, "invalid ReportNetworkConfig request");
+            conflict("invalid_request", None)
+        };
+
+        let Ok(storage) = Storage::try_from({
+            let data = self.data.read().await;
+            data.storage.clone()
+        }) else {
+            return invalid("storage unavailable");
+        };
+
+        let (session_token, session_machine_id, user_id) = {
+            let data = self.data.read().await;
+            if !data.auth_state.is_authorized() {
+                return conflict("not_authorized", None);
+            }
+            let Some(token) = data.storage_token.as_ref() else {
+                return conflict("invalid_request", None);
+            };
+            (
+                token.token.clone(),
+                token.machine_id,
+                token.user_id,
+            )
+        };
+
+        let Some(machine_id) = req.machine_id.map(uuid::Uuid::from) else {
+            return invalid("machine_id missing");
+        };
+        if machine_id != session_machine_id {
+            return invalid("machine_id mismatch");
+        }
+        if req.user_token.trim() != session_token.trim() {
+            return invalid("user_token mismatch");
+        }
+        let Some(config) = req.config else {
+            return invalid("config missing");
+        };
+        let instance_id = match config
+            .instance_id
+            .as_deref()
+            .map(uuid::Uuid::parse_str)
+            .transpose()
+        {
+            Ok(Some(id)) => id,
+            Ok(None) => return invalid("instance_id missing"),
+            Err(_) => return invalid("instance_id invalid"),
+        };
+
+        let config_json = match serde_json::to_value(&config) {
+            Ok(value) => value,
+            Err(error) => return invalid(&format!("config serialize failed: {error}")),
+        };
+        let upsert = ManagedNetworkConfig {
+            instance_id: instance_id.to_string(),
+            network_config: config_json,
+        };
+        let expected = req.expected_config_revision.trim().to_string();
+        let target = req.config_revision.trim().to_string();
+
+        match managed_config::report_client_web_config(
+            &storage,
+            user_id,
+            machine_id,
+            upsert,
+            &expected,
+            &target,
+        )
+        .await
+        {
+            Ok(status) => {
+                let applied = match status {
+                    managed_config::ManagedConfigApplyStatus::Applied { .. }
+                    | managed_config::ManagedConfigApplyStatus::AlreadyApplied => target.clone(),
+                };
+                match storage.record_patch_managed_config_change(
+                    user_id,
+                    machine_id,
+                    ManagedConfigPersistedChange {
+                        expected_revision: expected,
+                        target_revision: applied.clone(),
+                        dirty_instance_ids: [instance_id.to_string()].into_iter().collect(),
+                    },
+                ) {
+                    RecordPatchOutcome::Recorded | RecordPatchOutcome::AlreadyApplied => {}
+                    // CAS already persisted the revision; without runtime state the
+                    // session only learns on the next heartbeat.
+                    RecordPatchOutcome::NoRuntimeState => tracing::warn!(
+                        user_id,
+                        %machine_id,
+                        %instance_id,
+                        "client-reported config applied in DB but no managed runtime state is bound yet; waiting for heartbeat to reconcile"
+                    ),
+                }
+                self.notify_runtime_after_client_report().await;
+                ReportNetworkConfigResponse {
+                    ok: true,
+                    applied_config_revision: applied,
+                    current_config_revision: String::new(),
+                    error_code: String::new(),
+                }
+            }
+            Err(error) => {
+                if let Some(managed_config::ManagedConfigError::RevisionConflict {
+                    current,
+                    ..
+                }) = error.downcast_ref()
+                {
+                    return conflict(
+                        "managed_config_revision_conflict",
+                        current.clone(),
+                    );
+                }
+                if let Some(managed_config::ManagedConfigError::OwnershipConflict { .. }) =
+                    error.downcast_ref()
+                {
+                    let current = storage
+                        .db()
+                        .get_managed_config_revision((user_id, machine_id))
+                        .await
+                        .ok()
+                        .flatten();
+                    return conflict("managed_config_ownership_conflict", current);
+                }
+                if let Some(managed_config::ManagedConfigError::Invalid(msg)) =
+                    error.downcast_ref()
+                {
+                    return invalid(msg);
+                }
+                tracing::warn!(?error, "ReportNetworkConfig failed");
+                conflict("invalid_request", None)
+            }
+        }
+    }
 }
 
 fn heartbeat_response_delay(elapsed: Duration, min_response_delay: Duration) -> Option<Duration> {
@@ -807,6 +1016,9 @@ impl SessionRpcService {
             (notify, runtime_notify, device_upsert)
         };
 
+        let revision_identity = device_upsert.as_ref().map(|(token, _, _, _)| {
+            (token.user_id, token.machine_id)
+        });
         if let Some((storage_token, hostname, version, report_time)) = device_upsert
             && let Err(e) = storage
                 .db()
@@ -829,7 +1041,13 @@ impl SessionRpcService {
         if let Some(notify) = notify {
             notify.notify_one();
         }
-        Ok(self.heartbeat_response())
+        if let Some((user_id, machine_id)) = revision_identity {
+            Ok(self
+                .heartbeat_response_with_revision(storage, user_id, machine_id)
+                .await)
+        } else {
+            Ok(self.heartbeat_response())
+        }
     }
 
     async fn handle_heartbeat(
@@ -966,7 +1184,9 @@ impl SessionRpcService {
         if let Some(notify) = validation_notify {
             notify.notify_one();
         }
-        Ok(self.heartbeat_response())
+        Ok(self
+            .heartbeat_response_with_revision(&storage, storage_token.user_id, storage_token.machine_id)
+            .await)
     }
 }
 
@@ -1009,6 +1229,14 @@ impl WebServerService for SessionRpcService {
         Ok(easytier::proto::web::GetFeatureResponse {
             support_encryption: easytier_core::tunnel::web_security::web_secure_tunnel_supported(),
         })
+    }
+
+    async fn report_network_config(
+        &self,
+        _: BaseController,
+        req: ReportNetworkConfigRequest,
+    ) -> rpc_types::error::Result<ReportNetworkConfigResponse> {
+        Ok(self.handle_report_network_config(req).await)
     }
 }
 
