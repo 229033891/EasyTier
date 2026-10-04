@@ -10,9 +10,9 @@ use crate::{
     proto::common::{StunInfo, TunnelInfo, Url as ProtoUrl},
 };
 
-/// Underlay destinations that must keep a more-specific host route when the
-/// local exit-node installs `0.0.0.0/0` on TUN (peer tunnels, STUN publics,
-/// and any extra candidates such as the config-server management plane).
+/// Underlay destinations that must keep a more-specific host route when TUN
+/// installs an effective default route (peer tunnels, STUN publics, and
+/// config-server / management-plane targets — including private LAN addresses).
 pub async fn collect_underlay_exclude_ips(
     peer_manager: &PeerManagerCore,
     extra_candidates: impl IntoIterator<Item = IpAddr>,
@@ -68,9 +68,10 @@ fn stun_public_ips(stun: &StunInfo) -> impl Iterator<Item = IpAddr> + '_ {
 }
 
 async fn should_exclude_ip(peer_manager: &PeerManagerCore, ip: IpAddr) -> bool {
-    if !is_global_underlay_ip(ip) {
+    if !is_excludable_underlay_ip(ip) {
         return false;
     }
+    // Overlay VIP / managed addresses must keep using TUN, not the physical default.
     if peer_manager.is_local_virtual_ip(&ip) {
         return false;
     }
@@ -82,29 +83,30 @@ async fn should_exclude_ip(peer_manager: &PeerManagerCore, ip: IpAddr) -> bool {
     true
 }
 
-fn is_global_underlay_ip(ip: IpAddr) -> bool {
+/// Host routes are useful for both public and RFC1918/ULA underlay peers and
+/// management consoles. Reject only addresses that are never valid tunnel or
+/// console endpoints on the physical path.
+fn is_excludable_underlay_ip(ip: IpAddr) -> bool {
     match ip {
-        IpAddr::V4(ip) => is_global_ipv4(ip),
-        IpAddr::V6(ip) => is_global_ipv6(ip),
+        IpAddr::V4(ip) => is_excludable_ipv4(ip),
+        IpAddr::V6(ip) => is_excludable_ipv6(ip),
     }
 }
 
-fn is_global_ipv4(ip: Ipv4Addr) -> bool {
+fn is_excludable_ipv4(ip: Ipv4Addr) -> bool {
     !(ip.is_unspecified()
         || ip.is_loopback()
         || ip.is_broadcast()
         || ip.is_multicast()
         || ip.is_link_local()
-        || ip.is_private()
         || ip.is_documentation())
 }
 
-fn is_global_ipv6(ip: Ipv6Addr) -> bool {
+fn is_excludable_ipv6(ip: Ipv6Addr) -> bool {
     !(ip.is_unspecified()
         || ip.is_loopback()
         || ip.is_multicast()
-        || ip.is_unicast_link_local()
-        || ip.is_unique_local())
+        || ip.is_unicast_link_local())
 }
 
 #[cfg(test)]
@@ -112,17 +114,26 @@ mod tests {
     use super::*;
 
     #[test]
-    fn private_and_vip_like_addresses_are_not_global() {
-        assert!(!is_global_ipv4("10.0.0.1".parse().unwrap()));
-        assert!(!is_global_ipv4("192.168.1.1".parse().unwrap()));
-        assert!(!is_global_ipv4("127.0.0.1".parse().unwrap()));
-        assert!(is_global_ipv4("8.8.8.8".parse().unwrap()));
+    fn private_lan_addresses_are_excludable() {
+        assert!(is_excludable_ipv4("10.0.0.1".parse().unwrap()));
+        assert!(is_excludable_ipv4("192.168.1.1".parse().unwrap()));
+        assert!(is_excludable_ipv4("172.16.5.5".parse().unwrap()));
+        assert!(is_excludable_ipv4("8.8.8.8".parse().unwrap()));
     }
 
     #[test]
-    fn global_ipv6_filter_matches_underlay_policy() {
-        assert!(!is_global_ipv6("fe80::1".parse().unwrap()));
-        assert!(!is_global_ipv6("fd00::1".parse().unwrap()));
-        assert!(is_global_ipv6("2001:db8::1".parse().unwrap()));
+    fn non_forwardable_ipv4_is_not_excludable() {
+        assert!(!is_excludable_ipv4("127.0.0.1".parse().unwrap()));
+        assert!(!is_excludable_ipv4("0.0.0.0".parse().unwrap()));
+        assert!(!is_excludable_ipv4("169.254.1.1".parse().unwrap()));
+        assert!(!is_excludable_ipv4("224.0.0.1".parse().unwrap()));
+    }
+
+    #[test]
+    fn ula_ipv6_is_excludable_but_link_local_is_not() {
+        assert!(is_excludable_ipv6("fd00::1".parse().unwrap()));
+        assert!(is_excludable_ipv6("2001:db8::1".parse().unwrap()));
+        assert!(!is_excludable_ipv6("fe80::1".parse().unwrap()));
+        assert!(!is_excludable_ipv6("::1".parse().unwrap()));
     }
 }

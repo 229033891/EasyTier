@@ -142,7 +142,7 @@ pub async fn underlay_exclude_candidate_ips() -> BTreeSet<IpAddr> {
         return ips;
     }
 
-    #[cfg(not(target_os = "wasi"))]
+    #[cfg(not(any(target_os = "wasi", target_arch = "wasm32")))]
     {
         let lookup = tokio::time::timeout(
             DNS_LOOKUP_TIMEOUT,

@@ -423,6 +423,15 @@ impl<F> WebClient<F> {
         let connected = Arc::new(AtomicBool::new(false));
         config_server_status::mark_enabled();
         config_server_status::set_endpoint_url(&connector.remote_url());
+        // Resolve the management endpoint early so underlay excludes can pin it
+        // before a TUN default route is installed. Desktop DNS is still the
+        // system resolver (no VpnService protect); this only shrinks the race.
+        #[cfg(not(any(target_os = "wasi", target_arch = "wasm32")))]
+        {
+            let _ = tokio::spawn(async {
+                let _ = config_server_status::underlay_exclude_candidate_ips().await;
+            });
+        }
         let tasks = AbortOnDropHandle::new(tokio::spawn(web_client_routine(
             controller.clone(),
             connected.clone(),

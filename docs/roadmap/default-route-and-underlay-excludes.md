@@ -2,9 +2,9 @@
 
 ## Status
 
-- Status: **Roadmap**（讨论稿 / 建议采纳方案 D，尚未改代码）
+- Status: **Roadmap**（讨论稿 / 建议采纳方案 D；§7.3（4）漏点已修，方案 D 本体仍待产品决策）
 - 日期：2026-10-04
-- 最近审阅：2026-10-04（**已按代码核验**，修正见 §4.4 与 §7.3；结论仍待产品决策）
+- 最近审阅：2026-10-04（**已按代码核验**；§7.3（4）已落地，§7.3（5）DNS protect 仍开放）
 - 目标读者：产品决策 + 路由/出口实现
 - 索引：[`../README.md`](../README.md)
 - **现状行为**：[`../current/traffic-steering.md`](../current/traffic-steering.md)
@@ -171,8 +171,14 @@ L3 仍可按现状用对端 `/0` 作选路兜底（见 Current §2）；L2 只�
 - 现有 `peer_ospf_route_tests` 中 `default_proxy_cidr_is_excluded_from_specific_lookup`、`default_proxy_remains_available_for_service_paths` 只钉住**内存**语义，**必须保留**（证明 L3/服务路径仍能解析对端 `/0`）。
 - 需要**新增**：① 「无 exit + 对端 `/0` → 期望集合不含 `/0`」；② 「无物理默认路由」场景的显式验收，否则该行为失效时无人察觉。
 
-**（4）独立于本方案的既有缺口（建议单独修）：**  
-`ipv4_physical_default` / `ipv6_physical_default` 不感知换网——仅在排除路由全部卸载后才重新发现物理默认网关，因此**出口打开状态下换网会把 `/32` 排除路由钉在旧网关上**，导致 P2P 隧道被吸进 TUN 而断连。A/B/C/D 四个方案都没有覆盖这一点。
+**（4）换网 / 私网排除 / 门控（2026-10-04 已直接修）：**  
+- `reconcile_underlay_exclude_routes` 每轮重新发现物理默认；网关/ifindex 变化时先卸旧 via 上的主机路由再换下一跳。  
+- `is_excludable_*` 允许 RFC1918 / ULA 作为 underlay 排除目标（仍过滤环回/链路本地/组播及 overlay VIP）。  
+- 排除门控改为「本机 exit **或** TUN 上已有/将有 `/0`」时安装，不再仅看 `local_exit_default`。  
+- 管理面：`WebClient` 启动时 eager 解析 config-server，缩小装 `/0` 前的 DNS 竞态（见下条剩余缺口）。
+
+**（5）仍未闭环的桌面 DNS protect 缺口：**  
+Android 可用 `VpnService.protect`；桌面端 config-server / peer 域名仍走系统 `lookup_host`，在 TUN 默认路由已生效且主机排除尚未覆盖解析结果时，**首次 DNS 查询本身可能被吸进 TUN**。eager 解析只能缩小窗口，不能替代 socket protect / 绑定物理网卡的解析路径。完整修复需独立设计（绑定物理 default iface 的 resolver，或平台 API）。
 
 ---
 
