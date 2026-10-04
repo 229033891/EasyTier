@@ -42,6 +42,8 @@
   --surface-200: var(--p-surface-200, #e2e8f0);
   --text-color: var(--p-text-color, #1e293b);
   --text-color-secondary: var(--p-text-muted-color, #64748b);
+  /* Placeholder hint color: lighter than secondary so empty hints != filled values */
+  --et-placeholder-color: #a8b5c5;
   --primary-color: var(--p-primary-color, #0ea5e9);
 
   --et-border-color: var(--surface-border, #e2e8f0);
@@ -103,19 +105,23 @@
 }
 
 /*
- * 占位符与已填内容区分：浅灰次要色，避免与真实输入值同色。
- * 覆盖浏览器默认 opacity（Firefox）以及 Aura 未单独降权时的继承色。
+ * Placeholder vs filled value: use dedicated light gray (--et-placeholder-color).
+ * Do NOT use --text-color-secondary here (#64748b is too close to body text).
  */
 :where(input, textarea)::placeholder {
-  color: var(--text-color-secondary, #94a3b8);
+  color: var(--et-placeholder-color, #a8b5c5);
+  -webkit-text-fill-color: var(--et-placeholder-color, #a8b5c5);
   opacity: 1;
 }
 
 .p-inputtext::placeholder,
 .p-inputnumber-input::placeholder,
 .p-password-input::placeholder,
-.p-autocomplete-input::placeholder {
-  color: var(--text-color-secondary, #94a3b8) !important;
+.p-autocomplete-input::placeholder,
+.p-autocomplete .p-inputtext::placeholder,
+.p-autocomplete-input-multiple input::placeholder {
+  color: var(--et-placeholder-color, #a8b5c5) !important;
+  -webkit-text-fill-color: var(--et-placeholder-color, #a8b5c5) !important;
   opacity: 1 !important;
 }
 
@@ -123,7 +129,7 @@
 .p-select .p-placeholder,
 .p-multiselect .p-placeholder,
 .p-autocomplete .p-placeholder {
-  color: var(--text-color-secondary, #94a3b8) !important;
+  color: var(--et-placeholder-color, #a8b5c5) !important;
 }
 
 /* 遗留 PrimeFlex 类名：模板里仍有 surface-border / border-1，补成有效样式 */

@@ -1028,13 +1028,19 @@ function removeVpnPortalClient(index: number) {
 .config-panels :deep(.p-inputtext::placeholder),
 .config-panels :deep(.p-inputnumber-input::placeholder),
 .config-panels :deep(.p-password-input::placeholder),
-.config-panels :deep(.p-autocomplete-input::placeholder) {
-  color: var(--text-color-secondary, #94a3b8) !important;
+.config-panels :deep(.p-autocomplete-input::placeholder),
+.config-panels :deep(.p-autocomplete .p-inputtext::placeholder),
+.config-panels :deep(.p-autocomplete-input-multiple input::placeholder) {
+  color: var(--et-placeholder-color, #a8b5c5) !important;
+  -webkit-text-fill-color: var(--et-placeholder-color, #a8b5c5) !important;
   opacity: 1 !important;
 }
 
-.config-panels :deep(.p-placeholder) {
-  color: var(--text-color-secondary, #94a3b8) !important;
+.config-panels :deep(.p-placeholder),
+.config-panels :deep(.p-select .p-placeholder),
+.config-panels :deep(.p-multiselect .p-placeholder),
+.config-panels :deep(.p-autocomplete .p-placeholder) {
+  color: var(--et-placeholder-color, #a8b5c5) !important;
 }
 
 .advanced-flag-item .config-help-tip {

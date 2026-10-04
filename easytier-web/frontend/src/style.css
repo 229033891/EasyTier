@@ -48,6 +48,7 @@
   --surface-200: var(--p-surface-200, #e2e8f0);
   --text-color: var(--p-text-color, #1e293b);
   --text-color-secondary: var(--p-text-muted-color, #64748b);
+  --et-placeholder-color: #a8b5c5;
   --primary-color: var(--p-primary-color, #0ea5e9);
 
   /* 边框 / 圆角 / 阴影 */
@@ -163,17 +164,21 @@ select {
   color: var(--text-color-secondary, #64748b);
 }
 
-/* 输入框占位符：浅灰，与已填内容区分 */
+/* Input placeholders: dedicated light gray (do not use text-color-secondary) */
 :where(input, textarea)::placeholder {
-  color: var(--text-color-secondary, #94a3b8);
+  color: var(--et-placeholder-color, #a8b5c5);
+  -webkit-text-fill-color: var(--et-placeholder-color, #a8b5c5);
   opacity: 1;
 }
 
 .p-inputtext::placeholder,
 .p-inputnumber-input::placeholder,
 .p-password-input::placeholder,
-.p-autocomplete-input::placeholder {
-  color: var(--text-color-secondary, #94a3b8) !important;
+.p-autocomplete-input::placeholder,
+.p-autocomplete .p-inputtext::placeholder,
+.p-autocomplete-input-multiple input::placeholder {
+  color: var(--et-placeholder-color, #a8b5c5) !important;
+  -webkit-text-fill-color: var(--et-placeholder-color, #a8b5c5) !important;
   opacity: 1 !important;
 }
 
@@ -181,7 +186,7 @@ select {
 .p-select .p-placeholder,
 .p-multiselect .p-placeholder,
 .p-autocomplete .p-placeholder {
-  color: var(--text-color-secondary, #94a3b8) !important;
+  color: var(--et-placeholder-color, #a8b5c5) !important;
 }
 
 /* 顶部导航栏安全区适配（position/z-index 由 MainPage 控制，避免压过抽屉） */
