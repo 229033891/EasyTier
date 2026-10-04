@@ -8,8 +8,7 @@ use std::collections::BTreeSet;
 type PeerId = u32;
 
 include!(concat!(env!("OUT_DIR"), "/peer_rpc.rs"));
-// Always include: `api.manage.serde` embeds peer_rpc types (GetIpListResponse,
-// RouteForeignNetworkSummary, …) whenever manage serde is unconditional.
+#[cfg(feature = "json-rpc")]
 include!(concat!(env!("OUT_DIR"), "/peer_rpc.serde.rs"));
 
 impl PeerGroupInfo {

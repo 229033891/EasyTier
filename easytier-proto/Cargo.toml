@@ -69,7 +69,7 @@ full = [
     "zstd",
     "json-rpc",
 ]
-api = ["core"]
+api = ["core", "json-rpc"]
 core = [
     "dep:anyhow",
     "dep:async-trait",
