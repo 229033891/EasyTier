@@ -30,8 +30,11 @@ defineProps<{
       <div class="detail-value">{{ device.reported_hostname }}</div>
     </div>
     <div class="detail-item public-ip">
-      <div class="detail-label">{{ t('web.device.connection_addr') }}</div>
-      <div class="detail-value">{{ device.public_ip }}</div>
+      <div
+        class="detail-label"
+        v-tooltip.top="{ value: t('web.device.connection_addr_help'), escape: false }"
+      >{{ t('web.device.connection_addr') }}</div>
+      <div class="detail-value" v-tooltip.top="device.public_ip || undefined">{{ device.public_ip }}</div>
     </div>
     <div class="detail-item running-networks">
       <div class="detail-label">{{ t('web.device.networks') }}</div>

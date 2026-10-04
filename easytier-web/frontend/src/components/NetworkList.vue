@@ -271,7 +271,10 @@ const openNetworkRow = (row: NetworkRow, mode: 'status' | 'config') => {
                     <tr class="bg-surface-50 text-left">
                         <th class="px-3 py-2 font-semibold">{{ t('web.device.network_name') }}</th>
                         <th class="px-3 py-2 font-semibold">{{ t('web.device.belonging_device') }}</th>
-                        <th class="px-3 py-2 font-semibold">{{ t('web.device.connection_addr') }}</th>
+                        <th
+                            class="px-3 py-2 font-semibold"
+                            v-tooltip.top="{ value: t('web.device.connection_addr_help'), escape: false }"
+                        >{{ t('web.device.connection_addr') }}</th>
                         <th class="px-3 py-2 font-semibold">{{ t('virtual_ipv4') }}</th>
                         <th class="px-3 py-2 font-semibold">{{ t('web.device.status') }}</th>
                         <th class="px-3 py-2 font-semibold text-right">{{ t('web.device.management') }}</th>
@@ -357,7 +360,9 @@ const openNetworkRow = (row: NetworkRow, mode: 'status' | 'config') => {
                             <dd class="truncate" v-tooltip.top="row.hostname">{{ row.hostname || '—' }}</dd>
                         </div>
                         <div>
-                            <dt>{{ t('web.device.connection_addr') }}</dt>
+                            <dt
+                                v-tooltip.top="{ value: t('web.device.connection_addr_help'), escape: false }"
+                            >{{ t('web.device.connection_addr') }}</dt>
                             <dd class="truncate" v-tooltip.top="row.connection_addr_raw || undefined">
                                 {{ row.connection_addr || '—' }}
                             </dd>

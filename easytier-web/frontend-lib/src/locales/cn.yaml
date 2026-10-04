@@ -632,7 +632,9 @@ web:
     sort_direction_desc: 当前降序，点击切换为升序
     hostname: 显示名
     public_ip: 公网IP
-    connection_addr: 连接地址
+    # 实为节点 WebClient → easytier-web 配置端口会话的对端地址，勿与 P2P / 浏览器 URL 混淆
+    connection_addr: 配置服务会话
+    connection_addr_help: 节点连上 easytier-web 配置端口时，服务端看到的对端地址（含协议与端口）。不是节点间 P2P 地址，也不是浏览器访问控制台的网址。
     networks: 网络数量
     last_report: 最后在线
     version: 版本
