@@ -228,6 +228,9 @@ jobs:
 
       # Web embed assets (frontend + config-generator wasm). Deferred until after
       # GUI so Prepare stays light; product bits for ET-web-embed unchanged.
+      # prepare-pnpm clears RUSTC_WRAPPER on Windows+wasm so sccache does not
+      # fail spawning rustc for web-sys (CreateProcess argv length). GUI/native
+      # cargo steps above/below continue to use sccache from prepare-build.
       - name: Build web console assets for embed
         if: ${{ contains(matrix.GUI_TARGET, 'windows') }}
         uses: ./.github/actions/prepare-pnpm

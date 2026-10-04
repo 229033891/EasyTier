@@ -76,7 +76,30 @@ runs:
 
     - name: Install and build
       shell: bash
+      env:
+        # Evaluated by GHA; bash below only unsets when true.
+        ET_DISABLE_RUSTC_WRAPPER_FOR_WASM: ${{ runner.os == 'Windows' && inputs.setup-wasm == 'true' }}
       run: |
+        set -euo pipefail
+
+        # Windows + wasm (config-generator / wasm-pack → cargo → rustc web-sys):
+        # sccache wrapping rustc fails with "failed to spawn" / exit 0xfffffffe.
+        # Root cause: CreateProcess command-line length limits when web-sys is
+        # compiled with a huge --cfg feature=* set; sccache re-spawns rustc
+        # with that full argv and hits the OS ceiling. Native MSVC/GUI builds
+        # keep RUSTC_WRAPPER=sccache (set by prepare-build); only this
+        # wasm-oriented pnpm build clears it for the duration of the step.
+        # Linux/macOS wasm builds are unaffected (different process model).
+        # Scope: step env only — later workflow steps still inherit sccache.
+        if [[ "${ET_DISABLE_RUSTC_WRAPPER_FOR_WASM}" == "true" ]]; then
+          if [[ -n "${RUSTC_WRAPPER:-}" ]]; then
+            echo "Disabling RUSTC_WRAPPER=${RUSTC_WRAPPER} for Windows wasm pnpm build (sccache CreateProcess limit)"
+          else
+            echo "Windows wasm pnpm build: RUSTC_WRAPPER already unset"
+          fi
+          unset RUSTC_WRAPPER
+        fi
+
         pnpm -r install
         if [ -n "${{ inputs.build-filter }}" ]; then
           echo "Building with filter: ${{ inputs.build-filter }}"
