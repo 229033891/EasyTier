@@ -524,9 +524,14 @@ impl PortalEngine {
 }
 
 fn new_attached_identity_private_key() -> [u8; 32] {
-    // boringtun still vendors x25519-dalek 2 (no StaticSecret::random);
-    // generate with the workspace dalek 3 key type and hand bytes to boringtun.
-    x25519_dalek::StaticSecret::random().to_bytes()
+    // boringtun vendors x25519-dalek 2 (no StaticSecret::random). Workspace
+    // x25519-dalek is only a dev-dependency, so fill key bytes via SysRng.
+    use rand::TryRng as _;
+    let mut key = [0u8; 32];
+    rand::rngs::SysRng
+        .try_fill_bytes(&mut key)
+        .expect("system entropy unavailable");
+    key
 }
 
 fn is_handshake_initiation(packet: &[u8]) -> bool {
