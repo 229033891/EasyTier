@@ -148,6 +148,9 @@ core_clap:
   enable_exit_node:
     en: "allow this node to be an exit node"
     zh-CN: "允许此节点成为出口节点"
+  allow_peer_default_without_exit:
+    en: "install peer-advertised 0.0.0.0/0 into the OS route table without a reachable local exit_nodes entry (escape hatch; default off)"
+    zh-CN: "在没有可到达的本机 exit_nodes 时，仍将对端通告的 0.0.0.0/0 写入系统路由表（逃生阀，默认关闭）"
   proxy_forward_by_system:
     en: "forward packet to proxy networks via system kernel, disable internal nat for network proxy"
     zh-CN: "通过系统内核转发子网代理数据包，禁用内置NAT"

@@ -144,6 +144,7 @@ pub fn network_config_from_toml(config: &TomlConfig) -> NetworkConfig {
     result.socket_mark = flags.socket_mark;
     result.no_tun = Some(flags.no_tun);
     result.enable_exit_node = Some(flags.enable_exit_node);
+    result.allow_peer_default_without_exit = Some(flags.allow_peer_default_without_exit);
     result.relay_all_peer_rpc = Some(flags.relay_all_peer_rpc);
     result.need_p2p = Some(flags.need_p2p);
     result.multi_thread = Some(flags.multi_thread);

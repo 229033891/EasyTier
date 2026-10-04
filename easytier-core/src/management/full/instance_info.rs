@@ -76,5 +76,11 @@ where
         running,
         error_msg: instance.latest_error(),
         foreign_network_summary: Some(instance.foreign_network_route_summary().await),
+        proxy_cidr_route_sync: Some(
+            instance
+                .packet_plane()
+                .proxy_cidr_route_sync_status()
+                .summary(),
+        ),
     })
 }

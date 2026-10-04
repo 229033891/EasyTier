@@ -397,6 +397,15 @@ struct NetworkOptions {
 
     #[arg(
         long,
+        env = "ET_ALLOW_PEER_DEFAULT_WITHOUT_EXIT",
+        help = t!("core_clap.allow_peer_default_without_exit").to_string(),
+        num_args = 0..=1,
+        default_missing_value = "true"
+    )]
+    allow_peer_default_without_exit: Option<bool>,
+
+    #[arg(
+        long,
         env = "ET_PROXY_FORWARD_BY_SYSTEM",
         help = t!("core_clap.proxy_forward_by_system").to_string(),
         num_args = 0..=1,
@@ -1244,6 +1253,9 @@ impl NetworkOptions {
             f.mtu = mtu as u32;
         }
         f.enable_exit_node = self.enable_exit_node.unwrap_or(f.enable_exit_node);
+        f.allow_peer_default_without_exit = self
+            .allow_peer_default_without_exit
+            .unwrap_or(f.allow_peer_default_without_exit);
         f.proxy_forward_by_system = self
             .proxy_forward_by_system
             .unwrap_or(f.proxy_forward_by_system);

@@ -21,6 +21,9 @@ pub(crate) struct ProxyCidrConfigSnapshot {
     pub no_tun: bool,
     /// Install the local default route. Set only after an exit VIP has a next hop.
     pub has_exit_nodes: bool,
+    /// Opt-in escape hatch: keep peer-advertised `/0` in the L2 desired set
+    /// even when this node has no reachable exit.
+    pub allow_peer_default_without_exit: bool,
 }
 
 impl From<&CoreInstanceRuntimeConfig> for ProxyCidrConfigSnapshot {
@@ -29,6 +32,41 @@ impl From<&CoreInstanceRuntimeConfig> for ProxyCidrConfigSnapshot {
             manual_routes: config.services.manual_routes.clone(),
             no_tun: config.services.proxy.no_tun,
             has_exit_nodes: false,
+            allow_peer_default_without_exit: config.services.proxy.allow_peer_default_without_exit,
+        }
+    }
+}
+
+/// Desktop L2 sync observability: desired vs installed proxy CIDRs.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ProxyCidrRouteSyncStatus {
+    pub desired: Vec<String>,
+    pub installed: Vec<String>,
+    pub local_exit_default: bool,
+    pub last_error: Option<String>,
+}
+
+impl ProxyCidrRouteSyncStatus {
+    pub fn summary(&self) -> String {
+        let desired = if self.desired.is_empty() {
+            "-".to_string()
+        } else {
+            self.desired.join(",")
+        };
+        let installed = if self.installed.is_empty() {
+            "-".to_string()
+        } else {
+            self.installed.join(",")
+        };
+        match &self.last_error {
+            Some(err) => format!(
+                "desired=[{desired}] installed=[{installed}] exit={} last_error={err}",
+                self.local_exit_default
+            ),
+            None => format!(
+                "desired=[{desired}] installed=[{installed}] exit={}",
+                self.local_exit_default
+            ),
         }
     }
 }
@@ -83,6 +121,13 @@ pub struct ProxyCidrDiff {
     pub local_exit_default: bool,
 }
 
+/// Build the L2 desired IPv4 proxy CIDR set.
+///
+/// Peer-advertised `0.0.0.0/0` is filtered out unless this node has a reachable
+/// exit (`has_exit_nodes`) or the escape hatch
+/// `allow_peer_default_without_exit` is enabled. Filtering must happen here
+/// (desired set), not only in OS apply — otherwise the 1s reconciler retries
+/// forever.
 pub(crate) fn resolve_proxy_cidrs(
     peer_routes: BTreeSet<Ipv4Cidr>,
     config: ProxyCidrConfigSnapshot,
@@ -91,8 +136,15 @@ pub(crate) fn resolve_proxy_cidrs(
         return manual_routes;
     }
     let mut routes = peer_routes;
-    if config.has_exit_nodes && !config.no_tun {
-        routes.insert(ipv4_default_cidr());
+    let default = ipv4_default_cidr();
+    let install_local_default = config.has_exit_nodes && !config.no_tun;
+    let keep_peer_default =
+        (config.allow_peer_default_without_exit && !config.no_tun) || install_local_default;
+    if !keep_peer_default {
+        routes.remove(&default);
+    }
+    if install_local_default {
+        routes.insert(default);
     }
     routes
 }
@@ -139,6 +191,7 @@ async fn collect_proxy_cidr_state(
             manual_routes: config.services.manual_routes.clone(),
             no_tun: config.services.proxy.no_tun,
             has_exit_nodes: local_exit_default,
+            allow_peer_default_without_exit: config.services.proxy.allow_peer_default_without_exit,
         },
     );
     (current, local_exit_default)
@@ -396,5 +449,64 @@ mod tests {
         assert_eq!(diff.removed, vec![ipv4_default_cidr()]);
         assert!(diff.added.is_empty());
         assert_eq!(diff.current, cidrs(&["10.0.0.0/8"]));
+    }
+
+    #[test]
+    fn peer_default_is_filtered_without_exit_or_escape_hatch() {
+        let resolved = resolve_proxy_cidrs(
+            cidrs(&["0.0.0.0/0", "10.0.0.0/8"]),
+            ProxyCidrConfigSnapshot::default(),
+        );
+        assert_eq!(resolved, cidrs(&["10.0.0.0/8"]));
+    }
+
+    #[test]
+    fn peer_default_kept_with_escape_hatch_without_exit() {
+        let resolved = resolve_proxy_cidrs(
+            cidrs(&["0.0.0.0/0", "10.0.0.0/8"]),
+            ProxyCidrConfigSnapshot {
+                allow_peer_default_without_exit: true,
+                ..Default::default()
+            },
+        );
+        assert_eq!(resolved, cidrs(&["0.0.0.0/0", "10.0.0.0/8"]));
+    }
+
+    #[test]
+    fn peer_default_survives_when_local_exit_is_active() {
+        let resolved = resolve_proxy_cidrs(
+            cidrs(&["0.0.0.0/0", "10.0.0.0/8"]),
+            ProxyCidrConfigSnapshot {
+                has_exit_nodes: true,
+                ..Default::default()
+            },
+        );
+        assert_eq!(resolved, cidrs(&["0.0.0.0/0", "10.0.0.0/8"]));
+    }
+
+    #[test]
+    fn peer_default_filtered_when_exit_configured_but_no_tun() {
+        let resolved = resolve_proxy_cidrs(
+            cidrs(&["0.0.0.0/0", "10.0.0.0/8"]),
+            ProxyCidrConfigSnapshot {
+                has_exit_nodes: true,
+                no_tun: true,
+                ..Default::default()
+            },
+        );
+        assert_eq!(resolved, cidrs(&["10.0.0.0/8"]));
+    }
+
+    #[test]
+    fn escape_hatch_ignored_when_no_tun() {
+        let resolved = resolve_proxy_cidrs(
+            cidrs(&["0.0.0.0/0", "10.0.0.0/8"]),
+            ProxyCidrConfigSnapshot {
+                allow_peer_default_without_exit: true,
+                no_tun: true,
+                ..Default::default()
+            },
+        );
+        assert_eq!(resolved, cidrs(&["10.0.0.0/8"]));
     }
 }

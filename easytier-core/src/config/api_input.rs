@@ -132,6 +132,7 @@ const FORM_MANAGED_FLAG_FIELDS: &[&str] = &[
     "socket_mark",
     "no_tun",
     "enable_exit_node",
+    "allow_peer_default_without_exit",
     "relay_all_peer_rpc",
     "need_p2p",
     "multi_thread",
@@ -543,6 +544,10 @@ impl NetworkConfigExt for NetworkConfig {
             flags.enable_exit_node = enable_exit_node;
         }
 
+        if let Some(allow_peer_default_without_exit) = self.allow_peer_default_without_exit {
+            flags.allow_peer_default_without_exit = allow_peer_default_without_exit;
+        }
+
         if let Some(relay_all_peer_rpc) = self.relay_all_peer_rpc {
             flags.relay_all_peer_rpc = relay_all_peer_rpc;
         }
@@ -781,6 +786,7 @@ impl NetworkConfigExt for NetworkConfig {
         result.socket_mark = flags.socket_mark;
         result.no_tun = Some(flags.no_tun);
         result.enable_exit_node = Some(flags.enable_exit_node);
+        result.allow_peer_default_without_exit = Some(flags.allow_peer_default_without_exit);
         result.relay_all_peer_rpc = Some(flags.relay_all_peer_rpc);
         result.need_p2p = Some(flags.need_p2p);
         result.multi_thread = Some(flags.multi_thread);

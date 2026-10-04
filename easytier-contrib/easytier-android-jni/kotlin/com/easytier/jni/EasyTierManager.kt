@@ -43,6 +43,14 @@ class EasyTierManager(
     private var currentIpv4: String? = null
     private var currentProxyCidrs: List<String> = emptyList()
     private var vpnServiceIntent: Intent? = null
+    private val allowPeerDefaultWithoutExit: Boolean
+    private val exitNodes: List<String>
+
+    init {
+        val policy = parseRoutePolicy(networkConfig)
+        allowPeerDefaultWithoutExit = policy.first
+        exitNodes = policy.second
+    }
 
     // JSON 解析器
     private val moshi = Moshi.Builder().add(WireJsonAdapterFactory()).build()
@@ -148,28 +156,37 @@ class EasyTierManager(
             // 获取当前节点的 IPv4 地址
             val newIpv4 = parseIpv4InetToString(newIpv4Inet)
 
-            // 获取所有节点的 proxy_cidrs
+            // 获取所有节点的 proxy_cidrs（D+：仅 exit 可达或逃生阀时保留对端 0.0.0.0/0）
+            val localExitDefault = hasReachableExit(networkInfo.routes)
             val newProxyCidrs = mutableListOf<String>()
             networkInfo.routes?.forEach { route ->
-                route.proxy_cidrs?.let { cidrs -> newProxyCidrs.addAll(cidrs) }
+                route.proxy_cidrs?.forEach { cidr ->
+                    if (shouldInstallProxyCidr(cidr, localExitDefault)) {
+                        newProxyCidrs.add(cidr)
+                    }
+                }
             }
+            if (localExitDefault) {
+                newProxyCidrs.add("0.0.0.0/0")
+            }
+            val dedupedProxyCidrs = newProxyCidrs.distinct().sorted()
 
             // 检查是否有变化
             val ipv4Changed = newIpv4 != currentIpv4
-            val proxyCidrsChanged = newProxyCidrs != currentProxyCidrs
+            val proxyCidrsChanged = dedupedProxyCidrs != currentProxyCidrs
 
             if (ipv4Changed || proxyCidrsChanged) {
                 Log.i(TAG, "网络状态发生变化:")
                 Log.i(TAG, "  IPv4: $currentIpv4 -> $newIpv4")
-                Log.i(TAG, "  Proxy CIDRs: $currentProxyCidrs -> $newProxyCidrs")
+                Log.i(TAG, "  Proxy CIDRs: $currentProxyCidrs -> $dedupedProxyCidrs")
 
                 // 更新状态
                 currentIpv4 = newIpv4
-                currentProxyCidrs = newProxyCidrs.toList()
+                currentProxyCidrs = dedupedProxyCidrs
 
                 // 重启 VpnService
                 if (newIpv4 != null) {
-                    restartVpnService(newIpv4, newProxyCidrs)
+                    restartVpnService(newIpv4, dedupedProxyCidrs)
                 }
             } else {
                 Log.d(TAG, "网络状态无变化 - IPv4: $currentIpv4, Proxy CIDRs: ${currentProxyCidrs.size} 个")
@@ -242,6 +259,31 @@ class EasyTierManager(
         )
     }
 
+    private fun shouldInstallProxyCidr(cidr: String, localExitDefault: Boolean): Boolean {
+        if (localExitDefault || allowPeerDefaultWithoutExit) {
+            return true
+        }
+        val normalized = if (cidr.contains('/')) cidr else "$cidr/32"
+        return normalized != "0.0.0.0/0"
+    }
+
+    private fun hasReachableExit(routes: List<api.instance.Route>?): Boolean {
+        if (routes.isNullOrEmpty() || exitNodes.isEmpty()) {
+            return false
+        }
+        for (exit in exitNodes) {
+            val exitIp = exit.trim().substringBefore('/')
+            if (exitIp.isEmpty()) continue
+            for (route in routes) {
+                val vip = parseIpv4InetToString(route.ipv4_addr)?.substringBefore('/')
+                if (vip == exitIp && route.next_hop_peer_id > 0) {
+                    return true
+                }
+            }
+        }
+        return false
+    }
+
     /** 状态数据类 */
     data class EasyTierStatus(
             val isRunning: Boolean,
@@ -249,4 +291,24 @@ class EasyTierManager(
             val currentIpv4: String?,
             val currentProxyCidrs: List<String>
     )
+}
+
+private fun parseRoutePolicy(networkConfig: String): Pair<Boolean, List<String>> {
+    return try {
+        val json = org.json.JSONObject(networkConfig)
+        val allow = json.optBoolean("allow_peer_default_without_exit", false)
+        val exitNodes = mutableListOf<String>()
+        val arr = json.optJSONArray("exit_nodes")
+        if (arr != null) {
+            for (i in 0 until arr.length()) {
+                val value = arr.optString(i)?.trim().orEmpty()
+                if (value.isNotEmpty()) {
+                    exitNodes.add(value)
+                }
+            }
+        }
+        Pair(allow, exitNodes)
+    } catch (_: Exception) {
+        Pair(false, emptyList())
+    }
 }

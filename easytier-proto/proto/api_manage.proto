@@ -106,6 +106,8 @@ message NetworkConfig {
   optional VpnPortalConfig vpn_portal_config = 69;
   repeated ManagedCredentialConfig managed_credentials = 71;
   optional bool prefer_peer_relay = 72;
+  // Opt-in: install peer-advertised 0.0.0.0/0 without a local exit (see Flags).
+  optional bool allow_peer_default_without_exit = 73;
 }
 
 message ManagedCredentialConfig {
@@ -168,6 +170,8 @@ message NetworkInstanceRunningInfo {
   bool running = 7;
   optional string error_msg = 8;
   peer_rpc.RouteForeignNetworkSummary foreign_network_summary = 9;
+  // Desktop L2 sync summary: desired vs installed proxy CIDRs and last error.
+  optional string proxy_cidr_route_sync = 10;
 }
 
 message NetworkInstanceRunningInfoMap {

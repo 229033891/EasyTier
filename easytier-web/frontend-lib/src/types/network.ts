@@ -54,6 +54,8 @@ export type NetworkConfig = Omit<
    * 后端用 Option<u32> 区分这两者（`socket_mark.is_some()`），所以这里必须用 null 而不是 0 表示「未设置」。
    */
   socket_mark: number | null
+  /** D+: opt-in peer `/0` without local exit_nodes. */
+  allow_peer_default_without_exit?: boolean | null
 }
 
 export type NormalizedAclV1 = AclV1 & {

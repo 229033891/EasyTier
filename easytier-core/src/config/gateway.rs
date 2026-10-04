@@ -51,6 +51,11 @@ impl From<PortForwardConfig> for PortForwardConfigPb {
 pub struct ProxyRuntimeConfig {
     pub enable_exit_node: bool,
     pub no_tun: bool,
+    /// Install peer-advertised `0.0.0.0/0` into the OS route table without a
+    /// reachable local `exit_nodes` entry. Default false (D+): peer `/0` is
+    /// L3-only unless this escape hatch is enabled.
+    #[serde(default)]
+    pub allow_peer_default_without_exit: bool,
     pub forward_by_system: bool,
     pub force_smoltcp: bool,
     pub icmp_failure_is_fatal: bool,
@@ -72,6 +77,7 @@ impl Default for ProxyRuntimeConfig {
         Self {
             enable_exit_node: false,
             no_tun: false,
+            allow_peer_default_without_exit: false,
             forward_by_system: false,
             force_smoltcp: false,
             icmp_failure_is_fatal: false,

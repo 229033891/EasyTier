@@ -1,11 +1,14 @@
 use std::{collections::BTreeSet, net::IpAddr, sync::Arc};
 
+use arc_swap::ArcSwap;
 use async_trait::async_trait;
 
 use crate::{
     config::runtime::CoreRuntimeConfigStore,
     gateway::magic_dns::{MagicDnsRouteSnapshot, MagicDnsRouteSource},
-    gateway::proxy::cidr_monitor::{ProxyCidrDiff, collect_proxy_cidr_diff},
+    gateway::proxy::cidr_monitor::{
+        ProxyCidrDiff, ProxyCidrRouteSyncStatus, collect_proxy_cidr_diff,
+    },
     gateway::proxy::underlay_exclude::collect_underlay_exclude_ips,
     host::packet::HostPacket,
     peers::peer_manager::PeerManagerCore,
@@ -27,6 +30,7 @@ pub struct CorePacketPlane {
     peer_manager: Arc<PeerManagerCore>,
     runtime_config: CoreRuntimeConfigStore,
     proxy_cidr_monitor_available: bool,
+    proxy_cidr_route_sync: ArcSwap<ProxyCidrRouteSyncStatus>,
 }
 
 impl CorePacketPlane {
@@ -39,6 +43,7 @@ impl CorePacketPlane {
             peer_manager,
             runtime_config,
             proxy_cidr_monitor_available,
+            proxy_cidr_route_sync: ArcSwap::from_pointee(ProxyCidrRouteSyncStatus::default()),
         }
     }
 
@@ -73,6 +78,26 @@ impl CorePacketPlane {
             collect_proxy_cidr_diff(self.peer_manager.as_ref(), &self.runtime_config, previous)
                 .await,
         )
+    }
+
+    pub fn proxy_cidr_route_sync_status(&self) -> ProxyCidrRouteSyncStatus {
+        self.proxy_cidr_route_sync.load_full().as_ref().clone()
+    }
+
+    pub fn report_proxy_cidr_route_sync(
+        &self,
+        desired: &BTreeSet<cidr::Ipv4Cidr>,
+        installed: &BTreeSet<cidr::Ipv4Cidr>,
+        local_exit_default: bool,
+        last_error: Option<String>,
+    ) {
+        let status = ProxyCidrRouteSyncStatus {
+            desired: desired.iter().map(ToString::to_string).collect(),
+            installed: installed.iter().map(ToString::to_string).collect(),
+            local_exit_default,
+            last_error,
+        };
+        self.proxy_cidr_route_sync.store(Arc::new(status));
     }
 
     /// Already-resolved underlay destinations that must not follow the TUN

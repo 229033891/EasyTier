@@ -88,6 +88,11 @@ message FlagsInConfig {
   // Prefer direct credential peers that already relay to a destination over
   // advertising another direct edge to the same destination.
   bool prefer_peer_relay = 44;
+
+  // When true, install a peer-advertised 0.0.0.0/0 into the OS route table even
+  // without a reachable local exit_nodes entry (high metric on desktop). Default
+  // false: peer /0 stays L3-only unless this node itself installs an exit default.
+  bool allow_peer_default_without_exit = 45;
 }
 
 message RpcDescriptor {

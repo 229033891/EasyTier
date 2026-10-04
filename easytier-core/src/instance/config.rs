@@ -315,6 +315,7 @@ impl CoreInstanceConfig {
             proxy: ProxyRuntimeConfig {
                 enable_exit_node: flags.enable_exit_node || host.force_exit_node,
                 no_tun: flags.no_tun,
+                allow_peer_default_without_exit: flags.allow_peer_default_without_exit,
                 forward_by_system: flags.proxy_forward_by_system,
                 force_smoltcp: host.smoltcp_available
                     && (flags.use_smoltcp || flags.no_tun || host.requires_smoltcp),

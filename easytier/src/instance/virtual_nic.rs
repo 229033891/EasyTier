@@ -1002,6 +1002,9 @@ impl NicCtx {
                 continue;
             }
             let cost = if cidr.network_length() == 0 && !local_exit_default {
+                // Escape hatch only: peer `/0` without exit uses high metric so a
+                // normal physical default still wins. With D+ default filtering,
+                // this branch is inactive unless allow_peer_default_without_exit.
                 Some(ifcfg.specific_route_metric())
             } else {
                 None
@@ -1058,16 +1061,16 @@ impl NicCtx {
 
     /// Install excludes before TUN `/0`; tear down TUN `/0` before clearing excludes.
     ///
-    /// Excludes are required whenever the post-sync route set will contain a TUN
-    /// default (`0.0.0.0/0`), not only when `local_exit_default` is set — a
-    /// peer-advertised `/0` can still capture traffic when no physical default
-    /// exists or its metric is unusually high.
+    /// D+: excludes are gated solely on whether the post-sync desired set will
+    /// contain a TUN default. Peer `/0` only enters that set with a reachable
+    /// local exit or `allow_peer_default_without_exit`.
     #[allow(clippy::too_many_arguments)]
     async fn sync_proxy_cidrs_with_underlay_excludes(
         ifcfg: &impl IfConfiguerTrait,
         ifname: &str,
         net_ns: &crate::common::netns::NetNS,
         packet_plane: &CorePacketPlane,
+        desired: &BTreeSet<cidr::Ipv4Cidr>,
         installed: &mut BTreeSet<cidr::Ipv4Cidr>,
         exit_ipv6_default_installed: &mut bool,
         ipv4_default_uses_exit_metric: &mut bool,
@@ -1089,7 +1092,8 @@ impl NicCtx {
             }
             next.iter().any(|cidr| cidr.network_length() == 0)
         };
-        let needs_excludes = local_exit_default || will_have_tun_default;
+        // Unified gate: any effective TUN `/0` (exit, escape hatch, or manual).
+        let needs_excludes = will_have_tun_default;
 
         if needs_excludes {
             let exclude_desired = packet_plane.underlay_exclude_ips().await;
@@ -1143,6 +1147,18 @@ impl NicCtx {
             )
             .await;
         }
+
+        let last_error = if desired == installed.as_ref() {
+            None
+        } else {
+            Some("proxy CIDR desired set not fully installed yet".to_string())
+        };
+        packet_plane.report_proxy_cidr_route_sync(
+            desired,
+            installed,
+            local_exit_default,
+            last_error,
+        );
     }
 
     async fn clear_underlay_exclude_routes(
@@ -1595,6 +1611,7 @@ impl NicCtx {
                 &ifname,
                 &net_ns,
                 &packet_plane,
+                &desired,
                 &mut installed,
                 &mut exit_ipv6_default_installed,
                 &mut ipv4_default_uses_exit_metric,
@@ -1666,6 +1683,7 @@ impl NicCtx {
                                 &ifname,
                                 &net_ns,
                                 &packet_plane,
+                                &desired,
                                 &mut installed,
                                 &mut exit_ipv6_default_installed,
                                 &mut ipv4_default_uses_exit_metric,
@@ -1682,8 +1700,7 @@ impl NicCtx {
                     _ = retry.tick() => {
                         // Skip expensive exclude collection when no TUN /0 is
                         // desired/installed and excludes are already empty.
-                        let needs_excludes = desired_local_exit_default
-                            || desired.iter().any(|c| c.network_length() == 0)
+                        let needs_excludes = desired.iter().any(|c| c.network_length() == 0)
                             || installed.iter().any(|c| c.network_length() == 0);
                         if !needs_excludes && exclude_installed.is_empty() {
                             let added =
@@ -1702,6 +1719,7 @@ impl NicCtx {
                                 &ifname,
                                 &net_ns,
                                 &packet_plane,
+                                &desired,
                                 &mut installed,
                                 &mut exit_ipv6_default_installed,
                                 &mut ipv4_default_uses_exit_metric,
@@ -1740,6 +1758,7 @@ impl NicCtx {
                             &ifname,
                             &net_ns,
                             &packet_plane,
+                            &desired,
                             &mut installed,
                             &mut exit_ipv6_default_installed,
                             &mut ipv4_default_uses_exit_metric,

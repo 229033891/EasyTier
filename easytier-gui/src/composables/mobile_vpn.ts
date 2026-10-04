@@ -290,12 +290,53 @@ async function registerVpnServiceListener() {
   )
 }
 
+function isDefaultIpv4Route(cidr: string): boolean {
+  const normalized = cidr.includes('/') ? cidr : `${cidr}/32`
+  const [ip, len] = normalized.split('/')
+  return ip === '0.0.0.0' && Number(len) === 0
+}
+
+function routeVip(route: Route): string | null {
+  const addr = route.ipv4_addr
+  if (!addr)
+    return null
+  if (typeof addr === 'string')
+    return addr.split('/')[0] ?? null
+  const address = (addr as { address?: { toString?: () => string } | string }).address
+  if (typeof address === 'string')
+    return address
+  if (address && typeof address.toString === 'function')
+    return address.toString()
+  return null
+}
+
+/** Mirror desktop: only treat exit as usable when its VIP appears in live routes with a next hop. */
+function hasReachableExit(routes: Route[] | undefined, exitNodes: string[]): boolean {
+  for (const exit of exitNodes) {
+    const exitIp = exit.trim().split('/')[0]
+    if (!exitIp)
+      continue
+    for (const route of routes ?? []) {
+      if (routeVip(route) === exitIp && Number(route.next_hop_peer_id) > 0)
+        return true
+    }
+  }
+  return false
+}
+
 function getRoutesForVpn(routes: Route[] | undefined, node_config: NetworkTypes.NetworkConfig): string[] {
   const ret = []
+  const exitNodes = node_config.exit_nodes ?? []
+  const localExitDefault = hasReachableExit(routes, exitNodes)
+  const allowPeerDefault = node_config.allow_peer_default_without_exit === true
+
   for (const r of routes ?? []) {
     for (let cidr of r.proxy_cidrs ?? []) {
       if (!cidr.includes('/')) {
         cidr += '/32'
+      }
+      if (!localExitDefault && !allowPeerDefault && isDefaultIpv4Route(cidr)) {
+        continue
       }
       ret.push(cidr)
     }
@@ -303,6 +344,10 @@ function getRoutesForVpn(routes: Route[] | undefined, node_config: NetworkTypes.
 
   for (const route of node_config.routes ?? []) {
     ret.push(route)
+  }
+
+  if (localExitDefault) {
+    ret.push('0.0.0.0/0')
   }
 
   if (node_config.enable_magic_dns) {

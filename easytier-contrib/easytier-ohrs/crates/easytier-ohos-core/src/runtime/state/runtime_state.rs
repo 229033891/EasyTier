@@ -109,6 +109,12 @@ pub struct RuntimeInstanceState {
     pub tun_attached: bool,
     pub magic_dns_enabled: bool,
     pub need_exit_node: bool,
+    /// Opt-in: keep peer-advertised `/0` without local exit_nodes.
+    #[serde(skip)]
+    pub allow_peer_default_without_exit: bool,
+    /// Configured exit VIPs; used with live routes to decide TUN `/0`.
+    #[serde(skip)]
+    pub exit_nodes: Vec<String>,
     pub error_message: Option<String>,
     pub my_node_info: Option<MyNodeInfo>,
     pub events: Vec<String>,
@@ -405,6 +411,14 @@ pub fn runtime_instance_from_running_info(
     let need_exit_node = config
         .as_ref()
         .is_some_and(|config| !config.exit_nodes.is_empty());
+    let allow_peer_default_without_exit = config
+        .as_ref()
+        .and_then(|config| config.allow_peer_default_without_exit)
+        .unwrap_or(false);
+    let exit_nodes = config
+        .as_ref()
+        .map(|config| config.exit_nodes.clone())
+        .unwrap_or_default();
     let manual_routes = config
         .as_ref()
         .map(|config| config.routes.clone())
@@ -419,6 +433,8 @@ pub fn runtime_instance_from_running_info(
         tun_attached,
         magic_dns_enabled,
         need_exit_node,
+        allow_peer_default_without_exit,
+        exit_nodes,
         error_message: info.error_msg,
         my_node_info: info.my_node_info.map(my_node_info_to_view),
         events: info.events,
@@ -461,6 +477,8 @@ pub fn runtime_instance_from_config_snapshot(
         tun_attached,
         magic_dns_enabled: config.enable_magic_dns.unwrap_or(false),
         need_exit_node: !config.exit_nodes.is_empty(),
+        allow_peer_default_without_exit: config.allow_peer_default_without_exit.unwrap_or(false),
+        exit_nodes: config.exit_nodes.clone(),
         error_message: None,
         my_node_info: Some(my_node_info),
         events: Vec::new(),

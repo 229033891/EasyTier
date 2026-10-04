@@ -188,6 +188,8 @@ pub(crate) fn collect_runtime_state() -> RuntimeAggregateState {
                 tun_attached,
                 magic_dns_enabled: false,
                 need_exit_node: false,
+                allow_peer_default_without_exit: false,
+                exit_nodes: Vec::new(),
                 error_message: None,
                 my_node_info: None,
                 events: Vec::new(),
