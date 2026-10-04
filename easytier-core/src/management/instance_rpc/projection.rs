@@ -4,8 +4,9 @@ use crate::instance::{CoreInstance, CoreInstanceHost};
 pub(super) fn format_last_update(
     last_update: &easytier_proto::common::RuntimeTimestamp,
 ) -> anyhow::Result<String> {
-    let last_update = last_update.normalized();
-    let date_time = chrono::DateTime::from_timestamp(last_update.seconds, last_update.nanos as u32)
+    // prost_wkt_types::Timestamp has no normalized(); clamp nanos ourselves.
+    let nanos = last_update.nanos.clamp(0, 999_999_999) as u32;
+    let date_time = chrono::DateTime::from_timestamp(last_update.seconds, nanos)
         .ok_or_else(|| anyhow::anyhow!("invalid protobuf timestamp"))?;
     Ok(format!("\"{date_time:?}\""))
 }

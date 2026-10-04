@@ -951,6 +951,7 @@ impl NicCtx {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn apply_route_changes(
         ifcfg: &impl IfConfiguerTrait,
         ifname: &str,
@@ -1061,6 +1062,7 @@ impl NicCtx {
     /// default (`0.0.0.0/0`), not only when `local_exit_default` is set — a
     /// peer-advertised `/0` can still capture traffic when no physical default
     /// exists or its metric is unusually high.
+    #[allow(clippy::too_many_arguments)]
     async fn sync_proxy_cidrs_with_underlay_excludes(
         ifcfg: &impl IfConfiguerTrait,
         ifname: &str,
@@ -1269,35 +1271,33 @@ impl NicCtx {
         if let Err(err) = ifcfg
             .remove_ipv6_route(ifname, Ipv6Addr::UNSPECIFIED, 0)
             .await
+            && !route_remove_already_satisfied(&err)
         {
-            if !route_remove_already_satisfied(&err) {
-                tracing::warn!(
-                    ifname,
-                    ?err,
-                    "remove IPv6 default route for exit node failed; will retry"
-                );
-                return;
-            }
+            tracing::warn!(
+                ifname,
+                ?err,
+                "remove IPv6 default route for exit node failed; will retry"
+            );
+            return;
         }
         // Remove succeeded or was already gone: update state and optionally restore
         // the public IPv6 default route that the exit default had overridden.
         *exit_ipv6_default_installed = false;
-        if restore_public_ipv6_default {
-            if let Err(err) = ifcfg
+        if restore_public_ipv6_default
+            && let Err(err) = ifcfg
                 .add_ipv6_route(ifname, Ipv6Addr::UNSPECIFIED, 0, Some(5))
                 .await
-            {
-                if !route_add_already_satisfied(&err) {
-                    tracing::warn!(
-                        ifname,
-                        ?err,
-                        "failed to restore public IPv6 default route after removing exit default"
-                    );
-                }
-            }
+            && !route_add_already_satisfied(&err)
+        {
+            tracing::warn!(
+                ifname,
+                ?err,
+                "failed to restore public IPv6 default route after removing exit default"
+            );
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn reconcile_underlay_exclude_routes(
         ifcfg: &impl IfConfiguerTrait,
         tun_ifname: &str,
@@ -1649,32 +1649,34 @@ impl NicCtx {
                             }
                         };
 
-                        match event {
-                            GlobalCtxEvent::ProxyCidrsUpdated(added, removed, local_exit_default) => {
-                                for cidr in &removed {
-                                    desired.remove(cidr);
-                                }
-                                desired.extend(added.iter().copied());
-                                desired_local_exit_default = local_exit_default;
-
-                                Self::sync_proxy_cidrs_with_underlay_excludes(
-                                    &ifcfg,
-                                    &ifname,
-                                    &net_ns,
-                                    &packet_plane,
-                                    &mut installed,
-                                    &mut exit_ipv6_default_installed,
-                                    &mut ipv4_default_uses_exit_metric,
-                                    &mut exclude_installed,
-                                    &mut ipv4_physical_default,
-                                    &mut ipv6_physical_default,
-                                    desired_local_exit_default,
-                                    added,
-                                    removed,
-                                )
-                                .await;
+                        if let GlobalCtxEvent::ProxyCidrsUpdated(
+                            added,
+                            removed,
+                            local_exit_default,
+                        ) = event
+                        {
+                            for cidr in &removed {
+                                desired.remove(cidr);
                             }
-                            _ => {}
+                            desired.extend(added.iter().copied());
+                            desired_local_exit_default = local_exit_default;
+
+                            Self::sync_proxy_cidrs_with_underlay_excludes(
+                                &ifcfg,
+                                &ifname,
+                                &net_ns,
+                                &packet_plane,
+                                &mut installed,
+                                &mut exit_ipv6_default_installed,
+                                &mut ipv4_default_uses_exit_metric,
+                                &mut exclude_installed,
+                                &mut ipv4_physical_default,
+                                &mut ipv6_physical_default,
+                                desired_local_exit_default,
+                                added,
+                                removed,
+                            )
+                            .await;
                         }
                     }
                     _ = retry.tick() => {
