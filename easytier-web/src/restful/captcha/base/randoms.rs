@@ -1,4 +1,4 @@
-use rand::random;
+use rand::random_range;
 
 /// 随机数工具类
 pub(crate) struct Randoms {
@@ -59,12 +59,12 @@ impl Randoms {
 
     /// 产生两个数之间的随机数
     pub fn num_between(&mut self, min: i32, max: i32) -> i32 {
-        min + (random::<usize>() % (max - min) as usize) as i32
+        random_range(min..max)
     }
 
     /// 产生0-num的随机数,不包括num
     pub fn num(&mut self, num: usize) -> usize {
-        random::<usize>() % num
+        random_range(0..num)
     }
 
     /// 返回ALPHA中的随机字符
