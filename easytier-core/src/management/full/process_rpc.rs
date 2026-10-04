@@ -11,9 +11,10 @@ use easytier_proto::{
         GetNetworkInstanceConfigRequest, GetNetworkInstanceConfigResponse,
         ListNetworkInstanceMetaRequest, ListNetworkInstanceMetaResponse,
         ListNetworkInstanceRequest, ListNetworkInstanceResponse, NetworkInstanceRunningInfoMap,
-        NetworkMeta, RetainNetworkInstanceRequest, RetainNetworkInstanceResponse,
-        RunNetworkInstanceRequest, RunNetworkInstanceResponse, ValidateConfigRequest,
-        ValidateConfigResponse, WebClientService,
+        NetworkMeta, ReportManagedNetworkConfigRequest, ReportManagedNetworkConfigResponse,
+        RetainNetworkInstanceRequest, RetainNetworkInstanceResponse, RunNetworkInstanceRequest,
+        RunNetworkInstanceResponse, ValidateConfigRequest, ValidateConfigResponse,
+        WebClientService,
     },
     rpc_types::{self, controller::BaseController},
 };
@@ -28,8 +29,9 @@ use crate::{
 };
 
 use super::{
-    ConfigFileControl, ConfigFilePermission, InstanceManager, config_server_status,
-    config_source_from_rpc, config_source_to_rpc, network_instance_running_info,
+    ConfigFileControl, ConfigFilePermission, InstanceManager, config_server_client,
+    config_server_status, config_source_from_rpc, config_source_to_rpc,
+    network_instance_running_info,
 };
 
 #[async_trait::async_trait]
@@ -795,11 +797,34 @@ where
         _: BaseController,
         _: GetConfigServerStatusRequest,
     ) -> rpc_types::error::Result<GetConfigServerStatusResponse> {
+        // Prefer the actionable registry when present so status and
+        // ReportManagedNetworkConfig share one source of truth.
+        let report = config_server_client::config_server_report_client();
         let status = config_server_status::snapshot();
         Ok(GetConfigServerStatusResponse {
-            enabled: status.enabled,
-            connected: status.connected,
+            enabled: report.is_some() || status.enabled,
+            connected: report
+                .as_ref()
+                .map(|client| client.is_connected())
+                .unwrap_or(status.connected),
             last_error: status.last_error.unwrap_or_default(),
         })
+    }
+
+    async fn report_managed_network_config(
+        &self,
+        _: BaseController,
+        request: ReportManagedNetworkConfigRequest,
+    ) -> rpc_types::error::Result<ReportManagedNetworkConfigResponse> {
+        let Some(config) = request.config else {
+            return Ok(config_server_client::ReportNetworkConfigError::Invalid(
+                "missing NetworkConfig".into(),
+            )
+            .into_managed_response());
+        };
+        match config_server_client::report_via_process_client(config).await {
+            Ok(()) => Ok(config_server_client::managed_report_ok()),
+            Err(error) => Ok(error.into_managed_response()),
+        }
     }
 }

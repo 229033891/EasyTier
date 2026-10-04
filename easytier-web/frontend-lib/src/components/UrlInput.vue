@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { AutoComplete, Button, Dialog, InputNumber, InputText } from 'primevue'
+import { Button, Dialog, InputNumber, InputText, Select } from 'primevue'
 import InputGroup from 'primevue/inputgroup'
 import InputGroupAddon from 'primevue/inputgroupaddon'
 import { computed, ref, watch } from 'vue'
@@ -150,19 +150,21 @@ watch(internalValue, () => {
 }, { deep: true })
 
 const protoOptions = computed(() => Object.keys(props.protos))
-const filteredProtos = ref<string[]>([])
 
-const searchProtos = (event: { query: string }) => {
-    if (!event.query.trim().length) {
-        filteredProtos.value = [...protoOptions.value]
-    } else {
-        filteredProtos.value = protoOptions.value.filter((proto) => {
-            return proto.toLowerCase().startsWith(event.query.toLowerCase())
-        })
+/** Keep unknown/legacy protocols selectable so imported configs still round-trip. */
+const protoSelectOptions = computed(() => {
+    const options = [...protoOptions.value]
+    const current = internalValue.value.proto
+    if (current && !options.includes(current)) {
+        options.unshift(current)
     }
-}
+    return options
+})
 
-const onProtoChange = (newProto: string) => {
+const onProtoChange = (newProto: string | undefined | null) => {
+    if (!newProto) {
+        return
+    }
     const oldProto = internalValue.value.proto
     const oldDefault = props.protos[oldProto]
     const newDefault = props.protos[newProto]
@@ -177,8 +179,8 @@ const onProtoChange = (newProto: string) => {
 <template>
     <div class="url-input-container w-full min-w-0 overflow-hidden">
         <InputGroup class="url-input-full w-full min-w-0">
-            <AutoComplete :model-value="internalValue.proto" :suggestions="filteredProtos" dropdown
-                class="max-w-32 proto-autocomplete-in-group" @complete="searchProtos"
+            <Select :model-value="internalValue.proto" :options="protoSelectOptions"
+                class="et-proto-select proto-select-in-group"
                 @update:model-value="onProtoChange" />
             <InputText v-model="internalValue.host" :placeholder="placeholder || '0.0.0.0'" class="grow min-w-0"
                 @focus="onHostFocus" @blur="onHostBlur" />
@@ -212,8 +214,8 @@ const onProtoChange = (newProto: string) => {
             <div class="flex flex-col gap-4">
                 <div class="flex flex-col gap-2">
                     <label>{{ t('tunnel_proto') }}</label>
-                    <AutoComplete :model-value="internalValue.proto" :suggestions="filteredProtos" dropdown fluid
-                        @complete="searchProtos" @update:model-value="onProtoChange" />
+                    <Select :model-value="internalValue.proto" :options="protoSelectOptions" fluid class="et-select"
+                        @update:model-value="onProtoChange" />
                 </div>
                 <div class="flex flex-col gap-2">
                     <label>{{ t('web.common.address') || 'Address' }}</label>
@@ -261,14 +263,14 @@ const onProtoChange = (newProto: string) => {
     }
 }
 
-.proto-autocomplete-in-group,
-.proto-autocomplete-in-group :deep(.p-autocomplete-input),
-.proto-autocomplete-in-group :deep(.p-autocomplete-dropdown) {
+.proto-select-in-group,
+.proto-select-in-group :deep(.p-select-label),
+.proto-select-in-group :deep(.p-select-dropdown) {
     border-top-right-radius: 0 !important;
     border-bottom-right-radius: 0 !important;
 }
 
-.proto-autocomplete-in-group :deep(.p-autocomplete-dropdown) {
+.proto-select-in-group {
     border-right: 0 !important;
 }
 </style>

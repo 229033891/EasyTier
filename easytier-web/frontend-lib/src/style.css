@@ -260,7 +260,9 @@
 .p-inputgroup > :first-child,
 .p-inputgroup > :first-child .p-inputtext,
 .p-inputgroup > :first-child .p-password-input,
-.p-inputgroup > :first-child .p-inputnumber-input {
+.p-inputgroup > :first-child .p-inputnumber-input,
+.p-inputgroup > :first-child.p-select,
+.p-inputgroup > :first-child .p-select-label {
   border-top-left-radius: calc(var(--et-radius, 0.75rem) - 0.125rem) !important;
   border-bottom-left-radius: calc(var(--et-radius, 0.75rem) - 0.125rem) !important;
 }
@@ -268,9 +270,51 @@
 .p-inputgroup > :last-child,
 .p-inputgroup > :last-child .p-inputtext,
 .p-inputgroup > :last-child .p-password-input,
-.p-inputgroup > :last-child .p-inputnumber-input {
+.p-inputgroup > :last-child .p-inputnumber-input,
+.p-inputgroup > :last-child.p-select {
   border-top-right-radius: calc(var(--et-radius, 0.75rem) - 0.125rem) !important;
   border-bottom-right-radius: calc(var(--et-radius, 0.75rem) - 0.125rem) !important;
+}
+
+/* Compact protocol Select used inside URL / port-forward InputGroups */
+.et-proto-select.p-select,
+.p-inputgroup > .et-proto-select.p-select {
+  flex: 0 0 auto !important;
+  width: 6.25rem !important;
+  min-width: 6.25rem !important;
+  max-width: 7.5rem !important;
+}
+
+.et-proto-select .p-select-label {
+  padding-inline: 0.7rem !important;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.01em;
+}
+
+.et-proto-select .p-select-dropdown {
+  width: 2rem !important;
+}
+
+/* Full-width Selects (encryption / compression / dialogs) */
+.et-select.p-select {
+  min-height: 2.35rem;
+}
+
+.et-select .p-select-label,
+.p-select .p-select-label {
+  padding-block: 0.45rem !important;
+}
+
+.et-select .p-select-dropdown,
+.p-select .p-select-dropdown {
+  width: 2.35rem !important;
+  color: var(--text-color-secondary, #64748b) !important;
+}
+
+.p-select:not(.p-disabled):hover .p-select-dropdown,
+.et-select:not(.p-disabled):hover .p-select-dropdown {
+  color: var(--primary-color, #0ea5e9) !important;
 }
 
 /* Checkbox：加大可点区域，勾选态走品牌色 */

@@ -2,6 +2,8 @@
 
 本目录按用途分层。**改代码时以 Current 为准；拍板未实现能力时改 Roadmap。**
 
+其他 agent / 复查：**先读** [`current/system-overview.md`](./current/system-overview.md)，再按任务下钻专题。
+
 | 分区 | 含义 | 何时更新 |
 |------|------|----------|
 | [`current/`](./current/) | 代码今天做什么（含已知缺口） | 行为变更的同一 PR |
@@ -19,11 +21,13 @@
 
 | 文档 | 说明 |
 |------|------|
+| [system-overview.md](./current/system-overview.md) | **Agent 入口**：系统如何串起来、阅读顺序与代码锚点 |
 | [architecture.md](./current/architecture.md) | 可移植 core / host / proto 边界（架构 SoT） |
 | [product-map.md](./current/product-map.md) | 产品与 crate / 二进制命名地图 |
 | [traffic-steering.md](./current/traffic-steering.md) | 出口节点、子网代理、系统路由：**真实行为与缺口** |
 | [data-plane.md](./current/data-plane.md) | DataPlaneRuntime / FFI / Go / WASI（现状摘要；长文在 Archive） |
 | [web-managed-config.md](./current/web-managed-config.md) | Web managed config Full/PATCH 接收与 Session 收敛 |
+| [desktop-gui-and-config-server.md](./current/desktop-gui-and-config-server.md) | 桌面 GUI / `ET-Gui` 进程模型与 config-server 回写路径 |
 | [socket-protection.md](./current/socket-protection.md) | Host VPN-bypass / `need_protect` 契约 |
 | [peer-connections.md](./current/peer-connections.md) | 节点间多 PeerConn 与单 `default_conn` 发送路径 |
 | [tunnels-and-transport.md](./current/tunnels-and-transport.md) | 隧道 scheme、打洞/中继与伪装差距 |
@@ -58,6 +62,7 @@
 | 文档 | 说明 |
 |------|------|
 | [data-plane-runtime-plan.md](./archive/data-plane-runtime-plan.md) | DataPlane 原实现计划全文（已由 Current 摘要替代日常阅读） |
+| [service-mode-web-config-sync-and-select-ui-2026-10-04.md](./archive/service-mode-web-config-sync-and-select-ui-2026-10-04.md) | 服务模式 web-owned 同步修复 + 配置页协议下拉复查 |
 
 ---
 

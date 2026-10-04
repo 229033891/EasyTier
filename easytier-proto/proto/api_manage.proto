@@ -241,6 +241,22 @@ message GetConfigServerStatusResponse {
   string last_error = 3;
 }
 
+// Push a web-owned NetworkConfig from a GUI/RPC peer to the process that owns
+// the config-server client (normal mode: self; service mode: ET-Gui service).
+// error_code values (stable wire contract):
+//   not_enabled | not_connected | not_authorized | revision_conflict |
+//   ownership_conflict | invalid
+message ReportManagedNetworkConfigRequest { NetworkConfig config = 1; }
+
+message ReportManagedNetworkConfigResponse {
+  bool ok = 1;
+  // Empty on success. Otherwise one of the wire codes listed above.
+  string error_code = 2;
+  string current_config_revision = 3;
+  string applied_config_revision = 4;
+  string message = 5;
+}
+
 service WebClientService {
   rpc ValidateConfig(ValidateConfigRequest) returns (ValidateConfigResponse) {}
   rpc RunNetworkInstance(RunNetworkInstanceRequest)
@@ -259,4 +275,6 @@ service WebClientService {
       returns (ListNetworkInstanceMetaResponse) {}
   rpc GetConfigServerStatus(GetConfigServerStatusRequest)
       returns (GetConfigServerStatusResponse) {}
+  rpc ReportManagedNetworkConfig(ReportManagedNetworkConfigRequest)
+      returns (ReportManagedNetworkConfigResponse) {}
 }

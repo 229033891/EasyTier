@@ -3,12 +3,13 @@
 ## Status
 
 - Status: **Current**
-- 最近审阅：2026-10-03
+- 最近审阅：2026-10-04
 - 状态说明：帮助理解 monorepo 内各产品/组件职责与关系
 - 范围：仓库内主要 crate、前端包与贡献组件
 - 索引：[`../README.md`](../README.md)
 - 配套文档：
   - [`architecture.md`](./architecture.md)（core 架构细节）
+  - [`desktop-gui-and-config-server.md`](./desktop-gui-and-config-server.md)（桌面 GUI / 服务进程 / config-server 回写）
   - [`../roadmap/web-evolution.md`](../roadmap/web-evolution.md)（Web 演进路线）
   - [`../ops/web-upgrade.md`](../ops/web-upgrade.md)（Web 升级保库）
 
@@ -22,6 +23,8 @@
 |----------|--------|----------|
 | **节点 / `easytier-core`（二进制）** | 真正组网的进程 | 含糊的 “easytier code” 等（易与 crate 名混淆时写全） |
 | **`easytier-gui`** | 本机图形客户端 | 仅说 “客户端” 时尽量写全名 |
+| **`ET` / `ET Gui Service`** | Windows 任务管理器常见显示名：前台窗口 / 后台服务 | 勿与节点二进制 `easytier-core` 混淆 |
+| **`ET-Gui`** | 桌面后台服务的 sc / 内部服务名（`--daemon`） | 旧名 `easytier-gui` 服务 |
 | **`easytier-web`** | 配置服务器 + REST API + 浏览器 UI | **controller**、控制面产品名、其它自造英文名 |
 
 说明：
@@ -29,6 +32,7 @@
 1. **`easytier-web` 是正式产品名**（含配置服务器与 Web UI；embed 产物为 `easytier-web-embed`）。
 2. 口语里说「网页控制台 / 配置后台」可以，书面与代码、Issue、PR、发布说明一律写 **`easytier-web`**。
 3. 下文若出现「控制台」，仅指 `easytier-web` 提供的 UI/管理体验，**不是**另一个叫 controller 的产品。
+4. 桌面 **Normal / Service** 双进程与 config-server 回写路径见 [`desktop-gui-and-config-server.md`](./desktop-gui-and-config-server.md)。
 
 ### 1.1 用户视角三分法（推荐心智模型）
 
@@ -193,6 +197,8 @@ easytier-proto  ←  easytier-core  ←  easytier
 
 安装 `easytier-gui` → 本机启停节点；UI 复用 `frontend-lib`；需要系统 VPN 能力时用 `tauri-plugin-vpnservice`。
 
+可选 **Service 模式**：前台 `ET` + 后台 `ET-Gui`（同安装目录可执行文件，`--daemon`）。网络实例与 config-server `WebClient` 在服务进程；GUI 经 RPC 查询/同步。详见 [`desktop-gui-and-config-server.md`](./desktop-gui-and-config-server.md)。
+
 ### 场景 D：App / 其它语言集成
 
 不直接依赖 CLI，而通过 FFI / JNI / JS / Go 等把核心能力嵌入自有程序。
@@ -217,9 +223,10 @@ easytier-proto  ←  easytier-core  ←  easytier
 - **easytier crate** = 把内核接到真实 OS，并打出节点/CLI 二进制
 - **easytier-core 二进制** = 用户机器上跑的节点进程
 - **`easytier-web`** = 发配置 + REST API + 网页 UI（可单独升级；**不要叫 controller**）
-- **`easytier-gui`** = 本机图形壳
+- **`easytier-gui`** = 本机图形壳；服务模式后台名 **`ET-Gui`**
 - **JS / Go / FFI / 移动** = 把同一套节点能力嵌到别的环境
 - **proto** = 全家共用的协议与 RPC 类型
+- Agent 先读：[`system-overview.md`](./system-overview.md)
 
 ---
 

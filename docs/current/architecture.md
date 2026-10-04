@@ -3,8 +3,10 @@
 ## Status
 
 - Status: **Current**
-- Last reviewed: 2026-10-03
+- Last reviewed: 2026-10-04
 - Index: [`../README.md`](../README.md)
+- System map (agent entry): [`system-overview.md`](./system-overview.md)
+- Desktop process / config-server sync: [`desktop-gui-and-config-server.md`](./desktop-gui-and-config-server.md)
 
 ## Scope
 
@@ -389,6 +391,15 @@ The composition root creates and shares one runtime. Management listener ports
 are protected before bind and held by leases after the concrete port is known.
 Native and target adapters supply bound resources but do not implement a
 second protected-port registry.
+
+Separately, when the `management` feature is enabled, the process may install
+a single `ConfigServerReportClient` in
+`management/full/config_server_client.rs`. That registry is the process-local
+authority for `GetConfigServerStatus` and `ReportManagedNetworkConfig`: the
+GUI process and the optional `ET-Gui` service process each have their own
+registry; service-mode desktop sync must RPC into the service process rather
+than read the GUI process’s empty client. See
+[`desktop-gui-and-config-server.md`](./desktop-gui-and-config-server.md).
 
 Process-global capability objects may contain stateless or shared platform
 mechanisms. They must not contain instance-specific peer, route,

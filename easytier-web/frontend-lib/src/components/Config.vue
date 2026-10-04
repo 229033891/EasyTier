@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { v4 as uuidv4 } from 'uuid'
-import { AutoComplete, Button, Checkbox, Dialog, InputNumber, InputText, MultiSelect, Panel, Password, Select, SelectButton, ToggleButton, useConfirm, useToast } from 'primevue'
+import { AutoComplete, Button, Checkbox, Dialog, InputNumber, InputText, MultiSelect, Panel, Password, Select, ToggleButton, useConfirm, useToast } from 'primevue'
 import { TOAST_LIFE } from '../modules/toast'
 import InputGroup from 'primevue/inputgroup'
 import InputGroupAddon from 'primevue/inputgroupaddon'
@@ -253,7 +253,7 @@ const dataCompressAlgoOptions = [
   { value: CompressionAlgoPb.Zstd, label: 'zstd' },
 ]
 
-const portForwardProtocolOptions = ref(["tcp", "udp"]);
+const portForwardProtocolOptions = ['tcp', 'udp'] as const
 
 const editingPortForward = ref(false);
 const editingPortForwardIndex = ref(-1);
@@ -719,6 +719,7 @@ function removeVpnPortalClient(index: number) {
                   <div class="config-inline-control">
                     <Select id="encryption_algorithm" v-model="curNetwork.encryption_algorithm"
                       :options="encryptionAlgoOptions" option-label="label" option-value="value" fluid
+                      class="et-select"
                       :disabled="!!curNetwork.disable_encryption"
                       :placeholder="t('encryption_algorithm_placeholder')" />
                   </div>
@@ -732,7 +733,8 @@ function removeVpnPortalClient(index: number) {
                   </div>
                   <div class="config-inline-control">
                     <Select id="data_compress_algo" v-model="curNetwork.data_compress_algo"
-                      :options="dataCompressAlgoOptions" option-label="label" option-value="value" fluid />
+                      :options="dataCompressAlgoOptions" option-label="label" option-value="value" fluid
+                      class="et-select" />
                   </div>
                 </div>
 
@@ -763,9 +765,10 @@ function removeVpnPortalClient(index: number) {
                   <div v-for="(row, index) in curNetwork.port_forwards" :key="index" class="form-row">
                     <!-- Wide screen view -->
                     <div v-if="!isCompact" class="flex gap-2 items-center">
-                      <SelectButton v-model="row.proto" :options="portForwardProtocolOptions" :allow-empty="false" />
-                      <div style="flex-grow: 4;">
+                      <div style="flex-grow: 5;">
                         <InputGroup>
+                          <Select :input-id="`port_forward_proto_${index}`" v-model="row.proto"
+                            :options="[...portForwardProtocolOptions]" class="et-proto-select" />
                           <InputText v-model="row.bind_ip" :placeholder="t('port_forwards_bind_addr')" />
                           <InputGroupAddon>
                             <span style="font-weight: bold">:</span>
@@ -814,9 +817,9 @@ function removeVpnPortalClient(index: number) {
                     class="et-dialog"
                     :style="{ width: '90vw', maxWidth: '600px' }">
                     <div v-if="editingPortForwardData" class="flex flex-col gap-4">
-                      <SelectButton v-model="editingPortForwardData.proto" :options="portForwardProtocolOptions"
-                        :allow-empty="false" />
                       <InputGroup>
+                        <Select id="edit_port_forward_proto" v-model="editingPortForwardData.proto"
+                          :options="[...portForwardProtocolOptions]" class="et-proto-select" />
                         <InputText v-model="editingPortForwardData.bind_ip"
                           :placeholder="t('port_forwards_bind_addr')" />
                         <InputGroupAddon>

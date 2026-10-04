@@ -28,7 +28,8 @@ use crate::{
 #[cfg(not(feature = "management"))]
 use super::register_web_client_rpc;
 use super::{
-    ConfigFileStorage, DaemonGuard, InstanceManager, InstanceMutationHooks, config_server_status,
+    ConfigFileStorage, DaemonGuard, InstanceManager, InstanceMutationHooks, config_server_client,
+    config_server_status,
 };
 #[cfg(feature = "management")]
 use super::{LoggerControl, register_management_rpc};
@@ -340,31 +341,21 @@ impl WebClientController {
 }
 
 /// Error from reporting a client-edited web-owned config to the console.
-#[derive(Debug, thiserror::Error)]
-pub enum ReportNetworkConfigError {
-    #[error("config server is not connected")]
-    NotConnected,
-    #[error("config server rejected the session credentials")]
-    NotAuthorized,
-    #[error("managed config revision conflict (current={current:?})")]
-    RevisionConflict { current: Option<String> },
-    #[error("managed config ownership conflict")]
-    OwnershipConflict,
-    #[error("invalid report request: {0}")]
-    Invalid(String),
-    #[error(transparent)]
-    Rpc(#[from] easytier_proto::rpc_types::error::Error),
-}
+pub use config_server_client::ReportNetworkConfigError;
 
 /// Portable config-server client. Hosts only supply identity and adapters.
 pub struct WebClient<F> {
     controller: Arc<WebClientController>,
+    report_client: Arc<dyn config_server_client::ConfigServerReportClient>,
     _tasks: AbortOnDropHandle<()>,
     _manager_guard: Option<DaemonGuard>,
     connected: Arc<AtomicBool>,
     _factory: std::marker::PhantomData<F>,
-    // Declared last so Drop clears status after the reconnect task aborts.
+    // Struct fields drop in declaration order: clear observational status
+    // first, then the report registry, so teardown never advertises
+    // enabled-without-report.
     _clear_status_on_drop: ClearConfigServerStatusOnDrop,
+    _clear_report_client_on_drop: ClearReportClientOnDrop,
 }
 
 impl<F, H> WebClient<F>
@@ -421,6 +412,15 @@ impl<F> WebClient<F> {
             pending_report: StdMutex::new(None),
         });
         let connected = Arc::new(AtomicBool::new(false));
+        // Install the report client before advertising enabled status so
+        // GetConfigServerStatus / ReportManagedNetworkConfig never observe
+        // "enabled but not reportable".
+        let report_client: Arc<dyn config_server_client::ConfigServerReportClient> =
+            Arc::new(WebClientReportFacade {
+                controller: controller.clone(),
+                connected: connected.clone(),
+            });
+        config_server_client::install_config_server_report_client(Some(report_client.clone()));
         config_server_status::mark_enabled();
         config_server_status::set_endpoint_url(&connector.remote_url());
         // Resolve the management endpoint early so underlay excludes can pin it
@@ -441,11 +441,13 @@ impl<F> WebClient<F> {
 
         Self {
             controller,
+            report_client: report_client.clone(),
             _tasks: tasks,
             _manager_guard: manager_guard,
             connected,
             _factory: std::marker::PhantomData,
             _clear_status_on_drop: ClearConfigServerStatusOnDrop,
+            _clear_report_client_on_drop: ClearReportClientOnDrop { report_client },
         }
     }
 
@@ -459,6 +461,25 @@ impl<F> WebClient<F> {
 
     /// Push a client-edited web-owned NetworkConfig to the console with CAS.
     pub async fn report_network_config(
+        &self,
+        config: NetworkConfig,
+    ) -> Result<(), ReportNetworkConfigError> {
+        self.report_client.report_network_config(config).await
+    }
+}
+
+struct WebClientReportFacade {
+    controller: Arc<WebClientController>,
+    connected: Arc<AtomicBool>,
+}
+
+#[async_trait]
+impl config_server_client::ConfigServerReportClient for WebClientReportFacade {
+    fn is_connected(&self) -> bool {
+        self.connected.load(Ordering::Acquire)
+    }
+
+    async fn report_network_config(
         &self,
         config: NetworkConfig,
     ) -> Result<(), ReportNetworkConfigError> {
@@ -536,6 +557,16 @@ struct ClearConfigServerStatusOnDrop;
 impl Drop for ClearConfigServerStatusOnDrop {
     fn drop(&mut self) {
         config_server_status::clear();
+    }
+}
+
+struct ClearReportClientOnDrop {
+    report_client: Arc<dyn config_server_client::ConfigServerReportClient>,
+}
+
+impl Drop for ClearReportClientOnDrop {
+    fn drop(&mut self) {
+        config_server_client::clear_config_server_report_client(&self.report_client);
     }
 }
 

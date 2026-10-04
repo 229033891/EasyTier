@@ -37,9 +37,10 @@ pub use full::{
     ConfigFileStorage, ConfigPatchPersistence, ConfigServerEndpoint, ConfigServerStatusSnapshot,
     InstanceMutationHooks, InstanceMutationResult, ProcessManagement, ProcessManagementRpc,
     ReportNetworkConfigError, UnsupportedConfigFileStorage, WebClient, WebClientConfig,
-    apply_config_patch, clear_config_server_status, config_server_status,
-    config_server_underlay_ips, config_source_from_rpc, config_source_to_rpc,
-    network_instance_running_info, set_host_dns_lookup,
+    apply_config_patch, clear_config_server_status, config_server_report_client,
+    config_server_status, config_server_underlay_ips, config_source_from_rpc, config_source_to_rpc,
+    gui_sync_message_for_error_code, network_instance_running_info, report_via_process_client,
+    set_host_dns_lookup,
 };
 #[cfg(feature = "management")]
 pub use full::{

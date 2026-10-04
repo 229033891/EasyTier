@@ -293,6 +293,7 @@ const SelectStub = defineComponent({
   props: {
     modelValue: [String, Number],
     id: String,
+    inputId: String,
     disabled: Boolean,
     options: Array,
   },
@@ -300,12 +301,19 @@ const SelectStub = defineComponent({
   setup(props, { attrs, emit }) {
     return () => h('select', {
       ...attrs,
-      id: props.id,
+      id: props.id ?? props.inputId,
       disabled: props.disabled,
       value: props.modelValue ?? '',
       'data-stub': 'select',
-      onChange: (event: Event) => emit('update:modelValue', (event.target as HTMLSelectElement).value),
+      onChange: (event: Event) => {
+        const raw = (event.target as HTMLSelectElement).value
+        const numeric = Number(raw)
+        emit('update:modelValue', Number.isFinite(numeric) && String(numeric) === raw ? numeric : raw)
+      },
     }, (props.options ?? []).map((option) => {
+      if (typeof option === 'string' || typeof option === 'number') {
+        return h('option', { value: String(option) }, String(option))
+      }
       const { label, value } = (option ?? {}) as { label?: unknown, value?: unknown }
       const optionValue = value ?? label ?? ''
       return h('option', { value: String(optionValue) }, String(label ?? optionValue))
@@ -480,7 +488,7 @@ describe('Config.vue network config projection', () => {
     expect(input(wrapper, 'input[data-add-label="add_listener_url"]').value).toBe('tcp://0.0.0.0:12010')
     expect(input(wrapper, 'input[data-add-label="add_mapped_listener"]').value).toBe('tcp://127.0.0.1:22000')
 
-    expect(wrapper.find<HTMLSelectElement>('select[data-stub="select-button"]').element.value).toBe('udp')
+    expect(wrapper.find<HTMLSelectElement>('#port_forward_proto_0').element.value).toBe('udp')
     expect(input(wrapper, 'input[placeholder="port_forwards_bind_addr"]').value).toBe('0.0.0.0')
     expect(input(wrapper, 'input[placeholder="port_forwards_dst_addr"]').value).toBe('10.0.0.2')
     expect(wrapper.findComponent(AclManagerStub).props('modelValue')).toStrictEqual(curNetwork.acl)
@@ -513,7 +521,7 @@ describe('Config.vue network config projection', () => {
     await setInput(wrapper, '#socks5_port', '1089')
     await setInput(wrapper, '#exit_nodes', 'exit-edited')
     await setInput(wrapper, 'input[data-add-label="add_mapped_listener"]', 'tcp://127.0.0.1:23000')
-    await wrapper.find('select[data-stub="select-button"]').setValue('tcp')
+    await wrapper.find('#port_forward_proto_0').setValue('tcp')
     await setInput(wrapper, 'input[placeholder="port_forwards_bind_addr"]', '127.0.0.1')
     await setInput(wrapper, 'input[placeholder="port_forwards_dst_addr"]', '10.9.0.2')
 

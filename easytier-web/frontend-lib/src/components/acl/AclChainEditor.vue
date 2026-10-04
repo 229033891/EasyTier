@@ -132,7 +132,7 @@ function onRowReorder(event: any) {
         <div class="flex items-center gap-2 min-w-0">
           <label class="acl-label">{{ t('acl.chain.type') }}</label>
           <Select v-model="chain.chain_type" :options="chainTypeOptions" :option-label="opt => opt.label()"
-            option-value="value" size="small" class="acl-select w-36" />
+            option-value="value" size="small" class="acl-select et-select w-36" />
         </div>
         <div class="flex items-center gap-2 md:ml-auto">
           <label class="acl-label">{{ t('acl.default_action') }}</label>

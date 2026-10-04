@@ -35,7 +35,8 @@ use easytier_proto::{
         DeleteNetworkInstanceResponse, GetConfigServerStatusRequest, GetConfigServerStatusResponse,
         GetNetworkInstanceConfigRequest, GetNetworkInstanceConfigResponse,
         ListNetworkInstanceMetaRequest, ListNetworkInstanceMetaResponse,
-        ListNetworkInstanceRequest, ListNetworkInstanceResponse, RetainNetworkInstanceRequest,
+        ListNetworkInstanceRequest, ListNetworkInstanceResponse, ReportManagedNetworkConfigRequest,
+        ReportManagedNetworkConfigResponse, RetainNetworkInstanceRequest,
         RetainNetworkInstanceResponse, RunNetworkInstanceRequest, RunNetworkInstanceResponse,
         ValidateConfigRequest, ValidateConfigResponse, WebClientService,
         WebClientServiceClientFactory, WebClientServiceServer,
@@ -499,6 +500,20 @@ impl WebClientService for NearbyWebClientService {
             enabled: false,
             connected: false,
             last_error: String::new(),
+        })
+    }
+
+    async fn report_managed_network_config(
+        &self,
+        _controller: BaseController,
+        _request: ReportManagedNetworkConfigRequest,
+    ) -> Result<ReportManagedNetworkConfigResponse, RpcError> {
+        Ok(ReportManagedNetworkConfigResponse {
+            ok: false,
+            error_code: "not_enabled".into(),
+            current_config_revision: String::new(),
+            applied_config_revision: String::new(),
+            message: "nearby management does not own a config-server client".into(),
         })
     }
 }
@@ -1006,6 +1021,7 @@ fn valid_management_json_call(service_name: &str, method_name: &str, domain_name
                 | "RunNetworkInstance"
                 | "DeleteNetworkInstance"
                 | "GetConfigServerStatus"
+                | "ReportManagedNetworkConfig"
         )
 }
 

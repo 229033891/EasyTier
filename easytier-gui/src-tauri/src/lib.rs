@@ -15,8 +15,8 @@ use easytier::proto::api::instance::{
     VpnPortalRpcClientFactory, instance_identifier,
 };
 use easytier::proto::api::manage::{
-    CollectNetworkInfoResponse, GetConfigServerStatusRequest, ValidateConfigResponse,
-    VpnPortalClientConfig, WebClientService, WebClientServiceClientFactory,
+    CollectNetworkInfoResponse, GetConfigServerStatusRequest, ReportManagedNetworkConfigRequest,
+    ValidateConfigResponse, VpnPortalClientConfig, WebClientService, WebClientServiceClientFactory,
 };
 use easytier::proto::rpc_types::controller::BaseController;
 use easytier::web_client::{self, WebClient};
@@ -345,43 +345,44 @@ async fn save_network_config(app: AppHandle, cfg: NetworkConfig) -> Result<(), S
         return Ok(());
     }
 
-    let web_client_guard = WEB_CLIENT.read().await;
-    let Some(web_client) = web_client_guard.as_ref() else {
-        return Err(
-            "web-owned config saved locally but config-server client is not running; reconnect to sync"
-                .to_string(),
-        );
-    };
-    if !web_client.is_connected() {
-        return Err(
-            "web-owned config saved locally but config-server is disconnected; reconnect to sync"
-                .to_string(),
-        );
+    sync_web_owned_network_config(app, cfg).await
+}
+
+/// Sync a web-owned config to the console via whichever process owns the
+/// config-server client:
+/// - same process (normal mode): process-wide report registry installed by `WebClient`
+/// - service / remote mode: `WebClientService.ReportManagedNetworkConfig` RPC into
+///   the owner process (same registry on that side)
+async fn sync_web_owned_network_config(app: AppHandle, cfg: NetworkConfig) -> Result<(), String> {
+    // Try the process-local registry first. `NotEnabled` means this process does
+    // not own the config-server session (typical in service/remote mode), so we
+    // fall through to RPC instead of racing a separate `is_some()` check.
+    match easytier_core::management::report_via_process_client(cfg.clone()).await {
+        Ok(()) => return Ok(()),
+        Err(easytier_core::management::ReportNetworkConfigError::NotEnabled) => {}
+        Err(error) => return Err(error.gui_sync_message()),
     }
 
-    match web_client.report_network_config(cfg).await {
-        Ok(()) => Ok(()),
-        Err(easytier_core::management::ReportNetworkConfigError::NotConnected) => Err(
-            "web-owned config saved locally but config-server is disconnected; reconnect to sync"
-                .to_string(),
-        ),
-        Err(easytier_core::management::ReportNetworkConfigError::NotAuthorized) => Err(
-            "web-owned config saved locally but the config server rejected this session; sign in again to sync"
-                .to_string(),
-        ),
-        Err(easytier_core::management::ReportNetworkConfigError::RevisionConflict { .. }) => {
-            // Keep the local edit that was already persisted above. The client's
-            // revision cache was refreshed from the conflict response, so a retry
-            // can push this draft against the console's current revision; the user
-            // can still reload from the console if they prefer to discard it.
-            drop(web_client_guard);
-            Err(
-                "config revision conflict: your local edit was kept; retry to push it, or reload from the console to discard it"
-                    .to_string(),
-            )
-        }
-        Err(error) => Err(error.to_string()),
+    let client_manager = get_client_manager!()?;
+    let Some(client) = client_manager.get_rpc_client(app) else {
+        return Err(
+            easytier_core::management::ReportNetworkConfigError::NotEnabled.gui_sync_message(),
+        );
+    };
+    let response = client
+        .report_managed_network_config(
+            BaseController::default(),
+            ReportManagedNetworkConfigRequest { config: Some(cfg) },
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+    if response.ok {
+        return Ok(());
     }
+    Err(easytier_core::management::gui_sync_message_for_error_code(
+        &response.error_code,
+        &response.message,
+    ))
 }
 
 #[tauri::command]
@@ -835,17 +836,14 @@ struct ConfigServerStatusDto {
 
 #[tauri::command]
 async fn get_config_server_status(app: AppHandle) -> Result<ConfigServerStatusDto, String> {
-    // Normal mode: WebClient lives in the GUI process.
-    {
-        let web_client_guard = WEB_CLIENT.read().await;
-        if let Some(web_client) = web_client_guard.as_ref() {
-            let status = easytier_core::management::config_server_status();
-            return Ok(ConfigServerStatusDto {
-                enabled: true,
-                connected: web_client.is_connected(),
-                last_error: status.last_error.unwrap_or_default(),
-            });
-        }
+    // Same-process owner (normal mode): status and sync share the report registry.
+    if let Some(client) = easytier_core::management::config_server_report_client() {
+        let status = easytier_core::management::config_server_status();
+        return Ok(ConfigServerStatusDto {
+            enabled: true,
+            connected: client.is_connected(),
+            last_error: status.last_error.unwrap_or_default(),
+        });
     }
 
     // Service / remote mode: query the process that owns the WebClient via RPC.
@@ -869,13 +867,10 @@ async fn get_config_server_status(app: AppHandle) -> Result<ConfigServerStatusDt
 }
 
 #[tauri::command]
-async fn is_web_client_connected() -> Result<bool, String> {
-    let web_client_guard = WEB_CLIENT.read().await;
-    if let Some(web_client) = web_client_guard.as_ref() {
-        Ok(web_client.is_connected())
-    } else {
-        Ok(false)
-    }
+async fn is_web_client_connected(app: AppHandle) -> Result<bool, String> {
+    // Keep semantics aligned with get_config_server_status: prefer the process
+    // that owns the config-server client (service/remote via RPC).
+    Ok(get_config_server_status(app).await?.connected)
 }
 
 // 获取日志目录的辅助函数

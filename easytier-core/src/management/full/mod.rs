@@ -1,6 +1,7 @@
 #[cfg(feature = "management")]
 mod compiled;
 mod config_patch;
+pub(crate) mod config_server_client;
 pub(crate) mod config_server_status;
 mod instance_info;
 #[cfg(feature = "management")]
@@ -39,6 +40,10 @@ use super::{
 #[cfg(feature = "management")]
 pub use compiled::register_instance_management_rpc;
 pub use config_patch::{ConfigPatchPersistence, apply_config_patch};
+pub use config_server_client::{
+    ReportNetworkConfigError, config_server_report_client, gui_sync_message_for_error_code,
+    report_via_process_client,
+};
 pub use config_server_status::{
     ConfigServerStatusSnapshot, clear as clear_config_server_status, set_host_dns_lookup,
     snapshot as config_server_status, underlay_exclude_candidate_ips as config_server_underlay_ips,
@@ -54,7 +59,7 @@ pub use process_rpc::{
 };
 #[cfg(target_os = "wasi")]
 pub(crate) use web_client::WebClientBackend;
-pub use web_client::{ConfigServerEndpoint, ReportNetworkConfigError, WebClient, WebClientConfig};
+pub use web_client::{ConfigServerEndpoint, WebClient, WebClientConfig};
 
 #[cfg(feature = "management")]
 pub use super::instance_rpc::full::call_instance_json_rpc;
