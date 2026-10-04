@@ -249,13 +249,28 @@ impl GlobalCtx {
 
     #[cfg(any(feature = "tun", test))]
     pub(crate) fn set_tun_device_ready(&self, name: String) {
+        let previous = self.tun_device_name.lock().unwrap().clone();
         self.set_tun_device_name(Some(name.clone()));
+        #[cfg(feature = "dns-resolver")]
+        {
+            if let Some(prev) = previous {
+                if prev != name {
+                    crate::common::dns::unregister_dns_tun_exclude(&prev);
+                }
+            }
+            crate::common::dns::register_dns_tun_exclude(name.clone());
+        }
         self.issue_event(GlobalCtxEvent::TunDeviceReady(name));
     }
 
     #[cfg(any(feature = "tun", test))]
     pub(crate) fn set_tun_device_error(&self, error: String) {
+        let previous = self.tun_device_name.lock().unwrap().clone();
         self.set_tun_device_name(None);
+        #[cfg(feature = "dns-resolver")]
+        if let Some(prev) = previous {
+            crate::common::dns::unregister_dns_tun_exclude(&prev);
+        }
         self.issue_event(GlobalCtxEvent::TunDeviceError(error));
     }
 

@@ -58,6 +58,7 @@ IPv6：VIP / 非 `/0` 的 proxy LPM → `exit_nodes`（同样要求下一跳）�
 - **本机 `exit_nodes` 中至少有一个 VIP 可解析且有下一跳**、未开 `manual_routes`、未 `no_tun`：加入本机管理的 `0.0.0.0/0`（低度量）；IPv4 `/0` **成功装上之后**再装 `::/0`（按 TUN 接口）  
 - 逃生阀：`allow_peer_default_without_exit=true` 时，无 exit 也可把对端 `/0` 装进 OS（桌面用高度量；移动端无度量概念，会成为真默认）  
 - 装 TUN 默认路由前，会先把 **underlay 排除宿主路由**（`/32`/`/128`）装到**物理默认网关**上：已连接 peer 隧道的 `resolved_remote_addr`、对端 `stun_info.public_ip`、以及本进程 **config-server / 管理面** 连接目标。卸默认时**先卸 TUN `/0`，再卸排除**  
+- 桌面 DNS：TUN 就绪后，peer / STUN / config-server 域名解析经 `RuntimeDnsResolver`，hickory 套接字绑定物理默认网卡，避免首次查询被 TUN `/0` 吸走  
 - 排除门控：**期望集合将含 TUN `/0`** 时才装（覆盖 exit、逃生阀、`manual_routes` 含 `/0`）  
 - ACL / KCP / QUIC / wrapped-TCP 等旁路通过 `get_peer_id_by_ip_allowing_default_proxy` 仍可解析对端通告的 `/0`  
 - `manual_routes` 开启：整表由手动列表覆盖，**不**自动加出口默认路由  

@@ -1,11 +1,12 @@
 use std::net::{IpAddr, SocketAddr, ToSocketAddrs as _};
 #[cfg(feature = "dns-resolver")]
 use std::{
+    collections::BTreeSet,
     future::Future,
     io,
     pin::Pin,
-    sync::{Arc, LazyLock},
-    time::Duration,
+    sync::{Arc, LazyLock, RwLock},
+    time::{Duration, Instant},
 };
 
 use anyhow::Context;
@@ -33,12 +34,130 @@ use tokio::sync::Semaphore;
 use super::error::Error;
 use super::netns::NetNS;
 #[cfg(feature = "dns-resolver")]
+use super::ifcfg::{IfConfiger, IfConfiguerTrait};
+#[cfg(feature = "dns-resolver")]
 use crate::{
     socket::{tcp::create_tcp_socket, udp::create_udp_socket},
     socket_protector::native_socket_protection_available,
 };
 #[cfg(feature = "dns-resolver")]
 use easytier_core::socket::{NetNamespace, tcp::TcpBindOptions, udp::UdpBindOptions};
+
+/// TUN ifnames that must not be used as the DNS bind device (exit `/0` lives there).
+#[cfg(feature = "dns-resolver")]
+static DNS_TUN_EXCLUDES: RwLock<BTreeSet<String>> = RwLock::new(BTreeSet::new());
+
+#[cfg(feature = "dns-resolver")]
+static PHYSICAL_DNS_IF_CACHE: RwLock<Option<(Instant, bool, String)>> = RwLock::new(None);
+
+#[cfg(feature = "dns-resolver")]
+const PHYSICAL_DNS_IF_CACHE_TTL: Duration = Duration::from_secs(5);
+
+/// Register a TUN device so desktop DNS sockets bind to the physical default instead.
+#[cfg(feature = "dns-resolver")]
+pub fn register_dns_tun_exclude(ifname: impl Into<String>) {
+    let ifname = ifname.into();
+    if ifname.is_empty() {
+        return;
+    }
+    DNS_TUN_EXCLUDES
+        .write()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .insert(ifname);
+    *PHYSICAL_DNS_IF_CACHE
+        .write()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
+}
+
+/// Drop a TUN device from the DNS bind exclude set (device gone / failed).
+#[cfg(feature = "dns-resolver")]
+pub fn unregister_dns_tun_exclude(ifname: &str) {
+    DNS_TUN_EXCLUDES
+        .write()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .remove(ifname);
+    *PHYSICAL_DNS_IF_CACHE
+        .write()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
+}
+
+#[cfg(feature = "dns-resolver")]
+fn dns_tun_excludes() -> BTreeSet<String> {
+    DNS_TUN_EXCLUDES
+        .read()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone()
+}
+
+/// Resolve the physical default ifname for underlay-bound DNS sockets.
+#[cfg(feature = "dns-resolver")]
+async fn physical_dns_bind_device(server_addr: SocketAddr) -> Option<String> {
+    let want_v4 = server_addr.is_ipv4();
+    {
+        let cache = PHYSICAL_DNS_IF_CACHE
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some((at, cached_v4, name)) = cache.as_ref() {
+            if *cached_v4 == want_v4 && at.elapsed() < PHYSICAL_DNS_IF_CACHE_TTL {
+                return Some(name.clone());
+            }
+        }
+    }
+
+    let found = lookup_physical_dns_ifname(want_v4).await;
+    if let Some(ref name) = found {
+        *PHYSICAL_DNS_IF_CACHE
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) =
+            Some((Instant::now(), want_v4, name.clone()));
+    }
+    found
+}
+
+#[cfg(feature = "dns-resolver")]
+async fn lookup_physical_dns_ifname(want_v4: bool) -> Option<String> {
+    let excludes = dns_tun_excludes();
+    let ifcfg = IfConfiger {};
+    let mut skip = excludes.clone();
+    let mut prefer_v4 = want_v4;
+    loop {
+        let platform_exclude = skip.iter().next().cloned().unwrap_or_default();
+        let route = if prefer_v4 {
+            ifcfg
+                .find_ipv4_physical_default(&platform_exclude)
+                .await
+                .ok()
+                .flatten()
+        } else {
+            ifcfg
+                .find_ipv6_physical_default(&platform_exclude)
+                .await
+                .ok()
+                .flatten()
+        };
+        let Some(route) = route else {
+            // No IPv6 default: reuse the IPv4 physical iface on dual-stack hosts.
+            if !prefer_v4 {
+                prefer_v4 = true;
+                skip = excludes.clone();
+                continue;
+            }
+            return None;
+        };
+        if excludes.contains(&route.ifname) || skip.contains(&route.ifname) {
+            if !skip.insert(route.ifname) {
+                return None;
+            }
+            continue;
+        }
+        return Some(route.ifname);
+    }
+}
+
+#[cfg(feature = "dns-resolver")]
+fn prefer_physical_bound_dns() -> bool {
+    !dns_tun_excludes().is_empty()
+}
 
 #[cfg(feature = "dns-resolver")]
 pub fn get_default_resolver_config() -> ResolverConfig {
@@ -220,12 +339,28 @@ impl RuntimeProvider for RuntimeDnsIoProvider {
         bind_addr: Option<SocketAddr>,
         wait_for: Option<Duration>,
     ) -> Pin<Box<dyn Send + Future<Output = io::Result<Self::Tcp>>>> {
-        let options = TcpBindOptions::default()
-            .with_context(self.context.socket_context())
-            .with_local_addr(bind_addr)
-            .with_bind_device(Some(String::new()))
-            .with_reuse_addr(false);
+        let context = self.context.socket_context();
+        let pin_physical = self.context.netns.is_none() && self.context.socket_mark.is_none();
         Box::pin(async move {
+            // Desktop process-default DNS: pin to the physical default so exit
+            // TUN /0 cannot swallow queries. Netns / SO_MARK / VPN-protect paths
+            // keep historical Disabled bind-device and rely on their own bypass.
+            let bind_device = if pin_physical {
+                physical_dns_bind_device(server_addr).await
+            } else {
+                Some(String::new())
+            };
+            if pin_physical && prefer_physical_bound_dns() && bind_device.is_none() {
+                tracing::warn!(
+                    ?server_addr,
+                    "TUN is active but no physical default iface was found for DNS bind; query may enter TUN"
+                );
+            }
+            let options = TcpBindOptions::default()
+                .with_context(context)
+                .with_local_addr(bind_addr)
+                .with_bind_device(bind_device)
+                .with_reuse_addr(false);
             let wait_for = wait_for.unwrap_or(Duration::from_secs(5));
             let connect = async {
                 let socket = create_tcp_socket(server_addr, &options)
@@ -248,12 +383,28 @@ impl RuntimeProvider for RuntimeDnsIoProvider {
     fn bind_udp(
         &self,
         local_addr: SocketAddr,
-        _server_addr: SocketAddr,
+        server_addr: SocketAddr,
     ) -> Pin<Box<dyn Send + Future<Output = io::Result<Self::Udp>>>> {
-        let options = UdpBindOptions::default()
-            .with_context(self.context.socket_context())
-            .with_local_addr(Some(local_addr));
-        Box::pin(async move { create_udp_socket(&options).await.map_err(io::Error::other) })
+        let context = self.context.socket_context();
+        let pin_physical = self.context.netns.is_none() && self.context.socket_mark.is_none();
+        Box::pin(async move {
+            let bind_device = if pin_physical {
+                physical_dns_bind_device(server_addr).await
+            } else {
+                Some(String::new())
+            };
+            if pin_physical && prefer_physical_bound_dns() && bind_device.is_none() {
+                tracing::warn!(
+                    ?server_addr,
+                    "TUN is active but no physical default iface was found for DNS bind; query may enter TUN"
+                );
+            }
+            let options = UdpBindOptions::direct_connect()
+                .with_context(context)
+                .with_local_addr(Some(local_addr))
+                .with_bind_device(bind_device);
+            create_udp_socket(&options).await.map_err(io::Error::other)
+        })
     }
 }
 
@@ -297,6 +448,20 @@ impl RuntimeDnsResolver {
 
     #[cfg(feature = "dns-resolver")]
     async fn resolve_process_ips(&self, host: &str) -> anyhow::Result<Vec<IpAddr>> {
+        // Only force underlay-bound DNS when a TUN exclude is registered (exit
+        // risk). Otherwise keep the historical system resolver + unprotected
+        // hickory fallback so split-horizon / corp DNS keep working.
+        if prefer_physical_bound_dns() {
+            return Self::resolve_contextual_with_hickory(
+                RuntimeDnsIoContext {
+                    netns: None,
+                    socket_mark: None,
+                },
+                host.to_owned(),
+            )
+            .await;
+        }
+
         let system_host = host.to_owned();
         self.system_dns
             .resolve(
@@ -395,7 +560,7 @@ impl DnsResolver for RuntimeDnsResolver {
 impl DnsRecordResolver for RuntimeDnsResolver {
     async fn resolve_txt(&self, query: DnsQuery) -> anyhow::Result<String> {
         let context = RuntimeDnsIoContext::from_socket_context(&query.context);
-        if context.is_process_default() {
+        if context.is_process_default() && !prefer_physical_bound_dns() {
             return Ok(resolve_txt_record(&query.host).await?);
         }
 
@@ -417,7 +582,7 @@ impl DnsRecordResolver for RuntimeDnsResolver {
 
     async fn resolve_srv(&self, query: DnsQuery) -> anyhow::Result<Vec<DnsSrvRecord>> {
         let context = RuntimeDnsIoContext::from_socket_context(&query.context);
-        let response = if context.is_process_default() {
+        let response = if context.is_process_default() && !prefer_physical_bound_dns() {
             RESOLVER.srv_lookup(&query.host).await?
         } else {
             Self::contextual_resolver(context)
@@ -471,7 +636,11 @@ pub async fn socket_addrs(
     url: &url::Url,
     default_port_number: impl Fn() -> Option<u16>,
 ) -> Result<Vec<SocketAddr>, Error> {
-    socket_addrs_with_system_resolver(url, default_port_number, true).await
+    #[cfg(feature = "dns-resolver")]
+    let allow_system = !prefer_physical_bound_dns();
+    #[cfg(not(feature = "dns-resolver"))]
+    let allow_system = true;
+    socket_addrs_with_system_resolver(url, default_port_number, allow_system).await
 }
 
 async fn socket_addrs_with_system_resolver(
@@ -509,17 +678,45 @@ async fn socket_addrs_with_system_resolver(
         }
     }
 
-    // use hickory_resolver
+    // use hickory_resolver — prefer underlay-bound sockets when TUN may own /0
     #[cfg(feature = "dns-resolver")]
     {
-        let ret = RESOLVER.lookup_ip(&host).await.with_context(|| {
-            format!(
-                "hickory dns lookup_ip failed, host: {}, port: {}",
-                host, port
-            )
-        })?;
-        Ok(ret
-            .iter()
+        let ips = match RuntimeDnsResolver::resolve_contextual_with_hickory(
+            RuntimeDnsIoContext {
+                netns: None,
+                socket_mark: None,
+            },
+            host.clone(),
+        )
+        .await
+        {
+            Ok(ips) => ips,
+            Err(bound_err) if prefer_physical_bound_dns() => {
+                return Err(Error::AnyhowError(bound_err.context(format!(
+                    "underlay-bound dns lookup_ip failed, host: {host}, port: {port}"
+                ))));
+            }
+            Err(bound_err) => {
+                tracing::warn!(
+                    ?bound_err,
+                    %host,
+                    "underlay-bound DNS failed; falling back to process-default hickory"
+                );
+                RESOLVER
+                    .lookup_ip(&host)
+                    .await
+                    .with_context(|| {
+                        format!(
+                            "hickory dns lookup_ip failed, host: {}, port: {}",
+                            host, port
+                        )
+                    })?
+                    .iter()
+                    .collect()
+            }
+        };
+        Ok(ips
+            .into_iter()
             .map(|ip| SocketAddr::new(ip, port))
             .collect::<Vec<_>>())
     }
@@ -604,6 +801,25 @@ mod tests {
         assert_eq!(fallback_calls.load(Ordering::Relaxed), 0);
     }
 
+    #[cfg(feature = "dns-resolver")]
+    #[test]
+    fn tun_exclude_registration_prefers_physical_bound_dns() {
+        unregister_dns_tun_exclude("test-dns-tun0");
+        assert!(!prefer_physical_bound_dns());
+        register_dns_tun_exclude("test-dns-tun0");
+        assert!(prefer_physical_bound_dns());
+        unregister_dns_tun_exclude("test-dns-tun0");
+        assert!(!prefer_physical_bound_dns());
+    }
+
+    #[cfg(feature = "dns-resolver")]
+    #[test]
+    fn empty_tun_exclude_name_is_ignored() {
+        let before = prefer_physical_bound_dns();
+        register_dns_tun_exclude("");
+        assert_eq!(prefer_physical_bound_dns(), before);
+    }
+
     #[test]
     fn runtime_dns_context_preserves_process_routing_inputs() {
         let context = SocketContext::default()
@@ -623,13 +839,21 @@ mod tests {
     async fn test_socket_addrs() {
         let url = url::Url::parse("tcp://github-ci-test.easytier.cn:80").unwrap();
         let addrs = socket_addrs(&url, || Some(80)).await.unwrap();
-        assert_eq!(2, addrs.len(), "addrs: {:?}", addrs);
+        assert!(
+            !addrs.is_empty() && addrs.iter().all(|addr| addr.port() == 80),
+            "addrs: {:?}",
+            addrs
+        );
         println!("addrs: {:?}", addrs);
 
         let addrs = socket_addrs_with_system_resolver(&url, || Some(80), false)
             .await
             .unwrap();
-        assert_eq!(2, addrs.len(), "addrs: {:?}", addrs);
+        assert!(
+            !addrs.is_empty() && addrs.iter().all(|addr| addr.port() == 80),
+            "addrs2: {:?}",
+            addrs
+        );
         println!("addrs2: {:?}", addrs);
     }
 

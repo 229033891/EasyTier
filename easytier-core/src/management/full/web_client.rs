@@ -424,8 +424,9 @@ impl<F> WebClient<F> {
         config_server_status::mark_enabled();
         config_server_status::set_endpoint_url(&connector.remote_url());
         // Resolve the management endpoint early so underlay excludes can pin it
-        // before a TUN default route is installed. Desktop DNS is still the
-        // system resolver (no VpnService protect); this only shrinks the race.
+        // before a TUN default route is installed. Desktop DNS binds to the
+        // physical default iface once a TUN exclude is registered; this eager
+        // resolve still shrinks the pre-TUN race.
         #[cfg(not(any(target_os = "wasi", target_arch = "wasm32")))]
         {
             drop(tokio::spawn(async {

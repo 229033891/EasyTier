@@ -39,7 +39,7 @@ pub use full::{
     ReportNetworkConfigError, UnsupportedConfigFileStorage, WebClient, WebClientConfig,
     apply_config_patch, clear_config_server_status, config_server_status,
     config_server_underlay_ips, config_source_from_rpc, config_source_to_rpc,
-    network_instance_running_info,
+    network_instance_running_info, set_host_dns_lookup,
 };
 #[cfg(feature = "management")]
 pub use full::{

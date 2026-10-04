@@ -45,10 +45,26 @@ static NATIVE_HOST_RUNTIME: OnceLock<Arc<NativeHostRuntime>> = OnceLock::new();
 pub(crate) fn native_host_runtime() -> Arc<NativeHostRuntime> {
     NATIVE_HOST_RUNTIME
         .get_or_init(|| {
-            Arc::new(NativeHostRuntime {
+            let runtime = Arc::new(NativeHostRuntime {
                 udp_sockets: RuntimeUdpSocketFactory::new(),
                 dns: RuntimeDnsResolver::new(),
-            })
+            });
+            #[cfg(feature = "web-client")]
+            {
+                let dns = runtime.clone();
+                easytier_core::management::set_host_dns_lookup(Some(Arc::new(move |host| {
+                    let dns = dns.clone();
+                    Box::pin(async move {
+                        DnsResolver::resolve(
+                            dns.as_ref(),
+                            DnsQuery::new(host, SocketContext::default()),
+                        )
+                        .await
+                        .map_err(|error| error.to_string())
+                    })
+                })));
+            }
+            runtime
         })
         .clone()
 }

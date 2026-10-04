@@ -3,7 +3,10 @@
 
 use std::{
     collections::BTreeSet,
+    future::Future,
     net::IpAddr,
+    pin::Pin,
+    sync::Arc,
     time::{Duration, Instant},
 };
 
@@ -14,6 +17,25 @@ use crate::proto::common::{TunnelInfo, Url as ProtoUrl};
 
 const DNS_LOOKUP_TIMEOUT: Duration = Duration::from_millis(300);
 const DNS_CACHE_TTL: Duration = Duration::from_secs(45);
+
+/// Optional host DNS lookup used for config-server underlay excludes.
+/// Native desktop installs a physical-iface-bound resolver; tests may omit it.
+pub type HostDnsLookupFn = Arc<
+    dyn Fn(String) -> Pin<Box<dyn Future<Output = Result<Vec<IpAddr>, String>> + Send>>
+        + Send
+        + Sync,
+>;
+
+static HOST_DNS_LOOKUP: RwLock<Option<HostDnsLookupFn>> = RwLock::new(None);
+
+/// Install the process-wide hostname lookup used by underlay exclude collection.
+pub fn set_host_dns_lookup(lookup: Option<HostDnsLookupFn>) {
+    *HOST_DNS_LOOKUP.write() = lookup;
+}
+
+fn host_dns_lookup() -> Option<HostDnsLookupFn> {
+    HOST_DNS_LOOKUP.read().clone()
+}
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ConfigServerStatusSnapshot {
@@ -107,6 +129,8 @@ pub fn mark_error(error: impl Into<String>) {
 }
 
 pub fn clear() {
+    // Only reset config-server status. The process-wide host DNS lookup hook is
+    // installed once by the native runtime and must survive WebClient teardown.
     *STATUS.write() = Status::default();
 }
 
@@ -144,17 +168,20 @@ pub async fn underlay_exclude_candidate_ips() -> BTreeSet<IpAddr> {
 
     #[cfg(not(any(target_os = "wasi", target_arch = "wasm32")))]
     {
-        let lookup = tokio::time::timeout(
-            DNS_LOOKUP_TIMEOUT,
-            tokio::net::lookup_host((host.as_str(), 0)),
-        )
+        let lookup = tokio::time::timeout(DNS_LOOKUP_TIMEOUT, async {
+            if let Some(host_lookup) = host_dns_lookup() {
+                host_lookup(host.clone())
+                    .await
+                    .map(|ips| ips.into_iter().collect::<BTreeSet<_>>())
+                    .map_err(std::io::Error::other)
+            } else {
+                let addrs = tokio::net::lookup_host((host.as_str(), 0)).await?;
+                Ok(addrs.map(|addr| addr.ip()).collect::<BTreeSet<_>>())
+            }
+        })
         .await;
         match lookup {
-            Ok(Ok(addrs)) => {
-                let mut resolved = BTreeSet::new();
-                for addr in addrs {
-                    resolved.insert(addr.ip());
-                }
+            Ok(Ok(resolved)) => {
                 {
                     let mut status = STATUS.write();
                     if status.snapshot.endpoint_host.as_deref() == Some(host.as_str()) {
@@ -207,9 +234,40 @@ fn parse_proto_url_host_ip(url: Option<&ProtoUrl>) -> Option<IpAddr> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{Mutex, MutexGuard};
+
+    static TEST_LOCK: Mutex<()> = Mutex::new(());
+
+    fn lock_status() -> MutexGuard<'static, ()> {
+        TEST_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    #[tokio::test]
+    async fn host_dns_lookup_hook_is_used_for_hostname_endpoints() {
+        let _guard = lock_status();
+        clear();
+        set_host_dns_lookup(Some(Arc::new(|_host| {
+            Box::pin(async {
+                Ok(vec![
+                    "198.51.100.50".parse().unwrap(),
+                    "2001:db8::50".parse().unwrap(),
+                ])
+            })
+        })));
+        mark_enabled();
+        set_endpoint_url(&Url::parse("udp://config.example.test:22020/token").unwrap());
+        let ips = underlay_exclude_candidate_ips().await;
+        assert!(ips.contains(&"198.51.100.50".parse().unwrap()));
+        assert!(ips.contains(&"2001:db8::50".parse().unwrap()));
+        set_host_dns_lookup(None);
+        clear();
+    }
 
     #[test]
     fn status_transitions_clear_error_on_connect() {
+        let _guard = lock_status();
         clear();
         mark_enabled();
         mark_error("boom");
@@ -237,6 +295,7 @@ mod tests {
 
     #[tokio::test]
     async fn set_endpoint_url_records_literal_ip() {
+        let _guard = lock_status();
         clear();
         mark_enabled();
         set_endpoint_url(&Url::parse("udp://203.0.113.9:22020/token").unwrap());
@@ -252,6 +311,7 @@ mod tests {
 
     #[tokio::test]
     async fn set_endpoint_url_replaces_previous_resolved_ips() {
+        let _guard = lock_status();
         clear();
         mark_enabled();
         set_endpoint_url(&Url::parse("udp://203.0.113.9:22020/token").unwrap());

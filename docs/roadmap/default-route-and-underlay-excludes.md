@@ -2,9 +2,9 @@
 
 ## Status
 
-- Status: **Shipped (Phase 1 + 1b)** — 桌面期望集合过滤 + 逃生阀 + exclude 统一门控已落地；Android / OHOS / GUI 移动端同步过滤对端 `/0`
+- Status: **Shipped (Phase 1 + 1b + desktop DNS protect)** — 桌面期望集合过滤 + 逃生阀 + exclude 统一门控已落地；Android / OHOS / GUI 移动端同步过滤对端 `/0`；桌面 DNS 绑定物理默认网卡
 - 日期：2026-10-04
-- 最近审阅：2026-10-04（实现落地；§7.3（5）桌面 DNS protect 仍开放；Phase 2 `/1+/1` 按需）
+- 最近审阅：2026-10-04（实现落地；桌面 DNS protect Phase-1 已落地；Phase 2 `/1+/1` 按需）
 - 目标读者：产品决策 + 路由/出口实现
 - 索引：[`../README.md`](../README.md)
 - **现状行为**：[`../current/traffic-steering.md`](../current/traffic-steering.md)（已按 D+ 更新）
@@ -186,8 +186,8 @@ L3 仍可按现状用对端 `/0` 作选路兜底（见 Current §2）；L2 只�
 - 过渡门控为「本机 exit **或** TUN 上已有/将有 `/0`」时安装（`will_have_tun_default`），防止迁移期对端 `/0` 残留时无排除保护；期望集合过滤上线、确认无残留后收窄为纯 `local_exit_default` 门控。  
 - 管理面：`WebClient` 启动时 eager 解析 config-server，缩小装 `/0` 前的 DNS 竞态（见下条剩余缺口）。
 
-**（5）仍未闭环的桌面 DNS protect 缺口：**  
-Android 可用 `VpnService.protect`；桌面端 config-server / peer 域名仍走系统 `lookup_host`，在 TUN 默认路由已生效且主机排除尚未覆盖解析结果时，**首次 DNS 查询本身可能被吸进 TUN**。eager 解析只能缩小窗口，不能替代 socket protect / 绑定物理网卡的解析路径。完整修复需独立设计（绑定物理 default iface 的 resolver，或平台 API）。
+**（5）桌面 DNS protect（2026-10-04 已落地 Phase-1）：**  
+Android 可用 `VpnService.protect`；桌面端改为：TUN 就绪时登记 ifname，`RuntimeDnsResolver` 的 hickory UDP/TCP 套接字绑定到**物理默认网卡**（`SO_BINDTODEVICE` / `IP_BOUND_IF` / `IP_UNICAST_IF`），config-server underlay 解析走同一 `DnsResolver` 钩子。系统 `lookup_host` 仅在无 TUN / 无物理默认时使用。完整「平台 socket protect API」仍非必需；换网后依赖短 TTL 刷新物理 ifname。
 
 ### 7.4 D+ 相对 D 的增量（本次修订）
 

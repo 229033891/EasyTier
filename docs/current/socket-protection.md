@@ -3,7 +3,7 @@
 ## Status
 
 - Status: **Current**
-- Last reviewed: 2026-10-03
+- Last reviewed: 2026-10-04
 - Index: [`../README.md`](../README.md)
 
 VPN bypass is a socket-creation requirement, not an operation on a socket that
@@ -34,6 +34,10 @@ the requirement as a no-op.
 - DNS and source-route queries are already host-owned operations. A bypass-enabled
   host must protect their underlying sockets before querying/probing, including
   DNS TCP fallback, rather than letting system DNS silently bypass this contract.
+  On desktop native builds, `RuntimeDnsResolver` binds hickory DNS UDP/TCP sockets
+  to the physical default interface (excluding registered TUN ifnames) so an exit
+  TUN default cannot swallow the first query. System `lookup_host` is only used
+  when no TUN exclude is registered and no physical default is available.
 
 ## TUN-facing ingress and port forwarding
 
