@@ -55,9 +55,13 @@ struct DnsCache {
 #[derive(Default)]
 struct Status {
     snapshot: ConfigServerStatusSnapshot,
-    /// IPs from URL literals and live tunnel remotes.
+    /// IPs from URL literals and live tunnel remotes for the *current* host.
     resolved_ips: BTreeSet<IpAddr>,
     dns_cache: DnsCache,
+    /// Previous host's exclude IPs kept only while the new host still has no
+    /// resolved destinations — closes the URL-switch underlay gap without
+    /// pinning traffic to a stale host after the new one resolves.
+    stale_exclude_ips: BTreeSet<IpAddr>,
 }
 
 static STATUS: RwLock<Status> = RwLock::new(Status {
@@ -72,6 +76,7 @@ static STATUS: RwLock<Status> = RwLock::new(Status {
         ips: BTreeSet::new(),
         fetched_at: None,
     },
+    stale_exclude_ips: BTreeSet::new(),
 });
 
 pub fn snapshot() -> ConfigServerStatusSnapshot {
@@ -91,12 +96,20 @@ pub fn set_endpoint_url(url: &Url) {
     let mut status = STATUS.write();
     let host = url.host_str().map(|host| host.to_string());
     if status.snapshot.endpoint_host.as_ref() != host.as_ref() {
+        // Preserve previous excludes as a short-lived fallback until the new
+        // host resolves; otherwise TUN `/0` can swallow management traffic in
+        // the DNS/connect gap after a URL change.
+        let mut stale = status.resolved_ips.clone();
+        stale.extend(status.dns_cache.ips.iter().copied());
+        status.stale_exclude_ips = stale;
         status.dns_cache = DnsCache::default();
+        status.resolved_ips.clear();
     }
     status.snapshot.endpoint_host = host;
-    status.resolved_ips.clear();
     if let Some(ip) = url_host_ip(url) {
         status.resolved_ips.insert(ip);
+        // Literal IP is immediately usable — drop stale previous host.
+        status.stale_exclude_ips.clear();
     }
 }
 
@@ -104,7 +117,17 @@ pub fn record_tunnel_remote(info: Option<&TunnelInfo>) {
     let Some(ip) = tunnel_remote_ip(info) else {
         return;
     };
-    STATUS.write().resolved_ips.insert(ip);
+    let mut status = STATUS.write();
+    status.resolved_ips.insert(ip);
+    // Live tunnel remote proves the current host is reachable — drop stale
+    // previous-host excludes so we do not pin underlay to an obsolete peer.
+    //
+    // Accepted race (narrow): this path is not generation-keyed. After a URL
+    // host change, a late report from a dying old connection can insert the
+    // previous remote and clear `stale_exclude_ips` before the new host's DNS
+    // returns. Only matters if that report lands in the DNS gap; reconnect
+    // + DNS then repair. Not worth endpoint-generation plumbing for now.
+    status.stale_exclude_ips.clear();
 }
 
 pub fn mark_connected() {
@@ -136,7 +159,7 @@ pub fn clear() {
 
 /// Candidate underlay IPs for the active config-server endpoint (cached + DNS).
 pub async fn underlay_exclude_candidate_ips() -> BTreeSet<IpAddr> {
-    let (host, mut ips, cached_dns) = {
+    let (host, mut ips, cached_dns, stale) = {
         let status = STATUS.read();
         if !status.snapshot.enabled {
             return BTreeSet::new();
@@ -150,10 +173,12 @@ pub async fn underlay_exclude_candidate_ips() -> BTreeSet<IpAddr> {
             status.snapshot.endpoint_host.clone(),
             status.resolved_ips.clone(),
             cached_dns,
+            status.stale_exclude_ips.clone(),
         )
     };
 
     let Some(host) = host else {
+        ips.extend(stale);
         return ips;
     };
 
@@ -182,21 +207,33 @@ pub async fn underlay_exclude_candidate_ips() -> BTreeSet<IpAddr> {
         .await;
         match lookup {
             Ok(Ok(resolved)) => {
-                {
+                if !resolved.is_empty() {
                     let mut status = STATUS.write();
                     if status.snapshot.endpoint_host.as_deref() == Some(host.as_str()) {
                         status.dns_cache = DnsCache {
                             ips: resolved.clone(),
                             fetched_at: Some(Instant::now()),
                         };
+                        // Retire stale fallback once the new host has concrete
+                        // destinations.
+                        status.stale_exclude_ips.clear();
                     }
                 }
                 ips.extend(resolved);
             }
             Ok(Err(err)) => {
                 tracing::warn!(%host, %err, "config-server DNS lookup failed for underlay exclude");
-                let stale = STATUS.read().dns_cache.ips.clone();
-                ips.extend(stale);
+                let (dns_stale, url_stale) = {
+                    let status = STATUS.read();
+                    (
+                        status.dns_cache.ips.clone(),
+                        status.stale_exclude_ips.clone(),
+                    )
+                };
+                ips.extend(dns_stale);
+                if ips.is_empty() {
+                    ips.extend(url_stale);
+                }
             }
             Err(_) => {
                 tracing::warn!(
@@ -204,10 +241,23 @@ pub async fn underlay_exclude_candidate_ips() -> BTreeSet<IpAddr> {
                     timeout_ms = DNS_LOOKUP_TIMEOUT.as_millis(),
                     "config-server DNS lookup timed out for underlay exclude"
                 );
-                let stale = STATUS.read().dns_cache.ips.clone();
-                ips.extend(stale);
+                let (dns_stale, url_stale) = {
+                    let status = STATUS.read();
+                    (
+                        status.dns_cache.ips.clone(),
+                        status.stale_exclude_ips.clone(),
+                    )
+                };
+                ips.extend(dns_stale);
+                if ips.is_empty() {
+                    ips.extend(url_stale);
+                }
             }
         }
+    }
+
+    if ips.is_empty() {
+        ips.extend(stale);
     }
 
     ips
@@ -317,6 +367,46 @@ mod tests {
         let ips = underlay_exclude_candidate_ips().await;
         assert!(!ips.contains(&"203.0.113.9".parse().unwrap()));
         assert!(ips.contains(&"198.51.100.7".parse().unwrap()));
+        clear();
+    }
+
+    #[tokio::test]
+    async fn url_host_change_keeps_stale_excludes_until_new_host_resolves() {
+        let _guard = lock_status().await;
+        clear();
+        set_host_dns_lookup(Some(Arc::new(|host| {
+            Box::pin(async move {
+                if host == "new.example.test" {
+                    // Simulate DNS still empty for the new host.
+                    Ok(Vec::new())
+                } else {
+                    Ok(vec!["198.51.100.50".parse().unwrap()])
+                }
+            })
+        })));
+        mark_enabled();
+        set_endpoint_url(&Url::parse("udp://old.example.test:22020/token").unwrap());
+        // Prime DNS cache for the old host.
+        let old_ips = underlay_exclude_candidate_ips().await;
+        assert!(old_ips.contains(&"198.51.100.50".parse().unwrap()));
+
+        set_endpoint_url(&Url::parse("udp://new.example.test:22020/token").unwrap());
+        let during_gap = underlay_exclude_candidate_ips().await;
+        assert!(
+            during_gap.contains(&"198.51.100.50".parse().unwrap()),
+            "previous host must remain excluded until the new host resolves"
+        );
+
+        set_host_dns_lookup(Some(Arc::new(|_host| {
+            Box::pin(async { Ok(vec!["203.0.113.77".parse().unwrap()]) })
+        })));
+        let after = underlay_exclude_candidate_ips().await;
+        assert!(after.contains(&"203.0.113.77".parse().unwrap()));
+        assert!(
+            !after.contains(&"198.51.100.50".parse().unwrap()),
+            "stale previous-host excludes must clear once the new host resolves"
+        );
+        set_host_dns_lookup(None);
         clear();
     }
 }

@@ -45,7 +45,7 @@ jobs:
         }}
     steps:
       - id: skip_check
-        uses: fkirc/skip-duplicate-actions@v5.3.1
+        uses: fkirc/skip-duplicate-actions@f75f66ce1886f00957d99748a42c724f4330bdcf # v5.3.1
         with:
           concurrent_skipping: 'same_content_newer'
           skip_after_successful_duplicate: 'true'
@@ -56,7 +56,7 @@ jobs:
         if: >-
           github.event_name == 'pull_request' &&
           steps.skip_check.outputs.should_skip != 'true'
-        uses: dorny/paths-filter@v4
+        uses: dorny/paths-filter@9d7afb8d214ad99e78fbd4247752c4caed2b6e4c # v4.0.0
         with:
           filters: |
             relevant: ${{ env.RELEVANT_PATHS }}
@@ -126,7 +126,7 @@ jobs:
           pnpm-setup-wasm: 'false'
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - uses: Swatinem/rust-cache@v2.7.8
+      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2.7.8
         with:
           # The prefix cache key, this can be changed to start a new cache manually.
           # default: "v0-rust"

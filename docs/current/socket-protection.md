@@ -95,3 +95,19 @@ An embedding host must update its versioned option decoder and honor the flag
 inside its existing creation implementation. The external host implementation
 is not in this repository: building the guest proves propagation/compatibility
 of imports, not that every external host has implemented platform protection.
+
+## Code anchors
+
+Stable symbols to verify the contract against the tree (line numbers drift; use
+the symbol names):
+
+| Behavior | Anchor |
+|----------|--------|
+| Default `need_protect = true` | `easytier-core/src/socket/mod.rs` → `default_need_protect` |
+| TCP option field + constructors | `easytier-core/src/socket/tcp.rs` → `TcpBindOptions`, `TcpListenOptions::{proxy_nat,socks5,port_forward,port_lease}` opt-out via `.with_need_protect(false)` |
+| UDP option field + constructors | `easytier-core/src/socket/udp/virtual_socket.rs` → `UdpBindOptions`; `hole_punch_control()` defaults protected; senders opt out at call site |
+| Hole-punch control senders opt out | `easytier-core/src/socket/udp/virtual_socket.rs` → `send_v4_hole_punch_control_packet` / `send_v6_hole_punch_control_packet` |
+| Unit assertions (TCP/UDP defaults) | `easytier-core/src/socket/tcp.rs` and `udp/virtual_socket.rs` `#[cfg(test)]` modules |
+| Native protect-before-use gate | `easytier/src/socket_protector.rs` → `NativeSocketProtector`, `protect_native_socket` |
+| Native TCP/UDP apply protect | `easytier/src/socket/tcp.rs`, `easytier/src/socket/udp.rs` (call `protect_native_socket` before bind/connect) |
+| Tunnel builder flag | `easytier/src/tunnel/common.rs` → `need_protect` on the native bind builder |

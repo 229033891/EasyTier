@@ -3,9 +3,12 @@ use std::{
     io,
     net::{IpAddr, Ipv4Addr, Ipv6Addr},
     pin::Pin,
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
     task::{Context, Poll},
-    time::Duration,
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use crate::common::{
@@ -46,6 +49,25 @@ use zerocopy::{NativeEndian, NetworkEndian};
 
 #[cfg(target_os = "windows")]
 use crate::common::ifcfg::RegistryManager;
+
+/// Rate-limit third-party `/0` EEXIST warnings so a stuck foreign route does
+/// not spam the log every reconcile tick (~1s).
+static LAST_THIRD_PARTY_EEXIST_WARN_MS: AtomicU64 = AtomicU64::new(0);
+const THIRD_PARTY_EEXIST_WARN_INTERVAL: Duration = Duration::from_secs(60);
+
+fn should_warn_third_party_eexist() -> bool {
+    let now_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+    let prev = LAST_THIRD_PARTY_EEXIST_WARN_MS.load(Ordering::Relaxed);
+    if now_ms.saturating_sub(prev) < THIRD_PARTY_EEXIST_WARN_INTERVAL.as_millis() as u64 {
+        return false;
+    }
+    LAST_THIRD_PARTY_EEXIST_WARN_MS
+        .compare_exchange(prev, now_ms, Ordering::Relaxed, Ordering::Relaxed)
+        .is_ok()
+}
 
 pin_project! {
     pub struct TunStream {
@@ -1283,11 +1305,13 @@ impl NicCtx {
                         // Still present after a force-remove — likely a
                         // third-party same-prefix route. Do not mark
                         // converged; let the ticker keep retrying.
-                        tracing::warn!(
-                            ifname,
-                            ?err2,
-                            "replace ipv4 default route still EEXIST after force-remove; will retry"
-                        );
+                        if should_warn_third_party_eexist() {
+                            tracing::warn!(
+                                ifname,
+                                ?err2,
+                                "replace ipv4 default route still EEXIST after force-remove; will retry (rate-limited)"
+                            );
+                        }
                         false
                     }
                     Err(err2) => {

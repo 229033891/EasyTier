@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 use std::sync::{
-    Arc, Mutex as StdMutex, Weak,
+    Arc, Mutex as StdMutex, MutexGuard, PoisonError, Weak,
     atomic::{AtomicBool, Ordering},
 };
 
@@ -35,6 +35,7 @@ use super::{
 use super::{LoggerControl, register_management_rpc};
 
 const RETRY_INTERVAL: std::time::Duration = std::time::Duration::from_secs(1);
+const MAX_RETRY_INTERVAL: std::time::Duration = std::time::Duration::from_secs(30);
 // Keep retry ownership in this loop when transport or protocol handshakes stall.
 const CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
 const FEATURE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(3);
@@ -45,6 +46,27 @@ const MAX_HEARTBEAT_INTERVAL_MS: u32 = 60_000;
 const MIN_HEARTBEAT_TIMEOUT_MS: u32 = 5_000;
 const MAX_HEARTBEAT_TIMEOUT_MS: u32 = 120_000;
 const MIN_HEARTBEAT_TIMEOUT_MARGIN_MS: u32 = 5_000;
+
+/// Recover from a poisoned `StdMutex` instead of silently dropping updates.
+/// Poison means a prior holder paniced while holding the lock; the inner state
+/// is still the best available process truth for revision / RPC bookkeeping.
+fn lock_mutex<T>(mutex: &StdMutex<T>) -> MutexGuard<'_, T> {
+    mutex
+        .lock()
+        .unwrap_or_else(|poisoned: PoisonError<MutexGuard<'_, T>>| {
+            tracing::error!(
+                "config-server StdMutex poisoned; recovering inner state so reports keep working"
+            );
+            poisoned.into_inner()
+        })
+}
+
+fn next_backoff(current: std::time::Duration) -> std::time::Duration {
+    current
+        .checked_mul(2)
+        .unwrap_or(MAX_RETRY_INTERVAL)
+        .min(MAX_RETRY_INTERVAL)
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct HeartbeatPolicy {
@@ -282,27 +304,21 @@ struct PendingReport {
 
 impl WebClientController {
     fn cached_revision(&self) -> Option<String> {
-        self.managed_config_revision
-            .lock()
-            .ok()
-            .and_then(|guard| guard.clone())
+        lock_mutex(&self.managed_config_revision).clone()
     }
 
     /// Cache a revision observed by a local report (applied or conflict) and bump
     /// the generation so an in-flight heartbeat cannot write a staler value.
     fn store_local_revision(&self, revision: Option<String>) {
-        if let Ok(mut guard) = self.managed_config_revision.lock() {
-            *guard = revision;
-            self.revision_generation.fetch_add(1, Ordering::AcqRel);
-        }
+        *lock_mutex(&self.managed_config_revision) = revision;
+        self.revision_generation.fetch_add(1, Ordering::AcqRel);
     }
 
     /// Cache the revision carried by a heartbeat, unless a local report landed
     /// after that heartbeat sampled the generation.
     fn store_heartbeat_revision(&self, sampled_generation: u64, revision: Option<String>) {
-        if let Ok(mut guard) = self.managed_config_revision.lock()
-            && self.revision_generation.load(Ordering::Acquire) == sampled_generation
-        {
+        let mut guard = lock_mutex(&self.managed_config_revision);
+        if self.revision_generation.load(Ordering::Acquire) == sampled_generation {
             *guard = revision;
         }
     }
@@ -312,9 +328,7 @@ impl WebClientController {
     /// identical target revision as already applied, so a retry after a lost
     /// response must not look like a concurrent edit.
     fn revision_for_report(&self, instance_id: &str, expected_revision: &str) -> String {
-        let Ok(mut guard) = self.pending_report.lock() else {
-            return uuid::Uuid::new_v4().to_string();
-        };
+        let mut guard = lock_mutex(&self.pending_report);
         if let Some(pending) = guard.get(instance_id)
             && pending.expected_revision == expected_revision
         {
@@ -335,9 +349,7 @@ impl WebClientController {
     /// Drop the pending report after a definitive answer. Transient failures keep
     /// it so the next attempt reuses the same revision.
     fn clear_pending_report(&self, instance_id: &str) {
-        if let Ok(mut guard) = self.pending_report.lock() {
-            guard.remove(instance_id);
-        }
+        lock_mutex(&self.pending_report).remove(instance_id);
     }
 }
 
@@ -487,12 +499,8 @@ impl config_server_client::ConfigServerReportClient for WebClientReportFacade {
         if !self.is_connected() {
             return Err(ReportNetworkConfigError::NotConnected);
         }
-        let rpc = self
-            .controller
-            .active_rpc
-            .lock()
-            .ok()
-            .and_then(|guard| guard.clone())
+        let rpc = lock_mutex(&self.controller.active_rpc)
+            .clone()
             .ok_or(ReportNetworkConfigError::NotConnected)?;
         let instance_id = config.instance_id().to_owned();
         let expected = self.controller.cached_revision().unwrap_or_default();
@@ -576,14 +584,23 @@ async fn web_client_routine(
     connected: Arc<AtomicBool>,
     connector: Box<dyn TunnelDialer>,
 ) {
+    let mut backoff = RETRY_INTERVAL;
     loop {
         let connection = match connect_config_server(connector.as_ref(), CONNECT_TIMEOUT).await {
-            Ok(connection) => connection,
+            Ok(connection) => {
+                backoff = RETRY_INTERVAL;
+                connection
+            }
             Err(error) => {
-                tracing::warn!(%error, "failed to connect to config server; retrying");
+                tracing::warn!(
+                    %error,
+                    retry_in_ms = backoff.as_millis(),
+                    "failed to connect to config server; retrying"
+                );
                 config_server_status::mark_error(error.to_string());
                 connected.store(false, Ordering::Release);
-                time::sleep(RETRY_INTERVAL).await;
+                time::sleep(backoff).await;
+                backoff = next_backoff(backoff);
                 continue;
             }
         };
@@ -613,19 +630,32 @@ async fn web_client_routine(
                 Err(error) => {
                     connected.store(false, Ordering::Release);
                     config_server_status::mark_error(error.to_string());
-                    tracing::warn!(%error, "failed to reconnect secure config-server tunnel");
-                    time::sleep(RETRY_INTERVAL).await;
+                    tracing::warn!(
+                        %error,
+                        retry_in_ms = backoff.as_millis(),
+                        "failed to reconnect secure config-server tunnel"
+                    );
+                    time::sleep(backoff).await;
+                    backoff = next_backoff(backoff);
                     continue;
                 }
             };
             config_server_status::record_tunnel_remote(connection.info().as_ref());
             let connection = match web_security::upgrade_client_tunnel(connection).await {
-                Ok(connection) => connection,
+                Ok(connection) => {
+                    backoff = RETRY_INTERVAL;
+                    connection
+                }
                 Err(error) => {
                     connected.store(false, Ordering::Release);
                     config_server_status::mark_error(error.to_string());
-                    tracing::warn!(%error, "config-server secure handshake failed");
-                    time::sleep(RETRY_INTERVAL).await;
+                    tracing::warn!(
+                        %error,
+                        retry_in_ms = backoff.as_millis(),
+                        "config-server secure handshake failed"
+                    );
+                    time::sleep(backoff).await;
+                    backoff = next_backoff(backoff);
                     continue;
                 }
             };
@@ -637,6 +667,13 @@ async fn web_client_routine(
             session.wait().await;
             connected.store(false, Ordering::Release);
             config_server_status::mark_disconnected();
+            // Successful session ended (server close / network drop). Back off
+            // before hot-reconnecting to avoid a reconnect storm.
+            tracing::info!(
+                retry_in_ms = RETRY_INTERVAL.as_millis(),
+                "config-server session ended; reconnecting after backoff"
+            );
+            time::sleep(RETRY_INTERVAL).await;
             continue;
         }
 
@@ -647,7 +684,8 @@ async fn web_client_routine(
                     "secure mode requires web secure-tunnel support in the local build",
                 );
                 tracing::warn!("secure mode requires web secure-tunnel support in the local build");
-                time::sleep(RETRY_INTERVAL).await;
+                time::sleep(backoff).await;
+                backoff = next_backoff(backoff);
                 continue;
             }
             tracing::warn!(
@@ -660,7 +698,8 @@ async fn web_client_routine(
                 "secure mode requires config-server encryption support",
             );
             tracing::warn!("secure mode requires config-server encryption support");
-            time::sleep(RETRY_INTERVAL).await;
+            time::sleep(backoff).await;
+            backoff = next_backoff(backoff);
             continue;
         }
 
@@ -668,6 +707,11 @@ async fn web_client_routine(
         session.wait().await;
         connected.store(false, Ordering::Release);
         config_server_status::mark_disconnected();
+        tracing::info!(
+            retry_in_ms = RETRY_INTERVAL.as_millis(),
+            "config-server session ended; reconnecting after backoff"
+        );
+        time::sleep(RETRY_INTERVAL).await;
     }
 }
 
@@ -743,9 +787,7 @@ impl WebClientSession {
         let rpc = Arc::new(BidirectRpcManager::new());
         rpc.run_with_tunnel(tunnel);
         controller.backend.register(rpc.rpc_server().registry());
-        if let Ok(mut guard) = controller.active_rpc.lock() {
-            *guard = Some(rpc.clone());
-        }
+        *lock_mutex(&controller.active_rpc) = Some(rpc.clone());
         Self {
             rpc,
             controller,
@@ -755,10 +797,10 @@ impl WebClientSession {
     }
 
     fn clear_active_rpc_if_current(&self) {
-        if let Ok(mut guard) = self.controller.active_rpc.lock()
-            && guard
-                .as_ref()
-                .is_some_and(|active| Arc::ptr_eq(active, &self.rpc))
+        let mut guard = lock_mutex(&self.controller.active_rpc);
+        if guard
+            .as_ref()
+            .is_some_and(|active| Arc::ptr_eq(active, &self.rpc))
         {
             *guard = None;
         }
