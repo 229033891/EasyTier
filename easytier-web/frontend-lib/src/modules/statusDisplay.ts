@@ -1,4 +1,4 @@
-import type { NetworkInstanceRunningInfo, PeerInfo, PeerRoutePair, Route } from '../types/network'
+import type { NetworkInstanceRunningInfo, PeerInfo, PeerRoutePair } from '../types/network'
 
 export function numericValue(value: unknown): number | undefined {
   if (typeof value === 'number')
@@ -367,33 +367,23 @@ function normalizeCidr(cidr: string): string {
     : `${trimmed}${trimmed.includes(':') ? '/128' : '/32'}`
 }
 
-/** Collect proxy CIDRs from the EasyTier route table (mobile / no L2 sync fallback). */
-export function collectRouteProxyCidrs(routes?: Route[] | null): string[] {
-  const cidrs = new Set<string>()
-  for (const route of routes ?? []) {
-    for (const cidr of route.proxy_cidrs ?? []) {
-      const normalized = normalizeCidr(cidr)
-      if (normalized)
-        cidrs.add(normalized)
-    }
-  }
-  return [...cidrs].sort()
-}
-
 /**
  * Local OS / VPN routes currently applied for this instance.
- * Priority: explicit override (e.g. Android VpnService) → meaningful L2 installed
- * → route-table proxy_cidrs. Empty L2 placeholders do not block the fallback.
+ *
+ * - `overrideRoutes === undefined`: no platform source → use meaningful L2 `installed=` only.
+ * - `overrideRoutes` is an array (including `[]`): platform-authoritative (Android VpnService).
+ * - Never fall back to route-table `proxy_cidrs` (those are advertised, not locally installed;
+ *   wrong for no_tun / mobile without override).
  */
 export function collectLocalInstalledRoutes(
   detail?: Pick<NetworkInstanceRunningInfo, 'proxy_cidr_route_sync' | 'routes'> | null,
   overrideRoutes?: string[] | null,
 ): string[] {
-  const fromOverride = (overrideRoutes ?? [])
-    .map(normalizeCidr)
-    .filter(Boolean)
-  if (fromOverride.length)
+  // undefined/null = no override; [] = platform says nothing installed.
+  if (overrideRoutes !== undefined && overrideRoutes !== null) {
+    const fromOverride = overrideRoutes.map(normalizeCidr).filter(Boolean)
     return [...new Set(fromOverride)].sort()
+  }
 
   if (!detail)
     return []
@@ -402,5 +392,5 @@ export function collectLocalInstalledRoutes(
   if (isMeaningfulProxyCidrRouteSync(sync))
     return parseInstalledProxyCidrs(sync)
 
-  return collectRouteProxyCidrs(detail.routes)
+  return []
 }

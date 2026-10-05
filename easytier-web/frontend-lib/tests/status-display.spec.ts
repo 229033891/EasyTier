@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
   collectLocalInstalledRoutes,
-  collectRouteProxyCidrs,
   isMeaningfulProxyCidrRouteSync,
   latencyMs,
   lossRate,
@@ -97,17 +96,7 @@ describe('status display helpers', () => {
     )).toEqual(['10.0.0.0/24', '192.168.1.0/24'])
   })
 
-  it('collects route-table proxy CIDRs as fallback', () => {
-    expect(collectRouteProxyCidrs([
-      { proxy_cidrs: ['10.1.0.0/24', '10.2.0.1'] },
-      { proxy_cidrs: ['10.1.0.0/24'] },
-    ] as any)).toEqual(['10.1.0.0/24', '10.2.0.1/32'])
-    expect(collectRouteProxyCidrs([
-      { proxy_cidrs: ['fd00::1', '2001:db8::/64'] },
-    ] as any)).toEqual(['2001:db8::/64', 'fd00::1/128'])
-  })
-
-  it('prefers L2 installed routes over route-table proxy CIDRs', () => {
+  it('resolves locally installed routes (override > meaningful L2, never route-table)', () => {
     expect(collectLocalInstalledRoutes({
       proxy_cidr_route_sync: 'desired=[1.0.0.0/8] installed=[1.0.0.0/8] exit=false',
       routes: [{ proxy_cidrs: ['9.9.9.0/24'] } as any],
@@ -119,21 +108,26 @@ describe('status display helpers', () => {
       routes: [{ proxy_cidrs: ['9.9.9.0/24'] } as any],
     })).toEqual([])
 
-    // Empty L2 placeholder (Android / uninitialized): fall back to route-table proxy_cidrs
+    // Empty L2 placeholder (mobile / uninitialized / no_tun): do NOT claim peer CIDRs as installed
     expect(isMeaningfulProxyCidrRouteSync('desired=[-] installed=[-] exit=false')).toBe(false)
     expect(collectLocalInstalledRoutes({
       proxy_cidr_route_sync: 'desired=[-] installed=[-] exit=false',
       routes: [{ proxy_cidrs: ['9.9.9.0/24'] } as any],
-    })).toEqual(['9.9.9.0/24'])
+    })).toEqual([])
 
     expect(collectLocalInstalledRoutes({
       routes: [{ proxy_cidrs: ['9.9.9.0/24'] } as any],
-    })).toEqual(['9.9.9.0/24'])
+    })).toEqual([])
 
-    // Platform override (VpnService) wins over L2 and route table
+    // Platform override (VpnService) wins; empty override means none installed
     expect(collectLocalInstalledRoutes({
       proxy_cidr_route_sync: 'desired=[1.0.0.0/8] installed=[1.0.0.0/8] exit=false',
       routes: [{ proxy_cidrs: ['9.9.9.0/24'] } as any],
     }, ['10.20.0.0/16', '0.0.0.0/0'])).toEqual(['0.0.0.0/0', '10.20.0.0/16'])
+
+    expect(collectLocalInstalledRoutes({
+      proxy_cidr_route_sync: 'desired=[-] installed=[-] exit=false',
+      routes: [{ proxy_cidrs: ['9.9.9.0/24'] } as any],
+    }, [])).toEqual([])
   })
 })

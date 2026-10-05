@@ -331,10 +331,13 @@ const myNodeInfoGroups = computed(() => {
     })
   }
 
-  // 本机已添加路由：Android VpnService 覆盖优先；否则 L2 installed / 路由表回退
-  const overrideRoutes = typeof props.localInstalledRoutes === 'function'
-    ? props.localInstalledRoutes()
-    : props.localInstalledRoutes
+  // 本机已添加路由：平台 override（含空数组）优先；否则仅信有意义的 L2 installed
+  const hasPlatformOverride = props.localInstalledRoutes !== undefined
+  const overrideRoutes = hasPlatformOverride
+    ? (typeof props.localInstalledRoutes === 'function'
+        ? props.localInstalledRoutes()
+        : props.localInstalledRoutes) ?? []
+    : undefined
   const routeChips = collectLocalInstalledRoutes(props.curNetworkInst.detail, overrideRoutes)
     .map(cidr => chip(cidr))
   if (routeChips.length) {

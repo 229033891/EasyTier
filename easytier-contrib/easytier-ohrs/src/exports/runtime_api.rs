@@ -1,7 +1,8 @@
 use crate::config::repository::{clear_runtime_config_snapshot, get_runtime_config_snapshot};
 use crate::config::types::stored_config::KeyValuePair;
 use crate::kernel_bridge::{
-    aggregate_requested_tun_routes, start_local_socket_server as start_local_socket_server_inner,
+    aggregate_requested_tun_routes, aggregate_tun_routes,
+    start_local_socket_server as start_local_socket_server_inner,
     stop_local_socket_server as stop_local_socket_server_inner,
 };
 use crate::runtime::state::runtime_state::{
@@ -76,6 +77,40 @@ pub(crate) fn stop_network_instance(
     ok
 }
 
+/// Replace empty desktop L2 sync with OHOS VpnService-bound TUN routes.
+pub(crate) fn annotate_ohos_proxy_cidr_route_sync(
+    config_id: &str,
+    info: &mut easytier_proto::api::manage::NetworkInstanceRunningInfo,
+) {
+    let snapshot = get_runtime_config_snapshot(config_id);
+    let display_name = snapshot
+        .as_ref()
+        .map(|snapshot| snapshot.display_name.clone())
+        .unwrap_or_else(|| config_id.to_string());
+    let instance = runtime_instance_from_running_info(
+        config_id.to_string(),
+        display_name,
+        snapshot.map(|snapshot| snapshot.config),
+        info.clone(),
+    );
+    let routes = if instance.tun_required {
+        aggregate_tun_routes(&instance)
+    } else {
+        Vec::new()
+    };
+    let joined = if routes.is_empty() {
+        "-".to_string()
+    } else {
+        routes.join(",")
+    };
+    let exit = routes
+        .iter()
+        .any(|route| route == "0.0.0.0/0" || route.starts_with("0.0.0.0/"));
+    info.proxy_cidr_route_sync = Some(format!(
+        "desired=[{joined}] installed=[{joined}] exit={exit}"
+    ));
+}
+
 pub(crate) fn collect_network_infos() -> Vec<KeyValuePair> {
     let infos = match ASYNC_RUNTIME.block_on(INSTANCE_MANAGER.collect_network_infos()) {
         Ok(infos) => infos,
@@ -87,7 +122,8 @@ pub(crate) fn collect_network_infos() -> Vec<KeyValuePair> {
 
     infos
         .into_iter()
-        .filter_map(|(key, value)| {
+        .filter_map(|(key, mut value)| {
+            annotate_ohos_proxy_cidr_route_sync(&key.to_string(), &mut value);
             serde_json::to_string(&value)
                 .ok()
                 .map(|value_json| KeyValuePair {

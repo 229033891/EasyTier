@@ -839,7 +839,7 @@ async function connectRpcClient(isNormalMode: boolean, url?: string) {
 
     <RemoteManagement v-if="clientRunning" class="flex-1 overflow-y-auto" :api="remoteClient"
       :pause-auto-refresh="isModeSaving" v-model:instance-id="instanceId"
-      :local-installed-routes="getMobileVpnInstalledRoutes">
+      :local-installed-routes="type() === 'android' ? getMobileVpnInstalledRoutes : undefined">
       <!-- 与共享底部栏同一行：样式与禁用网络完全一致 -->
       <template #footer-extra>
         <Button :label="t('system_settings')" icon="pi pi-cog" iconPos="left" severity="secondary"

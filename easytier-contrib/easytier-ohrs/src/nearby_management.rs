@@ -62,6 +62,7 @@ use tokio::{
 use url::Url;
 use uuid::Uuid;
 
+use crate::exports::runtime_api::annotate_ohos_proxy_cidr_route_sync;
 use crate::{ASYNC_RUNTIME, INSTANCE_MANAGER, config::repository::config_root_dir};
 
 const MAX_NEARBY_SESSIONS: usize = 8;
@@ -425,7 +426,13 @@ impl WebClientService for NearbyWebClientService {
         controller: BaseController,
         request: CollectNetworkInfoRequest,
     ) -> Result<CollectNetworkInfoResponse, RpcError> {
-        self.inner.collect_network_info(controller, request).await
+        let mut response = self.inner.collect_network_info(controller, request).await?;
+        if let Some(info_map) = response.info.as_mut() {
+            for (instance_id, info) in info_map.map.iter_mut() {
+                annotate_ohos_proxy_cidr_route_sync(instance_id, info);
+            }
+        }
+        Ok(response)
     }
 
     async fn list_network_instance(
