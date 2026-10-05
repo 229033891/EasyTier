@@ -168,6 +168,7 @@ pub fn network_config_from_toml(config: &TomlConfig) -> NetworkConfig {
         (flags.instance_recv_bps_limit != u64::MAX).then_some(flags.instance_recv_bps_limit);
     result.enable_private_mode = Some(flags.private_mode);
     result.acl = config.get_acl();
+    result.dns_config = config.get_dns_config();
 
     if flags.relay_network_whitelist == "*" {
         result.enable_relay_network_whitelist = Some(false);

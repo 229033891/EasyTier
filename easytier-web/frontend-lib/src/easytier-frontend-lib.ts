@@ -1,7 +1,7 @@
 import './style.css'
 
 import type { App } from 'vue';
-import { Config, Status, ConfigEditDialog, RemoteManagement, HumanEvent } from "./components";
+import { Config, Status, ConfigEditDialog, RemoteManagement, HumanEvent, DnsCoverageBadge, DnsHostsEditor, DnsForwardersEditor } from "./components";
 import PrimeVue from 'primevue/config'
 
 import I18nUtils from './modules/i18n'
@@ -14,6 +14,7 @@ import { EasyTierPreset, ET_PRIMARY, ET_PRIMARY_EMPHASIS } from './modules/theme
 
 import * as Api from './modules/api';
 import * as Utils from './modules/utils';
+import * as DnsCoverage from './modules/dnsCoverage';
 import { TOAST_LIFE } from './modules/toast';
 
 export default {
@@ -54,10 +55,14 @@ export {
     RemoteManagement,
     Status,
     HumanEvent,
+    DnsCoverageBadge,
+    DnsHostsEditor,
+    DnsForwardersEditor,
     I18nUtils,
     NetworkTypes,
     Api,
     Utils,
+    DnsCoverage,
     TOAST_LIFE,
     tooltipDirective,
     tooltipDefaults,

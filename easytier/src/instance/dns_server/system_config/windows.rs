@@ -173,6 +173,7 @@ mod tests {
         use tokio_util::sync::CancellationToken;
 
         use crate::instance::dns_server::{
+            MAGIC_DNS_FAKE_IP,
             runner::DnsRunner,
             tests::{check_dns_record, prepare_env},
         };
@@ -182,7 +183,7 @@ mod tests {
         let tun_name = virtual_nic.ifname().await.unwrap();
 
         println!("dev_name: {}", tun_name);
-        let fake_ip = Ipv4Addr::from_str("100.100.100.101").unwrap();
+        let fake_ip = Ipv4Addr::from_str(MAGIC_DNS_FAKE_IP).unwrap();
         let mut dns_runner = DnsRunner::new(
             core_instance.packet_plane(),
             global_ctx,
@@ -224,7 +225,7 @@ mod tests {
         dns_mgr
             .interface_control
             .set_primary_dns(
-                &["100.100.100.101".parse().unwrap()],
+                &[MAGIC_DNS_FAKE_IP.parse().unwrap()],
                 &[".et.net.".to_string()],
             )
             .unwrap();

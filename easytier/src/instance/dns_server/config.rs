@@ -16,6 +16,22 @@ pub struct RunConfig {
     #[builder(default = Vec::new())]
     #[serde(default)]
     excluded_forward_nameservers: Vec<IpAddr>,
+
+    /// Custom default upstreams (R3). Empty = use system DNS (B1).
+    #[builder(default = Vec::new())]
+    #[serde(default)]
+    forward_nameservers: Vec<String>,
+
+    /// Split DNS forwarders (R2): each entry maps domain suffixes to upstreams.
+    #[builder(default = Vec::new())]
+    #[serde(default)]
+    split_forwarders: Vec<SplitForwarderConfig>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct SplitForwarderConfig {
+    pub domains: Vec<String>,
+    pub servers: Vec<String>,
 }
 
 impl RunConfig {
@@ -29,6 +45,14 @@ impl RunConfig {
 
     pub fn excluded_forward_nameservers(&self) -> &Vec<IpAddr> {
         &self.excluded_forward_nameservers
+    }
+
+    pub fn forward_nameservers(&self) -> &Vec<String> {
+        &self.forward_nameservers
+    }
+
+    pub fn split_forwarders(&self) -> &Vec<SplitForwarderConfig> {
+        &self.split_forwarders
     }
 }
 

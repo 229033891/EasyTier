@@ -410,6 +410,57 @@ exit_nodes_help: |-
   对端必须开启「允许此节点成为出口节点」，否则 L3 接不住这些流量。
   注意：装/卸系统默认路由或 underlay 排除失败时，状态页可看「期望 vs 已安装」摘要，进程会周期性重试；在路由装好前本机上网可能短暂异常。填错地址或出口不可达会导致完全断网，请先确认可达。
 
+dns:
+  title: DNS 策略
+  hosts:
+    title: 静态主机
+    enable: 配置 DNS 策略
+    enable_tip: 添加静态主机、分流转发与默认上游 DNS
+    magic_dns_off_hint: DNS 策略会保存在本网络配置中；设备侧请在「高级 → 系统」启用魔法 DNS 后才会接线生效。
+    editor_help: 静态条目在 MagicDNS 上为权威记录，优先于路由 hostname；未命中时走正常解析。
+    empty: 尚未配置静态 DNS 主机。
+    name: 主机名
+    name_placeholder: "例如 app.internal. 或 db.et.net"
+    ips: IPv4 地址
+    ips_placeholder: "例如 10.1.2.3"
+    ttl: TTL
+    ttl_unit: 秒
+    add: 添加主机
+    add_tip: 添加一条静态 DNS 主机
+    remove: 删除主机
+  upstream:
+    title: 上游 DNS
+    help: 主机与分流均未命中时使用的顺序 failover 列表；为空则沿用系统 DNS。首期仅支持 IP 字面量（如 1.1.1.1、udp://8.8.8.8:53），不支持域名。
+    placeholder: "例如 1.1.1.1 或 udp://8.8.8.8:53"
+  forwarders:
+    title: 分流 DNS
+    editor_help: 将匹配的域名后缀转发到指定上游（优先于默认上游）。上游为首期仅 IP 字面量。
+    empty: 尚未配置分流转发。
+    domains: 域名
+    domains_placeholder: "例如 corp.example."
+    servers: 上游
+    servers_placeholder: "例如 10.0.0.53"
+    add: 添加分流
+    add_tip: 添加一条分流 DNS 规则
+    remove: 删除分流
+  mixed_version_warning: 网络中存在低于 2.7.4 的节点时，若旧节点当选 MagicDNS server，静态 hosts 可能静默丢失。请升级旧节点，或确认新版本节点担任 server 后再验收 hosts。
+  coverage:
+    label: DNS 覆盖
+    covered: 自动
+    covered_help: 启用魔法 DNS 后，此平台应能自动将系统 DNS 接到 MagicDNS。
+    covered_platform_help: 此平台在启用魔法 DNS 时通常可自动接线系统 DNS（徽章未读取具体网络开关）。
+    manual_required: 需手动
+    manual_required_help: 静态 hosts 可能已下发，但此系统需按文档手动配置 DNS。见 docs/current/magic-dns-manual-wiring.md（OpenWrt dnsmasq：server=/et.net/100.100.100.53）。
+    manual_required_platform_help: 此系统通常需手动配置 Magic DNS。见 docs/current/magic-dns-manual-wiring.md。徽章假定网络上已启用魔法 DNS。
+    manual_required_docs: 手工接线说明
+    manual_required_docs_url: https://github.com/EasyTier/EasyTier/blob/main/docs/current/magic-dns-manual-wiring.md
+    unsupported: 不支持
+    unsupported_help: 此平台或配置无法自动接线 Magic DNS（如 no_tun、iOS）。
+    unsupported_platform_help: 此平台无法自动接线 Magic DNS；徽章假定网络上已启用魔法 DNS。
+    version_too_old: 客户端过旧
+    version_too_old_help: 客户端低于 2.7.4，无法应用 DnsConfig.hosts；若它当选 MagicDNS server，静态 hosts 可能静默丢失（mesh 域名仍可能可解析）。
+    version_too_old_platform_help: 客户端版本过旧，无法应用控制台下发的 DnsConfig.hosts。
+
 port_forwards: 端口转发
 port_forwards_help: "将本地端口转发到虚拟网络中的远程端口。例如：udp://0.0.0.0:12345/10.126.126.1:23456，表示将本地UDP端口12345转发到虚拟网络中的10.126.126.1:23456。可以指定多个。"
 port_forwards_bind_addr: "绑定地址，如：0.0.0.0"

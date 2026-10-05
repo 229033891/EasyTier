@@ -3,3 +3,6 @@ export { default as Status } from './Status.vue';
 export { default as ConfigEditDialog } from './ConfigEditDialog.vue';
 export { default as RemoteManagement } from './RemoteManagement.vue';
 export { default as HumanEvent } from './HumanEvent.vue';
+export { default as DnsCoverageBadge } from './dns/DnsCoverageBadge.vue';
+export { default as DnsHostsEditor } from './dns/DnsHostsEditor.vue';
+export { default as DnsForwardersEditor } from './dns/DnsForwardersEditor.vue';

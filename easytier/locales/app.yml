@@ -237,6 +237,15 @@ core_clap:
   port_forward:
     en: "forward local port to remote port in virtual network. e.g.: udp://0.0.0.0:12345/10.126.126.1:23456, means forward local udp port 12345 to 10.126.126.1:23456 in the virtual network. can specify multiple."
     zh-CN: "将本地端口转发到虚拟网络中的远程端口。例如：udp://0.0.0.0:12345/10.126.126.1:23456，表示将本地UDP端口12345转发到虚拟网络中的10.126.126.1:23456。可以指定多个。"
+  dns_upstream:
+    en: "MagicDNS default upstream DNS servers (ordered failover). IP literals only in phase 1, e.g.: 1.1.1.1,8.8.8.8 or udp://1.1.1.1:53 (hostnames not accepted). empty keeps system DNS."
+    zh-CN: "MagicDNS 默认上游 DNS（按顺序 failover）。首期仅支持 IP 字面量，例如：1.1.1.1,8.8.8.8 或 udp://1.1.1.1:53（不支持域名）。为空则沿用系统 DNS。"
+  dns_host:
+    en: "static DNS host entry for MagicDNS. format: name=ip[,ip...][@ttl]. e.g.: app.internal.=10.1.2.3 or db.et.net=10.1.2.3,10.1.2.4@600. @0 or omit ttl uses default 300s. can specify multiple."
+    zh-CN: "MagicDNS 静态主机条目。格式：name=ip[,ip...][@ttl]。例如：app.internal.=10.1.2.3 或 db.et.net=10.1.2.3,10.1.2.4@600。@0 或省略 TTL 表示默认 300 秒。可指定多个。"
+  dns_forward:
+    en: "MagicDNS split DNS forwarder. format: domain[,domain]=server[,server]. servers are IP literals only in phase 1. e.g.: corp.example.,intra.=10.0.0.53. can specify multiple."
+    zh-CN: "MagicDNS 分流转发。格式：domain[,domain]=server[,server]。首期上游仅支持 IP 字面量。例如：corp.example.,intra.=10.0.0.53。可指定多个。"
   accept_dns:
     en: "if true, enable magic dns. with magic dns, you can access other nodes with a domain name, e.g.: <hostname>.et.net. magic dns will modify your system dns settings, enable it carefully."
     zh-CN: "如果为true，则启用魔法DNS。使用魔法DNS，您可以使用域名访问其他节点，例如：<hostname>.et.net。魔法DNS将修改您的系统DNS设置，请谨慎启用。"

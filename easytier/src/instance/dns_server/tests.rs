@@ -114,7 +114,7 @@ async fn test_magic_dns_server_instance() {
     let tun_ip = Ipv4Inet::from_str("10.144.144.10/24").unwrap();
     let (global_ctx, core_instance, virtual_nic) = prepare_env("test1", tun_ip).await;
     let tun_name = virtual_nic.ifname().await.unwrap();
-    let fake_ip = Ipv4Addr::from_str("100.100.100.101").unwrap();
+    let fake_ip = Ipv4Addr::from_str(MAGIC_DNS_FAKE_IP).unwrap();
     let dns_server_inst = MagicDnsServerInstance::new(
         core_instance.packet_plane(),
         global_ctx,
@@ -250,6 +250,7 @@ async fn test_magic_dns_update_replaces_records_for_same_client() {
                     ipv4_addr: Some(Ipv4Inet::from_str("8.8.8.8/32").unwrap().into()),
                     ..Default::default()
                 }],
+                ..Default::default()
             },
         )
         .await
@@ -266,6 +267,7 @@ async fn test_magic_dns_update_replaces_records_for_same_client() {
                     ipv4_addr: Some(Ipv4Inet::from_str("1.1.1.1/32").unwrap().into()),
                     ..Default::default()
                 }],
+                ..Default::default()
             },
         )
         .await
@@ -314,6 +316,7 @@ async fn test_magic_dns_update_replaces_records_for_same_client() {
             UpdateDnsRecordRequest {
                 zone: DEFAULT_ET_DNS_ZONE.to_string(),
                 routes: vec![],
+                ..Default::default()
             },
         )
         .await
@@ -328,4 +331,260 @@ async fn test_magic_dns_update_replaces_records_for_same_client() {
         .await
         .unwrap();
     assert!(!dns_records.records.contains_key(DEFAULT_ET_DNS_ZONE));
+}
+
+#[test]
+fn normalize_host_zone_trims_and_lowercases() {
+    use super::server_instance::normalize_host_zone;
+    assert_eq!(normalize_host_zone(" App.Internal. "), "app.internal.");
+    assert_eq!(normalize_host_zone("host.et.net"), "host.et.net.");
+    assert_eq!(normalize_host_zone("   "), "");
+}
+
+#[tokio::test]
+async fn test_static_hosts_win_over_route_hostname() {
+    use crate::proto::api::manage::{DnsConfig, DnsHostEntry};
+
+    let tun_ip = Ipv4Inet::from_str("10.144.144.10/24").unwrap();
+    let (global_ctx, core_instance, virtual_nic) = prepare_env("test1", tun_ip).await;
+    let tun_name = virtual_nic.ifname().await.unwrap();
+
+    global_ctx.config.set_dns_config(Some(DnsConfig {
+        hosts: vec![DnsHostEntry {
+            name: "test1.et.net".to_string(),
+            ips: vec!["9.9.9.9".to_string()],
+            ttl_secs: Some(300),
+        }],
+        forwarders: vec![],
+        upstream_dns: vec![],
+    }));
+
+    let fake_ip = Ipv4Addr::from_str(MAGIC_DNS_FAKE_IP).unwrap();
+    let dns_server_inst = MagicDnsServerInstance::new(
+        core_instance.packet_plane(),
+        global_ctx,
+        Some(tun_name),
+        tun_ip,
+        fake_ip,
+    )
+    .await
+    .unwrap();
+
+    // Route publishes the same name with a different IP; hosts zone must win.
+    let mut ctrl = BaseController::default();
+    ctrl.set_tunnel_info(Some(crate::proto::common::TunnelInfo {
+        tunnel_type: "tcp".to_string(),
+        local_addr: None,
+        remote_addr: Some(crate::proto::common::Url {
+            url: "tcp://127.0.0.1:54321".to_string(),
+        }),
+        resolved_remote_addr: None,
+    }));
+    dns_server_inst
+        .data
+        .update_dns_record(
+            ctrl,
+            UpdateDnsRecordRequest {
+                zone: DEFAULT_ET_DNS_ZONE.to_string(),
+                routes: vec![Route {
+                    hostname: "test1".to_string(),
+                    ipv4_addr: Some(Ipv4Inet::from_str("10.144.144.10/32").unwrap().into()),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+
+    check_dns_record(&fake_ip, "test1.et.net", "9.9.9.9").await;
+}
+
+#[tokio::test]
+async fn test_static_hosts_channel_via_update_dns_record() {
+    use crate::proto::magic_dns::StaticDnsHost;
+
+    let tun_ip = Ipv4Inet::from_str("10.144.144.20/24").unwrap();
+    let (global_ctx, core_instance, virtual_nic) = prepare_env("channel-node", tun_ip).await;
+    let tun_name = virtual_nic.ifname().await.unwrap();
+
+    let fake_ip = Ipv4Addr::from_str(MAGIC_DNS_FAKE_IP).unwrap();
+    let dns_server_inst = MagicDnsServerInstance::new(
+        core_instance.packet_plane(),
+        global_ctx,
+        Some(tun_name),
+        tun_ip,
+        fake_ip,
+    )
+    .await
+    .unwrap();
+
+    let mut ctrl = BaseController::default();
+    ctrl.set_tunnel_info(Some(crate::proto::common::TunnelInfo {
+        tunnel_type: "tcp".to_string(),
+        local_addr: None,
+        remote_addr: Some(crate::proto::common::Url {
+            url: "tcp://127.0.0.1:55555".to_string(),
+        }),
+        resolved_remote_addr: None,
+    }));
+
+    // R1 channel: client="static-hosts" installs long-TTL zone (B2 over routes).
+    dns_server_inst
+        .data
+        .update_dns_record(
+            ctrl.clone(),
+            UpdateDnsRecordRequest {
+                zone: DEFAULT_ET_DNS_ZONE.to_string(),
+                routes: vec![Route {
+                    hostname: "app".to_string(),
+                    ipv4_addr: Some(Ipv4Inet::from_str("10.144.144.20/32").unwrap().into()),
+                    ..Default::default()
+                }],
+                client: Some(
+                    crate::instance::dns_server::MAGIC_DNS_STATIC_HOSTS_CLIENT.to_string(),
+                ),
+                static_hosts: vec![StaticDnsHost {
+                    name: "app.et.net".to_string(),
+                    ips: vec!["8.8.4.4".to_string()],
+                    ttl_secs: Some(600),
+                }],
+            },
+        )
+        .await
+        .unwrap();
+
+    check_dns_record(&fake_ip, "app.et.net", "8.8.4.4").await;
+
+    // Clearing static hosts falls back to route IP.
+    dns_server_inst
+        .data
+        .update_dns_record(
+            ctrl,
+            UpdateDnsRecordRequest {
+                zone: DEFAULT_ET_DNS_ZONE.to_string(),
+                routes: vec![Route {
+                    hostname: "app".to_string(),
+                    ipv4_addr: Some(Ipv4Inet::from_str("10.144.144.20/32").unwrap().into()),
+                    ..Default::default()
+                }],
+                client: Some(
+                    crate::instance::dns_server::MAGIC_DNS_STATIC_HOSTS_CLIENT.to_string(),
+                ),
+                static_hosts: vec![],
+            },
+        )
+        .await
+        .unwrap();
+
+    check_dns_record(&fake_ip, "app.et.net", "10.144.144.20").await;
+}
+
+#[tokio::test]
+async fn test_static_hosts_cleared_on_client_disconnect() {
+    use crate::proto::magic_dns::StaticDnsHost;
+    use crate::proto::rpc::standalone::RpcServerHook;
+    use easytier_core::config::toml::DnsHostEntry;
+
+    let tun_ip = Ipv4Inet::from_str("10.144.144.30/24").unwrap();
+    let (global_ctx, core_instance, virtual_nic) = prepare_env("disconnect-node", tun_ip).await;
+    let tun_name = virtual_nic.ifname().await.unwrap();
+
+    let fake_ip = Ipv4Addr::from_str(MAGIC_DNS_FAKE_IP).unwrap();
+    let dns_server_inst = MagicDnsServerInstance::new(
+        core_instance.packet_plane(),
+        global_ctx,
+        Some(tun_name),
+        tun_ip,
+        fake_ip,
+    )
+    .await
+    .unwrap();
+
+    let tunnel = crate::proto::common::TunnelInfo {
+        tunnel_type: "tcp".to_string(),
+        local_addr: None,
+        remote_addr: Some(crate::proto::common::Url {
+            url: "tcp://127.0.0.1:55666".to_string(),
+        }),
+        resolved_remote_addr: None,
+    };
+    let mut ctrl = BaseController::default();
+    ctrl.set_tunnel_info(Some(tunnel.clone()));
+
+    dns_server_inst
+        .data
+        .update_dns_record(
+            ctrl,
+            UpdateDnsRecordRequest {
+                zone: DEFAULT_ET_DNS_ZONE.to_string(),
+                routes: vec![Route {
+                    hostname: "gone".to_string(),
+                    ipv4_addr: Some(Ipv4Inet::from_str("10.144.144.30/32").unwrap().into()),
+                    ..Default::default()
+                }],
+                client: Some(
+                    crate::instance::dns_server::MAGIC_DNS_STATIC_HOSTS_CLIENT.to_string(),
+                ),
+                static_hosts: vec![StaticDnsHost {
+                    name: "gone.et.net".to_string(),
+                    ips: vec!["7.7.7.7".to_string()],
+                    ttl_secs: Some(300),
+                }],
+            },
+        )
+        .await
+        .unwrap();
+    check_dns_record(&fake_ip, "gone.et.net", "7.7.7.7").await;
+
+    dns_server_inst
+        .data
+        .on_client_disconnected(Some(tunnel))
+        .await;
+
+    // After disconnect, static channel entry is gone; route entry also removed →
+    // fall back to empty authoritative zone / NX. Query route hostname after
+    // re-publishing route only.
+    let mut ctrl2 = BaseController::default();
+    ctrl2.set_tunnel_info(Some(crate::proto::common::TunnelInfo {
+        tunnel_type: "tcp".to_string(),
+        local_addr: None,
+        remote_addr: Some(crate::proto::common::Url {
+            url: "tcp://127.0.0.1:55667".to_string(),
+        }),
+        resolved_remote_addr: None,
+    }));
+    dns_server_inst
+        .data
+        .update_dns_record(
+            ctrl2,
+            UpdateDnsRecordRequest {
+                zone: DEFAULT_ET_DNS_ZONE.to_string(),
+                routes: vec![Route {
+                    hostname: "gone".to_string(),
+                    ipv4_addr: Some(Ipv4Inet::from_str("10.144.144.30/32").unwrap().into()),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    check_dns_record(&fake_ip, "gone.et.net", "10.144.144.30").await;
+
+    // Also cover reload_dns_policy (local hosts hot path).
+    dns_server_inst
+        .data
+        .reload_dns_policy(Some(&crate::proto::api::manage::DnsConfig {
+            hosts: vec![DnsHostEntry {
+                name: "gone.et.net".to_string(),
+                ips: vec!["5.5.5.5".to_string()],
+                ttl_secs: Some(300),
+            }],
+            forwarders: vec![],
+            upstream_dns: vec![],
+        }))
+        .await
+        .unwrap();
+    check_dns_record(&fake_ip, "gone.et.net", "5.5.5.5").await;
 }

@@ -108,6 +108,28 @@ message NetworkConfig {
   optional bool prefer_peer_relay = 72;
   // Opt-in: install peer-advertised 0.0.0.0/0 without a local exit (see Flags).
   optional bool allow_peer_default_without_exit = 73;
+  // DNS policy: static hosts / split forwarders / upstream (see docs/roadmap/dns-policy.md).
+  // Older clients ignore this field; behavior degrades to pre-policy MagicDNS.
+  optional DnsConfig dns_config = 74;
+}
+
+message DnsHostEntry {
+  string name = 1;
+  repeated string ips = 2;
+  // Seconds; 0 / unset = default long TTL (300s). Must not use MagicDNS route TTL (1s).
+  optional uint32 ttl_secs = 3;
+}
+
+message DnsForwarder {
+  repeated string domains = 1;
+  repeated string servers = 2;
+}
+
+message DnsConfig {
+  repeated DnsHostEntry hosts = 1;
+  repeated DnsForwarder forwarders = 2;
+  // Empty = keep today's system DNS forwarder behavior.
+  repeated string upstream_dns = 3;
 }
 
 message ManagedCredentialConfig {

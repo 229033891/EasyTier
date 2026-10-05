@@ -108,6 +108,7 @@ const FORM_MANAGED_TOML_FIELDS: &[&str] = &[
     "port_forward",
     "secure_mode",
     "acl",
+    "dns_config",
     "credential_file",
     "managed_credentials",
 ];
@@ -630,6 +631,10 @@ impl NetworkConfigExt for NetworkConfig {
             cfg.set_acl(Some(acl.clone()));
         }
 
+        if let Some(dns_config) = self.dns_config.as_ref() {
+            cfg.set_dns_config(Some(dns_config.clone()));
+        }
+
         if let Some(data_compress_algo) = self.data_compress_algo {
             if data_compress_algo < 1 {
                 flags.data_compress_algo = 1;
@@ -811,6 +816,7 @@ impl NetworkConfigExt for NetworkConfig {
         result.enable_private_mode = Some(flags.private_mode);
 
         result.acl = config.get_acl();
+        result.dns_config = config.get_dns_config();
 
         if flags.relay_network_whitelist == "*" {
             result.enable_relay_network_whitelist = Some(false);
@@ -854,6 +860,41 @@ mod tests {
             networking_method: Some(NetworkingMethod::Standalone as i32),
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn dns_config_hosts_round_trips_through_toml_model() {
+        let input = NetworkConfig {
+            dns_config: Some(manage::DnsConfig {
+                hosts: vec![manage::DnsHostEntry {
+                    name: "app.internal.".to_owned(),
+                    ips: vec!["10.1.2.3".to_owned()],
+                    ttl_secs: Some(600),
+                }],
+                forwarders: vec![manage::DnsForwarder {
+                    domains: vec!["corp.example.".to_owned()],
+                    servers: vec!["10.0.0.53".to_owned()],
+                }],
+                upstream_dns: vec!["1.1.1.1".to_owned()],
+            }),
+            enable_magic_dns: Some(true),
+            ..standalone_config()
+        };
+
+        let config = input.gen_config().unwrap();
+        let dns = config.get_dns_config().expect("dns_config stored");
+        assert_eq!(dns.hosts.len(), 1);
+        assert_eq!(dns.hosts[0].name, "app.internal.");
+        assert_eq!(dns.hosts[0].ips, vec!["10.1.2.3".to_owned()]);
+        assert_eq!(dns.hosts[0].ttl_secs, Some(600));
+        assert_eq!(dns.upstream_dns, vec!["1.1.1.1".to_owned()]);
+        assert_eq!(dns.forwarders.len(), 1);
+        assert_eq!(dns.forwarders[0].domains, vec!["corp.example."]);
+        assert_eq!(dns.forwarders[0].servers, vec!["10.0.0.53"]);
+
+        let output = NetworkConfig::new_from_config(config).unwrap();
+        assert_eq!(output.dns_config, input.dns_config);
+        assert_eq!(output.enable_magic_dns, Some(true));
     }
 
     #[test]

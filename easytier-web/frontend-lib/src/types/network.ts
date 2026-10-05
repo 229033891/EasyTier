@@ -7,6 +7,9 @@ import {
   type PortForwardConfig,
   type VpnPortalClientConfig,
   type VpnPortalConfig,
+  type DnsConfig,
+  type DnsHostEntry,
+  type DnsForwarder,
 } from '../generated/proto/api_manage'
 import {
   VpnPortalClientState,
@@ -35,7 +38,7 @@ import { prepareNetworkConfigForProtoJson } from './networkCompat'
 
 export { AclAction, AclChainType, AclProtocol, CompressionAlgoPb, NatType, NetworkingMethod }
 export { VpnPortalClientState }
-export type { Acl, AclChain, AclRule, AclV1, GroupIdentity, GroupInfo, NetworkPeerConfig, PeerFeatureFlag, PortForwardConfig, SecureModeConfig, VpnPortalClientConfig, VpnPortalClientInfo, VpnPortalConfig, VpnPortalInfo }
+export type { Acl, AclChain, AclRule, AclV1, DnsConfig, DnsForwarder, DnsHostEntry, GroupIdentity, GroupInfo, NetworkPeerConfig, PeerFeatureFlag, PortForwardConfig, SecureModeConfig, VpnPortalClientConfig, VpnPortalClientInfo, VpnPortalConfig, VpnPortalInfo }
 
 export type NetworkConfig = Omit<
   ProtoNetworkConfig,
@@ -336,6 +339,11 @@ export function normalizeNetworkConfig(config: NetworkConfig): NetworkConfig {
   normalized.exit_nodes ??= []
   normalized.mapped_listeners ??= []
   normalized.port_forwards ??= []
+  if (normalized.dns_config) {
+    normalized.dns_config.hosts ??= []
+    normalized.dns_config.forwarders ??= []
+    normalized.dns_config.upstream_dns ??= []
+  }
   normalized.disable_relay_data ??= false
   if (normalized.vpn_portal_config) {
     normalized.vpn_portal_config.clients ??= []
@@ -525,6 +533,24 @@ export const addRow = (rows: PortForwardConfig[]) => {
 export const removeRow = (index: number, rows: PortForwardConfig[]) => {
   rows.splice(index, 1);
 };
+
+export const DEFAULT_DNS_HOST_TTL_SECS = 300
+
+export function emptyDnsConfig(): DnsConfig {
+  return { hosts: [], forwarders: [], upstream_dns: [] }
+}
+
+export function addDnsHostRow(rows: DnsHostEntry[]) {
+  rows.push({
+    name: '',
+    ips: [],
+    ttl_secs: DEFAULT_DNS_HOST_TTL_SECS,
+  })
+}
+
+export function removeDnsHostRow(index: number, rows: DnsHostEntry[]) {
+  rows.splice(index, 1)
+}
 
 export enum EventType {
   TunDeviceReady = 'TunDeviceReady', // string

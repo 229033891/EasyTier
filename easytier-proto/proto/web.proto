@@ -30,6 +30,9 @@ message HeartbeatRequest {
   // so the server must not treat an empty list as "enable everything".
   bool support_user_disabled_instances = 12;
   repeated common.UUID disabled_network_instances = 13;
+  // B6 phase 2 (dns-policy.md): whether OS DNS was successfully wired to MagicDNS.
+  // Unset on older clients / platforms that do not report; false = accept_dns but skip/fail.
+  optional bool magic_dns_os_wired = 14;
 }
 
 message HeartbeatResponse {

@@ -18,7 +18,74 @@ use crate::proto::{
     common::{CompressionAlgoPb, SecureModeConfig},
 };
 
+pub use crate::proto::api::manage::{DnsConfig, DnsForwarder, DnsHostEntry};
+
 pub const DEFAULT_ET_DNS_ZONE: &str = "et.net.";
+/// Default TTL for static DnsConfig.hosts entries (seconds). Route MagicDNS records use 1s.
+pub const DEFAULT_DNS_HOSTS_TTL_SECS: u32 = 300;
+
+/// Parse CLI `--dns-host` entry: `name=ip[,ip...][@ttl]`.
+/// Example: `app.internal.=10.1.2.3` or `db.et.net=10.1.2.3,10.1.2.4@600`.
+pub fn parse_dns_host_flag(raw: &str) -> anyhow::Result<DnsHostEntry> {
+    let raw = raw.trim();
+    let (name_ips, ttl_secs) = if let Some((left, ttl)) = raw.rsplit_once('@') {
+        let ttl = ttl
+            .trim()
+            .parse::<u32>()
+            .with_context(|| format!("invalid dns-host TTL in `{raw}`"))?;
+        // 0 = use DEFAULT_DNS_HOSTS_TTL_SECS (same as TOML `ttl_secs = 0`).
+        if ttl == 0 {
+            (left, None)
+        } else {
+            (left, Some(ttl))
+        }
+    } else {
+        (raw, None)
+    };
+    let (name, ips_raw) = name_ips
+        .split_once('=')
+        .with_context(|| format!("dns-host must be name=ip[,ip...][@ttl], got `{raw}`"))?;
+    let name = name.trim().to_string();
+    if name.is_empty() {
+        anyhow::bail!("dns-host name is empty in `{raw}`");
+    }
+    let ips = ips_raw
+        .split(',')
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect::<Vec<_>>();
+    if ips.is_empty() {
+        anyhow::bail!("dns-host requires at least one IP in `{raw}`");
+    }
+    Ok(DnsHostEntry {
+        name,
+        ips,
+        ttl_secs,
+    })
+}
+
+/// Parse CLI `--dns-forward` entry: `domain[,domain]=server[,server]`.
+/// Example: `corp.example.,intra.=10.0.0.53,10.0.0.54`.
+pub fn parse_dns_forward_flag(raw: &str) -> anyhow::Result<DnsForwarder> {
+    let raw = raw.trim();
+    let (domains_raw, servers_raw) = raw.split_once('=').with_context(|| {
+        format!("dns-forward must be domain[,domain]=server[,server], got `{raw}`")
+    })?;
+    let domains = domains_raw
+        .split(',')
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect::<Vec<_>>();
+    let servers = servers_raw
+        .split(',')
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect::<Vec<_>>();
+    if domains.is_empty() || servers.is_empty() {
+        anyhow::bail!("dns-forward requires domains and servers in `{raw}`");
+    }
+    Ok(DnsForwarder { domains, servers })
+}
 
 pub type Flags = crate::proto::common::FlagsInConfig;
 
@@ -249,6 +316,11 @@ pub trait ConfigLoader: Send + Sync {
 
     fn get_acl(&self) -> Option<Acl>;
     fn set_acl(&self, acl: Option<Acl>);
+
+    fn get_dns_config(&self) -> Option<DnsConfig> {
+        None
+    }
+    fn set_dns_config(&self, _dns: Option<DnsConfig>) {}
 
     fn get_tcp_whitelist(&self) -> Vec<String>;
     fn set_tcp_whitelist(&self, whitelist: Vec<String>);
@@ -558,6 +630,8 @@ struct Config {
     flags_struct: Option<Flags>,
 
     acl: Option<Acl>,
+
+    dns_config: Option<DnsConfig>,
 
     tcp_whitelist: Option<Vec<String>>,
     udp_whitelist: Option<Vec<String>>,
@@ -1083,6 +1157,14 @@ impl ConfigLoader for TomlConfig {
 
     fn set_acl(&self, acl: Option<Acl>) {
         self.config.lock().unwrap().acl = acl;
+    }
+
+    fn get_dns_config(&self) -> Option<DnsConfig> {
+        self.config.lock().unwrap().dns_config.clone()
+    }
+
+    fn set_dns_config(&self, dns: Option<DnsConfig>) {
+        self.config.lock().unwrap().dns_config = dns;
     }
 
     fn get_tcp_whitelist(&self) -> Vec<String> {
@@ -1852,6 +1934,56 @@ members = ["admin"]
         let group = config.get_acl().unwrap().acl_v1.unwrap().group.unwrap();
         assert!(group.declares.is_empty());
         assert_eq!(group.members, vec!["admin"]);
+    }
+
+    #[cfg(feature = "config-write")]
+    #[test]
+    fn dns_config_toml_round_trips() {
+        let config_str = r#"
+[dns_config]
+upstream_dns = ["1.1.1.1", "8.8.8.8"]
+
+[[dns_config.hosts]]
+name = "app.internal."
+ips = ["10.1.2.3"]
+ttl_secs = 600
+
+[[dns_config.forwarders]]
+domains = ["corp.example."]
+servers = ["10.0.0.53"]
+"#;
+        let config = TomlConfigLoader::new_from_str(config_str).unwrap();
+        let dns = config.get_dns_config().expect("dns_config present");
+        assert_eq!(dns.upstream_dns, vec!["1.1.1.1", "8.8.8.8"]);
+        assert_eq!(dns.hosts.len(), 1);
+        assert_eq!(dns.hosts[0].name, "app.internal.");
+        assert_eq!(dns.hosts[0].ips, vec!["10.1.2.3"]);
+        assert_eq!(dns.hosts[0].ttl_secs, Some(600));
+        assert_eq!(dns.forwarders.len(), 1);
+        assert_eq!(dns.forwarders[0].domains, vec!["corp.example."]);
+        assert_eq!(dns.forwarders[0].servers, vec!["10.0.0.53"]);
+
+        let dumped = config.dump();
+        let restored = TomlConfigLoader::new_from_str(&dumped).unwrap();
+        assert_eq!(restored.get_dns_config(), config.get_dns_config());
+    }
+
+    #[test]
+    fn parse_dns_host_and_forward_flags() {
+        let host = parse_dns_host_flag("app.internal.=10.1.2.3,10.1.2.4@600").unwrap();
+        assert_eq!(host.name, "app.internal.");
+        assert_eq!(host.ips, vec!["10.1.2.3", "10.1.2.4"]);
+        assert_eq!(host.ttl_secs, Some(600));
+
+        let host_default_ttl = parse_dns_host_flag("app.internal.=10.1.2.3@0").unwrap();
+        assert_eq!(host_default_ttl.ttl_secs, None);
+
+        let forward = parse_dns_forward_flag("corp.example.,intra.=10.0.0.53").unwrap();
+        assert_eq!(forward.domains, vec!["corp.example.", "intra."]);
+        assert_eq!(forward.servers, vec!["10.0.0.53"]);
+
+        assert!(parse_dns_host_flag("no-equals").is_err());
+        assert!(parse_dns_forward_flag("domains-only").is_err());
     }
 
     #[cfg(feature = "config-write")]

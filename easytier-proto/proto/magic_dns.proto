@@ -28,9 +28,20 @@ message DnsRecordList {
     repeated DnsRecord records = 1;
 }
 
+// R1 static hosts channel (dns-policy.md §5). Long TTL; not the 1s route path.
+message StaticDnsHost {
+    string name = 1;
+    repeated string ips = 2;
+    optional uint32 ttl_secs = 3;
+}
+
 message UpdateDnsRecordRequest {
     string zone = 1;
     repeated api.instance.Route routes = 2;
+    // Hint for static hosts bookkeeping. Use "static-hosts" when publishing
+    // DnsConfig.hosts. Server stores under "static-hosts:<tunnel remote>".
+    optional string client = 3;
+    repeated StaticDnsHost static_hosts = 4;
 }
 
 message GetDnsRecordResponse {

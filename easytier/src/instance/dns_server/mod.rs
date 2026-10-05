@@ -18,5 +18,9 @@ mod tests;
 
 pub static MAGIC_DNS_INSTANCE_ADDR: &str = "tcp://127.0.0.1:49813";
 pub static MAGIC_DNS_INSTANCE_SOCKET_ADDR: &str = "127.0.0.1:49813";
-pub static MAGIC_DNS_FAKE_IP: &str = "100.100.100.101";
+pub static MAGIC_DNS_FAKE_IP: &str = "100.100.100.53"; // Final: CGNAT, avoid Tailscale .100, memorable DNS-ish .53
+/// UpdateDnsRecord `client` hint for DnsConfig.hosts (dns-policy R1 channel).
+pub static MAGIC_DNS_STATIC_HOSTS_CLIENT: &str = "static-hosts";
+/// Store key for the elected MagicDNS server's own DnsConfig.hosts.
+pub static MAGIC_DNS_STATIC_HOSTS_LOCAL_CLIENT: &str = "static-hosts:local";
 pub use easytier_core::config::toml::DEFAULT_ET_DNS_ZONE;

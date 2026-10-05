@@ -170,7 +170,7 @@ L3 仍可按现状用对端 `/0` 作选路兜底（见 Current §2）；L2 只�
 **（2.1）Android / OHOS 实现位置（2026-10-04 已核验，实现稍后）：**
 
 - Android JNI：`easytier-contrib/easytier-android-jni/kotlin/.../EasyTierManager.kt:151` 全量收集 `routes.*.proxy_cidrs` → `EasyTierVpnService.t.kt:67 builder.addRoute`，无 exit 门控、无 metric；示例 `README.md:245 addRoute("0.0.0.0",0)` 即全隧道。
-- GUI 移动端：`easytier-gui/src/composables/mobile_vpn.ts:293 getRoutesForVpn` 全量 `proxy_cidrs + node_config.routes + MagicDNS 100.100.100.101/32`，同样无 exit 过滤。
+- GUI 移动端：`easytier-gui/src/composables/mobile_vpn.ts:293 getRoutesForVpn` 全量 `proxy_cidrs + node_config.routes + MagicDNS 100.100.100.53/32`，同样无 exit 过滤。
 - OHOS：`easytier-contrib/easytier-ohrs/crates/easytier-ohos-core/src/routing.rs:56 aggregate_tun_routes`（`virtual_cidr + manual + 全 peer proxy`）→ `simplify_routes:23` 折叠，调用方 `easytier-contrib/easytier-ohrs/src/kernel_bridge/socket_server.rs:499`。
 - 保护模型不同：移动端无 host exclude 路由，靠 `need_protect → VpnService.protect / VpnConnection.protect`（见 `docs/current/socket-protection.md`），fail-closed，只保序不保实时。
 - 稍后实现清单：① 聚合函数加 `local_exit_default` 入参，无 exit 则过滤对端 `/0` 后再 `simplify`；② 保留 `manual_routes` 与 MagicDNS `/32`；③ 补单测「任一对端 `/0` + 无 exit → 不出 `/0`」「有 exit → 出 `/0`」；④ GUI 文案按平台区分提示。

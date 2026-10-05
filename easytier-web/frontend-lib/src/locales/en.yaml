@@ -409,6 +409,57 @@ exit_nodes_help: |-
   The peer must have "Enable Exit Node" turned on, or L3 will not accept that traffic.
   Note: if installing/removing the system default or underlay excludes fails, the status page shows desired vs installed and the process retries periodically; internet access may be disrupted until routes land. A wrong or unreachable address cuts off all internet access — verify reachability first.
 
+dns:
+  title: DNS Policy
+  hosts:
+    title: Static Hosts
+    enable: Configure DNS policy
+    enable_tip: Add static hosts, split forwarders, and upstream DNS
+    magic_dns_off_hint: DNS policy is stored in this network config. Enable Magic DNS (Advanced → System) on the device for MagicDNS wiring to take effect.
+    editor_help: Static entries are authoritative on MagicDNS and override route hostnames. Unmatched names continue to normal resolution.
+    empty: No static DNS hosts yet.
+    name: Hostname
+    name_placeholder: "e.g. app.internal. or db.et.net"
+    ips: IPv4 addresses
+    ips_placeholder: "e.g. 10.1.2.3"
+    ttl: TTL
+    ttl_unit: seconds
+    add: Add host
+    add_tip: Add a static DNS host entry
+    remove: Remove host
+  upstream:
+    title: Upstream DNS
+    help: Ordered failover list when hosts/split do not match. Empty keeps system DNS. Phase 1 accepts IP literals only (e.g. 1.1.1.1, udp://8.8.8.8:53); hostnames are rejected.
+    placeholder: "e.g. 1.1.1.1 or udp://8.8.8.8:53"
+  forwarders:
+    title: Split DNS
+    editor_help: Route matching domain suffixes to dedicated upstream servers (before default upstream). Upstream servers are IP literals only in phase 1.
+    empty: No split forwarders yet.
+    domains: Domains
+    domains_placeholder: "e.g. corp.example."
+    servers: Servers
+    servers_placeholder: "e.g. 10.0.0.53"
+    add: Add forwarder
+    add_tip: Add a split DNS forwarder
+    remove: Remove forwarder
+  mixed_version_warning: If any peer is older than 2.7.4 and wins the MagicDNS server election, static hosts may be silently dropped. Upgrade old peers, or verify a new-version node is the server before validating hosts.
+  coverage:
+    label: DNS coverage
+    covered: Auto
+    covered_help: With Magic DNS enabled, this platform should wire OS DNS to MagicDNS automatically.
+    covered_platform_help: Platform can auto-wire OS DNS when Magic DNS is enabled on a network.
+    manual_required: Manual
+    manual_required_help: "Magic DNS hosts may be stored, but this OS needs manual DNS setup. See docs/current/magic-dns-manual-wiring.md (OpenWrt dnsmasq: server=/et.net/100.100.100.53)."
+    manual_required_platform_help: This OS typically needs manual Magic DNS wiring. See docs/current/magic-dns-manual-wiring.md. Badge assumes Magic DNS is enabled on the network.
+    manual_required_docs: Manual setup guide
+    manual_required_docs_url: https://github.com/EasyTier/EasyTier/blob/main/docs/current/magic-dns-manual-wiring.md
+    unsupported: Unsupported
+    unsupported_help: Magic DNS OS wiring is not available on this platform or configuration (e.g. no TUN, iOS).
+    unsupported_platform_help: Magic DNS OS wiring is not available on this platform. Badge assumes Magic DNS is enabled on the network.
+    version_too_old: Old client
+    version_too_old_help: Client is older than 2.7.4 and cannot apply DnsConfig.hosts; if it becomes the MagicDNS server, static hosts may be silently dropped (mesh names may still resolve).
+    version_too_old_platform_help: Client version is too old to apply DnsConfig.hosts from managed config.
+
 port_forwards: Port Forward
 port_forwards_help: "forward local port to remote port in virtual network. e.g.: udp://0.0.0.0:12345/10.126.126.1:23456, means forward local udp port 12345 to 10.126.126.1:23456 in the virtual network. can specify multiple."
 port_forwards_bind_addr: "Bind address, e.g.: 0.0.0.0"

@@ -4,6 +4,9 @@ pub mod windows;
 #[cfg(all(target_os = "macos", not(feature = "macos-ne")))]
 pub mod darwin;
 
+#[cfg(target_os = "linux")]
+pub mod linux;
+
 #[derive(Default, Debug)]
 pub struct OSConfig {
     pub nameservers: Vec<String>,

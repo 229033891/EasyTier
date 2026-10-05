@@ -764,6 +764,7 @@ fn build_heartbeat_request(
             .into_iter()
             .map(Into::into)
             .collect(),
+        magic_dns_os_wired: crate::gateway::magic_dns::get_magic_dns_os_wired(),
     }
 }
 

@@ -21,6 +21,8 @@
 //! - `isConfigServerClientConnected()`: return whether the managed client is connected.
 //! - `reportNetworkConfig(configJson)`: push a client-edited NetworkConfig JSON to the console (CAS).
 //!
+//! - `setMagicDnsOsWired(wired)`: report MagicDNS VpnService DNS wiring (B6 phase 2).
+//!
 //! Error API:
 //! - `getLastError()`: return the latest FFI/JNI error string for the calling thread.
 //!
@@ -286,4 +288,18 @@ pub extern "system" fn Java_com_easytier_jni_EasyTierJNI_reportNetworkConfig(
 ) -> jint {
     logger::init();
     config_server_api::report_network_config_jni(&mut env, config_json)
+}
+
+/// Report MagicDNS OS wiring from Android VpnService (dns-policy B6 phase 2).
+///
+/// Java signature matches Kotlin `external fun setMagicDnsOsWired(wired: Boolean)`
+/// (`Unit` / void). Feeds `HeartbeatRequest.magic_dns_os_wired`.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_easytier_jni_EasyTierJNI_setMagicDnsOsWired(
+    _env: JNIEnv,
+    _class: JClass,
+    wired: jboolean,
+) {
+    logger::init();
+    easytier_core::gateway::magic_dns::set_magic_dns_os_wired(wired != jni::sys::JNI_FALSE);
 }

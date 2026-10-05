@@ -6,6 +6,8 @@ import { useI18n } from 'vue-i18n';
 import * as Api from '../modules/api';
 import * as Utils from '../modules/utils';
 import * as NetworkTypes from '../types/network';
+import { expectedDnsCoverage } from '../modules/dnsCoverage';
+import DnsCoverageBadge from './dns/DnsCoverageBadge.vue';
 
 const { t } = useI18n()
 
@@ -35,6 +37,10 @@ const props = defineProps<{
      * Forwarded to Status; may be a getter refreshed with network info polls.
      */
     localInstalledRoutes?: string[] | ((instanceId?: string) => string[]);
+    /** Heartbeat fields for B6 DNS coverage badge (device management page). */
+    deviceOsType?: string;
+    deviceEasytierVersion?: string;
+    deviceMagicDnsOsWired?: boolean | null;
 }>();
 
 const isStatusMode = computed(() => props.mode === 'status')
@@ -263,6 +269,19 @@ const showConfigPanel = computed(() => {
     }
     // ????????????????ensureConfigModeEditing ?????
     return isConfigMode.value && !!selectedInstanceId.value;
+})
+
+const dnsCoverageState = computed(() => {
+    if (!currentNetworkConfig.value?.enable_magic_dns) {
+        return null
+    }
+    return expectedDnsCoverage({
+        enable_magic_dns: currentNetworkConfig.value.enable_magic_dns,
+        no_tun: currentNetworkConfig.value.no_tun,
+        os_type: props.deviceOsType,
+        easytier_version: props.deviceEasytierVersion ?? '',
+        magic_dns_os_wired: props.deviceMagicDnsOsWired,
+    })
 })
 
 /** ??????????????????????? */
@@ -879,6 +898,17 @@ onUnmounted(() => {
         <!-- ??????????????????? -->
         <div v-if="showConfigPanel" class="network-toolbar">
             <div class="config-toolbar">
+                <div v-if="dnsCoverageState" class="toolbar-zone toolbar-zone--dns-coverage">
+                    <span class="toolbar-zone-label">{{ t('dns.coverage.label') }}</span>
+                    <DnsCoverageBadge :state="dnsCoverageState" />
+                </div>
+                <p
+                    v-if="dnsCoverageState === 'version_too_old'"
+                    class="dns-version-too-old-hint et-meta m-0"
+                    role="note"
+                >
+                    {{ t('dns.mixed_version_warning') }}
+                </p>
                 <div class="toolbar-zone">
                     <span class="toolbar-zone-label">{{ t('web.device_management.toolbar_config_files') }}</span>
                     <div class="toolbar-zone-actions">
@@ -1009,6 +1039,12 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
+.dns-version-too-old-hint {
+    color: var(--et-warning, #b45309);
+    width: 100%;
+    flex-basis: 100%;
+}
+
 .device-management {
     height: 100%;
     display: flex;

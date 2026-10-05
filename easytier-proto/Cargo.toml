@@ -42,7 +42,7 @@ prost-build = "0.14.4"
 quote = "1"
 
 [target.'cfg(windows)'.build-dependencies]
-reqwest = { workspace = true, default-features = true, features = ["blocking"] }
+reqwest = { workspace = true, default-features = false, features = ["blocking", "native-tls"] }
 zip = "8.6.0"
 
 [dev-dependencies]

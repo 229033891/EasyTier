@@ -7,8 +7,9 @@
 // all the clients will exit and let the easytier instance to launch a new server instance.
 
 use super::{
-    MAGIC_DNS_INSTANCE_SOCKET_ADDR,
-    config::{GeneralConfigBuilder, RunConfigBuilder},
+    MAGIC_DNS_INSTANCE_SOCKET_ADDR, MAGIC_DNS_STATIC_HOSTS_CLIENT,
+    MAGIC_DNS_STATIC_HOSTS_LOCAL_CLIENT,
+    config::{GeneralConfigBuilder, RunConfigBuilder, SplitForwarderConfig},
     server::Server,
     system_config::{OSConfig, SystemConfig},
 };
@@ -22,6 +23,7 @@ use crate::{
         server::build_authority,
     },
     proto::{
+        api::manage::DnsHostEntry,
         common::{TunnelInfo, Void},
         magic_dns::{
             DnsRecord, DnsRecordA, DnsRecordList, GetDnsRecordResponse, HandshakeRequest,
@@ -36,23 +38,30 @@ use crate::{
 };
 use anyhow::Context;
 use cidr::Ipv4Inet;
+use easytier_core::config::toml::DEFAULT_DNS_HOSTS_TTL_SECS;
 use easytier_core::gateway::magic_dns::{
     MagicDnsQuery, MagicDnsQueryResolver, MagicDnsRecordStore, MagicDnsResolverRegistration,
-    MagicDnsRoute,
+    MagicDnsRoute, clear_magic_dns_os_wired, set_magic_dns_os_wired,
 };
 use easytier_core::instance::CorePacketPlane;
 use hickory_proto::rr::LowerName;
 use hickory_proto::serialize::binary::{BinDecodable, BinEncoder};
 use hickory_server::authority::{MessageRequest, MessageResponse};
 use hickory_server::server::{Request, RequestHandler, ResponseHandler, ResponseInfo};
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Mutex;
-use std::{collections::BTreeMap, io, net::Ipv4Addr, str::FromStr, sync::Arc, time::Duration};
+use std::{io, net::Ipv4Addr, str::FromStr, sync::Arc, time::Duration};
+use tokio_util::task::AbortOnDropHandle;
 
 pub(super) struct MagicDnsServerInstanceData {
     dns_server: Server,
     tun_dev: Option<String>,
     fake_ip: Ipv4Addr,
     route_store: MagicDnsRecordStore,
+    /// Per-client static hosts (`static-hosts:<tunnel>` or `static-hosts:local`).
+    static_hosts_by_client: Mutex<BTreeMap<String, Vec<DnsHostEntry>>>,
+    /// Zones currently installed by the static-hosts path (for cleanup).
+    applied_static_zones: Mutex<BTreeSet<String>>,
     record_apply: tokio::sync::Mutex<()>,
 
     system_config: Option<Box<dyn SystemConfig>>,
@@ -145,9 +154,199 @@ impl MagicDnsServerInstanceData {
                 search_domains: vec![zone.to_string()],
                 match_domains: vec![zone.to_string()],
             })?;
+            // Linux publishes wired status inside LinuxResolvedConfigurator
+            // (may soft-skip without Err). Desktop auto-wire success → true.
+            #[cfg(any(
+                target_os = "windows",
+                all(target_os = "macos", not(feature = "macos-ne"))
+            ))]
+            set_magic_dns_os_wired(true);
         }
+        // Android/iOS have no SystemConfig here; VpnService may report via JNI
+        // `setMagicDnsOsWired` — do not clear an already-reported flag.
         Ok(())
     }
+
+    /// Install static hosts as per-name authoritative zones so they win over
+    /// parent MagicDNS route zones (dns-policy B2). Long TTL by default.
+    pub async fn apply_static_hosts(&self, hosts: &[DnsHostEntry]) -> Result<(), anyhow::Error> {
+        self.set_static_hosts_for_client(MAGIC_DNS_STATIC_HOSTS_LOCAL_CLIENT, hosts.to_vec())
+            .await
+    }
+
+    fn static_hosts_client_key(remote_addr: &url::Url) -> String {
+        format!("{MAGIC_DNS_STATIC_HOSTS_CLIENT}:{remote_addr}")
+    }
+
+    /// Replace one client's static hosts and reinstall Catalog zones (B2).
+    pub async fn set_static_hosts_for_client(
+        &self,
+        client: &str,
+        hosts: Vec<DnsHostEntry>,
+    ) -> Result<(), anyhow::Error> {
+        {
+            let mut map = self.static_hosts_by_client.lock().unwrap();
+            if hosts.is_empty() {
+                map.remove(client);
+            } else {
+                map.insert(client.to_string(), hosts);
+            }
+        }
+        self.reapply_static_hosts().await
+    }
+
+    /// Hot-reload local DnsConfig policy (hosts + split + upstream) without restarting UDP.
+    pub async fn reload_dns_policy(
+        &self,
+        dns: Option<&crate::proto::api::manage::DnsConfig>,
+    ) -> Result<(), anyhow::Error> {
+        let hosts = dns.map(|d| d.hosts.clone()).unwrap_or_default();
+        let forwarders = dns.map(|d| d.forwarders.clone()).unwrap_or_default();
+        let upstream = dns.map(|d| d.upstream_dns.clone()).unwrap_or_default();
+
+        self.set_static_hosts_for_client(MAGIC_DNS_STATIC_HOSTS_LOCAL_CLIENT, hosts)
+            .await?;
+
+        let splits = forwarders
+            .into_iter()
+            .map(|f| SplitForwarderConfig {
+                domains: f.domains,
+                servers: f.servers,
+            })
+            .collect::<Vec<_>>();
+        let retain_zones: BTreeSet<String> = {
+            let mut zones = self
+                .route_store
+                .snapshot()
+                .zones
+                .keys()
+                .cloned()
+                .collect::<BTreeSet<_>>();
+            zones.extend(self.applied_static_zones.lock().unwrap().iter().cloned());
+            zones
+        };
+        self.dns_server
+            .reload_split_forwarders(&splits, &retain_zones)
+            .await?;
+        self.dns_server.reload_root_forwarder(&upstream).await?;
+        tracing::info!("MagicDNS dns_config policy reloaded");
+        Ok(())
+    }
+
+    async fn reapply_static_hosts(&self) -> Result<(), anyhow::Error> {
+        // Merge by zone name; later client key (BTreeMap order) wins on conflict.
+        let mut merged: BTreeMap<String, DnsHostEntry> = BTreeMap::new();
+        {
+            let map = self.static_hosts_by_client.lock().unwrap();
+            for hosts in map.values() {
+                for entry in hosts {
+                    let zone = normalize_host_zone(&entry.name);
+                    if zone.is_empty() || zone == "." {
+                        tracing::warn!(name = %entry.name, "skipping empty DnsHostEntry name");
+                        continue;
+                    }
+                    merged.insert(
+                        zone.clone(),
+                        DnsHostEntry {
+                            name: zone,
+                            ips: entry.ips.clone(),
+                            ttl_secs: entry.ttl_secs,
+                        },
+                    );
+                }
+            }
+        }
+
+        let next_zones: BTreeSet<String> = merged.keys().cloned().collect();
+        let route_zones: BTreeSet<String> =
+            self.route_store.snapshot().zones.keys().cloned().collect();
+        let split_zones = self.dns_server.split_zones();
+        let stale_zones: Vec<String> = {
+            let applied = self.applied_static_zones.lock().unwrap();
+            applied.difference(&next_zones).cloned().collect()
+        };
+        for zone in &stale_zones {
+            if route_zones.contains(zone) || split_zones.contains(zone) {
+                tracing::debug!(
+                    zone = %zone,
+                    "keeping catalog zone owned by routes/splits while pruning static hosts"
+                );
+                continue;
+            }
+            if let Ok(name) = LowerName::from_str(zone) {
+                self.dns_server.remove(&name).await;
+            }
+        }
+
+        for (zone, entry) in &merged {
+            let ttl_secs = entry
+                .ttl_secs
+                .filter(|ttl| *ttl > 0)
+                .unwrap_or(DEFAULT_DNS_HOSTS_TTL_SECS);
+            let ttl = Duration::from_secs(ttl_secs as u64);
+
+            let mut records: Vec<Record> = Vec::new();
+            for ip in &entry.ips {
+                let Ok(addr) = Ipv4Addr::from_str(ip.trim()) else {
+                    tracing::warn!(name = %entry.name, ip = %ip, "skipping invalid host IP");
+                    continue;
+                };
+                let record = RecordBuilder::default()
+                    .rr_type(RecordType::A)
+                    .name(zone.clone())
+                    .value(addr.to_string())
+                    .ttl(ttl)
+                    .build()?;
+                if let Err(e) = record.name() {
+                    tracing::error!("Invalid static host name {}: {}", zone, e);
+                    continue;
+                }
+                records.push(record);
+            }
+
+            if records.is_empty() {
+                continue;
+            }
+
+            let soa_record = RecordBuilder::default()
+                .rr_type(RecordType::SOA)
+                .name(zone.clone())
+                .value(format!(
+                    "ns.{} hostmaster.{} 2023101001 7200 3600 1209600 86400",
+                    zone, zone
+                ))
+                .ttl(Duration::from_secs(60))
+                .build()?;
+            records.push(soa_record);
+
+            let authority = build_authority(zone, &records)?;
+            self.dns_server
+                .upsert(
+                    LowerName::from_str(zone)
+                        .with_context(|| format!("Invalid static host zone: {zone}"))?,
+                    Arc::new(authority),
+                )
+                .await;
+            tracing::info!(
+                zone = %zone,
+                records = records.len().saturating_sub(1),
+                ttl_secs,
+                "applied static DNS host zone"
+            );
+        }
+
+        *self.applied_static_zones.lock().unwrap() = next_zones;
+        Ok(())
+    }
+}
+
+/// Absolute DNS zone for a hosts entry (trailing dot, lowercased).
+pub(crate) fn normalize_host_zone(name: &str) -> String {
+    let trimmed = name.trim().trim_end_matches('.').trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+    format!("{}.", trimmed.to_ascii_lowercase())
 }
 
 #[async_trait::async_trait]
@@ -183,23 +382,47 @@ impl MagicDnsServerRpc for MagicDnsServerInstanceData {
         let _apply = self.record_apply.lock().await;
         let zone = input.zone.clone();
         let remote_addr: url::Url = remote_addr.clone().into();
-        let routes = input
-            .routes
-            .into_iter()
-            .map(|route| MagicDnsRoute {
-                hostname: route.hostname,
-                ipv4_addr: route.ipv4_addr.unwrap_or_default().address.map(Into::into),
-            })
-            .collect();
-        let zone_removed =
-            self.route_store
-                .replace_client_routes(zone.clone(), remote_addr.to_string(), routes);
 
-        if zone_removed {
-            self.keep_zone_authoritative(&zone).await;
+        let wants_static = input.client.as_deref() == Some(MAGIC_DNS_STATIC_HOSTS_CLIENT)
+            || !input.static_hosts.is_empty();
+        if wants_static {
+            let hosts = input
+                .static_hosts
+                .into_iter()
+                .map(|h| DnsHostEntry {
+                    name: h.name,
+                    ips: h.ips,
+                    ttl_secs: h.ttl_secs,
+                })
+                .collect::<Vec<_>>();
+            let client_key = Self::static_hosts_client_key(&remote_addr);
+            self.set_static_hosts_for_client(&client_key, hosts)
+                .await
+                .map_err(|e| anyhow::anyhow!(e))?;
         }
 
-        self.update().await;
+        // Hosts-only pushes use an empty zone; do not clobber route records.
+        if !zone.is_empty() {
+            let routes = input
+                .routes
+                .into_iter()
+                .map(|route| MagicDnsRoute {
+                    hostname: route.hostname,
+                    ipv4_addr: route.ipv4_addr.unwrap_or_default().address.map(Into::into),
+                })
+                .collect();
+            let zone_removed = self.route_store.replace_client_routes(
+                zone.clone(),
+                remote_addr.to_string(),
+                routes,
+            );
+
+            if zone_removed {
+                self.keep_zone_authoritative(&zone).await;
+            }
+
+            self.update().await;
+        }
         Ok(Default::default())
     }
 
@@ -222,6 +445,34 @@ impl MagicDnsServerRpc for MagicDnsServerInstanceData {
             }
             ret.insert(zone, dns_records);
         }
+
+        let static_hosts = self.static_hosts_by_client.lock().unwrap().clone();
+        for hosts in static_hosts.values() {
+            for entry in hosts {
+                let zone = normalize_host_zone(&entry.name);
+                if zone.is_empty() {
+                    continue;
+                }
+                let ttl = entry
+                    .ttl_secs
+                    .filter(|ttl| *ttl > 0)
+                    .unwrap_or(DEFAULT_DNS_HOSTS_TTL_SECS) as i32;
+                let list = ret.entry(zone.clone()).or_default();
+                for ip in &entry.ips {
+                    let Ok(addr) = Ipv4Addr::from_str(ip.trim()) else {
+                        continue;
+                    };
+                    list.records.push(DnsRecord {
+                        record: Some(dns_record::Record::A(DnsRecordA {
+                            name: zone.clone(),
+                            value: Some(addr.into()),
+                            ttl,
+                        })),
+                    });
+                }
+            }
+        }
+
         Ok(GetDnsRecordResponse { records: ret })
     }
 }
@@ -321,6 +572,17 @@ impl RpcServerHook for MagicDnsServerInstanceData {
         };
         let _apply = self.record_apply.lock().await;
         let remote_addr: url::Url = remote_addr.into();
+        let static_key = Self::static_hosts_client_key(&remote_addr);
+        if let Err(e) = self
+            .set_static_hosts_for_client(&static_key, Vec::new())
+            .await
+        {
+            tracing::error!(
+                client = %static_key,
+                "Failed to clear static hosts on disconnect: {:?}",
+                e
+            );
+        }
         for zone in self.route_store.remove_client(remote_addr.as_ref()) {
             self.keep_zone_authoritative(&zone).await;
         }
@@ -333,6 +595,7 @@ pub struct MagicDnsServerInstance {
     pub(super) data: Arc<MagicDnsServerInstanceData>,
     packet_filter: MagicDnsResolverRegistration,
     tun_inet: Ipv4Inet,
+    _dns_policy_watch: tokio_util::task::AbortOnDropHandle<()>,
 }
 
 fn get_system_config(
@@ -351,6 +614,12 @@ fn get_system_config(
         return Ok(Some(Box::new(DarwinConfigurator::new())));
     }
 
+    #[cfg(target_os = "linux")]
+    {
+        use super::system_config::linux::LinuxResolvedConfigurator;
+        return Ok(Some(Box::new(LinuxResolvedConfigurator::new())));
+    }
+
     #[allow(unreachable_code)]
     Ok(None)
 }
@@ -367,11 +636,38 @@ impl MagicDnsServerInstance {
         let mut rpc_server = StandAloneServer::new(tcp_listener);
         rpc_server.serve().await?;
 
-        let dns_config = RunConfigBuilder::default()
+        let policy = global_ctx.config.get_dns_config();
+        let mut run_cfg = RunConfigBuilder::default()
             .general(GeneralConfigBuilder::default().build()?)
-            .excluded_forward_nameservers(vec![fake_ip.into()])
-            .build()?;
-        let mut dns_server = Server::new(dns_config);
+            .excluded_forward_nameservers(vec![fake_ip.into()]);
+        if let Some(dns) = &policy {
+            if !dns.upstream_dns.is_empty() {
+                // R3: user-ordered upstreams. Forward sockets use
+                // magic_dns_forward_connector() (physical NIC bind, dns-policy §7).
+                run_cfg = run_cfg.forward_nameservers(dns.upstream_dns.clone());
+                tracing::info!(
+                    upstreams = ?dns.upstream_dns,
+                    "MagicDNS using configured upstream_dns (ordered failover, underlay-bound)"
+                );
+            }
+            if !dns.forwarders.is_empty() {
+                let splits = dns
+                    .forwarders
+                    .iter()
+                    .map(|f| SplitForwarderConfig {
+                        domains: f.domains.clone(),
+                        servers: f.servers.clone(),
+                    })
+                    .collect::<Vec<_>>();
+                run_cfg = run_cfg.split_forwarders(splits);
+                tracing::info!(
+                    forwarders = dns.forwarders.len(),
+                    "MagicDNS split forwarder zones configured"
+                );
+            }
+        }
+        let dns_config = run_cfg.build()?;
+        let mut dns_server = Server::new(dns_config)?;
         dns_server.run().await?;
 
         if !tun_inet.contains(&fake_ip)
@@ -393,6 +689,8 @@ impl MagicDnsServerInstance {
             tun_dev: tun_dev.clone(),
             fake_ip,
             route_store: MagicDnsRecordStore::default(),
+            static_hosts_by_client: Mutex::new(BTreeMap::new()),
+            applied_static_zones: Mutex::new(BTreeSet::new()),
             record_apply: tokio::sync::Mutex::new(()),
             system_config: get_system_config(tun_dev.as_deref())?,
         });
@@ -409,6 +707,31 @@ impl MagicDnsServerInstance {
         data.update_dns_records(std::iter::empty(), &tld_dns_zone_clone)
             .await
             .context("Failed to initialize DNS zone")?;
+
+        if let Some(dns_config) = global_ctx.config.get_dns_config() {
+            data.apply_static_hosts(&dns_config.hosts)
+                .await
+                .context("Failed to apply static DNS hosts")?;
+        }
+
+        let watch_data = data.clone();
+        let watch_ctx = global_ctx.clone();
+        let dns_policy_watch = AbortOnDropHandle::new(tokio::spawn(async move {
+            let mut last = watch_ctx.config.get_dns_config();
+            loop {
+                tokio::time::sleep(Duration::from_secs(1)).await;
+                let cur = watch_ctx.config.get_dns_config();
+                if cur == last {
+                    continue;
+                }
+                let _apply = watch_data.record_apply.lock().await;
+                if let Err(e) = watch_data.reload_dns_policy(cur.as_ref()).await {
+                    tracing::error!("MagicDNS dns_config hot-reload failed: {:?}", e);
+                    continue;
+                }
+                last = cur;
+            }
+        }));
 
         let data_clone = data.clone();
         tokio::task::spawn_blocking(move || data_clone.do_system_config(&tld_dns_zone_clone))
@@ -427,6 +750,7 @@ impl MagicDnsServerInstance {
             data,
             packet_filter,
             tun_inet,
+            _dns_policy_watch: dns_policy_watch,
         })
     }
 
@@ -445,6 +769,7 @@ impl MagicDnsServerInstance {
                     .await;
             }
         }
+        clear_magic_dns_os_wired();
 
         self.packet_filter.close().await;
     }

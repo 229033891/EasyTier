@@ -8,15 +8,19 @@ import {
   addRow,
   CompressionAlgoPb,
   DEFAULT_NETWORK_CONFIG,
+  emptyDnsConfig,
   NetworkConfig,
   normalizeNetworkConfig,
   removeRow,
+  type DnsConfig,
   type VpnPortalClientConfig,
   type VpnPortalConfig,
 } from '../types/network'
 import { computed, reactive, ref, onMounted, onUnmounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import AclManager from './acl/AclManager.vue'
+import DnsHostsEditor from './dns/DnsHostsEditor.vue'
+import DnsForwardersEditor from './dns/DnsForwardersEditor.vue'
 import UrlListInput from './UrlListInput.vue'
 
 const props = defineProps<{
@@ -110,8 +114,23 @@ const panelCollapsed = reactive({
   basic: false,
   advanced: true,
   portForwards: true,
+  dns: true,
   acl: true,
 })
+
+function ensureDnsConfig(): DnsConfig {
+  if (!curNetwork.value.dns_config) {
+    curNetwork.value.dns_config = emptyDnsConfig()
+  }
+  curNetwork.value.dns_config.hosts ??= []
+  curNetwork.value.dns_config.forwarders ??= []
+  curNetwork.value.dns_config.upstream_dns ??= []
+  return curNetwork.value.dns_config
+}
+
+function initDnsHosts() {
+  ensureDnsConfig()
+}
 
 function onToggleablePanelHeaderClick(
   key: keyof typeof panelCollapsed,
@@ -848,6 +867,52 @@ function removeVpnPortalClient(index: number) {
             </div>
           </Panel>
 
+          <Panel v-model:collapsed="panelCollapsed.dns" :header="t('dns.title')" toggleable
+            :pt="panelHeaderPt('dns')">
+            <div class="flex flex-col gap-y-4">
+              <p v-if="!curNetwork.enable_magic_dns" class="dns-magic-dns-hint et-meta m-0">
+                {{ t('dns.hosts.magic_dns_off_hint') }}
+              </p>
+              <p
+                v-if="curNetwork.dns_config && (curNetwork.dns_config.hosts?.length || curNetwork.dns_config.forwarders?.length || curNetwork.dns_config.upstream_dns?.length)"
+                class="dns-mixed-version-hint et-meta m-0"
+                role="note"
+              >
+                {{ t('dns.mixed_version_warning') }}
+              </p>
+
+              <template v-if="curNetwork.dns_config">
+                <div class="flex flex-col gap-y-2">
+                  <div class="config-inline-field">
+                    <div class="config-inline-label flex items-center gap-1">
+                      <label for="dns_upstream">{{ t('dns.upstream.title') }}</label>
+                      <i class="pi pi-question-circle config-help-tip"
+                        v-tooltip.top="{ value: t('dns.upstream.help'), escape: false }" role="img"></i>
+                    </div>
+                    <div class="config-inline-control">
+                      <AutoComplete id="dns_upstream" v-model="curNetwork.dns_config.upstream_dns"
+                        :placeholder="t('dns.upstream.placeholder')" multiple fluid :typeahead="false" />
+                    </div>
+                  </div>
+                </div>
+
+                <div class="dns-section">
+                  <div class="dns-section__title">{{ t('dns.hosts.title') }}</div>
+                  <DnsHostsEditor v-model:hosts="curNetwork.dns_config.hosts" />
+                </div>
+
+                <div class="dns-section">
+                  <div class="dns-section__title">{{ t('dns.forwarders.title') }}</div>
+                  <DnsForwardersEditor v-model:forwarders="curNetwork.dns_config.forwarders" />
+                </div>
+              </template>
+              <div v-else class="flex justify-start">
+                <Button class="et-panel-action-btn" icon="pi pi-plus" :label="t('dns.hosts.enable')"
+                  severity="success" v-tooltip.top="t('dns.hosts.enable_tip')" @click="initDnsHosts" />
+              </div>
+            </div>
+          </Panel>
+
           <Panel v-model:collapsed="panelCollapsed.acl" :header="t('acl.title')" toggleable
             :pt="panelHeaderPt('acl')">
             <div v-if="curNetwork.acl" class="flex flex-col gap-y-2">
@@ -869,6 +934,29 @@ function removeVpnPortalClient(index: number) {
 </template>
 
 <style scoped>
+.dns-magic-dns-hint {
+  color: var(--text-color-secondary, #64748b);
+}
+
+.dns-mixed-version-hint {
+  color: var(--et-warning, #b45309);
+  background: color-mix(in srgb, var(--et-warning, #f59e0b) 12%, transparent);
+  border-radius: 0.375rem;
+  padding: 0.5rem 0.75rem;
+}
+
+.dns-section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.dns-section__title {
+  font-size: var(--et-fs-section, 0.875rem);
+  font-weight: 600;
+  color: var(--text-color, #1e293b);
+}
+
 .config-panels {
   display: flex;
   flex-direction: column;

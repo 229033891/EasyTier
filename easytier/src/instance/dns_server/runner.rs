@@ -66,7 +66,8 @@ impl DnsRunner {
         }
 
         // every runner must run a client
-        let client = MagicDnsClientInstance::new(self.packet_plane.clone()).await?;
+        let client =
+            MagicDnsClientInstance::new(self.packet_plane.clone(), self.global_ctx.clone()).await?;
         self.client = Some(client);
         self.client.as_mut().unwrap().run_and_wait().await;
 

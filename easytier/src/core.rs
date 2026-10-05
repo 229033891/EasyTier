@@ -5,7 +5,8 @@ use crate::{
             ConfigFileControl, ConfigLoader, ConsoleLoggerConfig, EncryptionAlgorithm,
             FileLoggerConfig, LoggingConfigLoader, NetworkIdentity, PeerConfig, PortForwardConfig,
             TomlConfigLoader, VpnPortalClientConfig, VpnPortalConfig, add_proxy_network_to_config,
-            load_config_from_file, load_toml_config_from_path, parse_mapped_listener_urls,
+            load_config_from_file, load_toml_config_from_path, parse_dns_forward_flag,
+            parse_dns_host_flag, parse_mapped_listener_urls,
         },
         constants::EASYTIER_VERSION,
         log,
@@ -621,6 +622,31 @@ struct NetworkOptions {
     port_forward: Vec<url::Url>,
 
     #[arg(
+        long = "dns-upstream",
+        env = "ET_DNS_UPSTREAM",
+        value_delimiter = ',',
+        help = t!("core_clap.dns_upstream").to_string(),
+        num_args = 1..
+    )]
+    dns_upstream: Vec<String>,
+
+    #[arg(
+        long = "dns-host",
+        env = "ET_DNS_HOST",
+        help = t!("core_clap.dns_host").to_string(),
+        num_args = 1..
+    )]
+    dns_hosts: Vec<String>,
+
+    #[arg(
+        long = "dns-forward",
+        env = "ET_DNS_FORWARD",
+        help = t!("core_clap.dns_forward").to_string(),
+        num_args = 1..
+    )]
+    dns_forwards: Vec<String>,
+
+    #[arg(
         long,
         env = "ET_ACCEPT_DNS",
         help = t!("core_clap.accept_dns").to_string(),
@@ -1196,6 +1222,29 @@ impl NetworkOptions {
             let mut old = cfg.get_port_forwards();
             old.push(port_forward_item);
             cfg.set_port_forwards(old);
+        }
+
+        if !self.dns_upstream.is_empty()
+            || !self.dns_hosts.is_empty()
+            || !self.dns_forwards.is_empty()
+        {
+            let mut dns = cfg.get_dns_config().unwrap_or_default();
+            if !self.dns_upstream.is_empty() {
+                dns.upstream_dns.extend(self.dns_upstream.iter().cloned());
+            }
+            for raw in &self.dns_hosts {
+                dns.hosts.push(
+                    parse_dns_host_flag(raw)
+                        .with_context(|| format!("invalid --dns-host `{raw}`"))?,
+                );
+            }
+            for raw in &self.dns_forwards {
+                dns.forwarders.push(
+                    parse_dns_forward_flag(raw)
+                        .with_context(|| format!("invalid --dns-forward `{raw}`"))?,
+                );
+            }
+            cfg.set_dns_config(Some(dns));
         }
 
         if let Some(ref credential_file) = self.credential_file {

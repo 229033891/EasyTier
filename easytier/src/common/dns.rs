@@ -308,7 +308,7 @@ impl RuntimeDnsIoContext {
 
 #[cfg(feature = "dns-resolver")]
 #[derive(Clone)]
-struct RuntimeDnsIoProvider {
+pub(crate) struct RuntimeDnsIoProvider {
     inner: TokioRuntimeProvider,
     context: RuntimeDnsIoContext,
 }
@@ -321,6 +321,23 @@ impl RuntimeDnsIoProvider {
             context,
         }
     }
+}
+
+/// Hickory connection provider for MagicDNS root-zone forwarding.
+///
+/// Sockets bind to the physical default iface (skipping registered TUN excludes),
+/// matching [`RuntimeDnsResolver`] underlay behavior so configured upstreams
+/// (including VPN-internal ones) do not loop into TUN / packet filter.
+#[cfg(feature = "dns-resolver")]
+pub type MagicDnsForwardConnector = GenericConnector<RuntimeDnsIoProvider>;
+
+/// Build a forwarder connector that pins UDP/TCP DNS to the underlay NIC.
+#[cfg(feature = "dns-resolver")]
+pub fn magic_dns_forward_connector() -> MagicDnsForwardConnector {
+    GenericConnector::new(RuntimeDnsIoProvider::new(RuntimeDnsIoContext {
+        netns: None,
+        socket_mark: None,
+    }))
 }
 
 #[cfg(feature = "dns-resolver")]

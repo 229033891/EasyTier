@@ -26,6 +26,7 @@ class EasyTierVpnService : VpnService() {
         val ipv4Address = intent?.getStringExtra("ipv4_address")
         val proxyCidrs = intent?.getStringArrayListExtra("proxy_cidrs") ?: arrayListOf()
         instanceName = intent?.getStringExtra("instance_name")
+        val enableMagicDns = intent?.getBooleanExtra("enable_magic_dns", false) ?: false
 
         if (ipv4Address == null || instanceName == null) {
             Log.e(TAG, "缺少必要参数: ipv4Address=$ipv4Address, instanceName=$instanceName")
@@ -35,12 +36,12 @@ class EasyTierVpnService : VpnService() {
 
         Log.i(
                 TAG,
-                "启动 VPN Service - IPv4: $ipv4Address, Proxy CIDRs: $proxyCidrs, Instance: $instanceName"
+                "启动 VPN Service - IPv4: $ipv4Address, Proxy CIDRs: $proxyCidrs, Instance: $instanceName, MagicDNS: $enableMagicDns"
         )
 
         thread {
             try {
-                setupVpnInterface(ipv4Address, proxyCidrs)
+                setupVpnInterface(ipv4Address, proxyCidrs, enableMagicDns)
             } catch (t: Throwable) {
                 Log.e(TAG, "VPN 设置失败", t)
                 stopSelf()
@@ -50,18 +51,25 @@ class EasyTierVpnService : VpnService() {
         return START_STICKY
     }
 
-    private fun setupVpnInterface(ipv4Address: String, proxyCidrs: List<String>) {
+    private fun setupVpnInterface(
+            ipv4Address: String,
+            proxyCidrs: List<String>,
+            enableMagicDns: Boolean
+    ) {
         try {
             // 解析 IPv4 地址和网络长度
             val (ip, networkLength) = parseIpv4Address(ipv4Address)
 
-            // 1. 准备 VpnService.Builder
+            // 1. 准备 VpnService.Builder（DNS 与 Tauri 路径对齐）
             val builder = Builder()
-            builder.setSession("EasyTier VPN")
-                    .addAddress(ip, networkLength)
-                    .addDnsServer("223.5.5.5")
-                    .addDnsServer("114.114.114.114")
-                    .addDisallowedApplication("com.easytier.easytiervpn")
+            builder.setSession("EasyTier VPN").addAddress(ip, networkLength)
+            if (enableMagicDns) {
+                builder.addDnsServer("100.100.100.53")
+            } else {
+                builder.addDnsServer("223.5.5.5")
+                builder.addDnsServer("114.114.114.114")
+            }
+            builder.addDisallowedApplication("com.easytier.easytiervpn")
 
             // 2. 添加路由表 - 为每个 proxy CIDR 添加路由
             proxyCidrs.forEach { cidr ->
@@ -79,10 +87,16 @@ class EasyTierVpnService : VpnService() {
 
             if (vpnInterface == null) {
                 Log.e(TAG, "创建 VPN 接口失败")
+                if (enableMagicDns) {
+                    EasyTierJNI.setMagicDnsOsWired(false)
+                }
                 return
             }
 
             Log.i(TAG, "VPN 接口创建成功")
+            if (enableMagicDns) {
+                EasyTierJNI.setMagicDnsOsWired(true)
+            }
 
             // 4. 将 TUN 文件描述符传递给 EasyTier
             instanceName?.let { name ->
@@ -103,6 +117,12 @@ class EasyTierVpnService : VpnService() {
             }
         } catch (t: Throwable) {
             Log.e(TAG, "VPN 接口设置过程中发生错误", t)
+            if (enableMagicDns) {
+                try {
+                    EasyTierJNI.setMagicDnsOsWired(false)
+                } catch (_: Throwable) {
+                }
+            }
         } finally {
             cleanup()
         }
@@ -130,6 +150,10 @@ class EasyTierVpnService : VpnService() {
 
     private fun cleanup() {
         isRunning = false
+        try {
+            EasyTierJNI.setMagicDnsOsWired(false)
+        } catch (_: Throwable) {
+        }
         vpnInterface?.close()
         vpnInterface = null
         Log.i(TAG, "VPN 接口已清理")

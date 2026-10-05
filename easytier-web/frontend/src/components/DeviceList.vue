@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue';
-import { TOAST_LIFE } from 'easytier-frontend-lib'
+import { DnsCoverage, DnsCoverageBadge, TOAST_LIFE } from 'easytier-frontend-lib'
 import { Button, Dialog, InputText, ProgressSpinner, useConfirm, useToast, Dropdown } from 'primevue';
 import { Utils, tooltipDirective } from 'easytier-frontend-lib';
 import { useRouter } from 'vue-router';
@@ -54,6 +54,18 @@ const loadDevices = async (): Promise<Array<Utils.DeviceInfo>> => {
 const { data: deviceList, loading: devicesLoading, reloading: devicesReloading, error: listError, reload: reloadDevices } = usePollingList<Array<Utils.DeviceInfo>>({
     fetcher: loadDevices,
 });
+
+function deviceDnsPlatformState(device: Utils.DeviceInfo) {
+    return DnsCoverage.platformDnsCapability({
+        os_type: device.os_type,
+        easytier_version: device.easytier_version,
+        magic_dns_os_wired: device.magic_dns_os_wired,
+    })
+}
+
+const hasVersionTooOldDevice = computed(() =>
+    (deviceList.value || []).some((d) => deviceDnsPlatformState(d) === 'version_too_old'),
+)
 
 const retryLoadDevices = async () => {
     try {
@@ -460,6 +472,14 @@ const sortedDeviceList = computed(() => {
 </script>
 
 <style scoped>
+.dns-mixed-version-banner {
+    color: var(--et-warning, #b45309);
+    background: color-mix(in srgb, var(--et-warning, #f59e0b) 12%, transparent);
+    border-radius: var(--et-radius, 0.375rem);
+    padding: 0.55rem 0.85rem;
+    margin-bottom: var(--et-gap-section, 0.75rem);
+}
+
 /* 卡片容器 */
 .card-container {
     display: grid;
@@ -866,6 +886,14 @@ const sortedDeviceList = computed(() => {
             />
         </div>
 
+        <div
+            v-if="hasVersionTooOldDevice"
+            class="dns-mixed-version-banner et-meta"
+            role="status"
+        >
+            {{ t('dns.mixed_version_warning') }}
+        </div>
+
         <div class="device-list-toolbar">
             <div class="device-list-toolbar-group">
                 <label for="sort-by" class="text-sm hidden sm:block">{{ t('web.device.sort_by') }}</label>
@@ -1014,6 +1042,10 @@ const sortedDeviceList = computed(() => {
                                 <div class="text-xs version-badge" v-tooltip.top="`EasyTier ${device.easytier_version || '—'}`">
                                     v{{ (device.easytier_version || '').split('-')[0] || '—' }}
                                 </div>
+                                <DnsCoverageBadge
+                                    :state="deviceDnsPlatformState(device)"
+                                    platform-only
+                                />
                             </div>
                         </div>
 

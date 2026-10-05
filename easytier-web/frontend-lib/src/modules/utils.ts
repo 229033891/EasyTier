@@ -288,6 +288,10 @@ export interface DeviceInfo {
     location: Location | undefined;
     /** True when present in live `list_machines`; false for archive-only offline rows. */
     online?: boolean;
+    /** Heartbeat `DeviceOsInfo.os_type` (e.g. windows, linux, android). */
+    os_type?: string;
+    /** Heartbeat B6 phase-2 OS wiring signal; unset on older clients. */
+    magic_dns_os_wired?: boolean | null;
 }
 
 /** Archive row from `/api/v1/devices` (offline devices + display aliases). */
@@ -330,6 +334,8 @@ export function buildDeviceInfo(device: any): DeviceInfo {
         report_time: device.info?.report_time ?? '',
         // Keep a string so template `.split` never throws on missing heartbeat fields.
         easytier_version: device.info?.easytier_version ?? '',
+        os_type: device.info?.device_os?.os_type ?? '',
+        magic_dns_os_wired: device.info?.magic_dns_os_wired ?? null,
         machine_id: UuidToStr(device.info?.machine_id),
         location: device.location,
         online: true,

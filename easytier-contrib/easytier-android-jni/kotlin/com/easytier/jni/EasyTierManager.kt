@@ -42,14 +42,17 @@ class EasyTierManager(
     private var isRunning = false
     private var currentIpv4: String? = null
     private var currentProxyCidrs: List<String> = emptyList()
+    private var currentEnableMagicDns: Boolean = false
     private var vpnServiceIntent: Intent? = null
     private val allowPeerDefaultWithoutExit: Boolean
     private val exitNodes: List<String>
+    private val enableMagicDns: Boolean
 
     init {
         val policy = parseRoutePolicy(networkConfig)
-        allowPeerDefaultWithoutExit = policy.first
-        exitNodes = policy.second
+        allowPeerDefaultWithoutExit = policy.allowPeerDefaultWithoutExit
+        exitNodes = policy.exitNodes
+        enableMagicDns = policy.enableMagicDns
     }
 
     // JSON 解析器
@@ -169,24 +172,31 @@ class EasyTierManager(
             if (localExitDefault) {
                 newProxyCidrs.add("0.0.0.0/0")
             }
+            // MagicDNS fake IP route (align with Tauri mobile_vpn.ts).
+            if (enableMagicDns) {
+                newProxyCidrs.add("100.100.100.53/32")
+            }
             val dedupedProxyCidrs = newProxyCidrs.distinct().sorted()
 
             // 检查是否有变化
             val ipv4Changed = newIpv4 != currentIpv4
             val proxyCidrsChanged = dedupedProxyCidrs != currentProxyCidrs
+            val magicDnsChanged = enableMagicDns != currentEnableMagicDns
 
-            if (ipv4Changed || proxyCidrsChanged) {
+            if (ipv4Changed || proxyCidrsChanged || magicDnsChanged) {
                 Log.i(TAG, "网络状态发生变化:")
                 Log.i(TAG, "  IPv4: $currentIpv4 -> $newIpv4")
                 Log.i(TAG, "  Proxy CIDRs: $currentProxyCidrs -> $dedupedProxyCidrs")
+                Log.i(TAG, "  MagicDNS: $currentEnableMagicDns -> $enableMagicDns")
 
                 // 更新状态
                 currentIpv4 = newIpv4
                 currentProxyCidrs = dedupedProxyCidrs
+                currentEnableMagicDns = enableMagicDns
 
                 // 重启 VpnService
                 if (newIpv4 != null) {
-                    restartVpnService(newIpv4, dedupedProxyCidrs)
+                    restartVpnService(newIpv4, dedupedProxyCidrs, enableMagicDns)
                 }
             } else {
                 Log.d(TAG, "网络状态无变化 - IPv4: $currentIpv4, Proxy CIDRs: ${currentProxyCidrs.size} 个")
@@ -207,30 +217,34 @@ class EasyTierManager(
     }
 
     /** 重启 VpnService */
-    private fun restartVpnService(ipv4: String, proxyCidrs: List<String>) {
+    private fun restartVpnService(ipv4: String, proxyCidrs: List<String>, enableMagicDns: Boolean) {
         try {
             // 先停止现有的 VpnService
             stopVpnService()
 
             // 启动新的 VpnService
-            startVpnService(ipv4, proxyCidrs)
+            startVpnService(ipv4, proxyCidrs, enableMagicDns)
         } catch (e: Exception) {
             Log.e(TAG, "重启 VpnService 时发生异常", e)
         }
     }
 
     /** 启动 VpnService */
-    private fun startVpnService(ipv4: String, proxyCidrs: List<String>) {
+    private fun startVpnService(ipv4: String, proxyCidrs: List<String>, enableMagicDns: Boolean) {
         try {
             val intent = Intent(activity, EasyTierVpnService::class.java)
             intent.putExtra("ipv4_address", ipv4)
             intent.putStringArrayListExtra("proxy_cidrs", ArrayList(proxyCidrs))
             intent.putExtra("instance_name", instanceName)
+            intent.putExtra("enable_magic_dns", enableMagicDns)
 
             activity.startService(intent)
             vpnServiceIntent = intent
 
-            Log.i(TAG, "VpnService 已启动 - IPv4: $ipv4, Proxy CIDRs: $proxyCidrs")
+            Log.i(
+                    TAG,
+                    "VpnService 已启动 - IPv4: $ipv4, Proxy CIDRs: $proxyCidrs, MagicDNS: $enableMagicDns"
+            )
         } catch (e: Exception) {
             Log.e(TAG, "启动 VpnService 时发生异常", e)
         }
@@ -293,10 +307,17 @@ class EasyTierManager(
     )
 }
 
-private fun parseRoutePolicy(networkConfig: String): Pair<Boolean, List<String>> {
+private data class RoutePolicy(
+        val allowPeerDefaultWithoutExit: Boolean,
+        val exitNodes: List<String>,
+        val enableMagicDns: Boolean
+)
+
+private fun parseRoutePolicy(networkConfig: String): RoutePolicy {
     return try {
         val json = org.json.JSONObject(networkConfig)
         val allow = json.optBoolean("allow_peer_default_without_exit", false)
+        val enableMagicDns = json.optBoolean("enable_magic_dns", false)
         val exitNodes = mutableListOf<String>()
         val arr = json.optJSONArray("exit_nodes")
         if (arr != null) {
@@ -307,8 +328,8 @@ private fun parseRoutePolicy(networkConfig: String): Pair<Boolean, List<String>>
                 }
             }
         }
-        Pair(allow, exitNodes)
+        RoutePolicy(allow, exitNodes, enableMagicDns)
     } catch (_: Exception) {
-        Pair(false, emptyList())
+        RoutePolicy(false, emptyList(), false)
     }
 }

@@ -27,6 +27,55 @@ use easytier::{
 
 use super::session::{SessionConfigClient, SessionRpcClient};
 
+/// First EasyTier release that applies `DnsConfig` / `InstanceConfigPatch.dns_config`.
+/// Released 2.7.0–2.7.3 ignore unknown fields; patching them never converges (B1).
+/// Keep in sync with `DNS_POLICY_MIN_VERSION` in frontend-lib `dnsCoverage.ts`.
+pub(super) const DNS_POLICY_MIN_VERSION: &str = "2.7.4";
+
+fn parse_version_parts(version: &str) -> Option<Vec<u32>> {
+    let cleaned = version.trim().trim_start_matches(['v', 'V']);
+    let cleaned = cleaned.split(['+', '-']).next().unwrap_or("");
+    if cleaned.is_empty() {
+        return None;
+    }
+    let mut parts = Vec::new();
+    for p in cleaned.split('.') {
+        parts.push(p.parse().ok()?);
+    }
+    Some(parts)
+}
+
+/// True when `version` is strictly older than `min_version`.
+pub(super) fn is_version_older_than(version: &str, min_version: &str) -> bool {
+    let Some(a) = parse_version_parts(version) else {
+        return false;
+    };
+    let Some(b) = parse_version_parts(min_version) else {
+        return false;
+    };
+    let len = a.len().max(b.len());
+    for i in 0..len {
+        let av = a.get(i).copied().unwrap_or(0);
+        let bv = b.get(i).copied().unwrap_or(0);
+        if av < bv {
+            return true;
+        }
+        if av > bv {
+            return false;
+        }
+    }
+    false
+}
+
+/// Whether the connected core understands managed `DnsConfig`.
+pub(super) fn client_supports_dns_config(client_version: Option<&str>) -> bool {
+    match client_version.map(str::trim).filter(|v| !v.is_empty()) {
+        Some(v) => !is_version_older_than(v, DNS_POLICY_MIN_VERSION),
+        // Heartbeat normally reports a version; unknown → allow (same as FE badge).
+        None => true,
+    }
+}
+
 pub(super) enum RuntimeReconcileAction {
     Unchanged(Box<NetworkConfig>),
     Run {
@@ -65,6 +114,7 @@ fn hot_patch_base(config: &NetworkConfig) -> anyhow::Result<NetworkConfig> {
     config.proxy_cidrs.clear();
     config.disable_relay_data = None;
     config.prefer_peer_relay = None;
+    config.dns_config = None;
     // VPN portal clients are diffed separately; the listener identity
     // (address and private key) decides between patch and recreate.
     config.vpn_portal_config = None;
@@ -287,6 +337,7 @@ fn is_automatic_windows_dev_name(dev_name: &str) -> bool {
 fn web_source_runtime_patch(
     current: &NetworkConfig,
     desired: &NetworkConfig,
+    client_version: Option<&str>,
 ) -> anyhow::Result<Option<InstanceConfigPatch>> {
     let mut current_base = hot_patch_base(current)?;
     let mut desired_base = hot_patch_base(desired)?;
@@ -347,6 +398,14 @@ fn web_source_runtime_patch(
         patch.prefer_peer_relay = Some(desired_prefer_peer_relay);
     }
 
+    if client_supports_dns_config(client_version) && current.dns_config != desired.dns_config {
+        // Full replace; empty Some clears policy, None leaves unchanged on wire —
+        // here we always send desired (including clearing to empty DnsConfig).
+        // Old cores (< DNS_POLICY_MIN_VERSION) ignore unknown fields and never
+        // converge — skip entirely (C1 / B1).
+        patch.dns_config = Some(desired.dns_config.clone().unwrap_or_default());
+    }
+
     match (
         normalized_vpn_portal(current)?,
         normalized_vpn_portal(desired)?,
@@ -396,8 +455,9 @@ pub(super) fn ensure_runtime_config_converged(
     current: &NetworkConfig,
     desired: &NetworkConfig,
     hostname_applied: bool,
+    client_version: Option<&str>,
 ) -> anyhow::Result<()> {
-    let patch = web_source_runtime_patch(current, desired)?;
+    let patch = web_source_runtime_patch(current, desired, client_version)?;
     match patch {
         Some(mut patch) => {
             // Release 2.6.4 omits a configured hostname when it equals
@@ -458,6 +518,7 @@ pub(super) async fn prepare_web_source_runtime_reconcile(
     inst_id: &str,
     desired_config: NetworkConfig,
     is_running: bool,
+    client_version: Option<&str>,
 ) -> anyhow::Result<RuntimeReconcileAction> {
     if !is_running {
         return Ok(RuntimeReconcileAction::Run {
@@ -468,14 +529,20 @@ pub(super) async fn prepare_web_source_runtime_reconcile(
 
     let current_config = get_runtime_config(rpc_client, inst_id).await?;
 
-    prepare_web_source_runtime_reconcile_from_current(&current_config, desired_config)
+    prepare_web_source_runtime_reconcile_from_current(
+        &current_config,
+        desired_config,
+        client_version,
+    )
 }
 
 pub(super) fn prepare_web_source_runtime_reconcile_from_current(
     current_config: &NetworkConfig,
     desired_config: NetworkConfig,
+    client_version: Option<&str>,
 ) -> anyhow::Result<RuntimeReconcileAction> {
-    let Some(patch) = web_source_runtime_patch(current_config, &desired_config)? else {
+    let Some(patch) = web_source_runtime_patch(current_config, &desired_config, client_version)?
+    else {
         let mut run_config = desired_config;
         if run_config.hostname.is_none() {
             run_config.hostname = current_config.hostname.clone();
@@ -500,6 +567,7 @@ pub(super) async fn apply_web_source_runtime_reconcile(
     inst_id: &str,
     desired_config: NetworkConfig,
     action: RuntimeReconcileAction,
+    client_version: Option<&str>,
 ) -> anyhow::Result<NetworkConfig> {
     match action {
         RuntimeReconcileAction::Unchanged(current_config) => Ok(*current_config),
@@ -507,7 +575,12 @@ pub(super) async fn apply_web_source_runtime_reconcile(
             let hostname_applied = config.hostname.is_some();
             run_web_source_instance(rpc_client, inst_id, *config, overwrite).await?;
             let mut current_config = get_runtime_config(rpc_client, inst_id).await?;
-            ensure_runtime_config_converged(&current_config, &desired_config, hostname_applied)?;
+            ensure_runtime_config_converged(
+                &current_config,
+                &desired_config,
+                hostname_applied,
+                client_version,
+            )?;
             restore_omitted_hostname(&mut current_config, &desired_config, hostname_applied);
             Ok(current_config)
         }
@@ -523,7 +596,12 @@ pub(super) async fn apply_web_source_runtime_reconcile(
                 )
                 .await?;
             let mut current_config = get_runtime_config(rpc_client, inst_id).await?;
-            ensure_runtime_config_converged(&current_config, &desired_config, hostname_applied)?;
+            ensure_runtime_config_converged(
+                &current_config,
+                &desired_config,
+                hostname_applied,
+                client_version,
+            )?;
             restore_omitted_hostname(&mut current_config, &desired_config, hostname_applied);
             Ok(current_config)
         }
@@ -640,7 +718,7 @@ mod tests {
             "0.0.0.0:22121",
         );
 
-        let patch = web_source_runtime_patch(&current, &desired)
+        let patch = web_source_runtime_patch(&current, &desired, Some(DNS_POLICY_MIN_VERSION))
             .unwrap()
             .expect("client-only changes must be hot-patchable");
 
@@ -675,7 +753,7 @@ mod tests {
             "0.0.0.0:22121",
         );
 
-        let patch = web_source_runtime_patch(&current, &desired)
+        let patch = web_source_runtime_patch(&current, &desired, Some(DNS_POLICY_MIN_VERSION))
             .unwrap()
             .unwrap();
         assert!(patch.vpn_portal_clients.is_empty());
@@ -692,7 +770,7 @@ mod tests {
             "0.0.0.0:22122",
         );
         assert!(
-            web_source_runtime_patch(&current, &desired)
+            web_source_runtime_patch(&current, &desired, Some(DNS_POLICY_MIN_VERSION))
                 .unwrap()
                 .is_none()
         );
@@ -709,7 +787,7 @@ mod tests {
             .unwrap()
             .wireguard_private_key = Some("bm90LXRoZS1zYW1lLWtleQ==".to_owned());
         assert!(
-            web_source_runtime_patch(&current, &different_key)
+            web_source_runtime_patch(&current, &different_key, Some(DNS_POLICY_MIN_VERSION))
                 .unwrap()
                 .is_none()
         );
@@ -724,12 +802,12 @@ mod tests {
         );
 
         assert!(
-            web_source_runtime_patch(&without_portal, &with_portal)
+            web_source_runtime_patch(&without_portal, &with_portal, Some(DNS_POLICY_MIN_VERSION))
                 .unwrap()
                 .is_none()
         );
         assert!(
-            web_source_runtime_patch(&with_portal, &without_portal)
+            web_source_runtime_patch(&with_portal, &without_portal, Some(DNS_POLICY_MIN_VERSION))
                 .unwrap()
                 .is_none()
         );
@@ -749,7 +827,7 @@ mod tests {
         let desired =
             config_with_port_forwards(vec![port_forward(23000, 5174), port_forward(23007, 3389)]);
 
-        let patch = web_source_runtime_patch(&current, &desired)
+        let patch = web_source_runtime_patch(&current, &desired, Some(DNS_POLICY_MIN_VERSION))
             .expect("build patch")
             .expect("hot patch");
 
@@ -771,7 +849,7 @@ mod tests {
             config_with_port_forwards(vec![port_forward(23000, 5174), port_forward(23007, 3389)]);
         let desired = config_with_port_forwards(vec![port_forward(23000, 5174)]);
 
-        let patch = web_source_runtime_patch(&current, &desired)
+        let patch = web_source_runtime_patch(&current, &desired, Some(DNS_POLICY_MIN_VERSION))
             .expect("build patch")
             .expect("hot patch");
 
@@ -793,7 +871,7 @@ mod tests {
             config_with_port_forwards(vec![port_forward(23000, 5174), port_forward(23000, 5174)]);
         let desired = config_with_port_forwards(vec![port_forward(23000, 5174)]);
 
-        let patch = web_source_runtime_patch(&current, &desired)
+        let patch = web_source_runtime_patch(&current, &desired, Some(DNS_POLICY_MIN_VERSION))
             .expect("build patch")
             .expect("hot patch");
 
@@ -824,8 +902,12 @@ mod tests {
         current.dev_name = Some("et_3_abcd".to_string());
         let desired = config_with_port_forwards(Vec::new());
 
-        let action = prepare_web_source_runtime_reconcile_from_current(&current, desired)
-            .expect("prepare reconcile");
+        let action = prepare_web_source_runtime_reconcile_from_current(
+            &current,
+            desired,
+            Some(DNS_POLICY_MIN_VERSION),
+        )
+        .expect("prepare reconcile");
 
         assert!(matches!(action, RuntimeReconcileAction::Unchanged(_)));
     }
@@ -837,8 +919,12 @@ mod tests {
         let mut desired = config_with_port_forwards(Vec::new());
         desired.dev_name = Some(String::new());
 
-        let action = prepare_web_source_runtime_reconcile_from_current(&current, desired)
-            .expect("prepare reconcile");
+        let action = prepare_web_source_runtime_reconcile_from_current(
+            &current,
+            desired,
+            Some(DNS_POLICY_MIN_VERSION),
+        )
+        .expect("prepare reconcile");
 
         assert!(matches!(action, RuntimeReconcileAction::Unchanged(_)));
     }
@@ -850,8 +936,12 @@ mod tests {
         let mut desired = config_with_port_forwards(Vec::new());
         desired.dev_name = Some(String::new());
 
-        let action = prepare_web_source_runtime_reconcile_from_current(&current, desired)
-            .expect("prepare reconcile");
+        let action = prepare_web_source_runtime_reconcile_from_current(
+            &current,
+            desired,
+            Some(DNS_POLICY_MIN_VERSION),
+        )
+        .expect("prepare reconcile");
         let RuntimeReconcileAction::Run { overwrite, .. } = action else {
             panic!("clearing an explicit device name should require a full overwrite");
         };
@@ -866,8 +956,12 @@ mod tests {
         let mut desired = config_with_port_forwards(Vec::new());
         desired.dev_name = Some("managed-device".to_string());
 
-        let action = prepare_web_source_runtime_reconcile_from_current(&current, desired)
-            .expect("prepare reconcile");
+        let action = prepare_web_source_runtime_reconcile_from_current(
+            &current,
+            desired,
+            Some(DNS_POLICY_MIN_VERSION),
+        )
+        .expect("prepare reconcile");
         let RuntimeReconcileAction::Run { overwrite, .. } = action else {
             panic!("explicit device name should require a full overwrite");
         };
@@ -885,8 +979,13 @@ mod tests {
         let desired =
             config_with_port_forwards(vec![port_forward(23000, 5174), port_forward(23007, 3389)]);
 
-        let err = ensure_runtime_config_converged(&current, &desired, false)
-            .expect_err("extra runtime port forward should not converge");
+        let err = ensure_runtime_config_converged(
+            &current,
+            &desired,
+            false,
+            Some(DNS_POLICY_MIN_VERSION),
+        )
+        .expect_err("extra runtime port forward should not converge");
 
         assert!(
             err.to_string()
@@ -902,12 +1001,13 @@ mod tests {
         desired_port_forward.proto = "TCP".to_string();
         let desired = config_with_port_forwards(vec![desired_port_forward]);
 
-        let patch = web_source_runtime_patch(&current, &desired)
+        let patch = web_source_runtime_patch(&current, &desired, Some(DNS_POLICY_MIN_VERSION))
             .expect("build patch")
             .expect("hot patch");
 
         assert_eq!(patch, InstanceConfigPatch::default());
-        ensure_runtime_config_converged(&current, &desired, false).expect("runtime converged");
+        ensure_runtime_config_converged(&current, &desired, false, Some(DNS_POLICY_MIN_VERSION))
+            .expect("runtime converged");
     }
 
     #[test]
@@ -917,7 +1017,8 @@ mod tests {
 
         desired.network_secret = Some("new-secret".to_string());
 
-        let patch = web_source_runtime_patch(&current, &desired).expect("build patch");
+        let patch = web_source_runtime_patch(&current, &desired, Some(DNS_POLICY_MIN_VERSION))
+            .expect("build patch");
 
         assert!(patch.is_none());
     }
@@ -930,9 +1031,12 @@ mod tests {
         unmanaged_desired.hostname = None;
         unmanaged_desired.network_secret = Some("new-secret".to_string());
 
-        let action =
-            prepare_web_source_runtime_reconcile_from_current(&current, unmanaged_desired.clone())
-                .expect("prepare full overwrite");
+        let action = prepare_web_source_runtime_reconcile_from_current(
+            &current,
+            unmanaged_desired.clone(),
+            Some(DNS_POLICY_MIN_VERSION),
+        )
+        .expect("prepare full overwrite");
         let RuntimeReconcileAction::Run { config, overwrite } = action else {
             panic!("non-hot change should require a full overwrite");
         };
@@ -942,9 +1046,12 @@ mod tests {
         let observed_after_run = *config;
         let mut explicit_clear = unmanaged_desired;
         explicit_clear.hostname = Some(String::new());
-        let action =
-            prepare_web_source_runtime_reconcile_from_current(&observed_after_run, explicit_clear)
-                .expect("prepare explicit clear");
+        let action = prepare_web_source_runtime_reconcile_from_current(
+            &observed_after_run,
+            explicit_clear,
+            Some(DNS_POLICY_MIN_VERSION),
+        )
+        .expect("prepare explicit clear");
         let RuntimeReconcileAction::Patch(patch) = action else {
             panic!("explicit clear should patch the preserved runtime hostname");
         };
@@ -963,8 +1070,12 @@ mod tests {
             ..Default::default()
         }];
 
-        let action = prepare_web_source_runtime_reconcile_from_current(&current, desired)
-            .expect("prepare reconcile");
+        let action = prepare_web_source_runtime_reconcile_from_current(
+            &current,
+            desired,
+            Some(DNS_POLICY_MIN_VERSION),
+        )
+        .expect("prepare reconcile");
         let RuntimeReconcileAction::Patch(patch) = action else {
             panic!("managed credential change must use a hot patch");
         };
@@ -982,7 +1093,8 @@ mod tests {
         desired.enable_manual_routes = Some(true);
         desired.routes = vec!["10.2.0.0/16".to_string(), "10.3.0.0/16".to_string()];
 
-        let patch = web_source_runtime_patch(&current, &desired).expect("build patch");
+        let patch = web_source_runtime_patch(&current, &desired, Some(DNS_POLICY_MIN_VERSION))
+            .expect("build patch");
 
         assert!(patch.is_none());
     }
@@ -1000,7 +1112,7 @@ mod tests {
             "10.3.0.0/16".to_string(),
         ];
 
-        let patch = web_source_runtime_patch(&current, &desired)
+        let patch = web_source_runtime_patch(&current, &desired, Some(DNS_POLICY_MIN_VERSION))
             .expect("build patch")
             .expect("hot patch");
 
@@ -1041,7 +1153,7 @@ mod tests {
         let mut desired = config_with_port_forwards(Vec::new());
         desired.proxy_cidrs = vec!["10.1.2.0/24->10.1.3.0/24".to_string()];
 
-        let patch = web_source_runtime_patch(&current, &desired)
+        let patch = web_source_runtime_patch(&current, &desired, Some(DNS_POLICY_MIN_VERSION))
             .expect("build patch")
             .expect("hot patch");
 
@@ -1070,7 +1182,8 @@ mod tests {
         let mut desired = config_with_port_forwards(Vec::new());
         desired.proxy_cidrs = vec!["10.1.2.0/24".to_string()];
 
-        let patch = web_source_runtime_patch(&current, &desired).expect("build patch");
+        let patch = web_source_runtime_patch(&current, &desired, Some(DNS_POLICY_MIN_VERSION))
+            .expect("build patch");
 
         assert!(patch.is_none());
     }
@@ -1081,7 +1194,7 @@ mod tests {
         current.proxy_cidrs = vec!["10.1.2.0/24".to_string()];
         let desired = config_with_port_forwards(Vec::new());
 
-        let patch = web_source_runtime_patch(&current, &desired)
+        let patch = web_source_runtime_patch(&current, &desired, Some(DNS_POLICY_MIN_VERSION))
             .expect("build patch")
             .expect("hot patch");
 
@@ -1102,7 +1215,7 @@ mod tests {
         let mut desired = current.clone();
         desired.disable_relay_data = Some(true);
 
-        let patch = web_source_runtime_patch(&current, &desired)
+        let patch = web_source_runtime_patch(&current, &desired, Some(DNS_POLICY_MIN_VERSION))
             .expect("build patch")
             .expect("hot patch");
 
@@ -1115,7 +1228,7 @@ mod tests {
         let mut desired = current.clone();
         desired.prefer_peer_relay = Some(true);
 
-        let patch = web_source_runtime_patch(&current, &desired)
+        let patch = web_source_runtime_patch(&current, &desired, Some(DNS_POLICY_MIN_VERSION))
             .expect("build patch")
             .expect("hot patch");
 
@@ -1129,7 +1242,8 @@ mod tests {
         let mut desired = current.clone();
         desired.no_tun = Some(true);
 
-        let patch = web_source_runtime_patch(&current, &desired).expect("build patch");
+        let patch = web_source_runtime_patch(&current, &desired, Some(DNS_POLICY_MIN_VERSION))
+            .expect("build patch");
 
         assert!(patch.is_none());
     }
@@ -1140,7 +1254,8 @@ mod tests {
         let mut desired = current.clone();
         desired.encryption_algorithm = Some("managed-test-algo".to_string());
 
-        let patch = web_source_runtime_patch(&current, &desired).expect("build patch");
+        let patch = web_source_runtime_patch(&current, &desired, Some(DNS_POLICY_MIN_VERSION))
+            .expect("build patch");
 
         assert!(patch.is_none());
     }
@@ -1151,7 +1266,8 @@ mod tests {
         let mut desired = current.clone();
         desired.data_compress_algo = Some(CompressionAlgoPb::Zstd as i32);
 
-        let patch = web_source_runtime_patch(&current, &desired).expect("build patch");
+        let patch = web_source_runtime_patch(&current, &desired, Some(DNS_POLICY_MIN_VERSION))
+            .expect("build patch");
 
         assert!(patch.is_none());
     }
@@ -1172,7 +1288,8 @@ mod tests {
             local_public_key: None,
         });
 
-        let patch = web_source_runtime_patch(&current, &desired).expect("build patch");
+        let patch = web_source_runtime_patch(&current, &desired, Some(DNS_POLICY_MIN_VERSION))
+            .expect("build patch");
 
         assert!(patch.is_none());
     }
@@ -1193,7 +1310,7 @@ mod tests {
             local_public_key: None,
         });
 
-        let patch = web_source_runtime_patch(&current, &desired)
+        let patch = web_source_runtime_patch(&current, &desired, Some(DNS_POLICY_MIN_VERSION))
             .expect("build patch")
             .expect("hot patch");
 
@@ -1216,7 +1333,7 @@ mod tests {
         let desired =
             config_with_port_forwards(vec![port_forward(23000, 5174), port_forward(23007, 3389)]);
 
-        let patch = web_source_runtime_patch(&current, &desired)
+        let patch = web_source_runtime_patch(&current, &desired, Some(DNS_POLICY_MIN_VERSION))
             .expect("build patch")
             .expect("hot patch");
 
@@ -1238,8 +1355,12 @@ mod tests {
         let mut desired = config_with_port_forwards(Vec::new());
         desired.hostname = Some("desired-host".to_string());
 
-        let action = prepare_web_source_runtime_reconcile_from_current(&current, desired)
-            .expect("prepare reconcile");
+        let action = prepare_web_source_runtime_reconcile_from_current(
+            &current,
+            desired,
+            Some(DNS_POLICY_MIN_VERSION),
+        )
+        .expect("prepare reconcile");
         let RuntimeReconcileAction::Patch(patch) = action else {
             panic!("hostname-only change should use a hot patch");
         };
@@ -1253,7 +1374,7 @@ mod tests {
         let mut desired = config_with_port_forwards(Vec::new());
         desired.hostname = Some("device-host".to_string());
 
-        ensure_runtime_config_converged(&current, &desired, true)
+        ensure_runtime_config_converged(&current, &desired, true, Some(DNS_POLICY_MIN_VERSION))
             .expect("hostname-only readback difference should be converged");
     }
 
@@ -1263,8 +1384,13 @@ mod tests {
         let mut desired = config_with_port_forwards(Vec::new());
         desired.hostname = Some("device-host".to_string());
 
-        let err = ensure_runtime_config_converged(&current, &desired, false)
-            .expect_err("omitted hostname before apply should not converge");
+        let err = ensure_runtime_config_converged(
+            &current,
+            &desired,
+            false,
+            Some(DNS_POLICY_MIN_VERSION),
+        )
+        .expect_err("omitted hostname before apply should not converge");
 
         assert!(
             err.to_string()
@@ -1279,8 +1405,9 @@ mod tests {
         let mut desired = config_with_port_forwards(Vec::new());
         desired.hostname = Some("device-host".to_string());
 
-        let err = ensure_runtime_config_converged(&current, &desired, true)
-            .expect_err("explicit wrong hostname should not converge");
+        let err =
+            ensure_runtime_config_converged(&current, &desired, true, Some(DNS_POLICY_MIN_VERSION))
+                .expect_err("explicit wrong hostname should not converge");
 
         assert!(
             err.to_string()
@@ -1295,7 +1422,7 @@ mod tests {
         let mut desired = config_with_port_forwards(Vec::new());
         desired.hostname = Some(String::new());
 
-        let patch = web_source_runtime_patch(&current, &desired)
+        let patch = web_source_runtime_patch(&current, &desired, Some(DNS_POLICY_MIN_VERSION))
             .expect("build patch")
             .expect("hot patch");
 
@@ -1308,8 +1435,12 @@ mod tests {
         let mut desired = config_with_port_forwards(Vec::new());
         desired.hostname = Some(String::new());
 
-        let action = prepare_web_source_runtime_reconcile_from_current(&current, desired)
-            .expect("prepare reconcile");
+        let action = prepare_web_source_runtime_reconcile_from_current(
+            &current,
+            desired,
+            Some(DNS_POLICY_MIN_VERSION),
+        )
+        .expect("prepare reconcile");
 
         assert!(matches!(action, RuntimeReconcileAction::Unchanged(_)));
     }
@@ -1320,8 +1451,12 @@ mod tests {
         current.hostname = Some("desired-host".to_string());
         let desired = current.clone();
 
-        let action = prepare_web_source_runtime_reconcile_from_current(&current, desired)
-            .expect("prepare reconcile");
+        let action = prepare_web_source_runtime_reconcile_from_current(
+            &current,
+            desired,
+            Some(DNS_POLICY_MIN_VERSION),
+        )
+        .expect("prepare reconcile");
 
         assert!(matches!(action, RuntimeReconcileAction::Unchanged(_)));
     }
@@ -1332,7 +1467,7 @@ mod tests {
         let mut desired = config_with_port_forwards(Vec::new());
         desired.hostname = Some("a".repeat(33));
 
-        let patch = web_source_runtime_patch(&current, &desired)
+        let patch = web_source_runtime_patch(&current, &desired, Some(DNS_POLICY_MIN_VERSION))
             .expect("build patch")
             .expect("hot patch");
 
@@ -1345,7 +1480,7 @@ mod tests {
         let mut desired = config_with_port_forwards(Vec::new());
         desired.hostname = Some("node\u{7}-name".to_string());
 
-        let patch = web_source_runtime_patch(&current, &desired)
+        let patch = web_source_runtime_patch(&current, &desired, Some(DNS_POLICY_MIN_VERSION))
             .expect("build patch")
             .expect("hot patch");
 
@@ -1359,10 +1494,77 @@ mod tests {
         let mut desired = config_with_port_forwards(Vec::new());
         desired.hostname = Some("\u{7}\n".to_string());
 
-        let patch = web_source_runtime_patch(&current, &desired)
+        let patch = web_source_runtime_patch(&current, &desired, Some(DNS_POLICY_MIN_VERSION))
             .expect("build patch")
             .expect("hot patch");
 
         assert_eq!(patch.hostname.as_deref(), Some(""));
+    }
+
+    #[test]
+    fn runtime_patch_includes_dns_config_without_full_overwrite() {
+        use easytier::proto::api::manage::{DnsConfig, DnsHostEntry};
+
+        let current = config_with_port_forwards(Vec::new());
+        let mut desired = config_with_port_forwards(Vec::new());
+        desired.dns_config = Some(DnsConfig {
+            hosts: vec![DnsHostEntry {
+                name: "app.internal.".to_string(),
+                ips: vec!["10.1.2.3".to_string()],
+                ttl_secs: Some(600),
+            }],
+            forwarders: vec![],
+            upstream_dns: vec!["1.1.1.1".to_string()],
+        });
+
+        let patch = web_source_runtime_patch(&current, &desired, Some(DNS_POLICY_MIN_VERSION))
+            .expect("build patch")
+            .expect("dns_config-only change must stay hot-patchable");
+
+        let dns = patch.dns_config.expect("dns_config in patch");
+        assert_eq!(dns.hosts.len(), 1);
+        assert_eq!(dns.hosts[0].name, "app.internal.");
+        assert_eq!(dns.upstream_dns, vec!["1.1.1.1"]);
+        assert!(patch.port_forwards.is_empty());
+        assert!(patch.acl.is_none());
+    }
+
+    #[test]
+    fn old_core_skips_dns_config_patch_and_still_converges() {
+        use easytier::proto::api::manage::{DnsConfig, DnsHostEntry};
+
+        let current = config_with_port_forwards(Vec::new());
+        let mut desired = config_with_port_forwards(Vec::new());
+        desired.dns_config = Some(DnsConfig {
+            hosts: vec![DnsHostEntry {
+                name: "app.internal.".to_string(),
+                ips: vec!["10.1.2.3".to_string()],
+                ttl_secs: Some(600),
+            }],
+            forwarders: vec![],
+            upstream_dns: vec!["1.1.1.1".to_string()],
+        });
+
+        let old = Some("2.7.3");
+        let patch = web_source_runtime_patch(&current, &desired, old)
+            .expect("build patch")
+            .expect("dns-only on old core must remain hot-patchable (empty)");
+        assert!(patch.dns_config.is_none());
+        assert_eq!(patch, InstanceConfigPatch::default());
+
+        ensure_runtime_config_converged(&current, &desired, false, old)
+            .expect("old core must converge without applying DnsConfig");
+
+        let action = prepare_web_source_runtime_reconcile_from_current(&current, desired, old)
+            .expect("prepare");
+        assert!(matches!(action, RuntimeReconcileAction::Unchanged(_)));
+    }
+
+    #[test]
+    fn dns_policy_min_version_treats_2_7_3_as_too_old() {
+        assert!(is_version_older_than("2.7.3", DNS_POLICY_MIN_VERSION));
+        assert!(!is_version_older_than("2.7.4", DNS_POLICY_MIN_VERSION));
+        assert!(!client_supports_dns_config(Some("2.7.3")));
+        assert!(client_supports_dns_config(Some("2.7.4")));
     }
 }
