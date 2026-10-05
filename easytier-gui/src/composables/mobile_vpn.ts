@@ -52,7 +52,7 @@ export function getMobileVpnInstalledRoutes(forInstanceId?: string): string[] {
   if (forInstanceId && activeVpnInstanceId && forInstanceId !== activeVpnInstanceId)
     return []
 
-  const routes = [...curVpnStatus.routes]
+  const routes = [...normalizeRouteList(curVpnStatus.routes)]
   // VpnService installs the virtual address via addAddress; surface the subnet
   // alongside addRoute prefixes so Status ROUTE matches what users expect.
   if (curVpnStatus.ipv4Addr && curVpnStatus.ipv4Cidr != null) {
@@ -61,11 +61,89 @@ export function getMobileVpnInstalledRoutes(forInstanceId?: string): string[] {
   return Array.from(new Set(routes)).sort()
 }
 
-/** Format VpnService routes into the L2 proxy_cidr_route_sync summary string. */
-export function formatMobileVpnRouteSync(routes: string[] = getMobileVpnInstalledRoutes()): string {
+/** DNS server VpnService pushed (empty when none / VPN down / wrong owner). */
+export function getMobileVpnPushedDns(forInstanceId?: string): string {
+  if (!curVpnStatus.running)
+    return ''
+  if (forInstanceId && activeVpnInstanceId && forInstanceId !== activeVpnInstanceId)
+    return ''
+  return typeof curVpnStatus.dns === 'string' ? curVpnStatus.dns.trim() : ''
+}
+
+/**
+ * Coerce plugin/native route payloads to string[].
+ *
+ * Fail-closed: only Array values are accepted. A bare string (including Java
+ * Array.toString() junk like "[Ljava.lang.String;@…") is discarded — never
+ * treated as a single route and never spread into characters. Do not "fix"
+ * this to `typeof routes === 'string' ? [routes] : …`.
+ */
+export function normalizeRouteList(routes: unknown): string[] {
+  if (Array.isArray(routes)) {
+    return routes
+      .filter((route): route is string => typeof route === 'string')
+      .map(route => route.trim())
+      .filter(route => route.length > 0)
+  }
+  return []
+}
+
+/** True when `addr/prefix` is safe for Android VpnService.Builder.addRoute. */
+export function isValidVpnRouteCidr(cidr: string): boolean {
+  const parts = cidr.split('/')
+  if (parts.length !== 2)
+    return false
+  const [addr, prefixRaw] = parts
+  if (!addr || !prefixRaw || !/^\d+$/.test(prefixRaw))
+    return false
+  const prefix = Number(prefixRaw)
+  if (!Number.isInteger(prefix) || prefix < 0)
+    return false
+
+  if (/^\d{1,3}(\.\d{1,3}){3}$/.test(addr)) {
+    if (prefix > 32)
+      return false
+    return addr.split('.').every((octet) => {
+      const n = Number(octet)
+      return Number.isInteger(n) && n >= 0 && n <= 255
+    })
+  }
+
+  // Loose IPv6: require a colon and a plausible prefix.
+  return addr.includes(':') && !addr.includes(' ') && prefix <= 128
+}
+
+/**
+ * Normalize one route entry for VpnService. Bare IPv4 may get `/32`;
+ * anything that is not a valid CIDR afterwards is dropped (warn).
+ */
+function toVpnRouteCidr(raw: string): string | undefined {
+  let cidr = raw.trim()
+  if (!cidr)
+    return undefined
+  if (!cidr.includes('/')) {
+    if (!/^\d{1,3}(\.\d{1,3}){3}$/.test(cidr)) {
+      console.warn('skip vpn route: not a CIDR', raw)
+      return undefined
+    }
+    cidr = `${cidr}/32`
+  }
+  if (!isValidVpnRouteCidr(cidr)) {
+    console.warn('skip vpn route: invalid CIDR', raw)
+    return undefined
+  }
+  return cidr
+}
+
+/** Format VpnService routes + DNS into the L2 proxy_cidr_route_sync summary string. */
+export function formatMobileVpnRouteSync(
+  routes: string[] = getMobileVpnInstalledRoutes(),
+  dns: string = getMobileVpnPushedDns(),
+): string {
   const joined = routes.length ? routes.join(',') : '-'
   const exit = routes.some(route => route === '0.0.0.0/0')
-  return `desired=[${joined}] installed=[${joined}] exit=${exit}`
+  // dns= empty means VpnService did not push a DNS server.
+  return `desired=[${joined}] installed=[${joined}] exit=${exit} dns=${dns}`
 }
 
 /**
@@ -77,7 +155,10 @@ export function annotateNetworkInfoWithMobileVpnRoutes<T extends { proxy_cidr_ro
   info: T,
   instanceId?: string,
 ): T {
-  info.proxy_cidr_route_sync = formatMobileVpnRouteSync(getMobileVpnInstalledRoutes(instanceId))
+  info.proxy_cidr_route_sync = formatMobileVpnRouteSync(
+    getMobileVpnInstalledRoutes(instanceId),
+    getMobileVpnPushedDns(instanceId),
+  )
   return info
 }
 
@@ -233,7 +314,7 @@ function syncVpnStatusFromNative(status: Awaited<ReturnType<typeof get_vpn_statu
     curVpnStatus.ipv4Cidr = undefined
   }
 
-  curVpnStatus.routes = [...(status?.routes ?? [])]
+  curVpnStatus.routes = normalizeRouteList(status?.routes)
   curVpnStatus.dns = status?.dns ?? undefined
 }
 
@@ -296,7 +377,7 @@ async function doStartVpn(instanceId: string, ipv4Addr: string, cidr: number, ro
 
   curVpnStatus.ipv4Addr = ipv4Addr
   curVpnStatus.ipv4Cidr = cidr
-  curVpnStatus.routes = routes
+  curVpnStatus.routes = normalizeRouteList(routes)
   curVpnStatus.dns = dns
   activeVpnInstanceId = instanceId
 }
@@ -384,10 +465,10 @@ function getRoutesForVpn(routes: Route[] | undefined, node_config: NetworkTypes.
   const allowPeerDefault = node_config.allow_peer_default_without_exit === true
 
   for (const r of routes ?? []) {
-    for (let cidr of r.proxy_cidrs ?? []) {
-      if (!cidr.includes('/')) {
-        cidr += '/32'
-      }
+    for (const raw of normalizeRouteList(r.proxy_cidrs)) {
+      const cidr = toVpnRouteCidr(raw)
+      if (!cidr)
+        continue
       if (!localExitDefault && !allowPeerDefault && isDefaultIpv4Route(cidr)) {
         continue
       }
@@ -395,8 +476,10 @@ function getRoutesForVpn(routes: Route[] | undefined, node_config: NetworkTypes.
     }
   }
 
-  for (const route of node_config.routes ?? []) {
-    ret.push(route)
+  for (const raw of normalizeRouteList(node_config.routes)) {
+    const cidr = toVpnRouteCidr(raw)
+    if (cidr)
+      ret.push(cidr)
   }
 
   if (localExitDefault) {

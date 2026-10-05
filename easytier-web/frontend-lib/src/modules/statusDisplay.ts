@@ -1,4 +1,4 @@
-import type { NetworkInstanceRunningInfo, PeerInfo, PeerRoutePair } from '../types/network'
+import type { PeerInfo, PeerRoutePair } from '../types/network'
 
 export function numericValue(value: unknown): number | undefined {
   if (typeof value === 'number')
@@ -325,25 +325,6 @@ export function lossRate(info: PeerRoutePair) {
   return ''
 }
 
-/** Parse `installed=[a,b]` from desktop L2 proxy_cidr_route_sync summary. */
-export function parseInstalledProxyCidrs(syncSummary?: string | null): string[] {
-  if (!syncSummary)
-    return []
-
-  const match = syncSummary.match(/installed=\[([^\]]*)\]/)
-  if (!match)
-    return []
-
-  const raw = match[1]?.trim()
-  if (!raw || raw === '-')
-    return []
-
-  return raw
-    .split(',')
-    .map(s => s.trim())
-    .filter(s => s.length > 0 && s !== '-')
-}
-
 /**
  * Default/uninitialized L2 summary before the desktop route updater reports,
  * or on platforms (Android) where ifcfg is a no-op and VpnService owns routes.
@@ -353,44 +334,8 @@ export function isMeaningfulProxyCidrRouteSync(syncSummary?: string | null): boo
   if (!syncSummary?.trim())
     return false
   // Empty placeholder with no last_error — not useful observability.
-  if (/^desired=\[-\]\s*installed=\[-\]\s*exit=(true|false)$/.test(syncSummary.trim()))
+  // Optional trailing `dns=` (Android VpnService; empty means none pushed).
+  if (/^desired=\[-\]\s*installed=\[-\]\s*exit=(true|false)(\s+dns=)?$/.test(syncSummary.trim()))
     return false
   return true
-}
-
-function normalizeCidr(cidr: string): string {
-  const trimmed = cidr.trim()
-  if (!trimmed)
-    return ''
-  return trimmed.includes('/')
-    ? trimmed
-    : `${trimmed}${trimmed.includes(':') ? '/128' : '/32'}`
-}
-
-/**
- * Local OS / VPN routes currently applied for this instance.
- *
- * - `overrideRoutes === undefined`: no platform source → use meaningful L2 `installed=` only.
- * - `overrideRoutes` is an array (including `[]`): platform-authoritative (Android VpnService).
- * - Never fall back to route-table `proxy_cidrs` (those are advertised, not locally installed;
- *   wrong for no_tun / mobile without override).
- */
-export function collectLocalInstalledRoutes(
-  detail?: Pick<NetworkInstanceRunningInfo, 'proxy_cidr_route_sync' | 'routes'> | null,
-  overrideRoutes?: string[] | null,
-): string[] {
-  // undefined/null = no override; [] = platform says nothing installed.
-  if (overrideRoutes !== undefined && overrideRoutes !== null) {
-    const fromOverride = overrideRoutes.map(normalizeCidr).filter(Boolean)
-    return [...new Set(fromOverride)].sort()
-  }
-
-  if (!detail)
-    return []
-
-  const sync = detail.proxy_cidr_route_sync
-  if (isMeaningfulProxyCidrRouteSync(sync))
-    return parseInstalledProxyCidrs(sync)
-
-  return []
 }

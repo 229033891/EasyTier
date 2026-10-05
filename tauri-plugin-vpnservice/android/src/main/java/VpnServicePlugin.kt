@@ -9,6 +9,7 @@ import app.tauri.annotation.ActivityCallback
 import app.tauri.annotation.InvokeArg
 import app.tauri.annotation.TauriPlugin
 import app.tauri.plugin.Invoke
+import app.tauri.plugin.JSArray
 import app.tauri.plugin.JSObject
 import app.tauri.plugin.Plugin
 import android.webkit.WebView
@@ -137,7 +138,13 @@ class VpnServicePlugin(private val activity: Activity) : Plugin(activity) {
         val ret = JSObject()
         ret.put("running", TauriVpnService.self != null)
         ret.put("ipv4Addr", TauriVpnService.ipv4Addr)
-        ret.put("routes", TauriVpnService.routes)
+        // JSObject.put(Array) ends up as Java Array.toString() ("[Ljava.lang.String;@…")
+        // and the frontend spreads that string into one-character "routes".
+        val routes = JSArray()
+        for (route in TauriVpnService.routes) {
+            routes.put(route)
+        }
+        ret.put("routes", routes)
         ret.put("dns", TauriVpnService.dns)
         invoke.resolve(ret)
     }

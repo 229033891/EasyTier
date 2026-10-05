@@ -37,6 +37,7 @@ declare global {
   const getEasytierVersion: typeof import('./composables/backend')['getEasytierVersion']
   const getLoggingLevel: typeof import('./composables/backend')['getLoggingLevel']
   const getMobileVpnInstalledRoutes: typeof import('./composables/mobile_vpn')['getMobileVpnInstalledRoutes']
+  const getMobileVpnPushedDns: typeof import('./composables/mobile_vpn')['getMobileVpnPushedDns']
   const getNetworkMetas: typeof import('./composables/backend')['getNetworkMetas']
   const getServiceStatus: typeof import('./composables/backend')['getServiceStatus']
   const getVpnPortalInfo: typeof import('./composables/backend')['getVpnPortalInfo']
@@ -51,6 +52,7 @@ declare global {
   const isReactive: typeof import('vue')['isReactive']
   const isReadonly: typeof import('vue')['isReadonly']
   const isRef: typeof import('vue')['isRef']
+  const isValidVpnRouteCidr: typeof import('./composables/mobile_vpn')['isValidVpnRouteCidr']
   const isWebClientConnected: typeof import('./composables/backend')['isWebClientConnected']
   const listLogFiles: typeof import('./composables/backend')['listLogFiles']
   const listNetworkInstanceIds: typeof import('./composables/backend')['listNetworkInstanceIds']
@@ -65,6 +67,7 @@ declare global {
   const markRaw: typeof import('vue')['markRaw']
   const nextTick: typeof import('vue')['nextTick']
   const normalizeConfigSource: typeof import('./composables/config_source')['normalizeConfigSource']
+  const normalizeRouteList: typeof import('./composables/mobile_vpn')['normalizeRouteList']
   const normalizeServiceRpcUrl: typeof import('./composables/mode')['normalizeServiceRpcUrl']
   const onActivated: typeof import('vue')['onActivated']
   const onBeforeMount: typeof import('vue')['onBeforeMount']
@@ -180,6 +183,7 @@ declare module 'vue' {
     readonly getEasytierVersion: UnwrapRef<typeof import('./composables/backend')['getEasytierVersion']>
     readonly getLoggingLevel: UnwrapRef<typeof import('./composables/backend')['getLoggingLevel']>
     readonly getMobileVpnInstalledRoutes: UnwrapRef<typeof import('./composables/mobile_vpn')['getMobileVpnInstalledRoutes']>
+    readonly getMobileVpnPushedDns: UnwrapRef<typeof import('./composables/mobile_vpn')['getMobileVpnPushedDns']>
     readonly getNetworkMetas: UnwrapRef<typeof import('./composables/backend')['getNetworkMetas']>
     readonly getServiceStatus: UnwrapRef<typeof import('./composables/backend')['getServiceStatus']>
     readonly getVpnPortalInfo: UnwrapRef<typeof import('./composables/backend')['getVpnPortalInfo']>
@@ -194,6 +198,7 @@ declare module 'vue' {
     readonly isReactive: UnwrapRef<typeof import('vue')['isReactive']>
     readonly isReadonly: UnwrapRef<typeof import('vue')['isReadonly']>
     readonly isRef: UnwrapRef<typeof import('vue')['isRef']>
+    readonly isValidVpnRouteCidr: UnwrapRef<typeof import('./composables/mobile_vpn')['isValidVpnRouteCidr']>
     readonly isWebClientConnected: UnwrapRef<typeof import('./composables/backend')['isWebClientConnected']>
     readonly listLogFiles: UnwrapRef<typeof import('./composables/backend')['listLogFiles']>
     readonly listNetworkInstanceIds: UnwrapRef<typeof import('./composables/backend')['listNetworkInstanceIds']>
@@ -208,6 +213,7 @@ declare module 'vue' {
     readonly markRaw: UnwrapRef<typeof import('vue')['markRaw']>
     readonly nextTick: UnwrapRef<typeof import('vue')['nextTick']>
     readonly normalizeConfigSource: UnwrapRef<typeof import('./composables/config_source')['normalizeConfigSource']>
+    readonly normalizeRouteList: UnwrapRef<typeof import('./composables/mobile_vpn')['normalizeRouteList']>
     readonly normalizeServiceRpcUrl: UnwrapRef<typeof import('./composables/mode')['normalizeServiceRpcUrl']>
     readonly onActivated: UnwrapRef<typeof import('vue')['onActivated']>
     readonly onBeforeMount: UnwrapRef<typeof import('vue')['onBeforeMount']>

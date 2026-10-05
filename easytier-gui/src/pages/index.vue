@@ -10,7 +10,6 @@ import type { MenuItem } from 'primevue/menuitem'
 import { useTray, setTrayRunState } from '~/composables/tray'
 import {
   consumePendingMobileVpnTileAction,
-  getMobileVpnInstalledRoutes,
   initMobileVpnService,
   setMobileVpnTileActionHandler,
   syncMobileVpnService,
@@ -756,8 +755,7 @@ async function connectRpcClient(isNormalMode: boolean, url?: string) {
     <LoggingSettingsDialog v-model:visible="loggingDialogVisible" :api="loggingApi" />
 
     <RemoteManagement v-if="clientRunning" class="flex-1 overflow-y-auto" :api="remoteClient"
-      :pause-auto-refresh="isModeSaving" v-model:instance-id="instanceId"
-      :local-installed-routes="type() === 'android' ? getMobileVpnInstalledRoutes : undefined">
+      :pause-auto-refresh="isModeSaving" v-model:instance-id="instanceId">
       <!-- 与共享底部栏同一行：样式与禁用网络完全一致 -->
       <template #footer-extra>
         <Button :label="t('system_settings')" icon="pi pi-cog" iconPos="left" severity="secondary"

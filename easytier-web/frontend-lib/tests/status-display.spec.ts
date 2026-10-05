@@ -1,10 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import {
-  collectLocalInstalledRoutes,
   isMeaningfulProxyCidrRouteSync,
   latencyMs,
   lossRate,
-  parseInstalledProxyCidrs,
 } from '../src/modules/statusDisplay'
 import { ipv4ToString, ipv6ToString } from '../src/modules/utils'
 
@@ -88,46 +86,14 @@ describe('status display helpers', () => {
     expect(lossRate(peerRoutePairWithDefaultConn(conns, defaultConnId))).toBe('50%')
   })
 
-  it('parses installed proxy CIDRs from L2 sync summary', () => {
-    expect(parseInstalledProxyCidrs(undefined)).toEqual([])
-    expect(parseInstalledProxyCidrs('desired=[-] installed=[-] exit=false')).toEqual([])
-    expect(parseInstalledProxyCidrs(
-      'desired=[10.0.0.0/24] installed=[10.0.0.0/24,192.168.1.0/24] exit=true',
-    )).toEqual(['10.0.0.0/24', '192.168.1.0/24'])
-  })
-
-  it('resolves locally installed routes (override > meaningful L2, never route-table)', () => {
-    expect(collectLocalInstalledRoutes({
-      proxy_cidr_route_sync: 'desired=[1.0.0.0/8] installed=[1.0.0.0/8] exit=false',
-      routes: [{ proxy_cidrs: ['9.9.9.0/24'] } as any],
-    })).toEqual(['1.0.0.0/8'])
-
-    // Sync present but installed empty: do NOT fall back (would misreport peers' CIDRs as installed)
-    expect(collectLocalInstalledRoutes({
-      proxy_cidr_route_sync: 'desired=[1.0.0.0/8] installed=[-] exit=false',
-      routes: [{ proxy_cidrs: ['9.9.9.0/24'] } as any],
-    })).toEqual([])
-
-    // Empty L2 placeholder (mobile / uninitialized / no_tun): do NOT claim peer CIDRs as installed
+  it('detects meaningful proxy CIDR route sync summaries', () => {
     expect(isMeaningfulProxyCidrRouteSync('desired=[-] installed=[-] exit=false')).toBe(false)
-    expect(collectLocalInstalledRoutes({
-      proxy_cidr_route_sync: 'desired=[-] installed=[-] exit=false',
-      routes: [{ proxy_cidrs: ['9.9.9.0/24'] } as any],
-    })).toEqual([])
-
-    expect(collectLocalInstalledRoutes({
-      routes: [{ proxy_cidrs: ['9.9.9.0/24'] } as any],
-    })).toEqual([])
-
-    // Platform override (VpnService) wins; empty override means none installed
-    expect(collectLocalInstalledRoutes({
-      proxy_cidr_route_sync: 'desired=[1.0.0.0/8] installed=[1.0.0.0/8] exit=false',
-      routes: [{ proxy_cidrs: ['9.9.9.0/24'] } as any],
-    }, ['10.20.0.0/16', '0.0.0.0/0'])).toEqual(['0.0.0.0/0', '10.20.0.0/16'])
-
-    expect(collectLocalInstalledRoutes({
-      proxy_cidr_route_sync: 'desired=[-] installed=[-] exit=false',
-      routes: [{ proxy_cidrs: ['9.9.9.0/24'] } as any],
-    }, [])).toEqual([])
+    expect(isMeaningfulProxyCidrRouteSync('desired=[-] installed=[-] exit=false dns=')).toBe(false)
+    expect(isMeaningfulProxyCidrRouteSync(
+      'desired=[10.0.0.0/24] installed=[10.0.0.0/24] exit=false dns=100.100.100.53',
+    )).toBe(true)
+    expect(isMeaningfulProxyCidrRouteSync(
+      'desired=[10.0.0.0/24] installed=[10.0.0.0/24] exit=true',
+    )).toBe(true)
   })
 })

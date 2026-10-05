@@ -109,13 +109,52 @@ beforeEach(() => {
 describe('mobile VPN route sync annotate', () => {
   it('formats VpnService routes like L2 proxy_cidr_route_sync', async () => {
     const vpn = await loadVpnModule()
-    expect(vpn.formatMobileVpnRouteSync([])).toBe('desired=[-] installed=[-] exit=false')
+    expect(vpn.formatMobileVpnRouteSync([])).toBe('desired=[-] installed=[-] exit=false dns=')
     expect(vpn.formatMobileVpnRouteSync(['10.0.0.0/24', '0.0.0.0/0'])).toBe(
-      'desired=[10.0.0.0/24,0.0.0.0/0] installed=[10.0.0.0/24,0.0.0.0/0] exit=true',
+      'desired=[10.0.0.0/24,0.0.0.0/0] installed=[10.0.0.0/24,0.0.0.0/0] exit=true dns=',
+    )
+    expect(vpn.formatMobileVpnRouteSync(['10.0.0.0/24'], '100.100.100.53')).toBe(
+      'desired=[10.0.0.0/24] installed=[10.0.0.0/24] exit=false dns=100.100.100.53',
     )
     expect(vpn.annotateNetworkInfoWithMobileVpnRoutes({
       proxy_cidr_route_sync: 'desired=[-] installed=[-] exit=false',
-    }, 'other-instance').proxy_cidr_route_sync).toBe('desired=[-] installed=[-] exit=false')
+    }, 'other-instance').proxy_cidr_route_sync).toBe('desired=[-] installed=[-] exit=false dns=')
+  })
+
+  it('does not treat Java Array.toString junk as route characters', async () => {
+    const vpn = await loadVpnModule()
+    // Regression: get_vpn_status used to return Kotlin Array.toString()
+    // ("[Ljava.lang.String;@…") and spreading that string produced ./32 chips.
+    expect(vpn.normalizeRouteList('[Ljava.lang.String;@1689abe')).toEqual([])
+    expect(vpn.normalizeRouteList('10.0.0.0/24')).toEqual([])
+    expect(vpn.normalizeRouteList(['10.0.0.0/24', 1, null, ' 1.2.3.0/24 '])).toEqual([
+      '10.0.0.0/24',
+      '1.2.3.0/24',
+    ])
+    expect(vpn.isValidVpnRouteCidr('10.0.0.0/24')).toBe(true)
+    expect(vpn.isValidVpnRouteCidr('10.0.0.0')).toBe(false)
+    expect(vpn.isValidVpnRouteCidr('not-a-cidr/32')).toBe(false)
+    expect(vpn.isValidVpnRouteCidr('10.0.0.0/99')).toBe(false)
+
+    setConfig('A')
+    setReady('A', '10.0.0.1')
+    await vpn.onNetworkInstanceChange('A')
+    expect(mocks.startVpn).toHaveBeenCalledTimes(1)
+
+    mocks.getVpnStatus.mockResolvedValue({
+      running: true,
+      ipv4Addr: '10.0.0.1/24',
+      routes: '[Ljava.lang.String;@1689abe',
+      dns: '100.100.100.53',
+    })
+    const annotated = await vpn.annotateNetworkInfoFromVpnService({
+      proxy_cidr_route_sync: 'desired=[-] installed=[-] exit=false',
+    }, 'A')
+    expect(vpn.getMobileVpnInstalledRoutes('A')).toEqual(['10.0.0.1/24'])
+    expect(vpn.getMobileVpnPushedDns('A')).toBe('100.100.100.53')
+    expect(annotated.proxy_cidr_route_sync).toBe(
+      'desired=[10.0.0.1/24] installed=[10.0.0.1/24] exit=false dns=100.100.100.53',
+    )
   })
 
   it('attributes installed routes to the VPN owner instance only', async () => {
@@ -131,8 +170,8 @@ describe('mobile VPN route sync annotate', () => {
     expect(vpn.getMobileVpnInstalledRoutes('A')).toEqual(['10.0.0.1/24'])
     expect(vpn.getMobileVpnInstalledRoutes('B')).toEqual([])
     expect(vpn.getMobileVpnInstalledRoutes()).toEqual(['10.0.0.1/24'])
-    expect(vpn.formatMobileVpnRouteSync(vpn.getMobileVpnInstalledRoutes('B'))).toBe(
-      'desired=[-] installed=[-] exit=false',
+    expect(vpn.formatMobileVpnRouteSync(vpn.getMobileVpnInstalledRoutes('B'), vpn.getMobileVpnPushedDns('B'))).toBe(
+      'desired=[-] installed=[-] exit=false dns=',
     )
   })
 })

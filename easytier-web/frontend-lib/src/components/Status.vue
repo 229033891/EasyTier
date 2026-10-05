@@ -5,7 +5,7 @@ import type { RemoteClient } from '../modules/api'
 import { useI18n } from 'vue-i18n';
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue';
 import { ipv4InetToString, ipv4ToString, ipv6ToString } from '../modules/utils';
-import { collectLocalInstalledRoutes, isMeaningfulProxyCidrRouteSync, latencyMs, lossRate, numericValue, peerConns, resolvePeerRemoteAddr, resolveRoutePath, type RoutePeerLabel } from '../modules/statusDisplay';
+import { isMeaningfulProxyCidrRouteSync, latencyMs, lossRate, numericValue, peerConns, resolvePeerRemoteAddr, resolveRoutePath, type RoutePeerLabel } from '../modules/statusDisplay';
 import { Badge, DataTable, Column, Tag, Button, ScrollPanel, Timeline, Card, Panel, } from 'primevue';
 import NetworkChart from './NetworkChart.vue';
 import PeerConnHistoryChart from './PeerConnHistoryChart.vue';
@@ -13,13 +13,6 @@ import PeerConnHistoryChart from './PeerConnHistoryChart.vue';
 const props = defineProps<{
   curNetworkInst: NetworkInstance | null,
   api: RemoteClient,
-  /**
-   * Platform-owned installed routes (e.g. Android VpnService).
-   * When provided (including []), preferred over L2 proxy_cidr_route_sync.
-   * May be a getter so parent can re-read on each status refresh;
-   * getters receive the current instance id for ownership checks.
-   */
-  localInstalledRoutes?: string[] | ((instanceId?: string) => string[]),
 }>()
 
 const { t } = useI18n()
@@ -229,7 +222,7 @@ const udpNatTypeStrMap = {
   [NatType.SymmetricEasyDec]: 'Symmetric Easy Dec',
 }
 
-/** 按类型分区；顺序：Peer ID → … → Listener → Route（本机已添加路由） */
+/** 按类型分区；顺序：Peer ID → … → Listener */
 const myNodeInfoGroups = computed(() => {
   const groups: ChipGroup[] = []
   if (!props.curNetworkInst)
@@ -256,6 +249,8 @@ const myNodeInfoGroups = computed(() => {
     })
   }
 
+  // Prefer the L2 / platform sync summary over a separate Route chip list —
+  // both surfaces show the same installed CIDRs; keep one canonical view.
   const routeSync = props.curNetworkInst.detail?.proxy_cidr_route_sync
   if (isMeaningfulProxyCidrRouteSync(routeSync)) {
     groups.push({
@@ -329,23 +324,6 @@ const myNodeInfoGroups = computed(() => {
       key: 'listener',
       titleKey: 'node_info_group_listener',
       chips: listenerChips,
-    })
-  }
-
-  // 本机已添加路由：平台 override（含空数组）优先；否则仅信有意义的 L2 installed
-  const hasPlatformOverride = props.localInstalledRoutes !== undefined
-  const overrideRoutes = hasPlatformOverride
-    ? (typeof props.localInstalledRoutes === 'function'
-        ? props.localInstalledRoutes(props.curNetworkInst.instance_id)
-        : props.localInstalledRoutes)
-    : undefined
-  const routeChips = collectLocalInstalledRoutes(props.curNetworkInst.detail, overrideRoutes)
-    .map(cidr => chip(cidr))
-  if (routeChips.length) {
-    groups.push({
-      key: 'route',
-      titleKey: 'node_info_group_route',
-      chips: routeChips,
     })
   }
 
