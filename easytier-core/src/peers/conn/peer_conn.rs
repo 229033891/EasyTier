@@ -1556,8 +1556,8 @@ mod tests {
     use crate::peers::test_support::NoopPeerContext;
     use crate::tunnel::ring::create_ring_tunnel_pair;
 
-    #[test]
-    fn tcp_hole_punch_ping_policy_is_admission_driven() {
+    #[tokio::test]
+    async fn tcp_hole_punch_ping_policy_is_admission_driven() {
         let (tunnel, _remote) = create_ring_tunnel_pair();
         let mut conn = PeerConn::new(
             1,

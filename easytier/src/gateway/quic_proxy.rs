@@ -22,7 +22,6 @@ use std::future::Future;
 use std::io::IoSliceMut;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::pin::Pin;
-use std::ptr::copy_nonoverlapping;
 use std::sync::Arc;
 use std::task::Poll;
 use std::time::Duration;
