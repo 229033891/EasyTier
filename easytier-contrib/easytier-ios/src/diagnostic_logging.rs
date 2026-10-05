@@ -249,7 +249,9 @@ impl RotatingLog {
         }
         for index in 1..MAX_LOG_FILES {
             let path = self.rotated_path(index);
-            if path.exists() && let Ok(info) = file_info(&path, false) {
+            if path.exists()
+                && let Ok(info) = file_info(&path, false)
+            {
                 files.push(info);
             }
         }
