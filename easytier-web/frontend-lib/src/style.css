@@ -930,6 +930,16 @@
   cursor: help;
 }
 
+.config-help-tip:focus {
+  outline: none;
+}
+
+.config-help-tip:focus-visible {
+  outline: 2px solid var(--primary-color, #3b82f6);
+  outline-offset: 2px;
+  border-radius: 9999px;
+}
+
 .config-help-tip--warning,
 .dns-mixed-version-tip {
   display: inline-flex;
@@ -942,4 +952,14 @@
   line-height: 1;
   color: var(--et-warning, #b45309);
   cursor: help;
+}
+
+.dns-mixed-version-tip:focus {
+  outline: none;
+}
+
+.dns-mixed-version-tip:focus-visible {
+  outline: 2px solid var(--et-warning, #b45309);
+  outline-offset: 2px;
+  border-radius: 9999px;
 }

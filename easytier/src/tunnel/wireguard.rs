@@ -51,7 +51,7 @@ use std::sync::LazyLock;
 pub const WG_MAX_PACKET_SIZE: usize = 2048;
 
 static WG_BUF_POOL: LazyLock<FixedBufPool<WG_MAX_PACKET_SIZE>> =
-    LazyLock::new(|| FixedBufPool::new(1024));
+    LazyLock::new(|| FixedBufPool::new(64));
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum WgType {

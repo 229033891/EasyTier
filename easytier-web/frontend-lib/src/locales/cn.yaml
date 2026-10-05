@@ -424,7 +424,7 @@ dns:
     title: 静态主机
     enable: 配置策略
     enable_tip: 添加静态主机、分流转发与默认上游 DNS
-    magic_dns_off_hint: DNS 策略会保存在本网络配置中；设备侧请在「高级 → 系统」启用魔法 DNS 后才会接线生效。
+    magic_dns_off_hint: DNS 策略会保存在本网络配置中；需开启「启用魔法 DNS」后才会接线生效。
     editor_help: 静态条目在 MagicDNS 上为权威记录，优先于路由 hostname；未命中时走正常解析。
     empty: 尚未配置静态 DNS 主机。
     name: 主机名

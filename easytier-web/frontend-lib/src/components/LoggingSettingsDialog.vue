@@ -174,14 +174,14 @@ async function copyLoggingDir() {
         <div class="logging-inline-label">
           <label for="logging-level">{{ t('logging_level') }}</label>
           <i
-            class="pi pi-question-circle config-help-tip"
+            class="pi pi-question-circle config-help-tip" tabindex="0"
             v-tooltip.top="t('logging_retention_hint')"
             :aria-label="t('logging_retention_hint')"
             role="img"
           />
           <i
             v-if="api.remoteOnly"
-            class="pi pi-question-circle config-help-tip"
+            class="pi pi-question-circle config-help-tip" tabindex="0"
             v-tooltip.top="t('logging_remote_hint')"
             :aria-label="t('logging_remote_hint')"
             role="img"

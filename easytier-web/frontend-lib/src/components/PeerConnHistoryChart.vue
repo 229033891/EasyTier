@@ -35,7 +35,7 @@
         <div class="peer-history-chart-title flex items-center gap-1">
           <span>{{ t('history_latency') }}</span>
           <i
-            class="pi pi-question-circle config-help-tip"
+            class="pi pi-question-circle config-help-tip" tabindex="0"
             v-tooltip.top="t('history_sampling_hint')"
             :aria-label="t('history_sampling_hint')"
             role="img"
@@ -106,7 +106,7 @@ const loading = ref(false)
 const loadFailed = ref(false)
 const selectedPeerId = ref<number>()
 
-/** 该实现不支持历史查询（GUI 直连内核）时不渲染任何东西 */
+/** 该实现不支持历史查询（GUI 直连内核）时不渲染任何东�?*/
 const supported = computed(() => typeof props.api?.get_peer_conn_history === 'function')
 
 const peers = computed(() =>
@@ -132,8 +132,7 @@ function formatTime(unixSeconds: number): string {
   const d = new Date(unixSeconds * 1000)
   const pad = (n: number) => String(n).padStart(2, '0')
   const hm = `${pad(d.getHours())}:${pad(d.getMinutes())}`
-  // 跨度超过一天时补上日期，否则看不出是哪天
-  return hours.value > 24 ? `${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${hm}` : hm
+  // 跨度超过一天时补上日期，否则看不出是哪�?  return hours.value > 24 ? `${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${hm}` : hm
 }
 
 const labels = computed(() => selectedPeer.value?.points.map(p => formatTime(p.t)) ?? [])
@@ -207,8 +206,7 @@ function initCharts() {
           spanGaps: true,
         }],
       },
-      // 只有一条线，图例和上面的「延迟」标题重复，隐藏掉
-      options: baseOptions(v => `${v} ms`, v => `${v} ms`, false),
+      // 只有一条线，图例和上面的「延迟」标题重复，隐藏�?      options: baseOptions(v => `${v} ms`, v => `${v} ms`, false),
     })
   }
 
@@ -278,8 +276,7 @@ async function load() {
     const resp = await props.api.get_peer_conn_history!(instanceId, requestHours)
     if (sequence !== loadSequence || props.instanceId !== instanceId || hours.value !== requestHours) return
     data.value = resp
-    // 保留当前选择；peer 消失了才回退到第一个
-    if (!resp?.peers.some(p => p.peer_id === selectedPeerId.value)) {
+    // 保留当前选择；peer 消失了才回退到第一�?    if (!resp?.peers.some(p => p.peer_id === selectedPeerId.value)) {
       selectedPeerId.value = resp?.peers[0]?.peer_id
     }
   } catch (e) {

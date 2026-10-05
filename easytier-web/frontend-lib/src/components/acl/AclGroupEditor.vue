@@ -75,7 +75,7 @@ function saveGroup() {
         <div class="min-w-0 flex items-center gap-1">
           <div class="acl-section-title">{{ t('acl.group.declares') }}</div>
           <i
-            class="pi pi-question-circle config-help-tip"
+            class="pi pi-question-circle config-help-tip" tabindex="0"
             v-tooltip.top="t('acl.group.help')"
             :aria-label="t('acl.group.help')"
             role="img"
@@ -116,7 +116,7 @@ function saveGroup() {
       <div class="flex items-center gap-1">
         <div class="acl-section-title">{{ t('acl.group.members') }}</div>
         <i
-          class="pi pi-question-circle config-help-tip"
+          class="pi pi-question-circle config-help-tip" tabindex="0"
           v-tooltip.top="t('acl.group.members_help')"
           :aria-label="t('acl.group.members_help')"
           role="img"

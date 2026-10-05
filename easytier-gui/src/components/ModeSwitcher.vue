@@ -227,9 +227,7 @@ watch(() => model.value.mode, async (newMode, oldMode) => {
       mode: 'service',
       config_dir: serviceMode.value?.config_dir || defaultConfigDir.value,
       rpc_portal: serviceMode.value?.rpc_portal || '127.0.0.1:15999',
-      // 默认 warn：服务起不来（配置解析失败、端口占用等）都是 log::error! 记的，
-      // 默认 off 会让这类故障在日志里完全看不到，只剩「服务反复重启」。
-      file_log_level: serviceMode.value?.file_log_level || 'warn',
+      // 默认 warn：服务起不来（配置解析失败、端口占用等）都�?log::error! 记的�?      // 默认 off 会让这类故障在日志里完全看不到，只剩「服务反复重启」�?      file_log_level: serviceMode.value?.file_log_level || 'warn',
       file_log_dir: serviceMode.value?.file_log_dir || defaultLogDir.value,
       config_server_url: prevConfigServerUrl,
       secure_mode: !!prevSecureMode,
@@ -281,7 +279,7 @@ watch(() => model.value.mode, async (newMode, oldMode) => {
         <div class="flex items-center gap-2">
           <label for="rpc-listen-all">{{ t('mode.rpc_listen_all_interfaces') }}</label>
           <i
-            class="pi pi-question-circle config-help-tip"
+            class="pi pi-question-circle config-help-tip" tabindex="0"
             v-tooltip.top="t('mode.rpc_listen_all_interfaces_hint')"
             :aria-label="t('mode.rpc_listen_all_interfaces_hint')"
             role="img"
@@ -337,7 +335,7 @@ watch(() => model.value.mode, async (newMode, oldMode) => {
           <label class="m-0 font-medium">{{ t('config-server.title') }}</label>
           <i
             v-if="serviceMode"
-            class="pi pi-question-circle config-help-tip"
+            class="pi pi-question-circle config-help-tip" tabindex="0"
             v-tooltip.top="t('config-server.service_hint')"
             :aria-label="t('config-server.service_hint')"
             role="img"
@@ -361,7 +359,7 @@ watch(() => model.value.mode, async (newMode, oldMode) => {
         <Checkbox id="config-server-secure" v-model="configServerSecureMode" binary />
         <label for="config-server-secure">{{ t('config-server.secure_mode') }}</label>
         <i
-          class="pi pi-question-circle config-help-tip"
+          class="pi pi-question-circle config-help-tip" tabindex="0"
           v-tooltip.top="t('config-server.secure_mode_hint')"
           :aria-label="t('config-server.secure_mode_hint')"
           role="img"

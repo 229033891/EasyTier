@@ -31,6 +31,8 @@ musl_gcc
 
 # log
 easytier-panic.log
+check.log
+check_core.log
 
 # local sqlite (easytier-web)
 /et.db

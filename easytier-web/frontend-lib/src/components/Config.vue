@@ -27,7 +27,7 @@ const props = defineProps<{
   actionLabel?: string
   configInvalid?: boolean
   hostname?: string
-  /** 由父级统一渲染底部操作区时隐藏内置「运行网络」按钮 */
+  /** 由父级统一渲染底部操作区时隐藏内置「运行网络」按�?*/
   hideRunButton?: boolean
 }>()
 
@@ -45,7 +45,7 @@ const confirm = useConfirm()
 const NETWORK_SECRET_ALPHABET =
   'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$%^&*-_=+'
 
-/** 均匀取样，避免 `byte % alphabet.length` 的模偏差 */
+/** 均匀取样，避�?`byte % alphabet.length` 的模偏差 */
 function randomSecret(length = 24): string {
   const alphabet = NETWORK_SECRET_ALPHABET
   const maxUnbiased = Math.floor(256 / alphabet.length) * alphabet.length
@@ -109,7 +109,7 @@ function generateAndCopyNetworkSecret() {
   void applyGeneratedNetworkSecret()
 }
 
-/** 可折叠 Panel：默认 Basic 展开，其余收起；整块标题栏可点（触摸友好） */
+/** 可折�?Panel：默�?Basic 展开，其余收起；整块标题栏可点（触摸友好�?*/
 const panelCollapsed = reactive({
   basic: false,
   advanced: true,
@@ -137,8 +137,9 @@ function onToggleablePanelHeaderClick(
   event: Event,
 ) {
   const target = event.target as HTMLElement | null
-  // 加减号按钮自身已会切换，避免冒泡再翻一次
-  if (target?.closest('button, a, input, textarea, select, [role="button"]')) {
+  // 加减号按钮、问�?警告 tip 自身已处理交互，避免冒泡再翻一�?  if (target?.closest(
+    'button, a, input, textarea, select, [role="button"], .config-help-tip, .dns-mixed-version-tip, [role="img"]',
+  )) {
     return
   }
   panelCollapsed[key] = !panelCollapsed[key]
@@ -237,7 +238,6 @@ const bool_flags: BoolFlag[] = [
   { field: 'no_tun', help: 'no_tun_help', group: 'system' },
   { field: 'multi_thread', help: 'multi_thread_help', group: 'system' },
   { field: 'proxy_forward_by_system', help: 'proxy_forward_by_system_help', group: 'system' },
-  { field: 'enable_magic_dns', help: 'enable_magic_dns_help', group: 'system' },
   { field: 'enable_private_mode', help: 'enable_private_mode_help', group: 'security' },
   { field: 'disable_encryption', help: 'disable_encryption_help', group: 'security' },
 ]
@@ -257,8 +257,7 @@ const advancedFlagGroups = computed(() => {
 
 /**
  * 加密算法选项对齐 `EncryptionAlgorithm::from_str`（easytier-core/src/config/encryption.rs）：除下列名称外，后端还接受
- * openssl-* 前缀别名（openssl-aes-gcm / openssl-aes-256-gcm / openssl-chacha20）；这里只列会原样回写的 canonical 名称。
- */
+ * openssl-* 前缀别名（openssl-aes-gcm / openssl-aes-256-gcm / openssl-chacha20）；这里只列会原样回写的 canonical 名称�? */
 const encryptionAlgoOptions = [
   { value: 'aes-gcm', label: 'aes-gcm' },
   { value: 'aes-256-gcm', label: 'aes-256-gcm' },
@@ -266,7 +265,7 @@ const encryptionAlgoOptions = [
   { value: 'xor', label: 'xor' },
 ]
 
-/** CompressionAlgoPb 取值来自 proto：None = 1、Zstd = 2、Invalid = 0（前端不展示 Invalid，未设置时按 None 处理） */
+/** CompressionAlgoPb 取值来�?proto：None = 1、Zstd = 2、Invalid = 0（前端不展示 Invalid，未设置时按 None 处理�?*/
 const dataCompressAlgoOptions = [
   { value: CompressionAlgoPb.None, label: 'none' },
   { value: CompressionAlgoPb.Zstd, label: 'zstd' },
@@ -465,7 +464,7 @@ function removeVpnPortalClient(index: number) {
                 <div class="flex flex-col gap-2 basis-5/12 grow">
                   <div class="flex items-center">
                     <label for="initial_nodes">{{ t('initial_nodes') }}</label>
-                    <i class="pi pi-question-circle config-help-tip ml-2" v-tooltip.top="{ value: t('initial_nodes_help'), escape: false }" role="img"></i>
+                    <i class="pi pi-question-circle config-help-tip ml-2" tabindex="0" v-tooltip.top="{ value: t('initial_nodes_help'), escape: false }" role="img"></i>
                   </div>
                   <div class="items-center flex flex-col p-fluid gap-y-2">
                     <UrlListInput id="initial_nodes" v-model="curNetwork.peer_urls" :protos="protos"
@@ -493,7 +492,7 @@ function removeVpnPortalClient(index: number) {
                       <div v-for="flag in group.flags" :key="flag.field" class="advanced-flag-item">
                         <Checkbox v-model="curNetwork[flag.field]" :input-id="flag.field" :binary="true" />
                         <label :for="flag.field">{{ t(flag.field) }}</label>
-                        <i class="pi pi-question-circle config-help-tip"
+                        <i class="pi pi-question-circle config-help-tip" tabindex="0"
                           v-tooltip.top="{ value: t(flag.help), escape: false }"
                           :aria-label="t(flag.help)" role="img"></i>
                       </div>
@@ -506,7 +505,7 @@ function removeVpnPortalClient(index: number) {
                 <div class="config-inline-field">
                   <div class="config-inline-label flex items-center gap-1">
                     <label for="hostname">{{ t('hostname') }}</label>
-                    <i class="pi pi-question-circle config-help-tip"
+                    <i class="pi pi-question-circle config-help-tip" tabindex="0"
                       v-tooltip.top="{ value: t('hostname_help'), escape: false }" role="img"></i>
                   </div>
                   <div class="config-inline-control">
@@ -528,7 +527,7 @@ function removeVpnPortalClient(index: number) {
                 <div class="config-inline-field">
                   <div class="config-inline-label flex items-center gap-1">
                     <label for="mtu">{{ t('mtu') }}</label>
-                    <i class="pi pi-question-circle config-help-tip"
+                    <i class="pi pi-question-circle config-help-tip" tabindex="0"
                       v-tooltip.top="{ value: t('mtu_help'), escape: false }" role="img"></i>
                   </div>
                   <div class="config-inline-control">
@@ -540,7 +539,7 @@ function removeVpnPortalClient(index: number) {
                 <div class="config-inline-field">
                   <div class="config-inline-label flex items-center gap-1">
                     <label for="instance_recv_bps_limit">{{ t('instance_recv_bps_limit') }}</label>
-                    <i class="pi pi-question-circle config-help-tip"
+                    <i class="pi pi-question-circle config-help-tip" tabindex="0"
                       v-tooltip.top="{ value: t('instance_recv_bps_limit_help'), escape: false }" role="img"></i>
                   </div>
                   <div class="config-inline-control">
@@ -555,7 +554,7 @@ function removeVpnPortalClient(index: number) {
                 <div class="config-inline-field">
                   <div class="config-inline-label flex items-center gap-1">
                     <label for="subnet-proxy">{{ t('proxy_cidrs') }}</label>
-                    <i class="pi pi-question-circle config-help-tip"
+                    <i class="pi pi-question-circle config-help-tip" tabindex="0"
                       v-tooltip.top="{ value: t('proxy_cidrs_help'), escape: false }" role="img"></i>
                   </div>
                   <div class="config-inline-control">
@@ -568,7 +567,7 @@ function removeVpnPortalClient(index: number) {
                 <div class="config-inline-field">
                   <div class="config-inline-label flex items-center gap-1">
                     <label for="exit_nodes">{{ t('exit_nodes') }}</label>
-                    <i class="pi pi-question-circle config-help-tip"
+                    <i class="pi pi-question-circle config-help-tip" tabindex="0"
                       v-tooltip.top="{ value: t('exit_nodes_help'), escape: false }" role="img"></i>
                   </div>
                   <div class="config-inline-control">
@@ -583,7 +582,7 @@ function removeVpnPortalClient(index: number) {
                 <div class="config-inline-field config-inline-field--top">
                   <div class="config-inline-label flex items-center gap-1">
                     <label for="listener_urls">{{ t('listener_urls') }}</label>
-                    <i class="pi pi-question-circle config-help-tip"
+                    <i class="pi pi-question-circle config-help-tip" tabindex="0"
                       v-tooltip.top="{ value: t('listener_urls_help'), escape: false }" role="img"></i>
                   </div>
                   <div class="config-inline-control">
@@ -595,7 +594,7 @@ function removeVpnPortalClient(index: number) {
                 <div class="config-inline-field config-inline-field--top">
                   <div class="config-inline-label flex items-center gap-1">
                     <label for="mapped_listeners">{{ t('mapped_listeners') }}</label>
-                    <i class="pi pi-question-circle config-help-tip"
+                    <i class="pi pi-question-circle config-help-tip" tabindex="0"
                       v-tooltip.top="{ value: t('mapped_listeners_help'), escape: false }" role="img"></i>
                   </div>
                   <div class="config-inline-control">
@@ -665,7 +664,7 @@ function removeVpnPortalClient(index: number) {
                 <div class="config-inline-field">
                   <div class="config-inline-label flex items-center gap-1">
                     <label for="relay_network_whitelist">{{ t('relay_network_whitelist') }}</label>
-                    <i class="pi pi-question-circle config-help-tip"
+                    <i class="pi pi-question-circle config-help-tip" tabindex="0"
                       v-tooltip.top="{ value: t('relay_network_whitelist_help'), escape: false }" role="img"></i>
                   </div>
                   <div class="config-inline-control">
@@ -682,7 +681,7 @@ function removeVpnPortalClient(index: number) {
                 <div class="config-inline-field">
                   <div class="config-inline-label flex items-center gap-1">
                     <label for="routes">{{ t('manual_routes') }}</label>
-                    <i class="pi pi-question-circle config-help-tip"
+                    <i class="pi pi-question-circle config-help-tip" tabindex="0"
                       v-tooltip.top="{ value: t('manual_routes_help'), escape: false }" role="img"></i>
                   </div>
                   <div class="config-inline-control">
@@ -699,7 +698,7 @@ function removeVpnPortalClient(index: number) {
                 <div class="config-inline-field">
                   <div class="config-inline-label flex items-center gap-1">
                     <label for="socks5_port">{{ t('socks5') }}</label>
-                    <i class="pi pi-question-circle config-help-tip"
+                    <i class="pi pi-question-circle config-help-tip" tabindex="0"
                       v-tooltip.top="{ value: t('socks5_help'), escape: false }" role="img"></i>
                   </div>
                   <div class="config-inline-control">
@@ -715,7 +714,7 @@ function removeVpnPortalClient(index: number) {
                 <div class="config-inline-field">
                   <div class="config-inline-label flex items-center gap-1">
                     <label for="ipv6_public_addr_provider">{{ t('ipv6_public_addr_provider') }}</label>
-                    <i class="pi pi-question-circle config-help-tip"
+                    <i class="pi pi-question-circle config-help-tip" tabindex="0"
                       v-tooltip.top="{ value: t('ipv6_public_addr_provider_help'), escape: false }" role="img"></i>
                   </div>
                   <div class="config-inline-control">
@@ -732,7 +731,7 @@ function removeVpnPortalClient(index: number) {
                 <div class="config-inline-field">
                   <div class="config-inline-label flex items-center gap-1">
                     <label for="encryption_algorithm">{{ t('encryption_algorithm') }}</label>
-                    <i class="pi pi-question-circle config-help-tip"
+                    <i class="pi pi-question-circle config-help-tip" tabindex="0"
                       v-tooltip.top="{ value: t('encryption_algorithm_help'), escape: false }" role="img"></i>
                   </div>
                   <div class="config-inline-control">
@@ -747,7 +746,7 @@ function removeVpnPortalClient(index: number) {
                 <div class="config-inline-field">
                   <div class="config-inline-label flex items-center gap-1">
                     <label for="data_compress_algo">{{ t('data_compress_algo') }}</label>
-                    <i class="pi pi-question-circle config-help-tip"
+                    <i class="pi pi-question-circle config-help-tip" tabindex="0"
                       v-tooltip.top="{ value: t('data_compress_algo_help'), escape: false }" role="img"></i>
                   </div>
                   <div class="config-inline-control">
@@ -760,7 +759,7 @@ function removeVpnPortalClient(index: number) {
                 <div class="config-inline-field">
                   <div class="config-inline-label flex items-center gap-1">
                     <label for="socket_mark">{{ t('socket_mark') }}</label>
-                    <i class="pi pi-question-circle config-help-tip"
+                    <i class="pi pi-question-circle config-help-tip" tabindex="0"
                       v-tooltip.top="{ value: t('socket_mark_help'), escape: false }" role="img"></i>
                   </div>
                   <div class="config-inline-control">
@@ -781,7 +780,7 @@ function removeVpnPortalClient(index: number) {
                   <div class="flex items-center gap-1">
                     <label for="port_forwards">{{ t('port_forwards') }}</label>
                     <i
-                      class="pi pi-question-circle config-help-tip"
+                      class="pi pi-question-circle config-help-tip" tabindex="0"
                       v-tooltip.top="t('port_forwards_help')"
                       :aria-label="t('port_forwards_help')"
                       role="img"
@@ -881,26 +880,40 @@ function removeVpnPortalClient(index: number) {
                 <i
                   v-if="!curNetwork.enable_magic_dns"
                   class="pi pi-question-circle config-help-tip"
+                  tabindex="0"
                   v-tooltip.top="t('dns.hosts.magic_dns_off_hint')"
                   :aria-label="t('dns.hosts.magic_dns_off_hint')"
-                  role="img"
-                />
-                <i
-                  v-if="curNetwork.dns_config && (curNetwork.dns_config.hosts?.length || curNetwork.dns_config.forwarders?.length || curNetwork.dns_config.upstream_dns?.length)"
-                  class="pi pi-exclamation-triangle dns-mixed-version-tip"
-                  v-tooltip.top="t('dns.mixed_version_warning')"
-                  :aria-label="t('dns.mixed_version_warning')"
                   role="img"
                 />
               </div>
             </template>
             <div class="flex flex-col gap-y-4">
+              <div class="dns-magic-dns-row flex items-center gap-2">
+                <Checkbox v-model="curNetwork.enable_magic_dns" input-id="enable_magic_dns" :binary="true" />
+                <label for="enable_magic_dns">{{ t('enable_magic_dns') }}</label>
+                <i
+                  class="pi pi-question-circle config-help-tip"
+                  tabindex="0"
+                  v-tooltip.top="{ value: t('enable_magic_dns_help'), escape: false }"
+                  :aria-label="t('enable_magic_dns_help')"
+                  role="img"
+                />
+              </div>
+
+              <p
+                v-if="curNetwork.dns_config && (curNetwork.dns_config.hosts?.length || curNetwork.dns_config.forwarders?.length || curNetwork.dns_config.upstream_dns?.length)"
+                class="dns-mixed-version-hint et-meta m-0"
+                role="status"
+              >
+                {{ t('dns.mixed_version_warning') }}
+              </p>
+
               <template v-if="curNetwork.dns_config">
                 <div class="flex flex-col gap-y-2">
                   <div class="config-inline-field">
                     <div class="config-inline-label flex items-center gap-1">
                       <label for="dns_upstream">{{ t('dns.upstream.title') }}</label>
-                      <i class="pi pi-question-circle config-help-tip"
+                      <i class="pi pi-question-circle config-help-tip" tabindex="0"
                         v-tooltip.top="{ value: t('dns.upstream.help'), escape: false }" role="img"></i>
                     </div>
                     <div class="config-inline-control">
@@ -914,7 +927,7 @@ function removeVpnPortalClient(index: number) {
                   <div class="dns-section__title">
                     <span>{{ t('dns.hosts.title') }}</span>
                     <i
-                      class="pi pi-question-circle config-help-tip"
+                      class="pi pi-question-circle config-help-tip" tabindex="0"
                       v-tooltip.top="t('dns.hosts.editor_help')"
                       :aria-label="t('dns.hosts.editor_help')"
                       role="img"
@@ -927,7 +940,7 @@ function removeVpnPortalClient(index: number) {
                   <div class="dns-section__title">
                     <span>{{ t('dns.forwarders.title') }}</span>
                     <i
-                      class="pi pi-question-circle config-help-tip"
+                      class="pi pi-question-circle config-help-tip" tabindex="0"
                       v-tooltip.top="t('dns.forwarders.editor_help')"
                       :aria-label="t('dns.forwarders.editor_help')"
                       role="img"
@@ -964,6 +977,13 @@ function removeVpnPortalClient(index: number) {
 </template>
 
 <style scoped>
+.dns-mixed-version-hint {
+  color: var(--et-warning, #b45309);
+  background: color-mix(in srgb, var(--et-warning, #f59e0b) 12%, transparent);
+  border-radius: 0.375rem;
+  padding: 0.5rem 0.75rem;
+}
+
 .dns-section {
   display: flex;
   flex-direction: column;
@@ -1036,7 +1056,7 @@ function removeVpnPortalClient(index: number) {
   box-sizing: border-box;
 }
 
-/* 高级开关按使用场景分组，避免 28 个选项堆成一片 */
+/* 高级开关按使用场景分组，避�?28 个选项堆成一�?*/
 .advanced-flags-section {
   display: flex;
   flex-direction: column;
@@ -1177,7 +1197,7 @@ function removeVpnPortalClient(index: number) {
     grid-template-columns: 1fr;
   }
 
-  /* 窄屏：开关项双列，避免单列过长 */
+  /* 窄屏：开关项双列，避免单列过�?*/
   .advanced-flags-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 0.35rem 0.5rem;
@@ -1213,7 +1233,7 @@ function removeVpnPortalClient(index: number) {
   }
 }
 
-/* 问号提示图标：内联对齐 + 固定尺寸，避免撑高所在行 */
+/* 问号提示图标：内联对�?+ 固定尺寸，避免撑高所在行 */
 .config-help-tip {
   display: inline-flex;
   align-items: center;
@@ -1235,7 +1255,7 @@ function removeVpnPortalClient(index: number) {
   min-width: 0;
 }
 
-/* 多行控件（如 UrlListInput）：标签顶对齐 */
+/* 多行控件（如 UrlListInput）：标签顶对�?*/
 .config-inline-field--top {
   align-items: flex-start;
 }
@@ -1256,13 +1276,13 @@ function removeVpnPortalClient(index: number) {
   min-width: 0;
 }
 
-/* 开关展开后的附加输入：与右侧控件列对齐 */
+/* 开关展开后的附加输入：与右侧控件列对�?*/
 .config-inline-expand {
   margin-left: calc(11rem + 0.75rem);
   min-width: 0;
 }
 
-/* 复杂展开块（如 VPN Portal 详情）占满整行，避免双重缩进 */
+/* 复杂展开块（�?VPN Portal 详情）占满整行，避免双重缩进 */
 .config-inline-expand--flush {
   margin-left: 0;
 }

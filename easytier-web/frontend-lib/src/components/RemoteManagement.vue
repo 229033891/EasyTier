@@ -915,14 +915,14 @@ onUnmounted(() => {
                 <div v-if="dnsCoverageState" class="toolbar-zone toolbar-zone--dns-coverage">
                     <span class="toolbar-zone-label">{{ t('dns.coverage.label') }}</span>
                     <DnsCoverageBadge :state="dnsCoverageState" />
-                    <i
-                        v-if="dnsCoverageState === 'version_too_old'"
-                        class="pi pi-exclamation-triangle dns-mixed-version-tip"
-                        v-tooltip.top="t('dns.mixed_version_warning')"
-                        :aria-label="t('dns.mixed_version_warning')"
-                        role="img"
-                    />
                 </div>
+                <p
+                    v-if="dnsCoverageState === 'version_too_old'"
+                    class="dns-version-too-old-hint et-meta m-0"
+                    role="status"
+                >
+                    {{ t('dns.mixed_version_warning') }}
+                </p>
                 <div class="toolbar-zone">
                     <span class="toolbar-zone-label">{{ t('web.device_management.toolbar_config_files') }}</span>
                     <div class="toolbar-zone-actions">
@@ -1056,6 +1056,15 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
+.dns-version-too-old-hint {
+    color: var(--et-warning, #b45309);
+    background: color-mix(in srgb, var(--et-warning, #f59e0b) 12%, transparent);
+    border-radius: 0.375rem;
+    padding: 0.5rem 0.75rem;
+    width: 100%;
+    flex-basis: 100%;
+}
+
 .device-management {
     height: 100%;
     display: flex;
