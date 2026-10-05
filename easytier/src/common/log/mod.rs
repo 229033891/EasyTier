@@ -82,6 +82,12 @@ pub fn file_level() -> String {
         .to_ascii_lowercase()
 }
 
+pub fn flush() {
+    if let Some(logger) = LOGGER.get() {
+        logger.flush_file();
+    }
+}
+
 fn install(logger: Logger) -> anyhow::Result<()> {
     LOGGER
         .set(logger)

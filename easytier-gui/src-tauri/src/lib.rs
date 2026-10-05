@@ -1009,7 +1009,7 @@ async fn read_log_file(
         return Err("log file not found".to_string());
     }
     // Best-effort flush so the latest lines are visible.
-    log::logger().flush();
+    log::flush();
     read_file_tail(&path, clamp_log_read_bytes(max_bytes))
 }
 
