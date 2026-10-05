@@ -242,17 +242,15 @@ impl RotatingLog {
     fn list_files(&self) -> io::Result<Vec<DiagnosticLogFileInfo>> {
         let mut files = Vec::new();
         let active = self.active_path();
-        if active.exists() {
-            if let Ok(info) = file_info(&active, true) {
-                files.push(info);
-            }
+        if active.exists()
+            && let Ok(info) = file_info(&active, true)
+        {
+            files.push(info);
         }
         for index in 1..MAX_LOG_FILES {
             let path = self.rotated_path(index);
-            if path.exists() {
-                if let Ok(info) = file_info(&path, false) {
-                    files.push(info);
-                }
+            if path.exists() && let Ok(info) = file_info(&path, false) {
+                files.push(info);
             }
         }
         Ok(files)
@@ -319,10 +317,10 @@ fn read_file_tail(path: &Path, max_bytes: u64) -> io::Result<String> {
     let mut buf = Vec::new();
     file.read_to_end(&mut buf)?;
     let content = String::from_utf8_lossy(&buf);
-    if len > max_bytes {
-        if let Some(rest) = content.split_once('\n').map(|(_, rest)| rest) {
-            return Ok(rest.to_string());
-        }
+    if len > max_bytes
+        && let Some(rest) = content.split_once('\n').map(|(_, rest)| rest)
+    {
+        return Ok(rest.to_string());
     }
     Ok(content.into_owned())
 }
