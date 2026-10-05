@@ -11,11 +11,13 @@ pub mod api_input;
 ))]
 mod browser;
 mod encryption;
+pub mod dns;
 pub mod gateway;
 pub mod peers;
 pub mod runtime;
 pub mod toml;
 
+pub use dns::{DnsConfig, DnsForwarder, DnsHostEntry};
 pub use encryption::EncryptionAlgorithm;
 
 pub(crate) const DEFAULT_UDP_STUN_SERVERS: &[&str] = &[

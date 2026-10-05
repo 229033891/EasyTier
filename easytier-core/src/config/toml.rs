@@ -18,7 +18,7 @@ use crate::proto::{
     common::{CompressionAlgoPb, SecureModeConfig},
 };
 
-pub use crate::proto::api::manage::{DnsConfig, DnsForwarder, DnsHostEntry};
+pub use super::dns::{DnsConfig, DnsForwarder, DnsHostEntry};
 
 pub const DEFAULT_ET_DNS_ZONE: &str = "et.net.";
 /// Default TTL for static DnsConfig.hosts entries (seconds). Route MagicDNS records use 1s.
