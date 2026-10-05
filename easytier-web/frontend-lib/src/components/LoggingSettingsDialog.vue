@@ -169,36 +169,85 @@ async function copyLoggingDir() {
 <template>
   <Dialog v-model:visible="visible" modal :header="t('logging')"
     :style="{ width: 'min(720px, calc(100vw - 1.5rem))' }" class="app-dialog">
-    <div class="flex flex-col gap-3">
-      <div class="flex flex-col gap-2">
-        <label for="logging-level">{{ t('logging_level') }}</label>
+    <div class="logging-dialog flex flex-col gap-3">
+      <div class="logging-inline-field">
+        <div class="logging-inline-label">
+          <label for="logging-level">{{ t('logging_level') }}</label>
+          <i
+            class="pi pi-question-circle config-help-tip"
+            v-tooltip.top="t('logging_retention_hint')"
+            :aria-label="t('logging_retention_hint')"
+            role="img"
+          />
+          <i
+            v-if="api.remoteOnly"
+            class="pi pi-question-circle config-help-tip"
+            v-tooltip.top="t('logging_remote_hint')"
+            :aria-label="t('logging_remote_hint')"
+            role="img"
+          />
+        </div>
         <Select id="logging-level" v-model="loggingLevel" :options="loggingLevelOptions" option-label="label"
-          option-value="value" class="w-full" />
-        <small class="text-color-secondary">{{ t('logging_retention_hint') }}</small>
-        <small v-if="api.remoteOnly" class="text-color-secondary">{{ t('logging_remote_hint') }}</small>
+          option-value="value" class="logging-inline-control" />
       </div>
-      <div v-if="api.getLogDir" class="flex flex-col gap-2">
-        <label>{{ t('logging_path') }}</label>
-        <InputText :model-value="loggingPath" class="w-full" readonly />
-        <div class="flex flex-wrap gap-2">
-          <Button v-if="api.canOpenLogDir && api.openLogDir" :label="t('logging_open_dir')" icon="pi pi-folder-open"
-            severity="secondary" outlined @click="openLoggingDir" />
-          <Button v-if="api.copyLogDir" :label="t('logging_copy_dir')" icon="pi pi-copy" severity="secondary" outlined
-            @click="copyLoggingDir" />
+
+      <div v-if="api.getLogDir" class="logging-inline-field">
+        <label class="logging-inline-label">{{ t('logging_path') }}</label>
+        <div class="logging-path-row">
+          <InputText :model-value="loggingPath" class="logging-inline-control" readonly />
+          <Button
+            v-if="api.copyLogDir"
+            size="small"
+            severity="secondary"
+            text
+            rounded
+            icon="pi pi-copy"
+            class="et-icon-action-btn"
+            :aria-label="t('logging_copy_dir')"
+            v-tooltip.top="t('logging_copy_dir')"
+            @click="copyLoggingDir"
+          />
+          <Button
+            v-if="api.canOpenLogDir && api.openLogDir"
+            size="small"
+            severity="secondary"
+            text
+            rounded
+            icon="pi pi-folder-open"
+            class="et-icon-action-btn"
+            :aria-label="t('logging_open_dir')"
+            v-tooltip.top="t('logging_open_dir')"
+            @click="openLoggingDir"
+          />
         </div>
       </div>
-      <div v-if="canShowLogContent" class="flex flex-col gap-2">
+
+      <div v-if="canShowLogContent" class="logging-content flex flex-col gap-2">
         <div class="flex flex-wrap items-center justify-between gap-2">
           <label for="logging-file">{{ t('logging_content') }}</label>
-          <Button :label="t('logging_refresh')" icon="pi pi-refresh" severity="secondary" text :loading="isLoading"
-            @click="loadLoggingContent()" />
+          <Button
+            size="small"
+            severity="secondary"
+            text
+            rounded
+            icon="pi pi-refresh"
+            class="et-icon-action-btn"
+            :loading="isLoading"
+            :aria-label="t('logging_refresh')"
+            v-tooltip.top="t('logging_refresh')"
+            @click="loadLoggingContent()"
+          />
         </div>
         <Select id="logging-file" v-model="selectedLogFile" :options="loggingFiles" option-label="label"
           option-value="value" class="w-full" :placeholder="t('logging_file')" :disabled="!loggingFiles.length"
           @update:model-value="(value: string) => loadLoggingContent(value)" />
-        <Textarea :model-value="loggingContent || (loggingFiles.length ? '' : t('logging_empty'))" class="w-full"
-          rows="14" readonly auto-resize
-          style="font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; white-space: pre; overflow: auto; max-height: 40vh;" />
+        <Textarea
+          :model-value="loggingContent || (loggingFiles.length ? '' : t('logging_empty'))"
+          class="w-full logging-textarea"
+          rows="16"
+          readonly
+          auto-resize
+        />
       </div>
     </div>
     <template #footer>
@@ -207,3 +256,53 @@ async function copyLoggingDir() {
     </template>
   </Dialog>
 </template>
+
+<style scoped>
+.logging-inline-field {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  min-width: 0;
+}
+
+.logging-inline-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.logging-inline-control {
+  flex: 1 1 auto;
+  min-width: 0;
+  width: 100%;
+}
+
+.logging-path-row {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.logging-textarea {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  white-space: pre;
+  overflow: auto;
+  max-height: min(55vh, 28rem);
+}
+
+@media (max-width: 480px) {
+  .logging-inline-field {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 0.4rem;
+  }
+
+  .logging-inline-label {
+    white-space: normal;
+  }
+}
+</style>

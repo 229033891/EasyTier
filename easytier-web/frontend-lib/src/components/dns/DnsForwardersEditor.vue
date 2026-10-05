@@ -21,8 +21,6 @@ function removeForwarder(index: number) {
 
 <template>
   <div class="dns-forwarders-editor flex flex-col gap-y-2">
-    <p class="dns-forwarders-editor__help et-meta m-0">{{ t('dns.forwarders.editor_help') }}</p>
-
     <div v-if="!forwarders.length" class="et-meta py-2">
       {{ t('dns.forwarders.empty') }}
     </div>
@@ -91,8 +89,3 @@ function removeForwarder(index: number) {
   </div>
 </template>
 
-<style scoped>
-.dns-forwarders-editor__help {
-  color: var(--text-color-secondary, #64748b);
-}
-</style>

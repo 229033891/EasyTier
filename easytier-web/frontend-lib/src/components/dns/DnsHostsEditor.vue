@@ -26,8 +26,6 @@ function removeHost(index: number) {
 
 <template>
   <div class="dns-hosts-editor flex flex-col gap-y-2">
-    <p class="dns-hosts-editor__help et-meta m-0">{{ t('dns.hosts.editor_help') }}</p>
-
     <div v-if="!hosts.length" class="et-meta py-2">
       {{ t('dns.hosts.empty') }}
     </div>
@@ -113,10 +111,6 @@ function removeHost(index: number) {
 </template>
 
 <style scoped>
-.dns-hosts-editor__help {
-  color: var(--text-color-secondary, #64748b);
-}
-
 .dns-host-row__ttl {
   display: flex;
   align-items: center;

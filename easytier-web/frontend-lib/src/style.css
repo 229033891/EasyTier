@@ -915,3 +915,31 @@
   justify-content: center;
   box-sizing: border-box;
 }
+
+/* 问号提示图标：内联对齐 + 固定尺寸，避免撑高所在行 */
+.config-help-tip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 1.1rem;
+  height: 1.1rem;
+  font-size: 0.95rem;
+  line-height: 1;
+  color: var(--text-color-secondary, #64748b);
+  cursor: help;
+}
+
+.config-help-tip--warning,
+.dns-mixed-version-tip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 1.1rem;
+  height: 1.1rem;
+  font-size: 0.95rem;
+  line-height: 1;
+  color: var(--et-warning, #b45309);
+  cursor: help;
+}

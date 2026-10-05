@@ -3,7 +3,7 @@ use crate::proto::peer_rpc::KcpConnData as QuicConnData;
 use crate::tunnel::quic::{
     QUIC_VERSION_ETQ1, client_config, endpoint_config, etq1_client_config, server_config,
 };
-use crate::utils::buf::BufMargins;
+use crate::utils::buf::{BufMargins, BufPool};
 use anyhow::{Context, Error, anyhow, ensure};
 use atomic_refcell::AtomicRefCell;
 use bytes::{BufMut, Bytes, BytesMut};
@@ -111,22 +111,14 @@ impl AsyncUdpSocket for QuicSocket {
                 let segment = segment_size + self.margins.size();
 
                 // The length of the last chunk could be smaller than segment_size
-                let mut payload = BytesMut::with_capacity(chunks.len() * segment);
+                let mut payload = BufPool::new(chunks.len() * segment);
                 for chunk in chunks {
-                    let len = chunk.len();
-                    unsafe {
-                        std::ptr::copy_nonoverlapping(
-                            chunk.as_ptr(),
-                            payload.chunk_mut().as_mut_ptr().add(self.margins.header),
-                            len,
-                        );
-                        payload.advance_mut(len + self.margins.len());
-                    }
+                    payload.write(chunk, self.margins);
                 }
 
                 permit.send(QuicPacket {
                     addr: transmit.destination,
-                    payload,
+                    payload: payload.split(),
                     segment: Some(segment),
                     ecn: transmit.ecn,
                 });

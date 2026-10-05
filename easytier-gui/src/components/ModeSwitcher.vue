@@ -280,11 +280,14 @@ watch(() => model.value.mode, async (newMode, oldMode) => {
         </div>
         <div class="flex items-center gap-2">
           <label for="rpc-listen-all">{{ t('mode.rpc_listen_all_interfaces') }}</label>
+          <i
+            class="pi pi-question-circle config-help-tip"
+            v-tooltip.top="t('mode.rpc_listen_all_interfaces_hint')"
+            :aria-label="t('mode.rpc_listen_all_interfaces_hint')"
+            role="img"
+          />
           <SelectButton id="rpc-listen-all" v-model="rpcListenAllInterfaces" :options="rpcListenOptions"
             option-label="label" option-value="value" />
-        </div>
-        <div class="text-xs text-gray-500">
-          {{ t('mode.rpc_listen_all_interfaces_hint') }}
         </div>
       </div>
     </div>
@@ -330,7 +333,16 @@ watch(() => model.value.mode, async (newMode, oldMode) => {
 
     <div v-if="showConfigServer" class="flex flex-col gap-2 pt-3 mt-1 border-t border-gray-200">
       <div class="flex items-center justify-between gap-2 flex-wrap">
-        <label class="m-0 font-medium">{{ t('config-server.title') }}</label>
+        <div class="flex items-center gap-1">
+          <label class="m-0 font-medium">{{ t('config-server.title') }}</label>
+          <i
+            v-if="serviceMode"
+            class="pi pi-question-circle config-help-tip"
+            v-tooltip.top="t('config-server.service_hint')"
+            :aria-label="t('config-server.service_hint')"
+            role="img"
+          />
+        </div>
         <Tag v-if="configServerStatusLabel" :severity="configServerStatusSeverity || 'secondary'"
           :value="configServerStatusLabel" />
       </div>
@@ -348,9 +360,13 @@ watch(() => model.value.mode, async (newMode, oldMode) => {
       <div class="flex items-center gap-2">
         <Checkbox id="config-server-secure" v-model="configServerSecureMode" binary />
         <label for="config-server-secure">{{ t('config-server.secure_mode') }}</label>
+        <i
+          class="pi pi-question-circle config-help-tip"
+          v-tooltip.top="t('config-server.secure_mode_hint')"
+          :aria-label="t('config-server.secure_mode_hint')"
+          role="img"
+        />
       </div>
-      <p class="text-xs text-secondary m-0">{{ t('config-server.secure_mode_hint') }}</p>
-      <p v-if="serviceMode" class="text-xs text-secondary m-0">{{ t('config-server.service_hint') }}</p>
     </div>
   </div>
 </template>

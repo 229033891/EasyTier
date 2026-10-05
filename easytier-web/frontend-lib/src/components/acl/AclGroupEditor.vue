@@ -72,9 +72,14 @@ function saveGroup() {
   <div class="acl-groups flex flex-col gap-3">
     <section class="acl-card flex flex-col gap-3">
       <div class="flex justify-between items-start gap-3">
-        <div class="min-w-0">
+        <div class="min-w-0 flex items-center gap-1">
           <div class="acl-section-title">{{ t('acl.group.declares') }}</div>
-          <p class="acl-help">{{ t('acl.group.help') }}</p>
+          <i
+            class="pi pi-question-circle config-help-tip"
+            v-tooltip.top="t('acl.group.help')"
+            :aria-label="t('acl.group.help')"
+            role="img"
+          />
         </div>
         <Button class="et-panel-action-btn acl-add-btn" icon="pi pi-plus" :label="t('web.common.add')"
           severity="success" @click="addGroup" />
@@ -108,8 +113,15 @@ function saveGroup() {
     </section>
 
     <section class="acl-card flex flex-col gap-2">
-      <div class="acl-section-title">{{ t('acl.group.members') }}</div>
-      <p class="acl-help">{{ t('acl.group.members_help') }}</p>
+      <div class="flex items-center gap-1">
+        <div class="acl-section-title">{{ t('acl.group.members') }}</div>
+        <i
+          class="pi pi-question-circle config-help-tip"
+          v-tooltip.top="t('acl.group.members_help')"
+          :aria-label="t('acl.group.members_help')"
+          role="img"
+        />
+      </div>
       <MultiSelect v-model="members" :options="props.groupNames" multiple fluid filter
         class="acl-members-select"
         :placeholder="t('acl.group.members')"

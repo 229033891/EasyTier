@@ -778,8 +778,14 @@ function removeVpnPortalClient(index: number) {
             <div ref="portForwardContainer" class="flex flex-col gap-y-2">
               <div class="flex flex-row gap-x-9 flex-wrap w-full">
                 <div class="flex flex-col gap-2 grow p-fluid">
-                  <div class="flex">
-                    <label for="port_forwards">{{ t('port_forwards_help') }}</label>
+                  <div class="flex items-center gap-1">
+                    <label for="port_forwards">{{ t('port_forwards') }}</label>
+                    <i
+                      class="pi pi-question-circle config-help-tip"
+                      v-tooltip.top="t('port_forwards_help')"
+                      :aria-label="t('port_forwards_help')"
+                      role="img"
+                    />
                   </div>
                   <div v-for="(row, index) in curNetwork.port_forwards" :key="index" class="form-row">
                     <!-- Wide screen view -->
@@ -867,20 +873,28 @@ function removeVpnPortalClient(index: number) {
             </div>
           </Panel>
 
-          <Panel v-model:collapsed="panelCollapsed.dns" :header="t('dns.title')" toggleable
+          <Panel v-model:collapsed="panelCollapsed.dns" toggleable
             :pt="panelHeaderPt('dns')">
+            <template #header>
+              <div class="flex items-center gap-2 min-w-0">
+                <span>{{ t('dns.title') }}</span>
+                <i
+                  v-if="!curNetwork.enable_magic_dns"
+                  class="pi pi-question-circle config-help-tip"
+                  v-tooltip.top="t('dns.hosts.magic_dns_off_hint')"
+                  :aria-label="t('dns.hosts.magic_dns_off_hint')"
+                  role="img"
+                />
+                <i
+                  v-if="curNetwork.dns_config && (curNetwork.dns_config.hosts?.length || curNetwork.dns_config.forwarders?.length || curNetwork.dns_config.upstream_dns?.length)"
+                  class="pi pi-exclamation-triangle dns-mixed-version-tip"
+                  v-tooltip.top="t('dns.mixed_version_warning')"
+                  :aria-label="t('dns.mixed_version_warning')"
+                  role="img"
+                />
+              </div>
+            </template>
             <div class="flex flex-col gap-y-4">
-              <p v-if="!curNetwork.enable_magic_dns" class="dns-magic-dns-hint et-meta m-0">
-                {{ t('dns.hosts.magic_dns_off_hint') }}
-              </p>
-              <p
-                v-if="curNetwork.dns_config && (curNetwork.dns_config.hosts?.length || curNetwork.dns_config.forwarders?.length || curNetwork.dns_config.upstream_dns?.length)"
-                class="dns-mixed-version-hint et-meta m-0"
-                role="note"
-              >
-                {{ t('dns.mixed_version_warning') }}
-              </p>
-
               <template v-if="curNetwork.dns_config">
                 <div class="flex flex-col gap-y-2">
                   <div class="config-inline-field">
@@ -897,12 +911,28 @@ function removeVpnPortalClient(index: number) {
                 </div>
 
                 <div class="dns-section">
-                  <div class="dns-section__title">{{ t('dns.hosts.title') }}</div>
+                  <div class="dns-section__title">
+                    <span>{{ t('dns.hosts.title') }}</span>
+                    <i
+                      class="pi pi-question-circle config-help-tip"
+                      v-tooltip.top="t('dns.hosts.editor_help')"
+                      :aria-label="t('dns.hosts.editor_help')"
+                      role="img"
+                    />
+                  </div>
                   <DnsHostsEditor v-model:hosts="curNetwork.dns_config.hosts" />
                 </div>
 
                 <div class="dns-section">
-                  <div class="dns-section__title">{{ t('dns.forwarders.title') }}</div>
+                  <div class="dns-section__title">
+                    <span>{{ t('dns.forwarders.title') }}</span>
+                    <i
+                      class="pi pi-question-circle config-help-tip"
+                      v-tooltip.top="t('dns.forwarders.editor_help')"
+                      :aria-label="t('dns.forwarders.editor_help')"
+                      role="img"
+                    />
+                  </div>
                   <DnsForwardersEditor v-model:forwarders="curNetwork.dns_config.forwarders" />
                 </div>
               </template>
@@ -934,17 +964,6 @@ function removeVpnPortalClient(index: number) {
 </template>
 
 <style scoped>
-.dns-magic-dns-hint {
-  color: var(--text-color-secondary, #64748b);
-}
-
-.dns-mixed-version-hint {
-  color: var(--et-warning, #b45309);
-  background: color-mix(in srgb, var(--et-warning, #f59e0b) 12%, transparent);
-  border-radius: 0.375rem;
-  padding: 0.5rem 0.75rem;
-}
-
 .dns-section {
   display: flex;
   flex-direction: column;
@@ -952,6 +971,9 @@ function removeVpnPortalClient(index: number) {
 }
 
 .dns-section__title {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
   font-size: var(--et-fs-section, 0.875rem);
   font-weight: 600;
   color: var(--text-color, #1e293b);

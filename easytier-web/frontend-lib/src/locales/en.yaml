@@ -421,7 +421,7 @@ dns:
   title: DNS Policy
   hosts:
     title: Static Hosts
-    enable: Configure DNS policy
+    enable: Configure policy
     enable_tip: Add static hosts, split forwarders, and upstream DNS
     magic_dns_off_hint: DNS policy is stored in this network config. Enable Magic DNS (Advanced → System) on the device for MagicDNS wiring to take effect.
     editor_help: Static entries are authoritative on MagicDNS and override route hostnames. Unmatched names continue to normal resolution.

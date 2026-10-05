@@ -32,7 +32,15 @@
 
     <template v-else>
       <div>
-        <div class="peer-history-chart-title">{{ t('history_latency') }}</div>
+        <div class="peer-history-chart-title flex items-center gap-1">
+          <span>{{ t('history_latency') }}</span>
+          <i
+            class="pi pi-question-circle config-help-tip"
+            v-tooltip.top="t('history_sampling_hint')"
+            :aria-label="t('history_sampling_hint')"
+            role="img"
+          />
+        </div>
         <div class="h-40">
           <canvas ref="latencyCanvas"></canvas>
         </div>
@@ -43,7 +51,6 @@
           <canvas ref="trafficCanvas"></canvas>
         </div>
       </div>
-      <p class="m-0 text-xs text-surface-500">{{ t('history_sampling_hint') }}</p>
     </template>
   </div>
 </template>
