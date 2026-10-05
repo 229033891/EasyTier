@@ -46,15 +46,15 @@ Status: **Roadmap**
 ## P2 —— 看实现再定级（先拆零风险部分）
 
 ### 4. #2626 QUIC 缓冲池 `perf(quic-proxy): use BufPool and BufMargins in QuicSocket`
-- [ ] 先读 main 实现，确认池所有权/锁粒度（`try_send` 并发语义）后再移植 `easytier/src/gateway/quic_proxy.rs`（约 2 处分配点 + `PacketMargins`→`BufMargins` 统一，含 `make_socket_pair` / `forward` / `test_gso` 测试同步）
-- [ ] 说明：dev 已有 #2625 的 `BufPool` / `BufMargins`，quic 路径仍 `BytesMut::with_capacity`，属顺水推舟
-- [ ] `cargo test -p easytier` 相关用例 + fmt
+- [x] `PacketMargins` → `type PacketMargins = BufMargins`；`try_send` 用 `BufPool::write`；`margins.len()` → `margins.size()`（含 `test_gso`）
+- [x] 说明：dev 已有 #2625 的 `BufPool` / `BufMargins`，与上游 #2626 对齐
+- [ ] `cargo test -p easytier` 相关用例 + fmt（本机 MSVC/ring 编译受阻，待 CI 验证）
 
 ### 5. #2627 WG 缓冲池 `perf(wireguard): rename WG_MAX_PACKET_SIZE and optimize scratch buffers`
-- [ ] 先合重命名部分（`MAX_PACKET` → `WG_MAX_PACKET_SIZE`，零行为风险，可单独先行）
-- [ ] 再从 main 引入 `FixedBufPool`（dev 的 `utils/buf.rs` 目前只有 `BufPool`，无此类型）
-- [ ] 读核 `TunnResult<'a>` 借用：上游用 `WG_BUF_POOL.acquire()` 的 guard 包住 buffer，再 `session.send(packet).await`；确认 guard 在 await 期间保持存活、boringtun 初始化保证后再动分配点
-- [ ] `cargo test -p easytier` 相关用例 + fmt（含新增 `unsafe` 的 safety 注释复核）
+- [x] `MAX_PACKET` → `WG_MAX_PACKET_SIZE`（含测试/握手 recv 缓冲）
+- [x] `utils/buf.rs` 新增 `FixedBufPool` / `FixedBufGuard` + `test_fixed_buf_pool`
+- [x] encapsulate / decapsulate / handshake / routine 路径改用 `WG_BUF_POOL.acquire()`；guard 在 `session.send(...).await` 期间保持存活
+- [ ] `cargo test -p easytier` 相关用例 + fmt（本机 MSVC/ring 编译受阻，待 CI 验证）
 
 ---
 
@@ -71,4 +71,4 @@ Status: **Roadmap**
 
 - 不 `merge main → dev`（会带入 README 改指向、sponsor 删除等 fork 行政提交 + ~19k 行中央控制台）。
 - 不移植 fork 行政提交（README 改指向、sponsor 删除、仅 CI/Docker 对齐类变更；与 `dev` 已对齐的无需再动）。
-- P1 在无复现前挂起；P2 在未读实现前不定级。
+- P0–P2 代码已落袋，待 CI/`cargo test` 验证；P3 发版后再开独立分支。

@@ -3,6 +3,7 @@ use crate::proto::peer_rpc::KcpConnData as QuicConnData;
 use crate::tunnel::quic::{
     QUIC_VERSION_ETQ1, client_config, endpoint_config, etq1_client_config, server_config,
 };
+use crate::utils::buf::BufMargins;
 use anyhow::{Context, Error, anyhow, ensure};
 use atomic_refcell::AtomicRefCell;
 use bytes::{BufMut, Bytes, BytesMut};
@@ -54,17 +55,7 @@ struct QuicPacket {
     ecn: Option<EcnCodepoint>,
 }
 
-#[derive(Debug, Clone, Copy, From, Into)]
-pub struct PacketMargins {
-    pub header: usize,
-    pub trailer: usize,
-}
-
-impl PacketMargins {
-    pub fn len(&self) -> usize {
-        self.header + self.trailer
-    }
-}
+type PacketMargins = BufMargins;
 //endregion
 
 //region socket
@@ -117,15 +108,14 @@ impl AsyncUdpSocket for QuicSocket {
 
                 let segment_size = transmit.segment_size.unwrap_or(len);
                 let chunks = transmit.contents.chunks(segment_size);
-                let segment = segment_size + self.margins.len();
-
-                let mut payload = BytesMut::with_capacity(chunks.len() * segment);
+                let segment = segment_size + self.margins.size();
 
                 // The length of the last chunk could be smaller than segment_size
+                let mut payload = BytesMut::with_capacity(chunks.len() * segment);
                 for chunk in chunks {
                     let len = chunk.len();
                     unsafe {
-                        copy_nonoverlapping(
+                        std::ptr::copy_nonoverlapping(
                             chunk.as_ptr(),
                             payload.chunk_mut().as_mut_ptr().add(self.margins.header),
                             len,
@@ -1314,7 +1304,7 @@ mod tests {
         let mut rx = socket.rx.into_inner();
         let packet = rx.recv().await.unwrap();
 
-        let actual_segment_size = segment_size + margins.len();
+        let actual_segment_size = segment_size + margins.size();
         let payload = packet.payload;
 
         let chunk1_start = margins.header;
