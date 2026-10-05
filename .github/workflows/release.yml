@@ -115,7 +115,8 @@ jobs:
           if [ -z "$version" ]; then
             version="${branch#releases/}"
           fi
-          if [[ ! "$version" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-].*)?$ ]]; then
+          # Allow vX.Y.Z, vX.Y.Za, vX.Y.Z-rc1, vX.Y.Z.1, etc.
+          if [[ ! "$version" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-].*|[A-Za-z].*)?$ ]]; then
             echo "::error::version must look like vX.Y.Z (got: ${version})"
             exit 1
           fi
