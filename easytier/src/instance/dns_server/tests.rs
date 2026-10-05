@@ -484,7 +484,7 @@ async fn test_static_hosts_channel_via_update_dns_record() {
 async fn test_static_hosts_cleared_on_client_disconnect() {
     use crate::proto::magic_dns::StaticDnsHost;
     use crate::proto::rpc::standalone::RpcServerHook;
-    use easytier_core::config::toml::DnsHostEntry;
+    use easytier_core::config::{DnsConfig, DnsHostEntry};
 
     let tun_ip = Ipv4Inet::from_str("10.144.144.30/24").unwrap();
     let (global_ctx, core_instance, virtual_nic) = prepare_env("disconnect-node", tun_ip).await;
