@@ -352,10 +352,6 @@ impl Server {
         self.catalog.write().await.remove(name);
     }
 
-    pub fn has_split_zone(&self, zone: &str) -> bool {
-        self.applied_split_zones.lock().unwrap().contains(zone)
-    }
-
     pub fn split_zones(&self) -> BTreeSet<String> {
         self.applied_split_zones.lock().unwrap().clone()
     }

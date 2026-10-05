@@ -39,15 +39,15 @@ use crate::{
 use anyhow::Context;
 use cidr::Ipv4Inet;
 use easytier_core::config::toml::DEFAULT_DNS_HOSTS_TTL_SECS;
-use easytier_core::gateway::magic_dns::{
-    MagicDnsQuery, MagicDnsQueryResolver, MagicDnsRecordStore, MagicDnsResolverRegistration,
-    MagicDnsRoute, clear_magic_dns_os_wired,
-};
 #[cfg(any(
     target_os = "windows",
     all(target_os = "macos", not(feature = "macos-ne"))
 ))]
 use easytier_core::gateway::magic_dns::set_magic_dns_os_wired;
+use easytier_core::gateway::magic_dns::{
+    MagicDnsQuery, MagicDnsQueryResolver, MagicDnsRecordStore, MagicDnsResolverRegistration,
+    MagicDnsRoute, clear_magic_dns_os_wired,
+};
 use easytier_core::instance::CorePacketPlane;
 use hickory_proto::rr::LowerName;
 use hickory_proto::serialize::binary::{BinDecodable, BinEncoder};

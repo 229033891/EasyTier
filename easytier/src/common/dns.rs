@@ -329,11 +329,11 @@ impl RuntimeDnsIoProvider {
 /// matching [`RuntimeDnsResolver`] underlay behavior so configured upstreams
 /// (including VPN-internal ones) do not loop into TUN / packet filter.
 #[cfg(feature = "dns-resolver")]
-pub type MagicDnsForwardConnector = GenericConnector<RuntimeDnsIoProvider>;
+pub(crate) type MagicDnsForwardConnector = GenericConnector<RuntimeDnsIoProvider>;
 
 /// Build a forwarder connector that pins UDP/TCP DNS to the underlay NIC.
 #[cfg(feature = "dns-resolver")]
-pub fn magic_dns_forward_connector() -> MagicDnsForwardConnector {
+pub(crate) fn magic_dns_forward_connector() -> MagicDnsForwardConnector {
     GenericConnector::new(RuntimeDnsIoProvider::new(RuntimeDnsIoContext {
         netns: None,
         socket_mark: None,
