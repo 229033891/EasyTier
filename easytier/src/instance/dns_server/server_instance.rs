@@ -37,8 +37,8 @@ use crate::{
 };
 use anyhow::Context;
 use cidr::Ipv4Inet;
-use easytier_core::config::{DnsConfig, DnsHostEntry};
 use easytier_core::config::toml::DEFAULT_DNS_HOSTS_TTL_SECS;
+use easytier_core::config::{DnsConfig, DnsHostEntry};
 #[cfg(any(
     target_os = "windows",
     all(target_os = "macos", not(feature = "macos-ne"))
@@ -201,10 +201,7 @@ impl MagicDnsServerInstanceData {
     }
 
     /// Hot-reload local DnsConfig policy (hosts + split + upstream) without restarting UDP.
-    pub async fn reload_dns_policy(
-        &self,
-        dns: Option<&DnsConfig>,
-    ) -> Result<(), anyhow::Error> {
+    pub async fn reload_dns_policy(&self, dns: Option<&DnsConfig>) -> Result<(), anyhow::Error> {
         let hosts = dns.map(|d| d.hosts.clone()).unwrap_or_default();
         let forwarders = dns.map(|d| d.forwarders.clone()).unwrap_or_default();
         let upstream = dns.map(|d| d.upstream_dns.clone()).unwrap_or_default();

@@ -10,8 +10,8 @@ pub mod api_input;
     target_os = "unknown"
 ))]
 mod browser;
-mod encryption;
 pub mod dns;
+mod encryption;
 pub mod gateway;
 pub mod peers;
 pub mod runtime;
