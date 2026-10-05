@@ -23,7 +23,6 @@ use crate::{
         server::build_authority,
     },
     proto::{
-        api::manage::DnsHostEntry,
         common::{TunnelInfo, Void},
         magic_dns::{
             DnsRecord, DnsRecordA, DnsRecordList, GetDnsRecordResponse, HandshakeRequest,
@@ -38,6 +37,7 @@ use crate::{
 };
 use anyhow::Context;
 use cidr::Ipv4Inet;
+use easytier_core::config::{DnsConfig, DnsHostEntry};
 use easytier_core::config::toml::DEFAULT_DNS_HOSTS_TTL_SECS;
 #[cfg(any(
     target_os = "windows",
@@ -203,7 +203,7 @@ impl MagicDnsServerInstanceData {
     /// Hot-reload local DnsConfig policy (hosts + split + upstream) without restarting UDP.
     pub async fn reload_dns_policy(
         &self,
-        dns: Option<&crate::proto::api::manage::DnsConfig>,
+        dns: Option<&DnsConfig>,
     ) -> Result<(), anyhow::Error> {
         let hosts = dns.map(|d| d.hosts.clone()).unwrap_or_default();
         let forwarders = dns.map(|d| d.forwarders.clone()).unwrap_or_default();

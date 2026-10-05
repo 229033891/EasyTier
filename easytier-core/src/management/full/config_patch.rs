@@ -104,7 +104,7 @@ where
             candidate.set_flags(flags);
         }
         if let Some(dns_config) = patch.dns_config {
-            candidate.set_dns_config(Some(dns_config));
+            candidate.set_dns_config(Some(dns_config.into()));
         }
         if let Some(enabled) = patch.ipv6_public_addr_provider {
             candidate.set_ipv6_public_addr_provider(enabled);

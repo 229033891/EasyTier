@@ -632,7 +632,7 @@ impl NetworkConfigExt for NetworkConfig {
         }
 
         if let Some(dns_config) = self.dns_config.as_ref() {
-            cfg.set_dns_config(Some(dns_config.clone()));
+            cfg.set_dns_config(Some(dns_config.clone().into()));
         }
 
         if let Some(data_compress_algo) = self.data_compress_algo {
@@ -816,7 +816,7 @@ impl NetworkConfigExt for NetworkConfig {
         result.enable_private_mode = Some(flags.private_mode);
 
         result.acl = config.get_acl();
-        result.dns_config = config.get_dns_config();
+        result.dns_config = config.get_dns_config().map(Into::into);
 
         if flags.relay_network_whitelist == "*" {
             result.enable_relay_network_whitelist = Some(false);

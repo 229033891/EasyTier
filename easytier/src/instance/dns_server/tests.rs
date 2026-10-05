@@ -343,7 +343,7 @@ fn normalize_host_zone_trims_and_lowercases() {
 
 #[tokio::test]
 async fn test_static_hosts_win_over_route_hostname() {
-    use crate::proto::api::manage::{DnsConfig, DnsHostEntry};
+    use easytier_core::config::{DnsConfig, DnsHostEntry};
 
     let tun_ip = Ipv4Inet::from_str("10.144.144.10/24").unwrap();
     let (global_ctx, core_instance, virtual_nic) = prepare_env("test1", tun_ip).await;
@@ -575,7 +575,7 @@ async fn test_static_hosts_cleared_on_client_disconnect() {
     // Also cover reload_dns_policy (local hosts hot path).
     dns_server_inst
         .data
-        .reload_dns_policy(Some(&crate::proto::api::manage::DnsConfig {
+        .reload_dns_policy(Some(&DnsConfig {
             hosts: vec![DnsHostEntry {
                 name: "gone.et.net".to_string(),
                 ips: vec!["5.5.5.5".to_string()],

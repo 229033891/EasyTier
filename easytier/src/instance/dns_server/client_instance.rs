@@ -1,5 +1,6 @@
 use std::{sync::Arc, time::Duration};
 
+use easytier_core::config::DnsHostEntry;
 use easytier_core::gateway::magic_dns::{
     MagicDnsRoutePublisher, MagicDnsRouteSnapshot, run_magic_dns_route_publisher,
 };
@@ -10,7 +11,6 @@ use crate::{
     common::global_ctx::ArcGlobalCtx,
     proto::{
         api::instance::Route,
-        api::manage::DnsHostEntry,
         common::Void,
         magic_dns::{
             HandshakeRequest, MagicDnsServerRpc, MagicDnsServerRpcClientFactory, StaticDnsHost,
