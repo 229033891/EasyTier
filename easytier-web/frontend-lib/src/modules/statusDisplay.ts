@@ -1,4 +1,4 @@
-import type { PeerInfo, PeerRoutePair } from '../types/network'
+import type { NetworkInstanceRunningInfo, PeerInfo, PeerRoutePair, Route } from '../types/network'
 
 export function numericValue(value: unknown): number | undefined {
   if (typeof value === 'number')
@@ -323,4 +323,64 @@ export function lossRate(info: PeerRoutePair) {
   }
 
   return ''
+}
+
+/** Parse `installed=[a,b]` from desktop L2 proxy_cidr_route_sync summary. */
+export function parseInstalledProxyCidrs(syncSummary?: string | null): string[] {
+  if (!syncSummary)
+    return []
+
+  const match = syncSummary.match(/installed=\[([^\]]*)\]/)
+  if (!match)
+    return []
+
+  const raw = match[1]?.trim()
+  if (!raw || raw === '-')
+    return []
+
+  return raw
+    .split(',')
+    .map(s => s.trim())
+    .filter(s => s.length > 0 && s !== '-')
+}
+
+function normalizeCidr(cidr: string): string {
+  const trimmed = cidr.trim()
+  if (!trimmed)
+    return ''
+  return trimmed.includes('/')
+    ? trimmed
+    : `${trimmed}${trimmed.includes(':') ? '/128' : '/32'}`
+}
+
+/** Collect proxy CIDRs from the EasyTier route table (mobile / no L2 sync fallback). */
+export function collectRouteProxyCidrs(routes?: Route[] | null): string[] {
+  const cidrs = new Set<string>()
+  for (const route of routes ?? []) {
+    for (const cidr of route.proxy_cidrs ?? []) {
+      const normalized = normalizeCidr(cidr)
+      if (normalized)
+        cidrs.add(normalized)
+    }
+  }
+  return [...cidrs].sort()
+}
+
+/**
+ * Local OS / VPN routes currently applied for this instance.
+ * When desktop L2 sync summary is present, trust its `installed=` list only
+ * (empty means nothing installed yet — do not fall back to the route table).
+ * Without sync (e.g. mobile), fall back to route-table proxy_cidrs.
+ */
+export function collectLocalInstalledRoutes(
+  detail?: Pick<NetworkInstanceRunningInfo, 'proxy_cidr_route_sync' | 'routes'> | null,
+): string[] {
+  if (!detail)
+    return []
+
+  // Sync string is authoritative on desktop even when installed is empty.
+  if (detail.proxy_cidr_route_sync)
+    return parseInstalledProxyCidrs(detail.proxy_cidr_route_sync)
+
+  return collectRouteProxyCidrs(detail.routes)
 }

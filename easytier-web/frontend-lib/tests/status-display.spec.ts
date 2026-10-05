@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { latencyMs, lossRate } from '../src/modules/statusDisplay'
+import {
+  collectLocalInstalledRoutes,
+  collectRouteProxyCidrs,
+  latencyMs,
+  lossRate,
+  parseInstalledProxyCidrs,
+} from '../src/modules/statusDisplay'
 import { ipv4ToString, ipv6ToString } from '../src/modules/utils'
 
 function peerRoutePair(conns: any[]) {
@@ -80,5 +86,40 @@ describe('status display helpers', () => {
 
     expect(latencyMs(peerRoutePairWithDefaultConn(conns, defaultConnId))).toBe('9ms')
     expect(lossRate(peerRoutePairWithDefaultConn(conns, defaultConnId))).toBe('50%')
+  })
+
+  it('parses installed proxy CIDRs from L2 sync summary', () => {
+    expect(parseInstalledProxyCidrs(undefined)).toEqual([])
+    expect(parseInstalledProxyCidrs('desired=[-] installed=[-] exit=false')).toEqual([])
+    expect(parseInstalledProxyCidrs(
+      'desired=[10.0.0.0/24] installed=[10.0.0.0/24,192.168.1.0/24] exit=true',
+    )).toEqual(['10.0.0.0/24', '192.168.1.0/24'])
+  })
+
+  it('collects route-table proxy CIDRs as fallback', () => {
+    expect(collectRouteProxyCidrs([
+      { proxy_cidrs: ['10.1.0.0/24', '10.2.0.1'] },
+      { proxy_cidrs: ['10.1.0.0/24'] },
+    ] as any)).toEqual(['10.1.0.0/24', '10.2.0.1/32'])
+    expect(collectRouteProxyCidrs([
+      { proxy_cidrs: ['fd00::1', '2001:db8::/64'] },
+    ] as any)).toEqual(['2001:db8::/64', 'fd00::1/128'])
+  })
+
+  it('prefers L2 installed routes over route-table proxy CIDRs', () => {
+    expect(collectLocalInstalledRoutes({
+      proxy_cidr_route_sync: 'desired=[1.0.0.0/8] installed=[1.0.0.0/8] exit=false',
+      routes: [{ proxy_cidrs: ['9.9.9.0/24'] } as any],
+    })).toEqual(['1.0.0.0/8'])
+
+    // Sync present but installed empty: do NOT fall back (would misreport peers' CIDRs as installed)
+    expect(collectLocalInstalledRoutes({
+      proxy_cidr_route_sync: 'desired=[1.0.0.0/8] installed=[-] exit=false',
+      routes: [{ proxy_cidrs: ['9.9.9.0/24'] } as any],
+    })).toEqual([])
+
+    expect(collectLocalInstalledRoutes({
+      routes: [{ proxy_cidrs: ['9.9.9.0/24'] } as any],
+    })).toEqual(['9.9.9.0/24'])
   })
 })

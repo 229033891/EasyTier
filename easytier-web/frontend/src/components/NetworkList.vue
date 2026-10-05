@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue';
-import { Button, ProgressSpinner, useToast } from 'primevue';
+import { computed, reactive, ref } from 'vue';
+import { Button, InputText, ProgressSpinner, useToast } from 'primevue';
 import { Utils, tooltipDirective, NetworkTypes } from 'easytier-frontend-lib';
 import { useRouter } from 'vue-router';
 import { useI18n } from 'vue-i18n';
@@ -32,6 +32,91 @@ interface NetworkRow {
     instance_id: string;
     network_name: string;
 }
+
+type SortKey = 'network_name' | 'hostname' | 'connection_addr' | 'virtual_ip';
+type SortDir = 'asc' | 'desc';
+
+const filters = reactive({
+    network_name: '',
+    hostname: '',
+    connection_addr: '',
+    virtual_ip: '',
+});
+
+const sortKey = ref<SortKey>('network_name');
+const sortDir = ref<SortDir>('asc');
+
+const hasActiveFilters = computed(() =>
+    Object.values(filters).some((v) => v.trim().length > 0),
+);
+
+const clearFilters = () => {
+    filters.network_name = '';
+    filters.hostname = '';
+    filters.connection_addr = '';
+    filters.virtual_ip = '';
+};
+
+const toggleSort = (key: SortKey) => {
+    if (sortKey.value === key) {
+        sortDir.value = sortDir.value === 'asc' ? 'desc' : 'asc';
+    } else {
+        sortKey.value = key;
+        sortDir.value = 'asc';
+    }
+};
+
+const sortAria = (key: SortKey) => {
+    if (sortKey.value !== key) return 'none';
+    return sortDir.value === 'asc' ? 'ascending' : 'descending';
+};
+
+/** 与设备列表排序按钮图标一致 */
+const sortIconClass = (key: SortKey) => {
+    if (sortKey.value !== key) {
+        return 'pi pi-sort-alt sort-icon sort-icon--idle';
+    }
+    return sortDir.value === 'asc'
+        ? 'pi pi-sort-amount-up sort-icon sort-icon--active'
+        : 'pi pi-sort-amount-down sort-icon sort-icon--active';
+};
+
+const includesIgnoreCase = (haystack: string, needle: string) => {
+    const q = needle.trim().toLowerCase();
+    if (!q) return true;
+    return haystack.toLowerCase().includes(q);
+};
+
+/** IPv4（可带 /cidr）转可比较整数；无效值靠后 */
+const ipv4SortValue = (vip: string): number => {
+    const ip = vip.split('/')[0]?.trim() ?? '';
+    const parts = ip.split('.').map((p) => Number(p));
+    if (parts.length !== 4 || parts.some((p) => !Number.isInteger(p) || p < 0 || p > 255)) {
+        return Number.POSITIVE_INFINITY;
+    }
+    return ((parts[0] << 24) | (parts[1] << 16) | (parts[2] << 8) | parts[3]) >>> 0;
+};
+
+const compareRows = (a: NetworkRow, b: NetworkRow, key: SortKey): number => {
+    switch (key) {
+        case 'network_name':
+            return a.network_name.localeCompare(b.network_name)
+                || a.instance_id.localeCompare(b.instance_id);
+        case 'hostname':
+            return a.hostname.localeCompare(b.hostname);
+        case 'connection_addr':
+            return (a.connection_addr || a.connection_addr_raw)
+                .localeCompare(b.connection_addr || b.connection_addr_raw);
+        case 'virtual_ip': {
+            const av = ipv4SortValue(a.virtual_ip);
+            const bv = ipv4SortValue(b.virtual_ip);
+            if (av !== bv) return av - bv;
+            return a.virtual_ip.localeCompare(b.virtual_ip);
+        }
+        default:
+            return 0;
+    }
+};
 
 const networkNameByKey = ref<Record<string, string>>({});
 const virtualIpByKey = ref<Record<string, string>>({});
@@ -101,11 +186,11 @@ const networkRows = computed<NetworkRow[]>(() => {
     for (const device of deviceList.value ?? []) {
         for (const instanceId of device.running_network_instances ?? []) {
             const key = `${device.machine_id}:${instanceId}`;
-            const rawAddr = device.public_ip || '';
+            const rawAddr = device.client_url || device.public_ip || '';
             rows.push({
                 machine_id: device.machine_id,
                 hostname: device.hostname,
-                connection_addr: Utils.formatClientUrl(rawAddr) || rawAddr,
+                connection_addr: device.public_ip || Utils.formatClientUrl(rawAddr) || rawAddr,
                 connection_addr_raw: rawAddr,
                 virtual_ip: virtualIpByKey.value[key] || '',
                 instance_id: instanceId,
@@ -113,9 +198,28 @@ const networkRows = computed<NetworkRow[]>(() => {
             });
         }
     }
-    return rows.sort((a, b) =>
-        a.network_name.localeCompare(b.network_name) || a.hostname.localeCompare(b.hostname)
-    );
+    return rows;
+});
+
+const displayedRows = computed<NetworkRow[]>(() => {
+    const filtered = networkRows.value.filter((row) => {
+        const nameHaystack = `${row.network_name} ${row.instance_id}`;
+        const addrHaystack = `${row.connection_addr} ${row.connection_addr_raw}`;
+        return includesIgnoreCase(nameHaystack, filters.network_name)
+            && includesIgnoreCase(row.hostname, filters.hostname)
+            && includesIgnoreCase(addrHaystack, filters.connection_addr)
+            && includesIgnoreCase(row.virtual_ip, filters.virtual_ip);
+    });
+
+    const dir = sortDir.value === 'asc' ? 1 : -1;
+    const key = sortKey.value;
+    return [...filtered].sort((a, b) => {
+        const primary = compareRows(a, b, key);
+        if (primary !== 0) return primary * dir;
+        return (a.network_name.localeCompare(b.network_name)
+            || a.hostname.localeCompare(b.hostname)
+            || a.instance_id.localeCompare(b.instance_id)) * dir;
+    });
 });
 
 const fetchMetasForDevices = async (
@@ -239,11 +343,21 @@ const loadDevices = async (): Promise<Array<Utils.DeviceInfo>> => {
     return devices;
 };
 
-const { data: deviceList } = usePollingList<Array<Utils.DeviceInfo>>({
+const { data: deviceList, loading: devicesLoading, reloading: devicesReloading, error: listError, reload: reloadDevices } = usePollingList<Array<Utils.DeviceInfo>>({
     fetcher: loadDevices,
     // 网络列表依赖二次 RPC；1s 过密，略放宽减轻 list_machines 压力
     interval: 2000,
 });
+
+const retryLoadDevices = async () => {
+    try {
+        await reloadDevices();
+    } catch {
+        // error 已写入 listError
+    }
+};
+
+const listLoadFailed = computed(() => !!listError.value && deviceList.value === undefined);
 
 const openNetworkRow = (row: NetworkRow, mode: 'status' | 'config') => {
     router.push({
@@ -261,27 +375,129 @@ const openNetworkRow = (row: NetworkRow, mode: 'status' | 'config') => {
     <div class="et-page">
         <div class="et-page-header">
             <h1 class="et-page-title">{{ t('web.main.network_list') }}</h1>
+            <Button
+                v-if="hasActiveFilters"
+                :label="t('web.device.clear_filters')"
+                icon="pi pi-filter-slash"
+                severity="secondary"
+                text
+                size="small"
+                class="clear-filters-btn"
+                @click="clearFilters"
+            />
         </div>
 
         <!-- 桌面：表格 -->
         <div class="network-list-desktop">
-            <ListPageShell :loading="deviceList === undefined" :empty="networkRows.length === 0">
+            <ListPageShell
+                :loading="devicesLoading"
+                :error="listLoadFailed"
+                :empty="!listLoadFailed && (!deviceList || networkRows.length === 0)"
+            >
                 <template #empty>{{ t('web.device.no_networks') }}</template>
+                <template #error>
+                    {{ t('web.device.load_list_failed') }}
+                    <span v-if="listError"> {{ Utils.formatApiErrorDetail(listError, t) }}</span>
+                </template>
+                <template #error-actions>
+                    <Button
+                        :label="t('web.device.load_list_retry')"
+                        icon="pi pi-refresh"
+                        severity="secondary"
+                        size="small"
+                        :loading="devicesReloading"
+                        @click="retryLoadDevices"
+                    />
+                </template>
                 <thead>
-                    <tr class="bg-surface-50 text-left">
-                        <th class="px-3 py-2 font-semibold">{{ t('web.device.network_name') }}</th>
-                        <th class="px-3 py-2 font-semibold">{{ t('web.device.belonging_device') }}</th>
-                        <th
-                            class="px-3 py-2 font-semibold"
-                            v-tooltip.top="{ value: t('web.device.connection_addr_help'), escape: false }"
-                        >{{ t('web.device.connection_addr') }}</th>
-                        <th class="px-3 py-2 font-semibold">{{ t('virtual_ipv4') }}</th>
+                    <tr class="text-left">
+                        <th class="px-3 py-2 font-semibold" :aria-sort="sortAria('network_name')">
+                            <button type="button" class="col-sort-btn"
+                                v-tooltip.top="t('web.device.click_to_sort')"
+                                @click="toggleSort('network_name')">
+                                <span>{{ t('web.device.network_name') }}</span>
+                                <i :class="sortIconClass('network_name')" aria-hidden="true"></i>
+                            </button>
+                        </th>
+                        <th class="px-3 py-2 font-semibold" :aria-sort="sortAria('hostname')">
+                            <button type="button" class="col-sort-btn"
+                                v-tooltip.top="t('web.device.click_to_sort')"
+                                @click="toggleSort('hostname')">
+                                <span>{{ t('web.device.belonging_device') }}</span>
+                                <i :class="sortIconClass('hostname')" aria-hidden="true"></i>
+                            </button>
+                        </th>
+                        <th class="px-3 py-2 font-semibold" :aria-sort="sortAria('connection_addr')">
+                            <button type="button" class="col-sort-btn"
+                                v-tooltip.top="{
+                                    value: `${t('web.device.connection_addr_help')}<br/>${t('web.device.click_to_sort')}`,
+                                    escape: false,
+                                }"
+                                @click="toggleSort('connection_addr')">
+                                <span>{{ t('web.device.connection_addr') }}</span>
+                                <i :class="sortIconClass('connection_addr')" aria-hidden="true"></i>
+                            </button>
+                        </th>
+                        <th class="px-3 py-2 font-semibold" :aria-sort="sortAria('virtual_ip')">
+                            <button type="button" class="col-sort-btn"
+                                v-tooltip.top="t('web.device.click_to_sort')"
+                                @click="toggleSort('virtual_ip')">
+                                <span>{{ t('virtual_ipv4') }}</span>
+                                <i :class="sortIconClass('virtual_ip')" aria-hidden="true"></i>
+                            </button>
+                        </th>
+                        <!-- 本页仅展示运行中实例，状态列不做筛选/排序 -->
                         <th class="px-3 py-2 font-semibold">{{ t('web.device.status') }}</th>
                         <th class="px-3 py-2 font-semibold text-right">{{ t('web.device.management') }}</th>
                     </tr>
+                    <tr class="filter-row text-left">
+                        <th class="px-3 pb-2 pt-0 font-normal">
+                            <InputText
+                                v-model="filters.network_name"
+                                :placeholder="t('web.device.filter_placeholder')"
+                                class="col-filter-input w-full"
+                                size="small"
+                                @click.stop
+                            />
+                        </th>
+                        <th class="px-3 pb-2 pt-0 font-normal">
+                            <InputText
+                                v-model="filters.hostname"
+                                :placeholder="t('web.device.filter_placeholder')"
+                                class="col-filter-input w-full"
+                                size="small"
+                                @click.stop
+                            />
+                        </th>
+                        <th class="px-3 pb-2 pt-0 font-normal">
+                            <InputText
+                                v-model="filters.connection_addr"
+                                :placeholder="t('web.device.filter_placeholder')"
+                                class="col-filter-input w-full"
+                                size="small"
+                                @click.stop
+                            />
+                        </th>
+                        <th class="px-3 pb-2 pt-0 font-normal">
+                            <InputText
+                                v-model="filters.virtual_ip"
+                                :placeholder="t('web.device.filter_placeholder')"
+                                class="col-filter-input w-full"
+                                size="small"
+                                @click.stop
+                            />
+                        </th>
+                        <th class="px-3 pb-2 pt-0"></th>
+                        <th class="px-3 pb-2 pt-0"></th>
+                    </tr>
                 </thead>
                 <tbody>
-                    <tr v-for="row in networkRows" :key="`${row.machine_id}-${row.instance_id}`"
+                    <tr v-if="displayedRows.length === 0">
+                        <td colspan="6" class="px-3 py-8 et-meta text-center">
+                            {{ t('web.device.no_matching_networks') }}
+                        </td>
+                    </tr>
+                    <tr v-for="row in displayedRows" :key="`${row.machine_id}-${row.instance_id}`"
                         class="border-t border-surface">
                         <td class="px-3 py-2">
                             <div class="font-medium truncate max-w-[16rem]" v-tooltip.top="row.network_name">
@@ -332,65 +548,149 @@ const openNetworkRow = (row: NetworkRow, mode: 'status' | 'config') => {
 
         <!-- 移动：卡片，避免六列宽表横滑 -->
         <div class="network-list-mobile">
-            <div v-if="deviceList === undefined" class="w-full flex justify-center py-8">
+            <div v-if="devicesLoading" class="w-full flex justify-center py-8">
                 <ProgressSpinner />
             </div>
-            <div v-else-if="networkRows.length === 0" class="et-list-empty et-meta py-10 px-4">
-                <i class="pi pi-inbox text-2xl" aria-hidden="true"></i>
-                <span>{{ t('web.device.no_networks') }}</span>
+            <div v-else-if="listLoadFailed" class="et-list-empty et-list-empty--error et-meta py-10 px-4">
+                <i class="pi pi-exclamation-circle text-2xl" aria-hidden="true"></i>
+                <span>{{ t('web.device.load_list_failed') }}</span>
+                <span v-if="listError">{{ Utils.formatApiErrorDetail(listError, t) }}</span>
+                <Button
+                    :label="t('web.device.load_list_retry')"
+                    icon="pi pi-refresh"
+                    severity="secondary"
+                    size="small"
+                    :loading="devicesReloading"
+                    @click="retryLoadDevices"
+                />
             </div>
-            <div v-else class="network-card-list">
-                <article v-for="row in networkRows" :key="`m-${row.machine_id}-${row.instance_id}`"
-                    class="network-card">
-                    <div class="network-card-head">
-                        <div class="min-w-0 flex-1">
-                            <div class="network-card-title truncate" v-tooltip.top="row.network_name">
-                                {{ row.network_name }}
+            <template v-else-if="!deviceList || networkRows.length === 0">
+                <div class="et-list-empty et-meta py-10 px-4">
+                    <i class="pi pi-inbox text-2xl" aria-hidden="true"></i>
+                    <span>{{ t('web.device.no_networks') }}</span>
+                </div>
+            </template>
+            <template v-else>
+                <div class="mobile-filters">
+                    <InputText
+                        v-model="filters.network_name"
+                        :placeholder="t('web.device.network_name')"
+                        class="col-filter-input w-full"
+                        size="small"
+                    />
+                    <InputText
+                        v-model="filters.hostname"
+                        :placeholder="t('web.device.belonging_device')"
+                        class="col-filter-input w-full"
+                        size="small"
+                    />
+                    <InputText
+                        v-model="filters.connection_addr"
+                        :placeholder="t('web.device.connection_addr')"
+                        class="col-filter-input w-full"
+                        size="small"
+                    />
+                    <InputText
+                        v-model="filters.virtual_ip"
+                        :placeholder="t('virtual_ipv4')"
+                        class="col-filter-input w-full"
+                        size="small"
+                    />
+                    <div class="mobile-sort-row">
+                        <label class="et-meta shrink-0">{{ t('web.device.sort_by') }}</label>
+                        <div class="mobile-sort-btns">
+                            <button
+                                type="button"
+                                class="mobile-sort-chip"
+                                :class="{ 'mobile-sort-chip--active': sortKey === 'network_name' }"
+                                @click="toggleSort('network_name')"
+                            >{{ t('web.device.network_name') }}
+                                <i v-if="sortKey === 'network_name'" :class="sortIconClass('network_name')"></i>
+                            </button>
+                            <button
+                                type="button"
+                                class="mobile-sort-chip"
+                                :class="{ 'mobile-sort-chip--active': sortKey === 'hostname' }"
+                                @click="toggleSort('hostname')"
+                            >{{ t('web.device.belonging_device') }}
+                                <i v-if="sortKey === 'hostname'" :class="sortIconClass('hostname')"></i>
+                            </button>
+                            <button
+                                type="button"
+                                class="mobile-sort-chip"
+                                :class="{ 'mobile-sort-chip--active': sortKey === 'virtual_ip' }"
+                                @click="toggleSort('virtual_ip')"
+                            >{{ t('virtual_ipv4') }}
+                                <i v-if="sortKey === 'virtual_ip'" :class="sortIconClass('virtual_ip')"></i>
+                            </button>
+                            <button
+                                type="button"
+                                class="mobile-sort-chip"
+                                :class="{ 'mobile-sort-chip--active': sortKey === 'connection_addr' }"
+                                @click="toggleSort('connection_addr')"
+                            >{{ t('web.device.connection_addr') }}
+                                <i v-if="sortKey === 'connection_addr'" :class="sortIconClass('connection_addr')"></i>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+                <div v-if="displayedRows.length === 0" class="et-list-empty et-meta py-10 px-4">
+                    <i class="pi pi-filter-slash text-2xl" aria-hidden="true"></i>
+                    <span>{{ t('web.device.no_matching_networks') }}</span>
+                </div>
+                <div v-else class="network-card-list">
+                    <article v-for="row in displayedRows" :key="`m-${row.machine_id}-${row.instance_id}`"
+                        class="network-card">
+                        <div class="network-card-head">
+                            <div class="min-w-0 flex-1">
+                                <div class="network-card-title truncate" v-tooltip.top="row.network_name">
+                                    {{ row.network_name }}
+                                </div>
+                                <div class="et-meta truncate" v-tooltip.top="row.instance_id">{{ row.instance_id }}</div>
                             </div>
-                            <div class="et-meta truncate" v-tooltip.top="row.instance_id">{{ row.instance_id }}</div>
+                            <span class="inline-flex items-center gap-1 status-running shrink-0">
+                                <i class="pi pi-circle-fill text-[0.45rem]"></i>
+                                {{ t('network_running') }}
+                            </span>
                         </div>
-                        <span class="inline-flex items-center gap-1 status-running shrink-0">
-                            <i class="pi pi-circle-fill text-[0.45rem]"></i>
-                            {{ t('network_running') }}
-                        </span>
-                    </div>
-                    <dl class="network-card-meta">
-                        <div>
-                            <dt>{{ t('web.device.belonging_device') }}</dt>
-                            <dd class="truncate" v-tooltip.top="row.hostname">{{ row.hostname || '—' }}</dd>
+                        <dl class="network-card-meta">
+                            <div>
+                                <dt>{{ t('web.device.belonging_device') }}</dt>
+                                <dd class="truncate" v-tooltip.top="row.hostname">{{ row.hostname || '—' }}</dd>
+                            </div>
+                            <div>
+                                <dt
+                                    v-tooltip.top="{ value: t('web.device.connection_addr_help'), escape: false }"
+                                >{{ t('web.device.connection_addr') }}</dt>
+                                <dd class="truncate" v-tooltip.top="row.connection_addr_raw || undefined">
+                                    {{ row.connection_addr || '—' }}
+                                </dd>
+                            </div>
+                            <div>
+                                <dt>{{ t('virtual_ipv4') }}</dt>
+                                <dd>
+                                    <span v-if="row.virtual_ip">{{ row.virtual_ip }}</span>
+                                    <span v-else-if="metaLoading" class="inline-flex items-center gap-1 et-meta">
+                                        <ProgressSpinner style="width: 0.85rem; height: 0.85rem"
+                                            strokeWidth="6" aria-hidden="true" />
+                                    </span>
+                                    <span v-else class="et-meta">—</span>
+                                </dd>
+                            </div>
+                        </dl>
+                        <div class="network-card-actions">
+                            <Button :label="t('web.device.page_title_status')"
+                                icon="pi pi-chart-line" severity="info" outlined size="small"
+                                class="network-card-btn"
+                                @click="openNetworkRow(row, 'status')" />
+                            <Button :label="t('web.device.page_title_config')"
+                                icon="pi pi-cog" severity="secondary" outlined size="small"
+                                class="network-card-btn"
+                                @click="openNetworkRow(row, 'config')" />
                         </div>
-                        <div>
-                            <dt
-                                v-tooltip.top="{ value: t('web.device.connection_addr_help'), escape: false }"
-                            >{{ t('web.device.connection_addr') }}</dt>
-                            <dd class="truncate" v-tooltip.top="row.connection_addr_raw || undefined">
-                                {{ row.connection_addr || '—' }}
-                            </dd>
-                        </div>
-                        <div>
-                            <dt>{{ t('virtual_ipv4') }}</dt>
-                            <dd>
-                                <span v-if="row.virtual_ip">{{ row.virtual_ip }}</span>
-                                <span v-else-if="metaLoading" class="inline-flex items-center gap-1 et-meta">
-                                    <ProgressSpinner style="width: 0.85rem; height: 0.85rem"
-                                        strokeWidth="6" aria-hidden="true" />
-                                </span>
-                                <span v-else class="et-meta">—</span>
-                            </dd>
-                        </div>
-                    </dl>
-                    <div class="network-card-actions">
-                        <Button :label="t('web.device.page_title_status')"
-                            icon="pi pi-chart-line" severity="info" outlined size="small"
-                            class="network-card-btn"
-                            @click="openNetworkRow(row, 'status')" />
-                        <Button :label="t('web.device.page_title_config')"
-                            icon="pi pi-cog" severity="secondary" outlined size="small"
-                            class="network-card-btn"
-                            @click="openNetworkRow(row, 'config')" />
-                    </div>
-                </article>
-            </div>
+                    </article>
+                </div>
+            </template>
         </div>
     </div>
 </template>
@@ -418,8 +718,101 @@ const openNetworkRow = (row: NetworkRow, mode: 'status' | 'config') => {
     border: 0;
 }
 
+.clear-filters-btn {
+    flex-shrink: 0;
+    align-self: center;
+}
+
+.col-sort-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    max-width: 100%;
+    padding: 0;
+    margin: 0;
+    border: 0;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    font-weight: 600;
+    letter-spacing: inherit;
+    text-transform: inherit;
+    cursor: pointer;
+    text-align: left;
+}
+
+.col-sort-btn:hover .sort-icon--idle,
+.col-sort-btn:focus-visible .sort-icon--idle {
+    opacity: 0.75;
+}
+
+.sort-icon {
+    font-size: 0.75rem;
+    flex-shrink: 0;
+}
+
+.sort-icon--idle {
+    opacity: 0.35;
+}
+
+.sort-icon--active {
+    opacity: 1;
+    color: var(--primary-color, #0ea5e9);
+}
+
+.filter-row th {
+    text-transform: none;
+    letter-spacing: normal;
+    font-weight: 400;
+}
+
+:deep(.col-filter-input.p-inputtext) {
+    width: 100%;
+    font-size: var(--et-fs-meta);
+    font-weight: 400;
+}
+
 .network-list-mobile {
     display: none;
+}
+
+.mobile-filters {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.5rem;
+    margin-bottom: 0.75rem;
+}
+
+.mobile-sort-row {
+    grid-column: 1 / -1;
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+}
+
+.mobile-sort-btns {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+}
+
+.mobile-sort-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    padding: 0.3rem 0.6rem;
+    border: var(--et-border);
+    border-radius: calc(var(--et-radius) - 0.25rem);
+    background: var(--surface-card, #ffffff);
+    color: var(--text-color-secondary, #64748b);
+    font-size: var(--et-fs-meta);
+    cursor: pointer;
+}
+
+.mobile-sort-chip--active {
+    border-color: var(--primary-color, #0ea5e9);
+    color: var(--primary-color, #0ea5e9);
+    background: color-mix(in srgb, var(--primary-color, #0ea5e9) 10%, transparent);
 }
 
 .network-card-list {
@@ -488,24 +881,6 @@ const openNetworkRow = (row: NetworkRow, mode: 'status' | 'config') => {
 
 .network-card-btn {
     width: 100%;
-}
-
-.et-list-empty {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    gap: 0.5rem;
-    min-height: 10rem;
-    text-align: center;
-    background: var(--surface-card, #ffffff);
-    border: var(--et-border);
-    border-radius: var(--et-radius);
-}
-
-.et-list-empty i {
-    color: var(--primary-color, #0ea5e9);
-    opacity: 0.72;
 }
 
 @media (max-width: 639px) {

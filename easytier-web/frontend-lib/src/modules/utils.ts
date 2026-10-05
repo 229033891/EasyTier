@@ -276,7 +276,10 @@ export interface DeviceInfo {
     reported_hostname?: string;
     /** Explicit console alias when set; empty/undefined means no alias. */
     display_name?: string;
+    /** Display form of the config-server address (host:port). */
     public_ip: string;
+    /** Original machine client_url (e.g. tcp://host:22020); tooltip / search haystack. */
+    client_url?: string;
     running_network_count: number;
     report_time: string;
     easytier_version: string;
@@ -297,13 +300,31 @@ export interface DeviceArchiveRow {
     last_seen_at?: number;
 }
 
+/** Split a machine client_url into display (host:port) and raw URL. */
+export function connectionAddrFields(raw: string | null | undefined): {
+    public_ip: string
+    client_url: string
+} {
+    const client_url = raw ?? ''
+    return {
+        client_url,
+        public_ip: formatClientUrl(client_url) || client_url,
+    }
+}
+
+export function connectionAddrHaystack(info: Pick<DeviceInfo, 'public_ip' | 'client_url'>): string {
+    return [info.public_ip, info.client_url].filter(Boolean).join(' ')
+}
+
 export function buildDeviceInfo(device: any): DeviceInfo {
     const runningInstances = device.info?.running_network_instances ?? [];
     const reported = device.info?.hostname ?? '';
+    const addr = connectionAddrFields(device.client_url);
     let dev_info: DeviceInfo = {
         hostname: reported,
         reported_hostname: reported,
-        public_ip: device.client_url ?? '',
+        public_ip: addr.public_ip,
+        client_url: addr.client_url,
         running_network_instances: runningInstances.map((instance: any) => UuidToStr(instance)),
         running_network_count: runningInstances.length,
         report_time: device.info?.report_time ?? '',
@@ -366,11 +387,13 @@ export function mergeDevicesWithArchive(
         if (!row.hostname && !alias) {
             continue;
         }
+        const addr = connectionAddrFields(row.last_client_url);
         devices.push({
             hostname: alias || reported,
             reported_hostname: reported,
             display_name: alias || undefined,
-            public_ip: formatClientUrl(row.last_client_url) || row.last_client_url || '',
+            public_ip: addr.public_ip,
+            client_url: addr.client_url,
             running_network_count: 0,
             report_time: row.last_seen_at
                 ? new Date(row.last_seen_at * 1000).toLocaleString()

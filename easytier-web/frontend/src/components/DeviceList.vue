@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue';
+import { computed, reactive, ref, watch } from 'vue';
 import { TOAST_LIFE } from 'easytier-frontend-lib'
 import { Button, Dialog, InputText, ProgressSpinner, useConfirm, useToast, Dropdown } from 'primevue';
 import { Utils, tooltipDirective } from 'easytier-frontend-lib';
@@ -51,9 +51,17 @@ const loadDevices = async (): Promise<Array<Utils.DeviceInfo>> => {
     return loadMergedDevices(api, { toast, t });
 };
 
-const { data: deviceList, reload: reloadDevices } = usePollingList<Array<Utils.DeviceInfo>>({
+const { data: deviceList, loading: devicesLoading, reloading: devicesReloading, error: listError, reload: reloadDevices } = usePollingList<Array<Utils.DeviceInfo>>({
     fetcher: loadDevices,
 });
+
+const retryLoadDevices = async () => {
+    try {
+        await reloadDevices();
+    } catch {
+        // error 已写入 listError，面板继续展示
+    }
+};
 
 const openRenameDialog = (device: Utils.DeviceInfo) => {
     renameDeviceId.value = device.machine_id;
@@ -68,12 +76,16 @@ const saveRename = async () => {
     try {
         await api.update_device_display_name(renameDeviceId.value, renameInput.value.trim());
         renameVisible.value = false;
-        await reloadDevices();
         toast.add({
             severity: 'success',
             summary: t('web.device.rename_success'),
             life: TOAST_LIFE.success,
         });
+        try {
+            await reloadDevices();
+        } catch {
+            // 改名已成功；列表刷新失败由轮询错误态处理
+        }
     } catch (e) {
         toast.add({
             severity: 'error',
@@ -165,12 +177,16 @@ const confirmMerge = () => {
             try {
                 await api.merge_devices(mergeSourceId.value, mergeTargetId.value!);
                 mergeVisible.value = false;
-                await reloadDevices();
                 toast.add({
                     severity: 'success',
                     summary: t('web.device.merge_success'),
                     life: TOAST_LIFE.success,
                 });
+                try {
+                    await reloadDevices();
+                } catch {
+                    // 合并已成功；列表刷新失败由轮询错误态处理
+                }
             } catch (e: any) {
                 toast.add({
                     severity: 'error',
@@ -212,12 +228,16 @@ const confirmRetire = (device: Utils.DeviceInfo) => {
             if (!api) return;
             try {
                 await api.delete_device(device.machine_id);
-                await reloadDevices();
                 toast.add({
                     severity: 'success',
                     summary: t('web.device.retire_success'),
                     life: TOAST_LIFE.success,
                 });
+                try {
+                    await reloadDevices();
+                } catch {
+                    // 删除已成功；列表刷新失败由轮询错误态处理
+                }
             } catch (e: any) {
                 toast.add({
                     severity: 'error',
@@ -260,13 +280,62 @@ const handleDeviceManagement = (device: Utils.DeviceInfo, mode: 'status' | 'conf
     });
 };
 
-// 排序相关
-const sortOptions = ref([
-    { name: () => t('web.device.sort_by_hostname'), value: 'hostname', icon: 'pi pi-home' },
-    { name: () => t('web.device.sort_by_version'), value: 'version', icon: 'pi pi-tag' },
-    { name: () => t('web.device.sort_by_networks'), value: 'networks', icon: 'pi pi-sitemap' }
+type SortField = 'hostname' | 'public_ip' | 'version' | 'networks' | 'status' | 'location';
+type StatusFilter = 'all' | 'online' | 'offline';
+
+const filters = reactive({
+    hostname: '',
+    public_ip: '',
+    version: '',
+    location: '',
+    networks: '',
+    status: 'all' as StatusFilter,
+});
+
+const statusFilterOptions = computed(() => [
+    { label: t('web.device.filter_status_all'), value: 'all' as StatusFilter },
+    { label: t('web.device.online'), value: 'online' as StatusFilter },
+    { label: t('web.device.offline'), value: 'offline' as StatusFilter },
 ]);
-const selectedSortOption = ref(sortOptions.value[0]);
+
+const hasActiveFilters = computed(() =>
+    filters.hostname.trim().length > 0
+    || filters.public_ip.trim().length > 0
+    || filters.version.trim().length > 0
+    || filters.location.trim().length > 0
+    || filters.networks.trim().length > 0
+    || filters.status !== 'all',
+);
+
+const clearFilters = () => {
+    filters.hostname = '';
+    filters.public_ip = '';
+    filters.version = '';
+    filters.location = '';
+    filters.networks = '';
+    filters.status = 'all';
+};
+
+const includesIgnoreCase = (haystack: string, needle: string) => {
+    const q = needle.trim().toLowerCase();
+    if (!q) return true;
+    return haystack.toLowerCase().includes(q);
+};
+
+// 排序相关
+type SortOption = { name: string; value: SortField; icon: string };
+const sortField = ref<SortField>('hostname');
+const sortOptions = computed<SortOption[]>(() => [
+    { name: t('web.device.sort_by_hostname'), value: 'hostname', icon: 'pi pi-home' },
+    { name: t('web.device.sort_by_public_ip'), value: 'public_ip', icon: 'pi pi-globe' },
+    { name: t('web.device.sort_by_version'), value: 'version', icon: 'pi pi-tag' },
+    { name: t('web.device.sort_by_networks'), value: 'networks', icon: 'pi pi-sitemap' },
+    { name: t('web.device.sort_by_status'), value: 'status', icon: 'pi pi-circle' },
+    { name: t('web.device.sort_by_location'), value: 'location', icon: 'pi pi-map-marker' },
+]);
+const currentSortOption = computed(() =>
+    sortOptions.value.find((opt) => opt.value === sortField.value)!,
+);
 // 排序方向 (true为升序，false为降序)
 const ascending = ref(true);
 
@@ -274,43 +343,6 @@ const ascending = ref(true);
 const toggleSortDirection = () => {
     ascending.value = !ascending.value;
 };
-
-// 排序函数
-const sortDevices = (devices: Array<Utils.DeviceInfo> | undefined) => {
-    if (!devices) return [];
-
-    const sortField = selectedSortOption.value.value;
-    const direction = ascending.value ? 1 : -1;
-
-    return [...devices].sort((a, b) => {
-        // 在线优先，避免离线设备挤在前面
-        const onlineDiff = Number(isDeviceOnline(b)) - Number(isDeviceOnline(a));
-        if (onlineDiff !== 0) {
-            return onlineDiff;
-        }
-
-        let result = 0;
-
-        switch (sortField) {
-            case 'hostname':
-                result = a.hostname.localeCompare(b.hostname);
-                break;
-            case 'version':
-                result = (a.easytier_version || '').localeCompare(b.easytier_version || '');
-                break;
-            case 'networks':
-                result = a.running_network_count - b.running_network_count;
-                break;
-        }
-
-        return result * direction;
-    });
-};
-
-// 排序后的设备列表
-const sortedDeviceList = computed(() => {
-    return sortDevices(deviceList.value);
-});
 
 /** 位置各段（国家 / 地区 / 城市），空值已过滤 */
 const locationParts = (device: Utils.DeviceInfo): string[] => {
@@ -324,6 +356,106 @@ const locationText = (device: Utils.DeviceInfo): string => {
     const parts = locationParts(device);
     return parts.length ? parts.join(' · ') : t('web.device.unknown_location');
 };
+
+/** 排序用原始三段，避免切语言后无位置行分组变化 */
+const locationSortKey = (device: Utils.DeviceInfo): string => locationParts(device).join(' · ');
+
+/** 筛选同时匹配原始位置与当前语言的「未知」展示文案 */
+const locationHaystack = (device: Utils.DeviceInfo): string => {
+    const parts = locationParts(device);
+    return parts.length ? parts.join(' ') : t('web.device.unknown_location');
+};
+
+const hostnameHaystack = (device: Utils.DeviceInfo) =>
+    [device.hostname, device.reported_hostname, device.display_name, device.machine_id]
+        .filter(Boolean)
+        .join(' ');
+
+const matchesNetworkCount = (count: number, needle: string) => {
+    const q = needle.trim();
+    if (!q) return true;
+    // 支持 ">=2" / "<=1" / ">0" / "<3" / 精确数字
+    const op = q.match(/^(>=|<=|>|<)\s*(\d+)$/);
+    if (op) {
+        const n = Number(op[2]);
+        switch (op[1]) {
+            case '>=': return count >= n;
+            case '<=': return count <= n;
+            case '>': return count > n;
+            case '<': return count < n;
+        }
+    }
+    if (/^\d+$/.test(q)) {
+        return count === Number(q);
+    }
+    // 非数字文本不匹配：数量是数值字段，子串会让 "1" 误命中 10/21
+    return false;
+};
+
+const filterDevices = (devices: Array<Utils.DeviceInfo>) => {
+    return devices.filter((device) => {
+        const online = isDeviceOnline(device);
+        if (filters.status === 'online' && !online) return false;
+        if (filters.status === 'offline' && online) return false;
+
+        return includesIgnoreCase(hostnameHaystack(device), filters.hostname)
+            && includesIgnoreCase(Utils.connectionAddrHaystack(device), filters.public_ip)
+            && includesIgnoreCase(device.easytier_version || '', filters.version)
+            && includesIgnoreCase(locationHaystack(device), filters.location)
+            && matchesNetworkCount(device.running_network_count, filters.networks);
+    });
+};
+
+// 排序函数
+const sortDevices = (devices: Array<Utils.DeviceInfo>) => {
+    const activeSortField = sortField.value;
+    const direction = ascending.value ? 1 : -1;
+
+    return [...devices].sort((a, b) => {
+        // 显式按状态排序时不再强制在线优先；其它字段仍在线优先
+        if (activeSortField !== 'status') {
+            const onlineDiff = Number(isDeviceOnline(b)) - Number(isDeviceOnline(a));
+            if (onlineDiff !== 0) {
+                return onlineDiff;
+            }
+        }
+
+        let result = 0;
+
+        switch (activeSortField) {
+            case 'hostname':
+                result = a.hostname.localeCompare(b.hostname);
+                break;
+            case 'public_ip':
+                result = (a.public_ip || '').localeCompare(b.public_ip || '');
+                break;
+            case 'version':
+                result = (a.easytier_version || '').localeCompare(b.easytier_version || '');
+                break;
+            case 'networks':
+                result = a.running_network_count - b.running_network_count;
+                break;
+            case 'status':
+                result = Number(isDeviceOnline(a)) - Number(isDeviceOnline(b));
+                break;
+            case 'location':
+                result = locationSortKey(a).localeCompare(locationSortKey(b));
+                break;
+        }
+
+        if (result !== 0) {
+            return result * direction;
+        }
+        return (a.hostname.localeCompare(b.hostname)
+            || a.machine_id.localeCompare(b.machine_id)) * direction;
+    });
+};
+
+// 筛选 + 排序后的设备列表
+const sortedDeviceList = computed(() => {
+    if (!deviceList.value) return [];
+    return sortDevices(filterDevices(deviceList.value));
+});
 
 </script>
 
@@ -634,6 +766,36 @@ const locationText = (device: Utils.DeviceInfo): string => {
         color: var(--primary-color, var(--et-primary, #0ea5e9));
     }
 }
+.clear-filters-btn {
+    flex-shrink: 0;
+    align-self: center;
+}
+
+.device-filter-bar {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(9rem, 1fr));
+    gap: var(--et-space-2);
+    padding: 0 0.125rem var(--et-space-1);
+    align-items: center;
+}
+
+:deep(.device-filter-input.p-inputtext),
+:deep(.device-filter-status.p-dropdown) {
+    width: 100%;
+    min-width: 0;
+    font-size: var(--et-fs-meta);
+}
+
+:deep(.device-filter-status.p-dropdown) {
+    /* 与 size=small 的 InputText 对齐 */
+    min-height: 2rem;
+}
+
+:deep(.device-filter-status .p-dropdown-label) {
+    font-size: var(--et-fs-meta);
+    padding-block: 0.35rem;
+}
+
 /* 工具条：轻量一行，不做卡片壳 */
 .device-list-toolbar {
     display: flex;
@@ -692,23 +854,34 @@ const locationText = (device: Utils.DeviceInfo): string => {
     <div class="et-page">
         <div class="et-page-header">
             <h1 class="et-page-title">{{ t('web.device.list') }}</h1>
+            <Button
+                v-if="hasActiveFilters"
+                :label="t('web.device.clear_filters')"
+                icon="pi pi-filter-slash"
+                severity="secondary"
+                text
+                size="small"
+                class="clear-filters-btn"
+                @click="clearFilters"
+            />
         </div>
 
         <div class="device-list-toolbar">
             <div class="device-list-toolbar-group">
                 <label for="sort-by" class="text-sm hidden sm:block">{{ t('web.device.sort_by') }}</label>
-                <Dropdown id="sort-by" v-model="selectedSortOption" :options="sortOptions" optionLabel="name"
-                    class="sort-dropdown text-sm !min-w-[120px] sm:!min-w-[140px]" panelClass="text-sm">
-                    <template #value="slotProps">
+                <Dropdown id="sort-by" v-model="sortField" :options="sortOptions" optionLabel="name"
+                    optionValue="value"
+                    class="sort-dropdown text-sm !min-w-[140px] sm:!min-w-[10.5rem]" panelClass="text-sm">
+                    <template #value>
                         <div class="flex items-center gap-2">
-                            <i :class="[slotProps.value.icon, 'text-muted-color']"></i>
-                            <span class="text-color">{{ slotProps.value.name() }}</span>
+                            <i :class="[currentSortOption.icon, 'text-muted-color']"></i>
+                            <span class="text-color">{{ currentSortOption.name }}</span>
                         </div>
                     </template>
                     <template #option="slotProps">
                         <div class="flex items-center gap-2">
                             <i :class="[slotProps.option.icon, 'text-muted-color']"></i>
-                            <span>{{ slotProps.option.name() }}</span>
+                            <span>{{ slotProps.option.name }}</span>
                         </div>
                     </template>
                 </Dropdown>
@@ -731,8 +904,75 @@ const locationText = (device: Utils.DeviceInfo): string => {
             </div>
         </div>
 
-        <div v-if="deviceList === undefined" class="w-full flex justify-center">
+        <!-- 有设备数据时再显示筛选，避免加载/空列表时工具条显得突兀 -->
+        <div v-if="deviceList && deviceList.length > 0" class="device-filter-bar">
+            <InputText
+                v-model="filters.hostname"
+                :placeholder="t('web.device.hostname')"
+                class="device-filter-input"
+                size="small"
+            />
+            <InputText
+                v-model="filters.public_ip"
+                :placeholder="t('web.device.connection_addr')"
+                class="device-filter-input"
+                size="small"
+            />
+            <InputText
+                v-model="filters.version"
+                :placeholder="t('web.device.version')"
+                class="device-filter-input"
+                size="small"
+            />
+            <InputText
+                v-model="filters.location"
+                :placeholder="t('web.device.location')"
+                class="device-filter-input"
+                size="small"
+            />
+            <InputText
+                v-model="filters.networks"
+                :placeholder="t('web.device.networks')"
+                class="device-filter-input"
+                size="small"
+                v-tooltip.top="t('web.device.filter_networks_hint')"
+            />
+            <Dropdown
+                v-model="filters.status"
+                :options="statusFilterOptions"
+                optionLabel="label"
+                optionValue="value"
+                class="device-filter-status text-sm"
+                panelClass="text-sm"
+            />
+        </div>
+
+        <div v-if="devicesLoading" class="w-full flex justify-center">
             <ProgressSpinner />
+        </div>
+
+        <div v-else-if="listError && deviceList === undefined" class="et-list-empty et-list-empty--error et-meta py-10 px-4">
+            <i class="pi pi-exclamation-circle text-2xl" aria-hidden="true"></i>
+            <span>{{ t('web.device.load_list_failed') }}</span>
+            <span v-if="listError">{{ errorDetail(listError) }}</span>
+            <Button
+                :label="t('web.device.load_list_retry')"
+                icon="pi pi-refresh"
+                severity="secondary"
+                size="small"
+                :loading="devicesReloading"
+                @click="retryLoadDevices"
+            />
+        </div>
+
+        <div v-else-if="!deviceList || deviceList.length === 0" class="et-list-empty et-meta py-10 px-4">
+            <i class="pi pi-inbox text-2xl" aria-hidden="true"></i>
+            <span>{{ t('web.device.no_devices') }}</span>
+        </div>
+
+        <div v-else-if="sortedDeviceList.length === 0" class="et-list-empty et-meta py-10 px-4">
+            <i class="pi pi-filter-slash text-2xl" aria-hidden="true"></i>
+            <span>{{ t('web.device.no_matching_devices') }}</span>
         </div>
 
         <div v-else class="card-container">

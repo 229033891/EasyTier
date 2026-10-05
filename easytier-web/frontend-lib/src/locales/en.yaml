@@ -135,6 +135,7 @@ node_info_group_udp_nat_type: UDP NAT Type
 node_info_group_local_ip: Local IP
 node_info_group_public_ip: Public IP
 node_info_group_listener: Listener
+node_info_group_route: Route
 node_info_details: Node Details
 node_info_copy_group: Copy this group
 peer_count: Connected
@@ -601,8 +602,13 @@ web:
     network_list: Network List
     network_name: Network Name
     no_networks: No running networks
+    no_matching_networks: No networks match the current filters
+    filter_placeholder: Filter…
+    clear_filters: Clear filters
+    click_to_sort: Click to sort by this column
     belonging_device: Device
     load_list_failed: Failed to load device list
+    load_list_retry: Retry
     management: Device Management
     add: Add Device
     delete: Delete Device
@@ -613,6 +619,9 @@ web:
     offline_action_denied: Device is offline. Status and network create/edit are unavailable until it reconnects.
     last_seen: Last Seen
     no_devices: No Devices Found
+    no_matching_devices: No devices match the current filters
+    filter_status_all: All statuses
+    filter_networks_hint: Exact number, or >=1 / <=0 / >2 / <3
     sort_by: Sort By
     sort_direction: Sort Direction
     show_detailed_view: Show Details
@@ -624,9 +633,12 @@ web:
     page_title_config: Edit Network
     no_running_network_hint: No running network on this device. You can still open Status to pick a stopped network, or switch to Config to create one.
     sort_by_hostname: Display Name
-    sort_by_public_ip: Public IP
+    sort_by_public_ip: Config-server Address
     sort_by_version: Version
     sort_by_networks: Network Count
+    sort_by_status: Online Status
+    sort_by_location: Location
+    location: Location
     sort_direction_asc: Currently ascending, click to switch to descending
     sort_direction_desc: Currently descending, click to switch to ascending
     hostname: Display Name

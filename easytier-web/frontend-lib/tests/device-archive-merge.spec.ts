@@ -1,9 +1,15 @@
 import { describe, expect, it } from 'vitest'
-import { mergeDevicesWithArchive, type DeviceInfo } from '../src/modules/utils'
+import {
+  buildDeviceInfo,
+  connectionAddrHaystack,
+  mergeDevicesWithArchive,
+  type DeviceInfo,
+} from '../src/modules/utils'
 
 function onlineDevice(overrides: Partial<DeviceInfo> & Pick<DeviceInfo, 'machine_id' | 'hostname'>): DeviceInfo {
   return {
-    public_ip: 'udp://1.2.3.4:22020',
+    public_ip: '1.2.3.4:22020',
+    client_url: 'udp://1.2.3.4:22020',
     running_network_count: 1,
     report_time: 'now',
     easytier_version: '2.7.0',
@@ -97,5 +103,26 @@ describe('mergeDevicesWithArchive', () => {
       },
     ])
     expect(merged).toHaveLength(0)
+  })
+
+  it('formats online and offline connection addresses the same way and keeps the raw URL', () => {
+    const online = [buildDeviceInfo({
+      client_url: 'tcp://1.2.3.4:22020',
+      info: { hostname: 'APP', machine_id: { part1: 1, part2: 2, part3: 3, part4: 4 } },
+    })]
+    const merged = mergeDevicesWithArchive(online, [
+      {
+        device_id: 'offline-1',
+        hostname: 'nas',
+        last_client_url: 'udp://9.9.9.9:22020',
+        last_seen_at: 1_700_000_000,
+      },
+    ])
+    expect(merged[0].public_ip).toBe('1.2.3.4:22020')
+    expect(merged[0].client_url).toBe('tcp://1.2.3.4:22020')
+    expect(merged[1].public_ip).toBe('9.9.9.9:22020')
+    expect(merged[1].client_url).toBe('udp://9.9.9.9:22020')
+    expect(connectionAddrHaystack(merged[0])).toContain('tcp://')
+    expect(connectionAddrHaystack(merged[0])).toContain('1.2.3.4:22020')
   })
 })

@@ -164,6 +164,32 @@ select {
   color: var(--text-color-secondary, #64748b);
 }
 
+/* 列表空态：设备/网络等页共用，与 ListPageShell 视觉一致 */
+.et-list-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  min-height: 10rem;
+  text-align: center;
+  overflow: hidden;
+  background: var(--surface-card, #ffffff);
+  border: var(--et-border);
+  border-radius: var(--et-radius);
+  box-shadow: var(--et-shadow-card, 0 1px 2px rgba(15, 23, 42, 0.03));
+}
+
+.et-list-empty i {
+  color: var(--primary-color, #0ea5e9);
+  opacity: 0.72;
+}
+
+.et-list-empty--error i {
+  color: var(--et-danger, #ef4444);
+  opacity: 1;
+}
+
 /* Input placeholders: dedicated light gray (do not use text-color-secondary) */
 :where(input, textarea)::placeholder {
   color: var(--et-placeholder-color, #a8b5c5);

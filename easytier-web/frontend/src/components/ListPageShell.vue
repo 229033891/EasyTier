@@ -4,7 +4,7 @@ import { ProgressSpinner } from 'primevue';
 /**
  * 列表页脚手架：统一 loading / 空态 / 表格容器样式。
  *
- * 用法：默认插槽放表格；`empty` 插槽放空态文案。
+ * 用法：默认插槽放表格；`empty` / `error` 插槽放空态或错误文案。
  * 当 loading 为 true 时只显示 spinner，其余内容不渲染。
  */
 defineProps<{
@@ -12,12 +12,20 @@ defineProps<{
     loading: boolean;
     /** true 表示加载完成但列表为空 */
     empty: boolean;
+    /** true 表示首次加载失败且没有可展示的缓存 */
+    error?: boolean;
 }>();
 </script>
 
 <template>
     <div v-if="loading" class="w-full flex justify-center py-8">
         <ProgressSpinner />
+    </div>
+
+    <div v-else-if="error" class="et-list-empty et-list-empty--error et-meta py-10 px-4">
+        <i class="pi pi-exclamation-circle text-2xl" aria-hidden="true"></i>
+        <span><slot name="error" /></span>
+        <slot name="error-actions" />
     </div>
 
     <div v-else-if="empty" class="et-list-empty et-meta py-10 px-4">
@@ -69,36 +77,40 @@ defineProps<{
     }
 }
 
-.et-list-table th,
-.et-list-table td {
+/* 插槽根是 thead/tbody，用后代选择器套表头/行样式 */
+.et-list-table :slotted(thead) th,
+.et-list-table :slotted(tbody) td {
     vertical-align: middle;
 }
 
-.et-list-table th {
+.et-list-table :slotted(thead) th {
     background: var(--surface-50, #f8fafc);
     color: var(--text-color-secondary, #64748b);
     font-size: var(--et-fs-meta);
     letter-spacing: 0.02em;
+}
+
+.et-list-table :slotted(thead) tr:not(.filter-row) th {
     text-transform: uppercase;
 }
 
-.et-list-table tbody tr {
+.et-list-table :slotted(tbody) tr {
     transition: background-color 0.15s ease;
 }
 
 @media (hover: hover) {
-    .et-list-table tbody tr:hover {
+    .et-list-table :slotted(tbody) tr:hover {
         background: var(--surface-50, #f8fafc);
     }
 }
 
 @media (prefers-color-scheme: dark) {
-    .et-list-table th {
+    .et-list-table :slotted(thead) th {
         background: var(--surface-800, #1e293b);
     }
 
     @media (hover: hover) {
-        .et-list-table tbody tr:hover {
+        .et-list-table :slotted(tbody) tr:hover {
             background: var(--surface-hover, rgba(255, 255, 255, 0.05));
         }
     }

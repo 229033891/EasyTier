@@ -5,7 +5,7 @@ import type { RemoteClient } from '../modules/api'
 import { useI18n } from 'vue-i18n';
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue';
 import { ipv4InetToString, ipv4ToString, ipv6ToString } from '../modules/utils';
-import { latencyMs, lossRate, numericValue, peerConns, resolvePeerRemoteAddr, resolveRoutePath, type RoutePeerLabel } from '../modules/statusDisplay';
+import { collectLocalInstalledRoutes, latencyMs, lossRate, numericValue, peerConns, resolvePeerRemoteAddr, resolveRoutePath, type RoutePeerLabel } from '../modules/statusDisplay';
 import { Badge, DataTable, Column, Tag, Button, ScrollPanel, Timeline, Card, Panel, } from 'primevue';
 import NetworkChart from './NetworkChart.vue';
 import PeerConnHistoryChart from './PeerConnHistoryChart.vue';
@@ -222,7 +222,7 @@ const udpNatTypeStrMap = {
   [NatType.SymmetricEasyDec]: 'Symmetric Easy Dec',
 }
 
-/** 按类型分区；顺序：Peer ID → Virtual IP → UDP NAT → Local IP → Public IP → Listener */
+/** 按类型分区；顺序：Peer ID → … → Listener → Route（本机已添加路由） */
 const myNodeInfoGroups = computed(() => {
   const groups: ChipGroup[] = []
   if (!props.curNetworkInst)
@@ -322,6 +322,17 @@ const myNodeInfoGroups = computed(() => {
       key: 'listener',
       titleKey: 'node_info_group_listener',
       chips: listenerChips,
+    })
+  }
+
+  // 本机已添加的代理/出口路由（桌面取 L2 installed；移动端回退路由表 proxy_cidrs）
+  const routeChips = collectLocalInstalledRoutes(props.curNetworkInst.detail)
+    .map(cidr => chip(cidr))
+  if (routeChips.length) {
+    groups.push({
+      key: 'route',
+      titleKey: 'node_info_group_route',
+      chips: routeChips,
     })
   }
 

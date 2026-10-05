@@ -136,6 +136,7 @@ node_info_group_udp_nat_type: UDP NAT Type
 node_info_group_local_ip: Local IP
 node_info_group_public_ip: Public IP
 node_info_group_listener: Listener
+node_info_group_route: Route
 node_info_details: 节点详情
 node_info_copy_group: 复制本组
 peer_count: 已连接
@@ -602,8 +603,13 @@ web:
     network_list: 网络列表
     network_name: 网络名称
     no_networks: 暂无运行中的网络
+    no_matching_networks: 没有符合筛选条件的网络
+    filter_placeholder: 筛选…
+    clear_filters: 清除筛选
+    click_to_sort: 点击按此列排序
     belonging_device: 所属设备
     load_list_failed: 加载设备列表失败
+    load_list_retry: 重试
     management: 设备管理
     add: 添加设备
     delete: 删除设备
@@ -614,6 +620,9 @@ web:
     offline_action_denied: 设备离线，无法查看状态或添加/编辑网络。请待设备重新上线后再操作。
     last_seen: 最后在线
     no_devices: 未找到设备
+    no_matching_devices: 没有符合筛选条件的设备
+    filter_status_all: 全部状态
+    filter_networks_hint: 支持精确数字，或 >=1 / <=0 / >2 / <3
     sort_by: 排序依据
     sort_direction: 排序方向
     show_detailed_view: 显示详情
@@ -625,9 +634,12 @@ web:
     page_title_config: 编辑网络
     no_running_network_hint: 该设备当前没有运行中的虚拟网。可打开状态页选择已停用网络，或切换到配置页创建。
     sort_by_hostname: 显示名
-    sort_by_public_ip: 公网IP
+    sort_by_public_ip: 配置服务地址
     sort_by_version: 版本
     sort_by_networks: 网络数量
+    sort_by_status: 在线状态
+    sort_by_location: 位置
+    location: 位置
     sort_direction_asc: 当前升序，点击切换为降序
     sort_direction_desc: 当前降序，点击切换为升序
     hostname: 显示名
