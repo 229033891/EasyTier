@@ -41,8 +41,13 @@ use cidr::Ipv4Inet;
 use easytier_core::config::toml::DEFAULT_DNS_HOSTS_TTL_SECS;
 use easytier_core::gateway::magic_dns::{
     MagicDnsQuery, MagicDnsQueryResolver, MagicDnsRecordStore, MagicDnsResolverRegistration,
-    MagicDnsRoute, clear_magic_dns_os_wired, set_magic_dns_os_wired,
+    MagicDnsRoute, clear_magic_dns_os_wired,
 };
+#[cfg(any(
+    target_os = "windows",
+    all(target_os = "macos", not(feature = "macos-ne"))
+))]
+use easytier_core::gateway::magic_dns::set_magic_dns_os_wired;
 use easytier_core::instance::CorePacketPlane;
 use hickory_proto::rr::LowerName;
 use hickory_proto::serialize::binary::{BinDecodable, BinEncoder};
@@ -637,14 +642,15 @@ impl MagicDnsServerInstance {
         rpc_server.serve().await?;
 
         let policy = global_ctx.config.get_dns_config();
-        let mut run_cfg = RunConfigBuilder::default()
+        let mut run_cfg = RunConfigBuilder::default();
+        run_cfg
             .general(GeneralConfigBuilder::default().build()?)
             .excluded_forward_nameservers(vec![fake_ip.into()]);
         if let Some(dns) = &policy {
             if !dns.upstream_dns.is_empty() {
                 // R3: user-ordered upstreams. Forward sockets use
                 // magic_dns_forward_connector() (physical NIC bind, dns-policy §7).
-                run_cfg = run_cfg.forward_nameservers(dns.upstream_dns.clone());
+                run_cfg.forward_nameservers(dns.upstream_dns.clone());
                 tracing::info!(
                     upstreams = ?dns.upstream_dns,
                     "MagicDNS using configured upstream_dns (ordered failover, underlay-bound)"
@@ -659,7 +665,7 @@ impl MagicDnsServerInstance {
                         servers: f.servers.clone(),
                     })
                     .collect::<Vec<_>>();
-                run_cfg = run_cfg.split_forwarders(splits);
+                run_cfg.split_forwarders(splits);
                 tracing::info!(
                     forwarders = dns.forwarders.len(),
                     "MagicDNS split forwarder zones configured"

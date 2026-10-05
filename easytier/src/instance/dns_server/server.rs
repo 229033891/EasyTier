@@ -587,11 +587,12 @@ mod tests {
         assert_eq!(opts.num_concurrent_reqs, 1);
         assert_eq!(opts.timeout, Duration::from_secs(2));
         assert_eq!(opts.attempts, 2);
+        let expected_ip: std::net::IpAddr = "1.1.1.1".parse()?;
         assert!(
             forward
                 .name_servers
                 .iter()
-                .any(|ns| ns.socket_addr.ip() == "1.1.1.1".parse::<std::net::IpAddr>()?)
+                .any(|ns| ns.socket_addr.ip() == expected_ip)
         );
         Ok(())
     }
