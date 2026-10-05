@@ -26,7 +26,9 @@ pub struct DnsConfig {
     pub upstream_dns: Vec<String>,
 }
 
-#[cfg(feature = "management-rpc")]
+// browser-config (WASM config-generator) and management-rpc both enable
+// easytier-proto/api without sharing a single local feature flag.
+#[cfg(any(feature = "management-rpc", feature = "browser-config"))]
 mod proto_convert {
     use super::*;
     use easytier_proto::api::manage;
