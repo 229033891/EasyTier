@@ -42,6 +42,13 @@ const curVpnStatus: vpnStatus = {
   dns: undefined,
 }
 
+/** Routes currently applied via Android VpnService (empty when VPN is down). */
+export function getMobileVpnInstalledRoutes(): string[] {
+  if (!curVpnStatus.running)
+    return []
+  return [...curVpnStatus.routes]
+}
+
 export function setMobileVpnTileActionHandler(
   handler?: (action: VpnTileAction) => Promise<void>,
 ) {

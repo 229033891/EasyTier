@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   collectLocalInstalledRoutes,
   collectRouteProxyCidrs,
+  isMeaningfulProxyCidrRouteSync,
   latencyMs,
   lossRate,
   parseInstalledProxyCidrs,
@@ -118,8 +119,21 @@ describe('status display helpers', () => {
       routes: [{ proxy_cidrs: ['9.9.9.0/24'] } as any],
     })).toEqual([])
 
+    // Empty L2 placeholder (Android / uninitialized): fall back to route-table proxy_cidrs
+    expect(isMeaningfulProxyCidrRouteSync('desired=[-] installed=[-] exit=false')).toBe(false)
+    expect(collectLocalInstalledRoutes({
+      proxy_cidr_route_sync: 'desired=[-] installed=[-] exit=false',
+      routes: [{ proxy_cidrs: ['9.9.9.0/24'] } as any],
+    })).toEqual(['9.9.9.0/24'])
+
     expect(collectLocalInstalledRoutes({
       routes: [{ proxy_cidrs: ['9.9.9.0/24'] } as any],
     })).toEqual(['9.9.9.0/24'])
+
+    // Platform override (VpnService) wins over L2 and route table
+    expect(collectLocalInstalledRoutes({
+      proxy_cidr_route_sync: 'desired=[1.0.0.0/8] installed=[1.0.0.0/8] exit=false',
+      routes: [{ proxy_cidrs: ['9.9.9.0/24'] } as any],
+    }, ['10.20.0.0/16', '0.0.0.0/0'])).toEqual(['0.0.0.0/0', '10.20.0.0/16'])
   })
 })

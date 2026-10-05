@@ -30,6 +30,11 @@ const props = defineProps<{
     mode?: 'status' | 'config';
     /** ??????????????????????? */
     pageTitle?: string;
+    /**
+     * Platform-owned installed routes (Android VpnService).
+     * Forwarded to Status; may be a getter refreshed with network info polls.
+     */
+    localInstalledRoutes?: string[] | (() => string[]);
 }>();
 
 const isStatusMode = computed(() => props.mode === 'status')
@@ -928,7 +933,7 @@ onUnmounted(() => {
 
             <template v-else-if="needShowNetworkStatus">
                 <Status v-if="curNetworkInfo && curNetworkInfo.error_msg === ''" v-bind:cur-network-inst="curNetworkInfo"
-                    :api="api" class="mb-0" />
+                    :api="api" :local-installed-routes="localInstalledRoutes" class="mb-0" />
                 <Message v-else-if="curNetworkInfo?.error_msg" severity="error" class="mb-0">{{
                     curNetworkInfo.error_msg }}</Message>
                 <Message v-else severity="info" class="mb-0">{{ t('web.device_management.loading_network_status') }}

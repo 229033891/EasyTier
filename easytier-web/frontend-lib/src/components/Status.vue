@@ -5,7 +5,7 @@ import type { RemoteClient } from '../modules/api'
 import { useI18n } from 'vue-i18n';
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue';
 import { ipv4InetToString, ipv4ToString, ipv6ToString } from '../modules/utils';
-import { collectLocalInstalledRoutes, latencyMs, lossRate, numericValue, peerConns, resolvePeerRemoteAddr, resolveRoutePath, type RoutePeerLabel } from '../modules/statusDisplay';
+import { collectLocalInstalledRoutes, isMeaningfulProxyCidrRouteSync, latencyMs, lossRate, numericValue, peerConns, resolvePeerRemoteAddr, resolveRoutePath, type RoutePeerLabel } from '../modules/statusDisplay';
 import { Badge, DataTable, Column, Tag, Button, ScrollPanel, Timeline, Card, Panel, } from 'primevue';
 import NetworkChart from './NetworkChart.vue';
 import PeerConnHistoryChart from './PeerConnHistoryChart.vue';
@@ -13,6 +13,12 @@ import PeerConnHistoryChart from './PeerConnHistoryChart.vue';
 const props = defineProps<{
   curNetworkInst: NetworkInstance | null,
   api: RemoteClient,
+  /**
+   * Platform-owned installed routes (e.g. Android VpnService).
+   * When non-empty, preferred over L2 proxy_cidr_route_sync.
+   * May be a getter so parent can re-read on each status refresh.
+   */
+  localInstalledRoutes?: string[] | (() => string[]),
 }>()
 
 const { t } = useI18n()
@@ -250,11 +256,11 @@ const myNodeInfoGroups = computed(() => {
   }
 
   const routeSync = props.curNetworkInst.detail?.proxy_cidr_route_sync
-  if (routeSync) {
+  if (isMeaningfulProxyCidrRouteSync(routeSync)) {
     groups.push({
       key: 'proxy_cidr_route_sync',
       titleKey: 'node_info_group_proxy_cidr_route_sync',
-      chips: [chip(routeSync)],
+      chips: [chip(routeSync!)],
     })
   }
 
@@ -325,8 +331,11 @@ const myNodeInfoGroups = computed(() => {
     })
   }
 
-  // 本机已添加的代理/出口路由（桌面取 L2 installed；移动端回退路由表 proxy_cidrs）
-  const routeChips = collectLocalInstalledRoutes(props.curNetworkInst.detail)
+  // 本机已添加路由：Android VpnService 覆盖优先；否则 L2 installed / 路由表回退
+  const overrideRoutes = typeof props.localInstalledRoutes === 'function'
+    ? props.localInstalledRoutes()
+    : props.localInstalledRoutes
+  const routeChips = collectLocalInstalledRoutes(props.curNetworkInst.detail, overrideRoutes)
     .map(cidr => chip(cidr))
   if (routeChips.length) {
     groups.push({

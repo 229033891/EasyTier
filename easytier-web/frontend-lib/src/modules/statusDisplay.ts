@@ -344,6 +344,20 @@ export function parseInstalledProxyCidrs(syncSummary?: string | null): string[] 
     .filter(s => s.length > 0 && s !== '-')
 }
 
+/**
+ * Default/uninitialized L2 summary before the desktop route updater reports,
+ * or on platforms (Android) where ifcfg is a no-op and VpnService owns routes.
+ * Showing this string as "sync status" is misleading.
+ */
+export function isMeaningfulProxyCidrRouteSync(syncSummary?: string | null): boolean {
+  if (!syncSummary?.trim())
+    return false
+  // Empty placeholder with no last_error — not useful observability.
+  if (/^desired=\[-\]\s*installed=\[-\]\s*exit=(true|false)$/.test(syncSummary.trim()))
+    return false
+  return true
+}
+
 function normalizeCidr(cidr: string): string {
   const trimmed = cidr.trim()
   if (!trimmed)
@@ -368,19 +382,25 @@ export function collectRouteProxyCidrs(routes?: Route[] | null): string[] {
 
 /**
  * Local OS / VPN routes currently applied for this instance.
- * When desktop L2 sync summary is present, trust its `installed=` list only
- * (empty means nothing installed yet — do not fall back to the route table).
- * Without sync (e.g. mobile), fall back to route-table proxy_cidrs.
+ * Priority: explicit override (e.g. Android VpnService) → meaningful L2 installed
+ * → route-table proxy_cidrs. Empty L2 placeholders do not block the fallback.
  */
 export function collectLocalInstalledRoutes(
   detail?: Pick<NetworkInstanceRunningInfo, 'proxy_cidr_route_sync' | 'routes'> | null,
+  overrideRoutes?: string[] | null,
 ): string[] {
+  const fromOverride = (overrideRoutes ?? [])
+    .map(normalizeCidr)
+    .filter(Boolean)
+  if (fromOverride.length)
+    return [...new Set(fromOverride)].sort()
+
   if (!detail)
     return []
 
-  // Sync string is authoritative on desktop even when installed is empty.
-  if (detail.proxy_cidr_route_sync)
-    return parseInstalledProxyCidrs(detail.proxy_cidr_route_sync)
+  const sync = detail.proxy_cidr_route_sync
+  if (isMeaningfulProxyCidrRouteSync(sync))
+    return parseInstalledProxyCidrs(sync)
 
   return collectRouteProxyCidrs(detail.routes)
 }
