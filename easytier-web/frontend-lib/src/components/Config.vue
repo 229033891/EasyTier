@@ -27,7 +27,7 @@ const props = defineProps<{
   actionLabel?: string
   configInvalid?: boolean
   hostname?: string
-  /** 由父级统一渲染底部操作区时隐藏内置「运行网络」按�?*/
+  /** 由父级统一渲染底部操作区时隐藏内置「运行网络」按钮 */
   hideRunButton?: boolean
 }>()
 
@@ -45,7 +45,7 @@ const confirm = useConfirm()
 const NETWORK_SECRET_ALPHABET =
   'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$%^&*-_=+'
 
-/** 均匀取样，避�?`byte % alphabet.length` 的模偏差 */
+/** 均匀取样，避免 `byte % alphabet.length` 的模偏差 */
 function randomSecret(length = 24): string {
   const alphabet = NETWORK_SECRET_ALPHABET
   const maxUnbiased = Math.floor(256 / alphabet.length) * alphabet.length
@@ -109,7 +109,7 @@ function generateAndCopyNetworkSecret() {
   void applyGeneratedNetworkSecret()
 }
 
-/** 可折�?Panel：默�?Basic 展开，其余收起；整块标题栏可点（触摸友好�?*/
+/** 可折叠 Panel：默认 Basic 展开，其余收起；整块标题栏可点（触摸友好） */
 const panelCollapsed = reactive({
   basic: false,
   advanced: true,
@@ -137,7 +137,8 @@ function onToggleablePanelHeaderClick(
   event: Event,
 ) {
   const target = event.target as HTMLElement | null
-  // 加减号按钮、问�?警告 tip 自身已处理交互，避免冒泡再翻一�?  if (target?.closest(
+  // Ignore tip icons / form controls so header click does not toggle twice
+  if (target?.closest(
     'button, a, input, textarea, select, [role="button"], .config-help-tip, .dns-mixed-version-tip, [role="img"]',
   )) {
     return
@@ -257,7 +258,8 @@ const advancedFlagGroups = computed(() => {
 
 /**
  * 加密算法选项对齐 `EncryptionAlgorithm::from_str`（easytier-core/src/config/encryption.rs）：除下列名称外，后端还接受
- * openssl-* 前缀别名（openssl-aes-gcm / openssl-aes-256-gcm / openssl-chacha20）；这里只列会原样回写的 canonical 名称�? */
+ * openssl-* 前缀别名（openssl-aes-gcm / openssl-aes-256-gcm / openssl-chacha20）；这里只列会原样回写的 canonical 名称。
+ */
 const encryptionAlgoOptions = [
   { value: 'aes-gcm', label: 'aes-gcm' },
   { value: 'aes-256-gcm', label: 'aes-256-gcm' },
@@ -265,7 +267,7 @@ const encryptionAlgoOptions = [
   { value: 'xor', label: 'xor' },
 ]
 
-/** CompressionAlgoPb 取值来�?proto：None = 1、Zstd = 2、Invalid = 0（前端不展示 Invalid，未设置时按 None 处理�?*/
+/** CompressionAlgoPb 取值来自 proto：None = 1、Zstd = 2、Invalid = 0（前端不展示 Invalid，未设置时按 None 处理） */
 const dataCompressAlgoOptions = [
   { value: CompressionAlgoPb.None, label: 'none' },
   { value: CompressionAlgoPb.Zstd, label: 'zstd' },
@@ -879,8 +881,7 @@ function removeVpnPortalClient(index: number) {
                 <span>{{ t('dns.title') }}</span>
                 <i
                   v-if="!curNetwork.enable_magic_dns"
-                  class="pi pi-question-circle config-help-tip"
-                  tabindex="0"
+                  class="pi pi-question-circle config-help-tip" tabindex="0"
                   v-tooltip.top="t('dns.hosts.magic_dns_off_hint')"
                   :aria-label="t('dns.hosts.magic_dns_off_hint')"
                   role="img"
@@ -1056,7 +1057,7 @@ function removeVpnPortalClient(index: number) {
   box-sizing: border-box;
 }
 
-/* 高级开关按使用场景分组，避�?28 个选项堆成一�?*/
+/* 高级开关按使用场景分组，避免 28 个选项堆成一片 */
 .advanced-flags-section {
   display: flex;
   flex-direction: column;
@@ -1197,7 +1198,7 @@ function removeVpnPortalClient(index: number) {
     grid-template-columns: 1fr;
   }
 
-  /* 窄屏：开关项双列，避免单列过�?*/
+  /* 窄屏：开关项双列，避免单列过长 */
   .advanced-flags-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 0.35rem 0.5rem;
@@ -1233,7 +1234,7 @@ function removeVpnPortalClient(index: number) {
   }
 }
 
-/* 问号提示图标：内联对�?+ 固定尺寸，避免撑高所在行 */
+/* 问号提示图标：内联对齐 + 固定尺寸，避免撑高所在行 */
 .config-help-tip {
   display: inline-flex;
   align-items: center;
@@ -1255,7 +1256,7 @@ function removeVpnPortalClient(index: number) {
   min-width: 0;
 }
 
-/* 多行控件（如 UrlListInput）：标签顶对�?*/
+/* 多行控件（如 UrlListInput）：标签顶对齐 */
 .config-inline-field--top {
   align-items: flex-start;
 }
@@ -1276,13 +1277,13 @@ function removeVpnPortalClient(index: number) {
   min-width: 0;
 }
 
-/* 开关展开后的附加输入：与右侧控件列对�?*/
+/* 开关展开后的附加输入：与右侧控件列对齐 */
 .config-inline-expand {
   margin-left: calc(11rem + 0.75rem);
   min-width: 0;
 }
 
-/* 复杂展开块（�?VPN Portal 详情）占满整行，避免双重缩进 */
+/* 复杂展开块（如 VPN Portal 详情）占满整行，避免双重缩进 */
 .config-inline-expand--flush {
   margin-left: 0;
 }
