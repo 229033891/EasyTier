@@ -4,7 +4,9 @@ use super::*;
 use async_trait::async_trait;
 use dashmap::{DashMap, DashSet};
 use easytier::common::config::{ConfigSource, NetworkConfig, NetworkConfigExt};
-use easytier::proto::api::logger::{LoggerRpc, LoggerRpcClientFactory, SetLoggerConfigRequest};
+use easytier::proto::api::logger::{
+    GetLoggerConfigRequest, LoggerRpc, LoggerRpcClientFactory, SetLoggerConfigRequest,
+};
 use easytier::proto::api::manage::RunNetworkInstanceRequest;
 use easytier::proto::rpc::bidirect::BidirectRpcManager;
 use easytier::proto::rpc_types::controller::BaseController;
@@ -493,6 +495,16 @@ impl GUIClientManager {
             )
             .await?;
         Ok(())
+    }
+
+    pub(crate) async fn get_logging_level(&self) -> Result<String, anyhow::Error> {
+        let logger_rpc = self
+            .get_logger_rpc_client()
+            .ok_or_else(|| anyhow::anyhow!("Logger RPC client not available"))?;
+        let response = logger_rpc
+            .get_logger_config(BaseController::default(), GetLoggerConfigRequest {})
+            .await?;
+        Ok(easytier_core::management::log_level_name(response.level()).to_string())
     }
 
     pub(crate) async fn load_configs(

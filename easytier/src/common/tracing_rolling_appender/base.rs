@@ -87,7 +87,7 @@ impl Default for RollingFileAppenderBaseBuilder {
         RollingFileAppenderBaseBuilder {
             condition: RollingConditionBase::default(),
             filename: String::new(),
-            max_filecount: 10,
+            max_filecount: 3,
             current_filesize: 0,
             writer_opt: None,
         }

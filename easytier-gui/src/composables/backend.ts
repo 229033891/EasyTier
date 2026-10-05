@@ -99,8 +99,27 @@ export async function clearVpnPortalClients(instanceId: string) {
   return invoke('patch_vpn_portal_clients', { instanceId, action: 'clear' })
 }
 
+export async function getLoggingLevel() {
+  return await invoke<string>('get_logging_level')
+}
+
 export async function setLoggingLevel(level: string) {
   return await invoke('set_logging_level', { level })
+}
+
+export interface LogFileInfo {
+  fileName: string
+  sizeBytes: number
+  modifiedMs: number
+  active: boolean
+}
+
+export async function listLogFiles() {
+  return await invoke<LogFileInfo[]>('list_log_files')
+}
+
+export async function readLogFile(fileName: string, maxBytes?: number) {
+  return await invoke<string>('read_log_file', { fileName, maxBytes })
 }
 
 export async function setTunFd(fd: number) {

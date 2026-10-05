@@ -1,12 +1,11 @@
 <script setup lang="ts">
 
 import { type } from '@tauri-apps/plugin-os'
-
 import { invoke } from '@tauri-apps/api/core'
 import { writeText } from '@tauri-apps/plugin-clipboard-manager'
 import { open } from '@tauri-apps/plugin-shell'
 import { exit } from '@tauri-apps/plugin-process'
-import { I18nUtils, RemoteManagement, Utils, TOAST_LIFE } from 'easytier-frontend-lib'
+import { I18nUtils, RemoteManagement, LoggingSettingsDialog, Utils, TOAST_LIFE, type LoggingSettingsApi } from 'easytier-frontend-lib'
 import type { MenuItem } from 'primevue/menuitem'
 import { useTray, setTrayRunState } from '~/composables/tray'
 import {
@@ -23,7 +22,7 @@ import { useToast, useConfirm } from 'primevue'
 import { loadMode, saveMode, normalizeServiceRpcUrl, type Mode } from '~/composables/mode'
 import { saveLastNetworkInstanceId, loadLastNetworkInstanceId } from '~/composables/config'
 import ModeSwitcher from '~/components/ModeSwitcher.vue'
-import { getEasytierVersion, getServiceStatus, type ServiceStatus } from '~/composables/backend'
+import { getEasytierVersion, getServiceStatus, getLoggingLevel, listLogFiles, readLogFile, setLoggingLevel, type ServiceStatus } from '~/composables/backend'
 
 const { t, locale } = useI18n()
 const confirm = useConfirm()
@@ -640,88 +639,31 @@ onMounted(async () => {
   }, 1000)
 })
 
-let current_log_level = 'warn'
 const loggingDialogVisible = ref(false)
-const loggingLevel = ref('warn')
-const loggingPath = ref('')
-const isLoggingSaving = ref(false)
 
-const loggingLevelOptions = computed(() =>
-  ['off', 'warn', 'info', 'debug', 'trace'].map(level => ({
-    label: t(`logging_level_${level}`),
-    value: level,
-  })),
-)
-
-// 从后端获取正确的日志路径
 async function getLogDirPath(): Promise<string> {
   return await invoke<string>('get_log_dir_path')
 }
 
-async function openLoggingDialog() {
-  loggingLevel.value = current_log_level
-  try {
-    loggingPath.value = await getLogDirPath()
-  }
-  catch (e) {
-    loggingPath.value = ''
-    console.error('Failed to get log dir path', e)
-  }
-  loggingDialogVisible.value = true
-}
-
-async function onLoggingSave() {
-  if (isLoggingSaving.value) {
-    return
-  }
-  isLoggingSaving.value = true
-  try {
-    await setLoggingLevel(loggingLevel.value)
-    current_log_level = loggingLevel.value
-    loggingDialogVisible.value = false
-    toast.add({ severity: 'success', summary: t('web.common.success'), life: TOAST_LIFE.success })
-  }
-  catch (e: any) {
-    toast.add({
-      severity: 'error',
-      summary: t('error'),
-      detail: Utils.formatApiErrorDetail(e, t),
-      life: TOAST_LIFE.severe,
-    })
-    console.error('Error saving logging level', e)
-  }
-  finally {
-    isLoggingSaving.value = false
-  }
-}
-
-async function openLoggingDir() {
-  try {
+const loggingApi = computed<LoggingSettingsApi>(() => ({
+  getLoggerLevel: getLoggingLevel,
+  setLoggerLevel: async (level: string) => {
+    await setLoggingLevel(level)
+  },
+  getLogDir: getLogDirPath,
+  listLogFiles,
+  readLogFile,
+  canOpenLogDir: type() !== 'android',
+  openLogDir: async () => {
     await open(await getLogDirPath())
-  }
-  catch (e: any) {
-    toast.add({
-      severity: 'error',
-      summary: t('error'),
-      detail: Utils.formatApiErrorDetail(e, t),
-      life: TOAST_LIFE.severe,
-    })
-  }
-}
-
-async function copyLoggingDir() {
-  try {
+  },
+  copyLogDir: async () => {
     await writeText(await getLogDirPath())
-    toast.add({ severity: 'success', summary: t('logging_copied'), life: TOAST_LIFE.success })
-  }
-  catch (e: any) {
-    toast.add({
-      severity: 'error',
-      summary: t('error'),
-      detail: Utils.formatApiErrorDetail(e, t),
-      life: TOAST_LIFE.severe,
-    })
-  }
+  },
+}))
+
+function openLoggingDialog() {
+  loggingDialogVisible.value = true
 }
 
 function getLabel(item: MenuItem) {
@@ -811,31 +753,7 @@ async function connectRpcClient(isNormalMode: boolean, url?: string) {
         <Button :label="t('web.common.save')" icon="pi pi-save" @click="onModeSave" autofocus :loading="isModeSaving" />
       </template>
     </Dialog>
-    <Dialog v-model:visible="loggingDialogVisible" modal :header="t('logging')" :style="settingsDialogStyle"
-      class="app-dialog">
-      <div class="flex flex-col gap-3">
-        <div class="flex flex-col gap-2">
-          <label for="logging-level">{{ t('logging_level') }}</label>
-          <Select id="logging-level" v-model="loggingLevel" :options="loggingLevelOptions" option-label="label"
-            option-value="value" class="w-full" />
-        </div>
-        <div class="flex flex-col gap-2">
-          <label>{{ t('logging_path') }}</label>
-          <InputText :model-value="loggingPath" class="w-full" readonly />
-          <div class="flex flex-wrap gap-2">
-            <Button v-if="type() !== 'android'" :label="t('logging_open_dir')" icon="pi pi-folder-open"
-              severity="secondary" outlined @click="openLoggingDir" />
-            <Button :label="t('logging_copy_dir')" icon="pi pi-copy" severity="secondary" outlined
-              @click="copyLoggingDir" />
-          </div>
-        </div>
-      </div>
-      <template #footer>
-        <Button :label="t('web.common.cancel')" icon="pi pi-times" @click="loggingDialogVisible = false" text />
-        <Button :label="t('web.common.save')" icon="pi pi-save" @click="onLoggingSave" autofocus
-          :loading="isLoggingSaving" />
-      </template>
-    </Dialog>
+    <LoggingSettingsDialog v-model:visible="loggingDialogVisible" :api="loggingApi" />
 
     <RemoteManagement v-if="clientRunning" class="flex-1 overflow-y-auto" :api="remoteClient"
       :pause-auto-refresh="isModeSaving" v-model:instance-id="instanceId"

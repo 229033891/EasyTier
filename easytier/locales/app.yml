@@ -313,8 +313,8 @@ core_clap:
     en: "per file log size in MB, default is 100MB"
     zh-CN: "单个文件日志大小，单位 MB，默认值为 100MB"
   file_log_count:
-    en: "max file log count, default is 10"
-    zh-CN: "最大文件日志数量，默认值为 10"
+    en: "max rotated log files to keep, default is 3 (daily rotation; ~3 days at normal volume, not a fixed time window)"
+    zh-CN: "最大滚动日志文件数，默认值为 3（按天切分；正常日志量下约 3 天，非固定时间窗口）"
 
 core_app:
   panic_backtrace_save:

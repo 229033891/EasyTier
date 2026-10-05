@@ -8,6 +8,8 @@ import * as Utils from '../modules/utils';
 import * as NetworkTypes from '../types/network';
 import { expectedDnsCoverage } from '../modules/dnsCoverage';
 import DnsCoverageBadge from './dns/DnsCoverageBadge.vue';
+import LoggingSettingsDialog from './LoggingSettingsDialog.vue';
+import type { LoggingSettingsApi } from '../modules/logging';
 
 const { t } = useI18n()
 
@@ -802,8 +804,25 @@ const stickyFooterPrimary = computed(() => {
     return 'none' as const;
 });
 
+const loggingDialogVisible = ref(false)
+
+const showLoggingSettings = computed(() =>
+    !!props.fullPage
+    && typeof props.api.get_logger_level === 'function'
+    && typeof props.api.set_logger_level === 'function',
+)
+
+const loggingApi = computed<LoggingSettingsApi>(() => ({
+    remoteOnly: typeof props.api.list_log_files !== 'function',
+    getLoggerLevel: props.api.get_logger_level?.bind(props.api),
+    setLoggerLevel: (level: string) => props.api.set_logger_level!(level),
+    getLogDir: props.api.get_log_dir?.bind(props.api),
+    listLogFiles: props.api.list_log_files?.bind(props.api),
+    readLogFile: props.api.read_log_file?.bind(props.api),
+}))
+
 const showStickyFooter = computed(() =>
-    showLeaveInFooter.value || stickyFooterPrimary.value !== 'none' || isCombinedMode.value
+    showLeaveInFooter.value || stickyFooterPrimary.value !== 'none' || isCombinedMode.value || showLoggingSettings.value
 );
 
 let periodFunc = new Utils.PeriodicTask(async () => {
@@ -990,6 +1009,8 @@ onUnmounted(() => {
         </div>
 
         <div v-if="showStickyFooter" class="network-sticky-footer">
+            <Button v-if="showLoggingSettings" :label="t('logging')" icon="pi pi-file" severity="secondary"
+                class="network-footer-btn network-footer-btn--muted" @click="loggingDialogVisible = true" />
             <!-- GUI 额外按钮（系统设置等）放最左，窄屏单行时更易点到 -->
             <slot name="footer-extra" />
             <Button v-if="showLeaveInFooter" @click="drawerClose" :label="leaveLabel" severity="secondary"
@@ -1035,6 +1056,7 @@ onUnmounted(() => {
 
         <ConfigEditDialog v-model:visible="showConfigEditDialog" :cur-network="currentNetworkConfig"
             :generate-config="generateConfig" :save-config="syncTomlConfig" />
+        <LoggingSettingsDialog v-if="showLoggingSettings" v-model:visible="loggingDialogVisible" :api="loggingApi" />
     </div>
 </template>
 

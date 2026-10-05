@@ -1,7 +1,7 @@
 import './style.css'
 
 import type { App } from 'vue';
-import { Config, Status, ConfigEditDialog, RemoteManagement, HumanEvent, DnsCoverageBadge, DnsHostsEditor, DnsForwardersEditor } from "./components";
+import { Config, Status, ConfigEditDialog, RemoteManagement, HumanEvent, DnsCoverageBadge, DnsHostsEditor, DnsForwardersEditor, LoggingSettingsDialog } from "./components";
 import PrimeVue from 'primevue/config'
 
 import I18nUtils from './modules/i18n'
@@ -16,6 +16,7 @@ import * as Api from './modules/api';
 import * as Utils from './modules/utils';
 import * as DnsCoverage from './modules/dnsCoverage';
 import { TOAST_LIFE } from './modules/toast';
+import { normalizeLoggerLevel, loggerLevelToRpc } from './modules/logging';
 
 export default {
     install: (app: App): void => {
@@ -58,12 +59,15 @@ export {
     DnsCoverageBadge,
     DnsHostsEditor,
     DnsForwardersEditor,
+    LoggingSettingsDialog,
     I18nUtils,
     NetworkTypes,
     Api,
     Utils,
     DnsCoverage,
     TOAST_LIFE,
+    normalizeLoggerLevel,
+    loggerLevelToRpc,
     tooltipDirective,
     tooltipDefaults,
     normalizeTooltipValue,
@@ -71,3 +75,5 @@ export {
     ET_PRIMARY,
     ET_PRIMARY_EMPHASIS,
 };
+
+export type { LogFileInfo, LoggingSettingsApi } from './modules/logging';

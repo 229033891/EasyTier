@@ -58,6 +58,30 @@ int easytier_ios_flush_diagnostic_logging(void);
 int easytier_ios_clear_diagnostic_logs(void);
 
 /**
+ * @brief List diagnostic log files as a JSON array.
+ *
+ * Each entry contains `fileName`, `sizeBytes`, `modifiedMs`, and `active`.
+ *
+ * @return A newly allocated JSON string on success, NULL on failure.
+ *
+ * @ownership The caller owns the returned string and must release it with
+ *            easytier_ios_free_string().
+ */
+char *easytier_ios_list_diagnostic_log_files(void);
+
+/**
+ * @brief Read the tail of a diagnostic log file.
+ *
+ * @param file_name Non-null NUL-terminated UTF-8 file name (e.g. `easytier.log`).
+ * @param max_bytes Maximum bytes to read from the end; `<= 0` defaults to 256 KiB.
+ * @return A newly allocated log text string on success, NULL on failure.
+ *
+ * @ownership The caller owns the returned string and must release it with
+ *            easytier_ios_free_string().
+ */
+char *easytier_ios_read_diagnostic_log_file(const char *file_name, int64_t max_bytes);
+
+/**
  * @brief Start one EasyTier network instance from a TOML config string.
  *
  * The config's `instance_name` must be unique among instances started

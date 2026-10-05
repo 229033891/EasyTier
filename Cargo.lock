@@ -2650,6 +2650,7 @@ version = "0.1.0"
 dependencies = [
  "android_logger",
  "easytier",
+ "easytier-core",
  "easytier-ffi",
  "jni 0.21.1",
  "log",

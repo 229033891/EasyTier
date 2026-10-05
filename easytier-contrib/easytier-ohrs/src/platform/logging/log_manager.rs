@@ -10,7 +10,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 const LOG_DIR_NAME: &str = "easytier-logs";
 const LOG_FILE_PREFIX: &str = "easytier-";
 const LOG_FILE_SUFFIX: &str = ".log";
-const MAX_LOG_FILES: usize = 10;
+/// Keep the newest three log files (about three days when one file is created per launch/day).
+const MAX_LOG_FILES: usize = 3;
 const MAX_MEMORY_LINES: usize = 500;
 
 #[derive(Debug, Clone)]

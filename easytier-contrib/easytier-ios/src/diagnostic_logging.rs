@@ -8,7 +8,8 @@ use std::{
 use tracing_subscriber::fmt::MakeWriter;
 
 pub(crate) const MAX_LOG_BYTES: u64 = 5 * 1024 * 1024;
-pub(crate) const MAX_LOG_FILES: usize = 4;
+pub(crate) const MAX_LOG_FILES: usize = 3;
+pub(crate) const MAX_LOG_READ_BYTES: u64 = 8 * 1024 * 1024;
 
 #[derive(Clone)]
 pub(crate) struct DiagnosticMakeWriter {
@@ -34,11 +35,27 @@ impl DiagnosticMakeWriter {
         self.lock()?.flush()
     }
 
+    pub(crate) fn list_files(&self) -> io::Result<Vec<DiagnosticLogFileInfo>> {
+        self.lock()?.list_files()
+    }
+
+    pub(crate) fn read_file(&self, file_name: &str, max_bytes: u64) -> io::Result<String> {
+        self.lock()?.read_file(file_name, max_bytes)
+    }
+
     fn lock(&self) -> io::Result<std::sync::MutexGuard<'_, RotatingLog>> {
         self.inner
             .lock()
             .map_err(|_| io::Error::other("diagnostic log lock poisoned"))
     }
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct DiagnosticLogFileInfo {
+    pub file_name: String,
+    pub size_bytes: u64,
+    pub modified_ms: i64,
+    pub active: bool,
 }
 
 impl<'a> MakeWriter<'a> for DiagnosticMakeWriter {
@@ -221,6 +238,93 @@ impl RotatingLog {
             None => Ok(()),
         }
     }
+
+    fn list_files(&self) -> io::Result<Vec<DiagnosticLogFileInfo>> {
+        let mut files = Vec::new();
+        let active = self.active_path();
+        if active.exists() {
+            if let Ok(info) = file_info(&active, true) {
+                files.push(info);
+            }
+        }
+        for index in 1..MAX_LOG_FILES {
+            let path = self.rotated_path(index);
+            if path.exists() {
+                if let Ok(info) = file_info(&path, false) {
+                    files.push(info);
+                }
+            }
+        }
+        Ok(files)
+    }
+
+    fn read_file(&self, file_name: &str, max_bytes: u64) -> io::Result<String> {
+        let max_bytes = max_bytes.min(MAX_LOG_READ_BYTES);
+        let name = Path::new(file_name)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "invalid log file name"))?;
+        let path = if name == "easytier.log" {
+            self.active_path()
+        } else if let Some(index) = name
+            .strip_prefix("easytier.")
+            .and_then(|rest| rest.strip_suffix(".log"))
+            .and_then(|index| index.parse::<usize>().ok())
+        {
+            if index == 0 || index >= MAX_LOG_FILES {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "invalid log file name",
+                ));
+            }
+            self.rotated_path(index)
+        } else {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "invalid log file name",
+            ));
+        };
+        read_file_tail(&path, max_bytes)
+    }
+}
+
+fn file_info(path: &Path, active: bool) -> io::Result<DiagnosticLogFileInfo> {
+    let meta = path.metadata()?;
+    let modified_ms = meta
+        .modified()
+        .ok()
+        .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|duration| duration.as_millis() as i64)
+        .unwrap_or(0);
+    Ok(DiagnosticLogFileInfo {
+        file_name: path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("easytier.log")
+            .to_string(),
+        size_bytes: meta.len(),
+        modified_ms,
+        active,
+    })
+}
+
+fn read_file_tail(path: &Path, max_bytes: u64) -> io::Result<String> {
+    use std::io::{Read, Seek, SeekFrom};
+
+    let mut file = File::open(path)?;
+    let len = file.metadata()?.len();
+    if len > max_bytes {
+        file.seek(SeekFrom::End(-(max_bytes as i64)))?;
+    }
+    let mut buf = Vec::new();
+    file.read_to_end(&mut buf)?;
+    let content = String::from_utf8_lossy(&buf);
+    if len > max_bytes {
+        if let Some(rest) = content.split_once('\n').map(|(_, rest)| rest) {
+            return Ok(rest.to_string());
+        }
+    }
+    Ok(content.into_owned())
 }
 
 #[cfg(test)]

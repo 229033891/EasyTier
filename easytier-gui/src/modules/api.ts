@@ -1,4 +1,5 @@
 import { type } from "@tauri-apps/plugin-os";
+import { invoke } from '@tauri-apps/api/core'
 import { type Api, type NetworkTypes } from "easytier-frontend-lib";
 import * as backend from "~/composables/backend";
 import { annotateNetworkInfoFromVpnService } from "~/composables/mobile_vpn";
@@ -62,6 +63,22 @@ export class GUIRemoteClient implements Api.RemoteClient {
     }
     async get_network_metas(instance_ids: string[]): Promise<Api.GetNetworkMetasResponse> {
         return await backend.getNetworkMetas(instance_ids);
+    }
+
+    async get_logger_level(): Promise<string> {
+        return backend.getLoggingLevel();
+    }
+    async set_logger_level(level: string): Promise<void> {
+        await backend.setLoggingLevel(level);
+    }
+    async list_log_files(): Promise<Api.LogFileInfo[]> {
+        return backend.listLogFiles();
+    }
+    async read_log_file(fileName: string, maxBytes?: number): Promise<string> {
+        return backend.readLogFile(fileName, maxBytes);
+    }
+    async get_log_dir(): Promise<string> {
+        return invoke<string>('get_log_dir_path');
     }
 
 }

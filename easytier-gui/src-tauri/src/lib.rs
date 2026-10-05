@@ -241,6 +241,14 @@ async fn set_logging_level(level: String) -> Result<(), String> {
 }
 
 #[tauri::command]
+async fn get_logging_level() -> Result<String, String> {
+    get_client_manager!()?
+        .get_logging_level()
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 async fn set_tun_fd(fd: i32) -> Result<(), String> {
     let Some(instance_manager) = INSTANCE_MANAGER.read().await.clone() else {
         return Err("set_tun_fd is not supported in remote mode".to_string());
@@ -895,6 +903,116 @@ async fn get_log_dir_path(app: tauri::AppHandle) -> Result<String, String> {
     }
 }
 
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct GuiLogFileInfo {
+    file_name: String,
+    size_bytes: u64,
+    modified_ms: i64,
+    active: bool,
+}
+
+const MAX_LOG_READ_BYTES: u64 = 8 * 1024 * 1024;
+
+fn is_easytier_log_file(name: &str) -> bool {
+    name == "easytier.log" || name.starts_with("easytier.log.")
+}
+
+fn clamp_log_read_bytes(max_bytes: Option<u64>) -> u64 {
+    max_bytes.unwrap_or(256 * 1024).min(MAX_LOG_READ_BYTES)
+}
+
+fn modified_ms(meta: &std::fs::Metadata) -> i64 {
+    meta.modified()
+        .ok()
+        .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|duration| duration.as_millis() as i64)
+        .unwrap_or(0)
+}
+
+fn read_file_tail(path: &std::path::Path, max_bytes: u64) -> Result<String, String> {
+    use std::io::{Read, Seek, SeekFrom};
+
+    let mut file = std::fs::File::open(path).map_err(|e| e.to_string())?;
+    let len = file.metadata().map_err(|e| e.to_string())?.len();
+    if len > max_bytes {
+        file.seek(SeekFrom::End(-(max_bytes as i64)))
+            .map_err(|e| e.to_string())?;
+    }
+    let mut buf = Vec::new();
+    file.read_to_end(&mut buf).map_err(|e| e.to_string())?;
+    let content = String::from_utf8_lossy(&buf);
+    if len > max_bytes {
+        // Drop a possible partial first line after seeking mid-file.
+        if let Some(rest) = content.split_once('\n').map(|(_, rest)| rest) {
+            return Ok(rest.to_string());
+        }
+    }
+    Ok(content.into_owned())
+}
+
+#[tauri::command]
+async fn list_log_files(app: tauri::AppHandle) -> Result<Vec<GuiLogFileInfo>, String> {
+    let log_dir = get_log_dir(&app).map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(&log_dir).ok();
+    let mut files = Vec::new();
+    let entries = match std::fs::read_dir(&log_dir) {
+        Ok(entries) => entries,
+        Err(_) => return Ok(files),
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+            continue;
+        };
+        if !is_easytier_log_file(name) {
+            continue;
+        }
+        let Ok(meta) = entry.metadata() else {
+            continue;
+        };
+        files.push(GuiLogFileInfo {
+            file_name: name.to_string(),
+            size_bytes: meta.len(),
+            modified_ms: modified_ms(&meta),
+            active: name == "easytier.log",
+        });
+    }
+    files.sort_by(|a, b| {
+        b.active
+            .cmp(&a.active)
+            .then(b.modified_ms.cmp(&a.modified_ms))
+            .then(a.file_name.cmp(&b.file_name))
+    });
+    Ok(files)
+}
+
+#[tauri::command]
+async fn read_log_file(
+    app: tauri::AppHandle,
+    file_name: String,
+    max_bytes: Option<u64>,
+) -> Result<String, String> {
+    let log_dir = get_log_dir(&app).map_err(|e| e.to_string())?;
+    let name = std::path::Path::new(&file_name)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .ok_or_else(|| "invalid log file name".to_string())?;
+    if !is_easytier_log_file(name) {
+        return Err("invalid log file name".to_string());
+    }
+    let path = log_dir.join(name);
+    if !path.is_file() {
+        return Err("log file not found".to_string());
+    }
+    // Best-effort flush so the latest lines are visible.
+    log::logger().flush();
+    read_file_tail(&path, clamp_log_read_bytes(max_bytes))
+}
+
 #[cfg(not(target_os = "android"))]
 fn toggle_window_visibility(app: &tauri::AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
@@ -995,7 +1113,8 @@ pub fn run_gui() -> std::process::ExitCode {
                     level: Some("warn".to_string()),
                     file: None,
                     size_mb: None,
-                    count: None,
+                    // Keep ~3 days with daily rotation.
+                    count: Some(3),
                 })
                 .build();
             let Ok(_) = log::init(&config, true) else {
@@ -1033,6 +1152,7 @@ pub fn run_gui() -> std::process::ExitCode {
             get_vpn_portal_info,
             patch_vpn_portal_clients,
             set_logging_level,
+            get_logging_level,
             set_tun_fd,
             easytier_version,
             set_dock_visibility,
@@ -1053,6 +1173,8 @@ pub fn run_gui() -> std::process::ExitCode {
             is_web_client_connected,
             get_config_server_status,
             get_log_dir_path,
+            list_log_files,
+            read_log_file,
         ])
         .on_window_event(|_win, event| match event {
             #[cfg(not(target_os = "android"))]

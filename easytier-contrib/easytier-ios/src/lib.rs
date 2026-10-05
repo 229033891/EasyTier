@@ -198,6 +198,87 @@ pub extern "C" fn easytier_ios_clear_diagnostic_logs() -> c_int {
     })
 }
 
+fn owned_cstring(value: String) -> *mut c_char {
+    match std::ffi::CString::new(value) {
+        Ok(value) => value.into_raw(),
+        Err(_) => {
+            error::set_error("diagnostic log output contains a null byte");
+            ptr::null_mut()
+        }
+    }
+}
+
+/// List diagnostic log files as a JSON array of `{ fileName, sizeBytes, modifiedMs, active }`.
+#[unsafe(no_mangle)]
+pub extern "C" fn easytier_ios_list_diagnostic_log_files() -> *mut c_char {
+    guarded(ptr::null_mut(), || {
+        error::clear_error();
+        let Some(Ok(logger)) = DIAGNOSTIC_LOGGER.get() else {
+            return owned_cstring("[]".to_string());
+        };
+        match logger.writer.list_files() {
+            Ok(files) => {
+                let items: Vec<_> = files
+                    .into_iter()
+                    .map(|file| {
+                        serde_json::json!({
+                            "fileName": file.file_name,
+                            "sizeBytes": file.size_bytes,
+                            "modifiedMs": file.modified_ms,
+                            "active": file.active,
+                        })
+                    })
+                    .collect();
+                owned_cstring(serde_json::Value::Array(items).to_string())
+            }
+            Err(message) => {
+                error::set_error(&format!("failed to list diagnostic logs: {message}"));
+                ptr::null_mut()
+            }
+        }
+    })
+}
+
+/// Read the tail of a diagnostic log file. `max_bytes <= 0` defaults to 256 KiB.
+///
+/// # Safety
+/// `file_name` must be a non-null pointer to a NUL-terminated UTF-8 string.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn easytier_ios_read_diagnostic_log_file(
+    file_name: *const c_char,
+    max_bytes: i64,
+) -> *mut c_char {
+    unsafe {
+        guarded(ptr::null_mut(), || {
+            error::clear_error();
+            let file_name = match cstr_arg(file_name, "diagnostic log file name") {
+                Ok(name) => name,
+                Err(message) => {
+                    error::set_error(&message);
+                    return ptr::null_mut();
+                }
+            };
+            let Some(Ok(logger)) = DIAGNOSTIC_LOGGER.get() else {
+                error::set_error("diagnostic logging is disabled");
+                return ptr::null_mut();
+            };
+            let max_bytes = if max_bytes <= 0 {
+                256 * 1024
+            } else {
+                max_bytes as u64
+            }
+            .min(diagnostic_logging::MAX_LOG_READ_BYTES);
+            match logger.writer.read_file(file_name, max_bytes) {
+                Ok(content) => owned_cstring(content),
+                Err(message) => {
+                    error::set_error(&format!("failed to read diagnostic log: {message}"));
+                    ptr::null_mut()
+                }
+            }
+        })
+    }
+}
+
 /// Run `body` catching any panic; panics are recorded in the last-error
 /// buffer so they never unwind across the FFI boundary.
 fn guarded<R>(default: R, body: impl FnOnce() -> R) -> R {

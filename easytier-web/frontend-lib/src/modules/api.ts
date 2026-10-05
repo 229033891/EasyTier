@@ -1,5 +1,8 @@
 import { UUID } from './utils';
 import { NetworkConfig, NetworkInstanceRunningInfo, VpnPortalInfo } from '../types/network';
+import type { LogFileInfo } from './logging';
+
+export type { LogFileInfo } from './logging';
 
 export interface ValidateConfigResponse {
     toml_config: string;
@@ -113,4 +116,9 @@ export interface RemoteClient {
      * GUI 直连内核时没有，因此这里是可选方法；UI 需自行判空后隐藏入口。
      */
     get_peer_conn_history?(inst_id: string, hours: number): Promise<PeerConnHistoryResponse | undefined>;
+    get_logger_level?(): Promise<string>;
+    set_logger_level?(level: string): Promise<void>;
+    list_log_files?(): Promise<LogFileInfo[]>;
+    read_log_file?(fileName: string, maxBytes?: number): Promise<string>;
+    get_log_dir?(): Promise<string>;
 }

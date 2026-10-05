@@ -94,12 +94,20 @@ logging_level: 日志级别
 logging_level_info: 信息
 logging_level_debug: 调试
 logging_level_warn: 警告
+logging_level_error: 错误
 logging_level_trace: 跟踪
 logging_level_off: 关闭
 logging_path: 日志目录
 logging_open_dir: 打开日志目录
 logging_copy_dir: 复制日志路径
 logging_copied: 已复制日志路径
+logging_content: 最近日志
+logging_refresh: 刷新
+logging_empty: 暂无日志文件
+logging_load_failed: 加载日志失败
+logging_file: 日志文件
+logging_retention_hint: 最多保留 3 个滚动日志文件（按天切分；正常日志量下约 3 天，非固定时间窗口）。
+logging_remote_hint: 日志级别会应用到远端 EasyTier 进程；查看最近日志请在设备上打开日志文件。
 vpn_tile_no_network: 没有已配置的网络
 vpn_tile_no_network_description: 请先在 EasyTier 中配置网络，再使用 VPN 快捷磁贴。
 vpn_tile_started: VPN 网络已启动

@@ -74,7 +74,7 @@ impl FileSink {
         let file_appender = RollingFileAppenderBase::builder()
             .filename(path.to_string_lossy().into_owned())
             .condition_daily()
-            .max_filecount(config.count.unwrap_or(10))
+            .max_filecount(config.count.unwrap_or(3))
             .condition_max_file_size(config.size_mb.unwrap_or(100) * 1024 * 1024)
             .build()
             .context("failed to initialize rolling file appender")?;

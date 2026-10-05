@@ -1,5 +1,5 @@
 import axios, { AxiosError, AxiosInstance, AxiosResponse, InternalAxiosRequestConfig } from 'axios';
-import { type Api, NetworkTypes, Utils } from 'easytier-frontend-lib';
+import { type Api, NetworkTypes, Utils, normalizeLoggerLevel, loggerLevelToRpc } from 'easytier-frontend-lib';
 
 export interface ValidateConfigResponse {
     toml_config: string;
@@ -424,6 +424,29 @@ class WebRemoteClient implements Api.RemoteClient {
             { params: { hours } },
         );
         return response;
+    }
+    async get_logger_level(): Promise<string> {
+        const response = await this.client.post<any, { level?: unknown }>(
+            `/machines/${this.machine_id}/proxy-rpc`,
+            {
+                service_name: 'api.logger.LoggerRpcService',
+                method_name: 'GetLoggerConfig',
+                payload: {},
+            },
+        );
+        return normalizeLoggerLevel(response.level);
+    }
+    async set_logger_level(level: string): Promise<void> {
+        await this.client.post(
+            `/machines/${this.machine_id}/proxy-rpc`,
+            {
+                service_name: 'api.logger.LoggerRpcService',
+                method_name: 'SetLoggerConfig',
+                payload: {
+                    level: loggerLevelToRpc(level),
+                },
+            },
+        );
     }
 }
 
