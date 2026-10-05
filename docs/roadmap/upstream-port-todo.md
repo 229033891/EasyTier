@@ -33,15 +33,13 @@ Status: **Roadmap**
 ## P1 —— 复现确认后再做（需适配，不能直接 cherry-pick）
 
 ### 3. #2632 TCP 打洞保活 `fix(peers): keep TCP hole-punched connections alive with 1s pings`
-- [ ] 前置：先在 dev 上复现症状（idle TCP 打洞连接是否因 `max_backoff_idx=5` → 约 32s backoff 被 NAT 回收致掉线），无复现则挂起
-- [ ] 不扩 `PeerConnectionOrigin` 枚举（dev 保持 `Network/Attached`）；保留 `is_hole_punched: bool`
-- [ ] **接入点（必读）**：ping 在 `PeerConn::start_pingpong` 创建；hole punch 经 `HolePunchTunnelSink` → `peer_manager` 的 `set_is_hole_punched(!is_directly_connected)`。TCP/UDP 打洞共用同一 bool，**不能**只凭 `is_hole_punched` 开 1s ping（会误伤 UDP）。适配任选其一，并写进实现注释：
-  1. 在 `PeerConn` 增加 `ping_max_interval: Option<Duration>`（或 `is_tcp_hole_punched`），由 peer_manager 在 **TCP** 打洞 admission 时写入；或
-  2. `start_pingpong` 时结合 `is_hole_punched` + tunnel 类型（TCP）判断
-- [ ] 不碰 `HolePunchTunnelSink` 签名；direct / manual / listener / UDP 打洞保持现有 backoff
-- [ ] `PeerConnPinger::new` 加可选 `max_interval: Option<Duration>`（默认 `None` = 现有 backoff 不变）；`peer_conn_ping.rs` 加 cap 分支，保留现有 `backoff_idx` / `max_backoff_idx` 字段逻辑
-- [ ] 相关单测 + `cargo test -p easytier-core` + fmt
-- 说明：直接合必撞（上游 origin 6 变体 vs dev 2 变体，`peer_conn.rs` / `peer_conn_ping.rs` / tests 全受影响）。无复现前挂起。
+- [x] 前置：用户要求继续移植；按 Option 1 适配（不依赖现场复现）。若线上未见 idle TCP 打洞掉线，风险仍低（仅缩短 TCP hole-punch 的 ping 上限）
+- [x] 不扩 `PeerConnectionOrigin` 枚举（dev 保持 `Network/Attached`）；保留 `is_hole_punched: bool`
+- [x] 在 `PeerConn` 增加 `ping_max_interval: Option<Duration>`；`peer_manager` admission 在 `!is_directly_connected` 且 **非 UDP** tunnel 时写入 `Some(1s)`（覆盖 tcp / faketcp host label；不碰 `HolePunchTunnelSink`）
+- [x] `PeerConnPinger` / `PingIntervalController` 增加 `max_interval` cap；默认 32s 保留现有 backoff
+- [x] 单测：ping interval controller + tunnel_type 分类 + PeerConn policy
+- [ ] `cargo test -p easytier-core` + fmt（本机 MSVC/ring 编译受阻，待 CI 验证）
+- 说明：直接合必撞（上游 origin 6 变体 vs dev 2 变体）。仅 hole-punch 会传 `is_directly_connected=false`；用「非 UDP」判定避免 FakeTCP host label 漏匹配。
 
 ---
 

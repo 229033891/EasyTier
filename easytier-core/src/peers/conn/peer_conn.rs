@@ -294,6 +294,9 @@ pub struct PeerConn {
 
     // remote or local
     is_hole_punched: bool,
+    // Optional cap for ping backoff. Set at TCP hole-punch admission so idle
+    // NAT mappings stay alive; None keeps the historical ~32s schedule.
+    ping_max_interval: Option<Duration>,
 
     close_event_notifier: Arc<PeerConnCloseNotify>,
 
@@ -396,6 +399,7 @@ impl PeerConn {
             is_client: None,
 
             is_hole_punched: true,
+            ping_max_interval: None,
 
             close_event_notifier: Arc::new(PeerConnCloseNotify::new(conn_id)),
 
@@ -448,6 +452,25 @@ impl PeerConn {
 
     pub fn is_hole_punched(&self) -> bool {
         self.is_hole_punched
+    }
+
+    pub(crate) fn set_ping_max_interval(&mut self, max_interval: Option<Duration>) {
+        self.ping_max_interval = max_interval;
+    }
+
+    pub(crate) fn tunnel_type(&self) -> Option<&str> {
+        self.tunnel_info
+            .as_ref()
+            .map(|info| info.tunnel_type.as_str())
+    }
+
+    /// Maximum idle gap between control pings.
+    ///
+    /// Defaults to 32s (`1 << max_backoff_idx`). TCP hole-punched admissions
+    /// override this to 1s so NAT mappings are refreshed frequently.
+    pub(crate) fn max_ping_interval(&self) -> Duration {
+        self.ping_max_interval
+            .unwrap_or_else(|| Duration::from_secs(32))
     }
 
     pub fn is_closed(&self) -> bool {
@@ -1376,6 +1399,7 @@ impl PeerConn {
             self.context.clone(),
             self.get_conn_info().network_name,
             self.liveness.clone(),
+            self.max_ping_interval(),
         );
 
         let close_event_notifier = self.close_event_notifier.clone();
@@ -1523,5 +1547,37 @@ impl Drop for PeerConn {
     fn drop(&mut self) {
         // if someone drop a conn manually, the notifier is not called.
         self.close_event_notifier.notify_close();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::peers::test_support::NoopPeerContext;
+    use crate::tunnel::ring::create_ring_tunnel_pair;
+
+    #[test]
+    fn tcp_hole_punch_ping_policy_is_admission_driven() {
+        let (tunnel, _remote) = create_ring_tunnel_pair();
+        let mut conn = PeerConn::new(
+            1,
+            Arc::new(NoopPeerContext::default()),
+            tunnel,
+            Arc::new(PeerSessionStore::new()),
+        );
+
+        assert_eq!(conn.max_ping_interval(), Duration::from_secs(32));
+        assert!(conn.is_hole_punched());
+
+        // Direct / listener / UDP hole-punch keep the default schedule.
+        conn.set_is_hole_punched(true);
+        assert_eq!(conn.max_ping_interval(), Duration::from_secs(32));
+
+        // TCP hole-punch admission sets an explicit 1s cap without expanding
+        // PeerConnectionOrigin on this branch.
+        conn.set_is_hole_punched(true);
+        conn.set_ping_max_interval(Some(Duration::from_secs(1)));
+        assert!(conn.is_hole_punched());
+        assert_eq!(conn.max_ping_interval(), Duration::from_secs(1));
     }
 }

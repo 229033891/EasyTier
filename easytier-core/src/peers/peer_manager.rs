@@ -2003,6 +2003,7 @@ impl PeerConnectionAdmission {
             origin,
         );
         peer.set_is_hole_punched(!is_directly_connected);
+        apply_tcp_hole_punch_ping_policy(&mut peer, is_directly_connected);
         peer.do_handshake_as_client().await?;
         let conn_id = peer.get_conn_id();
         let peer_id = peer.get_peer_id();
@@ -2144,6 +2145,7 @@ impl PeerConnectionAdmission {
         }
 
         conn.set_is_hole_punched(!is_directly_connected);
+        apply_tcp_hole_punch_ping_policy(&mut conn, is_directly_connected);
 
         let add_peer_ret = if is_local_network {
             let local_secure_mode = self
@@ -2179,6 +2181,52 @@ impl PeerConnectionAdmission {
 
         tracing::info!("add tunnel as server done");
         Ok((peer_id, conn_id))
+    }
+}
+
+/// TCP and UDP hole punch both set `is_hole_punched`; only non-UDP needs a 1s
+/// ping cap so NAT mappings stay alive. Detect via tunnel_type without expanding
+/// `PeerConnectionOrigin` or changing `HolePunchTunnelSink`.
+///
+/// Only hole-punch admissions pass `is_directly_connected=false`.
+fn apply_tcp_hole_punch_ping_policy(conn: &mut PeerConn, is_directly_connected: bool) {
+    if is_directly_connected {
+        return;
+    }
+    // UDP hole punch always reports tunnel_type "udp". TCP / FakeTCP may use
+    // plain "tcp"/"faketcp" or an opaque host transport_label (e.g.
+    // "faketcp_test-driver", "host-tcp") — treat everything except UDP as TCP-like.
+    if conn
+        .tunnel_type()
+        .is_some_and(is_udp_hole_punch_tunnel_type)
+    {
+        return;
+    }
+    conn.set_ping_max_interval(Some(Duration::from_secs(1)));
+}
+
+fn is_udp_hole_punch_tunnel_type(tunnel_type: &str) -> bool {
+    let scheme = tunnel_type
+        .split_once("://")
+        .map(|(s, _)| s)
+        .unwrap_or(tunnel_type);
+    scheme == "udp" || scheme.ends_with("-udp")
+}
+
+#[cfg(test)]
+mod tcp_hole_punch_ping_policy_tests {
+    use super::is_udp_hole_punch_tunnel_type;
+
+    #[test]
+    fn classifies_udp_vs_tcp_hole_punch_transports() {
+        assert!(is_udp_hole_punch_tunnel_type("udp"));
+        assert!(is_udp_hole_punch_tunnel_type("txt-udp"));
+        assert!(!is_udp_hole_punch_tunnel_type("tcp"));
+        assert!(!is_udp_hole_punch_tunnel_type("faketcp"));
+        assert!(!is_udp_hole_punch_tunnel_type("host-tcp"));
+        assert!(!is_udp_hole_punch_tunnel_type("host-accepted"));
+        assert!(!is_udp_hole_punch_tunnel_type("faketcp_test-driver"));
+        assert!(!is_udp_hole_punch_tunnel_type("faketcp://127.0.0.1:1"));
     }
 }
 
