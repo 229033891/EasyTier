@@ -1,5 +1,7 @@
+import { type } from "@tauri-apps/plugin-os";
 import { type Api, type NetworkTypes } from "easytier-frontend-lib";
 import * as backend from "~/composables/backend";
+import { annotateNetworkInfoFromVpnService } from "~/composables/mobile_vpn";
 
 export class GUIRemoteClient implements Api.RemoteClient {
     async validate_config(config: NetworkTypes.NetworkConfig): Promise<Api.ValidateConfigResponse> {
@@ -9,7 +11,13 @@ export class GUIRemoteClient implements Api.RemoteClient {
         await backend.runNetworkInstance(config, save);
     }
     async get_network_info(inst_id: string): Promise<NetworkTypes.NetworkInstanceRunningInfo | undefined> {
-        return backend.collectNetworkInfo(inst_id).then(infos => infos.info?.map?.[inst_id]);
+        const info = (await backend.collectNetworkInfo(inst_id)).info?.map?.[inst_id];
+        if (!info)
+            return undefined;
+        // Android DummyIfConfiger never updates L2 sync — fill from VpnService.
+        if (type() === "android")
+            return await annotateNetworkInfoFromVpnService(info, inst_id);
+        return info;
     }
     async get_vpn_portal_info(inst_id: string): Promise<NetworkTypes.VpnPortalInfo | undefined> {
         return backend.getVpnPortalInfo(inst_id);

@@ -103,9 +103,7 @@ pub(crate) fn annotate_ohos_proxy_cidr_route_sync(
     } else {
         routes.join(",")
     };
-    let exit = routes
-        .iter()
-        .any(|route| route == "0.0.0.0/0" || route.starts_with("0.0.0.0/"));
+    let exit = routes.iter().any(|route| route == "0.0.0.0/0");
     info.proxy_cidr_route_sync = Some(format!(
         "desired=[{joined}] installed=[{joined}] exit={exit}"
     ));

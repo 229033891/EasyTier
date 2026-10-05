@@ -15,10 +15,11 @@ const props = defineProps<{
   api: RemoteClient,
   /**
    * Platform-owned installed routes (e.g. Android VpnService).
-   * When non-empty, preferred over L2 proxy_cidr_route_sync.
-   * May be a getter so parent can re-read on each status refresh.
+   * When provided (including []), preferred over L2 proxy_cidr_route_sync.
+   * May be a getter so parent can re-read on each status refresh;
+   * getters receive the current instance id for ownership checks.
    */
-  localInstalledRoutes?: string[] | (() => string[]),
+  localInstalledRoutes?: string[] | ((instanceId?: string) => string[]),
 }>()
 
 const { t } = useI18n()
@@ -335,8 +336,8 @@ const myNodeInfoGroups = computed(() => {
   const hasPlatformOverride = props.localInstalledRoutes !== undefined
   const overrideRoutes = hasPlatformOverride
     ? (typeof props.localInstalledRoutes === 'function'
-        ? props.localInstalledRoutes()
-        : props.localInstalledRoutes) ?? []
+        ? props.localInstalledRoutes(props.curNetworkInst.instance_id)
+        : props.localInstalledRoutes)
     : undefined
   const routeChips = collectLocalInstalledRoutes(props.curNetworkInst.detail, overrideRoutes)
     .map(cidr => chip(cidr))

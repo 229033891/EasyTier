@@ -42,11 +42,57 @@ const curVpnStatus: vpnStatus = {
   dns: undefined,
 }
 
-/** Routes currently applied via Android VpnService (empty when VPN is down). */
-export function getMobileVpnInstalledRoutes(): string[] {
+/**
+ * Routes currently applied via Android VpnService (empty when VPN is down).
+ * When `forInstanceId` is set and another instance owns the VPN, returns [].
+ */
+export function getMobileVpnInstalledRoutes(forInstanceId?: string): string[] {
   if (!curVpnStatus.running)
     return []
-  return [...curVpnStatus.routes]
+  if (forInstanceId && activeVpnInstanceId && forInstanceId !== activeVpnInstanceId)
+    return []
+
+  const routes = [...curVpnStatus.routes]
+  // VpnService installs the virtual address via addAddress; surface the subnet
+  // alongside addRoute prefixes so Status ROUTE matches what users expect.
+  if (curVpnStatus.ipv4Addr && curVpnStatus.ipv4Cidr != null) {
+    routes.push(`${curVpnStatus.ipv4Addr}/${curVpnStatus.ipv4Cidr}`)
+  }
+  return Array.from(new Set(routes)).sort()
+}
+
+/** Format VpnService routes into the L2 proxy_cidr_route_sync summary string. */
+export function formatMobileVpnRouteSync(routes: string[] = getMobileVpnInstalledRoutes()): string {
+  const joined = routes.length ? routes.join(',') : '-'
+  const exit = routes.some(route => route === '0.0.0.0/0')
+  return `desired=[${joined}] installed=[${joined}] exit=${exit}`
+}
+
+/**
+ * Android L2 ifcfg is a no-op, so core always reports desired=[-] installed=[-].
+ * Replace that placeholder with VpnService-authoritative routes (mirrors OHOS annotate).
+ * Only attributes routes to the instance that currently owns the VPN.
+ */
+export function annotateNetworkInfoWithMobileVpnRoutes<T extends { proxy_cidr_route_sync?: string | null }>(
+  info: T,
+  instanceId?: string,
+): T {
+  info.proxy_cidr_route_sync = formatMobileVpnRouteSync(getMobileVpnInstalledRoutes(instanceId))
+  return info
+}
+
+/** Refresh native VpnService snapshot then annotate running info for Status display. */
+export async function annotateNetworkInfoFromVpnService<T extends { proxy_cidr_route_sync?: string | null }>(
+  info: T,
+  instanceId?: string,
+): Promise<T> {
+  try {
+    syncVpnStatusFromNative(await get_vpn_status())
+  }
+  catch (e) {
+    console.warn('refresh vpn status before route annotate failed', e)
+  }
+  return annotateNetworkInfoWithMobileVpnRoutes(info, instanceId)
 }
 
 export function setMobileVpnTileActionHandler(

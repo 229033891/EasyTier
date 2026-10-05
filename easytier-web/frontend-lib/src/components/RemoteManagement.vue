@@ -34,7 +34,7 @@ const props = defineProps<{
      * Platform-owned installed routes (Android VpnService).
      * Forwarded to Status; may be a getter refreshed with network info polls.
      */
-    localInstalledRoutes?: string[] | (() => string[]);
+    localInstalledRoutes?: string[] | ((instanceId?: string) => string[]);
 }>();
 
 const isStatusMode = computed(() => props.mode === 'status')

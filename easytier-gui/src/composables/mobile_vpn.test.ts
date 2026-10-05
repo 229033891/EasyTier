@@ -106,6 +106,37 @@ beforeEach(() => {
   mocks.stopVpn.mockClear()
 })
 
+describe('mobile VPN route sync annotate', () => {
+  it('formats VpnService routes like L2 proxy_cidr_route_sync', async () => {
+    const vpn = await loadVpnModule()
+    expect(vpn.formatMobileVpnRouteSync([])).toBe('desired=[-] installed=[-] exit=false')
+    expect(vpn.formatMobileVpnRouteSync(['10.0.0.0/24', '0.0.0.0/0'])).toBe(
+      'desired=[10.0.0.0/24,0.0.0.0/0] installed=[10.0.0.0/24,0.0.0.0/0] exit=true',
+    )
+    expect(vpn.annotateNetworkInfoWithMobileVpnRoutes({
+      proxy_cidr_route_sync: 'desired=[-] installed=[-] exit=false',
+    }, 'other-instance').proxy_cidr_route_sync).toBe('desired=[-] installed=[-] exit=false')
+  })
+
+  it('attributes installed routes to the VPN owner instance only', async () => {
+    setConfig('A')
+    setConfig('B')
+    setReady('A', '10.0.0.1')
+    const vpn = await loadVpnModule()
+
+    await vpn.onNetworkInstanceChange('A')
+    expect(mocks.startVpn).toHaveBeenCalledTimes(1)
+
+    // Owner sees its routes (interface subnet appended); others see none.
+    expect(vpn.getMobileVpnInstalledRoutes('A')).toEqual(['10.0.0.1/24'])
+    expect(vpn.getMobileVpnInstalledRoutes('B')).toEqual([])
+    expect(vpn.getMobileVpnInstalledRoutes()).toEqual(['10.0.0.1/24'])
+    expect(vpn.formatMobileVpnRouteSync(vpn.getMobileVpnInstalledRoutes('B'))).toBe(
+      'desired=[-] installed=[-] exit=false',
+    )
+  })
+})
+
 describe('mobile VPN reconciliation ownership', () => {
   it('stops A before retrying an unavailable B, then starts B when it becomes ready', async () => {
     setConfig('A')

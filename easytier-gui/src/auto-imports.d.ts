@@ -11,6 +11,8 @@ declare global {
   const MenuItemShow: typeof import('./composables/tray')['MenuItemShow']
   const acceptHMRUpdate: typeof import('pinia')['acceptHMRUpdate']
   const addVpnPortalClient: typeof import('./composables/backend')['addVpnPortalClient']
+  const annotateNetworkInfoFromVpnService: typeof import('./composables/mobile_vpn')['annotateNetworkInfoFromVpnService']
+  const annotateNetworkInfoWithMobileVpnRoutes: typeof import('./composables/mobile_vpn')['annotateNetworkInfoWithMobileVpnRoutes']
   const clearVpnPortalClients: typeof import('./composables/backend')['clearVpnPortalClients']
   const collectNetworkInfo: typeof import('./composables/backend')['collectNetworkInfo']
   const computed: typeof import('vue')['computed']
@@ -24,6 +26,7 @@ declare global {
   const deleteNetworkInstance: typeof import('./composables/backend')['deleteNetworkInstance']
   const effectScope: typeof import('vue')['effectScope']
   const executeVpnTileAction: typeof import('./composables/mobile_vpn_tile')['executeVpnTileAction']
+  const formatMobileVpnRouteSync: typeof import('./composables/mobile_vpn')['formatMobileVpnRouteSync']
   const generateMenuItem: typeof import('./composables/tray')['generateMenuItem']
   const generateNetworkConfig: typeof import('./composables/backend')['generateNetworkConfig']
   const getActivePinia: typeof import('pinia')['getActivePinia']
@@ -32,6 +35,7 @@ declare global {
   const getCurrentInstance: typeof import('vue')['getCurrentInstance']
   const getCurrentScope: typeof import('vue')['getCurrentScope']
   const getEasytierVersion: typeof import('./composables/backend')['getEasytierVersion']
+  const getMobileVpnInstalledRoutes: typeof import('./composables/mobile_vpn')['getMobileVpnInstalledRoutes']
   const getNetworkMetas: typeof import('./composables/backend')['getNetworkMetas']
   const getServiceStatus: typeof import('./composables/backend')['getServiceStatus']
   const getVpnPortalInfo: typeof import('./composables/backend')['getVpnPortalInfo']
@@ -147,6 +151,8 @@ declare module 'vue' {
     readonly MenuItemShow: UnwrapRef<typeof import('./composables/tray')['MenuItemShow']>
     readonly acceptHMRUpdate: UnwrapRef<typeof import('pinia')['acceptHMRUpdate']>
     readonly addVpnPortalClient: UnwrapRef<typeof import('./composables/backend')['addVpnPortalClient']>
+    readonly annotateNetworkInfoFromVpnService: UnwrapRef<typeof import('./composables/mobile_vpn')['annotateNetworkInfoFromVpnService']>
+    readonly annotateNetworkInfoWithMobileVpnRoutes: UnwrapRef<typeof import('./composables/mobile_vpn')['annotateNetworkInfoWithMobileVpnRoutes']>
     readonly clearVpnPortalClients: UnwrapRef<typeof import('./composables/backend')['clearVpnPortalClients']>
     readonly collectNetworkInfo: UnwrapRef<typeof import('./composables/backend')['collectNetworkInfo']>
     readonly computed: UnwrapRef<typeof import('vue')['computed']>
@@ -160,6 +166,7 @@ declare module 'vue' {
     readonly deleteNetworkInstance: UnwrapRef<typeof import('./composables/backend')['deleteNetworkInstance']>
     readonly effectScope: UnwrapRef<typeof import('vue')['effectScope']>
     readonly executeVpnTileAction: UnwrapRef<typeof import('./composables/mobile_vpn_tile')['executeVpnTileAction']>
+    readonly formatMobileVpnRouteSync: UnwrapRef<typeof import('./composables/mobile_vpn')['formatMobileVpnRouteSync']>
     readonly generateMenuItem: UnwrapRef<typeof import('./composables/tray')['generateMenuItem']>
     readonly generateNetworkConfig: UnwrapRef<typeof import('./composables/backend')['generateNetworkConfig']>
     readonly getActivePinia: UnwrapRef<typeof import('pinia')['getActivePinia']>
@@ -168,6 +175,7 @@ declare module 'vue' {
     readonly getCurrentInstance: UnwrapRef<typeof import('vue')['getCurrentInstance']>
     readonly getCurrentScope: UnwrapRef<typeof import('vue')['getCurrentScope']>
     readonly getEasytierVersion: UnwrapRef<typeof import('./composables/backend')['getEasytierVersion']>
+    readonly getMobileVpnInstalledRoutes: UnwrapRef<typeof import('./composables/mobile_vpn')['getMobileVpnInstalledRoutes']>
     readonly getNetworkMetas: UnwrapRef<typeof import('./composables/backend')['getNetworkMetas']>
     readonly getServiceStatus: UnwrapRef<typeof import('./composables/backend')['getServiceStatus']>
     readonly getVpnPortalInfo: UnwrapRef<typeof import('./composables/backend')['getVpnPortalInfo']>
