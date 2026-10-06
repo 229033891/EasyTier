@@ -473,10 +473,15 @@ where
 
     pub fn add_connector(&self, url: Url) -> anyhow::Result<()> {
         validate_manual_url(&url)?;
-        // Decide pin vs prefix-add before taking state_lock so we never nest
-        // state_lock → task (stop briefly takes task; keep lock order acyclic).
+        // Decide pin vs prefix-add before taking state_lock, then re-verify
+        // under the guard: start() may flip running state in between and a
+        // misclassified runtime add would sit behind the DirectFirst prefix
+        // until the next escalate. Re-checking nests state_lock → task, which
+        // is safe: no path holds the task guard while acquiring state_lock
+        // (stop() drops the task guard before taking state_lock).
         let pin = self.is_running();
         let _state_guard = lock(&self.data.state.state_lock);
+        let pin = pin || self.is_running();
         self.data.state.removed.remove(&url);
         // Initial peer URLs are registered before `start()` and stay behind the
         // DirectFirst fallback prefix. Runtime adds (after start) must dial
