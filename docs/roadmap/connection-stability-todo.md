@@ -164,15 +164,15 @@ score = w_lat * norm(rtt)
 ## 6. 建议实施顺序
 
 ```text
-P1.6 stats+jitter/loss上报+P1.1/P1.2透参  <- 先行，给P0.2提供健康信号
-  -> P0.1 配置模型+老开关映射
-  -> P0.2 回落状态机FallbackController
-  -> P0.3/P0.4 文档与UI
-  -> P0.5 非443验收
-并行P1.4#2632验证
-随后P1.3 scheme优先列表
-      P1.7-P1.8 质量分选路  <- 依赖P1.6
-再后P2 可观测/OSPF代价评估/bonding/proxy策略
+P1.6 stats jitter/loss 上报 + P1.1/P1.2 透参  <- 先行，给 P0.2 提供健康信号
+  -> P0.1 配置模型 + 老开关映射
+  -> P0.2 回落状态机 FallbackController
+  -> P0.3/P0.4 文档与 UI
+  -> P0.5 非 443 验收
+并行：P1.4 #2632 验证
+随后：P1.3 scheme 优先列表
+      P1.7-P1.8 质量分选路  <- 依赖 P1.6
+再后：P2 可观测 / OSPF 代价评估 / bonding / proxy 策略
 ```
 
 拍板前可与 [`discussion-proposal-2026-10.md`](./discussion-proposal-2026-10.md) 轨道 C（连通保底）对齐；**本文强调自定义端点后，轨道 C 叙事应从「wss/443 范式」改为「可配置保底 URL + 可选 443 推荐」**。
