@@ -231,6 +231,8 @@ onMounted(load);
                     <th>{{ t('web.config_tokens.token') }}</th>
                     <th>{{ t('web.config_tokens.label') }}</th>
                     <th>{{ t('web.config_tokens.url_example') }}</th>
+                    <th>{{ t('web.config_tokens.created') }}</th>
+                    <th>{{ t('web.config_tokens.updated') }}</th>
                     <th></th>
                 </tr>
             </thead>
@@ -263,6 +265,8 @@ onMounted(load);
                             <code class="et-code text-xs">tcp://&lt;host&gt;:22020/{{ row.token }}</code>
                         </div>
                     </td>
+                    <td class="whitespace-nowrap">{{ Utils.formatEventTime(row.create_time) }}</td>
+                    <td class="whitespace-nowrap">{{ Utils.formatEventTime(row.update_time) }}</td>
                     <td class="whitespace-nowrap">
                         <template v-if="editId === row.id">
                             <Button

@@ -19,6 +19,9 @@ pub struct ConfigTokenInfo {
     pub username: String,
     pub token: String,
     pub label: String,
+    /// RFC3339 with offset — clients format for display via formatEventTime.
+    pub create_time: String,
+    pub update_time: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -93,6 +96,8 @@ async fn list_tokens(
                 username,
                 token: row.token,
                 label: row.label,
+                create_time: row.create_time.to_rfc3339(),
+                update_time: row.update_time.to_rfc3339(),
             })
             .collect(),
     ))
@@ -147,6 +152,8 @@ async fn create_token(
         username,
         token: row.token,
         label: row.label,
+        create_time: row.create_time.to_rfc3339(),
+        update_time: row.update_time.to_rfc3339(),
     }))
 }
 
@@ -200,6 +207,8 @@ async fn update_token(
         username,
         token: row.token,
         label: row.label,
+        create_time: row.create_time.to_rfc3339(),
+        update_time: row.update_time.to_rfc3339(),
     }))
 }
 

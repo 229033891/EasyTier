@@ -9,6 +9,7 @@ import Select from 'primevue/select'
 import Textarea from 'primevue/textarea'
 import { TOAST_LIFE } from '../modules/toast'
 import { normalizeLoggerLevel, type LoggingSettingsApi, type LoggerLevelState } from '../modules/logging'
+import { localizeLogTimestamps } from '../modules/utils'
 
 const props = defineProps<{
   api: LoggingSettingsApi
@@ -66,9 +67,9 @@ async function loadLoggingContent(fileName?: string) {
       || files[0]?.fileName
       || ''
     selectedLogFile.value = preferred
-    loggingContent.value = preferred
-      ? await props.api.readLogFile!(preferred)
-      : ''
+    // Files stay UTC on disk; localize leading …Z stamps for the viewer only.
+    const raw = preferred ? await props.api.readLogFile!(preferred) : ''
+    loggingContent.value = localizeLogTimestamps(raw)
   }
   catch (e) {
     loggingContent.value = ''
@@ -257,6 +258,9 @@ async function copyLoggingDir() {
             :disabled="!loggingFiles.length"
             @update:model-value="(value: string) => loadLoggingContent(value)" />
         </div>
+        <p v-if="loggingContent || loggingFiles.length" class="logging-level-hint m-0">
+          {{ t('logging_timestamps_local_hint') }}
+        </p>
         <Textarea
           :model-value="loggingContent || (loggingFiles.length ? '' : t('logging_empty'))"
           class="w-full logging-textarea"

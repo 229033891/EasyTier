@@ -107,6 +107,7 @@ logging_refresh: Refresh
 logging_empty: No log files yet
 logging_load_failed: Failed to load logs
 logging_file: Log File
+logging_timestamps_local_hint: Log files are written in UTC; timestamps here are converted to your local timezone for reading.
 logging_retention_hint: Up to 3 rotated log files are kept (daily rotation; ~3 days at normal volume, not a fixed time window).
 logging_remote_hint: Log level applies to the remote EasyTier process. Open log files on the device to view recent content.
 vpn_tile_no_network: No configured network
@@ -654,6 +655,8 @@ web:
     label: Label
     label_placeholder: Optional label
     url_example: Client URL example
+    created: Created
+    updated: Updated
     copy: Copy
     copied: Copied
     copy_failed: Copy failed

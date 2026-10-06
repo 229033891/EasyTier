@@ -82,14 +82,40 @@ export function formatClientUrl(clientUrl: string | null | undefined): string {
 }
 
 /**
- * Format an event-log timestamp as absolute local date+time
- * (e.g. `2026/10/06 16:14:05`) instead of a relative "x minutes ago".
+ * Parse epoch seconds/ms or RFC3339 (with offset/Z) into unix milliseconds.
+ * Returns null when the value cannot be parsed.
+ */
+export function parseEventTimeMs(time: unknown): number | null {
+  if (time == null || time === '')
+    return null
+  if (typeof time === 'number') {
+    if (!Number.isFinite(time))
+      return null
+    // Heuristic: values below 1e12 are unix seconds (year ~2001 in ms).
+    return time < 1e12 ? time * 1000 : time
+  }
+  const raw = String(time).trim()
+  if (!raw)
+    return null
+  if (/^-?\d+(\.\d+)?$/.test(raw)) {
+    const n = Number(raw)
+    if (!Number.isFinite(n))
+      return null
+    return n < 1e12 ? n * 1000 : n
+  }
+  const parsed = Date.parse(raw)
+  return Number.isFinite(parsed) ? parsed : null
+}
+
+/**
+ * Format a timestamp for UI display as absolute local date+time
+ * (e.g. `2026/10/06 16:14:05`). Accepts epoch s/ms or RFC3339.
  * Returns the raw value when it cannot be parsed, never throws.
  */
 export function formatEventTime(time: unknown): string {
-  const timestamp = typeof time === 'number' ? time : Date.parse(String(time ?? ''));
-  if (!Number.isFinite(timestamp)) {
-    return String(time ?? '');
+  const timestamp = parseEventTimeMs(time)
+  if (timestamp == null) {
+    return String(time ?? '')
   }
   return new Date(timestamp).toLocaleString(undefined, {
     year: 'numeric',
@@ -99,7 +125,23 @@ export function formatEventTime(time: unknown): string {
     minute: '2-digit',
     second: '2-digit',
     hour12: false,
-  });
+  })
+}
+
+/** Log lines start with `YYYY-MM-DDTHH:MM:SS(.mmm)Z` — keep files UTC, localize for UI. */
+const LOG_UTC_TIMESTAMP = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?)Z/gm
+
+/**
+ * Rewrite leading UTC (`…Z`) timestamps in log file text to local display form.
+ * Does not mutate the on-disk log format — display only.
+ */
+export function localizeLogTimestamps(content: string): string {
+  if (!content)
+    return content
+  return content.replace(LOG_UTC_TIMESTAMP, (match) => {
+    const local = formatEventTime(match)
+    return local || match
+  })
 }
 
 export type ApiErrorKind =
@@ -422,9 +464,7 @@ export function mergeDevicesWithArchive(
             public_ip: addr.public_ip,
             client_url: addr.client_url,
             running_network_count: 0,
-            report_time: row.last_seen_at
-                ? new Date(row.last_seen_at * 1000).toLocaleString()
-                : '',
+            report_time: row.last_seen_at ? String(row.last_seen_at) : '',
             easytier_version: row.last_easytier_version || '',
             running_network_instances: [],
             machine_id: row.device_id,

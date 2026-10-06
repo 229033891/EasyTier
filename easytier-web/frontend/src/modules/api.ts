@@ -38,6 +38,9 @@ export interface ConfigTokenInfo {
     username: string;
     token: string;
     label: string;
+    /** RFC3339 with offset — format with Utils.formatEventTime for display. */
+    create_time: string;
+    update_time: string;
 }
 
 export interface CreateConfigTokenRequest {

@@ -1054,13 +1054,13 @@ const sortedDeviceList = computed(() => {
                                 v-tooltip.top="isDeviceOnline(device)
                                     ? locationText(device)
                                     : (device.report_time
-                                        ? `${t('web.device.last_seen')}: ${device.report_time}`
+                                        ? `${t('web.device.last_seen')}: ${Utils.formatEventTime(device.report_time)}`
                                         : t('web.device.offline'))">
                                 <i class="pi pi-map-marker location-icon"></i>
                                 <span class="location-text">
                                     <template v-if="!isDeviceOnline(device)">
                                         {{ device.report_time
-                                            ? `${t('web.device.last_seen')}: ${device.report_time}`
+                                            ? `${t('web.device.last_seen')}: ${Utils.formatEventTime(device.report_time)}`
                                             : t('web.device.offline') }}
                                     </template>
                                     <template v-else>

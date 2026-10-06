@@ -42,7 +42,7 @@ defineProps<{
     </div>
     <div class="detail-item last-report">
       <div class="detail-label">{{ t('web.device.last_report') }}</div>
-      <div class="detail-value">{{ device.report_time }}</div>
+      <div class="detail-value">{{ Utils.formatEventTime(device.report_time) }}</div>
     </div>
     <div class="detail-item version">
       <div class="detail-label">{{ t('web.device.version') }}</div>
