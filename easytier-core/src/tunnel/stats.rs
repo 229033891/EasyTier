@@ -96,11 +96,7 @@ impl WindowLatency {
             }
         }
 
-        if pairs == 0 {
-            0
-        } else {
-            sum_abs_diff / pairs
-        }
+        sum_abs_diff.checked_div(pairs).unwrap_or(0)
     }
 }
 

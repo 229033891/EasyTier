@@ -170,11 +170,12 @@ pub fn network_config_from_toml(config: &TomlConfig) -> NetworkConfig {
         .then_some(flags.conn_select_w_lat);
     result.conn_select_w_loss = (flags.conn_select_w_loss != default_flags.conn_select_w_loss)
         .then_some(flags.conn_select_w_loss);
-    result.conn_select_w_jitter = (flags.conn_select_w_jitter != default_flags.conn_select_w_jitter)
+    result.conn_select_w_jitter = (flags.conn_select_w_jitter
+        != default_flags.conn_select_w_jitter)
         .then_some(flags.conn_select_w_jitter);
-    result.conn_select_loss_fuse_pct =
-        (flags.conn_select_loss_fuse_pct != default_flags.conn_select_loss_fuse_pct)
-            .then_some(flags.conn_select_loss_fuse_pct);
+    result.conn_select_loss_fuse_pct = (flags.conn_select_loss_fuse_pct
+        != default_flags.conn_select_loss_fuse_pct)
+        .then_some(flags.conn_select_loss_fuse_pct);
     result.conn_select_switch_margin_pct = (flags.conn_select_switch_margin_pct
         != default_flags.conn_select_switch_margin_pct)
         .then_some(flags.conn_select_switch_margin_pct);

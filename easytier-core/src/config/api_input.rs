@@ -644,52 +644,40 @@ impl NetworkConfigExt for NetworkConfig {
             }
         }
 
-        if let Some(ping_fail_close_count) = self.ping_fail_close_count {
-            if ping_fail_close_count > 0 {
-                flags.ping_fail_close_count = ping_fail_close_count;
-            }
+        if let Some(ping_fail_close_count) = self.ping_fail_close_count
+            && ping_fail_close_count > 0
+        {
+            flags.ping_fail_close_count = ping_fail_close_count;
         }
 
-        if let Some(ping_interval_max_sec) = self.ping_interval_max_sec {
-            if ping_interval_max_sec > 0 {
-                flags.ping_interval_max_sec = ping_interval_max_sec;
-            }
+        if let Some(ping_interval_max_sec) = self.ping_interval_max_sec
+            && ping_interval_max_sec > 0
+        {
+            flags.ping_interval_max_sec = ping_interval_max_sec;
         }
 
+        // Literal assign (including 0): runtime `from_flags` treats an all-zero
+        // select block as built-in defaults; otherwise 0 disables that metric.
         if let Some(v) = self.conn_select_w_lat {
-            if v > 0 {
-                flags.conn_select_w_lat = v;
-            }
+            flags.conn_select_w_lat = v;
         }
         if let Some(v) = self.conn_select_w_loss {
-            if v > 0 {
-                flags.conn_select_w_loss = v;
-            }
+            flags.conn_select_w_loss = v;
         }
         if let Some(v) = self.conn_select_w_jitter {
-            if v > 0 {
-                flags.conn_select_w_jitter = v;
-            }
+            flags.conn_select_w_jitter = v;
         }
         if let Some(v) = self.conn_select_loss_fuse_pct {
-            if v > 0 {
-                flags.conn_select_loss_fuse_pct = v;
-            }
+            flags.conn_select_loss_fuse_pct = v;
         }
         if let Some(v) = self.conn_select_switch_margin_pct {
-            if v > 0 {
-                flags.conn_select_switch_margin_pct = v;
-            }
+            flags.conn_select_switch_margin_pct = v;
         }
         if let Some(v) = self.conn_select_switch_abs_margin_milli {
-            if v > 0 {
-                flags.conn_select_switch_abs_margin_milli = v;
-            }
+            flags.conn_select_switch_abs_margin_milli = v;
         }
         if let Some(v) = self.conn_select_switch_windows {
-            if v > 0 {
-                flags.conn_select_switch_windows = v;
-            }
+            flags.conn_select_switch_windows = v;
         }
 
         // Path tier is SoT: when set, projects disable_p2p / prefer_peer_relay;
@@ -897,12 +885,12 @@ impl NetworkConfigExt for NetworkConfig {
             .then_some(flags.conn_select_w_lat);
         result.conn_select_w_loss = (flags.conn_select_w_loss != default_flags.conn_select_w_loss)
             .then_some(flags.conn_select_w_loss);
-        result.conn_select_w_jitter =
-            (flags.conn_select_w_jitter != default_flags.conn_select_w_jitter)
-                .then_some(flags.conn_select_w_jitter);
-        result.conn_select_loss_fuse_pct =
-            (flags.conn_select_loss_fuse_pct != default_flags.conn_select_loss_fuse_pct)
-                .then_some(flags.conn_select_loss_fuse_pct);
+        result.conn_select_w_jitter = (flags.conn_select_w_jitter
+            != default_flags.conn_select_w_jitter)
+            .then_some(flags.conn_select_w_jitter);
+        result.conn_select_loss_fuse_pct = (flags.conn_select_loss_fuse_pct
+            != default_flags.conn_select_loss_fuse_pct)
+            .then_some(flags.conn_select_loss_fuse_pct);
         result.conn_select_switch_margin_pct = (flags.conn_select_switch_margin_pct
             != default_flags.conn_select_switch_margin_pct)
             .then_some(flags.conn_select_switch_margin_pct);

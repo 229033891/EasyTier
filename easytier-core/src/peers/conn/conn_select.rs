@@ -130,9 +130,7 @@ pub fn pick_default_conn(
     }
 
     let has_verified = scored.iter().any(|c| !c.unverified_hole_punch);
-    let has_unfused = scored
-        .iter()
-        .any(|c| !c.unverified_hole_punch && !c.fused);
+    let has_unfused = scored.iter().any(|c| !c.unverified_hole_punch && !c.fused);
 
     let best = scored
         .iter()
@@ -156,8 +154,8 @@ pub fn pick_default_conn(
     };
 
     // Incumbent no longer usable → take best immediately.
-    let incumbent_unusable = (has_verified && incumbent.unverified_hole_punch)
-        || (has_unfused && incumbent.fused);
+    let incumbent_unusable =
+        (has_verified && incumbent.unverified_hole_punch) || (has_unfused && incumbent.fused);
     if incumbent_unusable {
         return Some((best.conn_id, 0));
     }
@@ -187,13 +185,7 @@ mod tests {
         Uuid::from_bytes([n; 16])
     }
 
-    fn metrics(
-        n: u8,
-        latency_us: u64,
-        loss_rate: f32,
-        jitter_us: u64,
-        hole: bool,
-    ) -> ConnMetrics {
+    fn metrics(n: u8, latency_us: u64, loss_rate: f32, jitter_us: u64, hole: bool) -> ConnMetrics {
         ConnMetrics {
             conn_id: id(n),
             latency_us,
@@ -330,20 +322,25 @@ mod tests {
     #[test]
     fn from_flags_all_zero_keeps_builtin_default() {
         let flags = FlagsInConfig::default();
-        assert_eq!(ConnSelectConfig::from_flags(&flags), ConnSelectConfig::default());
+        assert_eq!(
+            ConnSelectConfig::from_flags(&flags),
+            ConnSelectConfig::default()
+        );
     }
 
     #[test]
     fn from_flags_materialized_zero_weight_disables_metric() {
         // Simulate gen_default_flags merge, then explicit w_lat = 0.
-        let mut flags = FlagsInConfig::default();
-        flags.conn_select_w_lat = 0;
-        flags.conn_select_w_loss = 400;
-        flags.conn_select_w_jitter = 100;
-        flags.conn_select_loss_fuse_pct = 20;
-        flags.conn_select_switch_margin_pct = 10;
-        flags.conn_select_switch_abs_margin_milli = 5;
-        flags.conn_select_switch_windows = 2;
+        let flags = FlagsInConfig {
+            conn_select_w_lat: 0,
+            conn_select_w_loss: 400,
+            conn_select_w_jitter: 100,
+            conn_select_loss_fuse_pct: 20,
+            conn_select_switch_margin_pct: 10,
+            conn_select_switch_abs_margin_milli: 5,
+            conn_select_switch_windows: 2,
+            ..Default::default()
+        };
         let cfg = ConnSelectConfig::from_flags(&flags);
         assert_eq!(cfg.w_lat, 0.0);
         assert_eq!(cfg.w_loss, 4.0);
@@ -354,14 +351,16 @@ mod tests {
 
     #[test]
     fn from_flags_overrides_weights() {
-        let mut flags = FlagsInConfig::default();
-        flags.conn_select_w_lat = 100;
-        flags.conn_select_w_loss = 800; // 8.0
-        flags.conn_select_w_jitter = 100;
-        flags.conn_select_loss_fuse_pct = 30;
-        flags.conn_select_switch_margin_pct = 10;
-        flags.conn_select_switch_abs_margin_milli = 5;
-        flags.conn_select_switch_windows = 3;
+        let flags = FlagsInConfig {
+            conn_select_w_lat: 100,
+            conn_select_w_loss: 800, // 8.0
+            conn_select_w_jitter: 100,
+            conn_select_loss_fuse_pct: 30,
+            conn_select_switch_margin_pct: 10,
+            conn_select_switch_abs_margin_milli: 5,
+            conn_select_switch_windows: 3,
+            ..Default::default()
+        };
         let cfg = ConnSelectConfig::from_flags(&flags);
         assert_eq!(cfg.w_lat, 1.0);
         assert_eq!(cfg.w_loss, 8.0);

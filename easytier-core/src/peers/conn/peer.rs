@@ -1,5 +1,5 @@
-use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
 
 use arc_swap::ArcSwapOption;
 use crossbeam::atomic::AtomicCell;
@@ -10,9 +10,7 @@ use tokio::{select, sync::mpsc};
 
 use tracing::Instrument;
 
-use super::conn_select::{
-    pick_default_conn, score_conn, ConnMetrics, ConnSelectConfig,
-};
+use super::conn_select::{ConnMetrics, ConnSelectConfig, pick_default_conn, score_conn};
 use super::peer_conn::{PeerConn, PeerConnId};
 use crate::peers::{
     PacketRecvChan,
@@ -246,9 +244,7 @@ impl Peer {
 
         let last = self.last_default_conn_id.load();
         let streak = self.better_streak.load(Ordering::Relaxed);
-        let Some((picked_id, next_streak)) = pick_default_conn(&scored, last, streak, cfg) else {
-            return None;
-        };
+        let (picked_id, next_streak) = pick_default_conn(&scored, last, streak, cfg)?;
         self.better_streak.store(next_streak, Ordering::Relaxed);
         self.last_default_conn_id.store(Some(picked_id));
 
@@ -362,7 +358,7 @@ impl Drop for Peer {
 #[cfg(test)]
 mod tests {
     use super::super::conn_select::{
-        conn_quality_score, pick_default_conn, score_conn, ConnMetrics, ConnSelectConfig,
+        ConnMetrics, ConnSelectConfig, conn_quality_score, pick_default_conn, score_conn,
     };
     use uuid::Uuid;
 

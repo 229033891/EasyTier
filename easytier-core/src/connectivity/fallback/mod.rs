@@ -5,8 +5,8 @@
 //! `ConnectionPathTier` with hysteresis when escalating the active index.
 
 use std::collections::HashSet;
-use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 
 use easytier_proto::common::ConnectionPathTier;
 use url::Url;
@@ -50,6 +50,9 @@ pub struct FallbackStatus {
 /// Tracks ordered peer URLs and which prefix is eligible to dial.
 pub struct FallbackController {
     ordered: Mutex<Vec<Url>>,
+    /// Runtime-added URLs that stay eligible under DirectFirst even when the
+    /// fallback index has not escalated to them (and after recover shrinks).
+    pinned: Mutex<HashSet<Url>>,
     index: AtomicUsize,
     reason: Mutex<FallbackReason>,
     unhealthy_ticks: AtomicU32,
@@ -68,6 +71,7 @@ impl FallbackController {
     pub fn new() -> Self {
         Self {
             ordered: Mutex::new(Vec::new()),
+            pinned: Mutex::new(HashSet::new()),
             index: AtomicUsize::new(0),
             reason: Mutex::new(FallbackReason::Initial),
             unhealthy_ticks: AtomicU32::new(0),
@@ -94,7 +98,15 @@ impl FallbackController {
         }
     }
 
+    /// Append `url` and keep it dialable under DirectFirst regardless of index.
+    /// Used for runtime `add_connector` after ManualConnector has started.
+    pub fn pin_url(&self, url: Url) {
+        self.add_url(url.clone());
+        lock(&self.pinned).insert(url);
+    }
+
     pub fn remove_url(&self, url: &Url) {
+        lock(&self.pinned).remove(url);
         let mut ordered = lock(&self.ordered);
         if let Some(pos) = ordered.iter().position(|existing| existing == url) {
             ordered.remove(pos);
@@ -118,6 +130,7 @@ impl FallbackController {
 
     pub fn clear(&self) {
         lock(&self.ordered).clear();
+        lock(&self.pinned).clear();
         self.index.store(0, Ordering::Relaxed);
         *lock(&self.reason) = FallbackReason::Initial;
         self.unhealthy_ticks.store(0, Ordering::Relaxed);
@@ -166,7 +179,10 @@ impl FallbackController {
                 self.index.load(Ordering::Relaxed).min(ordered.len() - 1)
             }
         };
-        ordered.iter().take(max_idx + 1).cloned().collect()
+        let mut eligible: HashSet<Url> = ordered.iter().take(max_idx + 1).cloned().collect();
+        // Pinned URLs stay dialable even when DirectFirst index has not reached them.
+        eligible.extend(lock(&self.pinned).iter().cloned());
+        eligible
     }
 
     /// Update index/reason from one reconnect tick.
@@ -220,10 +236,8 @@ impl FallbackController {
                 }
 
                 // DirectFirst: escalate when every currently eligible URL is dead.
-                let eligible_all_dead = ordered
-                    .iter()
-                    .take(cur + 1)
-                    .all(|url| !alive.contains(url));
+                let eligible_all_dead =
+                    ordered.iter().take(cur + 1).all(|url| !alive.contains(url));
                 let any_eligible_alive =
                     ordered.iter().take(cur + 1).any(|url| alive.contains(url));
 
@@ -245,21 +259,19 @@ impl FallbackController {
                     self.unhealthy_ticks.store(0, Ordering::Relaxed);
                     let n = self.healthy_ticks.fetch_add(1, Ordering::Relaxed) + 1;
                     // Optional de-escalate: shrink toward lowest alive index after recover_after.
-                    if n >= self.recover_after {
-                        if let Some(lowest_alive) =
+                    if n >= self.recover_after
+                        && let Some(lowest_alive) =
                             ordered.iter().position(|url| alive.contains(url))
-                        {
-                            if lowest_alive < cur {
-                                self.index.store(lowest_alive, Ordering::Relaxed);
-                                self.healthy_ticks.store(0, Ordering::Relaxed);
-                                next_reason = Some(FallbackReason::Initial);
-                                tracing::info!(
-                                    from = cur,
-                                    to = lowest_alive,
-                                    "fallback controller recovered to lower peer URL index"
-                                );
-                            }
-                        }
+                        && lowest_alive < cur
+                    {
+                        self.index.store(lowest_alive, Ordering::Relaxed);
+                        self.healthy_ticks.store(0, Ordering::Relaxed);
+                        next_reason = Some(FallbackReason::Initial);
+                        tracing::info!(
+                            from = cur,
+                            to = lowest_alive,
+                            "fallback controller recovered to lower peer URL index"
+                        );
                     }
                 }
             }
@@ -317,6 +329,40 @@ mod tests {
         c.add_url(url("tcp://b:1"));
         let eligible = c.eligible_urls(ConnectionPathTier::PreferRelay);
         assert_eq!(eligible.len(), 2);
+    }
+
+    #[test]
+    fn pinned_url_stays_eligible_under_direct_first() {
+        let c = FallbackController::new();
+        c.add_url(url("tcp://a:1"));
+        c.pin_url(url("tcp://b:1"));
+        let eligible = c.eligible_urls(ConnectionPathTier::DirectFirst);
+        assert_eq!(eligible.len(), 2);
+        assert!(eligible.contains(&url("tcp://a:1")));
+        assert!(eligible.contains(&url("tcp://b:1")));
+        // Recover shrink must not drop the pin.
+        assert_eq!(c.current_index(), 0);
+        let mut alive = HashSet::new();
+        alive.insert(url("tcp://a:1"));
+        for _ in 0..5 {
+            c.on_reconnect_tick(&alive, ConnectionPathTier::DirectFirst);
+        }
+        assert_eq!(c.current_index(), 0);
+        assert!(
+            c.eligible_urls(ConnectionPathTier::DirectFirst)
+                .contains(&url("tcp://b:1"))
+        );
+    }
+
+    #[test]
+    fn remove_unpins() {
+        let c = FallbackController::new();
+        c.pin_url(url("tcp://a:1"));
+        c.pin_url(url("tcp://b:1"));
+        c.remove_url(&url("tcp://b:1"));
+        let eligible = c.eligible_urls(ConnectionPathTier::DirectFirst);
+        assert_eq!(eligible.len(), 1);
+        assert!(eligible.contains(&url("tcp://a:1")));
     }
 
     #[test]
@@ -431,7 +477,10 @@ mod tests {
         assert_eq!(c.current_index(), 0);
         assert_eq!(c.reason(), FallbackReason::Initial);
         assert_eq!(c.eligible_urls(ConnectionPathTier::DirectFirst).len(), 1);
-        assert!(c.eligible_urls(ConnectionPathTier::DirectFirst).contains(&url("tcp://a:1")));
+        assert!(
+            c.eligible_urls(ConnectionPathTier::DirectFirst)
+                .contains(&url("tcp://a:1"))
+        );
     }
 
     #[test]

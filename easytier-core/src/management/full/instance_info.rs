@@ -83,9 +83,7 @@ where
                 .proxy_cidr_route_sync_status()
                 .summary(),
         ),
-        current_fallback_index: fallback
-            .as_ref()
-            .map(|s| s.current_fallback_index as u32),
+        current_fallback_index: fallback.as_ref().map(|s| s.current_fallback_index as u32),
         fallback_reason: fallback.as_ref().map(|s| s.reason.as_str().to_owned()),
         connection_path_tier: fallback.map(|s| s.connection_path_tier.into()),
     })

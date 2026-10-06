@@ -10,13 +10,13 @@ pub mod api_input;
     target_os = "unknown"
 ))]
 mod browser;
+pub mod connection_path;
 pub mod dns;
 mod encryption;
 pub mod gateway;
 pub mod peers;
 pub mod runtime;
 pub mod toml;
-pub mod connection_path;
 
 pub use connection_path::{
     apply_connection_path_tier, infer_connection_path_tier, normalize_connection_path_tier,

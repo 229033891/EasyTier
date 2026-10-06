@@ -140,7 +140,8 @@ score = w_lat * norm(rtt)
   - ManualConnector 重连仅拨号 `0..=index`（DirectFirst）；PreferRelay/RelayOnly 拨全量列表
   - 状态面：`ListConnectorResponse` + `NetworkInstanceRunningInfo` 暴露 index/reason/tier
   - 健康信号：本项 MVP 用「client tunnel 是否存活」驱动升/降档；质量分（jitter/loss）留给 P1.7
-  - PreferRelay：`p2p_policy_flags` 将 `prefer_peer_relay` 并入 `lazy_p2p`（软抑制背景打洞；有流量仍可动态打洞）
+  - PreferRelay：`p2p_policy_flags` 仅在 **stored** `connection_path_tier=PreferRelay` 时并入 `lazy_p2p`（软抑制背景打洞；有流量仍可动态打洞）。运行时 patch 只改 `prefer_peer_relay` 布尔、不写 tier 时不触发软偏置（OSPF 对端中继偏好测例）
+  - DirectFirst：运行时 `add_connector`（`start` 之后）对 URL `pin`，避免 fallback 前缀/recover 缩档把显式拨号卡住
   - 非目标：未做 scheme 矩阵（P-AUTO.L1）；降档后不主动拆除已建立的高索引隧道
 - [x] **P0.3** 文档与模板：同时提供「443 示例」与「自定义端口示例」；写明 **443 不一定可用**
   - Current：`tunnels-and-transport.md` / `peer-connections.md` 双端口示例 + 有序列表

@@ -21,7 +21,7 @@ use url::Url;
 use crate::tunnel::ring::RingTunnelRegistry;
 use crate::{
     connectivity::{
-        fallback::{tier_from_flags, FallbackController, FallbackStatus},
+        fallback::{FallbackController, FallbackStatus, tier_from_flags},
         protocol::{ClientProtocolUpgrader, ProtocolTransport, protocol_transport},
         transport::{self, ConnectedByteStream, ConnectedTransport, UdpSessionMode},
     },
@@ -475,11 +475,24 @@ where
         validate_manual_url(&url)?;
         let _state_guard = lock(&self.data.state.state_lock);
         self.data.state.removed.remove(&url);
-        self.data.fallback.add_url(url.clone());
+        // Initial peer URLs are registered before `start()` and stay behind the
+        // DirectFirst fallback prefix. Runtime adds (after start) must dial
+        // immediately — pin so recover shrink cannot strand them.
+        if self.is_running() {
+            self.data.fallback.pin_url(url.clone());
+        } else {
+            self.data.fallback.add_url(url.clone());
+        }
         if !self.data.state.reconnecting.contains(&url) {
             self.data.state.connectors.insert(url);
         }
         Ok(())
+    }
+
+    fn is_running(&self) -> bool {
+        lock(&self.task)
+            .as_ref()
+            .is_some_and(|task| !task.handle.is_finished())
     }
 
     pub fn remove_connector(&self, url: &Url) -> bool {
@@ -524,12 +537,7 @@ where
             .unwrap_or(easytier_proto::common::ConnectionPathTier::DirectFirst);
         let ordered = self.data.fallback.ordered_urls();
         let eligible = self.data.fallback.eligible_urls(tier);
-        let position = |url: &Url| {
-            ordered
-                .iter()
-                .position(|u| u == url)
-                .map(|idx| idx as u32)
-        };
+        let position = |url: &Url| ordered.iter().position(|u| u == url).map(|idx| idx as u32);
 
         let mut snapshots = self
             .data

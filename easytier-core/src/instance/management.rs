@@ -55,9 +55,7 @@ where
             .unwrap_or_default()
     }
 
-    pub fn fallback_status(
-        &self,
-    ) -> Option<crate::connectivity::fallback::FallbackStatus> {
+    pub fn fallback_status(&self) -> Option<crate::connectivity::fallback::FallbackStatus> {
         self.manual.as_ref().map(|manual| manual.fallback_status())
     }
 
