@@ -3,11 +3,12 @@
 ## Status
 
 - Status: **Current**
-- 最近审阅：2026-10-04
+- 最近审阅：2026-10-06
 - 读者：实现复查 / 其他 agent（先读本文，再下钻专题）
 - 索引：[`../README.md`](../README.md)
+- 命名与场景细节：[`product-map.md`](./product-map.md)；crate 边界：[`architecture.md`](./architecture.md)
 
-本文是**系统怎么串起来**的地图，不是 crate 边界细则（那是 [`architecture.md`](./architecture.md)）。
+本文是**系统怎么串起来**的地图：一张总图 + 阅读顺序 + 代码锚点。不复述产品命名长表（product-map）或 host/core 边界细则（architecture）。
 
 ---
 
@@ -76,8 +77,9 @@ easytier-proto  ←  easytier-core（可移植策略）  ←  easytier（OS / TU
 | 改 core 边界 / feature | `architecture.md` → Validation |
 | 改桌面服务模式 / 保存同步 | `desktop-gui-and-config-server.md` → archive 复查 checklist |
 | 改 Console managed config | `web-managed-config.md` → `roadmap/web-evolution.md`（未实现侧） |
-| 改出口 / 默认路由 / DNS | `traffic-steering.md` → 对应 Roadmap |
-| 搞清产品叫什么 | `product-map.md` |
+| 改出口 / 默认路由 | `traffic-steering.md` → `roadmap/domain-proxy.md` / vNext（未实现侧） |
+| 改 MagicDNS / DnsConfig | `magic-dns.md` → `magic-dns-manual-wiring.md` → `roadmap/dns-policy.md`（缺口） |
+| 搞清产品叫什么 | `product-map.md`（勿与本文总图重复扩写） |
 | 历史验证记录 | `../archive/`（**不**当 Current SoT） |
 
 ---
@@ -90,8 +92,9 @@ easytier-proto  ←  easytier-core（可移植策略）  ←  easytier（OS / TU
 | GUI sync | `easytier-gui/src-tauri/src/lib.rs` → `sync_web_owned_network_config` |
 | 服务名 | `easytier-gui/src-tauri/src/service.rs` → `"ET-Gui"` + `--daemon` |
 | L3 选路 | `PeerOutboundPacketRouter::get_msg_dst_peer_ipv4` |
-| L2 / underlay | `easytier/.../virtual_nic.rs` + `resolve_proxy_cidrs` |
-| 桌面 DNS | `easytier/src/common/dns.rs` → `RuntimeDnsResolver` |
+| L2 / underlay | `easytier/src/instance/virtual_nic.rs` + `resolve_proxy_cidrs` |
+| 桌面 underlay DNS | `easytier/src/common/dns.rs` → `RuntimeDnsResolver` |
+| MagicDNS | `easytier/src/instance/dns_server/`；总览 [`magic-dns.md`](./magic-dns.md) |
 
 ---
 

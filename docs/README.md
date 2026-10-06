@@ -15,6 +15,8 @@
 
 产品帮助文案（GUI/Web i18n）只描述 **Current** 行为，不引用 Roadmap 草案。
 
+crate 内设计稿（非本索引）：`easytier/docs/`（凭据计划已标 Archive；`RelayPeerMap` / Secure Mode 规格已加 Status，行号可能漂移）。
+
 ---
 
 ## Current — 现状
@@ -31,6 +33,7 @@
 | [socket-protection.md](./current/socket-protection.md) | Host VPN-bypass / `need_protect` 契约 |
 | [peer-connections.md](./current/peer-connections.md) | 节点间多 PeerConn 与单 `default_conn` 发送路径 |
 | [tunnels-and-transport.md](./current/tunnels-and-transport.md) | 隧道 scheme、打洞/中继与伪装差距 |
+| [magic-dns.md](./current/magic-dns.md) | MagicDNS / DnsConfig / OS 接线与覆盖信号（现状 SoT） |
 | [magic-dns-manual-wiring.md](./current/magic-dns-manual-wiring.md) | Linux 非 systemd / OpenWrt MagicDNS 手工接线 |
 
 ## Roadmap — 待实现
@@ -40,13 +43,14 @@
 | [discussion-proposal-2026-10.md](./roadmap/discussion-proposal-2026-10.md) | **路线整合讨论稿**（排序 / αβγ 节奏 / 待决清单） |
 | [market-comparison-2026-10.md](./roadmap/market-comparison-2026-10.md) | **市场对比**（Tailscale / ZeroTier / 蒲公英 / 华为 / VeloCloud） |
 | [traffic-steering-vNext.md](./roadmap/traffic-steering-vNext.md) | 出口默认路由、路由所有权、与域名导流统一设计 |
-| [default-route-and-underlay-excludes.md](./roadmap/default-route-and-underlay-excludes.md) | 默认路由 / underlay 排除：与 WG·OpenVPN 对比及方案 D |
+| [default-route-and-underlay-excludes.md](./roadmap/default-route-and-underlay-excludes.md) | 默认路由 **Phase 2**（`/1`+`/1`）；Phase 1 论证已归档 |
 | [domain-proxy.md](./roadmap/domain-proxy.md) | 域名驱动子网代理 + DNS 答案同步 |
-| [dns-policy.md](./roadmap/dns-policy.md) | hosts 清单 / Split DNS / MagicDNS 上游转发与查询策略 |
+| [dns-policy.md](./roadmap/dns-policy.md) | DNS 策略**剩余缺口**（现状见 Current `magic-dns.md`） |
 | [multi-link-bonding.md](./roadmap/multi-link-bonding.md) | 多 PeerConn 并行分摊以提升带宽（Draft） |
 | [traffic-camouflage.md](./roadmap/traffic-camouflage.md) | 传输伪装 / 抗识别（wss 范式与 TLS 外观，Draft） |
 | [web-evolution.md](./roadmap/web-evolution.md) | easytier-web 演进约束与阶段 |
 | [github-release-install.md](./roadmap/github-release-install.md) | GitHub/GHCR 安装升级方案 |
+| [upstream-port-todo.md](./roadmap/upstream-port-todo.md) | 上游 `main` → `dev` cherry-pick 跟踪（P0–P2 已落袋，P3 待发版后） |
 
 ## Ops — 运维
 
@@ -64,6 +68,7 @@
 | 文档 | 说明 |
 |------|------|
 | [data-plane-runtime-plan.md](./archive/data-plane-runtime-plan.md) | DataPlane 原实现计划全文（已由 Current 摘要替代日常阅读） |
+| [default-route-and-underlay-excludes-2026-10.md](./archive/default-route-and-underlay-excludes-2026-10.md) | 默认路由 / underlay 方案 D+ 全文（已由 Current + Phase 2 薄页替代日常阅读） |
 | [service-mode-web-config-sync-and-select-ui-2026-10-04.md](./archive/service-mode-web-config-sync-and-select-ui-2026-10-04.md) | 服务模式 web-owned 同步修复 + 配置页协议下拉复查 |
 | [kcp-control-reliability-design-2026-09-14.md](./archive/kcp-control-reliability-design-2026-09-14.md) | KCP 控制报文可靠性设计 |
 | [kcp-control-reliability-validation-2026-09-14.md](./archive/kcp-control-reliability-validation-2026-09-14.md) | KCP 控制报文可靠性验证 |

@@ -2,19 +2,18 @@
 
 ## Status
 
-- Status: **Roadmap**（域名代理、路由状态可观测仍待做）
+- Status: **Roadmap**（域名代理、统一导流模型仍待做；出口 `/0` / D+ 以 Current 为准）
 - 日期：2026-10-03
-- 最近审阅：2026-10-03
-- **已落地（现状文档为准）**：客户端在出口 **可解析且有下一跳** 时本机安装 `0.0.0.0/0`/`::/0`；出口不可达则卸默认路由；`add`/`remove` 仅成功记账并周期性重试；出口机不因 `enable_exit_node` 向 OSPF 通告默认路由；L3 在可解析出口时优先 `exit_nodes` 并打 `exit_node` 标志。见 [`../current/traffic-steering.md`](../current/traffic-steering.md)。
+- 最近审阅：2026-10-06
+- **已落地（现状文档为准）**：客户端在出口 **可解析且有下一跳** 时本机安装 `0.0.0.0/0`/`::/0`；出口不可达则卸默认路由；`add`/`remove` 仅成功记账并周期性重试；出口机不因 `enable_exit_node` 向 OSPF 通告默认路由；L3 在可解析出口时优先 `exit_nodes` 并打 `exit_node` 标志；对端 `/0` 默认不装 OS（D+）。见 [`../current/traffic-steering.md`](../current/traffic-steering.md)。
 - 目标读者：产品决策 + 后续实现
 - 索引：[`../README.md`](../README.md)
 - **现状行为（已实现）**：[`../current/traffic-steering.md`](../current/traffic-steering.md)
 - **市场对比（Tailscale exit / subnet）**：[`market-comparison-2026-10.md`](./market-comparison-2026-10.md)
-- **默认路由 / underlay 排除讨论**：[`default-route-and-underlay-excludes.md`](./default-route-and-underlay-excludes.md)（建议去掉高 metric `/0`，exclude 仅 exit 门控）
-- 输入文档：
-  - 出口节点选路与系统路由缺口（会话分析）
-  - [`domain-proxy.md`](./domain-proxy.md)（域名驱动子网代理草案）
-- 决策原则：**用户要结果（上网能走对出口、域名能打中代理、路由能装能删），在正确性与性能可接受的前提下选定默认语义，避免两套机制互相抢流量却不说清优先级。**
+- **默认路由 Phase 2**：[`default-route-and-underlay-excludes.md`](./default-route-and-underlay-excludes.md)；论证全文 [`../archive/default-route-and-underlay-excludes-2026-10.md`](../archive/default-route-and-underlay-excludes-2026-10.md)
+- DNS 现状：[`../current/magic-dns.md`](../current/magic-dns.md)
+- 输入：[`domain-proxy.md`](./domain-proxy.md)
+- 决策原则：用户要结果（出口 / 域名 / 路由可装可删）；默认语义以 Current 为准，本文只扩未落地统一模型。
 
 ---
 
@@ -220,7 +219,7 @@ GUI/Web：
 
 - `exit_nodes` 旁注明：「将安装本机默认路由经虚拟网出站；对端宣告的 `0.0.0.0/0` 仅在出口列表不可用时兜底（LPM 排除 `/0`）。」
 - `proxy_domains` 旁注明：「需对端启用 MagicDNS/覆盖 DNS。」
-- 冲突检测：**应从 OSPF 通告（对端 `proxy_cidrs` 含 `0.0.0.0/0`）判断，不要从本机路由表判断**——一旦采纳 [`default-route-and-underlay-excludes.md`](./default-route-and-underlay-excludes.md) 的方案 D，桌面端将不再安装该路由，基于路由表的检测会把冲突判成「无冲突」；Android / OHOS 则始终会安装，反而不一致。
+- 冲突检测：**应从 OSPF 通告（对端 `proxy_cidrs` 含 `0.0.0.0/0`）判断，不要从本机路由表判断**——D+ 下桌面默认不装该路由，基于路由表的检测会把冲突判成「无冲突」；见 [`../current/traffic-steering.md`](../current/traffic-steering.md) 与论证留档 [`../archive/default-route-and-underlay-excludes-2026-10.md`](../archive/default-route-and-underlay-excludes-2026-10.md)。
 - 若采纳方案 D，上述「后两者为准」的措辞需按平台改写（见 §3.1 表格与 [`../current/traffic-steering.md`](../current/traffic-steering.md) §3 平台差异）。
 
 ---

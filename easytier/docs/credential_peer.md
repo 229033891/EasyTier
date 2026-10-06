@@ -1,5 +1,14 @@
 # 临时凭据（Credential）系统实现计划
 
+## Status
+
+- Status: **Archive / Superseded**（功能已落地，本文仅为历史实现计划，勿当待办）
+- 最近审阅：2026-10-06
+- 实现入口：`easytier-core/src/peers/credential_manager.rs`（`generate_credential*` / `revoke` / `trusted_credential_pubkeys`）；CLI / Web RPC 已暴露相关命令
+- 建议：日常查阅以代码与产品帮助为准；需要协议细节时再读本文
+
+---
+
 ## Context
 
 EasyTier 的 secure mode 已实现 Noise XX 握手 + X25519 静态公钥认证。当前节点通过 `network_secret` 双向确认身份。用户需要一种"临时凭据"机制：

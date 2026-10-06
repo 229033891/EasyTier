@@ -40,10 +40,6 @@ function removeHost(index: number) {
 
 <template>
   <div class="dns-hosts-editor flex flex-col gap-y-2">
-    <div v-if="!hosts.length" class="et-meta py-1">
-      {{ t('dns.hosts.empty') }}
-    </div>
-
     <div
       v-for="(row, index) in hosts"
       :key="rowKey(row)"

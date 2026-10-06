@@ -2,8 +2,9 @@
 
 ## Status
 
-- Status: **Roadmap**（`releases/v*` 自动 Publish 已落地；客户端内更新仍属后续）
-- 最近审阅：2026-10-03
+- Status: **Roadmap / Partially landed**（`ET Release` 对 `releases/v*` 自动 Publish **已落地**；客户端内更新、统一安装脚本默认源等仍属后续）
+- 最近审阅：2026-10-06
+- 现状对照：发版流水线见 `.github/workflows/release.yml`；安装脚本用法见 [`../ops/deploy-install.md`](../ops/deploy-install.md)。
 - 目标：后续**以 GitHub Actions / Release / GHCR 为唯一发版来源**，统一安装与升级路径
 - 索引：[`../README.md`](../README.md)
 - 配套：

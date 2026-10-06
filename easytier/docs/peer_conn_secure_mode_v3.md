@@ -1,5 +1,13 @@
 # PeerConn Secure Mode（乱序隧道友好）
 
+## Status
+
+- Status: **Current / Spec**（协议规格；实现以代码为准，本文不替代 Current 产品文档）
+- 最近审阅：2026-10-06
+- 配套：[`../../docs/current/peer-connections.md`](../../docs/current/peer-connections.md)、[`../../docs/current/tunnels-and-transport.md`](../../docs/current/tunnels-and-transport.md)
+
+---
+
 本文是对“PeerConn 安全模式”下一阶段协议的完整规格草案，目标是在底层 `Tunnel` **不保证顺序交付**（可能乱序/丢包）的前提下：
 
 - 仍使用 Noise 进行握手（加密、认证、channel binding）

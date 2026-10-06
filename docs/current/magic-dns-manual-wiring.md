@@ -3,9 +3,9 @@
 ## Status
 
 - Status: **Current**
-- 最近审阅：2026-10-05
+- 最近审阅：2026-10-06
 - 适用范围：开启 `enable_magic_dns` / `--accept-dns` 后，进程内 MagicDNS 已在跑，但 OS 未自动把查询指到 fake IP 的平台
-- 相关：[`../roadmap/dns-policy.md`](../roadmap/dns-policy.md) §9 / §11；systemd 系自动接线见 `LinuxResolvedConfigurator`
+- 行为总览：[`magic-dns.md`](./magic-dns.md)；剩余缺口：[`../roadmap/dns-policy.md`](../roadmap/dns-policy.md)；systemd 自动接线见 `LinuxResolvedConfigurator`
 
 ## 背景
 

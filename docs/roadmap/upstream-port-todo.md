@@ -1,12 +1,13 @@
 # 上游 main → dev 移植 TODO
 
-Status: **Roadmap**
+Status: **Roadmap**（P0–P2 代码已落袋，待 CI / `cargo test`；P3 待发版后独立集成）
 
-- 最近审阅：2026-10-05（对照 `origin/dev` / `origin/main` 复核）
+- 最近审阅：2026-10-06（对照 `origin/dev`；发版线 `releases/v2.7.3d`）
 - 背景：`main` 相对 `dev` 多出的提交里，**6 个是上游功能/修复**（#2609、#2622、#2626、#2627、#2632、#2633），其余为 fork 行政提交（README 改指向、sponsor 删除、CI/Docker 同步等，**不移植**）。提交计数会随时间漂移，以 `git log origin/dev..origin/main` 为准。
-- 总原则：**不 `merge main → dev`**（`dev` 大幅领先，且 `releases/v2.7.3a` 收尾中）。一律 cherry-pick / 适配移植。
+- 总原则：**不 `merge main → dev`**（`dev` 大幅领先）。一律 cherry-pick / 适配移植。
 - 上游提交位置：`main` 分支。
-- 发版线：P0 默认先合入 `dev`；若 `v2.7.3a` 仍依赖 web 稳定性且未冻结，再决定是否双推 release 分支（不默认双推）。
+- 发版线：P0–P2 已合入 `dev`；验证通过后跟当前 `releases/v2.7.3*` 发版线（现 `v2.7.3d`），不默认双推历史分支。
+- 索引：[`../README.md`](../README.md)
 
 ---
 
@@ -18,7 +19,7 @@ Status: **Roadmap**
 - [x] 移植 `easytier-web/src/client_manager/mod.rs` accept 循环：串行 `await accept_or_upgrade` → `JoinSet`（上限 `MAX_PENDING_HANDSHAKES = 4096`，pin 住 in-flight accept future，避免 WebSocket upgrade 丢连接）
 - [x] 新增 `easytier-web/src/client_manager/listener_tests.rs`（非 `#[ignore]` 用例；容量用例保持 ignore，fd 上限 16384 另行验证）
 - [ ] `cargo test -p easytier-web` + `cargo fmt --check`（本机 MSVC/ring 编译受阻，待 CI 或可用环境验证）
-- 说明：dev 现状（`mod.rs` accept 循环约 L190–225）在 accept 循环内串行 await handshake，造成队头阻塞；`JoinSet` import 已有，无新增依赖。
+- 说明：dev 已用 `JoinSet` 并发 accept；无新增依赖。
 
 ### 2. #2609 退役被取代会话 `fix(web): retire superseded live client sessions`
 - [x] `client_manager/mod.rs`：15s 清理闭包改为 `prune_sessions`（`is_running && !is_superseded` 才留，其余 `remove_if(Arc::ptr_eq)` + `stop()`）
@@ -61,9 +62,9 @@ Status: **Roadmap**
 ## P3 —— 发版后单开分支集成
 
 ### 6. #2622 中央网络控制台 `feat(web): add central network management console`
-- [ ] `dev` 发版收尾后再开独立集成（分支建议 `integrate/central-network`），从 `main` 拉入解冲突
+- [ ] 当前发版线（`releases/v2.7.3d` 等）收尾后再开独立集成（分支建议 `integrate/central-network`），从 `main` 拉入解冲突
 - [ ] 规模参考：约 101 文件、约 1.9 万加行；冲突重灾区 `client_manager/`、`REST`、`frontend-lib`（正是 dev 改得最多的区域）
-- [ ] 前置：P0–P2 落袋、`releases/v2.7.3a` 发出
+- [ ] 前置：P0–P2 落袋并完成 CI/`cargo test` 验证
 
 ---
 

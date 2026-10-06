@@ -3,9 +3,10 @@
 ## Status
 
 - Status: **Current**
-- 最近审阅：2026-10-04
+- 最近审阅：2026-10-06
 - 范围：`exit_nodes` / `enable_exit_node` / `proxy_cidrs` / `manual_routes` / TUN 系统路由同步 / `allow_peer_default_without_exit`
-- 规划中的改动见：[`../roadmap/traffic-steering-vNext.md`](../roadmap/traffic-steering-vNext.md)、[`../roadmap/default-route-and-underlay-excludes.md`](../roadmap/default-route-and-underlay-excludes.md)、[`../roadmap/domain-proxy.md`](../roadmap/domain-proxy.md)
+- 规划中的改动见：[`../roadmap/traffic-steering-vNext.md`](../roadmap/traffic-steering-vNext.md)、[`../roadmap/domain-proxy.md`](../roadmap/domain-proxy.md)；默认路由 Phase 2：[`../roadmap/default-route-and-underlay-excludes.md`](../roadmap/default-route-and-underlay-excludes.md)（论证全文 [`../archive/default-route-and-underlay-excludes-2026-10.md`](../archive/default-route-and-underlay-excludes-2026-10.md)）
+- DNS：[`magic-dns.md`](./magic-dns.md)
 
 本文只描述 **代码今天做什么**。产品帮助文案应以本文为准。
 
@@ -90,7 +91,7 @@ IPv6：VIP / 非 `/0` 的 proxy LPM → `exit_nodes`（同样要求下一跳）�
 
 ## 5. 域名代理
 
-**未实现。** 现状仅有手工 `proxy_cidrs` + MagicDNS 等基础设施。  
+**未实现。** 现状仅有手工 `proxy_cidrs` + MagicDNS 等基础设施（DNS 侧见 [`magic-dns.md`](./magic-dns.md)）。  
 见 [`../roadmap/domain-proxy.md`](../roadmap/domain-proxy.md)。
 
 ---

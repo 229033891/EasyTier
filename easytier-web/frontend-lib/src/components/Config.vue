@@ -899,16 +899,18 @@ function removeVpnPortalClient(index: number) {
               </div>
             </template>
             <div class="flex flex-col gap-y-4">
-              <div class="dns-magic-dns-row flex items-center gap-2">
-                <Checkbox v-model="curNetwork.enable_magic_dns" input-id="enable_magic_dns" :binary="true" />
-                <label for="enable_magic_dns">{{ t('enable_magic_dns') }}</label>
-                <i
-                  class="pi pi-question-circle config-help-tip"
-                  tabindex="0"
-                  v-tooltip.top="{ value: t('enable_magic_dns_help'), escape: false }"
-                  :aria-label="t('enable_magic_dns_help')"
-                  role="img"
-                />
+              <div class="dns-section">
+                <div class="dns-section__title dns-section__title--control">
+                  <Checkbox v-model="curNetwork.enable_magic_dns" input-id="enable_magic_dns" :binary="true" />
+                  <label for="enable_magic_dns">{{ t('enable_magic_dns') }}</label>
+                  <i
+                    class="pi pi-question-circle config-help-tip"
+                    tabindex="0"
+                    v-tooltip.top="{ value: t('enable_magic_dns_help'), escape: false }"
+                    :aria-label="t('enable_magic_dns_help')"
+                    role="img"
+                  />
+                </div>
               </div>
 
               <p
@@ -947,21 +949,17 @@ function removeVpnPortalClient(index: number) {
                 </div>
 
                 <div class="dns-section">
-                  <div class="config-inline-field config-inline-field--top">
-                    <div class="config-inline-label flex items-center gap-1">
-                      <label for="dns_upstream">{{ t('dns.upstream.title') }}</label>
-                      <i
-                        class="pi pi-question-circle config-help-tip" tabindex="0"
-                        v-tooltip.top="{ value: t('dns.upstream.help'), escape: false }"
-                        :aria-label="t('dns.upstream.help')"
-                        role="img"
-                      />
-                    </div>
-                    <div class="config-inline-control">
-                      <AutoComplete id="dns_upstream" v-model="curNetwork.dns_config.upstream_dns"
-                        :placeholder="t('dns.upstream.placeholder')" multiple fluid :typeahead="false" />
-                    </div>
+                  <div class="dns-section__title">
+                    <label for="dns_upstream">{{ t('dns.upstream.title') }}</label>
+                    <i
+                      class="pi pi-question-circle config-help-tip" tabindex="0"
+                      v-tooltip.top="{ value: t('dns.upstream.help'), escape: false }"
+                      :aria-label="t('dns.upstream.help')"
+                      role="img"
+                    />
                   </div>
+                  <AutoComplete id="dns_upstream" v-model="curNetwork.dns_config.upstream_dns"
+                    :placeholder="t('dns.upstream.placeholder')" multiple fluid :typeahead="false" />
                 </div>
               </template>
               <div v-else class="flex justify-start">
@@ -1003,15 +1001,30 @@ function removeVpnPortalClient(index: number) {
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
+  /* Nested under the DNS Strategy panel header — one visual step down. */
+  padding-left: 0.25rem;
 }
 
 .dns-section__title {
   display: inline-flex;
   align-items: center;
   gap: 0.35rem;
-  font-size: var(--et-fs-section, 0.875rem);
+  /* Below panel title (0.875rem / primary); peer titles stay identical. */
+  font-size: 0.8125rem;
   font-weight: 600;
-  color: var(--text-color, #1e293b);
+  line-height: 1.2;
+  color: var(--text-color-secondary, #64748b);
+}
+
+.dns-section__title label,
+.dns-section__title span {
+  margin: 0;
+  font: inherit;
+  color: inherit;
+}
+
+.dns-section__title--control {
+  gap: 0.5rem;
 }
 
 .config-panels {

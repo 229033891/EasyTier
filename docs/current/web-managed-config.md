@@ -2,8 +2,8 @@
 
 ## Status
 
-- Status: **Current**（核心协议、持久化与 Session 增量收敛已落地）
-- 最近审阅：2026-10-04
+- Status: **Current**（核心协议、持久化与 Session 增量收敛已落地；§7 body limit 与 checklist 部分仍开放）
+- 最近审阅：2026-10-06
 - 实施范围：EasyTier Web 的 HTTP 接收、校验、SQLite 持久化和 Session 运行态收敛
 - 上游依赖：后续由 Console 计算并发送 Patch（见 [`../roadmap/web-evolution.md`](../roadmap/web-evolution.md)）
 - 兼容要求：保留现有 Full PUT
@@ -410,19 +410,20 @@ revision。只影响 user-owned rows 的操作不清除 managed revision。
 
 ## 7. Capacity contract
 
-当前 route 没有显式 body limit，Axum `Json` 使用依赖版本的默认 2 MiB 限制。
-生产容量不应依赖框架隐式默认值。
+**已落地：** internal managed-config route（Full PUT / PATCH）显式挂了
+`DefaultBodyLimit::max(32 MiB)`（`easytier-web/src/restful/network.rs` →
+`MAX_MANAGED_CONFIG_REQUEST_BODY_SIZE`）。该限制只作用于该 route，不提高其他
+public route 的 limit。
 
-本阶段定义并测试四个独立限制：
+**仍缺（checklist 未勾）：** 除 body bytes 外，另三个独立上限尚未在文档与测试中钉死：
 
-- decoded request 最大 bytes；
 - Full entries / Patch upserts 最大数量；
 - Patch deletes 最大数量；
 - 单个 `network_config` 最大 bytes。
 
-限制只应用于 internal managed-config route，不提高其他 public route 的 limit。
-具体默认值不能拍脑袋确定：先采集 1k/10k representative configs 的 encoded
-size 和 peak memory，再选择有明确 headroom 的默认值及硬上限。
+具体默认值不能拍脑袋：先采集 1k/10k representative configs 的 encoded size 和
+peak memory，再选择有明确 headroom 的默认值及硬上限；并补 Bulk SQL bind-count
+bound 与 scale / concurrent CAS 测试。
 
 提高 Full limit 只是确保 fallback 覆盖已支持的生产规模，不是稳态优化。请求压缩
 同样只能降低 wire bytes，不能降低 JSON materialization 和 SQLite 工作量，因此

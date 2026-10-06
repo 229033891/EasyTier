@@ -1,13 +1,23 @@
 # Relay Peer 管理模块设计文档
 
+## Status
+
+- Status: **Current / Implemented**（`RelayPeerMap` 已落地；本文保留设计意图，行号可能漂移）
+- 最近审阅：2026-10-06
+- 实现：`easytier-core/src/peers/relay_peer_map.rs`；由 `easytier-core/src/peers/peer_manager.rs` 与 `foreign_network` 持有
+- 配套 Current：[`../../docs/current/peer-connections.md`](../../docs/current/peer-connections.md)
+- 注意：旧路径 `easytier/src/peers/peer_manager.rs` 已迁至 **`easytier-core`**
+
+---
+
 ## 背景与现状
 
-当前出站转发路径中，PeerManager 根据路由直接选择下一跳并发送，转发路径以“取下一跳 → 发送”为核心流程：
+出站转发路径中，PeerManager 根据路由选择下一跳并发送；非直连目标经 `RelayPeerMap` 做会话与路径治理：
 
-- 发送内部路径：[peer_manager.rs:L1053-L1082](file:///data/project/EasyTier/easytier/src/peers/peer_manager.rs#L1053-L1082)
-- 数据面发送入口：[peer_manager.rs:L1187-L1238](file:///data/project/EasyTier/easytier/src/peers/peer_manager.rs#L1187-L1238)
+- 协调与发送：`easytier-core/src/peers/peer_manager.rs`（`get_relay_peer_map` 等）
+- Relay 状态机：`easytier-core/src/peers/relay_peer_map.rs`
 
-现状缺少面向“非直连目标”的统一管理模块，无法对 Relay Peer 进行会话、状态与策略层面的治理。
+（下文部分段落仍保留设计稿口吻；以仓库内上述实现为准。）
 
 ## 设计目标
 

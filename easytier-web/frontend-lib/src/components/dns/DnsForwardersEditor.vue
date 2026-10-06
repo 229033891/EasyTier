@@ -35,10 +35,6 @@ function removeForwarder(index: number) {
 
 <template>
   <div class="dns-forwarders-editor flex flex-col gap-y-2">
-    <div v-if="!forwarders.length" class="et-meta py-1">
-      {{ t('dns.forwarders.empty') }}
-    </div>
-
     <div
       v-for="(row, index) in forwarders"
       :key="rowKey(row)"

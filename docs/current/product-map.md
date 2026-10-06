@@ -3,13 +3,15 @@
 ## Status
 
 - Status: **Current**
-- 最近审阅：2026-10-04
+- 最近审阅：2026-10-06
 - 状态说明：帮助理解 monorepo 内各产品/组件职责与关系
 - 范围：仓库内主要 crate、前端包与贡献组件
 - 索引：[`../README.md`](../README.md)
+- Agent 入口（怎么串起来）：[`system-overview.md`](./system-overview.md)
 - 配套文档：
-  - [`architecture.md`](./architecture.md)（core 架构细节）
+  - [`architecture.md`](./architecture.md)（core / host 边界 SoT；本文不复述依赖箭头细节）
   - [`desktop-gui-and-config-server.md`](./desktop-gui-and-config-server.md)（桌面 GUI / 服务进程 / config-server 回写）
+  - [`magic-dns.md`](./magic-dns.md)（MagicDNS 现状）
   - [`../roadmap/web-evolution.md`](../roadmap/web-evolution.md)（Web 演进路线）
   - [`../ops/web-upgrade.md`](../ops/web-upgrade.md)（Web 升级保库）
 

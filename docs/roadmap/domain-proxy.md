@@ -3,14 +3,15 @@
 ## Status
 
 - Status: **Roadmap**（Draft / 暂缓实现）
-- 最近审阅：2026-10-03
+- 最近审阅：2026-10-06
 - 适用范围：`easytier-core` 子网代理（`proxy_cidrs`）+ MagicDNS / 解析覆盖
-- 相关现状：子网代理仅支持 IP/CIDR 清单；MagicDNS 已有 A 记录同步能力雏形
+- 相关现状：子网代理仅支持 IP/CIDR 清单；DNS 侧已落地见 [`../current/magic-dns.md`](../current/magic-dns.md)（本文仍缺「域名→CIDR + 答案同步」）
 - 决策：先文档立项，**当前不实现代码**
 - 索引：[`../README.md`](../README.md)
 - **全局导流 / 与出口交界**：[`traffic-steering-vNext.md`](./traffic-steering-vNext.md)
 - **市场对比（Tailscale App Connector）**：[`market-comparison-2026-10.md`](./market-comparison-2026-10.md)
 - **出口与 CIDR 现状**：[`../current/traffic-steering.md`](../current/traffic-steering.md)
+- **DNS 缺口留档**：[`dns-policy.md`](./dns-policy.md)
 - 本文仍是域名子系统的权威细节。
 
 ---
