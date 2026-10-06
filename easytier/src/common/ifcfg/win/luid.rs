@@ -10,7 +10,7 @@ use cidr::Ipv4Inet;
 use cidr::Ipv6Inet;
 use std::net::{Ipv4Addr, Ipv6Addr};
 use std::ptr;
-use windows::Win32::Foundation::{ERROR_NOT_FOUND, NO_ERROR, WIN32_ERROR};
+use windows::Win32::Foundation::{ERROR_ALREADY_EXISTS, ERROR_NOT_FOUND, NO_ERROR, WIN32_ERROR};
 use windows::Win32::NetworkManagement::IpHelper::{
     ConvertInterfaceIndexToLuid, CreateIpForwardEntry2, CreateUnicastIpAddressEntry,
     DeleteIpForwardEntry2, DeleteUnicastIpAddressEntry, FreeMibTable, GetIpForwardEntry2,
@@ -22,6 +22,16 @@ use windows::Win32::NetworkManagement::Ndis::NET_LUID_LH;
 use windows::Win32::Networking::WinSock::{
     ADDRESS_FAMILY, AF_INET, AF_INET6, IpDadStatePreferred, SOCKADDR_INET,
 };
+
+/// `CreateIpForwardEntry2` returns this when the same destination already exists.
+/// Distinct from [`ERROR_ALREADY_EXISTS`] (183); both mean "already present" for adds.
+const ERROR_OBJECT_ALREADY_EXISTS: WIN32_ERROR = WIN32_ERROR(5010);
+
+fn is_add_route_ok(status: WIN32_ERROR) -> bool {
+    status == NO_ERROR
+        || status == ERROR_OBJECT_ALREADY_EXISTS
+        || status == ERROR_ALREADY_EXISTS
+}
 
 pub struct InterfaceLuid {
     luid: NET_LUID_LH,
@@ -204,8 +214,7 @@ impl InterfaceLuid {
         row.Metric = metric;
 
         let result = unsafe { CreateIpForwardEntry2(&row) };
-
-        if result == NO_ERROR {
+        if is_add_route_ok(result) {
             Ok(())
         } else {
             Err(result)
@@ -238,8 +247,7 @@ impl InterfaceLuid {
         row.Metric = metric;
 
         let result = unsafe { CreateIpForwardEntry2(&row) };
-
-        if result == NO_ERROR {
+        if is_add_route_ok(result) {
             Ok(())
         } else {
             Err(result)

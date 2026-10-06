@@ -977,7 +977,7 @@ onUnmounted(() => {
 
             <template v-else-if="needShowNetworkStatus">
                 <Status v-if="curNetworkInfo && curNetworkInfo.error_msg === ''" v-bind:cur-network-inst="curNetworkInfo"
-                    :api="api" class="mb-0" />
+                    :api="api" class="mb-0 status-fill-host" />
                 <Message v-else-if="curNetworkInfo?.error_msg" severity="error" class="mb-0">{{
                     curNetworkInfo.error_msg }}</Message>
                 <Message v-else severity="info" class="mb-0">{{ t('web.device_management.loading_network_status') }}
@@ -1141,6 +1141,8 @@ onUnmounted(() => {
 
 .network-content {
     flex: 1 1 auto;
+    display: flex;
+    flex-direction: column;
     overflow-y: auto;
     min-height: 0;
     padding: 0.65rem 0.75rem !important;
@@ -1148,6 +1150,14 @@ onUnmounted(() => {
     border: 1px solid var(--et-border-color, #e2e8f0);
     border-radius: var(--et-radius, 0.75rem);
     box-shadow: var(--et-shadow-card, none) !important;
+}
+
+/* Status 列表占满内容区，便于展开面板吃掉剩余高度 */
+.network-content > .status-fill-host {
+    flex: 1 1 auto;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
 }
 
 .network-sticky-footer {

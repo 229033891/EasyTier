@@ -117,6 +117,10 @@ fn io_error_already_gone(err: &std::io::Error) -> bool {
 }
 
 fn error_text_already_exists(text: &str) -> bool {
+    // Match localized Win32 text (e.g. Chinese "对象已存在") before ascii lowercasing.
+    if text.contains("对象已存在") {
+        return true;
+    }
     let text = text.to_ascii_lowercase();
     text.contains("(code: 183)")
         || text.contains("(code: 5010)")
@@ -459,6 +463,14 @@ mod tests {
         }
         assert!(route_add_already_satisfied(&Error::AnyhowError(
             anyhow::anyhow!("Failed to add route: already exists (code: 183)")
+        )));
+        // Exact shape from Windows CreateIpForwardEntry2 + FormatMessageW (zh-CN).
+        assert!(route_add_already_satisfied(&Error::AnyhowError(
+            anyhow::anyhow!("Failed to add host route: 对象已存在。 (code: 5010)")
+        )));
+        #[cfg(windows)]
+        assert!(route_add_already_satisfied(&Error::IOError(
+            std::io::Error::from_raw_os_error(5010)
         )));
         assert!(!route_add_already_satisfied(&Error::ShellCommandError(
             "route: not in table".to_string()

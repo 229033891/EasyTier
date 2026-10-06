@@ -574,16 +574,20 @@ const eventLogContent = computed(() => {
 
   <div v-else class="status-panels flex flex-col gap-2">
         <Panel v-model:collapsed="panelCollapsed.myNode" :header="t('my_node_info')" toggleable
+          class="status-panel"
+          :class="{ 'status-panel--expanded': !panelCollapsed.myNode }"
           :pt="panelHeaderPt('myNode')">
-          <div class="w-full">
+          <div class="w-full status-panel-body">
             <NetworkChart :upload-rate="txRate" :download-rate="rxRate" />
           </div>
         </Panel>
 
         <!-- 节点详情：与「节点信息」同级的一级面板，不再嵌在「当前节点信息」内 -->
         <Panel v-if="myNodeInfo" v-model:collapsed="panelCollapsed.nodeDetails" :header="t('node_info_details')"
+          class="status-panel"
+          :class="{ 'status-panel--expanded': !panelCollapsed.nodeDetails }"
           toggleable :pt="panelHeaderPt('nodeDetails')">
-          <div class="node-detail-groups">
+          <div class="node-detail-groups status-panel-body">
             <div v-for="group in myNodeInfoGroups" :key="group.key" class="node-info-group">
               <span class="node-info-group-title" :title="t(group.titleKey)">
                 {{ t(group.titleKey) }}
@@ -606,7 +610,10 @@ const eventLogContent = computed(() => {
           </div>
         </Panel>
 
-        <Panel v-model:collapsed="panelCollapsed.peer" toggleable :pt="panelHeaderPt('peer')">
+        <Panel v-model:collapsed="panelCollapsed.peer" toggleable
+          class="status-panel"
+          :class="{ 'status-panel--expanded': !panelCollapsed.peer }"
+          :pt="panelHeaderPt('peer')">
           <template #header>
             <div class="flex items-center gap-2">
               <span>{{ t('peer_info') }}</span>
@@ -614,7 +621,7 @@ const eventLogContent = computed(() => {
                 class="text-xs font-semibold px-2 py-0.5 rounded-full" />
             </div>
           </template>
-          <div class="peer-table-scroll">
+          <div class="peer-table-scroll status-panel-body">
           <DataTable :value="peerRouteInfos" column-resize-mode="expand" table-class="peer-route-table">
             <Column :field="ipFormat" :header="t('virtual_ipv4')" />
             <Column :header="t('hostname')">
@@ -670,14 +677,21 @@ const eventLogContent = computed(() => {
         </Panel>
 
         <Panel v-if="api.get_peer_conn_history" v-model:collapsed="panelCollapsed.peerHistory"
-          :header="t('peer_conn_history')" toggleable :pt="panelHeaderPt('peerHistory')">
-          <PeerConnHistoryChart :api="api" :instance-id="curNetworkInst?.instance_id ?? ''"
-            :visible="!panelCollapsed.peerHistory" />
+          :header="t('peer_conn_history')" toggleable
+          class="status-panel"
+          :class="{ 'status-panel--expanded': !panelCollapsed.peerHistory }"
+          :pt="panelHeaderPt('peerHistory')">
+          <div class="status-panel-body">
+            <PeerConnHistoryChart :api="api" :instance-id="curNetworkInst?.instance_id ?? ''"
+              :visible="!panelCollapsed.peerHistory" />
+          </div>
         </Panel>
 
         <Panel v-if="myNodeInfo" v-model:collapsed="panelCollapsed.vpnPortal" :header="t('vpn_portal_config')"
+          class="status-panel"
+          :class="{ 'status-panel--expanded': !panelCollapsed.vpnPortal }"
           toggleable :pt="panelHeaderPt('vpnPortal')">
-          <ScrollPanel class="max-h-[50vh] pr-3">
+          <ScrollPanel class="vpn-portal-scroll status-panel-body pr-3">
             <div v-if="vpnPortalLoading" class="status-empty status-empty--center">
               {{ t('web.device_management.loading_network_status') }}
             </div>
@@ -740,24 +754,31 @@ const eventLogContent = computed(() => {
         </Panel>
 
         <Panel v-if="myNodeInfo" v-model:collapsed="panelCollapsed.eventLog" :header="t('event_log')" toggleable
+          class="status-panel"
+          :class="{ 'status-panel--expanded': !panelCollapsed.eventLog }"
           :pt="panelHeaderPt('eventLog')">
-          <Timeline v-if="eventLogContent.length" :value="eventLogContent">
-            <template #opposite="slotProps">
-              <small class="status-event-time">{{ formatEventTime(slotProps.item.time) }}</small>
-            </template>
-            <template #content="slotProps">
-              <HumanEvent :event="slotProps.item.event" />
-            </template>
-          </Timeline>
-          <div v-else class="status-empty">—</div>
+          <div class="status-panel-body">
+            <Timeline v-if="eventLogContent.length" :value="eventLogContent">
+              <template #opposite="slotProps">
+                <small class="status-event-time">{{ formatEventTime(slotProps.item.time) }}</small>
+              </template>
+              <template #content="slotProps">
+                <HumanEvent :event="slotProps.item.event" />
+              </template>
+            </Timeline>
+            <div v-else class="status-empty">—</div>
+          </div>
         </Panel>
   </div>
 </template>
 
 <style lang="postcss" scoped>
-/* 面板列表：整体收紧面板间距 */
+/* 面板列表：整体收紧面板间距；桌面端占满父级以便展开项吃剩余高度 */
 .status-panels {
   gap: 0.5rem;
+  flex: 1 1 auto;
+  min-height: 0;
+  height: 100%;
 }
 
 .status-panels :deep(.p-panel) {
@@ -766,6 +787,10 @@ const eventLogContent = computed(() => {
   background: var(--surface-card, #ffffff);
   box-shadow: none;
   overflow: hidden;
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
 }
 
 /* 面板标题栏：折叠态更矮（覆盖 PrimeVue 默认与全局触摸目标高度） */
@@ -778,6 +803,7 @@ const eventLogContent = computed(() => {
   color: var(--text-color, #1e293b);
   background: transparent;
   border: none;
+  flex-shrink: 0;
 }
 
 .status-panels :deep(.p-panel .p-panel-header.cursor-pointer) {
@@ -798,6 +824,60 @@ const eventLogContent = computed(() => {
   font-weight: 600;
   line-height: 1.2;
   color: var(--text-color, #1e293b);
+}
+
+/* 桌面：展开的面板吃掉剩余高度，内容区内滚动 */
+@media (min-width: 641px) {
+  .status-panels :deep(.p-panel.status-panel--expanded) {
+    flex: 1 1 0;
+    min-height: 8rem;
+  }
+
+  .status-panels :deep(.status-panel--expanded .p-toggleable-content),
+  .status-panels :deep(.status-panel--expanded .p-panel-content-container),
+  .status-panels :deep(.status-panel--expanded [data-pc-section="contentcontainer"]),
+  .status-panels :deep(.status-panel--expanded [data-pc-section="toggleablecontent"]) {
+    flex: 1 1 0;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  .status-panels :deep(.status-panel--expanded .p-panel-content),
+  .status-panels :deep(.status-panel--expanded [data-pc-section="content"]) {
+    flex: 1 1 0;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  .status-panels :deep(.status-panel--expanded .status-panel-body) {
+    flex: 1 1 0;
+    min-height: 0;
+    overflow: auto;
+    overscroll-behavior: contain;
+  }
+
+  .status-panels :deep(.status-panel--expanded .node-detail-groups) {
+    max-height: none;
+  }
+
+  .status-panels :deep(.status-panel--expanded .vpn-portal-scroll) {
+    max-height: none !important;
+    height: 100%;
+  }
+
+  .status-panels :deep(.status-panel--expanded .vpn-portal-scroll.p-scrollpanel),
+  .status-panels :deep(.status-panel--expanded .p-scrollpanel.vpn-portal-scroll) {
+    flex: 1 1 0;
+    min-height: 0;
+  }
+
+  .status-panels :deep(.status-panel--expanded .peer-table-scroll) {
+    overflow: auto;
+  }
 }
 
 /* 节点详情分组：行高随 chip 内容自适应（1 行或多行） */
@@ -974,6 +1054,11 @@ const eventLogContent = computed(() => {
 
 @media (max-width: 640px) {
   /* Mobile web console / Android: avoid nested scroll; let the page scroll. */
+  .status-panels {
+    height: auto;
+    flex: 0 0 auto;
+  }
+
   .node-detail-groups {
     max-height: none;
     overflow: visible;
