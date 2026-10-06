@@ -34,7 +34,7 @@ Maintained fork of [EasyTier/EasyTier](https://github.com/EasyTier/EasyTier). Re
 
 - 🔌 **Efficient NAT Traversal**: Supports UDP and IPv6 traversal, works with NAT4-NAT4 networks  
 - 🌐 **Subnet Proxy**: Nodes can share subnets for other nodes to access  
-- 🔄 **Intelligent Routing**: Latency priority and automatic route selection for best network experience  
+- 🔄 **Intelligent Routing**: Quality-first path selection (latency/loss/jitter) and automatic route selection for best network experience  
 - ⚡ **High Performance**: Zero-copy throughout the entire link, supports TCP/UDP/WSS/WG protocols  
 
 ### Network Optimization

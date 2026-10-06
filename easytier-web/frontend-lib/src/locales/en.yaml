@@ -126,7 +126,7 @@ hide_dock_icon: Hide Dock Icon
 show_dock_icon: Show Dock Icon
 exit: Exit
 exit_app: Exit App
-use_latency_first: Latency First Mode
+use_latency_first: Quality-First Routing
 show_node_details: Show Node Details
 hide_node_details: Hide Node Details
 chips_placeholder: 'e.g: {0}, select from the dropdown after input'
@@ -208,11 +208,12 @@ advanced_group_transport: Transport & Punching
 advanced_group_system: System & Network
 advanced_group_security: Security & Privacy
 
-latency_first: Enable Latency-First Mode
+latency_first: Enable Quality-First Routing
 latency_first_help: |-
-  By default routes are chosen by fewest hops; with this on, they are chosen by lowest total latency instead.
-  Useful when nodes are spread across regions and traffic crosses several relays.
-  Note: every node keeps probing path latency, which adds a little control-plane overhead. Best set consistently across the network.
+  By default routes use fewest hops; with this on, they minimize total path quality cost (latency + loss + jitter) and may take an extra hop when that is better.
+  Useful when nodes are spread across regions and end-to-end experience matters more than hop count.
+  Note: nodes keep reporting link quality, which adds a little control-plane overhead. Best set consistently across the network.
+  Config key remains latency_first for compatibility.
 
 use_smoltcp: Use User-Space Protocol Stack
 use_smoltcp_help: |-
@@ -403,8 +404,8 @@ disable_p2p_conflict_help: |-
 disable_p2p_blocks_help: When "Disable P2P" is on, you cannot enable P2P Only, Lazy P2P, or Need P2P.
 p2p_only_blocks_disable_p2p_help: When "P2P Only" is on, you cannot enable Disable P2P.
 p2p_only_latency_first_conflict_help: |-
-  With "P2P Only" enabled, latency-first mode is ignored at runtime. Values are not rewritten; you can turn latency-first off manually.
-p2p_only_blocks_latency_first_help: Latency-first has no effect while "P2P Only" is on, so it cannot be enabled.
+  With "P2P Only" enabled, quality-first routing is ignored at runtime. Values are not rewritten; you can turn quality-first routing off manually.
+p2p_only_blocks_latency_first_help: Quality-first routing has no effect while "P2P Only" is on, so it cannot be enabled.
 p2p_only_relay_conflict_help: |-
   "P2P Only" means no relaying; relay options (Disable Relay Data / Prefer Peer Relay / network whitelist) have no effect. Values are not rewritten.
 p2p_only_blocks_relay_help: Relay-related options have no effect while "P2P Only" is on.

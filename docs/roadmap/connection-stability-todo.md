@@ -4,7 +4,7 @@
 
 - Status: **Roadmap**（Checklist；P-UX + P0.1–P0.4 + P1.1/P1.2/P1.6–P1.8 + P2.1/P2.3 已落地；下一步 P0.5 / P2.2 或 P-AUTO.L1）
 - 日期：2026-10-06
-- 最近审阅：2026-10-06（P2.3：OSPF 边代价编码综合质量分 + 发布 hysteresis）
+- 最近审阅：2026-10-06（`latency_first` UI/文案改为「质量优先选路」；配置键不变）
 - 背景：对照 OpenVPN / IPsec 的「固定隧道 + 强保活」模型，梳理 EasyTier Mesh（多 PeerConn + 打洞 + 中继）的稳定性差距与可落地项；**另纳入 2026-10-06 用户反馈：高级选项互斥缺校验、长表单占空间、单协议配置失败后无智能回落**
 - 相关 Current：[`../current/peer-connections.md`](../current/peer-connections.md)、[`../current/tunnels-and-transport.md`](../current/tunnels-and-transport.md)
 - 相关 Roadmap：[`traffic-camouflage.md`](./traffic-camouflage.md)、[`multi-link-bonding.md`](./multi-link-bonding.md)、[`market-comparison-2026-10.md`](./market-comparison-2026-10.md)、[`upstream-port-todo.md`](./upstream-port-todo.md)（#2632 TCP 打洞 1s ping）

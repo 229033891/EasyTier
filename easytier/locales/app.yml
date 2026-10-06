@@ -140,8 +140,8 @@ core_clap:
     en: "mtu of the TUN device, default is 1380 for non-encryption, 1360 for encryption"
     zh-CN: "TUN设备的MTU，默认为非加密时为1380，加密时为1360"
   latency_first:
-    en: "latency first mode, will try to relay traffic with lowest latency path, default is using shortest path"
-    zh-CN: "延迟优先模式，将尝试使用最低延迟路径转发流量，默认使用最短路径"
+    en: "quality-first routing (config: latency_first): use lowest composite cost path (latency+loss+jitter), even with more hops; default is fewest hops"
+    zh-CN: "质量优先选路（配置键 latency_first）：按综合代价（延迟+丢包+抖动）选路，必要时可多跳；默认按最少跳数"
   exit_nodes:
     en: "exit nodes to forward all traffic to, a virtual ipv4 address, priority is determined by the order of the list"
     zh-CN: "转发所有流量的出口节点，虚拟IPv4地址，优先级由列表顺序决定"

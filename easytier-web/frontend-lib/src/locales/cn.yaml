@@ -141,7 +141,7 @@ close: 关闭
 save: 保存
 config_saved: 配置已保存
 
-use_latency_first: 延迟优先模式
+use_latency_first: 质量优先选路
 my_node_info: 当前节点信息
 node_info_group_peer_id: Peer ID
 node_info_group_tun_device: TUN 设备
@@ -209,11 +209,12 @@ advanced_group_transport: 传输与打洞
 advanced_group_system: 系统与网络
 advanced_group_security: 安全与隐私
 
-latency_first: 开启延迟优先模式
+latency_first: 开启质量优先选路
 latency_first_help: |-
-  默认按「中转跳数最少」选路；开启后改为按「总延迟最低」选路。
-  适合节点分散在不同地域、需要跨多跳中转的网络。
-  注意：需要各节点持续探测路径延迟，会略微增加控制面开销；同一网络内建议统一设置。
+  默认按「中转跳数最少」选路；开启后改为按「综合质量代价最低」选路（延迟 + 丢包 + 抖动，必要时可多绕一跳）。
+  适合节点分散在不同地域、需要跨多跳中转，且更在意端到端体验的网络。
+  注意：依赖各节点持续上报链路质量，会略微增加控制面开销；同一网络内建议统一设置。
+  配置键仍为 latency_first（兼容旧配置）。
 
 use_smoltcp: 使用用户态协议栈
 use_smoltcp_help: |-
@@ -402,8 +403,8 @@ disable_p2p_conflict_help: |-
 disable_p2p_blocks_help: 已开启「禁用 P2P」时，不能再勾选仅 P2P、延迟 P2P 或需要 P2P。
 p2p_only_blocks_disable_p2p_help: 已开启「仅 P2P」时，不能再勾选禁用 P2P。
 p2p_only_latency_first_conflict_help: |-
-  「仅 P2P」开启时，延迟优先模式会被运行时忽略。配置不会被自动改写；可手动关闭延迟优先。
-p2p_only_blocks_latency_first_help: 已开启「仅 P2P」时，延迟优先模式无效，无法勾选。
+  「仅 P2P」开启时，质量优先选路会被运行时忽略。配置不会被自动改写；可手动关闭质量优先选路。
+p2p_only_blocks_latency_first_help: 已开启「仅 P2P」时，质量优先选路无效，无法勾选。
 p2p_only_relay_conflict_help: |-
   「仅 P2P」表示不走中转；中继相关选项（禁止中转数据 / 优先对端中继 / 网络白名单）此时无意义。配置不会被自动改写。
 p2p_only_blocks_relay_help: 已开启「仅 P2P」时，中继相关选项无效。
