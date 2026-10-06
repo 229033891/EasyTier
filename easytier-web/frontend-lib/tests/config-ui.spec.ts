@@ -682,7 +682,7 @@ describe('Config.vue network config projection', () => {
     const { wrapper } = mountConfig(config)
     await nextTick()
 
-    // disable_p2p 是硬约束，保留在高级设置；prefer_peer_relay 后端休眠，不再展示
+    // disable_p2p 是硬约束，保留在高级设置；prefer_peer_relay UI 隐藏（TOML 可选 OSPF 投影）
     expect(wrapper.find('#disable_p2p').exists()).toBe(true)
     expect(wrapper.find('#prefer_peer_relay').exists()).toBe(false)
   })

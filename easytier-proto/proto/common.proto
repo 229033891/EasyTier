@@ -100,6 +100,9 @@ message FlagsInConfig {
   // hole-punch 1s) still win when lower. 0 means default.
   uint32 ping_interval_max_sec = 47;
 
+  // Tip-only ConnectionPathTier (removed); never reuse.
+  reserved 48;
+
   // PeerConn quality select (P1.7). Weights are hundredths (100 = 1.0).
   // All-zero select block = built-in defaults; otherwise values are literal
   // (so `conn_select_w_lat = 0` disables the latency term after TOML merge).

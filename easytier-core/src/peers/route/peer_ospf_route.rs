@@ -2492,6 +2492,8 @@ impl PeerRouteServiceImpl {
     }
 
     fn peer_relay_projection_enabled(&self) -> bool {
+        // Legacy TOML-only topology preference (UI-hidden). Does not delay punch;
+        // path quality is decided by select_conn / OSPF latency cost separately.
         self.context.flags().prefer_peer_relay && !self.is_credential_node()
     }
 

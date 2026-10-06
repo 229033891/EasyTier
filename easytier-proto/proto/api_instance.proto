@@ -210,12 +210,16 @@ enum ConnectorStatus {
 message Connector {
   common.Url url = 1;
   ConnectorStatus status = 2;
+  // Tip-only fallback_index / is_active_fallback (removed); never reuse.
+  reserved 3, 4;
 }
 
 message ListConnectorRequest { InstanceIdentifier instance = 1; }
 
 message ListConnectorResponse {
   repeated Connector connectors = 1;
+  // Tip-only current_fallback_index / fallback_reason / connection_path_tier; never reuse.
+  reserved 2, 3, 4;
 }
 
 service ConnectorManageRpc {

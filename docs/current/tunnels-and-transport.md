@@ -61,7 +61,7 @@
   - `tcp://10.0.0.2:8443`（内网中继）  
 - 内层仍是 EasyTier，深度包检测或主动探测仍可能区分。
 
-有序 peer URL 列表与档位回落见 [`peer-connections.md`](./peer-connections.md) §2.2。
+有序 peer URL 列表（全量维持连接 + 质量选路，无档位）见 [`peer-connections.md`](./peer-connections.md) §2.2。
 
 ---
 

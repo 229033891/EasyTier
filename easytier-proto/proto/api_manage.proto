@@ -118,6 +118,8 @@ message NetworkConfig {
   optional uint32 ping_fail_close_count = 76;
   // Adaptive ping max interval in seconds (default 32; TCP hole-punch may still cap to 1).
   optional uint32 ping_interval_max_sec = 77;
+  // Tip-only ConnectionPathTier (removed); never reuse.
+  reserved 78;
   // PeerConn quality select weights/thresholds (P1.7). See FlagsInConfig; 0 / unset = default.
   optional uint32 conn_select_w_lat = 79;
   optional uint32 conn_select_w_loss = 80;
@@ -209,6 +211,8 @@ message NetworkInstanceRunningInfo {
   peer_rpc.RouteForeignNetworkSummary foreign_network_summary = 9;
   // Desktop L2 sync summary: desired vs installed proxy CIDRs and last error.
   optional string proxy_cidr_route_sync = 10;
+  // Tip-only fallback status fields (removed with ConnectionPathTier); never reuse.
+  reserved 11, 12, 13;
 }
 
 message NetworkInstanceRunningInfoMap {

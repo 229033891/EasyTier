@@ -1463,10 +1463,10 @@ impl PeerManagerCore {
             disable_udp_hole_punching: flags.disable_udp_hole_punching,
             disable_sym_hole_punching: flags.disable_sym_hole_punching,
             disable_upnp: flags.disable_upnp,
-            // Treat prefer_peer_relay like lazy_p2p for proactive background
-            // punch (traffic-triggered / need_p2p paths still allowed via
-            // dynamic_allowed).
-            lazy_p2p: flags.lazy_p2p || flags.prefer_peer_relay,
+            // Quality-first: do NOT fold `prefer_peer_relay` into lazy_p2p.
+            // That flag is a legacy TOML-only OSPF topology preference; delaying
+            // background punch would fight select_conn / multi-path analysis.
+            lazy_p2p: flags.lazy_p2p,
             disable_p2p: flags.disable_p2p,
             need_p2p: flags.need_p2p,
         }

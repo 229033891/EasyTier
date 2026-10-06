@@ -56,8 +56,9 @@
 | 项 | 今日 |
 |----|------|
 | **初始节点 URL** | `[[peer]]` / `peer_urls` / `public_server_url`（完整 tunnel URL），全部恒维持连接 |
-| **硬约束** | `disable_p2p`（不主动直连）/ `p2p_only`（绝不中转）/ 允许中转开关；`prefer_peer_relay` 后端休眠 |
-| **选优** | 同 peer 按 `select_conn` 综合质量分；对端间按 OSPF 代价；`lazy_p2p` 减少无业务时的背景打洞 |
+| **硬约束** | `disable_p2p`（不主动直连）/ `p2p_only`（绝不中转）/ 允许中转开关 |
+| **遗留可选** | `prefer_peer_relay`：UI 隐藏；**不**抑制打洞；仅 TOML 可启用 OSPF 对端中继拓扑投影（与质量分正交） |
+| **选优** | 同 peer 按 `select_conn` 综合质量分（RTT+loss+jitter）；对端间按 OSPF 代价（今日仍以延迟为主，见 Roadmap P2.3）；`lazy_p2p` 减少无业务时的背景打洞 |
 | **Web 控件** | `Config.vue` 基础设置「允许作为中转节点」；`disable_p2p` 在高级设置 |
 
 示例（有序列表；**443 不一定可用**，按实际可达端口填写）：

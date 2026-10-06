@@ -153,7 +153,8 @@ export function advancedFlagConflictHelpKey(
   if (config.p2p_only && field === 'latency_first') {
     return 'p2p_only_blocks_latency_first_help'
   }
-  // prefer_peer_relay 后端休眠、不再展示；disable_relay_data 由基础设置正向开关驱动
+  // prefer_peer_relay：UI 不展示；不抑制打洞；TOML 可选 OSPF 投影。
+  // disable_relay_data 由基础设置正向开关驱动。
   if (config.p2p_only && field === 'enable_relay_network_whitelist') {
     return 'p2p_only_blocks_relay_help'
   }

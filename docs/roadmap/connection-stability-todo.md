@@ -53,7 +53,8 @@ EasyTier 优势（保持）：多 scheme、STUN/打洞、OSPF 选路、自适应
 2026-10-06 拍板：用户要的始终是两设备之间低延迟/低抖动/低丢包，不区分直连还是中转。
 因此**不设路径档位**：全部已配置 peer URL 恒维持连接（含打洞），走哪条只看质量分
 （§2.3 / P1.7；对端间靠 OSPF 代价 P2.3）。`disable_p2p` / `p2p_only` /
-「允许作为中转节点」保留为硬约束（政策/效率），`prefer_peer_relay` 后端休眠。
+「允许作为中转节点」保留为硬约束（政策/效率）。`prefer_peer_relay`：UI 隐藏；
+**不**并入 `lazy_p2p`；仅 TOML 兼容字段，可选启用 OSPF 对端中继拓扑投影。
 
 「中继」在文案中指 **用户（或网络管理员）提供的可达端点**，不隐含公网 443。
 
@@ -63,9 +64,9 @@ EasyTier 优势（保持）：多 scheme、STUN/打洞、OSPF 选路、自适应
 
 | 指标 | 今日 | 目标 |
 |------|------|------|
-| **延迟（RTT）** | `select_conn` / OSPF `path_latency` 主依据 | 保留，作为综合分的一项 |
-| **丢包率** | Ping 已算 `loss_rate`，写入 `PeerConnStats`，**不参与选路** | 进入 PeerConn 选择与（可选）路由代价 |
-| **抖动（Jitter）** | **未单独统计** | 由 RTT 滑动窗口算标准差或连续 RTT 差的均值；进入综合分 |
+| **延迟（RTT）** | `select_conn` 与 OSPF `path_latency` / peer-center `latency_ms` | 保留，作为综合分的一项 |
+| **丢包率** | Ping 算 `loss_rate`；**已参与同 peer `select_conn`**；OSPF 代价尚未纳入 | OSPF / 跨 peer 代价可选纳入（P2.3） |
+| **抖动（Jitter）** | `WindowLatency::get_jitter_us`；**已参与同 peer `select_conn`**；OSPF 尚未纳入 | 同上 |
 
 推荐综合分（草案，权重可配；数值仅示意）：
 
@@ -129,12 +130,12 @@ score = w_lat * norm(rtt)
 
 - [x] **P0.1** 定义配置模型（已简化，无档位）：保底/中继 **URL 列表**（`[[peer]]` / `peer_urls` / `public_server_url`，scheme/host/port/path）；**不**新增第二套 URL 系统
   - 拨号策略恒全量：全部已配置 URL 维持连接 + 按需打洞；选路只看质量分
-  - 硬约束保留：`disable_p2p` / `p2p_only` / 允许中转；`prefer_peer_relay` 后端休眠（兼容保留字段）
-  - `ConnectionPathTier` / `config/connection_path.rs` 已删除（未上线直接删，不做兼容）
+  - 硬约束保留：`disable_p2p` / `p2p_only` / 允许中转；`prefer_peer_relay` UI 隐藏、不抑制打洞，TOML 可选 OSPF 投影
+  - `ConnectionPathTier` / `config/connection_path.rs` 已删除（未上线直接删；proto `reserved`）
 - [x] **P0.2** 回落状态机（已简化，随档位一并删除）：`connectivity/fallback` 已删除（未上线直接删）
   - ManualConnector 恢复恒全量重拨（全部 connectors + 按需打洞）；`select_conn` 质量分 + hysteresis 承担选优与防抖
   - 状态面回退为 connector url + status（`Connector.fallback_*`、`current_fallback_index` / `fallback_reason` / tier 字段已删）
-  - `p2p_policy_flags` 回到 `lazy_p2p || prefer_peer_relay`（后者后端休眠，仅 TOML 兼容）
+  - `p2p_policy_flags.lazy_p2p` 仅跟 `lazy_p2p` 标志，不与 `prefer_peer_relay` 耦合
   - 非目标：未做 scheme 矩阵（P-AUTO.L1）
 - [x] **P0.3** 文档与模板：同时提供「443 示例」与「自定义端口示例」；写明 **443 不一定可用**
   - Current：`tunnels-and-transport.md` / `peer-connections.md` 双端口示例 + 有序列表

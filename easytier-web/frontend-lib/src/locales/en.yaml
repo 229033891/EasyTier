@@ -387,9 +387,11 @@ enable_private_mode_help: |-
 
 prefer_peer_relay: Prefer Peer Relay
 prefer_peer_relay_help: |-
-  Prefer reusing a peer that is already relaying toward the destination, instead of advertising another direct edge to the same destination.
-  Useful in networks with many direct edges where most traffic can reuse an existing path — it keeps the control plane smaller.
-  Note: it only affects path selection between already-credentialed peers; overall relaying behaviour is unchanged.
+  (Legacy TOML-only; hidden in the console.) Prefer reusing a peer that is already
+  relaying toward the destination to keep the control-plane edge set smaller.
+  Affects OSPF topology projection only — it does not delay hole punching; same-peer
+  multi-path selection still uses the quality score (RTT / loss / jitter).
+  Note: only applies between already-credentialed peers.
 
 # Mutex / dependency hints (Current behaviour only; legacy conflicting values are kept and warned)
 disable_p2p_conflict_help: |-
