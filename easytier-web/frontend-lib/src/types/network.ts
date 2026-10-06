@@ -369,6 +369,12 @@ export function toBackendNetworkConfig(config: NetworkConfig): NetworkConfig {
   if (config.acl === undefined || isAclEmpty(config.acl)) {
     backend.acl = undefined
   }
+  if (backend.dns_config?.upstream_dns) {
+    // List editor can leave blank draft rows; empty strings fail parse_upstream_nameserver.
+    backend.dns_config.upstream_dns = backend.dns_config.upstream_dns
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0)
+  }
 
   return NetworkConfigPb.toJson(backend, {
     useProtoFieldName: true,

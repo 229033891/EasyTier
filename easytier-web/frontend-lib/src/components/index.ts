@@ -6,4 +6,5 @@ export { default as HumanEvent } from './HumanEvent.vue';
 export { default as DnsCoverageBadge } from './dns/DnsCoverageBadge.vue';
 export { default as DnsHostsEditor } from './dns/DnsHostsEditor.vue';
 export { default as DnsForwardersEditor } from './dns/DnsForwardersEditor.vue';
+export { default as DnsUpstreamEditor } from './dns/DnsUpstreamEditor.vue';
 export { default as LoggingSettingsDialog } from './LoggingSettingsDialog.vue';

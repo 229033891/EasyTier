@@ -1,7 +1,7 @@
 import './style.css'
 
 import type { App } from 'vue';
-import { Config, Status, ConfigEditDialog, RemoteManagement, HumanEvent, DnsCoverageBadge, DnsHostsEditor, DnsForwardersEditor, LoggingSettingsDialog } from "./components";
+import { Config, Status, ConfigEditDialog, RemoteManagement, HumanEvent, DnsCoverageBadge, DnsHostsEditor, DnsForwardersEditor, DnsUpstreamEditor, LoggingSettingsDialog } from "./components";
 import PrimeVue from 'primevue/config'
 
 import I18nUtils from './modules/i18n'
@@ -59,6 +59,7 @@ export {
     DnsCoverageBadge,
     DnsHostsEditor,
     DnsForwardersEditor,
+    DnsUpstreamEditor,
     LoggingSettingsDialog,
     I18nUtils,
     NetworkTypes,

@@ -22,9 +22,9 @@ network_secret_overwrite_confirm: 当前已有网络密码，确定要用新生�
 network_secret_overwrite_header: 覆盖网络密码
 public_server_url: 公共服务器地址
 peer_urls: 对等节点地址
-proxy_cidrs: 子网代理CIDR
+proxy_cidrs: 子网代理
 proxy_cidrs_help: |-
-  子网代理 CIDR：填本机要代理出去的网段，对端就能通过虚拟网访问这些地址。
+  子网代理：填本机要代理出去的网段，对端就能通过虚拟网访问这些地址。
   格式：CIDR，例如：10.0.0.0/24，可填多个。
   注意：需要开启「无 TUN 模式」或使用手动路由（Manual Routes）时，请确认对端已有相应回包路由，否则流量不通。
 vpn_portal_wireguard_listen: WireGuard 监听地址
@@ -382,14 +382,14 @@ data_compress_algo_help: |-
   带宽紧张且数据可压缩度高时，开 zstd 能省带宽；CPU 紧张或数据本身已加密/已压缩时收益很小。
   注意：两端都要支持所选算法。
 
-socket_mark: SO_MARK（fwmark）
+socket_mark: SO_MARK
 socket_mark_help: |-
   仅 Linux：给本节点所有底层出站套接字设置 SO_MARK（fwmark），方便用 `ip rule fwmark ...`、nftables 的 `meta mark`、iptables 的 `-m mark` 做策略路由或过滤。
   留空 = 完全不设置 SO_MARK；填 0 = 显式设为 0（两者不是一回事，0 也是一个合法的 mark）。
   注意：需要 CAP_NET_ADMIN 权限；FakeTCP 的实际载荷通过原始 TUN 写入，内核不会给它打标记。
 socket_mark_placeholder: 留空表示不设置
 
-ipv6_public_addr_provider: 共享公网 IPv6 子网
+ipv6_public_addr_provider: 共享 IPv6 子网
 ipv6_public_addr_provider_help: |-
   把本节点的公网 IPv6 子网共享给其他节点，让它们也能获得公网 IPv6 地址（仅 Linux 支持）。
   适合本机有公网 IPv6 前缀（例如 /64），想让网络内其他节点也拿到公网 IPv6 的场景。
@@ -441,9 +441,14 @@ dns:
     title: 上游 DNS
     help: |-
       静态主机与分流 DNS 均未命中时，按添加顺序依次 failover。
-      可添加多个上游，例如先填 1.1.1.1 回车，再填 8.8.8.8，或 udp://9.9.9.9:53。
+      可添加多个上游，例如 1.1.1.1、8.8.8.8，或 udp://9.9.9.9:53。
       为空则沿用系统 DNS。首期仅支持 IP 字面量，不支持域名。
     placeholder: "例如 1.1.1.1，再添加 8.8.8.8"
+    server: 上游
+    server_placeholder: "例如 1.1.1.1 或 udp://9.9.9.9:53"
+    add: 添加上游
+    add_tip: 添加一条上游 DNS
+    remove: 删除上游
   forwarders:
     title: 分流 DNS
     editor_help: 将匹配的域名后缀转发到指定上游（优先于默认上游）。上游为首期仅 IP 字面量。
@@ -557,7 +562,7 @@ event:
   DhcpIpv4Changed: DHCP IPv4地址更改
   DhcpIpv4Conflicted: DHCP IPv4地址冲突
   PortForwardAdded: 端口转发添加
-  ProxyCidrsUpdated: 子网代理CIDR更新
+  ProxyCidrsUpdated: 子网代理更新
   UdpBroadcastRelayStartResult: UDP广播中继启动结果
 
 web:

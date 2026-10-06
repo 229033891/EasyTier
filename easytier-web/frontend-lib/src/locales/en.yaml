@@ -22,7 +22,7 @@ network_secret_overwrite_confirm: A network secret already exists. Replace it wi
 network_secret_overwrite_header: Replace Network Secret
 public_server_url: Public Server URL
 peer_urls: Peer URLs
-proxy_cidrs: Subnet Proxy CIDRs
+proxy_cidrs: Subnet Proxy
 proxy_cidrs_help: |-
   Subnet proxy CIDRs: the local subnets this host will proxy, so peers can reach them through the virtual network.
   Format: CIDR, e.g. 10.0.0.0/24. Multiple entries allowed.
@@ -381,14 +381,14 @@ data_compress_algo_help: |-
   Enable zstd when bandwidth is tight and the payload compresses well; the gain is small when the CPU is busy or the data is already encrypted/compressed.
   Note: both ends must support the chosen algorithm.
 
-socket_mark: SO_MARK (fwmark)
+socket_mark: SO_MARK
 socket_mark_help: |-
   Linux only: set SO_MARK (fwmark) on every outbound underlay socket so you can policy-route or filter them with `ip rule fwmark ...`, nftables `meta mark`, or iptables `-m mark`.
   Leave blank to leave SO_MARK untouched; enter 0 to set it explicitly to 0 (0 is also a valid mark, so this is not the same as unset).
   Note: requires CAP_NET_ADMIN. FakeTCP's real payload is written via raw TUN writes, which the kernel does not tag.
 socket_mark_placeholder: Leave blank to leave it unset
 
-ipv6_public_addr_provider: Share Public IPv6 Subnet
+ipv6_public_addr_provider: Share IPv6 Subnet
 ipv6_public_addr_provider_help: |-
   Share this node's public IPv6 subnet with other peers so they can obtain public IPv6 addresses (Linux only).
   Useful when this host has a public IPv6 prefix (e.g. /64) and you want the rest of the network to get public IPv6 too.
@@ -440,9 +440,14 @@ dns:
     title: Upstream DNS
     help: |-
       Ordered failover list when static hosts and split DNS do not match.
-      Add multiple upstreams in order, e.g. enter 1.1.1.1 then Enter, then 8.8.8.8, or udp://9.9.9.9:53.
+      Add multiple upstreams, e.g. 1.1.1.1, 8.8.8.8, or udp://9.9.9.9:53.
       Empty keeps system DNS. Phase 1 accepts IP literals only; hostnames are rejected.
     placeholder: "e.g. 1.1.1.1, then add 8.8.8.8"
+    server: Server
+    server_placeholder: "e.g. 1.1.1.1 or udp://9.9.9.9:53"
+    add: Add upstream
+    add_tip: Add an upstream DNS server
+    remove: Remove upstream
   forwarders:
     title: Split DNS
     editor_help: Route matching domain suffixes to dedicated upstream servers (before default upstream). Upstream servers are IP literals only in phase 1.

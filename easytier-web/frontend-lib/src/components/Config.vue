@@ -22,6 +22,7 @@ import { useI18n } from 'vue-i18n'
 import AclManager from './acl/AclManager.vue'
 import DnsHostsEditor from './dns/DnsHostsEditor.vue'
 import DnsForwardersEditor from './dns/DnsForwardersEditor.vue'
+import DnsUpstreamEditor from './dns/DnsUpstreamEditor.vue'
 import UrlListInput from './UrlListInput.vue'
 
 const props = defineProps<{
@@ -950,7 +951,7 @@ function removeVpnPortalClient(index: number) {
 
                 <div class="dns-section">
                   <div class="dns-section__title">
-                    <label for="dns_upstream">{{ t('dns.upstream.title') }}</label>
+                    <span>{{ t('dns.upstream.title') }}</span>
                     <i
                       class="pi pi-question-circle config-help-tip" tabindex="0"
                       v-tooltip.top="{ value: t('dns.upstream.help'), escape: false }"
@@ -958,8 +959,7 @@ function removeVpnPortalClient(index: number) {
                       role="img"
                     />
                   </div>
-                  <AutoComplete id="dns_upstream" v-model="curNetwork.dns_config.upstream_dns"
-                    :placeholder="t('dns.upstream.placeholder')" multiple fluid :typeahead="false" />
+                  <DnsUpstreamEditor v-model:servers="curNetwork.dns_config.upstream_dns" />
                 </div>
               </template>
               <div v-else class="flex justify-start">
