@@ -3282,6 +3282,9 @@ pub(crate) async fn try_handle_foreign_network_packet(
         return Err(packet);
     }
 
+    let from_peer_id = pm_header.from_peer_id.get();
+    let to_peer_id = pm_header.to_peer_id.get();
+
     let foreign_hdr = packet.foreign_network_hdr().unwrap();
     let foreign_network_name = foreign_hdr.get_network_name(packet.payload());
     let foreign_peer_id = foreign_hdr.get_dst_peer_id();
