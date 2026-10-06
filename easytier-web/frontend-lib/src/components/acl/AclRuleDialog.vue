@@ -3,6 +3,7 @@ import { AutoComplete, Button, Checkbox, Dialog, InputNumber, InputText, MultiSe
 import { computed, reactive, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { AclAction, AclProtocol, AclRule, ensureAclRuleLists } from '../../types/network';
+import { isPanelHeaderInteractiveTarget } from '../../modules/panel';
 
 const props = defineProps<{
   visible: boolean
@@ -26,7 +27,7 @@ function onToggleablePanelHeaderClick(
   event: Event,
 ) {
   const target = event.target as HTMLElement | null
-  if (target?.closest('button, a, input, textarea, select, [role="button"]')) {
+  if (isPanelHeaderInteractiveTarget(target, event)) {
     return
   }
   panelCollapsed[key] = !panelCollapsed[key]
@@ -37,6 +38,9 @@ function panelHeaderPt(key: keyof typeof panelCollapsed) {
     header: {
       class: 'cursor-pointer select-none touch-manipulation',
       onClick: (event: Event) => onToggleablePanelHeaderClick(key, event),
+    },
+    headerActions: {
+      onClick: (event: Event) => event.stopPropagation(),
     },
   }
 }

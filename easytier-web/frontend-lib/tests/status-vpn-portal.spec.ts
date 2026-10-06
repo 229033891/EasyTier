@@ -8,10 +8,6 @@ vi.mock('vue-i18n', () => ({
   useI18n: () => ({ t: (key: string) => key }),
 }))
 
-vi.mock('@vueuse/core', () => ({
-  useTimeAgo: () => '',
-}))
-
 vi.mock('../src/components/NetworkChart.vue', () => ({
   default: defineComponent({ render: () => h('div') }),
 }))

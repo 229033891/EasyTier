@@ -798,6 +798,74 @@
   min-height: 2.5rem;
 }
 
+/* 标签左、控件右（Config / DNS 编辑器等共用；须全局，scoped 穿不进子组件） */
+.config-inline-field {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  min-width: 0;
+}
+
+.config-inline-field--top {
+  align-items: flex-start;
+}
+
+.config-inline-field--top .config-inline-label {
+  padding-top: 0.45rem;
+}
+
+.config-inline-label {
+  flex: 0 0 11rem;
+  width: 11rem;
+  white-space: nowrap;
+  box-sizing: border-box;
+}
+
+.config-inline-label--sm {
+  flex: 0 0 5.5rem;
+  width: 5.5rem;
+}
+
+.config-inline-control {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.config-inline-control > .p-inputtext,
+.config-inline-control > .p-autocomplete,
+.config-inline-control > .p-inputnumber,
+.config-inline-control > .p-select,
+.config-inline-control > .p-password,
+.config-inline-control > .p-inputwrapper {
+  width: 100%;
+  max-width: 100%;
+}
+
+.config-inline-expand {
+  margin-left: calc(11rem + 0.75rem);
+  min-width: 0;
+}
+
+.config-inline-expand--flush {
+  margin-left: 0;
+}
+
+@media (max-width: 640px) {
+  .config-inline-label {
+    flex: 0 0 5.5rem;
+    width: 5.5rem;
+  }
+
+  .config-inline-label--sm {
+    flex: 0 0 5rem;
+    width: 5rem;
+  }
+
+  .config-inline-expand {
+    margin-left: 0;
+  }
+}
+
 /*
  * 列表/卡片圆形图标操作按钮（设备列表、网络列表共用）
  * 主色统一走 --primary-color / --et-primary，不再用独立 blue-* 色板。

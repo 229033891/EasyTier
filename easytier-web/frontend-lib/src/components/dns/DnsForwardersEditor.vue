@@ -10,6 +10,20 @@ const forwarders = defineModel('forwarders', {
 
 const { t } = useI18n()
 
+/** Stable per-row keys (object identity); avoids focus jump on mid-list delete. */
+const rowKeyMap = new WeakMap<object, string>()
+let rowKeySeq = 0
+
+function rowKey(row: DnsForwarder): string {
+  let key = rowKeyMap.get(row)
+  if (!key) {
+    rowKeySeq += 1
+    key = `dns-fwd-${rowKeySeq}`
+    rowKeyMap.set(row, key)
+  }
+  return key
+}
+
 function addForwarder() {
   forwarders.value.push({ domains: [], servers: [] })
 }
@@ -21,20 +35,20 @@ function removeForwarder(index: number) {
 
 <template>
   <div class="dns-forwarders-editor flex flex-col gap-y-2">
-    <div v-if="!forwarders.length" class="et-meta py-2">
+    <div v-if="!forwarders.length" class="et-meta py-1">
       {{ t('dns.forwarders.empty') }}
     </div>
 
     <div
       v-for="(row, index) in forwarders"
-      :key="index"
-      class="dns-forwarder-row form-row flex flex-col gap-2 p-2 border border-surface rounded-lg"
+      :key="rowKey(row)"
+      class="dns-forwarder-row flex flex-col gap-1.5"
     >
       <div class="config-inline-field">
-        <div class="config-inline-label">
-          <label :for="`dns_fwd_domains_${index}`">{{ t('dns.forwarders.domains') }}</label>
-        </div>
-        <div class="config-inline-control">
+        <label :for="`dns_fwd_domains_${index}`" class="config-inline-label config-inline-label--sm">
+          {{ t('dns.forwarders.domains') }}
+        </label>
+        <div class="config-inline-control dns-row-with-action">
           <AutoComplete
             :id="`dns_fwd_domains_${index}`"
             v-model="row.domains"
@@ -43,13 +57,23 @@ function removeForwarder(index: number) {
             fluid
             :typeahead="false"
           />
+          <Button
+            icon="pi pi-trash"
+            severity="danger"
+            text
+            rounded
+            class="et-icon-action-btn"
+            :aria-label="t('dns.forwarders.remove')"
+            v-tooltip.top="t('dns.forwarders.remove')"
+            @click="removeForwarder(index)"
+          />
         </div>
       </div>
 
       <div class="config-inline-field">
-        <div class="config-inline-label">
-          <label :for="`dns_fwd_servers_${index}`">{{ t('dns.forwarders.servers') }}</label>
-        </div>
+        <label :for="`dns_fwd_servers_${index}`" class="config-inline-label config-inline-label--sm">
+          {{ t('dns.forwarders.servers') }}
+        </label>
         <div class="config-inline-control">
           <AutoComplete
             :id="`dns_fwd_servers_${index}`"
@@ -61,22 +85,9 @@ function removeForwarder(index: number) {
           />
         </div>
       </div>
-
-      <div class="flex justify-end">
-        <Button
-          icon="pi pi-trash"
-          severity="danger"
-          text
-          rounded
-          class="et-icon-action-btn"
-          :aria-label="t('dns.forwarders.remove')"
-          v-tooltip.top="t('dns.forwarders.remove')"
-          @click="removeForwarder(index)"
-        />
-      </div>
     </div>
 
-    <div class="flex justify-start mt-2">
+    <div class="flex justify-start">
       <Button
         class="et-panel-action-btn"
         icon="pi pi-plus"
@@ -89,3 +100,19 @@ function removeForwarder(index: number) {
   </div>
 </template>
 
+<style scoped>
+.dns-row-with-action {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  min-width: 0;
+}
+
+.dns-row-with-action :deep(.p-autocomplete),
+.dns-row-with-action :deep(.p-inputwrapper) {
+  flex: 1 1 auto;
+  min-width: 0;
+  width: auto;
+  max-width: 100%;
+}
+</style>

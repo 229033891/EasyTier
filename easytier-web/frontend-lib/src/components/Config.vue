@@ -2,6 +2,7 @@
 import { v4 as uuidv4 } from 'uuid'
 import { AutoComplete, Button, Checkbox, Dialog, InputNumber, InputText, MultiSelect, Panel, Password, Select, ToggleButton, useConfirm, useToast } from 'primevue'
 import { TOAST_LIFE } from '../modules/toast'
+import { isPanelHeaderInteractiveTarget } from '../modules/panel'
 import InputGroup from 'primevue/inputgroup'
 import InputGroupAddon from 'primevue/inputgroupaddon'
 import {
@@ -137,10 +138,15 @@ function onToggleablePanelHeaderClick(
   event: Event,
 ) {
   const target = event.target as HTMLElement | null
-  // Ignore tip icons / form controls so header click does not toggle twice
-  if (target?.closest(
-    'button, a, input, textarea, select, [role="button"], .config-help-tip, .dns-mixed-version-tip, [role="img"]',
-  )) {
+  // +/- 按钮会自己切换；若再冒泡到标题栏会翻两次，表现为「一点开又关上」
+  // 帮助图标同样跳过，避免点 tip 时面板跟着折叠
+  if (
+    isPanelHeaderInteractiveTarget(target, event, [
+      '.config-help-tip',
+      '.dns-mixed-version-tip',
+      '[role="img"]',
+    ])
+  ) {
     return
   }
   panelCollapsed[key] = !panelCollapsed[key]
@@ -151,6 +157,10 @@ function panelHeaderPt(key: keyof typeof panelCollapsed) {
     header: {
       class: 'cursor-pointer select-none touch-manipulation',
       onClick: (event: Event) => onToggleablePanelHeaderClick(key, event),
+    },
+    headerActions: {
+      // 阻止加减号区域冒泡到标题栏，避免双重 toggle
+      onClick: (event: Event) => event.stopPropagation(),
     },
   }
 }
@@ -910,20 +920,6 @@ function removeVpnPortalClient(index: number) {
               </p>
 
               <template v-if="curNetwork.dns_config">
-                <div class="flex flex-col gap-y-2">
-                  <div class="config-inline-field">
-                    <div class="config-inline-label flex items-center gap-1">
-                      <label for="dns_upstream">{{ t('dns.upstream.title') }}</label>
-                      <i class="pi pi-question-circle config-help-tip" tabindex="0"
-                        v-tooltip.top="{ value: t('dns.upstream.help'), escape: false }" role="img"></i>
-                    </div>
-                    <div class="config-inline-control">
-                      <AutoComplete id="dns_upstream" v-model="curNetwork.dns_config.upstream_dns"
-                        :placeholder="t('dns.upstream.placeholder')" multiple fluid :typeahead="false" />
-                    </div>
-                  </div>
-                </div>
-
                 <div class="dns-section">
                   <div class="dns-section__title">
                     <span>{{ t('dns.hosts.title') }}</span>
@@ -948,6 +944,24 @@ function removeVpnPortalClient(index: number) {
                     />
                   </div>
                   <DnsForwardersEditor v-model:forwarders="curNetwork.dns_config.forwarders" />
+                </div>
+
+                <div class="dns-section">
+                  <div class="config-inline-field config-inline-field--top">
+                    <div class="config-inline-label flex items-center gap-1">
+                      <label for="dns_upstream">{{ t('dns.upstream.title') }}</label>
+                      <i
+                        class="pi pi-question-circle config-help-tip" tabindex="0"
+                        v-tooltip.top="{ value: t('dns.upstream.help'), escape: false }"
+                        :aria-label="t('dns.upstream.help')"
+                        role="img"
+                      />
+                    </div>
+                    <div class="config-inline-control">
+                      <AutoComplete id="dns_upstream" v-model="curNetwork.dns_config.upstream_dns"
+                        :placeholder="t('dns.upstream.placeholder')" multiple fluid :typeahead="false" />
+                    </div>
+                  </div>
                 </div>
               </template>
               <div v-else class="flex justify-start">
@@ -1248,66 +1262,7 @@ function removeVpnPortalClient(index: number) {
   cursor: help;
 }
 
-/* 标签与输入同一行，节省纵向高度 */
-.config-inline-field {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-  min-width: 0;
-}
-
-/* 多行控件（如 UrlListInput）：标签顶对齐 */
-.config-inline-field--top {
-  align-items: flex-start;
-}
-
-.config-inline-field--top .config-inline-label {
-  padding-top: 0.45rem;
-}
-
-.config-inline-label {
-  flex: 0 0 11rem;
-  width: 11rem;
-  white-space: nowrap;
-  box-sizing: border-box;
-}
-
-.config-inline-control {
-  flex: 1 1 auto;
-  min-width: 0;
-}
-
-/* 开关展开后的附加输入：与右侧控件列对齐 */
-.config-inline-expand {
-  margin-left: calc(11rem + 0.75rem);
-  min-width: 0;
-}
-
-/* 复杂展开块（如 VPN Portal 详情）占满整行，避免双重缩进 */
-.config-inline-expand--flush {
-  margin-left: 0;
-}
-
-@media (max-width: 640px) {
-  .config-inline-field {
-    flex-wrap: wrap;
-  }
-
-  .config-inline-label {
-    flex: 0 0 auto;
-    width: auto;
-    max-width: 100%;
-  }
-
-  .config-inline-control {
-    flex: 1 1 100%;
-  }
-
-  .config-inline-expand {
-    margin-left: 0;
-  }
-}
-
+/* 标签与输入同一行样式已提升到 style.css（子组件 DNS 编辑器也要用） */
 .config-inline-control :deep(.p-inputtext),
 .config-inline-control :deep(.p-autocomplete),
 .config-inline-control :deep(.p-inputnumber),

@@ -425,7 +425,7 @@ dns:
     enable: 配置策略
     enable_tip: 添加静态主机、分流转发与默认上游 DNS
     magic_dns_off_hint: DNS 策略会保存在本网络配置中；需开启「启用魔法 DNS」后才会接线生效。
-    editor_help: 静态条目在 MagicDNS 上为权威记录，优先于路由 hostname；未命中时走正常解析。
+    editor_help: 最高优先级。静态条目在 MagicDNS 上为权威记录，优先于路由 hostname；未命中时再看分流 DNS / 上游 DNS。
     empty: 尚未配置静态 DNS 主机。
     name: 主机名
     name_placeholder: "例如 app.internal. 或 db.et.net"
@@ -438,8 +438,11 @@ dns:
     remove: 删除主机
   upstream:
     title: 上游 DNS
-    help: 主机与分流均未命中时使用的顺序 failover 列表；为空则沿用系统 DNS。首期仅支持 IP 字面量（如 1.1.1.1、udp://8.8.8.8:53），不支持域名。
-    placeholder: "例如 1.1.1.1 或 udp://8.8.8.8:53"
+    help: |-
+      静态主机与分流 DNS 均未命中时，按添加顺序依次 failover。
+      可添加多个上游，例如先填 1.1.1.1 回车，再填 8.8.8.8，或 udp://9.9.9.9:53。
+      为空则沿用系统 DNS。首期仅支持 IP 字面量，不支持域名。
+    placeholder: "例如 1.1.1.1，再添加 8.8.8.8"
   forwarders:
     title: 分流 DNS
     editor_help: 将匹配的域名后缀转发到指定上游（优先于默认上游）。上游为首期仅 IP 字面量。

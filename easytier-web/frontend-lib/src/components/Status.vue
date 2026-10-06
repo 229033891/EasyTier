@@ -1,10 +1,10 @@
 <script setup lang="ts">
-import { useTimeAgo } from '@vueuse/core'
 import { NetworkInstance, VpnPortalClientState, type TunnelInfo, type NodeInfo, type PeerInfo, type PeerRoutePair, type VpnPortalClientInfo, type VpnPortalInfo } from '../types/network'
 import type { RemoteClient } from '../modules/api'
 import { useI18n } from 'vue-i18n';
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue';
-import { ipv4InetToString, ipv4ToString, ipv6ToString } from '../modules/utils';
+import { ipv4InetToString, ipv4ToString, ipv6ToString, formatEventTime } from '../modules/utils';
+import { isPanelHeaderInteractiveTarget } from '../modules/panel';
 import { isMeaningfulProxyCidrRouteSync, latencyMs, lossRate, numericValue, peerConns, resolvePeerRemoteAddr, resolveRoutePath, type RoutePeerLabel } from '../modules/statusDisplay';
 import { Badge, DataTable, Column, Tag, Button, ScrollPanel, Timeline, Card, Panel, } from 'primevue';
 import NetworkChart from './NetworkChart.vue';
@@ -419,7 +419,7 @@ function onToggleablePanelHeaderClick(
   event: Event,
 ) {
   const target = event.target as HTMLElement | null
-  if (target?.closest('button, a, input, textarea, select, [role="button"]')) {
+  if (isPanelHeaderInteractiveTarget(target, event)) {
     return
   }
   panelCollapsed[key] = !panelCollapsed[key]
@@ -430,6 +430,9 @@ function panelHeaderPt(key: keyof typeof panelCollapsed) {
     header: {
       class: 'cursor-pointer select-none touch-manipulation',
       onClick: (event: Event) => onToggleablePanelHeaderClick(key, event),
+    },
+    headerActions: {
+      onClick: (event: Event) => event.stopPropagation(),
     },
   }
 }
@@ -740,7 +743,7 @@ const eventLogContent = computed(() => {
           :pt="panelHeaderPt('eventLog')">
           <Timeline v-if="eventLogContent.length" :value="eventLogContent">
             <template #opposite="slotProps">
-              <small class="status-event-time">{{ useTimeAgo(Date.parse(slotProps.item.time)) }}</small>
+              <small class="status-event-time">{{ formatEventTime(slotProps.item.time) }}</small>
             </template>
             <template #content="slotProps">
               <HumanEvent :event="slotProps.item.event" />

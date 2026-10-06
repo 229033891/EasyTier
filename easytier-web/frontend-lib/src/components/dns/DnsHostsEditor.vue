@@ -15,6 +15,20 @@ const hosts = defineModel('hosts', {
 
 const { t } = useI18n()
 
+/** Stable per-row keys (object identity); avoids focus jump on mid-list delete. */
+const rowKeyMap = new WeakMap<object, string>()
+let rowKeySeq = 0
+
+function rowKey(row: DnsHostEntry): string {
+  let key = rowKeyMap.get(row)
+  if (!key) {
+    rowKeySeq += 1
+    key = `dns-host-${rowKeySeq}`
+    rowKeyMap.set(row, key)
+  }
+  return key
+}
+
 function addHost() {
   addDnsHostRow(hosts.value)
 }
@@ -26,33 +40,43 @@ function removeHost(index: number) {
 
 <template>
   <div class="dns-hosts-editor flex flex-col gap-y-2">
-    <div v-if="!hosts.length" class="et-meta py-2">
+    <div v-if="!hosts.length" class="et-meta py-1">
       {{ t('dns.hosts.empty') }}
     </div>
 
     <div
       v-for="(row, index) in hosts"
-      :key="index"
-      class="dns-host-row form-row flex flex-col gap-2 p-2 border border-surface rounded-lg"
+      :key="rowKey(row)"
+      class="dns-host-row flex flex-col gap-1.5"
     >
       <div class="config-inline-field">
-        <div class="config-inline-label">
-          <label :for="`dns_host_name_${index}`">{{ t('dns.hosts.name') }}</label>
-        </div>
-        <div class="config-inline-control">
+        <label :for="`dns_host_name_${index}`" class="config-inline-label config-inline-label--sm">
+          {{ t('dns.hosts.name') }}
+        </label>
+        <div class="config-inline-control dns-row-with-action">
           <InputText
             :id="`dns_host_name_${index}`"
             v-model="row.name"
             fluid
             :placeholder="t('dns.hosts.name_placeholder')"
           />
+          <Button
+            icon="pi pi-trash"
+            severity="danger"
+            text
+            rounded
+            class="et-icon-action-btn"
+            :aria-label="t('dns.hosts.remove')"
+            v-tooltip.top="t('dns.hosts.remove')"
+            @click="removeHost(index)"
+          />
         </div>
       </div>
 
       <div class="config-inline-field">
-        <div class="config-inline-label">
-          <label :for="`dns_host_ips_${index}`">{{ t('dns.hosts.ips') }}</label>
-        </div>
+        <label :for="`dns_host_ips_${index}`" class="config-inline-label config-inline-label--sm">
+          {{ t('dns.hosts.ips') }}
+        </label>
         <div class="config-inline-control">
           <AutoComplete
             :id="`dns_host_ips_${index}`"
@@ -66,9 +90,9 @@ function removeHost(index: number) {
       </div>
 
       <div class="config-inline-field">
-        <div class="config-inline-label">
-          <label :for="`dns_host_ttl_${index}`">{{ t('dns.hosts.ttl') }}</label>
-        </div>
+        <label :for="`dns_host_ttl_${index}`" class="config-inline-label config-inline-label--sm">
+          {{ t('dns.hosts.ttl') }}
+        </label>
         <div class="config-inline-control dns-host-row__ttl">
           <InputNumber
             :id="`dns_host_ttl_${index}`"
@@ -82,22 +106,9 @@ function removeHost(index: number) {
           <span class="et-meta">{{ t('dns.hosts.ttl_unit') }}</span>
         </div>
       </div>
-
-      <div class="flex justify-end">
-        <Button
-          icon="pi pi-trash"
-          severity="danger"
-          text
-          rounded
-          class="et-icon-action-btn"
-          :aria-label="t('dns.hosts.remove')"
-          v-tooltip.top="t('dns.hosts.remove')"
-          @click="removeHost(index)"
-        />
-      </div>
     </div>
 
-    <div class="flex justify-start mt-2">
+    <div class="flex justify-start">
       <Button
         class="et-panel-action-btn"
         icon="pi pi-plus"
@@ -111,6 +122,22 @@ function removeHost(index: number) {
 </template>
 
 <style scoped>
+.dns-row-with-action {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  min-width: 0;
+}
+
+.dns-row-with-action :deep(.p-inputtext),
+.dns-row-with-action :deep(.p-autocomplete),
+.dns-row-with-action :deep(.p-inputwrapper) {
+  flex: 1 1 auto;
+  min-width: 0;
+  width: auto;
+  max-width: 100%;
+}
+
 .dns-host-row__ttl {
   display: flex;
   align-items: center;

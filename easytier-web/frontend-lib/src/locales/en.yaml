@@ -424,7 +424,7 @@ dns:
     enable: Configure policy
     enable_tip: Add static hosts, split forwarders, and upstream DNS
     magic_dns_off_hint: DNS policy is stored in this network config. Enable Magic DNS for MagicDNS wiring to take effect.
-    editor_help: Static entries are authoritative on MagicDNS and override route hostnames. Unmatched names continue to normal resolution.
+    editor_help: Highest priority. Static entries are authoritative on MagicDNS and override route hostnames. Unmatched names fall through to split DNS / upstream DNS.
     empty: No static DNS hosts yet.
     name: Hostname
     name_placeholder: "e.g. app.internal. or db.et.net"
@@ -437,8 +437,11 @@ dns:
     remove: Remove host
   upstream:
     title: Upstream DNS
-    help: Ordered failover list when hosts/split do not match. Empty keeps system DNS. Phase 1 accepts IP literals only (e.g. 1.1.1.1, udp://8.8.8.8:53); hostnames are rejected.
-    placeholder: "e.g. 1.1.1.1 or udp://8.8.8.8:53"
+    help: |-
+      Ordered failover list when static hosts and split DNS do not match.
+      Add multiple upstreams in order, e.g. enter 1.1.1.1 then Enter, then 8.8.8.8, or udp://9.9.9.9:53.
+      Empty keeps system DNS. Phase 1 accepts IP literals only; hostnames are rejected.
+    placeholder: "e.g. 1.1.1.1, then add 8.8.8.8"
   forwarders:
     title: Split DNS
     editor_help: Route matching domain suffixes to dedicated upstream servers (before default upstream). Upstream servers are IP literals only in phase 1.

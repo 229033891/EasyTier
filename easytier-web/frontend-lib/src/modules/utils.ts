@@ -81,6 +81,27 @@ export function formatClientUrl(clientUrl: string | null | undefined): string {
     return clientUrl;
 }
 
+/**
+ * Format an event-log timestamp as absolute local date+time
+ * (e.g. `2026/10/06 16:14:05`) instead of a relative "x minutes ago".
+ * Returns the raw value when it cannot be parsed, never throws.
+ */
+export function formatEventTime(time: unknown): string {
+  const timestamp = typeof time === 'number' ? time : Date.parse(String(time ?? ''));
+  if (!Number.isFinite(timestamp)) {
+    return String(time ?? '');
+  }
+  return new Date(timestamp).toLocaleString(undefined, {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  });
+}
+
 export type ApiErrorKind =
     | 'timeout'
     | 'client_not_found'

@@ -223,30 +223,32 @@ async function copyLoggingDir() {
       </div>
 
       <div v-if="canShowLogContent" class="logging-content flex flex-col gap-2">
-        <div class="flex flex-wrap items-center justify-between gap-2">
-          <label for="logging-file">{{ t('logging_content') }}</label>
-          <Button
-            size="small"
-            severity="secondary"
-            text
-            rounded
-            icon="pi pi-refresh"
-            class="et-icon-action-btn"
-            :loading="isLoading"
-            :aria-label="t('logging_refresh')"
-            v-tooltip.top="t('logging_refresh')"
-            @click="loadLoggingContent()"
-          />
+        <div class="logging-inline-field">
+          <div class="logging-inline-label">
+            <label for="logging-file">{{ t('logging_content') }}</label>
+            <Button
+              size="small"
+              severity="secondary"
+              text
+              rounded
+              icon="pi pi-refresh"
+              class="et-icon-action-btn"
+              :loading="isLoading"
+              :aria-label="t('logging_refresh')"
+              v-tooltip.top="t('logging_refresh')"
+              @click="loadLoggingContent()"
+            />
+          </div>
+          <Select id="logging-file" v-model="selectedLogFile" :options="loggingFiles" option-label="label"
+            option-value="value" class="logging-inline-control" :placeholder="t('logging_file')"
+            :disabled="!loggingFiles.length"
+            @update:model-value="(value: string) => loadLoggingContent(value)" />
         </div>
-        <Select id="logging-file" v-model="selectedLogFile" :options="loggingFiles" option-label="label"
-          option-value="value" class="w-full" :placeholder="t('logging_file')" :disabled="!loggingFiles.length"
-          @update:model-value="(value: string) => loadLoggingContent(value)" />
         <Textarea
           :model-value="loggingContent || (loggingFiles.length ? '' : t('logging_empty'))"
           class="w-full logging-textarea"
           rows="16"
           readonly
-          auto-resize
         />
       </div>
     </div>
@@ -289,20 +291,22 @@ async function copyLoggingDir() {
 
 .logging-textarea {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  white-space: pre;
-  overflow: auto;
+  font-size: 0.78rem;
+  line-height: 1.25;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  overflow-x: hidden;
+  overflow-y: auto;
   max-height: min(55vh, 28rem);
+  resize: none;
 }
 
-@media (max-width: 480px) {
-  .logging-inline-field {
-    align-items: stretch;
-    flex-direction: column;
-    gap: 0.4rem;
-  }
-
-  .logging-inline-label {
-    white-space: normal;
-  }
+.logging-textarea :deep(textarea) {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  overflow-x: hidden;
+  line-height: 1.25;
 }
 </style>
