@@ -557,10 +557,6 @@ pub(crate) trait PeerContext: Send + Sync {
         PeerPacketPolicy::from_flags(&self.flags())
     }
 
-    fn disable_relay_data(&self) -> bool {
-        self.packet_policy().disable_relay_data
-    }
-
     fn secure_mode(&self) -> Option<SecureModeConfig> {
         None
     }

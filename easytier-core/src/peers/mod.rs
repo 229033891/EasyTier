@@ -44,6 +44,7 @@ pub(crate) enum PeerPacketIngress {
 }
 
 impl PeerPacketIngress {
+    #[cfg(test)]
     pub(crate) fn is_attached(self) -> bool {
         matches!(
             self,
@@ -52,15 +53,6 @@ impl PeerPacketIngress {
                 ..
             }
         )
-    }
-
-    pub(crate) fn peer_connection(self) -> Option<(PeerId, PeerConnId)> {
-        match self {
-            Self::Local => None,
-            Self::Peer {
-                peer_id, conn_id, ..
-            } => Some((peer_id, conn_id)),
-        }
     }
 }
 

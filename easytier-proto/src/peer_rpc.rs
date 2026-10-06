@@ -124,14 +124,13 @@ impl From<Vec<crate::api::instance::PeerInfo>> for PeerInfoForGlobalMap {
                     let stats = conn.stats.as_ref()?;
                     // Prefer quality_score when populated (same family as select_conn).
                     // Fall back to RTT-ms if score was left at prost default but RTT exists.
-                    let mut cost = if conn.quality_score != 0.0
-                        || stats.latency_us == 0
-                        || conn.quality_fused
-                    {
-                        (f64::from(conn.quality_score) * 1000.0).round() as i32
-                    } else {
-                        (stats.latency_us / 1000) as i32
-                    };
+                    let mut cost =
+                        if conn.quality_score != 0.0 || stats.latency_us == 0 || conn.quality_fused
+                        {
+                            (f64::from(conn.quality_score) * 1000.0).round() as i32
+                        } else {
+                            (stats.latency_us / 1000) as i32
+                        };
                     if conn.quality_fused {
                         cost = cost.saturating_add(FUSE_BONUS);
                     }

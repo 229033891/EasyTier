@@ -126,6 +126,7 @@ pub fn ospf_edge_cost_from_score(score: f64, fused: bool) -> i32 {
 }
 
 /// Build OSPF edge cost from raw metrics (same formula as `select_conn`).
+#[cfg(test)]
 pub fn ospf_edge_cost_ms(
     latency_us: u64,
     loss_rate: f32,

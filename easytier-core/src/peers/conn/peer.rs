@@ -347,6 +347,7 @@ impl Peer {
             .any(|entry| !entry.value().is_closed() && !entry.value().is_hole_punched())
     }
 
+    #[cfg(test)]
     pub(crate) fn has_direct_attached_conn(&self) -> bool {
         self.conns.iter().any(|entry| {
             let conn = entry.value();

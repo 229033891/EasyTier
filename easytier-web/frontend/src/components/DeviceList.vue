@@ -63,10 +63,6 @@ function deviceDnsPlatformState(device: Utils.DeviceInfo) {
     })
 }
 
-const hasVersionTooOldDevice = computed(() =>
-    (deviceList.value || []).some((d) => deviceDnsPlatformState(d) === 'version_too_old'),
-)
-
 const retryLoadDevices = async () => {
     try {
         await reloadDevices();
@@ -472,14 +468,6 @@ const sortedDeviceList = computed(() => {
 </script>
 
 <style scoped>
-.dns-mixed-version-banner {
-    color: var(--et-warning, #b45309);
-    background: color-mix(in srgb, var(--et-warning, #f59e0b) 12%, transparent);
-    border-radius: var(--et-radius, 0.375rem);
-    padding: 0.55rem 0.85rem;
-    margin-bottom: var(--et-gap-section, 0.75rem);
-}
-
 /* 卡片容器 */
 .card-container {
     display: grid;
@@ -884,14 +872,6 @@ const sortedDeviceList = computed(() => {
                 class="clear-filters-btn"
                 @click="clearFilters"
             />
-        </div>
-
-        <div
-            v-if="hasVersionTooOldDevice"
-            class="dns-mixed-version-banner et-meta"
-            role="status"
-        >
-            {{ t('dns.mixed_version_warning') }}
         </div>
 
         <div class="device-list-toolbar">

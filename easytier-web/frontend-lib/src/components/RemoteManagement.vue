@@ -348,6 +348,12 @@ const stopNetwork = async () => {
         await loadNetworkInstanceIds();
         await loadCurrentNetworkInfo();
         emits('update');
+        toast.add({
+            severity: 'success',
+            summary: t('web.device_management.disable_network'),
+            detail: t('web.device_management.stop_success'),
+            life: TOAST_LIFE.success,
+        });
     } catch (e: any) {
         console.error(e);
         toast.add({
@@ -357,24 +363,6 @@ const stopNetwork = async () => {
             life: TOAST_LIFE.error,
         });
     }
-}
-
-const confirmStopNetwork = (_event?: Event) => {
-    confirm.require({
-        message: t('web.device_management.confirm_disable_network'),
-        header: t('web.device_management.disable_network'),
-        icon: 'pi pi-exclamation-triangle',
-        rejectProps: {
-            label: t('web.common.cancel'),
-            severity: 'secondary',
-            outlined: true,
-        },
-        acceptProps: {
-            label: t('web.device_management.disable_network'),
-            severity: 'danger',
-        },
-        accept: () => { void stopNetwork() },
-    });
 }
 
 /** ?????????????? */
@@ -916,13 +904,6 @@ onUnmounted(() => {
                     <span class="toolbar-zone-label">{{ t('dns.coverage.label') }}</span>
                     <DnsCoverageBadge :state="dnsCoverageState" />
                 </div>
-                <p
-                    v-if="dnsCoverageState === 'version_too_old'"
-                    class="dns-version-too-old-hint et-meta m-0"
-                    role="status"
-                >
-                    {{ t('dns.mixed_version_warning') }}
-                </p>
                 <div class="toolbar-zone">
                     <span class="toolbar-zone-label">{{ t('web.device_management.toolbar_config_files') }}</span>
                     <div class="toolbar-zone-actions">
@@ -1041,7 +1022,7 @@ onUnmounted(() => {
                     :label="t('run_network')" severity="success" icon="pi pi-arrow-right" iconPos="right"
                     class="network-footer-btn"
                     v-tooltip.top="t('run_network_tip')" />
-                <Button v-else-if="stickyFooterPrimary === 'stop'" @click="confirmStopNetwork($event)"
+                <Button v-else-if="stickyFooterPrimary === 'stop'" @click="stopNetwork()"
                     :disabled="!currentNetworkControl.deletable.value"
                     :label="t('web.device_management.disable_network')" severity="danger" icon="pi pi-power-off"
                     iconPos="left" class="network-footer-btn network-footer-btn--danger"
@@ -1056,15 +1037,6 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
-.dns-version-too-old-hint {
-    color: var(--et-warning, #b45309);
-    background: color-mix(in srgb, var(--et-warning, #f59e0b) 12%, transparent);
-    border-radius: 0.375rem;
-    padding: 0.5rem 0.75rem;
-    width: 100%;
-    flex-basis: 100%;
-}
-
 .device-management {
     height: 100%;
     display: flex;

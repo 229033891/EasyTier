@@ -149,6 +149,7 @@ impl PeerMap {
         peer_id == self.my_peer_id || self.peer_map.contains_key(&peer_id)
     }
 
+    #[cfg(test)]
     pub(crate) fn has_direct_attached_peer(&self, peer_id: PeerId) -> bool {
         self.get_peer_by_id(peer_id)
             .is_some_and(|peer| peer.has_direct_attached_conn())
@@ -508,7 +509,9 @@ pub(crate) async fn direct_peer_info(peer_maps: &[Arc<PeerMap>]) -> PeerInfoForG
             .into_iter()
             .flatten()
             .filter(|conn| !conn.unverified_hole_punch)
-            .map(|conn| ospf_edge_cost_from_score(f64::from(conn.quality_score), conn.quality_fused))
+            .map(|conn| {
+                ospf_edge_cost_from_score(f64::from(conn.quality_score), conn.quality_fused)
+            })
             .min()
         else {
             continue;
@@ -518,12 +521,8 @@ pub(crate) async fn direct_peer_info(peer_maps: &[Arc<PeerMap>]) -> PeerInfoForG
         let cost = apply_ospf_cost_hysteresis(raw_cost, last, OSPF_EDGE_COST_MIN_DELTA);
         LAST_OSPF_EDGE_COST.insert(peer, cost);
 
-        ret.direct_peers.insert(
-            peer,
-            DirectConnectedPeerInfo {
-                latency_ms: cost,
-            },
-        );
+        ret.direct_peers
+            .insert(peer, DirectConnectedPeerInfo { latency_ms: cost });
     }
 
     // Drop hysteresis state for peers we no longer advertise.

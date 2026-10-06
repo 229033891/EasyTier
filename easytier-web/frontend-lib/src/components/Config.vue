@@ -150,7 +150,6 @@ function onToggleablePanelHeaderClick(
   if (
     isPanelHeaderInteractiveTarget(target, event, [
       '.config-help-tip',
-      '.dns-mixed-version-tip',
       '[role="img"]',
     ])
   ) {
@@ -249,7 +248,6 @@ const bool_flags: BoolFlag[] = [
   { field: 'allow_peer_default_without_exit', help: 'allow_peer_default_without_exit_help', group: 'connectivity' },
   { field: 'relay_all_peer_rpc', help: 'relay_all_peer_rpc_help', group: 'connectivity' },
   // disable_relay_data 由基础设置的「允许作为中转节点」正向开关驱动，不再列为高级开关
-  { field: 'use_smoltcp', help: 'use_smoltcp_help', group: 'transport' },
   { field: 'enable_kcp_proxy', help: 'enable_kcp_proxy_help', group: 'transport' },
   { field: 'disable_kcp_input', help: 'disable_kcp_input_help', group: 'transport' },
   { field: 'enable_quic_proxy', help: 'enable_quic_proxy_help', group: 'transport' },
@@ -259,6 +257,7 @@ const bool_flags: BoolFlag[] = [
   { field: 'disable_sym_hole_punching', help: 'disable_sym_hole_punching_help', group: 'transport' },
   { field: 'disable_upnp', help: 'disable_upnp_help', group: 'transport' },
   { field: 'enable_udp_broadcast_relay', help: 'enable_udp_broadcast_relay_help', group: 'transport' },
+  { field: 'use_smoltcp', help: 'use_smoltcp_help', group: 'transport' },
   { field: 'disable_ipv6', help: 'disable_ipv6_help', group: 'system',
     inverted: { inputId: 'allow_ipv6', label: 'allow_ipv6', help: 'allow_ipv6_help' } },
   { field: 'ipv6_public_addr_auto', help: 'ipv6_public_addr_auto_help', group: 'system' },
@@ -1039,14 +1038,6 @@ function removeVpnPortalClient(index: number) {
                 <p v-if="tunControlsDisabled" class="config-field-hint m-0">{{ t('no_tun_magic_dns_hint') }}</p>
               </div>
 
-              <p
-                v-if="curNetwork.dns_config && (curNetwork.dns_config.hosts?.length || curNetwork.dns_config.forwarders?.length || curNetwork.dns_config.upstream_dns?.length)"
-                class="dns-mixed-version-hint et-meta m-0"
-                role="status"
-              >
-                {{ t('dns.mixed_version_warning') }}
-              </p>
-
               <template v-if="curNetwork.dns_config">
                 <div class="dns-section">
                   <div class="dns-section__title">
@@ -1115,13 +1106,6 @@ function removeVpnPortalClient(index: number) {
 </template>
 
 <style scoped>
-.dns-mixed-version-hint {
-  color: var(--et-warning, #b45309);
-  background: color-mix(in srgb, var(--et-warning, #f59e0b) 12%, transparent);
-  border-radius: 0.375rem;
-  padding: 0.5rem 0.75rem;
-}
-
 .dns-section {
   display: flex;
   flex-direction: column;

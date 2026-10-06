@@ -895,8 +895,7 @@ mod tests {
         // Eviction removes the client map entry before the response-task handle;
         // wait for both so this assertion is not racy under CI scheduling.
         tokio::time::timeout(Duration::from_secs(1), async {
-            while clients.contains_key(&replacement) || response_tasks.contains_key(&replacement)
-            {
+            while clients.contains_key(&replacement) || response_tasks.contains_key(&replacement) {
                 tokio::task::yield_now().await;
             }
         })

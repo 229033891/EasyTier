@@ -442,6 +442,7 @@ impl PeerConn {
         self.conn_id
     }
 
+    #[cfg(test)]
     pub(crate) fn is_attached(&self) -> bool {
         self.origin == PeerConnectionOrigin::Attached
     }

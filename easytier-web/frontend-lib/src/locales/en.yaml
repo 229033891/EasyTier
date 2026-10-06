@@ -522,7 +522,6 @@ dns:
     add: Add forwarder
     add_tip: Add a split DNS forwarder
     remove: Remove forwarder
-  mixed_version_warning: If any peer is older than 2.7.4 and wins the MagicDNS server election, static hosts may be silently dropped. Upgrade old peers, or verify a new-version node is the server before validating hosts.
   coverage:
     label: DNS coverage
     covered: Auto
@@ -834,6 +833,7 @@ web:
     save_failed: Failed to save config
     start_failed: Failed to start network
     stop_failed: Failed to stop network
+    stop_success: Network disabled
     load_config_failed: Failed to load network config
     error_timeout: Operation timed out. The device may still be stopping a previous network or busy with another task. Wait and retry; if the network is already running, check the Status page.
     error_device_offline: The device is offline or not connected. Bring it online and try again.
@@ -868,7 +868,6 @@ web:
     switch_to_config_tip: Switch to the config page to edit this node's network settings
     switch_to_status: Go to Status
     switch_to_status_tip: Switch to the status page to view peers and connections
-    confirm_disable_network: Disable this network now?
     confirm_start_network: Start this network now?
     confirm_delete_network: Delete this network? This cannot be undone.
     confirm_delete_network_header: Delete Network

@@ -521,7 +521,6 @@ dns:
     add: 添加分流
     add_tip: 添加一条分流 DNS 规则
     remove: 删除分流
-  mixed_version_warning: 网络中存在低于 2.7.4 的节点时，若旧节点当选 MagicDNS server，静态 hosts 可能静默丢失。请升级旧节点，或确认新版本节点担任 server 后再验收 hosts。
   coverage:
     label: DNS 覆盖
     covered: 自动
@@ -833,6 +832,7 @@ web:
     save_failed: 保存配置失败
     start_failed: 启动网络失败
     stop_failed: 停用网络失败
+    stop_success: 网络已禁用
     load_config_failed: 加载配置失败
     error_timeout: 操作超时。设备可能正在停止旧网络或处理其他任务，请稍候再试；若网络已在运行，可先到「状态」页确认。
     error_device_offline: 设备未连接或已离线，请确认设备在线后再操作。
@@ -867,7 +867,6 @@ web:
     switch_to_config_tip: 切换到配置页，编辑本节点网络参数
     switch_to_status: 前往状态
     switch_to_status_tip: 切换到状态页，查看节点与连接信息
-    confirm_disable_network: 确定禁用该网络吗？
     confirm_start_network: 确定启动该网络吗？
     confirm_delete_network: 确定删除该网络吗？此操作不可恢复。
     confirm_delete_network_header: 删除网络
