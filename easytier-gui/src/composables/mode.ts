@@ -5,7 +5,40 @@ export type FileLogLevel = 'off' | 'error' | 'warn' | 'info' | 'debug' | 'trace'
 
 const FILE_LOG_LEVEL_KEY = 'file_log_level'
 const FILE_LOG_LEVELS: readonly FileLogLevel[] = ['off', 'error', 'warn', 'info', 'debug', 'trace']
+/** Product default when no preference is stored. */
 const DEFAULT_FILE_LOG_LEVEL: FileLogLevel = 'warn'
+/**
+ * Fallback for unrecognized strings — keep in sync with
+ * `parse_log_level` (logger_rpc.rs) and `normalizeLoggerLevel` (frontend-lib).
+ */
+const UNKNOWN_FILE_LOG_LEVEL: FileLogLevel = 'info'
+
+function readStorage(key: string): string | null {
+    try {
+        return localStorage.getItem(key)
+    }
+    catch {
+        return null
+    }
+}
+
+function writeStorage(key: string, value: string): void {
+    try {
+        localStorage.setItem(key, value)
+    }
+    catch {
+        // privacy mode / quota / SSR
+    }
+}
+
+function removeStorage(key: string): void {
+    try {
+        localStorage.removeItem(key)
+    }
+    catch {
+        // privacy mode / SSR
+    }
+}
 
 export function parseFileLogLevel(raw: unknown): FileLogLevel {
     if (typeof raw === 'string') {
@@ -17,22 +50,22 @@ export function parseFileLogLevel(raw: unknown): FileLogLevel {
         if (lower === 'disabled')
             return 'off'
     }
-    return DEFAULT_FILE_LOG_LEVEL
+    return UNKNOWN_FILE_LOG_LEVEL
 }
 
 /** Load the preferred file log level (default warn). */
 export function loadFileLogLevel(): FileLogLevel {
-    const stored = localStorage.getItem(FILE_LOG_LEVEL_KEY)
+    const stored = readStorage(FILE_LOG_LEVEL_KEY)
     if (stored != null)
         return parseFileLogLevel(stored)
     // Migrate from legacy service-mode field if present.
     try {
-        const modeStr = localStorage.getItem('app_mode')
+        const modeStr = readStorage('app_mode')
         if (modeStr) {
             const mode = JSON.parse(modeStr) as { mode?: string, file_log_level?: string }
             if (mode.mode === 'service' && mode.file_log_level) {
                 const migrated = parseFileLogLevel(mode.file_log_level)
-                localStorage.setItem(FILE_LOG_LEVEL_KEY, migrated)
+                writeStorage(FILE_LOG_LEVEL_KEY, migrated)
                 return migrated
             }
         }
@@ -45,7 +78,7 @@ export function loadFileLogLevel(): FileLogLevel {
 
 export function saveFileLogLevel(level: string): FileLogLevel {
     const parsed = parseFileLogLevel(level)
-    localStorage.setItem(FILE_LOG_LEVEL_KEY, parsed)
+    writeStorage(FILE_LOG_LEVEL_KEY, parsed)
     return parsed
 }
 
@@ -81,12 +114,12 @@ export interface RemoteMode {
 }
 
 export function saveMode(mode: Mode) {
-    localStorage.setItem('app_mode', JSON.stringify(mode))
+    writeStorage('app_mode', JSON.stringify(mode))
 }
 
 
 export function loadMode(): Mode {
-    const modeStr = localStorage.getItem('app_mode')
+    const modeStr = readStorage('app_mode')
     if (modeStr) {
         try {
             const mode = JSON.parse(modeStr) as Mode
@@ -106,7 +139,7 @@ export function loadMode(): Mode {
         }
         catch (e) {
             console.error('Failed to parse app_mode from localStorage', e)
-            localStorage.removeItem('app_mode')
+            removeStorage('app_mode')
         }
     }
     return { mode: 'normal' }

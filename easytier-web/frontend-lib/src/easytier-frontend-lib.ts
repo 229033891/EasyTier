@@ -76,4 +76,4 @@ export {
     ET_PRIMARY_EMPHASIS,
 };
 
-export type { LogFileInfo, LoggingSettingsApi } from './modules/logging';
+export type { LogFileInfo, LoggerLevelState, LoggingSettingsApi } from './modules/logging';

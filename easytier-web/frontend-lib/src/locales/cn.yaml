@@ -97,6 +97,7 @@ logging_level_warn: 警告
 logging_level_error: 错误
 logging_level_trace: 跟踪
 logging_level_off: 关闭
+logging_level_not_live: 当前显示本地偏好（未连上运行中的进程）；保存后会在下次连接时生效。
 logging_path: 日志目录
 logging_open_dir: 打开日志目录
 logging_copy_dir: 复制日志路径

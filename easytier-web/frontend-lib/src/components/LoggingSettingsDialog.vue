@@ -8,7 +8,7 @@ import InputText from 'primevue/inputtext'
 import Select from 'primevue/select'
 import Textarea from 'primevue/textarea'
 import { TOAST_LIFE } from '../modules/toast'
-import type { LoggingSettingsApi } from '../modules/logging'
+import { normalizeLoggerLevel, type LoggingSettingsApi, type LoggerLevelState } from '../modules/logging'
 
 const props = defineProps<{
   api: LoggingSettingsApi
@@ -20,6 +20,7 @@ const { t } = useI18n()
 const toast = useToast()
 
 const loggingLevel = ref('warn')
+const loggingLevelLive = ref(true)
 const loggingPath = ref('')
 const loggingFiles = ref<Array<{ label: string, value: string }>>([])
 const selectedLogFile = ref('')
@@ -37,6 +38,16 @@ const loggingLevelOptions = computed(() =>
 const canShowLogContent = computed(() =>
   !props.api.remoteOnly && !!props.api.listLogFiles && !!props.api.readLogFile,
 )
+
+function applyLoggerLevelResult(result: string | LoggerLevelState) {
+  if (typeof result === 'string') {
+    loggingLevel.value = normalizeLoggerLevel(result)
+    loggingLevelLive.value = true
+    return
+  }
+  loggingLevel.value = normalizeLoggerLevel(result.level)
+  loggingLevelLive.value = result.live
+}
 
 async function loadLoggingContent(fileName?: string) {
   if (!canShowLogContent.value || isLoading.value) {
@@ -75,12 +86,13 @@ async function loadLoggingContent(fileName?: string) {
 }
 
 async function openDialogState() {
+  loggingLevelLive.value = true
   try {
-    loggingLevel.value = props.api.getLoggerLevel
-      ? await props.api.getLoggerLevel()
-      : loggingLevel.value
+    if (props.api.getLoggerLevel)
+      applyLoggerLevelResult(await props.api.getLoggerLevel())
   }
   catch (e) {
+    loggingLevelLive.value = false
     console.error('Failed to get logger level', e)
   }
   try {
@@ -188,8 +200,9 @@ async function copyLoggingDir() {
           />
         </div>
         <Select id="logging-level" v-model="loggingLevel" :options="loggingLevelOptions" option-label="label"
-          option-value="value" class="logging-inline-control" />
+          option-value="value" class="logging-inline-control" :disabled="!loggingLevelLive && !!api.remoteOnly" />
       </div>
+      <p v-if="!loggingLevelLive" class="logging-level-hint m-0">{{ t('logging_level_not_live') }}</p>
 
       <div v-if="api.getLogDir" class="logging-inline-field">
         <label class="logging-inline-label">{{ t('logging_path') }}</label>
@@ -254,7 +267,8 @@ async function copyLoggingDir() {
     </div>
     <template #footer>
       <Button :label="t('web.common.cancel')" icon="pi pi-times" @click="visible = false" text />
-      <Button :label="t('web.common.save')" icon="pi pi-save" @click="onSave" autofocus :loading="isSaving" />
+      <Button :label="t('web.common.save')" icon="pi pi-save" @click="onSave" autofocus :loading="isSaving"
+        :disabled="!loggingLevelLive && !!api.remoteOnly" />
     </template>
   </Dialog>
 </template>
@@ -287,6 +301,12 @@ async function copyLoggingDir() {
   gap: 0.25rem;
   flex: 1 1 auto;
   min-width: 0;
+}
+
+.logging-level-hint {
+  font-size: 0.8rem;
+  line-height: 1.35;
+  opacity: 0.75;
 }
 
 .logging-textarea {

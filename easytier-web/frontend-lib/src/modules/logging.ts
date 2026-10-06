@@ -5,8 +5,15 @@ export interface LogFileInfo {
   active: boolean
 }
 
+/** Result of reading the logger level (live RPC vs preference-only fallback). */
+export interface LoggerLevelState {
+  level: string
+  /** False when the value is a local preference because RPC was unreachable. */
+  live: boolean
+}
+
 export interface LoggingSettingsApi {
-  getLoggerLevel?: () => Promise<string>
+  getLoggerLevel?: () => Promise<string | LoggerLevelState>
   setLoggerLevel: (level: string) => Promise<void>
   getLogDir?: () => Promise<string>
   listLogFiles?: () => Promise<LogFileInfo[]>

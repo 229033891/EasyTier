@@ -419,10 +419,12 @@ async function initWithMode(mode: Mode) {
       break;
     case 'service': {
       // Log level is owned by the Logging dialog preference; keep install args in sync.
+      // Compare against preferred *before* writing mode.file_log_level — onMounted passes
+      // currentMode by reference, so an early assign would alias-mutate and make
+      // modeConfigChanged() blind to log-level drift.
       const preferredLogLevel = loadFileLogLevel()
       const logLevelChanged = mode.file_log_level !== preferredLogLevel
-      mode.file_log_level = preferredLogLevel
-      if (!mode.config_dir || !mode.file_log_dir || !mode.file_log_level || !mode.rpc_portal) {
+      if (!mode.config_dir || !mode.file_log_dir || !mode.rpc_portal) {
         toast.add({ severity: 'error', summary: t('error'), detail: t('mode.service_config_empty'), life: TOAST_LIFE.severe })
         return initWithMode({ ...mode, mode: 'normal' });
       }
@@ -441,6 +443,7 @@ async function initWithMode(mode: Mode) {
         mode.installed_core_version = coreVersion
         serviceStatus = await getServiceStatus()
       }
+      mode.file_log_level = preferredLogLevel
       if (serviceStatus === "Stopped") {
         await setServiceStatus(true)
       }
@@ -670,11 +673,11 @@ async function getLogDirPath(): Promise<string> {
 const loggingApi = computed<LoggingSettingsApi>(() => ({
   getLoggerLevel: async () => {
     try {
-      return await getLoggingLevel()
+      return { level: await getLoggingLevel(), live: true }
     }
     catch {
-      // Not connected yet — show the saved preference.
-      return loadFileLogLevel()
+      // RPC down — preference only; Dialog must not present this as the live level.
+      return { level: loadFileLogLevel(), live: false }
     }
   },
   setLoggerLevel: async (level: string) => {

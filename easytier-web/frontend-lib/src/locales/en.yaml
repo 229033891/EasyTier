@@ -97,6 +97,7 @@ logging_level_warn: Warn
 logging_level_error: Error
 logging_level_trace: Trace
 logging_level_off: Off
+logging_level_not_live: Showing the saved preference (not connected to a live process). It will apply on the next connect.
 logging_path: Log Directory
 logging_open_dir: Open Log Directory
 logging_copy_dir: Copy Log Path
