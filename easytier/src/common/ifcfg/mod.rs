@@ -96,7 +96,7 @@ fn io_error_already_exists(err: &std::io::Error) -> bool {
     }
     match err.raw_os_error() {
         #[cfg(windows)]
-        Some(183) => true,
+        Some(183 | 5010) => true,
         #[cfg(unix)]
         Some(17) => true,
         _ => error_text_already_exists(&err.to_string()),
@@ -119,6 +119,7 @@ fn io_error_already_gone(err: &std::io::Error) -> bool {
 fn error_text_already_exists(text: &str) -> bool {
     let text = text.to_ascii_lowercase();
     text.contains("(code: 183)")
+        || text.contains("(code: 5010)")
         || text.contains("file exists")
         || text.contains("already exists")
         || text.contains("object already exists")

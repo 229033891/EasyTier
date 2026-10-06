@@ -69,7 +69,16 @@ impl AcceptedTunnelHandler for PeerAcceptedTunnelHandler {
                 remote_url,
                 error: error.to_string(),
             });
-            tracing::error!(?error, "handle conn error");
+            // "same network" errors are expected in some configurations (e.g., routing loops
+            // when no-tun is disabled), so log as warn instead of error.
+            let is_same_network = error
+                .to_string()
+                .contains("is from the same network");
+            if is_same_network {
+                tracing::warn!(?error, "handle conn error (same network, ignored)");
+            } else {
+                tracing::error!(?error, "handle conn error");
+            }
             return Err(error.into());
         }
         Ok(())
