@@ -5,7 +5,7 @@ import { useI18n } from 'vue-i18n';
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue';
 import { ipv4InetToString, ipv4ToString, ipv6ToString, formatEventTime } from '../modules/utils';
 import { isPanelHeaderInteractiveTarget } from '../modules/panel';
-import { isMeaningfulProxyCidrRouteSync, latencyMs, lossRate, numericValue, peerConns, resolvePeerRemoteAddr, resolveRoutePath, type RoutePeerLabel } from '../modules/statusDisplay';
+import { isMeaningfulProxyCidrRouteSync, jitterMs, latencyMs, lossRate, numericValue, peerConns, resolvePeerRemoteAddr, resolveRoutePath, type RoutePeerLabel } from '../modules/statusDisplay';
 import { Badge, DataTable, Column, Tag, Button, ScrollPanel, Timeline, Card, Panel, } from 'primevue';
 import NetworkChart from './NetworkChart.vue';
 import PeerConnHistoryChart from './PeerConnHistoryChart.vue';
@@ -658,6 +658,8 @@ const eventLogContent = computed(() => {
               </template>
             </Column>
             <Column :field="latencyMs" :header="t('latency')" />
+            <Column :field="jitterMs" :header="t('jitter')"
+              header-class="peer-col-secondary" body-class="peer-col-secondary" />
             <Column :field="txBytes" :header="t('upload_bytes')"
               header-class="peer-col-secondary" body-class="peer-col-secondary" />
             <Column :field="rxBytes" :header="t('download_bytes')"

@@ -3,9 +3,10 @@
 ## Status
 
 - Status: **Current**
-- 最近审阅：2026-10-03
+- 最近审阅：2026-10-06
 - 范围：同一对 peer 之间的 `PeerConn` / 默认发送路径
 - 规划中的多链路带宽聚合见：[`../roadmap/multi-link-bonding.md`](../roadmap/multi-link-bonding.md)
+- 连接稳定性（质量选路 / 保底）见：[`../roadmap/connection-stability-todo.md`](../roadmap/connection-stability-todo.md)
 - 隧道 scheme 与伪装差距见：[`tunnels-and-transport.md`](./tunnels-and-transport.md)
 - 索引：[`../README.md`](../README.md)
 
@@ -31,7 +32,7 @@
 实现：`easytier-core` → `peers::conn::Peer::select_conn` / `send_msg`。
 
 1. 若已有缓存的 `default_conn` 且仍可用 → **所有 `send_msg` 走这一条**。  
-2. 否则在存活连接中按延迟挑选一条（打洞连接在 ping 未确认前不会抢流量），写入 `default_conn`。  
+2. 否则在存活连接中按**综合质量分**（延迟 + 丢包 + 抖动）挑选一条（打洞连接在 ping 未确认前不会抢流量；高丢包路径可被熔断），写入 `default_conn`。  
 3. **不会**按包或按流把流量分摊到多条 PeerConn 上。
 
 因此：
@@ -39,6 +40,38 @@
 - CLI / 状态里可能看到 `peer_conn_count > 1`。  
 - **有效吞吐仍受当前默认那条隧道限制**。  
 - 多连接今天的用途是 **路径冗余、选优、故障切换**，不是带宽聚合。
+
+### 2.1 链路度量（今日）
+
+| 指标 | 来源 | 是否参与 `select_conn` | 状态面 |
+|------|------|------------------------|--------|
+| **RTT**（`latency_us`） | `WindowLatency` 窗口均值 | **是**（质量分一项） | `PeerConnStats.latency_us` |
+| **丢包**（`loss_rate`） | Ping 0/1 窗口均值 | **是**（质量分 + 熔断） | `PeerConnInfo.loss_rate` |
+| **抖动**（`jitter_us`） | 同 RTT 窗口的连续样本绝对差均值 | **是**（质量分一项） | `PeerConnStats.jitter_us` |
+
+同 peer 多 PeerConn 的 `select_conn`（`peers/conn/conn_select.rs`）使用综合质量分（默认 `w_lat=1` / `w_loss=4` / `w_jitter=1`），丢包超过熔断阈值（默认 20%）时在有替代路径时禁止成为 `default_conn`；切换需相对边际（默认 10%）**且**绝对分差（默认 0.005）连续窗口（默认 2，配合 5s 缓存清空）。已关闭的 PeerConn 不参与选路。权重/阈值可通过 `flags.conn_select_*` 覆盖（百分制权重；0 = 默认）。
+
+### 2.2 路径档位与保底回落（今日）
+
+| 项 | 今日 |
+|----|------|
+| **有序保底 URL** | 现有 `[[peer]]` / `peer_urls` / `public_server_url`（完整 tunnel URL） |
+| **档位 SoT** | `flags.connection_path_tier`：`DirectFirst` / `PreferRelay` / `RelayOnly` |
+| **老开关** | `disable_p2p` / `prefer_peer_relay` 为档位投影；`p2p_only` 正交；见 `config/connection_path.rs` |
+| **回落编排** | `connectivity/fallback::FallbackController`：DirectFirst 按 `0..=index` 拨号并 hysteresis 升档；PreferRelay/RelayOnly 拨全量列表；状态见 `current_fallback_index` / `fallback_reason` |
+| **PreferRelay 打洞** | `prefer_peer_relay` 并入背景打洞的 `lazy_p2p` 语义（减少主动打洞；有业务流量仍可动态尝试） |
+| **Web 档位控件** | `Config.vue` → `connection_path_tier` Select（投影 `disable_p2p` / `prefer_peer_relay`） |
+
+示例（有序列表；**443 不一定可用**，按实际可达端口填写）：
+
+```toml
+[[peer]]
+uri = "tcp://home-relay.internal:5000"
+[[peer]]
+uri = "wss://relay.example.com:8443/et"
+[[peer]]
+uri = "wss://relay.example.com/et"   # 隐式 443；仅当网络放行 443 时作为备选
+```
 
 ---
 
@@ -56,6 +89,8 @@
 | 场景 | 期望（今天） |
 |------|----------------|
 | 两节点仅一条存活隧道 | 全部流量走该隧道 |
-| 两节点多条存活隧道 | 状态可列出多条；发送仍只走 `default_conn`（通常为延迟更优者） |
+| 两节点多条存活隧道 | 状态可列出多条；发送仍只走 `default_conn`（通常为质量分更优者） |
 | 默认隧道断开 | 重新 `select_conn`，切到另一条存活连接（若有） |
 | 希望 N 条并行加带宽 | **未实现** |
+
+> 代码已合入，单元验收通过；非 443 保底组网（P0.5）与双路径现网抽样（P1.8b）待补，见 Roadmap。

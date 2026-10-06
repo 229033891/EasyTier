@@ -6,6 +6,7 @@ use url::Url;
 
 pub mod composite;
 pub mod direct;
+pub mod fallback;
 pub mod hole_punch;
 // Kept public: the host-driven adapter chain is WASI-only production code
 // (cfg(target_os = "wasi")), so crate-private visibility would surface

@@ -80,6 +80,11 @@ network_secret = "change-me"
 
 [[peer]]
 uri = "tcp://example.net:11010"
+# Optional ordered fallbacks (443 is not always available):
+# [[peer]]
+# uri = "wss://relay.example.com:8443/et"
+# [[peer]]
+# uri = "wss://relay.example.com/et"
 ```
 
 Local TOML and Web configuration both retain the complete authoritative model.

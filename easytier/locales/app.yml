@@ -54,8 +54,8 @@ core_clap:
     en: "automatically determine and set IP address by Easytier, and the IP address starts from 10.0.0.1 by default. Warning, if there is an IP conflict in the network when using DHCP, the IP will be automatically changed."
     zh-CN: "由Easytier自动确定并设置IP地址，默认从10.0.0.1开始。警告：在使用DHCP时，如果网络中出现IP冲突，IP将自动更改。"
   peers:
-    en: "peers to connect initially"
-    zh-CN: "最初要连接的对等节点"
+    en: "peers to connect initially (full URLs; ordered fallback). e.g. tcp://host:11010, wss://host:8443/et, wss://host/et (443 when omitted). Port 443 is not always available."
+    zh-CN: "最初要连接的对等节点（完整 URL；有序回落）。例：tcp://host:11010、wss://host:8443/et、wss://host/et（省略端口为 443）。443 不一定可用。"
   external_node:
     en: "use a public shared node to discover peers"
     zh-CN: "使用公共共享节点来发现对等节点"

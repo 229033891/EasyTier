@@ -1650,7 +1650,7 @@ pub async fn proxy_three_node_disconnect_test(#[values("tcp", "wg")] proto: &str
                 },
                 // 0 down, assume last packet is recv in -0.01
                 // one ping outstanding at a time, each waits up to 2s:
-                // 5 consecutive failures close the connection at ~[4, 11)
+                // default ping_fail_close_count=5 closes at ~[4, 11)
                 Duration::from_secs(15),
             )
             .await;

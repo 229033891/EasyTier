@@ -13,6 +13,8 @@ message PeerConnStats {
   uint64 tx_packets = 4;
 
   uint64 latency_us = 5;
+  // Mean absolute consecutive RTT delta over the latency window (microseconds).
+  uint64 jitter_us = 6;
 }
 
 message PeerConnInfo {

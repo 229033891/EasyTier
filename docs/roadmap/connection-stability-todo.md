@@ -2,10 +2,10 @@
 
 ## Status
 
-- Status: **Roadmap**（Checklist；尚未按本文改代码）
+- Status: **Roadmap**（Checklist；P-UX + P0.1–P0.4 + P1.1/P1.2/P1.6–P1.8 单元 + Flags 透参已落地；下一步 P0.5 现网验收或 P1.3/L1）
 - 日期：2026-10-06
-- 最近审阅：2026-10-06（可行性复核：选路只看 RTT、`loss_rate` 已算未参选、`jitter` 零命中、保活/阈值全硬编码、`prefer_peer_relay` 仅 OSPF 投影；结论总体可行，实施顺序微调见 §6）
-- 背景：对照 OpenVPN / IPsec 的「固定隧道 + 强保活」模型，梳理 EasyTier Mesh（多 PeerConn + 打洞 + 中继）的稳定性差距与可落地项
+- 最近审阅：2026-10-06（P1.7 Flags 透参 + P1.8 单元验收）
+- 背景：对照 OpenVPN / IPsec 的「固定隧道 + 强保活」模型，梳理 EasyTier Mesh（多 PeerConn + 打洞 + 中继）的稳定性差距与可落地项；**另纳入 2026-10-06 用户反馈：高级选项互斥缺校验、长表单占空间、单协议配置失败后无智能回落**
 - 相关 Current：[`../current/peer-connections.md`](../current/peer-connections.md)、[`../current/tunnels-and-transport.md`](../current/tunnels-and-transport.md)
 - 相关 Roadmap：[`traffic-camouflage.md`](./traffic-camouflage.md)、[`multi-link-bonding.md`](./multi-link-bonding.md)、[`market-comparison-2026-10.md`](./market-comparison-2026-10.md)、[`upstream-port-todo.md`](./upstream-port-todo.md)（#2632 TCP 打洞 1s ping）
 - 索引：[`../README.md`](../README.md)
@@ -28,6 +28,8 @@
 | S4 | TCP 打洞 idle 被中间设备掐断 | 上游 #2632 已移植 1s ping cap；待验证 |
 | S5 | 「学 OpenVPN 上 443」在部分环境无效 | **443 本身也可能不可用** → 必须自定义端口与协议 |
 | S6 | 低延迟但高丢包/高抖动的路径仍被选中 | `select_conn` / `latency_first` **几乎只看 RTT**；`loss_rate` 已统计却未参与选路；**抖动未单独度量** |
+| S7 | 互斥/依赖选项可同时选中，误配后难排查 | `api_input.rs` 逐 flag 独立赋值、无互斥校验；`Config.vue:226-268` 平铺 Checkbox，无联动隐藏/禁用 |
+| S8 | 用户只配一种协议（如 UDP），受限环境直接全失败 | 无 scheme 优先列表与自动降级；`default_protocol` 仅单值（`Config.vue:281-292`），失败仍重试同协议 |
 
 EasyTier 优势（保持）：多 scheme、STUN/打洞、OSPF 选路、自适应 Ping（1s～32s）+ `liveness-echo-v1`、手动 peer **1s** 重连。  
 优化方向是 **可配置保底 + 可调保活 + 多指标质量选路 + 清晰回落**，不是重做 IKE/OpenVPN 协议。
@@ -91,33 +93,80 @@ score = w_lat * norm(rtt)
 - 本文将其升格为：**同一套回落机制，端点完全自定义**；443 不可用时换端口/换 scheme 仍须达标。
 - 深度 TLS 指纹 / REALITY 仍属增强（Backlog），不阻塞本 TODO 的 P0。
 
+### 2.5 配置正确性原则（新增草案，对应 S7）
+
+互斥一律「可保存但要显式确认」不如「直接禁选 + 文案解释」；依赖一律「隐藏或禁用被置灰项」，不让用户填无效值：
+
+| 组 | 规则（草案） | UI 行为 |
+|----|--------------|---------|
+| `disable_p2p` vs `p2p_only` / `lazy_p2p` / `need_p2p` | `disable_p2p=true` 时后三者无意义（`need_p2p` 仅对 `lazy_p2p` 对端有效） | 从严：禁用并 tooltip 说明（已拍板） |
+| `p2p_only` vs `latency_first` | `p2p_only` 下 `latency_first` 被代码强制忽略（`peers/context.rs:534`） | 禁用 `latency_first` |
+| `p2p_only` vs `disable_relay_data` / `prefer_peer_relay` / 中继白名单 | 已不要中转 | 禁用/隐藏中继相关 |
+| `disable_tcp_hole_punching` + `disable_udp_hole_punching` 全关 | 只能走中转/手动 peer | 强提示横幅，不禁存 |
+| `enable_kcp_proxy` + `disable_kcp_input` 同机 | 只发不收，合法但多为误配 | warn，不禁存 |
+| `enable_kcp_proxy` + `enable_quic_proxy` 全开 | 可共存但双倍开销 | 建议单选，提示 |
+| `disable_ipv6=true` | `ipv6_public_addr_auto/provider/prefix` 无效 | 隐藏整组 |
+| `no_tun=true` | `dev_name/mtu` 无效；`exit_nodes` 默认路由不装；MagicDNS 不自动接线 | 禁用 `dev_name/mtu`，`exit_nodes`/DNS 处提示 |
+| `disable_encryption=true` | `encryption_algorithm` 无效（今日仅 `disabled`，见 `Config.vue:780`） | 隐藏算法下拉 |
+| `bind_device` 在纯虚拟/容器 | 可能无物理网卡 | 保留，但帮助注明 |
+
+全网一致性参数（`encryption_algorithm` / `data_compress_algo` / `disable_encryption` / 网密）不得单端自动切换，只做一致性校验提示。
+
+### 2.6 智能优选原则（新增草案，对应 S8）
+
+**结论：分层做，先保底回落，再质量选路，最后才是主动探测推荐；不做全参数暴力组合。**
+
+| 参数类 | 能否单端自动试 | 说明 |
+|--------|---------------|------|
+| 全网一致 | 否 | 加密/压缩/网密两端不一致直接连不通，只能提示 |
+| 单端可试 | 是 | scheme 顺序（tcp/udp/ws/wss/quic/wg）、打洞开关、KCP/QUIC 代理、`listener/mapped`、中继 vs 直连、MTU |
+| 质量信号 | 观测 | RTT + `loss_rate`（已有）+ 新增 jitter；综合分 + 熔断 + hysteresis（沿用 §2.3） |
+
+阶段含义：L1 保底降级（无感）、L2 同 peer 质量选路（无感）、L3 主动探测后「推荐 + 一键应用」（需用户确认）、L4 全自动切换（默认不做，需明确产品需求才立项）。
+
 ---
 
 ## 3. TODO 清单
 
 ### P0 — 连通保底（自定义端点）
 
-- [ ] **P0.1** 定义配置模型：保底/中继 **URL 列表**（有序）+ 档位（直连优先 / 偏好中继 / 仅中继）
-  - 字段须能表达 scheme/host/port/path；禁止仅 `use_https_443: bool` 一类开关
-  - 与现有 manual peer / shared node / foreign network 配置对齐或明确映射（避免两套互相打架）
-  - 与现有散装开关明确映射：`disable_p2p` / `p2p_only` / `disable_relay_data` / `prefer_peer_relay`（后者今日仅 OSPF 投影，见 `peer_ospf_route.rs:2494-2518`）不得与新档位语义冲突；老开关保留为兼容层，新档位为唯一真相源
-- [ ] **P0.2** 实现回落状态机：当前路径不可用时按列表与档位切换；切换可观测（日志 + 状态面）
-  - 新建 `FallbackController`（健康探测 + 按序降级 + hysteresis + 状态面 `current_fallback_index/reason`）；现状 `ManualConnector` 为 `DashSet` 全量轮询、`RelayPeerMap` 声明简化，均无统一编排
-  - 健康信号依赖 P1.6（jitter/loss 上报）与 P1.1/P1.2（阈值可配），建议先行落地再做本项（见 §6）
-- [ ] **P0.3** 文档与模板：同时提供「443 示例」与「自定义端口示例」；写明 **443 不一定可用**
-- [ ] **P0.4** GUI / Web（若改配置面）：中继地址为自由输入（URL），端口不默认锁死 443；占位符展示多种 scheme
+- [x] **P0.1** 定义配置模型：保底/中继 **URL 列表**（有序）+ 档位（直连优先 / 偏好中继 / 仅中继）
+  - 有序列表 = 现有 `[[peer]]` / `peer_urls` / `public_server_url`（scheme/host/port/path）；**不**新增第二套 URL 系统
+  - 新 SoT：`flags.connection_path_tier` / `NetworkConfig.connection_path_tier`（`ConnectionPathTier`）
+  - 老开关兼容投影：`disable_p2p` / `prefer_peer_relay`（`p2p_only` 正交保留）；见 `config/connection_path.rs`
+  - 非目标：本项不含 `FallbackController`（P0.2）与 GUI 档位控件（P0.4）
+- [x] **P0.2** 实现回落状态机：当前路径不可用时按列表与档位切换；切换可观测（日志 + 状态面）
+  - `connectivity/fallback::FallbackController`：有序 URL + hysteresis 升/降档 + `current_fallback_index` / `reason`
+  - ManualConnector 重连仅拨号 `0..=index`（DirectFirst）；PreferRelay/RelayOnly 拨全量列表
+  - 状态面：`ListConnectorResponse` + `NetworkInstanceRunningInfo` 暴露 index/reason/tier
+  - 健康信号：本项 MVP 用「client tunnel 是否存活」驱动升/降档；质量分（jitter/loss）留给 P1.7
+  - PreferRelay：`p2p_policy_flags` 将 `prefer_peer_relay` 并入 `lazy_p2p`（软抑制背景打洞；有流量仍可动态打洞）
+  - 非目标：未做 scheme 矩阵（P-AUTO.L1）；降档后不主动拆除已建立的高索引隧道
+- [x] **P0.3** 文档与模板：同时提供「443 示例」与「自定义端口示例」；写明 **443 不一定可用**
+  - Current：`tunnels-and-transport.md` / `peer-connections.md` 双端口示例 + 有序列表
+  - 用户面：`README.md` / `README_CN.md`、Web `initial_nodes_help`、CLI `peers` 帮助
+  - 模板：`script/install.sh`、magisk / android-jni / mini 示例注释
+- [x] **P0.4** GUI / Web：中继地址为自由输入（URL），端口不默认锁死 443；占位符展示多种 scheme；档位控件（`connection_path_tier`）
+  - `Config.vue`：初始节点旁增加路径档位 Select；变更时 `applyConnectionPathTier` 投影 `disable_p2p` / `prefer_peer_relay`
+  - 高级开关中隐藏上述两投影项（SoT 为档位）；`initial_nodes_help` / placeholder 含 443 与自定义端口示例
 - [ ] **P0.5** 验收：在 **非 443** 的 `tcp://` / `wss://host:自定义端口/path` 上，仅中继档可稳定组网；禁 UDP 环境可用用户指定的 TCP/`wss` 保底
+  - 清单：① `connection_path_tier=RelayOnly` + `wss://host:8443/et` 组网；② 同场景换 `tcp://host:5000`；③ 禁 UDP 主机仅用 TCP/`wss` peer 列表；④ 状态面可见 `current_fallback_index` / `fallback_reason`
 
 ### P1 — 保活与弱网策略可调
 
-- [ ] **P1.1** Ping 失败关连接阈值可配置（今日 `peer_conn_ping.rs:322-331` 硬编码连续 5 次；`three_node.rs:1651-1654` 有集成预期，改动须同步更新）；文档给出弱网建议值
-- [ ] **P1.2** `ping_max_interval` / 自适应上下限可配置（默认保持 1s～32s；`peer_conn.rs:299,402,457-474` 今日 `pub(crate)` 硬编码，TCP 打洞等场景可单独 cap）
+- [x] **P1.1** Ping 失败关连接阈值可配置（`flags.ping_fail_close_count`，默认 5；`peer_conn_ping.rs` / `api_input` / TOML）；弱网可调高（如 8～12）
+- [x] **P1.2** `ping_interval_max_sec` 可配置（默认 32；与 per-conn TCP 打洞 1s cap 取更严）；自适应下限仍为 1s 踢拍
 - [ ] **P1.3** 弱网/策略预设：**优先 scheme 列表**可自定义（例：`wss,tcp,quic,udp`），失败按序降级——**不写死「先 443」**
 - [ ] **P1.4** 验证 #2632：TCP/非 UDP 打洞连接 1s ping 在目标环境不再因 idle 掉线（`cargo test` / 现网抽样）
 - [ ] **P1.5** 可选：短时抖动宽限（如短暂丢包不立即拆 conn），避免比 OpenVPN 更「神经质」的闪断
-- [ ] **P1.6** 度量：在现有 RTT 窗口上增加 **jitter** 统计，并与已有 `loss_rate` 一并暴露到 `PeerConnStats` / 状态面（今日 `WindowLatency` 仅均值、`jitter` 全仓零命中；`loss_rate` 在 `PeerConnInfo` 已上报但 `select_conn` 未读）
-- [ ] **P1.7** `select_conn` 改为 **综合质量分**（延迟 + 丢包 + 抖动），含丢包熔断阈值与切换 hysteresis；权重可配，默认丢包权重大于纯 RTT（先改同 peer 多 PeerConn 的 `select_conn`，`peer.rs:213-237`；OSPF 代价放 P2.3 评估，避免震荡）
-- [ ] **P1.8** 验收：构造「低 RTT + 高丢包」vs「略高 RTT + 低丢包」双路径时，默认选后者；路径抖动时不频繁来回切
+- [x] **P1.6** 度量：在现有 RTT 窗口上增加 **jitter** 统计，并与已有 `loss_rate` 一并暴露到 `PeerConnStats` / 状态面（`WindowLatency::get_jitter_us`；proto `jitter_us=6`；Status 表展示）
+- [x] **P1.7** `select_conn` 改为 **综合质量分**（延迟 + 丢包 + 抖动），含丢包熔断阈值与切换 hysteresis；默认丢包权重大于纯 RTT（`peers/conn/conn_select.rs`）
+  - 默认：`w_lat=1` / `w_loss=4` / `w_jitter=1`；loss fuse 20%；switch margin 10% + abs 0.005 × 2 窗口
+  - Flags 透参：`conn_select_w_*`（百分制权重）、`conn_select_loss_fuse_pct`、`conn_select_switch_*`（全 0 = 内置默认，否则按字面值，允许权重为 0）；TOML / NetworkConfig / `ConnSelectConfig::from_flags`
+  - 非目标：本项未改 OSPF 代价（P2.3）；未做 GUI 调权
+- [x] **P1.8** 单元验收（代码级）：「低 RTT + 高丢包」选后者；hysteresis 单窗口不切（`conn_select` 单测）
+  - 现网双路径抽样仍建议人工确认；不阻塞 Flags 透参合入
+- [ ] **P1.8b**（可选）现网/仿真双路径验收清单
 
 ### P2 — 可观测、路由代价与带宽
 
@@ -126,6 +175,27 @@ score = w_lat * norm(rtt)
 - [ ] **P2.3** 评估将丢包/抖动（或综合分）纳入 OSPF / `latency_first` 代价；若做，必须带防震荡与可观测
 - [ ] **P2.4** 按需推进 [`multi-link-bonding.md`](./multi-link-bonding.md)（按流哈希；坏链路按质量熔断）；默认 N=1
 - [ ] **P2.5** 丢包场景下 KCP/QUIC proxy 的启用策略产品化（可配置，非隐性默认）
+
+### P-UX — 配置面正确性与密度（对应 S7；纯前端，低风险）
+
+- [x] **P-UX.1** 互斥/依赖规则落地：按 §2.5 表实现禁用/隐藏/warn；**老配置读入只提示、不强制改值**（已拍板）
+  - 改动面：`easytier-web/frontend-lib/src/components/Config.vue`、`modules/configConflicts.ts`、`types/network.ts`、`locales/cn.yaml + en.yaml`（`xxx_conflict_help`）
+  - 验收：`disable_p2p+p2p_only`、`disable_ipv6+ipv6_auto`、`no_tun+dev/mtu`、`disable_encryption+算法` 四组不再能“无提示”保存
+- [x] **P-UX.2** 紧凑布局（桌面 4 列×2 行 / 断点 **760px** 回单列，已拍板）：`默认连接协议/加密算法/数据压缩/SO_MARK` 一行 4 列；`主机名/TUN名称/MTU/接收限速` 一行 4 列
+  - 改动面：同上 `Config.vue`，复用 VPN Portal 双列 grid 模式；`Select` 与 `InputNumber` 对齐、`placeholder` 不截断需验证
+  - 非目标：不改字段语义与后端
+- [x] **P-UX.3** 帮助文案只描述 Current，不引用本 Roadmap 草案（遵守 `docs/README.md` 约定）
+
+### P-AUTO — 智能探测与优选（新增草案，对应 S8；分 L1-L4）
+
+- [ ] **P-AUTO.L1** 保底降级（无感）：`default_protocol: string` 扩展为有序 scheme 优先列表（如 `wss,tcp,quic,udp`），失败按序尝试；禁 UDP 环境自动落到用户指定的 TCP/`wss`
+  - 兼容：单值老配置视为长度 1 列表；与 P0.1 为叠加关系（URL 列表×scheme 矩阵，已拍板）
+  - 验收：只配 UDP 且 UDP 被阻断时，仍可用列表中 TCP/`wss` 建连
+- [ ] **P-AUTO.L2** 质量选路（无感）：即 P1.6-P1.8，不重复
+- [ ] **P-AUTO.L3** 主动探测 + 推荐（一键应用，需确认）：后台按候选 scheme/代理组合建连试测，记录 RTT/loss/jitter 到 `peer_conn_history` + 状态面，给出“推荐配置” diff
+  - 约束：限频限并发、默认关（已拍板）、需用户 opt-in；不试全网一致性参数；对称 NAT 生日攻击式探测默认禁
+  - 验收：双路径“低 RTT 高丢包 vs 略高 RTT 低丢包”下推荐后者，并可一键应用
+- [ ] **P-AUTO.L4** 全自动切换：默认不做；仅在 L3 有明确产品需求且误切率可接受时再立项
 
 ### P3 — 增强 / Backlog
 
@@ -142,6 +212,7 @@ score = w_lat * norm(rtt)
 - 不把「必须像访问 443 网站」写成验收前提。
 - 不做域前置（domain fronting）依赖。
 - 首期不对标 VeloCloud DMPO / 企业多 WAN 硬件 SD-WAN。
+- **P-UX 不改字段语义与后端；P-AUTO.L3/L4 不做全参数暴力组合，不自动改全网一致性参数。**
 
 ---
 
@@ -158,21 +229,27 @@ score = w_lat * norm(rtt)
 | 低 RTT 高丢包 vs 略高 RTT 低丢包 | 默认选后者（综合分）；超过丢包阈值不得占 `default_conn` |
 | 质量分接近、RTT 抖动 | 不因单次探测频繁切换（hysteresis） |
 | 文案 / 模板 | 出现「自定义端口」说明；无「仅支持 443」表述 |
+| P-UX 互斥四组 | 无提示保存被拦截或 warn；老配置读入不强制改值 |
+| P-UX 紧凑布局 | 桌面端 8 字段占 2 行；窄屏回单列不断行截断 |
+| P-AUTO.L1 | UDP 被阻断时自动落到列表中 TCP/`wss`，状态可查哪一条生效 |
+| P-AUTO.L3 | 给出推荐 diff，一键应用后复测分数提升；默认关闭，需 opt-in |
 
 ---
 
-## 6. 建议实施顺序
+## 6. 建议实施顺序（草案，待拍板）
 
 ```text
+P-UX（纯前端，可并行先行）
 P1.6 stats jitter/loss 上报 + P1.1/P1.2 透参  <- 先行，给 P0.2 提供健康信号
   -> P0.1 配置模型 + 老开关映射
-  -> P0.2 回落状态机 FallbackController
+  -> P0.2 回落状态机 FallbackController（含 P-AUTO.L1 scheme 列表，二选一或叠加待定）
   -> P0.3/P0.4 文档与 UI
   -> P0.5 非 443 验收
 并行：P1.4 #2632 验证
-随后：P1.3 scheme 优先列表
-      P1.7-P1.8 质量分选路  <- 依赖 P1.6
+随后：P1.3 scheme 优先列表（若已在 P-AUTO.L1 做，则此处只剩验收）
+       P1.7-P1.8 质量分选路（= P-AUTO.L2）  <- 依赖 P1.6
 再后：P2 可观测 / OSPF 代价评估 / bonding / proxy 策略
+最后：P-AUTO.L3 探测推荐（需 P2.1 状态面）；P-AUTO.L4 默认不启动
 ```
 
 拍板前可与 [`discussion-proposal-2026-10.md`](./discussion-proposal-2026-10.md) 轨道 C（连通保底）对齐；**本文强调自定义端点后，轨道 C 叙事应从「wss/443 范式」改为「可配置保底 URL + 可选 443 推荐」**。
@@ -183,7 +260,21 @@ P1.6 stats jitter/loss 上报 + P1.1/P1.2 透参  <- 先行，给 P0.2 提供健
 
 | 项 | 状态 | 备注 |
 |----|------|------|
-| P0.* | 未开始 | |
-| P1.* | 未开始 | P1.4 依赖 #2632；P1.7-P1.8 为质量选路 |
+| P0.* | P0.1–P0.4 **已完成**；P0.5 验收未开始 | Web 档位控件 + 文档/模板 |
+| P1.* | P1.1/P1.2/P1.6–P1.8（单元）**已完成**；P0.5/P1.8b 现网验收、P1.3–P1.5 未开始 | 质量分 Flags 透参已接 |
 | P2.* | 未开始 | OSPF 多指标 / bonding 细节见专题文 |
 | P3.* | Backlog | |
+| P-UX.* | **已完成** | 老配置只提示；断点 760px；`configConflicts.ts` + Config 紧凑布局 |
+| P-AUTO.* | 草案待评审 | L1/L2 无感；L3 需 opt-in；L4 默认不做 |
+
+---
+
+## 8. 待决问题（讨论用）
+
+1. ~~§2.5 互斥 / 老配置~~：**已拍板** — 从严禁选；老配置读入**只提示、不强制改值**。
+2. ~~紧凑布局 / 断点~~：**已拍板** — 桌面 4 列×2 行（8 字段占 2 行）；移动端断点 **760px** 回单列。
+3. ~~URL×scheme~~：**已拍板** — 叠加（URL 列表×scheme 矩阵）。
+4. ~~L3 默认~~：**已拍板** — L3 默认关。剩余：探测频率/并发上限定多少？对称 NAT 生日攻击类探测是否永远禁止自动触发（建议是）？
+5. 质量分权重默认值谁来定？丢包熔断阈值默认多少？是否允许用户手动调权重？
+6. 本文拍板后是否需要回写 [`discussion-proposal-2026-10.md`](./discussion-proposal-2026-10.md) 轨道 C 叙事（从 wss/443 改为可配置保底 URL）？
+

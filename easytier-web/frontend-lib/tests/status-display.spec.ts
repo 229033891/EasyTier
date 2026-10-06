@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   isMeaningfulProxyCidrRouteSync,
+  jitterMs,
   latencyMs,
   lossRate,
 } from '../src/modules/statusDisplay'
@@ -72,6 +73,16 @@ describe('status display helpers', () => {
     expect(lossRate(peerRoutePair([
       { conn_id: 'missing' },
       { conn_id: 'invalid', loss_rate: 'unknown' },
+    ]))).toBe('')
+  })
+
+  it('formats jitter from PeerConnStats', () => {
+    expect(jitterMs(peerRoutePair([
+      { conn_id: 'missing', stats: {} },
+      { conn_id: 'valid', stats: { jitter_us: '1500' } },
+    ]))).toBe('2ms')
+    expect(jitterMs(peerRoutePair([
+      { conn_id: 'missing', stats: {} },
     ]))).toBe('')
   })
 

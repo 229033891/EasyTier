@@ -133,6 +133,19 @@ ping 10.126.126.2
 sudo easytier-core -d --network-name abc --network-secret abc -p tcp://<公共节点IP>:11010 -p udp://<公共节点IP>:11010
 ```
 
+自建中继时请填写**完整隧道 URL**（scheme/主机/端口/path）。**443 不一定可用**——许多网络会阻断 443 或只放行特定端口：
+
+```bash
+# 自定义端口（443 不可用时）
+-p wss://relay.example.com:8443/et
+-p tcp://relay.example.com:5000
+
+# 443 可用时的推荐示例（合法证书）
+-p wss://relay.example.com/et
+```
+
+多条 `-p` / `[[peer]]` 按顺序作为保底回落列表。
+
 #### 去中心化组网
 
 EasyTier 本质上是去中心化的，没有服务器和客户端的区分。只要一个设备能与虚拟网络中的任何节点通信，它就可以加入虚拟网络。以下是如何设置去中心化网络：

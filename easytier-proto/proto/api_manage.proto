@@ -114,6 +114,21 @@ message NetworkConfig {
   // Prefer this underlay scheme when establishing a direct peer connection
   // (e.g. "tcp", "udp"). Default is "tcp".
   optional string default_protocol = 75;
+  // Consecutive ping failures before closing a PeerConn (default 5).
+  optional uint32 ping_fail_close_count = 76;
+  // Adaptive ping max interval in seconds (default 32; TCP hole-punch may still cap to 1).
+  optional uint32 ping_interval_max_sec = 77;
+  // Connectivity path tier. When set, overrides disable_p2p / prefer_peer_relay projection.
+  // Ordered fallback endpoints remain peer_urls / peers / public_server_url (scheme/host/port/path).
+  optional common.ConnectionPathTier connection_path_tier = 78;
+  // PeerConn quality select weights/thresholds (P1.7). See FlagsInConfig; 0 / unset = default.
+  optional uint32 conn_select_w_lat = 79;
+  optional uint32 conn_select_w_loss = 80;
+  optional uint32 conn_select_w_jitter = 81;
+  optional uint32 conn_select_loss_fuse_pct = 82;
+  optional uint32 conn_select_switch_margin_pct = 83;
+  optional uint32 conn_select_switch_abs_margin_milli = 84;
+  optional uint32 conn_select_switch_windows = 85;
 }
 
 message DnsHostEntry {
@@ -197,6 +212,10 @@ message NetworkInstanceRunningInfo {
   peer_rpc.RouteForeignNetworkSummary foreign_network_summary = 9;
   // Desktop L2 sync summary: desired vs installed proxy CIDRs and last error.
   optional string proxy_cidr_route_sync = 10;
+  // Connectivity fallback (P0.2): ordered peer-URL dial orchestration.
+  optional uint32 current_fallback_index = 11;
+  optional string fallback_reason = 12;
+  optional common.ConnectionPathTier connection_path_tier = 13;
 }
 
 message NetworkInstanceRunningInfoMap {

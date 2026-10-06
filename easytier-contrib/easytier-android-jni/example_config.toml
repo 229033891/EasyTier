@@ -13,8 +13,12 @@ network = "my_easytier_network"
 # 监听地址 (可选)
 # listeners = ["tcp://0.0.0.0:11010", "udp://0.0.0.0:11010"]
 
-# 对等节点地址 (可选)
-# peers = ["tcp://peer1.example.com:11010", "udp://peer2.example.com:11010"]
+# 对等节点地址 (可选；有序保底列表。443 不一定可用，按实际可达端口填写)
+# peers = [
+#   "tcp://peer1.example.com:11010",
+#   "wss://relay.example.com:8443/et",
+#   "wss://relay.example.com/et",
+# ]
 
 # 虚拟 IP 地址 (可选)
 # ipv4 = "10.144.144.1"

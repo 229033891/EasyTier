@@ -155,6 +155,35 @@ pub fn network_config_from_toml(config: &TomlConfig) -> NetworkConfig {
     result.disable_upnp = Some(flags.disable_upnp);
     result.disable_relay_data = Some(flags.disable_relay_data);
     result.prefer_peer_relay = Some(flags.prefer_peer_relay);
+    result.connection_path_tier = {
+        use easytier_proto::common::ConnectionPathTier;
+        let tier = ConnectionPathTier::try_from(flags.connection_path_tier)
+            .unwrap_or(ConnectionPathTier::Unspecified);
+        let normalized = if tier == ConnectionPathTier::Unspecified {
+            crate::config::infer_connection_path_tier(&flags)
+        } else {
+            crate::config::normalize_connection_path_tier(tier)
+        };
+        Some(normalized.into())
+    };
+    result.conn_select_w_lat = (flags.conn_select_w_lat != default_flags.conn_select_w_lat)
+        .then_some(flags.conn_select_w_lat);
+    result.conn_select_w_loss = (flags.conn_select_w_loss != default_flags.conn_select_w_loss)
+        .then_some(flags.conn_select_w_loss);
+    result.conn_select_w_jitter = (flags.conn_select_w_jitter != default_flags.conn_select_w_jitter)
+        .then_some(flags.conn_select_w_jitter);
+    result.conn_select_loss_fuse_pct =
+        (flags.conn_select_loss_fuse_pct != default_flags.conn_select_loss_fuse_pct)
+            .then_some(flags.conn_select_loss_fuse_pct);
+    result.conn_select_switch_margin_pct = (flags.conn_select_switch_margin_pct
+        != default_flags.conn_select_switch_margin_pct)
+        .then_some(flags.conn_select_switch_margin_pct);
+    result.conn_select_switch_abs_margin_milli = (flags.conn_select_switch_abs_margin_milli
+        != default_flags.conn_select_switch_abs_margin_milli)
+        .then_some(flags.conn_select_switch_abs_margin_milli);
+    result.conn_select_switch_windows = (flags.conn_select_switch_windows
+        != default_flags.conn_select_switch_windows)
+        .then_some(flags.conn_select_switch_windows);
     result.enable_udp_broadcast_relay = Some(flags.enable_udp_broadcast_relay);
     result.disable_sym_hole_punching = Some(flags.disable_sym_hole_punching);
     result.enable_magic_dns = Some(flags.accept_dns);

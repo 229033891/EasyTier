@@ -135,6 +135,8 @@ pub struct PeerConnPinger {
     network_name: String,
     liveness: PeerConnLiveness,
     max_interval: Duration,
+    /// Consecutive ping failures before closing; default 5.
+    fail_close_count: u32,
 }
 
 impl std::fmt::Debug for PeerConnPinger {
@@ -160,6 +162,7 @@ impl PeerConnPinger {
         network_name: String,
         liveness: PeerConnLiveness,
         max_interval: Duration,
+        fail_close_count: u32,
     ) -> Self {
         Self {
             my_peer_id,
@@ -173,6 +176,7 @@ impl PeerConnPinger {
             network_name,
             liveness,
             max_interval,
+            fail_close_count: fail_close_count.max(1),
         }
     }
 
@@ -249,8 +253,9 @@ impl PeerConnPinger {
 
         // one with 1% precision
         let loss_rate_stats_1 = WindowLatency::new(100);
-        // disconnect the connection if lost 5 pingpong consecutively
+        // disconnect after N consecutive pingpong failures (configurable; default 5)
         let loss_counter = Arc::new(AtomicU32::new(0));
+        let fail_close_count = self.fail_close_count;
 
         let (trigger_sender, mut trigger_receiver) = tokio::sync::mpsc::channel(1);
         let mut controller_tasks = JoinSet::new();
@@ -319,12 +324,13 @@ impl PeerConnPinger {
                 my_node_id
             );
 
-            if loss_counter.load(Ordering::Relaxed) >= 5 {
+            if loss_counter.load(Ordering::Relaxed) >= fail_close_count {
                 tracing::warn!(
                     ?ret,
                     ?self,
                     ?loss_rate_1,
                     ?loss_counter,
+                    fail_close_count,
                     "too many consecutive pingpong failures, closing the connection",
                 );
                 break;
@@ -423,6 +429,7 @@ mod tests {
             "test".to_owned(),
             PeerConnLiveness::new(),
             Duration::from_secs(32),
+            5,
         );
 
         let ingress = tokio::spawn(async move {
@@ -482,6 +489,7 @@ mod tests {
             "test".to_owned(),
             local_liveness,
             Duration::from_secs(32),
+            5,
         );
 
         let result = timeout(Duration::from_secs(12), pinger.pingpong()).await;

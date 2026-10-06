@@ -325,6 +325,31 @@ export function lossRate(info: PeerRoutePair) {
   return ''
 }
 
+/** Jitter from default (or best) PeerConnStats, in milliseconds. */
+export function jitterMs(info: PeerRoutePair) {
+  const connId = defaultConnId(info)
+  let minJitterUs: number | undefined
+
+  for (const conn of peerConns(info)) {
+    if (!conn.stats)
+      continue
+
+    const jitterUs = numericValue(conn.stats.jitter_us)
+    if (jitterUs === undefined)
+      continue
+
+    if (connId === conn.conn_id)
+      return `${Math.ceil(jitterUs / 1000)}ms`
+
+    minJitterUs = Math.min(minJitterUs ?? jitterUs, jitterUs)
+  }
+
+  if (minJitterUs !== undefined)
+    return `${Math.ceil(minJitterUs / 1000)}ms`
+
+  return ''
+}
+
 /**
  * Default/uninitialized L2 summary before the desktop route updater reports,
  * or on platforms (Android) where ifcfg is a no-op and VpnService owns routes.

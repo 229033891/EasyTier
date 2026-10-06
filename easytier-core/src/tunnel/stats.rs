@@ -59,6 +59,49 @@ impl WindowLatency {
             (T::from(sum)) / T::from(count)
         }
     }
+
+    /// Mean absolute consecutive RTT delta over the current window (microseconds).
+    /// Returns 0 until at least two samples are present.
+    pub fn get_jitter_us(&self) -> u64 {
+        let count = self.count.load(Relaxed) as usize;
+        if count < 2 {
+            return 0;
+        }
+
+        let size = self.latency_us_window_size as usize;
+        let next = self.latency_us_window_index.load(Relaxed) as usize;
+        let mut prev: Option<u32> = None;
+        let mut sum_abs_diff: u64 = 0;
+        let mut pairs: u64 = 0;
+
+        let visit = |idx: usize, prev: &mut Option<u32>, sum: &mut u64, pairs: &mut u64| {
+            let cur = self.latency_us_window[idx].load(Relaxed);
+            if let Some(p) = *prev {
+                let a = p as u64;
+                let b = cur as u64;
+                *sum += a.abs_diff(b);
+                *pairs += 1;
+            }
+            *prev = Some(cur);
+        };
+
+        if count < size {
+            for i in 0..count {
+                visit(i, &mut prev, &mut sum_abs_diff, &mut pairs);
+            }
+        } else {
+            let start = next % size;
+            for i in 0..size {
+                visit((start + i) % size, &mut prev, &mut sum_abs_diff, &mut pairs);
+            }
+        }
+
+        if pairs == 0 {
+            0
+        } else {
+            sum_abs_diff / pairs
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -127,5 +170,40 @@ impl Throughput {
             *self.rx_bytes.get() += bytes;
             *self.rx_packets.get() += 1;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::WindowLatency;
+
+    #[test]
+    fn jitter_is_zero_with_fewer_than_two_samples() {
+        let w = WindowLatency::new(8);
+        assert_eq!(w.get_jitter_us(), 0);
+        w.record_latency(1_000);
+        assert_eq!(w.get_jitter_us(), 0);
+    }
+
+    #[test]
+    fn jitter_is_mean_absolute_consecutive_delta() {
+        let w = WindowLatency::new(8);
+        // deltas: |20-10|=10, |30-20|=10 → mean 10
+        w.record_latency(10);
+        w.record_latency(20);
+        w.record_latency(30);
+        assert_eq!(w.get_jitter_us(), 10);
+    }
+
+    #[test]
+    fn jitter_survives_ring_wrap() {
+        let w = WindowLatency::new(3);
+        w.record_latency(100);
+        w.record_latency(200);
+        w.record_latency(100);
+        // wrap: overwrite oldest (100) with 400 → window chronological: 200, 100, 400
+        w.record_latency(400);
+        // deltas: 100, 300 → mean 200
+        assert_eq!(w.get_jitter_us(), 200);
     }
 }

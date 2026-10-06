@@ -466,11 +466,23 @@ impl PeerConn {
 
     /// Maximum idle gap between control pings.
     ///
-    /// Defaults to 32s (`1 << max_backoff_idx`). TCP hole-punched admissions
-    /// override this to 1s so NAT mappings are refreshed frequently.
+    /// Defaults to `flags.ping_interval_max_sec` (historically 32s = `1 << max_backoff_idx`).
+    /// Per-conn override (TCP hole-punch → 1s) wins when it is stricter (lower).
     pub(crate) fn max_ping_interval(&self) -> Duration {
-        self.ping_max_interval
-            .unwrap_or_else(|| Duration::from_secs(32))
+        let flags_max = {
+            let secs = self.context.flags().ping_interval_max_sec;
+            let secs = if secs == 0 { 32 } else { secs };
+            Duration::from_secs(secs as u64)
+        };
+        match self.ping_max_interval {
+            Some(cap) => cap.min(flags_max),
+            None => flags_max,
+        }
+    }
+
+    fn ping_fail_close_count(&self) -> u32 {
+        let n = self.context.flags().ping_fail_close_count;
+        if n == 0 { 5 } else { n }
     }
 
     pub fn is_closed(&self) -> bool {
@@ -1400,6 +1412,7 @@ impl PeerConn {
             self.get_conn_info().network_name,
             self.liveness.clone(),
             self.max_ping_interval(),
+            self.ping_fail_close_count(),
         );
 
         let close_event_notifier = self.close_event_notifier.clone();
@@ -1478,6 +1491,7 @@ impl PeerConn {
     pub fn get_stats(&self) -> PeerConnStats {
         PeerConnStats {
             latency_us: self.latency_stats.get_latency_us(),
+            jitter_us: self.latency_stats.get_jitter_us(),
 
             tx_bytes: self.throughput.tx_bytes(),
             rx_bytes: self.throughput.rx_bytes(),
@@ -1485,6 +1499,11 @@ impl PeerConn {
             tx_packets: self.throughput.tx_packets(),
             rx_packets: self.throughput.rx_packets(),
         }
+    }
+
+    /// Ping-derived loss rate in \[0, 1\] (same scale as `PeerConnInfo.loss_rate`).
+    pub fn loss_rate(&self) -> f32 {
+        (f64::from(self.loss_rate_stats.load(Ordering::Relaxed)) / 100.0) as f32
     }
 
     pub fn get_conn_info(&self) -> PeerConnInfo {
@@ -1496,7 +1515,7 @@ impl PeerConn {
             features: info.features.clone(),
             tunnel: self.tunnel_info.clone(),
             stats: Some(self.get_stats()),
-            loss_rate: (f64::from(self.loss_rate_stats.load(Ordering::Relaxed)) / 100.0) as f32,
+            loss_rate: self.loss_rate(),
             is_client: self.is_client.unwrap_or_default(),
             network_name: info.network_name.clone(),
             is_closed: self.close_event_notifier.is_closed(),

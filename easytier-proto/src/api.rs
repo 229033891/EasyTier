@@ -84,6 +84,7 @@ pub mod instance {
                 rx_packets: value.rx_packets,
                 tx_packets: value.tx_packets,
                 latency_us: value.latency_us,
+                jitter_us: value.jitter_us,
             }
         }
     }

@@ -133,6 +133,19 @@ To improve availability, you can connect to multiple shared nodes simultaneously
 sudo easytier-core -d --network-name abc --network-secret abc -p tcp://<SharedNodeIP1>:11010 -p udp://<SharedNodeIP2>:11010
 ```
 
+For self-hosted relays, use **full tunnel URLs** (scheme/host/port/path). **Port 443 is not always available**—many networks block 443 or only allow specific ports:
+
+```bash
+# Custom ports (when 443 is blocked)
+-p wss://relay.example.com:8443/et
+-p tcp://relay.example.com:5000
+
+# Recommended when 443 is allowed (valid TLS cert)
+-p wss://relay.example.com/et
+```
+
+Multiple `-p` / `[[peer]]` entries form an ordered fallback list.
+
 Once your network is set up successfully, you can easily configure it to start automatically on system boot. Refer to the [One-Click Register Service guide](https://easytier.cn/en/guide/network/oneclick-install-as-service.html) for step-by-step instructions on registering EasyTier as a system service.
 
 #### Decentralized Networking

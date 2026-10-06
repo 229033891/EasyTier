@@ -16,7 +16,12 @@ pub mod gateway;
 pub mod peers;
 pub mod runtime;
 pub mod toml;
+pub mod connection_path;
 
+pub use connection_path::{
+    apply_connection_path_tier, infer_connection_path_tier, normalize_connection_path_tier,
+    resolve_connection_path_tier,
+};
 pub use dns::{DnsConfig, DnsForwarder, DnsHostEntry};
 pub use encryption::EncryptionAlgorithm;
 

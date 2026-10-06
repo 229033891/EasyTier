@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { defineComponent, h, nextTick, reactive } from 'vue'
 import Config from '../src/components/Config.vue'
 import {
+  ConnectionPathTier,
   DEFAULT_NETWORK_CONFIG,
   toBackendNetworkConfig,
   type NetworkConfig,
@@ -26,7 +27,6 @@ const CONFIG_FLAG_FIELDS = [
   'disable_kcp_input',
   'enable_quic_proxy',
   'disable_quic_input',
-  'disable_p2p',
   'p2p_only',
   'lazy_p2p',
   'bind_device',
@@ -179,6 +179,7 @@ const CheckboxStub = defineComponent({
   props: {
     modelValue: Boolean,
     inputId: String,
+    disabled: Boolean,
   },
   emits: ['update:modelValue'],
   setup(props, { attrs, emit }) {
@@ -186,9 +187,13 @@ const CheckboxStub = defineComponent({
       ...attrs,
       id: props.inputId,
       checked: props.modelValue,
+      disabled: props.disabled,
       type: 'checkbox',
       'data-stub': 'checkbox',
-      onChange: (event: Event) => emit('update:modelValue', (event.target as HTMLInputElement).checked),
+      onChange: (event: Event) => {
+        if (props.disabled) return
+        emit('update:modelValue', (event.target as HTMLInputElement).checked)
+      },
     })
   },
 })
@@ -201,14 +206,19 @@ const ToggleButtonStub = defineComponent({
     offIcon: String,
     onLabel: String,
     offLabel: String,
+    disabled: Boolean,
   },
   emits: ['update:modelValue'],
   setup(props, { emit }) {
     return () => h('button', {
       type: 'button',
+      disabled: props.disabled,
       'aria-pressed': String(Boolean(props.modelValue)),
       'data-stub': 'toggle-button',
-      onClick: () => emit('update:modelValue', !props.modelValue),
+      onClick: () => {
+        if (props.disabled) return
+        emit('update:modelValue', !props.modelValue)
+      },
     }, props.modelValue ? props.onLabel : props.offLabel)
   },
 })
@@ -607,30 +617,101 @@ describe('Config.vue network config projection', () => {
     const { curNetwork, wrapper } = mountConfig(config)
     await nextTick()
 
+    const toggledFields = new Set<keyof NetworkConfig>()
+
     for (const [field, selector] of CONFIG_CHECKBOX_FIELDS) {
+      const checkbox = wrapper.find(selector)
+      // Hidden by dependency rules (e.g. ipv6_public_addr_auto under disable_ipv6).
+      if (!checkbox.exists()) {
+        continue
+      }
+      const el = input(wrapper, selector)
+      // Disabled by mutex rules — skip toggle; covered by config-conflicts.spec.ts.
+      if (el.disabled) {
+        expect(el.checked, `${field} should still project while disabled`).toBe(originalFlagValues.get(field))
+        continue
+      }
       const value = originalFlagValues.get(field)
-      expect(input(wrapper, selector).checked, `${field} should project into UI`).toBe(value)
-      await wrapper.find(selector).setValue(!value)
+      expect(el.checked, `${field} should project into UI`).toBe(value)
+      await checkbox.setValue(!value)
       await nextTick()
+      toggledFields.add(field)
     }
 
     const toggleButtons = wrapper.findAll('button[data-stub="toggle-button"]')
-    expect(toggleButtons).toHaveLength(CONFIG_TOGGLE_FIELDS.length + CONFIG_TOGGLE_START_INDEX + 1)
+    const expectedToggleCount =
+      CONFIG_TOGGLE_FIELDS.length +
+      CONFIG_TOGGLE_START_INDEX +
+      (curNetwork.disable_ipv6 ? 0 : 1)
+    expect(toggleButtons).toHaveLength(expectedToggleCount)
     for (const [index, field] of CONFIG_TOGGLE_FIELDS.entries()) {
       const value = originalFlagValues.get(field)
       const toggle = toggleButtons[index + CONFIG_TOGGLE_START_INDEX]
       expect(toggle.attributes('aria-pressed'), `${field} should project into UI`)
         .toBe(String(value))
+      if (toggle.attributes('disabled') !== undefined) {
+        continue
+      }
       await toggle.trigger('click')
       await nextTick()
+      toggledFields.add(field)
     }
 
     const backend = toBackendNetworkConfig(curNetwork) as Record<string, unknown>
-    for (const [field, value] of originalFlagValues) {
+    for (const field of toggledFields) {
+      const value = originalFlagValues.get(field)
       const expectedValue = !value
       expect(curNetwork[field], `${field} should update config`).toBe(expectedValue)
       expect(backend[field], `${field} should be preserved in backend JSON`).toBe(expectedValue)
     }
+  })
+
+  it('shows conflict banners for legacy disable_p2p + p2p_only without rewriting values', async () => {
+    const config = makeConfig()
+    config.disable_p2p = true
+    config.p2p_only = true
+    config.lazy_p2p = false
+    config.need_p2p = false
+    const { curNetwork, wrapper } = mountConfig(config)
+    await nextTick()
+
+    expect(wrapper.text()).toContain('disable_p2p_conflict_help')
+    expect(curNetwork.disable_p2p).toBe(true)
+    expect(curNetwork.p2p_only).toBe(true)
+  })
+
+  it('projects connection_path_tier select onto legacy path flags', async () => {
+    const config = makeConfig()
+    config.connection_path_tier = ConnectionPathTier.DIRECT_FIRST
+    config.disable_p2p = false
+    config.prefer_peer_relay = false
+    const { curNetwork, wrapper } = mountConfig(config)
+    await nextTick()
+
+    expect(wrapper.find('#connection_path_tier').exists()).toBe(true)
+    expect(wrapper.find('#disable_p2p').exists()).toBe(false)
+    expect(wrapper.find('#prefer_peer_relay').exists()).toBe(false)
+
+    await wrapper.find('#connection_path_tier').setValue(String(ConnectionPathTier.RELAY_ONLY))
+    await nextTick()
+
+    expect(curNetwork.connection_path_tier).toBe(ConnectionPathTier.RELAY_ONLY)
+    expect(curNetwork.disable_p2p).toBe(true)
+    expect(curNetwork.prefer_peer_relay).toBe(true)
+    expect(curNetwork.p2p_only).toBe(false)
+  })
+
+  it('disables TUN name/MTU when no_tun is on and hides encryption algo when encryption is off', async () => {
+    const config = makeConfig()
+    config.no_tun = true
+    config.disable_encryption = true
+    const { wrapper } = mountConfig(config)
+    await nextTick()
+
+    expect(input(wrapper, '#dev_name').disabled).toBe(true)
+    expect(input(wrapper, '#mtu').disabled).toBe(true)
+    expect(wrapper.find('#encryption_algorithm').exists()).toBe(false)
+    expect(wrapper.text()).toContain('disable_encryption_algo_hint')
   })
 
   it('uses VPN Portal config presence as the enable switch', async () => {

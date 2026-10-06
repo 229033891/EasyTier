@@ -3,7 +3,7 @@
 ## Status
 
 - Status: **Current**
-- 最近审阅：2026-10-03
+- 最近审阅：2026-10-06
 - 范围：Peer 隧道 scheme、中继/打洞与「看起来像什么」
 - 相关：[`peer-connections.md`](./peer-connections.md)（多连接与发送路径）
 - 规划中的抗识别 / 伪装见：[`../roadmap/traffic-camouflage.md`](../roadmap/traffic-camouflage.md)
@@ -21,7 +21,7 @@
 |--------|----------------|------|
 | `tcp` | 普通 TCP | 特征接近自定义长连接 |
 | `udp` | UDP + EasyTier mux | 打洞/直连常用；易被 UDP 策略影响 |
-| `ws` / `wss` | WebSocket（`wss` 带 TLS） | `wss` 默认端口概念上贴近 443；**仍是 EasyTier 协议载荷**，不是完整网站伪装 |
+| `ws` / `wss` | WebSocket（`wss` 带 TLS） | 常用示例端口含 **443** 与自定义端口（如 **8443**）；**443 不一定可用**。内层仍是 EasyTier 协议载荷，不是完整网站伪装 |
 | `quic` | QUIC/UDP | 有 TLS 外观，指纹仍可能可识别 |
 | `wg` | WireGuard 风格 UDP | 独立协议指纹 |
 | `faketcp` | 以 TCP 报文形态承载（feature） | 偏「UDP 改头/抗干扰」类能力，**不是 HTTPS 网站伪装** |
@@ -52,10 +52,16 @@
 - 通用 pluggable transport（obfs4、meek 等）框架  
 - 把 PeerConn 数据面强制封装进「只像浏览网页」的策略档
 
-相对接近的现成用法：
+相对接近的现成用法（**端点完全自定义**；443 只是推荐之一）：
 
-- 经公网中继，使用 **`wss://域名:443`**（合法证书），使链路在端口与 TLS 层更像 Web；  
+- 经可达中继，使用 **`wss://域名:443/et`**（合法证书）——当网络放行 443 时，端口与 TLS 层更像 Web；  
+- 若 **443 被阻断或仅放行特定端口**，改用自定义端口/scheme，例如：  
+  - `wss://relay.example.com:8443/et`  
+  - `tcp://relay.example.com:5000`  
+  - `tcp://10.0.0.2:8443`（内网中继）  
 - 内层仍是 EasyTier，深度包检测或主动探测仍可能区分。
+
+有序 peer URL 列表与档位回落见 [`peer-connections.md`](./peer-connections.md) §2.2。
 
 ---
 
@@ -63,7 +69,9 @@
 
 | 场景 | 期望（今天） |
 |------|----------------|
-| 配置 `wss://host:443/...` | 可建立 WebSocket+TLS 隧道（feature 开启时） |
+| 配置 `wss://host:443/et` | 可建立 WebSocket+TLS 隧道（feature 开启且网络放行 443 时） |
+| 配置 `wss://host:8443/et` 或 `tcp://host:5000` | 同样可建隧道；**不要求**对方开放 443 |
+| 环境阻断 443、放行自定义端口 | 只要 peer URL 指向可达端口即可通 |
 | 仅靠 `udp` 打洞 | 可能成功；不保证抗限速/阻断 |
 | 期望「完全像访问普通网站」 | **未实现** |
 | `faketcp` | 改变传输封装形态；不等于 HTTPS 伪装 |

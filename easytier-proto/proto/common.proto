@@ -4,6 +4,17 @@ import "error.proto";
 
 package common;
 
+// Path preference for connectivity fallback (P0.1).
+// Ordered peer URLs ([[peer]] / peer_urls / public_server_url) are the fallback list;
+// this enum is the sole source of truth for path policy. Old bools
+// (disable_p2p / prefer_peer_relay / p2p_only) remain as a compat projection.
+enum ConnectionPathTier {
+  CONNECTION_PATH_TIER_UNSPECIFIED = 0; // treat as DIRECT_FIRST
+  CONNECTION_PATH_TIER_DIRECT_FIRST = 1; // 直连优先：打洞/直连优先，失败后按 peer URL 列表回落
+  CONNECTION_PATH_TIER_PREFER_RELAY = 2; // 偏好中继：优先配置的 peer URL / peer-relay，直连为辅
+  CONNECTION_PATH_TIER_RELAY_ONLY = 3;   // 仅中继：不打洞/不主动 P2P，只走配置的 peer URL 列表
+}
+
 message FlagsInConfig {
   string default_protocol = 1;
   string dev_name = 2;
@@ -93,6 +104,31 @@ message FlagsInConfig {
   // without a reachable local exit_nodes entry (high metric on desktop). Default
   // false: peer /0 stays L3-only unless this node itself installs an exit default.
   bool allow_peer_default_without_exit = 45;
+
+  // Consecutive ping failures before closing a PeerConn. Default 5; 0 means default.
+  uint32 ping_fail_close_count = 46;
+  // Adaptive ping max interval in seconds (default 32). Per-conn caps (e.g. TCP
+  // hole-punch 1s) still win when lower. 0 means default.
+  uint32 ping_interval_max_sec = 47;
+
+  // Connectivity path tier (sole source of truth). UNSPECIFIED = DIRECT_FIRST.
+  // Projects to disable_p2p / prefer_peer_relay; p2p_only stays orthogonal.
+  ConnectionPathTier connection_path_tier = 48;
+
+  // PeerConn quality select (P1.7). Weights are hundredths (100 = 1.0).
+  // All-zero select block = built-in defaults; otherwise values are literal
+  // (so `conn_select_w_lat = 0` disables the latency term after TOML merge).
+  uint32 conn_select_w_lat = 49;
+  uint32 conn_select_w_loss = 50;
+  uint32 conn_select_w_jitter = 51;
+  // Loss fuse percent 0..100 (default 20 when select block unset).
+  uint32 conn_select_loss_fuse_pct = 52;
+  // Relative switch margin percent (default 10 when select block unset).
+  uint32 conn_select_switch_margin_pct = 53;
+  // Absolute score margin in milli-units (default 5 => 0.005 when unset).
+  uint32 conn_select_switch_abs_margin_milli = 54;
+  // Consecutive reselect windows before switch (default 2 when unset; runtime min 1).
+  uint32 conn_select_switch_windows = 55;
 }
 
 message RpcDescriptor {

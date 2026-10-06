@@ -1463,10 +1463,17 @@ impl PeerManagerCore {
             disable_udp_hole_punching: flags.disable_udp_hole_punching,
             disable_sym_hole_punching: flags.disable_sym_hole_punching,
             disable_upnp: flags.disable_upnp,
-            lazy_p2p: flags.lazy_p2p,
+            // PreferRelay soft-bias: treat like lazy_p2p for proactive background punch
+            // (traffic-triggered / need_p2p paths still allowed via dynamic_allowed).
+            lazy_p2p: flags.lazy_p2p || flags.prefer_peer_relay,
             disable_p2p: flags.disable_p2p,
             need_p2p: flags.need_p2p,
         }
+    }
+
+    /// Flags slice used by connectivity fallback (P0.1/P0.2).
+    pub fn connection_path_flags(&self) -> easytier_proto::common::FlagsInConfig {
+        self.context.flags()
     }
 
     pub fn tcp_hole_punching_disabled(&self) -> bool {

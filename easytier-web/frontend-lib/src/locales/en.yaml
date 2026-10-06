@@ -10,7 +10,22 @@ initial_nodes_help: |
   • Leaving it empty = the node starts alone until others connect to it, or you connect it later yourself.
   • Direct or indirect connectivity, including through relay nodes, can form one network.
   Initial nodes can be your own nodes or ones shared by others.
-initial_node_placeholder: "Example: node.example.com"
+  Enter full tunnel URLs (scheme/host/port/path). Examples:
+  • tcp://relay.example.com:11010
+  • wss://relay.example.com/et (port 443 when omitted)
+  • wss://relay.example.com:8443/et or tcp://10.0.0.2:5000 (custom ports)
+  Port 443 is recommended when your network allows it, but many networks block 443 or only allow specific ports — use the exact URL your relay listens on. Multiple URLs form an ordered fallback list.
+initial_node_placeholder: "e.g. tcp://relay.example.com:11010 or wss://relay.example.com:8443/et"
+connection_path_tier: Connection Path
+connection_path_tier_help: |-
+  How this node uses the ordered Initial Nodes list as fallback / relay endpoints.
+  • Direct First: try P2P/direct; escalate along the peer URL list when active endpoints stay down.
+  • Prefer Relay: dial all configured peer URLs; still allow P2P.
+  • Relay Only: no P2P; only the configured peer URL list.
+  Port 443 is optional — use whatever port your relay actually listens on.
+connection_path_tier_direct_first: Direct First
+connection_path_tier_prefer_relay: Prefer Relay
+connection_path_tier_relay_only: Relay Only
 virtual_ipv4: Virtual IPv4
 virtual_ipv4_dhcp: DHCP
 network_name: Network Name
@@ -190,6 +205,7 @@ latency: Latency
 upload_bytes: Upload
 download_bytes: Download
 loss_rate: Loss Rate
+jitter: Jitter
 nat_type: NAT Type
 
 flags_switch: Feature Switch
@@ -367,6 +383,34 @@ prefer_peer_relay_help: |-
   Prefer reusing a peer that is already relaying toward the destination, instead of advertising another direct edge to the same destination.
   Useful in networks with many direct edges where most traffic can reuse an existing path — it keeps the control plane smaller.
   Note: it only affects path selection between already-credentialed peers; overall relaying behaviour is unchanged.
+
+# Mutex / dependency hints (Current behaviour only; legacy conflicting values are kept and warned)
+disable_p2p_conflict_help: |-
+  Both "Disable P2P" and "P2P Only / Lazy P2P / Need P2P" are on. With P2P disabled the others have no effect — clear one side. Values are not rewritten automatically.
+disable_p2p_blocks_help: When "Disable P2P" is on, you cannot enable P2P Only, Lazy P2P, or Need P2P.
+p2p_only_blocks_disable_p2p_help: When "P2P Only" is on, you cannot enable Disable P2P.
+p2p_only_latency_first_conflict_help: |-
+  With "P2P Only" enabled, latency-first mode is ignored at runtime. Values are not rewritten; you can turn latency-first off manually.
+p2p_only_blocks_latency_first_help: Latency-first has no effect while "P2P Only" is on, so it cannot be enabled.
+p2p_only_relay_conflict_help: |-
+  "P2P Only" means no relaying; relay options (Disable Relay Data / Prefer Peer Relay / network whitelist) have no effect. Values are not rewritten.
+p2p_only_blocks_relay_help: Relay-related options have no effect while "P2P Only" is on.
+all_hole_punching_disabled_help: |-
+  Both TCP and UDP hole punching are off: direct links need manual peers or relays. Valid, but confirm a path remains reachable.
+kcp_proxy_no_input_conflict_help: |-
+  KCP proxy is on while KCP input is disabled (send-only). Valid but usually a misconfiguration; peers fall back to plain TCP toward this node.
+dual_proxy_conflict_help: |-
+  Enabling both KCP and QUIC proxy increases overhead; usually keep only one.
+disable_ipv6_conflict_help: |-
+  IPv6 is disabled but public-IPv6 options are still on. Those options have no effect while IPv6 is off; values are not rewritten.
+no_tun_dev_mtu_conflict_help: |-
+  In no-TUN mode, TUN name and MTU have no effect. Values are not rewritten.
+no_tun_dev_mtu_hint: Ignored in no-TUN mode.
+no_tun_exit_nodes_hint: Without a TUN device, exit-node default routes usually cannot be installed into the system routing table.
+no_tun_magic_dns_hint: In no-TUN mode, Magic DNS usually does not auto-wire into the OS resolver.
+disable_encryption_algo_conflict_help: |-
+  Encryption algorithm has no effect while encryption is disabled. Values are not rewritten.
+disable_encryption_algo_hint: Encryption is disabled; algorithm selection is ignored.
 
 default_protocol: Default Connection Protocol
 default_protocol_help: |-

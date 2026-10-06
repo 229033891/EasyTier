@@ -16,8 +16,13 @@ rpc_portal = "0.0.0.0:15888"
 network_name = "default"
 network_secret = ""
 
+# 有序保底 peer URL（按可达性填写；443 不一定可用）
 #[[peer]]
-#uri = "协议://中转ip:端口"
+#uri = "tcp://relay.example.com:11010"
+#[[peer]]
+#uri = "wss://relay.example.com:8443/et"
+#[[peer]]
+#uri = "wss://relay.example.com/et"
 
 [flags]
 default_protocol = "tcp"

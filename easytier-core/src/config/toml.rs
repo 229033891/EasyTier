@@ -7,6 +7,7 @@ use std::{
 };
 
 use super::normalize_secure_mode_config;
+use super::resolve_connection_path_tier;
 pub use super::{EncryptionAlgorithm, gateway::PortForwardConfig};
 use anyhow::Context;
 #[cfg(feature = "rich-config-errors")]
@@ -15,7 +16,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::proto::{
     acl::Acl,
-    common::{CompressionAlgoPb, SecureModeConfig},
+    common::{CompressionAlgoPb, ConnectionPathTier, SecureModeConfig},
 };
 
 pub use super::dns::{DnsConfig, DnsForwarder, DnsHostEntry};
@@ -141,6 +142,20 @@ pub fn gen_default_flags() -> Flags {
         prefer_peer_relay: false,
         enable_udp_broadcast_relay: false,
         socket_mark: None,
+        ping_fail_close_count: 5,
+        ping_interval_max_sec: 32,
+        // Unspecified = infer from legacy flags at runtime (old TOML files that
+        // only set disable_p2p / prefer_peer_relay keep working).
+        connection_path_tier: ConnectionPathTier::Unspecified.into(),
+        // PeerConn quality select (P1.7). Canonical values for TOML diff.
+        // Runtime: all-zero block → code defaults; else literal (0 weight allowed).
+        conn_select_w_lat: 100,
+        conn_select_w_loss: 400,
+        conn_select_w_jitter: 100,
+        conn_select_loss_fuse_pct: 20,
+        conn_select_switch_margin_pct: 10,
+        conn_select_switch_abs_margin_milli: 5,
+        conn_select_switch_windows: 2,
     }
 }
 
@@ -236,6 +251,16 @@ define_flags_diff! {
         prefer_peer_relay,
         enable_udp_broadcast_relay,
         socket_mark,
+        ping_fail_close_count,
+        ping_interval_max_sec,
+        connection_path_tier,
+        conn_select_w_lat,
+        conn_select_w_loss,
+        conn_select_w_jitter,
+        conn_select_loss_fuse_pct,
+        conn_select_switch_margin_pct,
+        conn_select_switch_abs_margin_milli,
+        conn_select_switch_windows,
     ],
     u64s: [foreign_relay_bps_limit, instance_recv_bps_limit],
     enums: [data_compress_algo]
@@ -827,6 +852,7 @@ impl TomlConfig {
     fn gen_flags(
         flags_hashmap: serde_json::Map<String, serde_json::Value>,
     ) -> serde_json::Result<Flags> {
+        let explicit_tier_present = flags_hashmap.contains_key("connection_path_tier");
         let mut merged_hashmap = match serde_json::to_value(gen_default_flags()) {
             Ok(serde_json::Value::Object(map)) => map,
             _ => serde_json::Map::new(),
@@ -838,6 +864,14 @@ impl TomlConfig {
         if flags.default_protocol.is_empty() {
             flags.default_protocol = gen_default_flags().default_protocol;
         }
+        // Materialize a self-consistent tier so legacy-only TOML
+        // (disable_p2p / prefer_peer_relay without a tier key) keeps working:
+        // absent key -> infer from legacy flags; explicit key wins and
+        // projects onto the legacy flags.
+        let explicit = explicit_tier_present
+            .then(|| ConnectionPathTier::try_from(flags.connection_path_tier).ok())
+            .flatten();
+        resolve_connection_path_tier(&mut flags, explicit);
         Ok(flags)
     }
 }
@@ -1361,6 +1395,65 @@ default_protocol = "TCP"
         )
         .unwrap();
         assert_eq!(cfg.get_flags().default_protocol, "tcp");
+    }
+
+    #[test]
+    fn legacy_toml_without_tier_key_infers_path_tier() {
+        // Old files that only set disable_p2p must resolve to RelayOnly,
+        // not silently fall back to DirectFirst.
+        let cfg = TomlConfig::new_from_str(
+            r#"
+[network_identity]
+network_name = "n"
+network_secret = "s"
+
+[flags]
+disable_p2p = true
+"#,
+        )
+        .unwrap();
+        let flags = cfg.get_flags();
+        assert_eq!(
+            ConnectionPathTier::try_from(flags.connection_path_tier).unwrap(),
+            ConnectionPathTier::RelayOnly
+        );
+        assert!(flags.disable_p2p);
+
+        let cfg = TomlConfig::new_from_str(
+            r#"
+[network_identity]
+network_name = "n"
+network_secret = "s"
+
+[flags]
+prefer_peer_relay = true
+"#,
+        )
+        .unwrap();
+        assert_eq!(
+            ConnectionPathTier::try_from(cfg.get_flags().connection_path_tier).unwrap(),
+            ConnectionPathTier::PreferRelay
+        );
+
+        // Explicit tier wins and projects onto legacy flags.
+        let cfg = TomlConfig::new_from_str(
+            r#"
+[network_identity]
+network_name = "n"
+network_secret = "s"
+
+[flags]
+connection_path_tier = 1
+disable_p2p = true
+"#,
+        )
+        .unwrap();
+        let flags = cfg.get_flags();
+        assert_eq!(
+            ConnectionPathTier::try_from(flags.connection_path_tier).unwrap(),
+            ConnectionPathTier::DirectFirst
+        );
+        assert!(!flags.disable_p2p);
     }
 
     #[test]

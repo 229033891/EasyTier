@@ -10,7 +10,22 @@ initial_nodes_help: |
   • 留空 = 节点独立启动，等别人来连，或你后续手动连。
   • 无论直接还是间接连通（通过其他节点搭桥），都能组网互通。
   初始节点可以用自己的，也可以用别人分享的。
-initial_node_placeholder: 例如：node.example.com
+  请填写完整隧道 URL（scheme/主机/端口/path）。示例：
+  • tcp://relay.example.com:11010
+  • wss://relay.example.com/et（省略端口时为 443）
+  • wss://relay.example.com:8443/et 或 tcp://10.0.0.2:5000（自定义端口）
+  网络允许时可用 443，但许多环境会阻断 443 或只放行特定端口——请按中继实际监听地址填写。多条 URL 按顺序作为保底回落列表。
+initial_node_placeholder: 例如：tcp://relay.example.com:11010 或 wss://relay.example.com:8443/et
+connection_path_tier: 连接路径
+connection_path_tier_help: |-
+  如何使用「初始节点」有序 URL 列表作为保底 / 中继端点。
+  • 直连优先：优先打洞/直连；当前可用端点持续不可达时按列表升档拨号。
+  • 偏好中继：拨号全部已配置 peer URL；仍允许 P2P。
+  • 仅中继：不打洞；只走已配置的 peer URL 列表。
+  443 只是可选端口——请按中继实际监听地址填写，不假定只有 443 能通。
+connection_path_tier_direct_first: 直连优先
+connection_path_tier_prefer_relay: 偏好中继
+connection_path_tier_relay_only: 仅中继
 virtual_ipv4: 虚拟IPv4地址
 virtual_ipv4_dhcp: DHCP
 network_name: 网络名称
@@ -191,6 +206,7 @@ latency: 延迟
 upload_bytes: 上传
 download_bytes: 下载
 loss_rate: 丢包率
+jitter: 抖动
 nat_type: NAT 类型
 
 flags_switch: 功能开关
@@ -368,6 +384,34 @@ prefer_peer_relay_help: |-
   优先复用「已经在向目标转发数据的对端」，而不是再宣告一条到同一目标的直连边。
   适合直连边很多、但大部分流量其实可以复用已有路径的网络，能减少控制面的路由信息量。
   注意：只影响与已有凭据对端之间的路径选择，不改变总的中继行为。
+
+# 互斥 / 依赖提示（只描述 Current 行为；老配置冲突值保留，仅提示）
+disable_p2p_conflict_help: |-
+  当前同时开启了「禁用 P2P」与「仅 P2P / 延迟 P2P / 需要 P2P」。禁用 P2P 时后三者无意义；请取消其一。配置不会被自动改写。
+disable_p2p_blocks_help: 已开启「禁用 P2P」时，不能再勾选仅 P2P、延迟 P2P 或需要 P2P。
+p2p_only_blocks_disable_p2p_help: 已开启「仅 P2P」时，不能再勾选禁用 P2P。
+p2p_only_latency_first_conflict_help: |-
+  「仅 P2P」开启时，延迟优先模式会被运行时忽略。配置不会被自动改写；可手动关闭延迟优先。
+p2p_only_blocks_latency_first_help: 已开启「仅 P2P」时，延迟优先模式无效，无法勾选。
+p2p_only_relay_conflict_help: |-
+  「仅 P2P」表示不走中转；中继相关选项（禁止中转数据 / 优先对端中继 / 网络白名单）此时无意义。配置不会被自动改写。
+p2p_only_blocks_relay_help: 已开启「仅 P2P」时，中继相关选项无效。
+all_hole_punching_disabled_help: |-
+  TCP 与 UDP 打洞均已关闭：直连只能依赖手动 peer 或中转。这是合法配置，但请确认中转/手动节点可达。
+kcp_proxy_no_input_conflict_help: |-
+  本机开启了 KCP 代理却禁用了 KCP 输入：只发不收。合法但多为误配；对端访问本机时会回退为原始 TCP。
+dual_proxy_conflict_help: |-
+  KCP 代理与 QUIC 代理同时开启会增加开销；通常只保留其一即可。
+disable_ipv6_conflict_help: |-
+  已禁用 IPv6，但公网 IPv6 相关选项仍为开启。禁用 IPv6 时这些选项无效；配置不会被自动改写。
+no_tun_dev_mtu_conflict_help: |-
+  无 TUN 模式下 TUN 名称与 MTU 不生效。配置不会被自动改写。
+no_tun_dev_mtu_hint: 无 TUN 模式下此项无效。
+no_tun_exit_nodes_hint: 无 TUN 时出口节点默认路由通常无法装入系统路由表。
+no_tun_magic_dns_hint: 无 TUN 模式下 Magic DNS 通常不会自动接线。
+disable_encryption_algo_conflict_help: |-
+  已禁用加密时，加密算法下拉无效。配置不会被自动改写。
+disable_encryption_algo_hint: 已禁用加密，算法设置无效。
 
 default_protocol: 默认连接协议
 default_protocol_help: |-

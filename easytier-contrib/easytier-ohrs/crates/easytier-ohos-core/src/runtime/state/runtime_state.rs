@@ -34,6 +34,7 @@ pub struct PeerConnStats {
     pub rx_packets: i64,
     pub tx_packets: i64,
     pub latency_us: i64,
+    pub jitter_us: i64,
 }
 
 #[derive(Serialize)]
@@ -330,6 +331,7 @@ pub fn peer_conn_to_view(conn: api::instance::PeerConnInfo) -> PeerConnInfo {
         rx_packets: stats.rx_packets as i64,
         tx_packets: stats.tx_packets as i64,
         latency_us: stats.latency_us as i64,
+        jitter_us: stats.jitter_us as i64,
     });
 
     PeerConnInfo {

@@ -6,12 +6,13 @@ use anyhow::Context;
 use easytier_proto::api::manage;
 
 use crate::config::{
-    MappedListenerPolicy, normalize_secure_mode_config,
+    MappedListenerPolicy, normalize_secure_mode_config, resolve_connection_path_tier,
     toml::{
         ConfigLoader, ManagedCredentialConfig, NetworkIdentity, PeerConfig, PortForwardConfig,
         TomlConfigLoader, VpnPortalClientConfig, VpnPortalConfig, gen_default_flags,
     },
 };
+use easytier_proto::common::ConnectionPathTier;
 
 fn parse_mapped_listener_urls(mapped_listeners: &[String]) -> Result<Vec<url::Url>, anyhow::Error> {
     MappedListenerPolicy::new(["tcp", "udp", "wg", "quic", "ws", "wss", "faketcp"])
@@ -154,6 +155,16 @@ const FORM_MANAGED_FLAG_FIELDS: &[&str] = &[
     "encryption_algorithm",
     "data_compress_algo",
     "default_protocol",
+    "ping_fail_close_count",
+    "ping_interval_max_sec",
+    "connection_path_tier",
+    "conn_select_w_lat",
+    "conn_select_w_loss",
+    "conn_select_w_jitter",
+    "conn_select_loss_fuse_pct",
+    "conn_select_switch_margin_pct",
+    "conn_select_switch_abs_margin_milli",
+    "conn_select_switch_windows",
 ];
 
 #[cfg(all(
@@ -633,6 +644,61 @@ impl NetworkConfigExt for NetworkConfig {
             }
         }
 
+        if let Some(ping_fail_close_count) = self.ping_fail_close_count {
+            if ping_fail_close_count > 0 {
+                flags.ping_fail_close_count = ping_fail_close_count;
+            }
+        }
+
+        if let Some(ping_interval_max_sec) = self.ping_interval_max_sec {
+            if ping_interval_max_sec > 0 {
+                flags.ping_interval_max_sec = ping_interval_max_sec;
+            }
+        }
+
+        if let Some(v) = self.conn_select_w_lat {
+            if v > 0 {
+                flags.conn_select_w_lat = v;
+            }
+        }
+        if let Some(v) = self.conn_select_w_loss {
+            if v > 0 {
+                flags.conn_select_w_loss = v;
+            }
+        }
+        if let Some(v) = self.conn_select_w_jitter {
+            if v > 0 {
+                flags.conn_select_w_jitter = v;
+            }
+        }
+        if let Some(v) = self.conn_select_loss_fuse_pct {
+            if v > 0 {
+                flags.conn_select_loss_fuse_pct = v;
+            }
+        }
+        if let Some(v) = self.conn_select_switch_margin_pct {
+            if v > 0 {
+                flags.conn_select_switch_margin_pct = v;
+            }
+        }
+        if let Some(v) = self.conn_select_switch_abs_margin_milli {
+            if v > 0 {
+                flags.conn_select_switch_abs_margin_milli = v;
+            }
+        }
+        if let Some(v) = self.conn_select_switch_windows {
+            if v > 0 {
+                flags.conn_select_switch_windows = v;
+            }
+        }
+
+        // Path tier is SoT: when set, projects disable_p2p / prefer_peer_relay;
+        // when absent, infer from those legacy flags (ordered peer URLs remain the list).
+        let explicit_tier = self
+            .connection_path_tier
+            .and_then(|v| ConnectionPathTier::try_from(v).ok());
+        resolve_connection_path_tier(&mut flags, explicit_tier);
+
         if let Some(acl) = self.acl.as_ref()
             && !acl.is_empty()
         {
@@ -821,6 +887,41 @@ impl NetworkConfigExt for NetworkConfig {
             .then_some(flags.encryption_algorithm.clone());
         result.default_protocol = (flags.default_protocol != default_flags.default_protocol)
             .then_some(flags.default_protocol.clone());
+        result.ping_fail_close_count = (flags.ping_fail_close_count
+            != default_flags.ping_fail_close_count)
+            .then_some(flags.ping_fail_close_count);
+        result.ping_interval_max_sec = (flags.ping_interval_max_sec
+            != default_flags.ping_interval_max_sec)
+            .then_some(flags.ping_interval_max_sec);
+        result.conn_select_w_lat = (flags.conn_select_w_lat != default_flags.conn_select_w_lat)
+            .then_some(flags.conn_select_w_lat);
+        result.conn_select_w_loss = (flags.conn_select_w_loss != default_flags.conn_select_w_loss)
+            .then_some(flags.conn_select_w_loss);
+        result.conn_select_w_jitter =
+            (flags.conn_select_w_jitter != default_flags.conn_select_w_jitter)
+                .then_some(flags.conn_select_w_jitter);
+        result.conn_select_loss_fuse_pct =
+            (flags.conn_select_loss_fuse_pct != default_flags.conn_select_loss_fuse_pct)
+                .then_some(flags.conn_select_loss_fuse_pct);
+        result.conn_select_switch_margin_pct = (flags.conn_select_switch_margin_pct
+            != default_flags.conn_select_switch_margin_pct)
+            .then_some(flags.conn_select_switch_margin_pct);
+        result.conn_select_switch_abs_margin_milli = (flags.conn_select_switch_abs_margin_milli
+            != default_flags.conn_select_switch_abs_margin_milli)
+            .then_some(flags.conn_select_switch_abs_margin_milli);
+        result.conn_select_switch_windows = (flags.conn_select_switch_windows
+            != default_flags.conn_select_switch_windows)
+            .then_some(flags.conn_select_switch_windows);
+        result.connection_path_tier = {
+            let tier = ConnectionPathTier::try_from(flags.connection_path_tier)
+                .unwrap_or(ConnectionPathTier::Unspecified);
+            let normalized = if tier == ConnectionPathTier::Unspecified {
+                crate::config::infer_connection_path_tier(&flags)
+            } else {
+                crate::config::normalize_connection_path_tier(tier)
+            };
+            Some(normalized.into())
+        };
         result.instance_recv_bps_limit =
             (flags.instance_recv_bps_limit != u64::MAX).then_some(flags.instance_recv_bps_limit);
         result.enable_private_mode = Some(flags.private_mode);

@@ -7,7 +7,9 @@ import InputGroup from 'primevue/inputgroup'
 import InputGroupAddon from 'primevue/inputgroupaddon'
 import {
   addRow,
+  applyConnectionPathTier,
   CompressionAlgoPb,
+  ConnectionPathTier,
   DEFAULT_NETWORK_CONFIG,
   emptyDnsConfig,
   NetworkConfig,
@@ -19,6 +21,12 @@ import {
 } from '../types/network'
 import { computed, reactive, ref, onMounted, onUnmounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import {
+  advancedFlagConflictHelpKey,
+  collectConfigConflictWarnings,
+  isAdvancedFlagDisabled,
+  isAdvancedFlagHidden,
+} from '../modules/configConflicts'
 import AclManager from './acl/AclManager.vue'
 import DnsHostsEditor from './dns/DnsHostsEditor.vue'
 import DnsForwardersEditor from './dns/DnsForwardersEditor.vue'
@@ -225,7 +233,7 @@ interface BoolFlag {
 
 const bool_flags: BoolFlag[] = [
   { field: 'latency_first', help: 'latency_first_help', group: 'connectivity' },
-  { field: 'disable_p2p', help: 'disable_p2p_help', group: 'connectivity' },
+  // disable_p2p / prefer_peer_relay: projected from connection_path_tier (P0.4 UI SoT)
   { field: 'p2p_only', help: 'p2p_only_help', group: 'connectivity' },
   { field: 'lazy_p2p', help: 'lazy_p2p_help', group: 'connectivity' },
   { field: 'need_p2p', help: 'need_p2p_help', group: 'connectivity' },
@@ -233,7 +241,6 @@ const bool_flags: BoolFlag[] = [
   { field: 'allow_peer_default_without_exit', help: 'allow_peer_default_without_exit_help', group: 'connectivity' },
   { field: 'relay_all_peer_rpc', help: 'relay_all_peer_rpc_help', group: 'connectivity' },
   { field: 'disable_relay_data', help: 'disable_relay_data_help', group: 'connectivity' },
-  { field: 'prefer_peer_relay', help: 'prefer_peer_relay_help', group: 'connectivity' },
   { field: 'use_smoltcp', help: 'use_smoltcp_help', group: 'transport' },
   { field: 'enable_kcp_proxy', help: 'enable_kcp_proxy_help', group: 'transport' },
   { field: 'disable_kcp_input', help: 'disable_kcp_input_help', group: 'transport' },
@@ -261,11 +268,28 @@ const advancedFlagGroups = computed(() => {
     { key: 'system', titleKey: 'advanced_group_system', icon: 'pi pi-sliders-h' },
     { key: 'security', titleKey: 'advanced_group_security', icon: 'pi pi-shield' },
   ]
+  const cfg = curNetwork.value
   return groupTitles.map((group) => ({
     ...group,
-    flags: bool_flags.filter((flag) => flag.group === group.key),
+    flags: bool_flags
+      .filter((flag) => flag.group === group.key && !isAdvancedFlagHidden(cfg, flag.field))
+      .map((flag) => {
+        const conflictHelp = advancedFlagConflictHelpKey(cfg, flag.field)
+        return {
+          ...flag,
+          disabled: isAdvancedFlagDisabled(cfg, flag.field),
+          helpKey: conflictHelp ?? flag.help,
+        }
+      }),
   }))
 })
+
+const conflictWarnings = computed(() => collectConfigConflictWarnings(curNetwork.value))
+
+const relayControlsDisabled = computed(() => !!curNetwork.value.p2p_only)
+const tunControlsDisabled = computed(() => !!curNetwork.value.no_tun)
+const ipv6ControlsHidden = computed(() => !!curNetwork.value.disable_ipv6)
+const encryptionAlgoHidden = computed(() => !!curNetwork.value.disable_encryption)
 
 /**
  * 加密算法选项对齐 `EncryptionAlgorithm::from_str`（easytier-core/src/config/encryption.rs）：除下列名称外，后端还接受
@@ -290,6 +314,51 @@ const defaultProtocolOptions = computed(() => {
   }
   return options
 })
+
+/** Path policy SoT; projects to disable_p2p / prefer_peer_relay. */
+const connectionPathTierOptions = computed(() => [
+  { value: ConnectionPathTier.DIRECT_FIRST, label: t('connection_path_tier_direct_first') },
+  { value: ConnectionPathTier.PREFER_RELAY, label: t('connection_path_tier_prefer_relay') },
+  { value: ConnectionPathTier.RELAY_ONLY, label: t('connection_path_tier_relay_only') },
+])
+
+function applyPathTier(tier: ConnectionPathTier) {
+  const next = applyConnectionPathTier(curNetwork.value, tier)
+  curNetwork.value.connection_path_tier = next.connection_path_tier
+  curNetwork.value.disable_p2p = next.disable_p2p
+  curNetwork.value.prefer_peer_relay = next.prefer_peer_relay
+  curNetwork.value.p2p_only = next.p2p_only
+}
+
+function onConnectionPathTierChange(tier: ConnectionPathTier | number | null | undefined) {
+  if (tier == null || tier === ConnectionPathTier.UNSPECIFIED) {
+    return
+  }
+  const target = tier as ConnectionPathTier
+  // Switching to a relay tier clears p2p_only (incompatible with "no relay").
+  // Never do that silently — ask first so legacy p2p_only isn't lost by a misclick.
+  if (
+    curNetwork.value.p2p_only &&
+    (target === ConnectionPathTier.PREFER_RELAY || target === ConnectionPathTier.RELAY_ONLY)
+  ) {
+    confirm.require({
+      message: t('p2p_only_relay_conflict_help'),
+      header: t('connection_path_tier'),
+      icon: 'pi pi-exclamation-triangle',
+      rejectProps: {
+        label: t('web.common.cancel'),
+        severity: 'secondary',
+        outlined: true,
+      },
+      acceptProps: {
+        label: t('web.common.confirm'),
+      },
+      accept: () => applyPathTier(target),
+    })
+    return
+  }
+  applyPathTier(target)
+}
 
 /** CompressionAlgoPb 取值来自 proto：None = 1、Zstd = 2、Invalid = 0（前端不展示 Invalid，未设置时按 None 处理） */
 const dataCompressAlgoOptions = [
@@ -499,6 +568,26 @@ function removeVpnPortalClient(index: number) {
                   </div>
                 </div>
               </div>
+
+              <div class="flex flex-row gap-x-9 flex-wrap">
+                <div class="flex flex-col gap-2 basis-5/12 grow">
+                  <div class="flex items-center">
+                    <label for="connection_path_tier">{{ t('connection_path_tier') }}</label>
+                    <i class="pi pi-question-circle config-help-tip ml-2" tabindex="0"
+                      v-tooltip.top="{ value: t('connection_path_tier_help'), escape: false }" role="img"></i>
+                  </div>
+                  <Select
+                    id="connection_path_tier"
+                    :model-value="curNetwork.connection_path_tier ?? ConnectionPathTier.DIRECT_FIRST"
+                    :options="connectionPathTierOptions"
+                    option-label="label"
+                    option-value="value"
+                    fluid
+                    class="et-select"
+                    @update:model-value="onConnectionPathTierChange"
+                  />
+                </div>
+              </div>
             </div>
           </Panel>
 
@@ -508,6 +597,20 @@ function removeVpnPortalClient(index: number) {
 
               <div class="advanced-flags-section">
                 <div class="advanced-flags-heading">{{ t('flags_switch') }}</div>
+                <div
+                  v-if="conflictWarnings.length"
+                  class="config-conflict-banners flex flex-col gap-2"
+                  role="status"
+                >
+                  <p
+                    v-for="warning in conflictWarnings"
+                    :key="warning.code"
+                    class="config-conflict-banner m-0"
+                    :class="warning.severity === 'warn' ? 'config-conflict-banner--warn' : 'config-conflict-banner--info'"
+                  >
+                    {{ t(warning.i18nKey) }}
+                  </p>
+                </div>
                 <div class="advanced-flag-groups">
                   <section v-for="group in advancedFlagGroups" :key="group.key" class="advanced-flag-group">
                     <h3 class="advanced-group-title">
@@ -515,64 +618,67 @@ function removeVpnPortalClient(index: number) {
                       {{ t(group.titleKey) }}
                     </h3>
                     <div class="advanced-flags-grid">
-                      <div v-for="flag in group.flags" :key="flag.field" class="advanced-flag-item">
-                        <Checkbox v-model="curNetwork[flag.field]" :input-id="flag.field" :binary="true" />
+                      <div
+                        v-for="flag in group.flags"
+                        :key="flag.field"
+                        class="advanced-flag-item"
+                        :class="{ 'advanced-flag-item--disabled': flag.disabled }"
+                      >
+                        <Checkbox
+                          v-model="curNetwork[flag.field]"
+                          :input-id="flag.field"
+                          :binary="true"
+                          :disabled="flag.disabled"
+                        />
                         <label :for="flag.field">{{ t(flag.field) }}</label>
                         <i class="pi pi-question-circle config-help-tip" tabindex="0"
-                          v-tooltip.top="{ value: t(flag.help), escape: false }"
-                          :aria-label="t(flag.help)" role="img"></i>
+                          v-tooltip.top="{ value: t(flag.helpKey), escape: false }"
+                          :aria-label="t(flag.helpKey)" role="img"></i>
                       </div>
                     </div>
                   </section>
                 </div>
               </div>
 
-              <div class="flex flex-col gap-2">
-                <div class="config-inline-field">
-                  <div class="config-inline-label flex items-center gap-1">
+              <div class="config-compact-grid">
+                <div class="config-compact-field">
+                  <div class="config-compact-label flex items-center gap-1">
                     <label for="hostname">{{ t('hostname') }}</label>
                     <i class="pi pi-question-circle config-help-tip" tabindex="0"
                       v-tooltip.top="{ value: t('hostname_help'), escape: false }" role="img"></i>
                   </div>
-                  <div class="config-inline-control">
-                    <InputText id="hostname" v-model="curNetwork.hostname" aria-describedby="hostname-help"
-                      :format="true" :placeholder="t('hostname_placeholder', [props.hostname])" fluid />
-                  </div>
+                  <InputText id="hostname" v-model="curNetwork.hostname" aria-describedby="hostname-help"
+                    :format="true" :placeholder="t('hostname_placeholder', [props.hostname])" fluid />
                 </div>
 
-                <div class="config-inline-field">
-                  <label for="dev_name" class="config-inline-label">{{ t('dev_name') }}</label>
-                  <div class="config-inline-control">
-                    <InputText id="dev_name" v-model="curNetwork.dev_name" aria-describedby="dev_name-help"
-                      :format="true" :placeholder="t('dev_name_placeholder')" fluid />
-                  </div>
+                <div class="config-compact-field">
+                  <label for="dev_name" class="config-compact-label">{{ t('dev_name') }}</label>
+                  <InputText id="dev_name" v-model="curNetwork.dev_name" aria-describedby="dev_name-help"
+                    :format="true" :placeholder="t('dev_name_placeholder')" fluid
+                    :disabled="tunControlsDisabled" />
+                  <p v-if="tunControlsDisabled" class="config-field-hint m-0">{{ t('no_tun_dev_mtu_hint') }}</p>
                 </div>
-              </div>
 
-              <div class="flex flex-col gap-2">
-                <div class="config-inline-field">
-                  <div class="config-inline-label flex items-center gap-1">
+                <div class="config-compact-field">
+                  <div class="config-compact-label flex items-center gap-1">
                     <label for="mtu">{{ t('mtu') }}</label>
                     <i class="pi pi-question-circle config-help-tip" tabindex="0"
                       v-tooltip.top="{ value: t('mtu_help'), escape: false }" role="img"></i>
                   </div>
-                  <div class="config-inline-control">
-                    <InputNumber id="mtu" v-model="curNetwork.mtu" aria-describedby="mtu-help" :format="false"
-                      :placeholder="t('mtu_placeholder')" :min="400" :max="1380" fluid />
-                  </div>
+                  <InputNumber id="mtu" v-model="curNetwork.mtu" aria-describedby="mtu-help" :format="false"
+                    :placeholder="t('mtu_placeholder')" :min="400" :max="1380" fluid
+                    :disabled="tunControlsDisabled" />
                 </div>
 
-                <div class="config-inline-field">
-                  <div class="config-inline-label flex items-center gap-1">
+                <div class="config-compact-field">
+                  <div class="config-compact-label flex items-center gap-1">
                     <label for="instance_recv_bps_limit">{{ t('instance_recv_bps_limit') }}</label>
                     <i class="pi pi-question-circle config-help-tip" tabindex="0"
                       v-tooltip.top="{ value: t('instance_recv_bps_limit_help'), escape: false }" role="img"></i>
                   </div>
-                  <div class="config-inline-control">
-                    <InputText id="instance_recv_bps_limit" v-model="instanceRecvBpsLimitInput"
-                      aria-describedby="instance_recv_bps_limit-help" inputmode="numeric" pattern="[0-9]*"
-                      :placeholder="t('instance_recv_bps_limit_placeholder')" fluid />
-                  </div>
+                  <InputText id="instance_recv_bps_limit" v-model="instanceRecvBpsLimitInput"
+                    aria-describedby="instance_recv_bps_limit-help" inputmode="numeric" pattern="[0-9]*"
+                    :placeholder="t('instance_recv_bps_limit_placeholder')" fluid />
                 </div>
               </div>
 
@@ -600,6 +706,7 @@ function removeVpnPortalClient(index: number) {
                     <AutoComplete id="exit_nodes" v-model="curNetwork.exit_nodes"
                       :placeholder="t('chips_placeholder', ['192.168.8.8'])" multiple fluid
                       :suggestions="exitNodesSuggestions" @complete="searchExitNodesSuggestions" />
+                    <p v-if="tunControlsDisabled" class="config-field-hint m-0 mt-1">{{ t('no_tun_exit_nodes_hint') }}</p>
                   </div>
                 </div>
               </div>
@@ -691,16 +798,18 @@ function removeVpnPortalClient(index: number) {
                   <div class="config-inline-label flex items-center gap-1">
                     <label for="relay_network_whitelist">{{ t('relay_network_whitelist') }}</label>
                     <i class="pi pi-question-circle config-help-tip" tabindex="0"
-                      v-tooltip.top="{ value: t('relay_network_whitelist_help'), escape: false }" role="img"></i>
+                      v-tooltip.top="{ value: t(relayControlsDisabled ? 'p2p_only_blocks_relay_help' : 'relay_network_whitelist_help'), escape: false }" role="img"></i>
                   </div>
                   <div class="config-inline-control">
                     <ToggleButton v-model="curNetwork.enable_relay_network_whitelist" on-icon="pi pi-check"
-                      off-icon="pi pi-times" :on-label="t('off_text')" :off-label="t('on_text')" class="w-48" />
+                      off-icon="pi pi-times" :on-label="t('off_text')" :off-label="t('on_text')" class="w-48"
+                      :disabled="relayControlsDisabled && !curNetwork.enable_relay_network_whitelist" />
                   </div>
                 </div>
                 <div v-if="curNetwork.enable_relay_network_whitelist" class="config-inline-expand">
                   <AutoComplete id="relay_network_whitelist" v-model="curNetwork.relay_network_whitelist"
                     :placeholder="t('relay_network_whitelist')" multiple fluid
+                    :disabled="relayControlsDisabled"
                     :suggestions="whitelistSuggestions" @complete="searchWhitelistSuggestions" />
                 </div>
 
@@ -737,7 +846,7 @@ function removeVpnPortalClient(index: number) {
                     :format="false" :allow-empty="false" :min="0" :max="65535" fluid />
                 </div>
 
-                <div class="config-inline-field">
+                <div v-if="!ipv6ControlsHidden" class="config-inline-field">
                   <div class="config-inline-label flex items-center gap-1">
                     <label for="ipv6_public_addr_provider">{{ t('ipv6_public_addr_provider') }}</label>
                     <i class="pi pi-question-circle config-help-tip" tabindex="0"
@@ -748,60 +857,61 @@ function removeVpnPortalClient(index: number) {
                       off-icon="pi pi-times" :on-label="t('off_text')" :off-label="t('on_text')" class="w-48" />
                   </div>
                 </div>
-                <div v-if="curNetwork.ipv6_public_addr_provider" class="config-inline-expand">
+                <div v-if="!ipv6ControlsHidden && curNetwork.ipv6_public_addr_provider" class="config-inline-expand">
                   <InputText id="ipv6_public_addr_prefix" v-model="curNetwork.ipv6_public_addr_prefix"
                     :placeholder="t('ipv6_public_addr_prefix_placeholder')" fluid
                     aria-describedby="ipv6_public_addr_prefix-help" />
                 </div>
 
-                <div class="config-inline-field">
-                  <div class="config-inline-label flex items-center gap-1">
-                    <label for="default_protocol">{{ t('default_protocol') }}</label>
-                    <i class="pi pi-question-circle config-help-tip" tabindex="0"
-                      v-tooltip.top="{ value: t('default_protocol_help'), escape: false }" role="img"></i>
-                  </div>
-                  <div class="config-inline-control">
+                <div class="config-compact-grid">
+                  <div class="config-compact-field">
+                    <div class="config-compact-label flex items-center gap-1">
+                      <label for="default_protocol">{{ t('default_protocol') }}</label>
+                      <i class="pi pi-question-circle config-help-tip" tabindex="0"
+                        v-tooltip.top="{ value: t('default_protocol_help'), escape: false }" role="img"></i>
+                    </div>
                     <Select id="default_protocol" v-model="curNetwork.default_protocol"
                       :options="defaultProtocolOptions" option-label="label" option-value="value" fluid
                       class="et-select" />
                   </div>
-                </div>
 
-                <div class="config-inline-field">
-                  <div class="config-inline-label flex items-center gap-1">
-                    <label for="encryption_algorithm">{{ t('encryption_algorithm') }}</label>
-                    <i class="pi pi-question-circle config-help-tip" tabindex="0"
-                      v-tooltip.top="{ value: t('encryption_algorithm_help'), escape: false }" role="img"></i>
-                  </div>
-                  <div class="config-inline-control">
-                    <Select id="encryption_algorithm" v-model="curNetwork.encryption_algorithm"
-                      :options="encryptionAlgoOptions" option-label="label" option-value="value" fluid
+                  <div class="config-compact-field">
+                    <div class="config-compact-label flex items-center gap-1">
+                      <label for="encryption_algorithm">{{ t('encryption_algorithm') }}</label>
+                      <i class="pi pi-question-circle config-help-tip" tabindex="0"
+                        v-tooltip.top="{ value: t(encryptionAlgoHidden ? 'disable_encryption_algo_conflict_help' : 'encryption_algorithm_help'), escape: false }" role="img"></i>
+                    </div>
+                    <Select
+                      v-if="!encryptionAlgoHidden"
+                      id="encryption_algorithm"
+                      v-model="curNetwork.encryption_algorithm"
+                      :options="encryptionAlgoOptions"
+                      option-label="label"
+                      option-value="value"
+                      fluid
                       class="et-select"
-                      :disabled="!!curNetwork.disable_encryption"
-                      :placeholder="t('encryption_algorithm_placeholder')" />
+                      :placeholder="t('encryption_algorithm_placeholder')"
+                    />
+                    <p v-else class="config-field-hint m-0">{{ t('disable_encryption_algo_hint') }}</p>
                   </div>
-                </div>
 
-                <div class="config-inline-field">
-                  <div class="config-inline-label flex items-center gap-1">
-                    <label for="data_compress_algo">{{ t('data_compress_algo') }}</label>
-                    <i class="pi pi-question-circle config-help-tip" tabindex="0"
-                      v-tooltip.top="{ value: t('data_compress_algo_help'), escape: false }" role="img"></i>
-                  </div>
-                  <div class="config-inline-control">
+                  <div class="config-compact-field">
+                    <div class="config-compact-label flex items-center gap-1">
+                      <label for="data_compress_algo">{{ t('data_compress_algo') }}</label>
+                      <i class="pi pi-question-circle config-help-tip" tabindex="0"
+                        v-tooltip.top="{ value: t('data_compress_algo_help'), escape: false }" role="img"></i>
+                    </div>
                     <Select id="data_compress_algo" v-model="curNetwork.data_compress_algo"
                       :options="dataCompressAlgoOptions" option-label="label" option-value="value" fluid
                       class="et-select" />
                   </div>
-                </div>
 
-                <div class="config-inline-field">
-                  <div class="config-inline-label flex items-center gap-1">
-                    <label for="socket_mark">{{ t('socket_mark') }}</label>
-                    <i class="pi pi-question-circle config-help-tip" tabindex="0"
-                      v-tooltip.top="{ value: t('socket_mark_help'), escape: false }" role="img"></i>
-                  </div>
-                  <div class="config-inline-control">
+                  <div class="config-compact-field">
+                    <div class="config-compact-label flex items-center gap-1">
+                      <label for="socket_mark">{{ t('socket_mark') }}</label>
+                      <i class="pi pi-question-circle config-help-tip" tabindex="0"
+                        v-tooltip.top="{ value: t('socket_mark_help'), escape: false }" role="img"></i>
+                    </div>
                     <InputNumber id="socket_mark" v-model="curNetwork.socket_mark" :format="false" fluid
                       :allow-empty="true" :min="0" :max="4294967295" :placeholder="t('socket_mark_placeholder')" />
                   </div>
@@ -938,6 +1048,7 @@ function removeVpnPortalClient(index: number) {
                     role="img"
                   />
                 </div>
+                <p v-if="tunControlsDisabled" class="config-field-hint m-0">{{ t('no_tun_magic_dns_hint') }}</p>
               </div>
 
               <p
@@ -1198,6 +1309,61 @@ function removeVpnPortalClient(index: number) {
   font-size: 0.8125rem;
 }
 
+.advanced-flag-item--disabled {
+  opacity: 0.55;
+}
+
+.advanced-flag-item--disabled label {
+  cursor: not-allowed;
+}
+
+.config-conflict-banner {
+  font-size: 0.8125rem;
+  line-height: 1.4;
+  border-radius: 0.375rem;
+  padding: 0.5rem 0.75rem;
+}
+
+.config-conflict-banner--warn {
+  color: var(--et-warning, #b45309);
+  background: color-mix(in srgb, var(--et-warning, #f59e0b) 12%, transparent);
+}
+
+.config-conflict-banner--info {
+  color: var(--text-color-secondary, #64748b);
+  background: color-mix(in srgb, var(--surface-200, #e2e8f0) 60%, transparent);
+}
+
+.config-compact-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.75rem 1rem;
+  min-width: 0;
+}
+
+.config-compact-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  min-width: 0;
+}
+
+.config-compact-label {
+  min-height: 1.25rem;
+  color: var(--text-color, #1e293b);
+  font-size: 0.8125rem;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.config-field-hint {
+  color: var(--text-color-secondary, #64748b);
+  font-size: 0.75rem;
+  line-height: 1.35;
+}
+
 .config-panels :deep(label) {
   color: var(--text-color, #1e293b);
   font-size: 0.8125rem;
@@ -1272,6 +1438,10 @@ function removeVpnPortalClient(index: number) {
     width: 0.95rem;
     height: 0.95rem;
     font-size: 0.85rem;
+  }
+
+  .config-compact-grid {
+    grid-template-columns: 1fr;
   }
 }
 

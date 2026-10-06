@@ -1,3 +1,4 @@
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 
 use arc_swap::ArcSwapOption;
@@ -9,6 +10,9 @@ use tokio::{select, sync::mpsc};
 
 use tracing::Instrument;
 
+use super::conn_select::{
+    pick_default_conn, score_conn, ConnMetrics, ConnSelectConfig,
+};
 use super::peer_conn::{PeerConn, PeerConnId};
 use crate::peers::{
     PacketRecvChan,
@@ -26,10 +30,6 @@ use tokio_util::task::AbortOnDropHandle;
 type ArcPeerConn = Arc<PeerConn>;
 type ConnMap = Arc<DashMap<PeerConnId, ArcPeerConn>>;
 
-fn conn_latency_sort_key(latency_us: u64, is_hole_punched: bool) -> (bool, u64) {
-    (is_hole_punched && latency_us == 0, latency_us)
-}
-
 pub struct Peer {
     pub peer_node_id: PeerId,
     conns: ConnMap,
@@ -45,6 +45,9 @@ pub struct Peer {
 
     default_conn: Arc<ArcSwapOption<PeerConn>>,
     default_conn_update_lock: Arc<Mutex<()>>,
+    /// Survives periodic default_conn cache clears for hysteresis (P1.7).
+    last_default_conn_id: AtomicCell<Option<PeerConnId>>,
+    better_streak: AtomicU32,
     peer_identity_type: Arc<AtomicCell<Option<PeerIdentityType>>>,
     peer_public_key: Arc<RwLock<Option<Vec<u8>>>>,
     #[allow(dead_code)]
@@ -66,6 +69,8 @@ impl Peer {
         let peer_public_key_copy = peer_public_key.clone();
         let default_conn = Arc::new(ArcSwapOption::empty());
         let default_conn_update_lock = Arc::new(Mutex::new(()));
+        let last_default_conn_id = AtomicCell::new(None);
+        let better_streak = AtomicU32::new(0);
 
         let conns_copy = conns.clone();
         let shutdown_notifier_copy = shutdown_notifier.clone();
@@ -151,6 +156,8 @@ impl Peer {
             shutdown_notifier,
             default_conn,
             default_conn_update_lock,
+            last_default_conn_id,
+            better_streak,
             peer_identity_type,
             peer_public_key,
             default_conn_clear_task,
@@ -216,20 +223,36 @@ impl Peer {
             return Some(conn);
         }
 
-        // A zero latency on a hole-punched connection means the ping loop has not
-        // confirmed liveness yet. Prefer any other connection, so a freshly admitted
-        // hole-punched path cannot steal traffic before its first successful ping.
-        let selected = self
-            .conns
-            .iter()
-            .min_by_key(|conn| {
-                conn_latency_sort_key(
-                    conn.value().get_stats().latency_us,
-                    conn.value().is_hole_punched(),
-                )
-            })
-            .map(|conn| conn.value().clone());
+        let cfg = ConnSelectConfig::from_flags(&self.context.flags());
+        let mut scored = Vec::with_capacity(self.conns.len());
+        let mut by_id = std::collections::HashMap::with_capacity(self.conns.len());
+        for entry in self.conns.iter() {
+            let conn = entry.value().clone();
+            // Closing tunnels must not win default_conn on stale metrics.
+            if conn.is_closed() {
+                continue;
+            }
+            let stats = conn.get_stats();
+            let metrics = ConnMetrics {
+                conn_id: conn.get_conn_id(),
+                latency_us: stats.latency_us,
+                loss_rate: conn.loss_rate(),
+                jitter_us: stats.jitter_us,
+                is_hole_punched: conn.is_hole_punched(),
+            };
+            scored.push(score_conn(&metrics, cfg));
+            by_id.insert(conn.get_conn_id(), conn);
+        }
 
+        let last = self.last_default_conn_id.load();
+        let streak = self.better_streak.load(Ordering::Relaxed);
+        let Some((picked_id, next_streak)) = pick_default_conn(&scored, last, streak, cfg) else {
+            return None;
+        };
+        self.better_streak.store(next_streak, Ordering::Relaxed);
+        self.last_default_conn_id.store(Some(picked_id));
+
+        let selected = by_id.get(&picked_id).cloned();
         if let Some(conn) = selected.as_ref() {
             self.default_conn.store(Some(conn.clone()));
         }
@@ -338,20 +361,59 @@ impl Drop for Peer {
 
 #[cfg(test)]
 mod tests {
-    use super::conn_latency_sort_key;
+    use super::super::conn_select::{
+        conn_quality_score, pick_default_conn, score_conn, ConnMetrics, ConnSelectConfig,
+    };
+    use uuid::Uuid;
+
+    fn id(n: u8) -> Uuid {
+        Uuid::from_bytes([n; 16])
+    }
 
     #[test]
     fn measured_relay_precedes_unverified_hole_punch_path() {
-        assert!(conn_latency_sort_key(20_000, false) < conn_latency_sort_key(0, true));
+        let cfg = ConnSelectConfig::default();
+        let scored = [
+            score_conn(
+                &ConnMetrics {
+                    conn_id: id(1),
+                    latency_us: 0,
+                    loss_rate: 0.0,
+                    jitter_us: 0,
+                    is_hole_punched: true,
+                },
+                cfg,
+            ),
+            score_conn(
+                &ConnMetrics {
+                    conn_id: id(2),
+                    latency_us: 20_000,
+                    loss_rate: 0.0,
+                    jitter_us: 0,
+                    is_hole_punched: false,
+                },
+                cfg,
+            ),
+        ];
+        let (picked, _) = pick_default_conn(&scored, None, 0, cfg).unwrap();
+        assert_eq!(picked, id(2));
     }
 
     #[test]
-    fn unmeasured_regular_connection_keeps_existing_priority() {
-        assert!(conn_latency_sort_key(0, false) < conn_latency_sort_key(20_000, false));
+    fn unverified_regular_connection_keeps_existing_priority() {
+        // latency 0 on a non-hole-punched path is still a valid measured-or-idle RTT;
+        // quality score treats it as best RTT (not deferred).
+        let cfg = ConnSelectConfig::default();
+        let a = conn_quality_score(0, 0.0, 0, cfg);
+        let b = conn_quality_score(20_000, 0.0, 0, cfg);
+        assert!(a < b);
     }
 
     #[test]
-    fn verified_lower_latency_path_can_be_preferred() {
-        assert!(conn_latency_sort_key(5_000, true) < conn_latency_sort_key(20_000, false));
+    fn verified_lower_quality_path_can_be_preferred() {
+        let cfg = ConnSelectConfig::default();
+        let a = conn_quality_score(5_000, 0.0, 0, cfg);
+        let b = conn_quality_score(20_000, 0.0, 0, cfg);
+        assert!(a < b);
     }
 }
