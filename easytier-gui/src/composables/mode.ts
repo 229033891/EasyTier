@@ -1,4 +1,53 @@
-import { type } from '@tauri-apps/plugin-os';
+import { type } from '@tauri-apps/plugin-os'
+
+/** Preferred file log level — single source of truth (edited only in Logging dialog). */
+export type FileLogLevel = 'off' | 'error' | 'warn' | 'info' | 'debug' | 'trace'
+
+const FILE_LOG_LEVEL_KEY = 'file_log_level'
+const FILE_LOG_LEVELS: readonly FileLogLevel[] = ['off', 'error', 'warn', 'info', 'debug', 'trace']
+const DEFAULT_FILE_LOG_LEVEL: FileLogLevel = 'warn'
+
+export function parseFileLogLevel(raw: unknown): FileLogLevel {
+    if (typeof raw === 'string') {
+        const lower = raw.toLowerCase()
+        if ((FILE_LOG_LEVELS as readonly string[]).includes(lower))
+            return lower as FileLogLevel
+        if (lower === 'warning')
+            return 'warn'
+        if (lower === 'disabled')
+            return 'off'
+    }
+    return DEFAULT_FILE_LOG_LEVEL
+}
+
+/** Load the preferred file log level (default warn). */
+export function loadFileLogLevel(): FileLogLevel {
+    const stored = localStorage.getItem(FILE_LOG_LEVEL_KEY)
+    if (stored != null)
+        return parseFileLogLevel(stored)
+    // Migrate from legacy service-mode field if present.
+    try {
+        const modeStr = localStorage.getItem('app_mode')
+        if (modeStr) {
+            const mode = JSON.parse(modeStr) as { mode?: string, file_log_level?: string }
+            if (mode.mode === 'service' && mode.file_log_level) {
+                const migrated = parseFileLogLevel(mode.file_log_level)
+                localStorage.setItem(FILE_LOG_LEVEL_KEY, migrated)
+                return migrated
+            }
+        }
+    }
+    catch {
+        // ignore corrupt app_mode
+    }
+    return DEFAULT_FILE_LOG_LEVEL
+}
+
+export function saveFileLogLevel(level: string): FileLogLevel {
+    const parsed = parseFileLogLevel(level)
+    localStorage.setItem(FILE_LOG_LEVEL_KEY, parsed)
+    return parsed
+}
 
 export interface WebClientConfig {
     config_server_url?: string
@@ -20,7 +69,8 @@ export interface ServiceMode extends WebClientConfig {
     mode: 'service'
     config_dir: string
     rpc_portal: string
-    file_log_level: 'off' | 'warn' | 'info' | 'debug' | 'trace'
+    /** Last level baked into the service install args (not edited in Mode UI). */
+    file_log_level: FileLogLevel
     file_log_dir: string
     installed_core_version?: string
 }

@@ -28,9 +28,7 @@ use windows::Win32::Networking::WinSock::{
 const ERROR_OBJECT_ALREADY_EXISTS: WIN32_ERROR = WIN32_ERROR(5010);
 
 fn is_add_route_ok(status: WIN32_ERROR) -> bool {
-    status == NO_ERROR
-        || status == ERROR_OBJECT_ALREADY_EXISTS
-        || status == ERROR_ALREADY_EXISTS
+    status == NO_ERROR || status == ERROR_OBJECT_ALREADY_EXISTS || status == ERROR_ALREADY_EXISTS
 }
 
 pub struct InterfaceLuid {

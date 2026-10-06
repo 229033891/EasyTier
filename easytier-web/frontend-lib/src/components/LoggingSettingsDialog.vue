@@ -168,7 +168,7 @@ async function copyLoggingDir() {
 
 <template>
   <Dialog v-model:visible="visible" modal :header="t('logging')"
-    :style="{ width: 'min(720px, calc(100vw - 1.5rem))' }" class="app-dialog">
+    :style="{ width: 'min(936px, calc(100vw - 1.5rem))' }" class="app-dialog">
     <div class="logging-dialog flex flex-col gap-3">
       <div class="logging-inline-field">
         <div class="logging-inline-label">
@@ -247,7 +247,7 @@ async function copyLoggingDir() {
         <Textarea
           :model-value="loggingContent || (loggingFiles.length ? '' : t('logging_empty'))"
           class="w-full logging-textarea"
-          rows="16"
+          rows="21"
           readonly
         />
       </div>
@@ -298,7 +298,7 @@ async function copyLoggingDir() {
   word-break: break-word;
   overflow-x: hidden;
   overflow-y: auto;
-  max-height: min(55vh, 28rem);
+  max-height: min(71.5vh, 36.4rem);
   resize: none;
 }
 

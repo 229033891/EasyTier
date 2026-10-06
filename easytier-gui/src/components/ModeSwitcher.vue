@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, watch, onMounted, ref } from 'vue';
 import type { Mode, ServiceMode, RemoteMode, NormalMode, WebClientConfig } from '~/composables/mode'
+import { loadFileLogLevel } from '~/composables/mode'
 import { appConfigDir, appLogDir } from '@tauri-apps/api/path'
 import { join } from '@tauri-apps/api/path'
 import { getServiceStatus, type ServiceStatus } from '~/composables/backend'
@@ -67,6 +68,7 @@ onMounted(async () => {
     const serviceModel = model.value as ServiceMode
     serviceModel.config_dir = serviceModel.config_dir || defaultConfigDir.value
     serviceModel.file_log_dir = serviceModel.file_log_dir || defaultLogDir.value
+    serviceModel.file_log_level = loadFileLogLevel()
   }
 })
 
@@ -227,9 +229,8 @@ watch(() => model.value.mode, async (newMode, oldMode) => {
       mode: 'service',
       config_dir: serviceMode.value?.config_dir || defaultConfigDir.value,
       rpc_portal: serviceMode.value?.rpc_portal || '127.0.0.1:15999',
-      // 默认 warn：服务起不来（配置解析失败、端口占用等）都是 log::error! 记的，
-      // 默认 off 会让这类故障在日志里完全看不到，只剩「服务反复重启」。
-      file_log_level: serviceMode.value?.file_log_level || 'warn',
+      // Log level is edited only in the Logging dialog; keep install args in sync.
+      file_log_level: loadFileLogLevel(),
       file_log_dir: serviceMode.value?.file_log_dir || defaultLogDir.value,
       config_server_url: prevConfigServerUrl,
       secure_mode: !!prevSecureMode,
@@ -300,11 +301,6 @@ watch(() => model.value.mode, async (newMode, oldMode) => {
       <div class="flex items-center gap-2">
         <label for="rpc-portal">{{ t('mode.rpc_portal') }}</label>
         <InputText id="rpc-portal" v-model="serviceMode.rpc_portal" class="flex-1" />
-      </div>
-      <div class="flex items-center gap-2">
-        <label for="log-level">{{ t('mode.log_level') }}</label>
-        <Select id="log-level" v-model="serviceMode.file_log_level"
-          :options="['off', 'warn', 'info', 'debug', 'trace']" />
       </div>
       <div class="flex items-center gap-2">
         <label for="log-dir">{{ t('mode.log_dir') }}</label>

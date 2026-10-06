@@ -858,7 +858,6 @@ mode:
   rpc_listen_port: RPC 监听端口
   rpc_listen_all_interfaces: 监听所有网卡
   rpc_listen_all_interfaces_hint: 默认仅本机(127.0.0.1)。开启后绑定 0.0.0.0，但仍默认只允许本机 IP 访问 RPC；如需局域网管理请使用命令行白名单。
-  log_level: 日志级别
   log_dir: 日志目录
   remote_rpc_address: 远程RPC地址
   normal: 普通模式

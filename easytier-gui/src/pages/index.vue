@@ -18,7 +18,14 @@ import { executeVpnTileAction } from '~/composables/mobile_vpn_tile'
 import { GUIRemoteClient } from '~/modules/api'
 
 import { useToast, useConfirm } from 'primevue'
-import { loadMode, saveMode, normalizeServiceRpcUrl, type Mode } from '~/composables/mode'
+import {
+  loadMode,
+  saveMode,
+  normalizeServiceRpcUrl,
+  loadFileLogLevel,
+  saveFileLogLevel,
+  type Mode,
+} from '~/composables/mode'
 import { saveLastNetworkInstanceId, loadLastNetworkInstanceId } from '~/composables/config'
 import ModeSwitcher from '~/components/ModeSwitcher.vue'
 import { getEasytierVersion, getServiceStatus, getLoggingLevel, listLogFiles, readLogFile, setLoggingLevel, type ServiceStatus } from '~/composables/backend'
@@ -140,6 +147,8 @@ function normalizeEditingMode(mode: Mode): Mode {
     next.config_server_url = next.config_server_url?.trim() || undefined
     next.secure_mode = !!next.secure_mode
   }
+  if (next.mode === 'service')
+    next.file_log_level = loadFileLogLevel()
   return next
 }
 
@@ -150,7 +159,10 @@ function configServerEndpointOf(mode: Mode): { url?: string, secure: boolean } {
 }
 
 async function openModeDialog() {
-  editingMode.value = JSON.parse(JSON.stringify(loadMode()))
+  const loaded = JSON.parse(JSON.stringify(loadMode())) as Mode
+  if (loaded.mode === 'service')
+    loaded.file_log_level = loadFileLogLevel()
+  editingMode.value = loaded
   showAutostartHint.value = false
   modeDialogVisible.value = true
 }
@@ -406,18 +418,22 @@ async function initWithMode(mode: Mode) {
       retrys = 3
       break;
     case 'service': {
+      // Log level is owned by the Logging dialog preference; keep install args in sync.
+      const preferredLogLevel = loadFileLogLevel()
+      const logLevelChanged = mode.file_log_level !== preferredLogLevel
+      mode.file_log_level = preferredLogLevel
       if (!mode.config_dir || !mode.file_log_dir || !mode.file_log_level || !mode.rpc_portal) {
         toast.add({ severity: 'error', summary: t('error'), detail: t('mode.service_config_empty'), life: TOAST_LIFE.severe })
         return initWithMode({ ...mode, mode: 'normal' });
       }
       let serviceStatus = await getServiceStatus()
       const coreVersion = await getEasytierVersion()
-      if (serviceStatus === "NotInstalled" || modeConfigChanged(mode) || mode.installed_core_version !== coreVersion) {
+      if (serviceStatus === "NotInstalled" || modeConfigChanged(mode) || mode.installed_core_version !== coreVersion || logLevelChanged) {
         mode.config_server_url = mode.config_server_url || undefined
         await initService({
           config_dir: mode.config_dir,
           file_log_dir: mode.file_log_dir,
-          file_log_level: mode.file_log_level,
+          file_log_level: preferredLogLevel,
           rpc_portal: mode.rpc_portal,
           config_server: mode.config_server_url,
           secure_mode: !!mode.secure_mode,
@@ -493,6 +509,13 @@ async function initWithMode(mode: Mode) {
   }
   if (mode.mode === 'normal' || mode.mode === 'service') {
     await refreshConfigServerConnection()
+    // Apply preferred file log level to the live process (Logging dialog is the editor).
+    try {
+      await setLoggingLevel(loadFileLogLevel())
+    }
+    catch (e) {
+      console.warn('Failed to apply preferred log level', e)
+    }
   }
   currentMode.value = mode
   saveMode(mode)
@@ -645,9 +668,32 @@ async function getLogDirPath(): Promise<string> {
 }
 
 const loggingApi = computed<LoggingSettingsApi>(() => ({
-  getLoggerLevel: getLoggingLevel,
+  getLoggerLevel: async () => {
+    try {
+      return await getLoggingLevel()
+    }
+    catch {
+      // Not connected yet — show the saved preference.
+      return loadFileLogLevel()
+    }
+  },
   setLoggerLevel: async (level: string) => {
-    await setLoggingLevel(level)
+    // Remote mode edits the remote process only; do not overwrite local preference.
+    // Keep mode.file_log_level as the last *installed* service args; preference
+    // diverging from it triggers a reinstall on the next initWithMode.
+    if (currentMode.value.mode !== 'remote')
+      saveFileLogLevel(level)
+    try {
+      await setLoggingLevel(level)
+    }
+    catch (e) {
+      if (currentMode.value.mode === 'remote')
+        throw e
+      const running = await isClientRunning().catch(() => false)
+      if (running)
+        throw e
+      // Preference is saved; core is not running yet — apply on next connect.
+    }
   },
   getLogDir: getLogDirPath,
   listLogFiles,

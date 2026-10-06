@@ -857,7 +857,6 @@ mode:
   rpc_listen_port: RPC Listen Port
   rpc_listen_all_interfaces: Listen on all interfaces
   rpc_listen_all_interfaces_hint: Defaults to localhost (127.0.0.1). When enabled, binds 0.0.0.0 but still only allows localhost clients by default; use CLI whitelist for LAN access.
-  log_level: Log Level
   log_dir: Log Dir
   remote_rpc_address: Remote RPC Address
   normal: Normal
