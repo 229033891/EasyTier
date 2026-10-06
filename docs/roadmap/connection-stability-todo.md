@@ -2,9 +2,9 @@
 
 ## Status
 
-- Status: **Roadmap**（Checklist；P-UX + P0.1–P0.4 + P1.1/P1.2/P1.6–P1.8 单元 + Flags 透参 + P2.1 质量分可观测已落地；下一步 P0.5 / P2.3 OSPF 质量代价或 P-AUTO.L1）
+- Status: **Roadmap**（Checklist；P-UX + P0.1–P0.4 + P1.1/P1.2/P1.6–P1.8 + P2.1/P2.3 已落地；下一步 P0.5 / P2.2 或 P-AUTO.L1）
 - 日期：2026-10-06
-- 最近审阅：2026-10-06（P2.1：PeerConnInfo.quality_score / Status 质量分列）
+- 最近审阅：2026-10-06（P2.3：OSPF 边代价编码综合质量分 + 发布 hysteresis）
 - 背景：对照 OpenVPN / IPsec 的「固定隧道 + 强保活」模型，梳理 EasyTier Mesh（多 PeerConn + 打洞 + 中继）的稳定性差距与可落地项；**另纳入 2026-10-06 用户反馈：高级选项互斥缺校验、长表单占空间、单协议配置失败后无智能回落**
 - 相关 Current：[`../current/peer-connections.md`](../current/peer-connections.md)、[`../current/tunnels-and-transport.md`](../current/tunnels-and-transport.md)
 - 相关 Roadmap：[`traffic-camouflage.md`](./traffic-camouflage.md)、[`multi-link-bonding.md`](./multi-link-bonding.md)、[`market-comparison-2026-10.md`](./market-comparison-2026-10.md)、[`upstream-port-todo.md`](./upstream-port-todo.md)（#2632 TCP 打洞 1s ping）
@@ -27,7 +27,7 @@
 | S3 | 弱网下 UDP 抖动、闪断 | 自适应 ping 较好，但失败阈值偏硬；部分环境需改走 TCP/`wss`/QUIC |
 | S4 | TCP 打洞 idle 被中间设备掐断 | 上游 #2632 已移植 1s ping cap；待验证 |
 | S5 | 「学 OpenVPN 上 443」在部分环境无效 | **443 本身也可能不可用** → 必须自定义端口与协议 |
-| S6 | 低延迟但高丢包/高抖动的路径仍被选中 | `select_conn` / `latency_first` **几乎只看 RTT**；`loss_rate` 已统计却未参与选路；**抖动未单独度量** |
+| S6 | 低延迟但高丢包/高抖动的路径仍被选中 | ~~`select_conn` / `latency_first` 几乎只看 RTT~~ → 同 peer 与 OSPF 边代价均已用综合质量分（P1.7 / P2.3） |
 | S7 | 互斥/依赖选项可同时选中，误配后难排查 | `api_input.rs` 逐 flag 独立赋值、无互斥校验；`Config.vue:226-268` 平铺 Checkbox，无联动隐藏/禁用 |
 | S8 | 用户只配一种协议（如 UDP），受限环境直接全失败 | 无 scheme 优先列表与自动降级；`default_protocol` 仅单值（`Config.vue:281-292`），失败仍重试同协议 |
 
@@ -52,7 +52,7 @@ EasyTier 优势（保持）：多 scheme、STUN/打洞、OSPF 选路、自适应
 
 2026-10-06 拍板：用户要的始终是两设备之间低延迟/低抖动/低丢包，不区分直连还是中转。
 因此**不设路径档位**：全部已配置 peer URL 恒维持连接（含打洞），走哪条只看质量分
-（§2.3 / P1.7；对端间靠 OSPF 代价 P2.3）。`disable_p2p` / `p2p_only` /
+（§2.3 / P1.7；对端间 OSPF 边代价已同源编码，P2.3）。`disable_p2p` / `p2p_only` /
 「允许作为中转节点」保留为硬约束（政策/效率）。`prefer_peer_relay`：UI 隐藏；
 **不**并入 `lazy_p2p`；仅 TOML 兼容字段，可选启用 OSPF 对端中继拓扑投影。
 
@@ -65,8 +65,8 @@ EasyTier 优势（保持）：多 scheme、STUN/打洞、OSPF 选路、自适应
 | 指标 | 今日 | 目标 |
 |------|------|------|
 | **延迟（RTT）** | `select_conn` 与 OSPF `path_latency` / peer-center `latency_ms` | 保留，作为综合分的一项 |
-| **丢包率** | Ping 算 `loss_rate`；**已参与同 peer `select_conn`**；OSPF 代价尚未纳入 | OSPF / 跨 peer 代价可选纳入（P2.3） |
-| **抖动（Jitter）** | `WindowLatency::get_jitter_us`；**已参与同 peer `select_conn`**；OSPF 尚未纳入 | 同上 |
+| **丢包率** | Ping 算 `loss_rate`；**已参与**同 peer `select_conn` **与** OSPF 边代价（P2.3） | 已落地 |
+| **抖动（Jitter）** | `WindowLatency::get_jitter_us`；**已参与**同 peer `select_conn` **与** OSPF 边代价（P2.3） | 已落地 |
 
 推荐综合分（草案，权重可配；数值仅示意）：
 
@@ -80,7 +80,7 @@ score = w_lat * norm(rtt)
 
 1. **丢包熔断阈值**：`loss_rate` 超过可配上限时，该 PeerConn **禁止成为 `default_conn`**（有替代路径时），避免「低延迟高丢包」饿死业务。
 2. **防抖切换（hysteresis）**：新路径综合分需优于当前路径超过阈值（或连续 N 个探测窗口更优）才切换，避免抖动本身导致路径来回切。
-3. **分层落地**：先改 **同 peer 多 PeerConn 的 `select_conn`**（数据已在本地）；再评估是否把丢包/抖动编进 OSPF 代价（影响面更大，易震荡）。
+3. **分层落地**：同 peer `select_conn`（P1.7）与跨 peer OSPF 边代价（P2.3）均已用综合质量分；OSPF 侧靠发布 hysteresis + 上报节流防震荡。
 4. **不对标** 企业 SD-WAN 包级 DMPO；首期只做 **选路/选 conn 的质量分**，不做按包喷洒。
 
 与 [`market-comparison-2026-10.md`](./market-comparison-2026-10.md)「链路质量选路（时延/丢包）」增强期、以及 bonding 文「按链路质量加权」一致；**稳定性 TODO 将其从「可选增强」升为明确交付项**。
@@ -158,7 +158,7 @@ score = w_lat * norm(rtt)
 - [x] **P1.7** `select_conn` 改为 **综合质量分**（延迟 + 丢包 + 抖动），含丢包熔断阈值与切换 hysteresis；默认丢包权重大于纯 RTT（`peers/conn/conn_select.rs`）
   - 默认：`w_lat=1` / `w_loss=4` / `w_jitter=1`；loss fuse 20%；switch margin 10% + abs 0.005 × 2 窗口
   - Flags 透参：`conn_select_w_*`（百分制权重）、`conn_select_loss_fuse_pct`、`conn_select_switch_*`（全 0 = 内置默认，否则按字面值，允许权重为 0）；TOML / NetworkConfig / `ConnSelectConfig::from_flags`
-  - 非目标：本项未改 OSPF 代价（P2.3）；未做 GUI 调权
+  - 非目标（P1.7 当时）：未改 OSPF 代价（后由 P2.3 落地）；未做 GUI 调权
 - [x] **P1.8** 单元验收（代码级）：「低 RTT + 高丢包」选后者；hysteresis 单窗口不切（`conn_select` 单测）
   - 现网双路径抽样仍建议人工确认；不阻塞 Flags 透参合入
 - [ ] **P1.8b**（可选）现网/仿真双路径验收清单
@@ -169,7 +169,10 @@ score = w_lat * norm(rtt)
   - `PeerConnInfo.quality_score` / `quality_fused`（与 `select_conn` 同源）；Status「质量分」列 + tooltip（★ default / · 热备 / `!` 熔断 / `+N` 热备数）
   - Connector 存活仍走既有 `ListConnector`（CLI）；Web Status 本项未嵌入 connector 列表
 - [ ] **P2.2** 文档/UI：多连接 ≠ 已聚合带宽（对齐 Current `peer-connections.md`）
-- [ ] **P2.3** 评估将丢包/抖动（或综合分）纳入 OSPF / `latency_first` 代价；若做，必须带防震荡与可观测
+- [x] **P2.3** 将丢包/抖动（综合分）纳入 OSPF / `latency_first` 边代价；带防震荡与可观测
+  - 发布端 `direct_peer_info`：`quality_score`→`DirectConnectedPeerInfo.latency_ms`（`score*1000` + 熔断加成）；发布 hysteresis `min_delta=20`
+  - Dijkstra / peer-center `RouteCostCalculator` 不变（仍读 `latency_ms`）；零 loss/jitter 时量级≈原 RTT ms
+  - 可观测：Status `path_latency*` 在 LeastCost 下反映质量代价；PeerConn 质量分列（P2.1）
 - [ ] **P2.4** 按需推进 [`multi-link-bonding.md`](./multi-link-bonding.md)（按流哈希；坏链路按质量熔断）；默认 N=1
 - [ ] **P2.5** 丢包场景下 KCP/QUIC proxy 的启用策略产品化（可配置，非隐性默认）
 

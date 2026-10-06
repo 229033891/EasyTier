@@ -52,6 +52,8 @@
 
 同 peer 多 PeerConn 的 `select_conn`（`peers/conn/conn_select.rs`）使用综合质量分（默认 `w_lat=1` / `w_loss=4` / `w_jitter=1`），丢包超过熔断阈值（默认 20%）时在有替代路径时禁止成为 `default_conn`；切换需相对边际（默认 10%）**且**绝对分差（默认 0.005）连续窗口（默认 2，配合 5s 缓存清空）。已关闭的 PeerConn 不参与选路。权重/阈值可通过 `flags.conn_select_*` 覆盖（百分制权重；0 = 默认）。状态面展示每条隧道的 score / rtt / jitter / loss，并标注当前 `default_conn`。
 
+跨 peer 的 OSPF / `latency_first`（LeastCost）边代价由同一质量分编码进 peer-center `DirectConnectedPeerInfo.latency_ms`（`round(score*1000)`，熔断路径另加固定加成；发布端 `|Δ|<20` 不改写，配合约 60s 上报节流）。零丢包/抖动时量级仍≈ RTT 毫秒，与历史行为兼容。
+
 ### 2.2 拨号与选路（今日：全量拨号 + 质量选路，无档位）
 
 | 项 | 今日 |
@@ -59,7 +61,7 @@
 | **初始节点 URL** | `[[peer]]` / `peer_urls` / `public_server_url`（完整 tunnel URL），全部恒维持连接 |
 | **硬约束** | `disable_p2p`（不主动直连）/ `p2p_only`（绝不中转）/ 允许中转开关 |
 | **遗留可选** | `prefer_peer_relay`：UI 隐藏；**不**抑制打洞；仅 TOML 可启用 OSPF 对端中继拓扑投影（与质量分正交） |
-| **选优** | 同 peer 按 `select_conn` 综合质量分（RTT+loss+jitter）；对端间按 OSPF 代价（今日仍以延迟为主，见 Roadmap P2.3）；`lazy_p2p` 减少无业务时的背景打洞 |
+| **选优** | 同 peer 按 `select_conn` 综合质量分（RTT+loss+jitter）；对端间 OSPF / `latency_first` 边代价同源编码进 peer-center `latency_ms`（含熔断加成与发布端 hysteresis）；`lazy_p2p` 减少无业务时的背景打洞 |
 | **Web 控件** | `Config.vue` 基础设置「允许作为中转节点」；`disable_p2p` 在高级设置 |
 
 示例（有序列表；**443 不一定可用**，按实际可达端口填写）：

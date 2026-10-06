@@ -284,6 +284,8 @@ service TcpHolePunchRpc {
   rpc ExchangeMappedAddr(TcpHolePunchRequest) returns (TcpHolePunchResponse);
 }
 
+// Edge cost for peer-center / OSPF LeastCost. Field name is historical; value is
+// a quality-encoded cost (≈ RTT ms when loss/jitter are zero), not raw RTT only.
 message DirectConnectedPeerInfo { int32 latency_ms = 1; }
 
 message PeerInfoForGlobalMap {

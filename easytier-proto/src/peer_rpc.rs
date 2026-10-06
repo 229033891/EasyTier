@@ -110,19 +110,39 @@ impl From<RouteConnPeerList> for sync_route_info_request::ConnInfo {
 #[cfg(feature = "api")]
 impl From<Vec<crate::api::instance::PeerInfo>> for PeerInfoForGlobalMap {
     fn from(peers: Vec<crate::api::instance::PeerInfo>) -> Self {
+        // Keep encoding in sync with easytier-core `conn_select::ospf_edge_cost_from_score`.
+        const FUSE_BONUS: i32 = 10_000;
+        const COST_MAX: i32 = 1_000_000;
+
         let mut peer_map = BTreeMap::new();
         for peer in peers {
-            let Some(min_lat) = peer
+            let Some(raw_cost) = peer
                 .conns
                 .iter()
-                .map(|conn| conn.stats.as_ref().unwrap().latency_us)
+                .filter_map(|conn| {
+                    let stats = conn.stats.as_ref()?;
+                    // Prefer quality_score when populated (same family as select_conn).
+                    // Fall back to RTT-ms if score was left at prost default but RTT exists.
+                    let mut cost = if conn.quality_score != 0.0
+                        || stats.latency_us == 0
+                        || conn.quality_fused
+                    {
+                        (f64::from(conn.quality_score) * 1000.0).round() as i32
+                    } else {
+                        (stats.latency_us / 1000) as i32
+                    };
+                    if conn.quality_fused {
+                        cost = cost.saturating_add(FUSE_BONUS);
+                    }
+                    Some(cost.clamp(1, COST_MAX))
+                })
                 .min()
             else {
                 continue;
             };
 
             let dp_info = DirectConnectedPeerInfo {
-                latency_ms: std::cmp::max(1, (min_lat as u32 / 1000) as i32),
+                latency_ms: raw_cost,
             };
 
             peer_map.insert(peer.peer_id, dp_info);

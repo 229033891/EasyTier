@@ -105,6 +105,48 @@ pub fn conn_quality_score(
     cfg.w_lat * norm_rtt + cfg.w_loss * norm_loss + cfg.w_jitter * norm_jitter
 }
 
+/// Cap for values published into `DirectConnectedPeerInfo.latency_ms` / OSPF edge weight.
+/// Must stay well below `AVOID_RELAY_COST` (i32::MAX) so fuse/avoid math remains distinct.
+pub const OSPF_EDGE_COST_MAX: i32 = 1_000_000;
+/// Extra cost when the path is loss-fused (discourages multi-hop via bad links).
+pub const OSPF_FUSE_COST_BONUS: i32 = 10_000;
+/// Publisher hysteresis: ignore cost wobble smaller than this (ms-equivalent units).
+pub const OSPF_EDGE_COST_MIN_DELTA: i32 = 20;
+
+/// Encode a quality score into the integer edge cost peer-center / OSPF consume.
+///
+/// With default `w_lat=1`, zero loss/jitter maps ≈ RTT milliseconds — same order
+/// of magnitude as the historical latency-only publisher.
+pub fn ospf_edge_cost_from_score(score: f64, fused: bool) -> i32 {
+    let mut cost = (score * 1000.0).round() as i32;
+    if fused {
+        cost = cost.saturating_add(OSPF_FUSE_COST_BONUS);
+    }
+    cost.clamp(1, OSPF_EDGE_COST_MAX)
+}
+
+/// Build OSPF edge cost from raw metrics (same formula as `select_conn`).
+pub fn ospf_edge_cost_ms(
+    latency_us: u64,
+    loss_rate: f32,
+    jitter_us: u64,
+    fused: bool,
+    cfg: ConnSelectConfig,
+) -> i32 {
+    ospf_edge_cost_from_score(
+        conn_quality_score(latency_us, loss_rate, jitter_us, cfg),
+        fused,
+    )
+}
+
+/// Keep the last published cost when the raw delta is below `min_delta`.
+pub fn apply_ospf_cost_hysteresis(raw: i32, last: Option<i32>, min_delta: i32) -> i32 {
+    match last {
+        Some(prev) if (raw - prev).abs() < min_delta => prev,
+        _ => raw,
+    }
+}
+
 pub fn score_conn(m: &ConnMetrics, cfg: ConnSelectConfig) -> ScoredConn {
     let unverified_hole_punch = m.is_hole_punched && m.latency_us == 0;
     let fused = !unverified_hole_punch && f64::from(m.loss_rate) > cfg.loss_fuse;
@@ -202,6 +244,41 @@ mod tests {
         let a = conn_quality_score(5_000, 0.30, 0, cfg);
         let b = conn_quality_score(25_000, 0.01, 0, cfg);
         assert!(b < a, "expected low-loss path better: a={a} b={b}");
+    }
+
+    #[test]
+    fn ospf_edge_cost_pure_rtt_matches_latency_ms() {
+        let cfg = ConnSelectConfig::default();
+        // 25ms RTT, no loss/jitter → ~25 cost units (historical latency_ms).
+        let cost = ospf_edge_cost_ms(25_000, 0.0, 0, false, cfg);
+        assert_eq!(cost, 25);
+    }
+
+    #[test]
+    fn ospf_edge_cost_prefers_low_loss_over_low_rtt() {
+        let cfg = ConnSelectConfig::default();
+        let high_loss = ospf_edge_cost_ms(5_000, 0.30, 0, false, cfg);
+        let low_loss = ospf_edge_cost_ms(25_000, 0.01, 0, false, cfg);
+        assert!(
+            low_loss < high_loss,
+            "low-loss edge should be cheaper for OSPF: high_loss={high_loss} low_loss={low_loss}"
+        );
+    }
+
+    #[test]
+    fn ospf_fuse_bonus_raises_cost() {
+        let cfg = ConnSelectConfig::default();
+        let normal = ospf_edge_cost_ms(20_000, 0.25, 0, false, cfg);
+        let fused = ospf_edge_cost_ms(20_000, 0.25, 0, true, cfg);
+        assert_eq!(fused - normal, OSPF_FUSE_COST_BONUS);
+    }
+
+    #[test]
+    fn ospf_hysteresis_holds_small_wobble() {
+        let held = apply_ospf_cost_hysteresis(55, Some(50), OSPF_EDGE_COST_MIN_DELTA);
+        assert_eq!(held, 50);
+        let updated = apply_ospf_cost_hysteresis(80, Some(50), OSPF_EDGE_COST_MIN_DELTA);
+        assert_eq!(updated, 80);
     }
 
     #[test]

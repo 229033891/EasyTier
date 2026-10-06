@@ -1,7 +1,7 @@
 use std::{
     collections::{BTreeSet, HashMap, HashSet},
     net::{IpAddr, Ipv4Addr, Ipv6Addr},
-    sync::Arc,
+    sync::{Arc, LazyLock},
 };
 
 use anyhow::Context;
@@ -27,6 +27,9 @@ use crate::{
 };
 
 use super::{
+    conn_select::{
+        OSPF_EDGE_COST_MIN_DELTA, apply_ospf_cost_hysteresis, ospf_edge_cost_from_score,
+    },
     peer::Peer,
     peer_conn::{PeerConn, PeerConnId},
 };
@@ -34,6 +37,9 @@ use crate::peers::{
     PacketRecvChan,
     route::{ArcRoute, NextHopPolicy},
 };
+
+/// Last published OSPF edge cost per peer (publisher hysteresis / anti-flap).
+static LAST_OSPF_EDGE_COST: LazyLock<DashMap<PeerId, i32>> = LazyLock::new(DashMap::new);
 
 pub struct PeerMap {
     context: ArcPeerContext,
@@ -472,7 +478,12 @@ impl Drop for PeerMap {
 }
 
 /// Aggregates the directly-connected peers of several peer maps into the
-/// peer-center reporting format, keeping the lowest observed latency per peer.
+/// peer-center reporting format.
+///
+/// Edge cost is the best (lowest) quality-encoded cost across PeerConns for
+/// that peer — same score family as `select_conn` (RTT + loss + jitter), with
+/// a fuse bonus and publisher hysteresis so OSPF / `latency_first` does not
+/// flap on noise. The field remains named `latency_ms` for wire compatibility.
 pub(crate) async fn direct_peer_info(peer_maps: &[Arc<PeerMap>]) -> PeerInfoForGlobalMap {
     let mut peers = BTreeSet::new();
     for peer_map in peer_maps {
@@ -488,21 +499,31 @@ pub(crate) async fn direct_peer_info(peer_maps: &[Arc<PeerMap>]) -> PeerInfoForG
                 break;
             }
         }
-        let Some(min_lat) = conns
+        // `list_peer_conns` attaches `quality_score` / `quality_fused` from the
+        // same formula as select_conn; take the cheapest usable edge.
+        let Some(raw_cost) = conns
             .into_iter()
             .flatten()
-            .map(|conn| conn.stats.as_ref().unwrap().latency_us)
+            .map(|conn| ospf_edge_cost_from_score(f64::from(conn.quality_score), conn.quality_fused))
             .min()
         else {
             continue;
         };
 
+        let last = LAST_OSPF_EDGE_COST.get(&peer).map(|v| *v);
+        let cost = apply_ospf_cost_hysteresis(raw_cost, last, OSPF_EDGE_COST_MIN_DELTA);
+        LAST_OSPF_EDGE_COST.insert(peer, cost);
+
         ret.direct_peers.insert(
             peer,
             DirectConnectedPeerInfo {
-                latency_ms: std::cmp::max(1, (min_lat as u32 / 1000) as i32),
+                latency_ms: cost,
             },
         );
     }
+
+    // Drop hysteresis state for peers we no longer advertise.
+    LAST_OSPF_EDGE_COST.retain(|id, _| ret.direct_peers.contains_key(id));
+
     ret
 }
