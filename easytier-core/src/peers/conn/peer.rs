@@ -292,8 +292,10 @@ impl Peer {
         for conn in conns {
             let info = conn.get_conn_info();
             if info.is_closed {
-                let conn_id = info.conn_id.parse().unwrap();
-                let _ = self.close_peer_conn(&conn_id).await;
+                let conn_id = info.conn_id.parse().ok();
+                if let Some(conn_id) = conn_id {
+                    let _ = self.close_peer_conn(&conn_id).await;
+                }
                 continue;
             }
             let Ok(conn_id) = info.conn_id.parse::<uuid::Uuid>() else {
@@ -328,6 +330,7 @@ impl Peer {
                 if let Some(s) = by_id.get(&conn_id) {
                     info.quality_score = s.score as f32;
                     info.quality_fused = s.fused;
+                    info.unverified_hole_punch = s.unverified_hole_punch;
                 }
                 info
             })

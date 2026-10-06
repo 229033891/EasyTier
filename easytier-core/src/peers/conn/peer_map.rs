@@ -501,9 +501,13 @@ pub(crate) async fn direct_peer_info(peer_maps: &[Arc<PeerMap>]) -> PeerInfoForG
         }
         // `list_peer_conns` attaches `quality_score` / `quality_fused` from the
         // same formula as select_conn; take the cheapest usable edge.
+        // Exclude unverified hole-punch connections (latency 0) — they are not
+        // eligible for default_conn in select_conn and should not be advertised
+        // as the best edge for OSPF either.
         let Some(raw_cost) = conns
             .into_iter()
             .flatten()
+            .filter(|conn| !conn.unverified_hole_punch)
             .map(|conn| ospf_edge_cost_from_score(f64::from(conn.quality_score), conn.quality_fused))
             .min()
         else {

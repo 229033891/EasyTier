@@ -36,6 +36,10 @@ message PeerConnInfo {
   float quality_score = 15;
   // True when loss_rate exceeds the configured loss fuse (may still be used if all paths fused).
   bool quality_fused = 16;
+  // True when this connection is a hole-punch attempt that has not yet been
+  // verified by a successful ping exchange. Such connections are excluded from
+  // default_conn selection and OSPF edge cost advertising.
+  bool unverified_hole_punch = 17;
 }
 
 message PeerInfo {

@@ -110,15 +110,14 @@ impl From<RouteConnPeerList> for sync_route_info_request::ConnInfo {
 #[cfg(feature = "api")]
 impl From<Vec<crate::api::instance::PeerInfo>> for PeerInfoForGlobalMap {
     fn from(peers: Vec<crate::api::instance::PeerInfo>) -> Self {
-        // Keep encoding in sync with easytier-core `conn_select::ospf_edge_cost_from_score`.
-        const FUSE_BONUS: i32 = 10_000;
-        const COST_MAX: i32 = 1_000_000;
+        use crate::config::{ospf_edge_cost_from_score, OSPF_EDGE_COST_MAX, OSPF_FUSE_COST_BONUS};
 
         let mut peer_map = BTreeMap::new();
         for peer in peers {
             let Some(raw_cost) = peer
                 .conns
                 .iter()
+                .filter(|conn| !conn.unverified_hole_punch)
                 .filter_map(|conn| {
                     let stats = conn.stats.as_ref()?;
                     // Prefer quality_score when populated (same family as select_conn).
@@ -132,9 +131,9 @@ impl From<Vec<crate::api::instance::PeerInfo>> for PeerInfoForGlobalMap {
                         (stats.latency_us / 1000) as i32
                     };
                     if conn.quality_fused {
-                        cost = cost.saturating_add(FUSE_BONUS);
+                        cost = cost.saturating_add(OSPF_FUSE_COST_BONUS);
                     }
-                    Some(cost.clamp(1, COST_MAX))
+                    Some(cost.clamp(1, OSPF_EDGE_COST_MAX))
                 })
                 .min()
             else {
