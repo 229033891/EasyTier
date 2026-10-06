@@ -280,12 +280,12 @@ jobs:
           (( ${#luci[@]} > 0 )) || { echo "missing luci-app-easytier .${pkg}"; ls -l dist/; exit 1; }
           (( ${#i18n[@]} > 0 )) || { echo "missing luci-i18n-easytier-zh-cn .${pkg}"; ls -l dist/; exit 1; }
           # Guard against the old MAKEFILE_LIST include bug silently baking 2.6.4.
-          # Boundary-aware match: apk names are `easytier-2.7.4.apk` and
-          # `luci-app-easytier-2.7.4-r1.apk`; a bare `*${ver}*` would also
-          # match `2.7.40`, so require a trailing `.apk` or `-` separator.
+          # Boundary-aware match (avoid bare *${ver}* matching 2.7.40):
+          #   apk:  easytier-2.7.4.apk / luci-app-easytier-2.7.4-r1.apk
+          #   ipk:  easytier_2.7.4_x86_64.ipk / luci-app-easytier_2.7.4-r1_all.ipk
           for f in "${easytier[@]}" "${luci[@]}"; do
             base="$(basename "$f")"
-            if [[ "$base" != *"-${ver}.apk" && "$base" != *"-${ver}-"* && "$base" != *"_${ver}.apk" && "$base" != *"_${ver}-"* ]]; then
+            if [[ "$base" != *"-${ver}.apk" && "$base" != *"-${ver}-"* && "$base" != *"_${ver}.apk" && "$base" != *"_${ver}-"* && "$base" != *"_${ver}_"* ]]; then
               echo "package version mismatch: expected ${ver} in ${base}"
               ls -l dist/
               exit 1
