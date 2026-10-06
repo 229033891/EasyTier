@@ -2,7 +2,6 @@
 //! and the peer map that multiplexes them.
 
 pub(crate) mod conn_select;
-pub(crate) mod conn_select;
 pub(crate) mod peer;
 pub(crate) mod peer_conn;
 pub(crate) mod peer_conn_liveness;
