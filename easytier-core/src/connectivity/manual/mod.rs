@@ -21,7 +21,6 @@ use url::Url;
 use crate::tunnel::ring::RingTunnelRegistry;
 use crate::{
     connectivity::{
-        fallback::{FallbackController, FallbackStatus, tier_from_flags},
         protocol::{ClientProtocolUpgrader, ProtocolTransport, protocol_transport},
         transport::{self, ConnectedByteStream, ConnectedTransport, UdpSessionMode},
     },
@@ -289,10 +288,6 @@ pub enum ManualConnectorStatus {
 pub struct ManualConnectorSnapshot {
     pub url: Url,
     pub status: ManualConnectorStatus,
-    /// Position in the ordered fallback list (if present).
-    pub fallback_index: Option<u32>,
-    /// True when this URL is within `0..=current_fallback_index` for the active tier.
-    pub is_active_fallback: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -362,7 +357,6 @@ where
     H: ManualConnectorHost,
 {
     state: Arc<ManualConnectorState>,
-    fallback: Arc<FallbackController>,
     peer_manager: Weak<PeerManagerCore>,
     host: Arc<H>,
     dns: Arc<dyn DnsResolver>,
@@ -427,7 +421,6 @@ where
     ) -> Self {
         let data = Arc::new(ManualConnectorData {
             state: Arc::new(ManualConnectorState::default()),
-            fallback: Arc::new(FallbackController::new()),
             peer_manager: Arc::downgrade(&peer_manager),
             host,
             dns,
@@ -473,39 +466,16 @@ where
 
     pub fn add_connector(&self, url: Url) -> anyhow::Result<()> {
         validate_manual_url(&url)?;
-        // Decide pin vs prefix-add before taking state_lock, then re-verify
-        // under the guard: start() may flip running state in between and a
-        // misclassified runtime add would sit behind the DirectFirst prefix
-        // until the next escalate. Re-checking nests state_lock → task, which
-        // is safe: no path holds the task guard while acquiring state_lock
-        // (stop() drops the task guard before taking state_lock).
-        let pin = self.is_running();
         let _state_guard = lock(&self.data.state.state_lock);
-        let pin = pin || self.is_running();
         self.data.state.removed.remove(&url);
-        // Initial peer URLs are registered before `start()` and stay behind the
-        // DirectFirst fallback prefix. Runtime adds (after start) must dial
-        // immediately — pin so recover shrink cannot strand them.
-        if pin {
-            self.data.fallback.pin_url(url.clone());
-        } else {
-            self.data.fallback.add_url(url.clone());
-        }
         if !self.data.state.reconnecting.contains(&url) {
             self.data.state.connectors.insert(url);
         }
         Ok(())
     }
 
-    fn is_running(&self) -> bool {
-        lock(&self.task)
-            .as_ref()
-            .is_some_and(|task| !task.handle.is_finished())
-    }
-
     pub fn remove_connector(&self, url: &Url) -> bool {
         let _state_guard = lock(&self.data.state.state_lock);
-        self.data.fallback.remove_url(url);
         if self.data.state.connectors.remove(url).is_some() {
             tracing::warn!(%url, "manual connector removed");
             return true;
@@ -519,34 +489,15 @@ where
 
     pub fn clear_connectors(&self) {
         let _state_guard = lock(&self.data.state.state_lock);
-        self.data.fallback.clear();
         self.data.state.connectors.clear();
         for url in self.data.state.reconnecting.iter() {
             self.data.state.removed.insert(url.key().clone());
         }
     }
 
-    pub fn fallback_status(&self) -> FallbackStatus {
-        let tier = self
-            .data
-            .peer_manager
-            .upgrade()
-            .map(|pm| tier_from_flags(&pm.connection_path_flags()))
-            .unwrap_or(easytier_proto::common::ConnectionPathTier::DirectFirst);
-        self.data.fallback.status(tier)
-    }
-
     pub fn list_connectors(&self) -> Vec<ManualConnectorSnapshot> {
         let _state_guard = lock(&self.data.state.state_lock);
         let peer_manager = self.data.peer_manager.upgrade();
-        let tier = peer_manager
-            .as_ref()
-            .map(|pm| tier_from_flags(&pm.connection_path_flags()))
-            .unwrap_or(easytier_proto::common::ConnectionPathTier::DirectFirst);
-        let ordered = self.data.fallback.ordered_urls();
-        let eligible = self.data.fallback.eligible_urls(tier);
-        let position = |url: &Url| ordered.iter().position(|u| u == url).map(|idx| idx as u32);
-
         let mut snapshots = self
             .data
             .state
@@ -558,33 +509,21 @@ where
                     .as_ref()
                     .is_some_and(|peer_manager| client_url_is_alive(peer_manager, &url));
                 ManualConnectorSnapshot {
-                    url: url.clone(),
+                    url,
                     status: if connected {
                         ManualConnectorStatus::Connected
                     } else {
                         ManualConnectorStatus::Disconnected
                     },
-                    fallback_index: position(&url),
-                    is_active_fallback: eligible.contains(&url),
                 }
             })
             .collect::<Vec<_>>();
         snapshots.extend(self.data.state.reconnecting.iter().map(|entry| {
-            let url = entry.key().clone();
             ManualConnectorSnapshot {
-                url: url.clone(),
+                url: entry.key().clone(),
                 status: ManualConnectorStatus::Connecting,
-                fallback_index: position(&url),
-                is_active_fallback: eligible.contains(&url),
             }
         }));
-        // Stable order: follow fallback list, then any extras.
-        snapshots.sort_by_key(|snap| {
-            (
-                snap.fallback_index.unwrap_or(u32::MAX),
-                snap.url.to_string(),
-            )
-        });
         snapshots
     }
 
@@ -662,42 +601,12 @@ where
         tracing::warn!("peer manager is gone, skip manual reconnect");
         return BTreeSet::new();
     };
-
-    let tier = tier_from_flags(&peer_manager.connection_path_flags());
-    let alive: std::collections::HashSet<Url> = data
-        .state
-        .connectors
-        .iter()
-        .filter_map(|entry| {
-            let url = entry.key().clone();
-            client_url_is_alive(&peer_manager, &url).then_some(url)
-        })
-        .chain(data.state.reconnecting.iter().filter_map(|entry| {
-            let url = entry.key().clone();
-            client_url_is_alive(&peer_manager, &url).then_some(url)
-        }))
-        .collect();
-    // Also count URLs that are connected even if briefly missing from connectors set.
-    let alive_from_ordered: std::collections::HashSet<Url> = data
-        .fallback
-        .ordered_urls()
-        .into_iter()
-        .filter(|url| client_url_is_alive(&peer_manager, url))
-        .collect();
-    let alive: std::collections::HashSet<Url> = alive.union(&alive_from_ordered).cloned().collect();
-
-    data.fallback.on_reconnect_tick(&alive, tier);
-    let eligible = data.fallback.eligible_urls(tier);
-
     let dead_connectors = data
         .state
         .connectors
         .iter()
         .filter_map(|entry| {
             let url = entry.key();
-            if !eligible.contains(url) {
-                return None;
-            }
             (!client_url_is_alive(&peer_manager, url)).then(|| url.clone())
         })
         .collect::<BTreeSet<_>>();

@@ -144,7 +144,7 @@ For self-hosted relays, use **full tunnel URLs** (scheme/host/port/path). **Port
 -p wss://relay.example.com/et
 ```
 
-Multiple `-p` / `[[peer]]` entries form an ordered fallback list.
+Multiple `-p` / `[[peer]]` entries are all kept connected; the active path is picked automatically by latency/jitter/loss quality.
 
 Once your network is set up successfully, you can easily configure it to start automatically on system boot. Refer to the [One-Click Register Service guide](https://easytier.cn/en/guide/network/oneclick-install-as-service.html) for step-by-step instructions on registering EasyTier as a system service.
 

@@ -420,8 +420,6 @@ fn connector_snapshots_to_api(snapshots: Vec<ManualConnectorSnapshot>) -> Vec<Co
         connectors.push(Connector {
             url: Some(connector.url.into()),
             status: status.into(),
-            fallback_index: connector.fallback_index,
-            is_active_fallback: Some(connector.is_active_fallback),
         });
     }
     connectors
@@ -616,12 +614,8 @@ where
         request: ListConnectorRequest,
     ) -> rpc_types::error::Result<ListConnectorResponse> {
         let instance = self.instance(request.instance.as_ref())?;
-        let fallback = instance.fallback_status();
         Ok(ListConnectorResponse {
             connectors: connector_snapshots_to_api(instance.list_connectors()),
-            current_fallback_index: fallback.as_ref().map(|s| s.current_fallback_index as u32),
-            fallback_reason: fallback.as_ref().map(|s| s.reason.as_str().to_owned()),
-            connection_path_tier: fallback.map(|s| s.connection_path_tier.into()),
         })
     }
 }

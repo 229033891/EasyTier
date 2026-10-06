@@ -3,7 +3,6 @@ import { describe, expect, it, vi } from 'vitest'
 import { defineComponent, h, nextTick, reactive } from 'vue'
 import Config from '../src/components/Config.vue'
 import {
-  ConnectionPathTier,
   DEFAULT_NETWORK_CONFIG,
   toBackendNetworkConfig,
   type NetworkConfig,
@@ -21,12 +20,12 @@ vi.mock('primevue', async () => {
 const CONFIG_FLAG_FIELDS = [
   'latency_first',
   'use_smoltcp',
-  'disable_ipv6',
   'ipv6_public_addr_auto',
   'enable_kcp_proxy',
   'disable_kcp_input',
   'enable_quic_proxy',
   'disable_quic_input',
+  'disable_p2p',
   'p2p_only',
   'lazy_p2p',
   'bind_device',
@@ -34,11 +33,9 @@ const CONFIG_FLAG_FIELDS = [
   'enable_exit_node',
   'allow_peer_default_without_exit',
   'relay_all_peer_rpc',
-  'disable_relay_data',
   'need_p2p',
   'multi_thread',
   'proxy_forward_by_system',
-  'disable_encryption',
   'disable_tcp_hole_punching',
   'disable_udp_hole_punching',
   'enable_udp_broadcast_relay',
@@ -478,7 +475,7 @@ describe('Config.vue network config projection', () => {
     expect(input(wrapper, '#virtual_ip_auto').checked).toBe(false)
     expect(input(wrapper, '#latency_first').checked).toBe(true)
     expect(input(wrapper, '#use_smoltcp').checked).toBe(true)
-    expect(input(wrapper, '#disable_ipv6').checked).toBe(true)
+    expect(input(wrapper, '#allow_ipv6').checked).toBe(false)
     expect(input(wrapper, '#no_tun').checked).toBe(true)
 
     expect(input(wrapper, '#hostname').value).toBe('host-a')
@@ -514,7 +511,7 @@ describe('Config.vue network config projection', () => {
     await setInput(wrapper, '#virtual_ip', '10.7.7.7')
     await setInput(wrapper, '#initial_nodes', ' tcp://peer-x:11010, , udp://peer-y:11010 ')
     await wrapper.find('#no_tun').setValue(false)
-    await wrapper.find('#disable_ipv6').setValue(false)
+    await wrapper.find('#allow_ipv6').setValue(true)
     await setInput(wrapper, '#hostname', 'host-edited')
     await setInput(wrapper, '#subnet-proxy', '10.7.0.0/16,172.17.0.0/16')
     await setInput(wrapper, '#vpn_portal_wireguard_listen', '[::]:23000')
@@ -680,25 +677,72 @@ describe('Config.vue network config projection', () => {
     expect(curNetwork.p2p_only).toBe(true)
   })
 
-  it('projects connection_path_tier select onto legacy path flags', async () => {
+  it('renders disable_p2p as an advanced flag while prefer_peer_relay stays hidden', async () => {
     const config = makeConfig()
-    config.connection_path_tier = ConnectionPathTier.DIRECT_FIRST
-    config.disable_p2p = false
-    config.prefer_peer_relay = false
+    const { wrapper } = mountConfig(config)
+    await nextTick()
+
+    // disable_p2p 是硬约束，保留在高级设置；prefer_peer_relay 后端休眠，不再展示
+    expect(wrapper.find('#disable_p2p').exists()).toBe(true)
+    expect(wrapper.find('#prefer_peer_relay').exists()).toBe(false)
+  })
+
+  it('drives relay permission from the basic allow-relay switch', async () => {
+    const config = makeConfig()
     const { curNetwork, wrapper } = mountConfig(config)
     await nextTick()
 
-    expect(wrapper.find('#connection_path_tier').exists()).toBe(true)
-    expect(wrapper.find('#disable_p2p').exists()).toBe(false)
-    expect(wrapper.find('#prefer_peer_relay').exists()).toBe(false)
+    // 默认允许中转（disable_relay_data: false）
+    expect(input(wrapper, '#allow_relay').checked).toBe(true)
 
-    await wrapper.find('#connection_path_tier').setValue(String(ConnectionPathTier.RELAY_ONLY))
+    await wrapper.find('#allow_relay').setValue(false)
+    await nextTick()
+    expect(curNetwork.disable_relay_data).toBe(true)
+    expect(toBackendNetworkConfig(curNetwork).disable_relay_data).toBe(true)
+
+    await wrapper.find('#allow_relay').setValue(true)
+    await nextTick()
+    expect(curNetwork.disable_relay_data).toBe(false)
+  })
+
+  it('blocks re-checking allow-relay under p2p_only but allows unchecking', async () => {
+    const config = makeConfig()
+    config.p2p_only = true
+    config.disable_relay_data = false
+    const { wrapper } = mountConfig(config)
     await nextTick()
 
-    expect(curNetwork.connection_path_tier).toBe(ConnectionPathTier.RELAY_ONLY)
-    expect(curNetwork.disable_p2p).toBe(true)
-    expect(curNetwork.prefer_peer_relay).toBe(true)
-    expect(curNetwork.p2p_only).toBe(false)
+    // 已勾选 + p2p_only：可取消（checkbox 启用，点击后 disallow）
+    expect(input(wrapper, '#allow_relay').disabled).toBe(false)
+    await wrapper.find('#allow_relay').setValue(false)
+    await nextTick()
+
+    // 未勾选 + p2p_only：禁止重新勾选
+    expect(input(wrapper, '#allow_relay').disabled).toBe(true)
+  })
+
+  it('binds inverted switches positively (checked = enabled)', async () => {
+    const config = makeConfig()
+    config.disable_ipv6 = true
+    config.disable_encryption = true
+    const { curNetwork, wrapper } = mountConfig(config)
+    await nextTick()
+
+    expect(input(wrapper, '#allow_ipv6').checked).toBe(false)
+    expect(input(wrapper, '#allow_encryption').checked).toBe(false)
+
+    await wrapper.find('#allow_ipv6').setValue(true)
+    await wrapper.find('#allow_encryption').setValue(true)
+    await nextTick()
+
+    expect(curNetwork.disable_ipv6).toBe(false)
+    expect(curNetwork.disable_encryption).toBe(false)
+    expect(toBackendNetworkConfig(curNetwork).disable_ipv6).toBe(false)
+    expect(toBackendNetworkConfig(curNetwork).disable_encryption).toBe(false)
+
+    await wrapper.find('#allow_ipv6').setValue(false)
+    await nextTick()
+    expect(curNetwork.disable_ipv6).toBe(true)
   })
 
   it('disables TUN name/MTU when no_tun is on and hides encryption algo when encryption is off', async () => {

@@ -155,17 +155,6 @@ pub fn network_config_from_toml(config: &TomlConfig) -> NetworkConfig {
     result.disable_upnp = Some(flags.disable_upnp);
     result.disable_relay_data = Some(flags.disable_relay_data);
     result.prefer_peer_relay = Some(flags.prefer_peer_relay);
-    result.connection_path_tier = {
-        use easytier_proto::common::ConnectionPathTier;
-        let tier = ConnectionPathTier::try_from(flags.connection_path_tier)
-            .unwrap_or(ConnectionPathTier::Unspecified);
-        let normalized = if tier == ConnectionPathTier::Unspecified {
-            crate::config::infer_connection_path_tier(&flags)
-        } else {
-            crate::config::normalize_connection_path_tier(tier)
-        };
-        Some(normalized.into())
-    };
     result.conn_select_w_lat = (flags.conn_select_w_lat != default_flags.conn_select_w_lat)
         .then_some(flags.conn_select_w_lat);
     result.conn_select_w_loss = (flags.conn_select_w_loss != default_flags.conn_select_w_loss)

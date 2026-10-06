@@ -4,17 +4,6 @@ import "error.proto";
 
 package common;
 
-// Path preference for connectivity fallback (P0.1).
-// Ordered peer URLs ([[peer]] / peer_urls / public_server_url) are the fallback list;
-// this enum is the sole source of truth for path policy. Old bools
-// (disable_p2p / prefer_peer_relay / p2p_only) remain as a compat projection.
-enum ConnectionPathTier {
-  CONNECTION_PATH_TIER_UNSPECIFIED = 0; // treat as DIRECT_FIRST
-  CONNECTION_PATH_TIER_DIRECT_FIRST = 1; // 直连优先：打洞/直连优先，失败后按 peer URL 列表回落
-  CONNECTION_PATH_TIER_PREFER_RELAY = 2; // 偏好中继：优先配置的 peer URL / peer-relay，直连为辅
-  CONNECTION_PATH_TIER_RELAY_ONLY = 3;   // 仅中继：不打洞/不主动 P2P，只走配置的 peer URL 列表
-}
-
 message FlagsInConfig {
   string default_protocol = 1;
   string dev_name = 2;
@@ -110,10 +99,6 @@ message FlagsInConfig {
   // Adaptive ping max interval in seconds (default 32). Per-conn caps (e.g. TCP
   // hole-punch 1s) still win when lower. 0 means default.
   uint32 ping_interval_max_sec = 47;
-
-  // Connectivity path tier (sole source of truth). UNSPECIFIED = DIRECT_FIRST.
-  // Projects to disable_p2p / prefer_peer_relay; p2p_only stays orthogonal.
-  ConnectionPathTier connection_path_tier = 48;
 
   // PeerConn quality select (P1.7). Weights are hundredths (100 = 1.0).
   // All-zero select block = built-in defaults; otherwise values are literal

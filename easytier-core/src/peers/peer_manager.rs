@@ -50,7 +50,7 @@ use crate::{
 
 use super::{
     BoxNicPacketFilter, BoxPeerPacketFilter, PacketRecvChanReceiver, PeerConnectionOrigin,
-    PeerPacketFilter, PeerPacketIngress,
+    PeerPacketFilter,
     acl::AclFilter,
     conn::{
         peer_conn::{PeerConn, PeerConnId},
@@ -1459,26 +1459,17 @@ impl PeerManagerCore {
 
     pub fn p2p_policy_flags(&self) -> P2pPolicyFlags {
         let flags = self.context.flags();
-        // PreferRelay soft-bias only when the stored SoT tier is PreferRelay.
-        // Do not key off the legacy `prefer_peer_relay` bool alone — that flag
-        // is also used for OSPF peer-relay preference without delaying punch.
-        let stored_tier =
-            easytier_proto::common::ConnectionPathTier::try_from(flags.connection_path_tier)
-                .unwrap_or(easytier_proto::common::ConnectionPathTier::Unspecified);
         P2pPolicyFlags {
             disable_udp_hole_punching: flags.disable_udp_hole_punching,
             disable_sym_hole_punching: flags.disable_sym_hole_punching,
             disable_upnp: flags.disable_upnp,
-            lazy_p2p: flags.lazy_p2p
-                || stored_tier == easytier_proto::common::ConnectionPathTier::PreferRelay,
+            // Treat prefer_peer_relay like lazy_p2p for proactive background
+            // punch (traffic-triggered / need_p2p paths still allowed via
+            // dynamic_allowed).
+            lazy_p2p: flags.lazy_p2p || flags.prefer_peer_relay,
             disable_p2p: flags.disable_p2p,
             need_p2p: flags.need_p2p,
         }
-    }
-
-    /// Flags slice used by connectivity fallback (P0.1/P0.2).
-    pub fn connection_path_flags(&self) -> easytier_proto::common::FlagsInConfig {
-        self.context.flags()
     }
 
     pub fn tcp_hole_punching_disabled(&self) -> bool {
@@ -3093,50 +3084,31 @@ impl PeerPacketRouter {
     pub async fn run(mut self) {
         tracing::trace!("start_peer_recv");
         while let Ok(envelope) = recv_packet_envelope_from_chan(&mut self.packet_recv).await {
-            let (ret, ingress) = envelope.into_parts();
-            let disable_relay_data = self.context.disable_relay_data();
-            let destination_is_attached = ret
-                .peer_manager_header()
-                .is_some_and(|header| self.peers.has_direct_attached_peer(header.to_peer_id.get()));
-            let drop_foreign_relay_data = disable_relay_data
-                && is_relay_data_zc_packet(&ret)
-                && !ingress.is_attached()
-                && !destination_is_attached;
+            // Avoid-only relay policy: a node that disallows relay is excluded
+            // at route-computation time (AVOID_RELAY_COST). Packets that still
+            // arrive for forwarding (stale routes, convergence windows,
+            // sole-path topologies) are forwarded, never hard-dropped — drops
+            // turn transient misroutes into severe loss.
+            let (ret, _) = envelope.into_parts();
             let Err(ret) = try_handle_foreign_network_packet(
                 ret,
                 self.my_peer_id,
                 &self.peers,
                 &self.foreign_network_manager,
                 self.stats_mgr.as_ref(),
-                drop_foreign_relay_data,
             )
             .await
             else {
                 continue;
             };
 
-            self.handle_packet(ret, disable_relay_data, ingress).await;
+            self.handle_packet(ret).await;
         }
         panic!("done_peer_recv");
     }
 
-    async fn handle_packet(
-        &self,
-        mut ret: ZCPacket,
-        disable_relay_data: bool,
-        ingress: PeerPacketIngress,
-    ) {
+    async fn handle_packet(&self, mut ret: ZCPacket) {
         let buf_len = ret.buf_len();
-        let destination_is_attached = ret
-            .peer_manager_header()
-            .is_some_and(|header| self.peers.has_direct_attached_peer(header.to_peer_id.get()));
-        let drop_relay_data = should_drop_relay_data(
-            disable_relay_data,
-            &ret,
-            self.my_peer_id,
-            ingress,
-            destination_is_attached,
-        );
         let Some(hdr) = ret.mut_peer_manager_header() else {
             tracing::warn!(?ret, "invalid packet, skip");
             return;
@@ -3148,18 +3120,6 @@ impl PeerPacketRouter {
         let packet_type = hdr.packet_type;
         let is_encrypted = hdr.is_encrypted();
         if to_peer_id != self.my_peer_id {
-            if drop_relay_data {
-                let ingress_connection = ingress.peer_connection();
-                tracing::debug!(
-                    ?from_peer_id,
-                    ?to_peer_id,
-                    packet_type,
-                    ?ingress_connection,
-                    "drop forwarded relay data while relay data is disabled"
-                );
-                return;
-            }
-
             if hdr.forward_counter > 7 {
                 tracing::warn!(?hdr, "forward counter exceed, drop packet");
                 return;
@@ -3310,70 +3270,16 @@ impl PeerPacketRouter {
     }
 }
 
-pub(crate) fn is_relay_data_packet(packet_type: u8) -> bool {
-    super::traffic_metrics::is_relay_data_packet_type(packet_type)
-}
-
-pub(crate) fn is_relay_data_zc_packet(packet: &ZCPacket) -> bool {
-    let Some(hdr) = packet.peer_manager_header() else {
-        return false;
-    };
-
-    if hdr.packet_type == PacketType::ForeignNetworkPacket as u8 {
-        let inner_packet_type = packet.foreign_network_inner_packet_type();
-        if inner_packet_type.is_none() {
-            tracing::warn!(
-                ?hdr,
-                "foreign network packet has unparseable inner peer manager header"
-            );
-        }
-        return inner_packet_type.is_none_or(is_relay_data_packet);
-    }
-
-    is_relay_data_packet(hdr.packet_type)
-}
-
-fn should_drop_relay_data(
-    disable_relay_data: bool,
-    packet: &ZCPacket,
-    my_peer_id: PeerId,
-    ingress: PeerPacketIngress,
-    destination_is_attached: bool,
-) -> bool {
-    if !disable_relay_data || !is_relay_data_zc_packet(packet) {
-        return false;
-    }
-
-    let is_forwarded = packet
-        .peer_manager_header()
-        .is_some_and(|header| header.to_peer_id.get() != my_peer_id);
-    is_forwarded && !ingress.is_attached() && !destination_is_attached
-}
-
 pub(crate) async fn try_handle_foreign_network_packet(
     mut packet: ZCPacket,
     my_peer_id: PeerId,
     peer_map: &PeerMap,
     foreign_network_manager: &ForeignNetworkManager,
     stats_manager: &StatsManager,
-    drop_relay_data: bool,
 ) -> Result<(), ZCPacket> {
     let pm_header = packet.peer_manager_header().unwrap();
     if pm_header.packet_type != PacketType::ForeignNetworkPacket as u8 {
         return Err(packet);
-    }
-
-    let from_peer_id = pm_header.from_peer_id.get();
-    let to_peer_id = pm_header.to_peer_id.get();
-
-    if drop_relay_data {
-        tracing::debug!(
-            ?from_peer_id,
-            ?to_peer_id,
-            inner_packet_type = ?packet.foreign_network_inner_packet_type(),
-            "drop foreign network relay data while relay data is disabled"
-        );
-        return Ok(());
     }
 
     let foreign_hdr = packet.foreign_network_hdr().unwrap();

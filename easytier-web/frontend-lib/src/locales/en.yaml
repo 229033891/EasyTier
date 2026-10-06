@@ -14,18 +14,8 @@ initial_nodes_help: |
   • tcp://relay.example.com:11010
   • wss://relay.example.com/et (port 443 when omitted)
   • wss://relay.example.com:8443/et or tcp://10.0.0.2:5000 (custom ports)
-  Port 443 is recommended when your network allows it, but many networks block 443 or only allow specific ports — use the exact URL your relay listens on. Multiple URLs form an ordered fallback list.
+  Port 443 is recommended when your network allows it, but many networks block 443 or only allow specific ports — use the exact URL your relay listens on. All configured addresses stay connected; the active path is picked automatically by latency/jitter/loss quality.
 initial_node_placeholder: "e.g. tcp://relay.example.com:11010 or wss://relay.example.com:8443/et"
-connection_path_tier: Connection Path
-connection_path_tier_help: |-
-  How this node uses the ordered Initial Nodes list as fallback / relay endpoints.
-  • Direct First: try P2P/direct; escalate along the peer URL list when active endpoints stay down.
-  • Prefer Relay: dial all configured peer URLs; still allow P2P.
-  • Relay Only: no P2P; only the configured peer URL list.
-  Port 443 is optional — use whatever port your relay actually listens on.
-connection_path_tier_direct_first: Direct First
-connection_path_tier_prefer_relay: Prefer Relay
-connection_path_tier_relay_only: Relay Only
 virtual_ipv4: Virtual IPv4
 virtual_ipv4_dhcp: DHCP
 network_name: Network Name
@@ -232,6 +222,11 @@ disable_ipv6_help: |-
   Useful when peers only support IPv4, or a broken local IPv6 route is what blocks connectivity.
   Note: keep it consistent with the other nodes, otherwise they may fail to connect.
 
+allow_ipv6: Enable IPv6
+allow_ipv6_help: |-
+  When checked, this node may communicate over IPv6 (checked by default).
+  Unchecking equals "Disable IPv6": IPv4 only, useful when peers lack IPv6 or local IPv6 is broken.
+
 ipv6_public_addr_auto: Auto Public IPv6
 ipv6_public_addr_auto_help: |-
   Automatically request a public IPv6 address from a peer that shares its public IPv6 subnet.
@@ -313,7 +308,14 @@ relay_all_peer_rpc_help: |-
 disable_relay_data: Disable Relay Data
 disable_relay_data_help: |
   Prevent other nodes from relaying data-plane traffic through this node.
-  This node can still communicate normally; when enabled, avoid_relay_data is advertised so peers prefer not to use it as a relay.
+  This node can still communicate normally; when enabled, avoid_relay_data is advertised so route computation avoids it with a very large cost.
+  Note: avoidance only, no drops — transit packets arriving during convergence or on sole-path topologies are still forwarded.
+
+allow_relay_data: Allow as Relay Node
+allow_relay_data_help: |-
+  When checked, other nodes may relay data-plane traffic through this node (checked by default).
+  Unchecking equals "Disable Relay Data": route computation avoids this node, but in-flight transit packets are still forwarded, never dropped; good for terminal-only devices.
+  Note: with "P2P only" enabled, relaying is meaningless and cannot be re-checked.
 
 need_p2p: Need P2P
 need_p2p_help: |-
@@ -338,6 +340,11 @@ disable_encryption_help: |-
   Turn off encryption between peers (on by default).
   Useful inside a fully trusted LAN, saving a little CPU.
   Note: it must match the other nodes — one side encrypted and the other not simply will not connect. Never disable it on the public internet.
+
+allow_encryption: Enable Encryption
+allow_encryption_help: |-
+  When checked, traffic between peers is encrypted (checked by default).
+  Unchecking equals "Disable Encryption": trusted LANs only, must match all nodes, never on the public internet.
 
 disable_tcp_hole_punching: Disable TCP Hole Punching
 disable_tcp_hole_punching_help: |-

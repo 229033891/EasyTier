@@ -6,13 +6,12 @@ use anyhow::Context;
 use easytier_proto::api::manage;
 
 use crate::config::{
-    MappedListenerPolicy, normalize_secure_mode_config, resolve_connection_path_tier,
+    MappedListenerPolicy, normalize_secure_mode_config,
     toml::{
         ConfigLoader, ManagedCredentialConfig, NetworkIdentity, PeerConfig, PortForwardConfig,
         TomlConfigLoader, VpnPortalClientConfig, VpnPortalConfig, gen_default_flags,
     },
 };
-use easytier_proto::common::ConnectionPathTier;
 
 fn parse_mapped_listener_urls(mapped_listeners: &[String]) -> Result<Vec<url::Url>, anyhow::Error> {
     MappedListenerPolicy::new(["tcp", "udp", "wg", "quic", "ws", "wss", "faketcp"])
@@ -157,7 +156,6 @@ const FORM_MANAGED_FLAG_FIELDS: &[&str] = &[
     "default_protocol",
     "ping_fail_close_count",
     "ping_interval_max_sec",
-    "connection_path_tier",
     "conn_select_w_lat",
     "conn_select_w_loss",
     "conn_select_w_jitter",
@@ -680,13 +678,6 @@ impl NetworkConfigExt for NetworkConfig {
             flags.conn_select_switch_windows = v;
         }
 
-        // Path tier is SoT: when set, projects disable_p2p / prefer_peer_relay;
-        // when absent, infer from those legacy flags (ordered peer URLs remain the list).
-        let explicit_tier = self
-            .connection_path_tier
-            .and_then(|v| ConnectionPathTier::try_from(v).ok());
-        resolve_connection_path_tier(&mut flags, explicit_tier);
-
         if let Some(acl) = self.acl.as_ref()
             && !acl.is_empty()
         {
@@ -900,16 +891,6 @@ impl NetworkConfigExt for NetworkConfig {
         result.conn_select_switch_windows = (flags.conn_select_switch_windows
             != default_flags.conn_select_switch_windows)
             .then_some(flags.conn_select_switch_windows);
-        result.connection_path_tier = {
-            let tier = ConnectionPathTier::try_from(flags.connection_path_tier)
-                .unwrap_or(ConnectionPathTier::Unspecified);
-            let normalized = if tier == ConnectionPathTier::Unspecified {
-                crate::config::infer_connection_path_tier(&flags)
-            } else {
-                crate::config::normalize_connection_path_tier(tier)
-            };
-            Some(normalized.into())
-        };
         result.instance_recv_bps_limit =
             (flags.instance_recv_bps_limit != u64::MAX).then_some(flags.instance_recv_bps_limit);
         result.enable_private_mode = Some(flags.private_mode);

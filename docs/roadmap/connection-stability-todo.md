@@ -48,15 +48,12 @@ EasyTier 优势（保持）：多 scheme、STUN/打洞、OSPF 选路、自适应
 | 多条备选 | 允许配置 **有序列表**（主路径失败按序尝试），而非单一硬编码地址 |
 | 探测 | 健康检查 / 连通探测目标 = 用户配置的 URL，不探测「默认 443」 |
 
-### 2.2 产品档语义（草案）
+### 2.2 产品档语义（已简化，不再设档位）
 
-名称待定；行为必须与端口无关：
-
-| 档位 | 行为 |
-|------|------|
-| **直连优先** | 打洞/直连优先；失败后回落到用户配置的中继/备选 URL 列表 |
-| **偏好中继** | 优先使用用户配置的中继 URL；直连为辅或延迟尝试 |
-| **仅中继** | 不打洞 / 不直连（或严格禁用），只走配置的中继列表 |
+2026-10-06 拍板：用户要的始终是两设备之间低延迟/低抖动/低丢包，不区分直连还是中转。
+因此**不设路径档位**：全部已配置 peer URL 恒维持连接（含打洞），走哪条只看质量分
+（§2.3 / P1.7；对端间靠 OSPF 代价 P2.3）。`disable_p2p` / `p2p_only` /
+「允许作为中转节点」保留为硬约束（政策/效率），`prefer_peer_relay` 后端休眠。
 
 「中继」在文案中指 **用户（或网络管理员）提供的可达端点**，不隐含公网 443。
 
@@ -130,28 +127,24 @@ score = w_lat * norm(rtt)
 
 ### P0 — 连通保底（自定义端点）
 
-- [x] **P0.1** 定义配置模型：保底/中继 **URL 列表**（有序）+ 档位（直连优先 / 偏好中继 / 仅中继）
-  - 有序列表 = 现有 `[[peer]]` / `peer_urls` / `public_server_url`（scheme/host/port/path）；**不**新增第二套 URL 系统
-  - 新 SoT：`flags.connection_path_tier` / `NetworkConfig.connection_path_tier`（`ConnectionPathTier`）
-  - 老开关兼容投影：`disable_p2p` / `prefer_peer_relay`（`p2p_only` 正交保留）；见 `config/connection_path.rs`
-  - 非目标：本项不含 `FallbackController`（P0.2）与 GUI 档位控件（P0.4）
-- [x] **P0.2** 实现回落状态机：当前路径不可用时按列表与档位切换；切换可观测（日志 + 状态面）
-  - `connectivity/fallback::FallbackController`：有序 URL + hysteresis 升/降档 + `current_fallback_index` / `reason`
-  - ManualConnector 重连仅拨号 `0..=index`（DirectFirst）；PreferRelay/RelayOnly 拨全量列表
-  - 状态面：`ListConnectorResponse` + `NetworkInstanceRunningInfo` 暴露 index/reason/tier
-  - 健康信号：本项 MVP 用「client tunnel 是否存活」驱动升/降档；质量分（jitter/loss）留给 P1.7
-  - PreferRelay：`p2p_policy_flags` 仅在 **stored** `connection_path_tier=PreferRelay` 时并入 `lazy_p2p`（软抑制背景打洞；有流量仍可动态打洞）。运行时 patch 只改 `prefer_peer_relay` 布尔、不写 tier 时不触发软偏置（OSPF 对端中继偏好测例）
-  - DirectFirst：运行时 `add_connector`（`start` 之后）对 URL `pin`，避免 fallback 前缀/recover 缩档把显式拨号卡住
-  - 非目标：未做 scheme 矩阵（P-AUTO.L1）；降档后不主动拆除已建立的高索引隧道
+- [x] **P0.1** 定义配置模型（已简化，无档位）：保底/中继 **URL 列表**（`[[peer]]` / `peer_urls` / `public_server_url`，scheme/host/port/path）；**不**新增第二套 URL 系统
+  - 拨号策略恒全量：全部已配置 URL 维持连接 + 按需打洞；选路只看质量分
+  - 硬约束保留：`disable_p2p` / `p2p_only` / 允许中转；`prefer_peer_relay` 后端休眠（兼容保留字段）
+  - `ConnectionPathTier` / `config/connection_path.rs` 已删除（未上线直接删，不做兼容）
+- [x] **P0.2** 回落状态机（已简化，随档位一并删除）：`connectivity/fallback` 已删除（未上线直接删）
+  - ManualConnector 恢复恒全量重拨（全部 connectors + 按需打洞）；`select_conn` 质量分 + hysteresis 承担选优与防抖
+  - 状态面回退为 connector url + status（`Connector.fallback_*`、`current_fallback_index` / `fallback_reason` / tier 字段已删）
+  - `p2p_policy_flags` 回到 `lazy_p2p || prefer_peer_relay`（后者后端休眠，仅 TOML 兼容）
+  - 非目标：未做 scheme 矩阵（P-AUTO.L1）
 - [x] **P0.3** 文档与模板：同时提供「443 示例」与「自定义端口示例」；写明 **443 不一定可用**
   - Current：`tunnels-and-transport.md` / `peer-connections.md` 双端口示例 + 有序列表
   - 用户面：`README.md` / `README_CN.md`、Web `initial_nodes_help`、CLI `peers` 帮助
   - 模板：`script/install.sh`、magisk / android-jni / mini 示例注释
-- [x] **P0.4** GUI / Web：中继地址为自由输入（URL），端口不默认锁死 443；占位符展示多种 scheme；档位控件（`connection_path_tier`）
-  - `Config.vue`：初始节点旁增加路径档位 Select；变更时 `applyConnectionPathTier` 投影 `disable_p2p` / `prefer_peer_relay`
-  - 高级开关中隐藏上述两投影项（SoT 为档位）；`initial_nodes_help` / placeholder 含 443 与自定义端口示例
-- [ ] **P0.5** 验收：在 **非 443** 的 `tcp://` / `wss://host:自定义端口/path` 上，仅中继档可稳定组网；禁 UDP 环境可用用户指定的 TCP/`wss` 保底
-  - 清单：① `connection_path_tier=RelayOnly` + `wss://host:8443/et` 组网；② 同场景换 `tcp://host:5000`；③ 禁 UDP 主机仅用 TCP/`wss` peer 列表；④ 状态面可见 `current_fallback_index` / `fallback_reason`
+- [x] **P0.4** GUI / Web：中继地址为自由输入（URL），端口不默认锁死 443；占位符展示多种 scheme（无档位控件）
+  - `Config.vue`：基础设置仅保留「允许作为中转节点」正向开关（`disable_relay_data` 取反）；`disable_p2p` 为硬约束保留在高级设置
+  - `initial_nodes_help` / placeholder 含 443 与自定义端口示例；全部地址恒维持连接，按质量自动选路
+- [ ] **P0.5** 验收：在 **非 443** 的 `tcp://` / `wss://host:自定义端口/path` 上稳定组网；禁 UDP 环境可用用户指定的 TCP/`wss` 保底
+  - 清单：① `wss://host:8443/et` 组网；② 同场景换 `tcp://host:5000`；③ 禁 UDP 主机仅用 TCP/`wss` peer 列表
 
 ### P1 — 保活与弱网策略可调
 
@@ -171,7 +164,7 @@ score = w_lat * norm(rtt)
 
 ### P2 — 可观测、路由代价与带宽
 
-- [ ] **P2.1** 状态面明确：各 PeerConn、`default_conn`、质量分分项（rtt/loss/jitter）、是否仅冗余、当前是否走保底列表中的哪一条
+- [ ] **P2.1** 状态面明确：各 PeerConn、`default_conn`、质量分分项（rtt/loss/jitter）、是否仅冗余、各 connector 存活状态
 - [ ] **P2.2** 文档/UI：多连接 ≠ 已聚合带宽（对齐 Current `peer-connections.md`）
 - [ ] **P2.3** 评估将丢包/抖动（或综合分）纳入 OSPF / `latency_first` 代价；若做，必须带防震荡与可观测
 - [ ] **P2.4** 按需推进 [`multi-link-bonding.md`](./multi-link-bonding.md)（按流哈希；坏链路按质量熔断）；默认 N=1
@@ -221,11 +214,11 @@ score = w_lat * norm(rtt)
 
 | 场景 | 期望 |
 |------|------|
-| 用户配置 `wss://relay.example:8443/et` | 保底/仅中继档可走该 URL，不要求 443 |
+| 用户配置 `wss://relay.example:8443/et` | 可走该 URL，不要求 443 |
 | 用户配置 `tcp://10.0.0.2:5000` | 同上 |
 | 环境阻断 443 但放行自定义端口 | 只要配置指向可达端口即可通 |
-| 环境阻断 UDP | 可通过用户指定的 TCP/`wss`/QUIC 保底，不依赖打洞 |
-| 直连优先 + 列表中继 | 打洞失败后落到列表中下一项，状态可查 |
+| 环境阻断 UDP | 可通过用户指定的 TCP/`wss`/QUIC 建连，不依赖打洞 |
+| 多 URL 配置 | 全部维持连接，按质量分自动选择，无档位概念 |
 | 多 PeerConn | 仍可热备切换；bonding 仅在 P2 启用后加带宽 |
 | 低 RTT 高丢包 vs 略高 RTT 低丢包 | 默认选后者（综合分）；超过丢包阈值不得占 `default_conn` |
 | 质量分接近、RTT 抖动 | 不因单次探测频繁切换（hysteresis） |
@@ -241,9 +234,8 @@ score = w_lat * norm(rtt)
 
 ```text
 P-UX（纯前端，可并行先行）
-P1.6 stats jitter/loss 上报 + P1.1/P1.2 透参  <- 先行，给 P0.2 提供健康信号
-  -> P0.1 配置模型 + 老开关映射
-  -> P0.2 回落状态机 FallbackController（含 P-AUTO.L1 scheme 列表，二选一或叠加待定）
+P1.6 stats jitter/loss 上报 + P1.1/P1.2 透参
+  -> P0.1 全量拨号 + 质量选路（无档位；P0.2 FallbackController 已删）
   -> P0.3/P0.4 文档与 UI
   -> P0.5 非 443 验收
 并行：P1.4 #2632 验证
@@ -261,7 +253,7 @@ P1.6 stats jitter/loss 上报 + P1.1/P1.2 透参  <- 先行，给 P0.2 提供健
 
 | 项 | 状态 | 备注 |
 |----|------|------|
-| P0.* | P0.1–P0.4 **已完成**；P0.5 验收未开始 | Web 档位控件 + 文档/模板 |
+| P0.* | P0.1–P0.4 **已完成（档位已简化删除）**；P0.5 验收未开始 | 全量拨号 + 质量选路 + 文档/模板 |
 | P1.* | P1.1/P1.2/P1.6–P1.8（单元）**已完成**；P0.5/P1.8b 现网验收、P1.3–P1.5 未开始 | 质量分 Flags 透参已接 |
 | P2.* | 未开始 | OSPF 多指标 / bonding 细节见专题文 |
 | P3.* | Backlog | |

@@ -80,7 +80,7 @@ network_secret = "change-me"
 
 [[peer]]
 uri = "tcp://example.net:11010"
-# Optional ordered fallbacks (443 is not always available):
+# Optional extra peers (443 is not always available; all stay connected):
 # [[peer]]
 # uri = "wss://relay.example.com:8443/et"
 # [[peer]]

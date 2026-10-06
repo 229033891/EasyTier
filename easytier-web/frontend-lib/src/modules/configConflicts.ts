@@ -124,10 +124,7 @@ export function isAdvancedFlagDisabled(config: NetworkConfig, field: keyof Netwo
   }
   if (
     config.p2p_only &&
-    (field === 'latency_first' ||
-      field === 'disable_relay_data' ||
-      field === 'prefer_peer_relay' ||
-      field === 'enable_relay_network_whitelist')
+    (field === 'latency_first' || field === 'enable_relay_network_whitelist')
   ) {
     return true
   }
@@ -156,12 +153,8 @@ export function advancedFlagConflictHelpKey(
   if (config.p2p_only && field === 'latency_first') {
     return 'p2p_only_blocks_latency_first_help'
   }
-  if (
-    config.p2p_only &&
-    (field === 'disable_relay_data' ||
-      field === 'prefer_peer_relay' ||
-      field === 'enable_relay_network_whitelist')
-  ) {
+  // prefer_peer_relay 后端休眠、不再展示；disable_relay_data 由基础设置正向开关驱动
+  if (config.p2p_only && field === 'enable_relay_network_whitelist') {
     return 'p2p_only_blocks_relay_help'
   }
   return null

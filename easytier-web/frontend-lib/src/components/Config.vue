@@ -7,9 +7,7 @@ import InputGroup from 'primevue/inputgroup'
 import InputGroupAddon from 'primevue/inputgroupaddon'
 import {
   addRow,
-  applyConnectionPathTier,
   CompressionAlgoPb,
-  ConnectionPathTier,
   DEFAULT_NETWORK_CONFIG,
   emptyDnsConfig,
   NetworkConfig,
@@ -229,18 +227,28 @@ interface BoolFlag {
   field: keyof NetworkConfig
   help: string
   group: AdvancedFlagGroup
+  /**
+   * 正向展示：勾选表示启用（本质是底层 `disable_*` 字段取反，后端语义不变）。
+   * 如 `disable_encryption` 展示为「启用加密」。
+   */
+  inverted?: {
+    inputId: string
+    label: string
+    help: string
+  }
 }
 
 const bool_flags: BoolFlag[] = [
   { field: 'latency_first', help: 'latency_first_help', group: 'connectivity' },
-  // disable_p2p / prefer_peer_relay: projected from connection_path_tier (P0.4 UI SoT)
+  // disable_p2p 是硬约束（政策/防火墙不允许直连），保留为高级开关
+  { field: 'disable_p2p', help: 'disable_p2p_help', group: 'connectivity' },
   { field: 'p2p_only', help: 'p2p_only_help', group: 'connectivity' },
   { field: 'lazy_p2p', help: 'lazy_p2p_help', group: 'connectivity' },
   { field: 'need_p2p', help: 'need_p2p_help', group: 'connectivity' },
   { field: 'enable_exit_node', help: 'enable_exit_node_help', group: 'connectivity' },
   { field: 'allow_peer_default_without_exit', help: 'allow_peer_default_without_exit_help', group: 'connectivity' },
   { field: 'relay_all_peer_rpc', help: 'relay_all_peer_rpc_help', group: 'connectivity' },
-  { field: 'disable_relay_data', help: 'disable_relay_data_help', group: 'connectivity' },
+  // disable_relay_data 由基础设置的「允许作为中转节点」正向开关驱动，不再列为高级开关
   { field: 'use_smoltcp', help: 'use_smoltcp_help', group: 'transport' },
   { field: 'enable_kcp_proxy', help: 'enable_kcp_proxy_help', group: 'transport' },
   { field: 'disable_kcp_input', help: 'disable_kcp_input_help', group: 'transport' },
@@ -251,14 +259,16 @@ const bool_flags: BoolFlag[] = [
   { field: 'disable_sym_hole_punching', help: 'disable_sym_hole_punching_help', group: 'transport' },
   { field: 'disable_upnp', help: 'disable_upnp_help', group: 'transport' },
   { field: 'enable_udp_broadcast_relay', help: 'enable_udp_broadcast_relay_help', group: 'transport' },
-  { field: 'disable_ipv6', help: 'disable_ipv6_help', group: 'system' },
+  { field: 'disable_ipv6', help: 'disable_ipv6_help', group: 'system',
+    inverted: { inputId: 'allow_ipv6', label: 'allow_ipv6', help: 'allow_ipv6_help' } },
   { field: 'ipv6_public_addr_auto', help: 'ipv6_public_addr_auto_help', group: 'system' },
   { field: 'bind_device', help: 'bind_device_help', group: 'system' },
   { field: 'no_tun', help: 'no_tun_help', group: 'system' },
   { field: 'multi_thread', help: 'multi_thread_help', group: 'system' },
   { field: 'proxy_forward_by_system', help: 'proxy_forward_by_system_help', group: 'system' },
   { field: 'enable_private_mode', help: 'enable_private_mode_help', group: 'security' },
-  { field: 'disable_encryption', help: 'disable_encryption_help', group: 'security' },
+  { field: 'disable_encryption', help: 'disable_encryption_help', group: 'security',
+    inverted: { inputId: 'allow_encryption', label: 'allow_encryption', help: 'allow_encryption_help' } },
 ]
 
 const advancedFlagGroups = computed(() => {
@@ -275,10 +285,27 @@ const advancedFlagGroups = computed(() => {
       .filter((flag) => flag.group === group.key && !isAdvancedFlagHidden(cfg, flag.field))
       .map((flag) => {
         const conflictHelp = advancedFlagConflictHelpKey(cfg, flag.field)
+        // 正向开关：勾选 = 启用（取反绑定），其余与普通开关一致
+        const model = flag.inverted
+          ? computed({
+              get: () => !(cfg[flag.field] as boolean),
+              set: (value: boolean) => {
+                ;(cfg as Record<string, unknown>)[flag.field] = !value
+              },
+            })
+          : computed({
+              get: () => cfg[flag.field] as boolean,
+              set: (value: boolean) => {
+                ;(cfg as Record<string, unknown>)[flag.field] = value
+              },
+            })
         return {
           ...flag,
+          inputId: flag.inverted?.inputId ?? flag.field,
+          labelKey: flag.inverted?.label ?? flag.field,
+          model,
           disabled: isAdvancedFlagDisabled(cfg, flag.field),
-          helpKey: conflictHelp ?? flag.help,
+          helpKey: conflictHelp ?? flag.inverted?.help ?? flag.help,
         }
       }),
   }))
@@ -287,6 +314,20 @@ const advancedFlagGroups = computed(() => {
 const conflictWarnings = computed(() => collectConfigConflictWarnings(curNetwork.value))
 
 const relayControlsDisabled = computed(() => !!curNetwork.value.p2p_only)
+/**
+ * 基础设置「允许作为中转节点」正向开关，本质是 `disable_relay_data` 取反。
+ * 默认勾选（与后端 `disable_relay_data: false` 一致）；老配置读入原值，仅提示不强改。
+ */
+const allowRelay = computed({
+  get: () => !curNetwork.value.disable_relay_data,
+  set: (value: boolean) => {
+    curNetwork.value.disable_relay_data = !value
+  },
+})
+/** p2p_only 下中转无意义：允许取消勾选（不再中转），禁止重新勾选 */
+const allowRelayDisabled = computed(
+  () => !!curNetwork.value.p2p_only && !!curNetwork.value.disable_relay_data,
+)
 const tunControlsDisabled = computed(() => !!curNetwork.value.no_tun)
 const ipv6ControlsHidden = computed(() => !!curNetwork.value.disable_ipv6)
 const encryptionAlgoHidden = computed(() => !!curNetwork.value.disable_encryption)
@@ -314,51 +355,6 @@ const defaultProtocolOptions = computed(() => {
   }
   return options
 })
-
-/** Path policy SoT; projects to disable_p2p / prefer_peer_relay. */
-const connectionPathTierOptions = computed(() => [
-  { value: ConnectionPathTier.DIRECT_FIRST, label: t('connection_path_tier_direct_first') },
-  { value: ConnectionPathTier.PREFER_RELAY, label: t('connection_path_tier_prefer_relay') },
-  { value: ConnectionPathTier.RELAY_ONLY, label: t('connection_path_tier_relay_only') },
-])
-
-function applyPathTier(tier: ConnectionPathTier) {
-  const next = applyConnectionPathTier(curNetwork.value, tier)
-  curNetwork.value.connection_path_tier = next.connection_path_tier
-  curNetwork.value.disable_p2p = next.disable_p2p
-  curNetwork.value.prefer_peer_relay = next.prefer_peer_relay
-  curNetwork.value.p2p_only = next.p2p_only
-}
-
-function onConnectionPathTierChange(tier: ConnectionPathTier | number | null | undefined) {
-  if (tier == null || tier === ConnectionPathTier.UNSPECIFIED) {
-    return
-  }
-  const target = tier as ConnectionPathTier
-  // Switching to a relay tier clears p2p_only (incompatible with "no relay").
-  // Never do that silently — ask first so legacy p2p_only isn't lost by a misclick.
-  if (
-    curNetwork.value.p2p_only &&
-    (target === ConnectionPathTier.PREFER_RELAY || target === ConnectionPathTier.RELAY_ONLY)
-  ) {
-    confirm.require({
-      message: t('p2p_only_relay_conflict_help'),
-      header: t('connection_path_tier'),
-      icon: 'pi pi-exclamation-triangle',
-      rejectProps: {
-        label: t('web.common.cancel'),
-        severity: 'secondary',
-        outlined: true,
-      },
-      acceptProps: {
-        label: t('web.common.confirm'),
-      },
-      accept: () => applyPathTier(target),
-    })
-    return
-  }
-  applyPathTier(target)
-}
 
 /** CompressionAlgoPb 取值来自 proto：None = 1、Zstd = 2、Invalid = 0（前端不展示 Invalid，未设置时按 None 处理） */
 const dataCompressAlgoOptions = [
@@ -570,22 +566,14 @@ function removeVpnPortalClient(index: number) {
               </div>
 
               <div class="flex flex-row gap-x-9 flex-wrap">
-                <div class="flex flex-col gap-2 basis-5/12 grow">
+                <div class="flex flex-col gap-2 basis-5/12 grow justify-end">
                   <div class="flex items-center">
-                    <label for="connection_path_tier">{{ t('connection_path_tier') }}</label>
+                    <Checkbox v-model="allowRelay" input-id="allow_relay" :binary="true"
+                      :disabled="allowRelayDisabled" />
+                    <label for="allow_relay" class="ml-2">{{ t('allow_relay_data') }}</label>
                     <i class="pi pi-question-circle config-help-tip ml-2" tabindex="0"
-                      v-tooltip.top="{ value: t('connection_path_tier_help'), escape: false }" role="img"></i>
+                      v-tooltip.top="{ value: t(allowRelayDisabled ? 'p2p_only_blocks_relay_help' : 'allow_relay_data_help'), escape: false }" role="img"></i>
                   </div>
-                  <Select
-                    id="connection_path_tier"
-                    :model-value="curNetwork.connection_path_tier ?? ConnectionPathTier.DIRECT_FIRST"
-                    :options="connectionPathTierOptions"
-                    option-label="label"
-                    option-value="value"
-                    fluid
-                    class="et-select"
-                    @update:model-value="onConnectionPathTierChange"
-                  />
                 </div>
               </div>
             </div>
@@ -625,12 +613,12 @@ function removeVpnPortalClient(index: number) {
                         :class="{ 'advanced-flag-item--disabled': flag.disabled }"
                       >
                         <Checkbox
-                          v-model="curNetwork[flag.field]"
-                          :input-id="flag.field"
+                          v-model="flag.model.value"
+                          :input-id="flag.inputId"
                           :binary="true"
                           :disabled="flag.disabled"
                         />
-                        <label :for="flag.field">{{ t(flag.field) }}</label>
+                        <label :for="flag.inputId">{{ t(flag.labelKey) }}</label>
                         <i class="pi pi-question-circle config-help-tip" tabindex="0"
                           v-tooltip.top="{ value: t(flag.helpKey), escape: false }"
                           :aria-label="t(flag.helpKey)" role="img"></i>

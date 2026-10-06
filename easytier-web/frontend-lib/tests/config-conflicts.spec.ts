@@ -58,7 +58,7 @@ describe('configConflicts', () => {
     expect(collectConfigConflictWarnings(config).some((w) => w.code === 'all_hole_punching_disabled')).toBe(true)
   })
 
-  it('blocks latency_first and relay flags under p2p_only when currently off', () => {
+  it('blocks latency_first and relay whitelist under p2p_only when currently off', () => {
     const config = {
       ...DEFAULT_NETWORK_CONFIG(),
       p2p_only: true,
@@ -68,8 +68,8 @@ describe('configConflicts', () => {
       enable_relay_network_whitelist: false,
     }
     expect(isAdvancedFlagDisabled(config, 'latency_first')).toBe(true)
-    expect(isAdvancedFlagDisabled(config, 'disable_relay_data')).toBe(true)
-    expect(isAdvancedFlagDisabled(config, 'prefer_peer_relay')).toBe(true)
+    // disable_relay_data 由基础设置正向开关驱动，不再走高级开关禁用分支
+    expect(isAdvancedFlagDisabled(config, 'disable_relay_data')).toBe(false)
     expect(isAdvancedFlagDisabled(config, 'enable_relay_network_whitelist')).toBe(true)
     expect(isAdvancedFlagDisabled(config, 'disable_p2p')).toBe(true)
     expect(advancedFlagConflictHelpKey(config, 'enable_relay_network_whitelist')).toBe(

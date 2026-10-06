@@ -55,10 +55,6 @@ where
             .unwrap_or_default()
     }
 
-    pub fn fallback_status(&self) -> Option<crate::connectivity::fallback::FallbackStatus> {
-        self.manual.as_ref().map(|manual| manual.fallback_status())
-    }
-
     pub fn running_listeners(&self) -> Vec<Url> {
         self.running_listeners.running_listeners()
     }

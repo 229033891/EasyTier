@@ -14,18 +14,8 @@ initial_nodes_help: |
   • tcp://relay.example.com:11010
   • wss://relay.example.com/et（省略端口时为 443）
   • wss://relay.example.com:8443/et 或 tcp://10.0.0.2:5000（自定义端口）
-  网络允许时可用 443，但许多环境会阻断 443 或只放行特定端口——请按中继实际监听地址填写。多条 URL 按顺序作为保底回落列表。
+  网络允许时可用 443，但许多环境会阻断 443 或只放行特定端口——请按中继实际监听地址填写。全部已配置地址都会维持连接，实际走哪条按延迟/抖动/丢包质量自动选择。
 initial_node_placeholder: 例如：tcp://relay.example.com:11010 或 wss://relay.example.com:8443/et
-connection_path_tier: 连接路径
-connection_path_tier_help: |-
-  如何使用「初始节点」有序 URL 列表作为保底 / 中继端点。
-  • 直连优先：优先打洞/直连；当前可用端点持续不可达时按列表升档拨号。
-  • 偏好中继：拨号全部已配置 peer URL；仍允许 P2P。
-  • 仅中继：不打洞；只走已配置的 peer URL 列表。
-  443 只是可选端口——请按中继实际监听地址填写，不假定只有 443 能通。
-connection_path_tier_direct_first: 直连优先
-connection_path_tier_prefer_relay: 偏好中继
-connection_path_tier_relay_only: 仅中继
 virtual_ipv4: 虚拟IPv4地址
 virtual_ipv4_dhcp: DHCP
 network_name: 网络名称
@@ -233,6 +223,11 @@ disable_ipv6_help: |-
   适合对端只支持 IPv4，或本机 IPv6 路由异常导致连不上时排查。
   注意：需要和网络内其他节点的设置保持一致，否则可能连不上。
 
+allow_ipv6: 启用 IPv6
+allow_ipv6_help: |-
+  勾选后本节点可使用 IPv6 通信（默认勾选）。
+  取消勾选等价于「禁用 IPv6」：只走 IPv4，适合对端无 IPv6 或本机 IPv6 异常时排查。
+
 ipv6_public_addr_auto: 自动获取公网 IPv6
 ipv6_public_addr_auto_help: |-
   自动向「共享了公网 IPv6 子网」的对等节点申请一个公网 IPv6 地址。
@@ -314,7 +309,14 @@ relay_all_peer_rpc_help: |-
 disable_relay_data: 禁止中转数据
 disable_relay_data_help: |
   禁止其他节点通过本节点转发业务流量（数据面中继）。
-  本节点仍可正常通信；开启后会向网络宣告 avoid_relay_data，使其他节点尽量不选本节点作为中继。
+  本节点仍可正常通信；开启后会向网络宣告 avoid_relay_data，算路时以极大代价避开本节点。
+  注意：仅算路避让，不丢包——收敛期间或无替代路径时到达的中转包仍会被正常转发。
+
+allow_relay_data: 允许作为中转节点
+allow_relay_data_help: |-
+  勾选后，其他节点可经由本节点中转业务流量（默认勾选）。
+  取消勾选等价于高级设置里的「禁止中转数据」：算路时会避开本节点，但收敛期间到达的中转包仍会被转发，不会丢包；适合只做终端的设备。
+  注意：开启「仅 P2P」时中转无意义，不可重新勾选。
 
 need_p2p: 需要 P2P
 need_p2p_help: |-
@@ -339,6 +341,11 @@ disable_encryption_help: |-
   关闭节点间通信的加密（默认开启）。
   适合在完全可信的内网里运行，换取一点 CPU 开销。
   注意：必须与网络内其他节点设置一致 —— 一边加密一边不加密会直接连不通；公网环境不要关闭。
+
+allow_encryption: 启用加密
+allow_encryption_help: |-
+  勾选后节点间通信加密（默认勾选）。
+  取消勾选等价于「禁用加密」：仅在完全可信的内网使用；必须全网一致，公网环境不要关闭。
 
 disable_tcp_hole_punching: 禁用TCP打洞
 disable_tcp_hole_punching_help: |-

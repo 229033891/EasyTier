@@ -210,19 +210,12 @@ enum ConnectorStatus {
 message Connector {
   common.Url url = 1;
   ConnectorStatus status = 2;
-  // Position in the ordered peer-URL fallback list (0-based).
-  optional uint32 fallback_index = 3;
-  // True when this URL is currently eligible to dial under connection_path_tier.
-  optional bool is_active_fallback = 4;
 }
 
 message ListConnectorRequest { InstanceIdentifier instance = 1; }
 
 message ListConnectorResponse {
   repeated Connector connectors = 1;
-  optional uint32 current_fallback_index = 2;
-  optional string fallback_reason = 3;
-  optional common.ConnectionPathTier connection_path_tier = 4;
 }
 
 service ConnectorManageRpc {

@@ -30,7 +30,6 @@ import {
 } from '../generated/proto/acl'
 import {
   CompressionAlgoPb,
-  ConnectionPathTier,
   NatType,
   type PeerFeatureFlag,
   type SecureModeConfig,
@@ -41,7 +40,7 @@ import {
   type ConfigConflictWarning,
 } from '../modules/configConflicts'
 
-export { AclAction, AclChainType, AclProtocol, CompressionAlgoPb, ConnectionPathTier, NatType, NetworkingMethod }
+export { AclAction, AclChainType, AclProtocol, CompressionAlgoPb, NatType, NetworkingMethod }
 export { VpnPortalClientState }
 export { collectConfigConflictWarnings }
 export type { ConfigConflictWarning }
@@ -154,8 +153,6 @@ export function DEFAULT_NETWORK_CONFIG(): NetworkConfig {
     encryption_algorithm: 'aes-gcm',
     data_compress_algo: CompressionAlgoPb.None,
     prefer_peer_relay: false,
-    /** Sole source of truth for path policy; projects to disable_p2p / prefer_peer_relay. */
-    connection_path_tier: ConnectionPathTier.DIRECT_FIRST,
     socket_mark: null,
     default_protocol: 'tcp',
     disable_tcp_hole_punching: false,
@@ -327,46 +324,9 @@ function applyNetworkingMethod(
 }
 
 /**
- * Infer / apply path-tier ↔ legacy flag projection for tip-only UI warnings.
- * Mirrors easytier-core `config::connection_path` (tier is SoT when set).
- */
-export function inferConnectionPathTier(config: NetworkConfig): ConnectionPathTier {
-  if (config.disable_p2p) return ConnectionPathTier.RELAY_ONLY
-  if (config.prefer_peer_relay) return ConnectionPathTier.PREFER_RELAY
-  return ConnectionPathTier.DIRECT_FIRST
-}
-
-export function applyConnectionPathTier(
-  config: NetworkConfig,
-  tier: ConnectionPathTier,
-): NetworkConfig {
-  const next = { ...config, connection_path_tier: tier }
-  switch (tier) {
-    case ConnectionPathTier.PREFER_RELAY:
-      next.disable_p2p = false
-      next.prefer_peer_relay = true
-      next.p2p_only = false
-      break
-    case ConnectionPathTier.RELAY_ONLY:
-      next.disable_p2p = true
-      next.prefer_peer_relay = true
-      next.p2p_only = false
-      break
-    case ConnectionPathTier.DIRECT_FIRST:
-    case ConnectionPathTier.UNSPECIFIED:
-    default:
-      next.disable_p2p = false
-      next.prefer_peer_relay = false
-      break
-  }
-  return next
-}
-
-/**
  * Normalize config for form / proto round-trip.
  * Does **not** rewrite mutually exclusive flags — call
  * {@link collectConfigConflictWarnings} for tip-only conflict alerts.
- * Resolves `connection_path_tier` when absent (infer from legacy path flags).
  */
 export function normalizeNetworkConfig(config: NetworkConfig): NetworkConfig {
   const normalized = NetworkConfigPb.fromJson(prepareNetworkConfigForProtoJson(config) as any, {
@@ -405,13 +365,6 @@ export function normalizeNetworkConfig(config: NetworkConfig): NetworkConfig {
     })
   }
   normalized.acl = config.acl === undefined ? undefined : normalizeAcl(normalized.acl)
-
-  const tierRaw = normalized.connection_path_tier as number | null | undefined
-  if (tierRaw == null || tierRaw === ConnectionPathTier.UNSPECIFIED) {
-    normalized.connection_path_tier = inferConnectionPathTier(normalized)
-  }
-  // Explicit tier is kept as-is (never rewritten here). Legacy-flag
-  // contradictions surface via collectConfigConflictWarnings (tip-only).
 
   return normalized
 }

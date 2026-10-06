@@ -51,16 +51,14 @@
 
 同 peer 多 PeerConn 的 `select_conn`（`peers/conn/conn_select.rs`）使用综合质量分（默认 `w_lat=1` / `w_loss=4` / `w_jitter=1`），丢包超过熔断阈值（默认 20%）时在有替代路径时禁止成为 `default_conn`；切换需相对边际（默认 10%）**且**绝对分差（默认 0.005）连续窗口（默认 2，配合 5s 缓存清空）。已关闭的 PeerConn 不参与选路。权重/阈值可通过 `flags.conn_select_*` 覆盖（百分制权重；0 = 默认）。
 
-### 2.2 路径档位与保底回落（今日）
+### 2.2 拨号与选路（今日：全量拨号 + 质量选路，无档位）
 
 | 项 | 今日 |
 |----|------|
-| **有序保底 URL** | 现有 `[[peer]]` / `peer_urls` / `public_server_url`（完整 tunnel URL） |
-| **档位 SoT** | `flags.connection_path_tier`：`DirectFirst` / `PreferRelay` / `RelayOnly` |
-| **老开关** | `disable_p2p` / `prefer_peer_relay` 为档位投影；`p2p_only` 正交；见 `config/connection_path.rs` |
-| **回落编排** | `connectivity/fallback::FallbackController`：DirectFirst 按 `0..=index` 拨号并 hysteresis 升档；PreferRelay/RelayOnly 拨全量列表；状态见 `current_fallback_index` / `fallback_reason` |
-| **PreferRelay 打洞** | `prefer_peer_relay` 并入背景打洞的 `lazy_p2p` 语义（减少主动打洞；有业务流量仍可动态尝试） |
-| **Web 档位控件** | `Config.vue` → `connection_path_tier` Select（投影 `disable_p2p` / `prefer_peer_relay`） |
+| **初始节点 URL** | `[[peer]]` / `peer_urls` / `public_server_url`（完整 tunnel URL），全部恒维持连接 |
+| **硬约束** | `disable_p2p`（不主动直连）/ `p2p_only`（绝不中转）/ 允许中转开关；`prefer_peer_relay` 后端休眠 |
+| **选优** | 同 peer 按 `select_conn` 综合质量分；对端间按 OSPF 代价；`lazy_p2p` 减少无业务时的背景打洞 |
+| **Web 控件** | `Config.vue` 基础设置「允许作为中转节点」；`disable_p2p` 在高级设置 |
 
 示例（有序列表；**443 不一定可用**，按实际可达端口填写）：
 

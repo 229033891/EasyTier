@@ -144,7 +144,7 @@ sudo easytier-core -d --network-name abc --network-secret abc -p tcp://<公共�
 -p wss://relay.example.com/et
 ```
 
-多条 `-p` / `[[peer]]` 按顺序作为保底回落列表。
+多条 `-p` / `[[peer]]` 会全部维持连接，实际走哪条按延迟/抖动/丢包质量自动选择。
 
 #### 去中心化组网
 

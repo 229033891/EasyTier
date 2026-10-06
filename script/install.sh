@@ -254,7 +254,7 @@ rpc_portal = "0.0.0.0:0"
 
 [[peer]]
 uri = "tcp://public.easytier.top:11010"
-# Ordered fallback examples (uncomment / replace with your reachable relay):
+# Extra peer examples (uncomment / replace with your reachable relay; all stay connected):
 # [[peer]]
 # uri = "wss://relay.example.com:8443/et"   # custom port — 443 is not always available
 # [[peer]]
