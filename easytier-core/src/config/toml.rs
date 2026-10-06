@@ -832,7 +832,13 @@ impl TomlConfig {
             _ => serde_json::Map::new(),
         };
         merged_hashmap.extend(flags_hashmap);
-        serde_json::from_value(serde_json::Value::Object(merged_hashmap))
+        let mut flags: Flags = serde_json::from_value(serde_json::Value::Object(merged_hashmap))?;
+        // Listener schemes are lowercase; normalize so hand-written "TCP"/"UDP" still match.
+        flags.default_protocol = flags.default_protocol.trim().to_ascii_lowercase();
+        if flags.default_protocol.is_empty() {
+            flags.default_protocol = gen_default_flags().default_protocol;
+        }
+        Ok(flags)
     }
 }
 
@@ -1339,6 +1345,22 @@ socket_mark = 0
         assert_eq!(restored.get_listener_uris(), config.get_listener_uris());
         assert_eq!(restored.get_flags().mtu, 1420);
         assert_eq!(restored.get_flags().socket_mark, Some(0));
+    }
+
+    #[test]
+    fn toml_default_protocol_is_normalized_to_lowercase() {
+        let cfg = TomlConfig::new_from_str(
+            r#"
+[network_identity]
+network_name = "network-a"
+network_secret = "secret-a"
+
+[flags]
+default_protocol = "TCP"
+"#,
+        )
+        .unwrap();
+        assert_eq!(cfg.get_flags().default_protocol, "tcp");
     }
 
     #[test]

@@ -164,6 +164,8 @@ pub fn network_config_from_toml(config: &TomlConfig) -> NetworkConfig {
     result.encryption_algorithm = (flags.encryption_algorithm
         != default_flags.encryption_algorithm)
         .then_some(flags.encryption_algorithm);
+    result.default_protocol = (flags.default_protocol != default_flags.default_protocol)
+        .then_some(flags.default_protocol);
     result.instance_recv_bps_limit =
         (flags.instance_recv_bps_limit != u64::MAX).then_some(flags.instance_recv_bps_limit);
     result.enable_private_mode = Some(flags.private_mode);

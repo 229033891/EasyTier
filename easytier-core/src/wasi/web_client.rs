@@ -129,6 +129,7 @@ fn hosted_network_config(config: &NetworkConfig) -> NetworkConfig {
         prefer_peer_relay: config.prefer_peer_relay,
         enable_udp_broadcast_relay: config.enable_udp_broadcast_relay,
         allow_peer_default_without_exit: config.allow_peer_default_without_exit,
+        default_protocol: config.default_protocol.clone(),
         managed_credentials: config.managed_credentials.clone(),
         peers,
         ..Default::default()

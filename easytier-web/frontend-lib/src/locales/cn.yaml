@@ -369,6 +369,12 @@ prefer_peer_relay_help: |-
   适合直连边很多、但大部分流量其实可以复用已有路径的网络，能减少控制面的路由信息量。
   注意：只影响与已有凭据对端之间的路径选择，不改变总的中继行为。
 
+default_protocol: 默认连接协议
+default_protocol_help: |-
+  建立对等直连时优先尝试的底层协议。可选 TCP（默认）或 UDP。
+  适合已知某一协议更稳、或想优先走 UDP 低延迟路径的场景。
+  注意：对端需要开放对应监听；优先协议连不上时仍会继续尝试其他可用协议。
+
 encryption_algorithm: 加密算法
 encryption_algorithm_help: |-
   节点间数据加密使用的算法。可选：aes-gcm（默认）、aes-256-gcm、chacha20、xor。

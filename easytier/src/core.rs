@@ -1283,7 +1283,10 @@ impl NetworkOptions {
 
         let mut f = cfg.get_flags();
         if let Some(default_protocol) = &self.default_protocol {
-            f.default_protocol = default_protocol.clone()
+            let normalized = default_protocol.trim().to_ascii_lowercase();
+            if !normalized.is_empty() {
+                f.default_protocol = normalized;
+            }
         };
         if let Some(v) = self.disable_encryption {
             f.enable_encryption = !v;

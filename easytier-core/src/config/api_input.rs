@@ -153,6 +153,7 @@ const FORM_MANAGED_FLAG_FIELDS: &[&str] = &[
     "private_mode",
     "encryption_algorithm",
     "data_compress_algo",
+    "default_protocol",
 ];
 
 #[cfg(all(
@@ -625,6 +626,13 @@ impl NetworkConfigExt for NetworkConfig {
             flags.encryption_algorithm = encryption_algorithm;
         }
 
+        if let Some(default_protocol) = self.default_protocol.clone() {
+            let normalized = default_protocol.trim().to_ascii_lowercase();
+            if !normalized.is_empty() {
+                flags.default_protocol = normalized;
+            }
+        }
+
         if let Some(acl) = self.acl.as_ref()
             && !acl.is_empty()
         {
@@ -811,6 +819,8 @@ impl NetworkConfigExt for NetworkConfig {
         result.encryption_algorithm = (flags.encryption_algorithm
             != default_flags.encryption_algorithm)
             .then_some(flags.encryption_algorithm.clone());
+        result.default_protocol = (flags.default_protocol != default_flags.default_protocol)
+            .then_some(flags.default_protocol.clone());
         result.instance_recv_bps_limit =
             (flags.instance_recv_bps_limit != u64::MAX).then_some(flags.instance_recv_bps_limit);
         result.enable_private_mode = Some(flags.private_mode);

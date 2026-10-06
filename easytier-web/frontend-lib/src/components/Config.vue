@@ -278,6 +278,19 @@ const encryptionAlgoOptions = [
   { value: 'xor', label: 'xor' },
 ]
 
+/** Direct-connect scheme preference (`flags.default_protocol`); UDP is also sorted ahead of other non-default schemes. */
+const defaultProtocolOptions = computed(() => {
+  const options = [
+    { value: 'tcp', label: 'TCP' },
+    { value: 'udp', label: 'UDP' },
+  ]
+  const current = curNetwork.value.default_protocol
+  if (current && !options.some((o) => o.value === current)) {
+    options.unshift({ value: current, label: current })
+  }
+  return options
+})
+
 /** CompressionAlgoPb 取值来自 proto：None = 1、Zstd = 2、Invalid = 0（前端不展示 Invalid，未设置时按 None 处理） */
 const dataCompressAlgoOptions = [
   { value: CompressionAlgoPb.None, label: 'none' },
@@ -739,6 +752,19 @@ function removeVpnPortalClient(index: number) {
                   <InputText id="ipv6_public_addr_prefix" v-model="curNetwork.ipv6_public_addr_prefix"
                     :placeholder="t('ipv6_public_addr_prefix_placeholder')" fluid
                     aria-describedby="ipv6_public_addr_prefix-help" />
+                </div>
+
+                <div class="config-inline-field">
+                  <div class="config-inline-label flex items-center gap-1">
+                    <label for="default_protocol">{{ t('default_protocol') }}</label>
+                    <i class="pi pi-question-circle config-help-tip" tabindex="0"
+                      v-tooltip.top="{ value: t('default_protocol_help'), escape: false }" role="img"></i>
+                  </div>
+                  <div class="config-inline-control">
+                    <Select id="default_protocol" v-model="curNetwork.default_protocol"
+                      :options="defaultProtocolOptions" option-label="label" option-value="value" fluid
+                      class="et-select" />
+                  </div>
                 </div>
 
                 <div class="config-inline-field">

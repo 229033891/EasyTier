@@ -148,6 +148,7 @@ export function DEFAULT_NETWORK_CONFIG(): NetworkConfig {
     data_compress_algo: CompressionAlgoPb.None,
     prefer_peer_relay: false,
     socket_mark: null,
+    default_protocol: 'tcp',
     disable_tcp_hole_punching: false,
     disable_udp_hole_punching: false,
     disable_upnp: false,
@@ -329,6 +330,7 @@ export function normalizeNetworkConfig(config: NetworkConfig): NetworkConfig {
   normalized.data_compress_algo =
     (normalized.data_compress_algo ?? 0) < 1 ? CompressionAlgoPb.None : normalized.data_compress_algo
   normalized.encryption_algorithm = normalized.encryption_algorithm || 'aes-gcm'
+  normalized.default_protocol = normalized.default_protocol || 'tcp'
   normalized.instance_recv_bps_limit = normalizeUint64ForInput(
     normalized.instance_recv_bps_limit as any,
   )

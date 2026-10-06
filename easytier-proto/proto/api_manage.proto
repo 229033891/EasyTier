@@ -111,6 +111,9 @@ message NetworkConfig {
   // DNS policy: static hosts / split forwarders / upstream (see docs/roadmap/dns-policy.md).
   // Older clients ignore this field; behavior degrades to pre-policy MagicDNS.
   optional DnsConfig dns_config = 74;
+  // Prefer this underlay scheme when establishing a direct peer connection
+  // (e.g. "tcp", "udp"). Default is "tcp".
+  optional string default_protocol = 75;
 }
 
 message DnsHostEntry {
