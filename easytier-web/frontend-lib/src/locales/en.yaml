@@ -24,7 +24,7 @@ public_server_url: Public Server URL
 peer_urls: Peer URLs
 proxy_cidrs: Subnet Proxy
 proxy_cidrs_help: |-
-  Subnet proxy CIDRs: the local subnets this host will proxy, so peers can reach them through the virtual network.
+  Subnet proxy: the local subnets this host will proxy, so peers can reach them through the virtual network.
   Format: CIDR, e.g. 10.0.0.0/24. Multiple entries allowed.
   Note: when using No TUN Mode or manual routes, make sure the peer has a matching return route, otherwise traffic won't flow.
 vpn_portal_wireguard_listen: WireGuard Listen Address
