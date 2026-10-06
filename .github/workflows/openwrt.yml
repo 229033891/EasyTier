@@ -181,6 +181,40 @@ jobs:
           )
           print(f"EASYTIER_VERSION={ver}")
 
+          # Feed Makefiles use:
+          #   -include $(dir $(lastword $(MAKEFILE_LIST)))../version.mk
+          #   PKG_VERSION:=$(or $(EASYTIER_VERSION),2.6.4)
+          # Inside openwrt/gh-action-sdk, MAKEFILE_LIST no longer points at the
+          # package Makefile when those lines expand, so the relative include
+          # misses and PKG_VERSION silently falls back to 2.6.4 (package name /
+          # opkg Version disagree with the freshly built 2.7.x binary).
+          # Pin absolute include + concrete PKG_VERSION under /feed mount.
+          for mk in pathlib.Path("feed").rglob("Makefile"):
+              text = mk.read_text()
+              orig = text
+              text = re.sub(
+                  r"^-include\s+\$\(dir\s+\$\(lastword\s+\$\(MAKEFILE_LIST\)\)\)\.\./version\.mk\s*$",
+                  "-include /feed/version.mk",
+                  text,
+                  flags=re.M,
+              )
+              text = re.sub(
+                  r"^PKG_VERSION:=\$\(or\s+\$\(EASYTIER_VERSION\),[^)]+\)\s*$",
+                  f"PKG_VERSION:={ver}",
+                  text,
+                  flags=re.M,
+              )
+              if text != orig:
+                  mk.write_text(text)
+                  print(f"patched version pins in {mk.as_posix()}")
+
+          pinned = list(pathlib.Path("feed").rglob("Makefile"))
+          if not any(f"PKG_VERSION:={ver}" in p.read_text() for p in pinned):
+              raise SystemExit(
+                  f"failed to pin PKG_VERSION:={ver} in feed Makefiles; "
+                  "refusing to build with stale fallback version"
+              )
+
           # easytier 包默认从 GitHub Release 下载旧二进制, 改成用本地现编译的.
           # EASYTIER_FEED_DIR must be an absolute path under the SDK FEED_DIR mount
           # (/feed/...). Using $(dir $(lastword $(MAKEFILE_LIST))) breaks because by
@@ -200,10 +234,11 @@ jobs:
               "endef"
           )
           mk.write_text(text[:old_start] + new_block + text[old_end:])
-          print("patched feed/easytier/Makefile")
+          print("patched feed/easytier/Makefile Build/Prepare")
           EOF
           ls -l feed/easytier/bins/
           cat feed/version.mk
+          grep -nE '^(PKG_VERSION|-include)' feed/easytier/Makefile feed/luci-app-easytier/Makefile
           grep -A8 'Build/Prepare' feed/easytier/Makefile
 
       - name: Prepare output dir (SDK action 会 chown 该目录, 不存在会直接失败)
@@ -229,6 +264,12 @@ jobs:
           ls -l dist/
           # ipk 用下划线 (easytier_1.2.3_x86_64.ipk)；apk 用连字符 (easytier-1.2.3.apk)
           pkg="${{ matrix.pkgtype }}"
+          ver="$(python3 - <<'PY'
+          import re, pathlib
+          cargo = pathlib.Path("easytier-src/easytier/Cargo.toml").read_text()
+          print(re.search(r'^version\s*=\s*"([^"]+)"', cargo, re.M).group(1))
+          PY
+          )"
           shopt -s nullglob
           easytier=(dist/easytier_*.${pkg} dist/easytier-*.${pkg})
           luci=(dist/luci-app-easytier_*.${pkg} dist/luci-app-easytier-*.${pkg})
@@ -238,6 +279,18 @@ jobs:
           (( ${#easytier[@]} > 0 )) || { echo "missing easytier .${pkg}"; ls -l dist/; exit 1; }
           (( ${#luci[@]} > 0 )) || { echo "missing luci-app-easytier .${pkg}"; ls -l dist/; exit 1; }
           (( ${#i18n[@]} > 0 )) || { echo "missing luci-i18n-easytier-zh-cn .${pkg}"; ls -l dist/; exit 1; }
+          # Guard against the old MAKEFILE_LIST include bug silently baking 2.6.4.
+          for f in "${easytier[@]}" "${luci[@]}"; do
+            case "$f" in
+              *"_${ver}"*|"*-${ver}"*|*"_${ver}-"*|"*-${ver}-"*) ;;
+              *)
+                echo "package version mismatch: expected ${ver} in $(basename "$f")"
+                ls -l dist/
+                exit 1
+                ;;
+            esac
+          done
+          echo "openwrt package version ok: ${ver}"
 
       - name: Archive packages
         uses: actions/upload-artifact@v5
