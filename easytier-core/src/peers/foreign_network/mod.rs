@@ -1495,14 +1495,15 @@ impl ForeignNetworkPacketRouter {
                 );
             } else {
                 if is_relay_data_packet_type(packet_type) {
-                    let disable_relay_data = parent_context.disable_relay_data();
-                    if !relay_data || disable_relay_data {
+                    // Network not permitted to relay through this node: drop.
+                    // Parent `disable_relay_data` is avoid-only (OSPF AVOID_RELAY_COST);
+                    // do not hard-drop here — same policy as PeerManager::run.
+                    if !relay_data {
                         tracing::debug!(
                             ?from_peer_id,
                             ?to_peer_id,
                             packet_type,
-                            disable_relay_data,
-                            "drop foreign network relay data"
+                            "drop foreign network relay data (relay not permitted)"
                         );
                         continue;
                     }

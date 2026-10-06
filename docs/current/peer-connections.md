@@ -59,7 +59,7 @@
 | 项 | 今日 |
 |----|------|
 | **初始节点 URL** | `[[peer]]` / `peer_urls` / `public_server_url`（完整 tunnel URL），全部恒维持连接 |
-| **硬约束** | `disable_p2p`（不主动直连）/ `p2p_only`（绝不中转）/ 允许中转开关 |
+| **硬约束** | `disable_p2p`（不主动直连）/ `p2p_only`（绝不中转）/ 允许中转开关（`disable_relay_data` 取反：**仅 OSPF 避让，不硬丢包**） |
 | **遗留可选** | `prefer_peer_relay`：UI 隐藏；**不**抑制打洞；仅 TOML 可启用 OSPF 对端中继拓扑投影（与质量分正交） |
 | **选优** | 同 peer 按 `select_conn` 综合质量分（RTT+loss+jitter）；对端间 OSPF 由 `latency_first`（质量优先选路）在 LeastHop / LeastCost 间切换，LeastCost 边代价同源编码进 `latency_ms`；`lazy_p2p` 减少无业务时的背景打洞 |
 | **Web 控件** | `Config.vue` 基础设置「允许作为中转节点」；高级设置「质量优先选路」(`latency_first`)；`disable_p2p` 在高级设置 |

@@ -4659,10 +4659,13 @@ pub async fn config_patch_disable_relay_data_test() {
             true
         },
     );
-    assert!(
-        !ping_test("net_a", "10.144.144.3", None).await,
-        "traffic from inst1 to inst3 should be blocked while inst2 relay data is disabled"
-    );
+    // Sole-path topology: avoid_relay_data raises OSPF cost but does not hard-drop.
+    // Traffic that still arrives for forwarding must succeed.
+    wait_for_condition(
+        || async { ping_test("net_a", "10.144.144.3", None).await },
+        Duration::from_secs(5),
+    )
+    .await;
 
     insts[1]
         .get_config_patcher()
