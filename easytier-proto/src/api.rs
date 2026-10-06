@@ -108,6 +108,7 @@ pub mod instance {
                 peer_identity_type: value.peer_identity_type,
                 quality_score: value.quality_score,
                 quality_fused: value.quality_fused,
+                unverified_hole_punch: value.unverified_hole_punch,
             }
         }
     }

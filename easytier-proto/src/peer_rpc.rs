@@ -110,7 +110,9 @@ impl From<RouteConnPeerList> for sync_route_info_request::ConnInfo {
 #[cfg(feature = "api")]
 impl From<Vec<crate::api::instance::PeerInfo>> for PeerInfoForGlobalMap {
     fn from(peers: Vec<crate::api::instance::PeerInfo>) -> Self {
-        use crate::config::{ospf_edge_cost_from_score, OSPF_EDGE_COST_MAX, OSPF_FUSE_COST_BONUS};
+        // Keep encoding in sync with easytier-core `conn_select::ospf_edge_cost_from_score`.
+        const FUSE_BONUS: i32 = 10_000;
+        const COST_MAX: i32 = 1_000_000;
 
         let mut peer_map = BTreeMap::new();
         for peer in peers {
@@ -131,9 +133,9 @@ impl From<Vec<crate::api::instance::PeerInfo>> for PeerInfoForGlobalMap {
                         (stats.latency_us / 1000) as i32
                     };
                     if conn.quality_fused {
-                        cost = cost.saturating_add(OSPF_FUSE_COST_BONUS);
+                        cost = cost.saturating_add(FUSE_BONUS);
                     }
-                    Some(cost.clamp(1, OSPF_EDGE_COST_MAX))
+                    Some(cost.clamp(1, COST_MAX))
                 })
                 .min()
             else {

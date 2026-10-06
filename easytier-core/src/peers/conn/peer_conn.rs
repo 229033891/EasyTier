@@ -1539,9 +1539,10 @@ impl PeerConn {
                 .as_ref()
                 .map(|x| x.peer_identity_type as i32)
                 .unwrap_or(PeerIdentityType::Admin as i32),
-            // Filled by Peer::list_peer_conns for status observability (P2.1).
+            // Filled by Peer::list_peer_conns for status observability (P2.1 / P2.3).
             quality_score: 0.0,
             quality_fused: false,
+            unverified_hole_punch: false,
         }
     }
 
