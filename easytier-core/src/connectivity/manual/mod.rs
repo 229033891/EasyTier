@@ -473,12 +473,15 @@ where
 
     pub fn add_connector(&self, url: Url) -> anyhow::Result<()> {
         validate_manual_url(&url)?;
+        // Decide pin vs prefix-add before taking state_lock so we never nest
+        // state_lock → task (stop briefly takes task; keep lock order acyclic).
+        let pin = self.is_running();
         let _state_guard = lock(&self.data.state.state_lock);
         self.data.state.removed.remove(&url);
         // Initial peer URLs are registered before `start()` and stay behind the
         // DirectFirst fallback prefix. Runtime adds (after start) must dial
         // immediately — pin so recover shrink cannot strand them.
-        if self.is_running() {
+        if pin {
             self.data.fallback.pin_url(url.clone());
         } else {
             self.data.fallback.add_url(url.clone());

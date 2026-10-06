@@ -101,34 +101,44 @@ impl FallbackController {
     /// Append `url` and keep it dialable under DirectFirst regardless of index.
     /// Used for runtime `add_connector` after ManualConnector has started.
     pub fn pin_url(&self, url: Url) {
-        self.add_url(url.clone());
+        // Lock order: `ordered` before `pinned`.
+        {
+            let mut ordered = lock(&self.ordered);
+            if !ordered.iter().any(|existing| existing == &url) {
+                ordered.push(url.clone());
+            }
+        }
         lock(&self.pinned).insert(url);
     }
 
     pub fn remove_url(&self, url: &Url) {
-        lock(&self.pinned).remove(url);
-        let mut ordered = lock(&self.ordered);
-        if let Some(pos) = ordered.iter().position(|existing| existing == url) {
-            ordered.remove(pos);
-            let cur = self.index.load(Ordering::Relaxed);
-            let new_idx = if ordered.is_empty() {
-                0
-            } else if pos < cur {
-                // List shifted left; keep pointing at the same logical URL.
-                cur - 1
-            } else if pos == cur {
-                // Removed the active entry; stay at this slot (next URL) or clamp.
-                cur.min(ordered.len() - 1)
-            } else {
-                cur.min(ordered.len() - 1)
-            };
-            self.index.store(new_idx, Ordering::Relaxed);
-            self.unhealthy_ticks.store(0, Ordering::Relaxed);
-            self.healthy_ticks.store(0, Ordering::Relaxed);
+        // Lock order: `ordered` before `pinned` (never nest the reverse).
+        {
+            let mut ordered = lock(&self.ordered);
+            if let Some(pos) = ordered.iter().position(|existing| existing == url) {
+                ordered.remove(pos);
+                let cur = self.index.load(Ordering::Relaxed);
+                let new_idx = if ordered.is_empty() {
+                    0
+                } else if pos < cur {
+                    // List shifted left; keep pointing at the same logical URL.
+                    cur - 1
+                } else if pos == cur {
+                    // Removed the active entry; stay at this slot (next URL) or clamp.
+                    cur.min(ordered.len() - 1)
+                } else {
+                    cur.min(ordered.len() - 1)
+                };
+                self.index.store(new_idx, Ordering::Relaxed);
+                self.unhealthy_ticks.store(0, Ordering::Relaxed);
+                self.healthy_ticks.store(0, Ordering::Relaxed);
+            }
         }
+        lock(&self.pinned).remove(url);
     }
 
     pub fn clear(&self) {
+        // Lock order: `ordered` before `pinned`, then `reason` alone.
         lock(&self.ordered).clear();
         lock(&self.pinned).clear();
         self.index.store(0, Ordering::Relaxed);
@@ -166,7 +176,9 @@ impl FallbackController {
 
     /// URLs that ManualConnector may dial / reconnect for this tier.
     pub fn eligible_urls(&self, tier: ConnectionPathTier) -> HashSet<Url> {
-        let ordered = lock(&self.ordered);
+        // Snapshot without nesting locks: never hold `ordered` while taking `pinned`
+        // (remove_url / clear use ordered-then-pinned; nesting the reverse deadlocks).
+        let ordered = lock(&self.ordered).clone();
         if ordered.is_empty() {
             return HashSet::new();
         }
@@ -179,7 +191,7 @@ impl FallbackController {
                 self.index.load(Ordering::Relaxed).min(ordered.len() - 1)
             }
         };
-        let mut eligible: HashSet<Url> = ordered.iter().take(max_idx + 1).cloned().collect();
+        let mut eligible: HashSet<Url> = ordered.into_iter().take(max_idx + 1).collect();
         // Pinned URLs stay dialable even when DirectFirst index has not reached them.
         eligible.extend(lock(&self.pinned).iter().cloned());
         eligible
