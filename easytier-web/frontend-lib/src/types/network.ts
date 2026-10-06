@@ -505,6 +505,10 @@ export interface PeerConnInfo {
   tunnel?: TunnelInfo
   stats?: PeerConnStats
   loss_rate?: number | string
+  /** Lower is better; same formula as core select_conn (P2.1). */
+  quality_score?: number
+  /** Loss above fuse threshold (may still be default if all paths fused). */
+  quality_fused?: boolean
 }
 
 export interface PeerRoutePair {

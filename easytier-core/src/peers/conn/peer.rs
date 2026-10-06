@@ -287,17 +287,51 @@ impl Peer {
             conns.push(conn.clone());
         }
 
-        let mut ret = Vec::new();
+        let cfg = ConnSelectConfig::from_flags(&self.context.flags());
+        let mut live: Vec<(uuid::Uuid, ArcPeerConn, PeerConnInfo)> = Vec::new();
         for conn in conns {
             let info = conn.get_conn_info();
-            if !info.is_closed {
-                ret.push(info);
-            } else {
+            if info.is_closed {
                 let conn_id = info.conn_id.parse().unwrap();
                 let _ = self.close_peer_conn(&conn_id).await;
+                continue;
             }
+            let Ok(conn_id) = info.conn_id.parse::<uuid::Uuid>() else {
+                continue;
+            };
+            live.push((conn_id, conn, info));
         }
-        ret
+
+        // Attach the same quality score/fuse flags used by select_conn so the
+        // status surface can explain why a path is (or is not) default_conn.
+        let scored: Vec<_> = live
+            .iter()
+            .map(|(conn_id, conn, _)| {
+                let stats = conn.get_stats();
+                score_conn(
+                    &ConnMetrics {
+                        conn_id: *conn_id,
+                        latency_us: stats.latency_us,
+                        loss_rate: conn.loss_rate(),
+                        jitter_us: stats.jitter_us,
+                        is_hole_punched: conn.is_hole_punched(),
+                    },
+                    cfg,
+                )
+            })
+            .collect();
+        let by_id: std::collections::HashMap<_, _> =
+            scored.iter().map(|s| (s.conn_id, *s)).collect();
+
+        live.into_iter()
+            .map(|(conn_id, _, mut info)| {
+                if let Some(s) = by_id.get(&conn_id) {
+                    info.quality_score = s.score as f32;
+                    info.quality_fused = s.fused;
+                }
+                info
+            })
+            .collect()
     }
 
     pub fn has_live_conns(&self) -> bool {

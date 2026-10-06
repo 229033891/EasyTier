@@ -4,6 +4,8 @@ import {
   jitterMs,
   latencyMs,
   lossRate,
+  pathQualityCell,
+  pathQualityTip,
 } from '../src/modules/statusDisplay'
 import { ipv4ToString, ipv6ToString } from '../src/modules/utils'
 
@@ -95,6 +97,47 @@ describe('status display helpers', () => {
 
     expect(latencyMs(peerRoutePairWithDefaultConn(conns, defaultConnId))).toBe('9ms')
     expect(lossRate(peerRoutePairWithDefaultConn(conns, defaultConnId))).toBe('50%')
+  })
+
+  it('summarizes path quality with default score and standby count', () => {
+    const defaultConnId = '00000001-0002-0003-0004-000000000005'
+    const conns = [
+      {
+        conn_id: 'standby',
+        tunnel: { tunnel_type: 'tcp' },
+        stats: { latency_us: '2000', jitter_us: '500' },
+        loss_rate: '0.01',
+        quality_score: 0.1,
+        quality_fused: false,
+      },
+      {
+        conn_id: defaultConnId,
+        tunnel: { tunnel_type: 'udp' },
+        stats: { latency_us: '9000', jitter_us: '1000' },
+        loss_rate: '0.02',
+        quality_score: 0.042,
+        quality_fused: false,
+      },
+    ]
+    const pair = peerRoutePairWithDefaultConn(conns, defaultConnId)
+    expect(pathQualityCell(pair)).toBe('0.042 · +1')
+    expect(pathQualityTip(pair)).toContain('★ udp score=0.042')
+    expect(pathQualityTip(pair)).toContain('· tcp score=0.100')
+  })
+
+  it('marks fused default_conn in the quality cell', () => {
+    const defaultConnId = '00000001-0002-0003-0004-000000000005'
+    const pair = peerRoutePairWithDefaultConn([
+      {
+        conn_id: defaultConnId,
+        tunnel: { tunnel_type: 'udp' },
+        stats: { latency_us: '1000' },
+        loss_rate: '0.5',
+        quality_score: 2.1,
+        quality_fused: true,
+      },
+    ], defaultConnId)
+    expect(pathQualityCell(pair)).toBe('2.100!')
   })
 
   it('detects meaningful proxy CIDR route sync summaries', () => {

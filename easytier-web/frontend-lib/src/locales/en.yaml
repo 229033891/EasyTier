@@ -192,6 +192,10 @@ tunnel_proto: Protocol
 peer_addr: Peer Address
 hostname: Hostname
 latency: Latency
+path_quality: Quality
+path_quality_help: |-
+  Composite same-peer path score (lower is better: RTT + loss + jitter).
+  ★ is the current default_conn; · are hot standbys. `!` means loss exceeded the fuse; `+N` is extra standby count.
 upload_bytes: Upload
 download_bytes: Download
 loss_rate: Loss Rate

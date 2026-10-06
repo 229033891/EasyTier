@@ -106,6 +106,8 @@ pub mod instance {
                 noise_remote_static_pubkey: value.noise_remote_static_pubkey,
                 secure_auth_level: value.secure_auth_level,
                 peer_identity_type: value.peer_identity_type,
+                quality_score: value.quality_score,
+                quality_fused: value.quality_fused,
             }
         }
     }

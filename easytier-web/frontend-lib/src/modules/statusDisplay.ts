@@ -350,6 +350,79 @@ export function jitterMs(info: PeerRoutePair) {
   return ''
 }
 
+export type ConnQualityLine = {
+  /** Tunnel type label, e.g. udp / tcp */
+  proto: string
+  /** True when this conn is PeerInfo.default_conn_id */
+  isDefault: boolean
+  /** Lower is better; undefined if backend omitted score */
+  score?: number
+  fused: boolean
+  latencyMs?: number
+  jitterMs?: number
+  lossPct?: number
+  remote?: string
+}
+
+function oneConnProto(tunnel?: { tunnel_type?: string }): string {
+  return tunnel?.tunnel_type || '?'
+}
+
+/** Per-conn quality rows for status tooltips / path analysis (P2.1). */
+export function connQualityLines(info: PeerRoutePair): ConnQualityLine[] {
+  const preferId = defaultConnId(info)
+  return defaultConnFirst(info).map((conn) => {
+    const latencyUs = numericValue(conn.stats?.latency_us)
+    const jitterUs = numericValue(conn.stats?.jitter_us)
+    const loss = numericValue(conn.loss_rate)
+    const score = typeof conn.quality_score === 'number' && Number.isFinite(conn.quality_score)
+      ? conn.quality_score
+      : undefined
+    return {
+      proto: oneConnProto(conn.tunnel),
+      isDefault: !!preferId && conn.conn_id === preferId,
+      score,
+      fused: !!conn.quality_fused,
+      latencyMs: latencyUs === undefined ? undefined : Math.ceil(latencyUs / 1000),
+      jitterMs: jitterUs === undefined ? undefined : Math.ceil(jitterUs / 1000),
+      lossPct: loss === undefined ? undefined : Math.round(loss * 100),
+      remote: conn.tunnel?.remote_addr?.url,
+    }
+  })
+}
+
+/** Compact cell: default score + standby count, e.g. `0.042 · +1`. */
+export function pathQualityCell(info: PeerRoutePair): string {
+  const lines = connQualityLines(info)
+  if (!lines.length)
+    return ''
+  const primary = lines.find(l => l.isDefault) ?? lines[0]
+  const standby = Math.max(0, lines.length - 1)
+  const scoreText = primary.score === undefined
+    ? '—'
+    : primary.score.toFixed(3)
+  const fusedMark = primary.fused ? '!' : ''
+  return standby > 0
+    ? `${scoreText}${fusedMark} · +${standby}`
+    : `${scoreText}${fusedMark}`
+}
+
+/** Multi-line tip explaining each PeerConn for operators. */
+export function pathQualityTip(info: PeerRoutePair): string {
+  const lines = connQualityLines(info)
+  if (!lines.length)
+    return ''
+  return lines.map((line) => {
+    const role = line.isDefault ? '★' : '·'
+    const score = line.score === undefined ? '—' : line.score.toFixed(3)
+    const lat = line.latencyMs === undefined ? '—' : `${line.latencyMs}ms`
+    const jit = line.jitterMs === undefined ? '—' : `${line.jitterMs}ms`
+    const loss = line.lossPct === undefined ? '—' : `${line.lossPct}%`
+    const fused = line.fused ? ' fused' : ''
+    return `${role} ${line.proto} score=${score} rtt=${lat} jitter=${jit} loss=${loss}${fused}`
+  }).join('\n')
+}
+
 /**
  * Default/uninitialized L2 summary before the desktop route updater reports,
  * or on platforms (Android) where ifcfg is a no-op and VpnService owns routes.

@@ -48,8 +48,9 @@
 | **RTT**（`latency_us`） | `WindowLatency` 窗口均值 | **是**（质量分一项） | `PeerConnStats.latency_us` |
 | **丢包**（`loss_rate`） | Ping 0/1 窗口均值 | **是**（质量分 + 熔断） | `PeerConnInfo.loss_rate` |
 | **抖动**（`jitter_us`） | 同 RTT 窗口的连续样本绝对差均值 | **是**（质量分一项） | `PeerConnStats.jitter_us` |
+| **质量分**（`quality_score`） | `select_conn` 综合分（越低越好） | 状态面「质量分」列 + tooltip 分项 | `PeerConnInfo.quality_score` / `quality_fused`；★=`default_conn_id` |
 
-同 peer 多 PeerConn 的 `select_conn`（`peers/conn/conn_select.rs`）使用综合质量分（默认 `w_lat=1` / `w_loss=4` / `w_jitter=1`），丢包超过熔断阈值（默认 20%）时在有替代路径时禁止成为 `default_conn`；切换需相对边际（默认 10%）**且**绝对分差（默认 0.005）连续窗口（默认 2，配合 5s 缓存清空）。已关闭的 PeerConn 不参与选路。权重/阈值可通过 `flags.conn_select_*` 覆盖（百分制权重；0 = 默认）。
+同 peer 多 PeerConn 的 `select_conn`（`peers/conn/conn_select.rs`）使用综合质量分（默认 `w_lat=1` / `w_loss=4` / `w_jitter=1`），丢包超过熔断阈值（默认 20%）时在有替代路径时禁止成为 `default_conn`；切换需相对边际（默认 10%）**且**绝对分差（默认 0.005）连续窗口（默认 2，配合 5s 缓存清空）。已关闭的 PeerConn 不参与选路。权重/阈值可通过 `flags.conn_select_*` 覆盖（百分制权重；0 = 默认）。状态面展示每条隧道的 score / rtt / jitter / loss，并标注当前 `default_conn`。
 
 ### 2.2 拨号与选路（今日：全量拨号 + 质量选路，无档位）
 

@@ -2,9 +2,9 @@
 
 ## Status
 
-- Status: **Roadmap**（Checklist；P-UX + P0.1–P0.4 + P1.1/P1.2/P1.6–P1.8 单元 + Flags 透参已落地；下一步 P0.5 现网验收或 P1.3/L1）
+- Status: **Roadmap**（Checklist；P-UX + P0.1–P0.4 + P1.1/P1.2/P1.6–P1.8 单元 + Flags 透参 + P2.1 质量分可观测已落地；下一步 P0.5 / P2.3 OSPF 质量代价或 P-AUTO.L1）
 - 日期：2026-10-06
-- 最近审阅：2026-10-06（P1.7 Flags 透参 + P1.8 单元验收）
+- 最近审阅：2026-10-06（P2.1：PeerConnInfo.quality_score / Status 质量分列）
 - 背景：对照 OpenVPN / IPsec 的「固定隧道 + 强保活」模型，梳理 EasyTier Mesh（多 PeerConn + 打洞 + 中继）的稳定性差距与可落地项；**另纳入 2026-10-06 用户反馈：高级选项互斥缺校验、长表单占空间、单协议配置失败后无智能回落**
 - 相关 Current：[`../current/peer-connections.md`](../current/peer-connections.md)、[`../current/tunnels-and-transport.md`](../current/tunnels-and-transport.md)
 - 相关 Roadmap：[`traffic-camouflage.md`](./traffic-camouflage.md)、[`multi-link-bonding.md`](./multi-link-bonding.md)、[`market-comparison-2026-10.md`](./market-comparison-2026-10.md)、[`upstream-port-todo.md`](./upstream-port-todo.md)（#2632 TCP 打洞 1s ping）
@@ -165,7 +165,9 @@ score = w_lat * norm(rtt)
 
 ### P2 — 可观测、路由代价与带宽
 
-- [ ] **P2.1** 状态面明确：各 PeerConn、`default_conn`、质量分分项（rtt/loss/jitter）、是否仅冗余、各 connector 存活状态
+- [x] **P2.1** 状态面明确：各 PeerConn、`default_conn`、质量分分项（rtt/loss/jitter）、是否仅冗余
+  - `PeerConnInfo.quality_score` / `quality_fused`（与 `select_conn` 同源）；Status「质量分」列 + tooltip（★ default / · 热备 / `!` 熔断 / `+N` 热备数）
+  - Connector 存活仍走既有 `ListConnector`（CLI）；Web Status 本项未嵌入 connector 列表
 - [ ] **P2.2** 文档/UI：多连接 ≠ 已聚合带宽（对齐 Current `peer-connections.md`）
 - [ ] **P2.3** 评估将丢包/抖动（或综合分）纳入 OSPF / `latency_first` 代价；若做，必须带防震荡与可观测
 - [ ] **P2.4** 按需推进 [`multi-link-bonding.md`](./multi-link-bonding.md)（按流哈希；坏链路按质量熔断）；默认 N=1
@@ -256,7 +258,7 @@ P1.6 stats jitter/loss 上报 + P1.1/P1.2 透参
 |----|------|------|
 | P0.* | P0.1–P0.4 **已完成（档位已简化删除）**；P0.5 验收未开始 | 全量拨号 + 质量选路 + 文档/模板 |
 | P1.* | P1.1/P1.2/P1.6–P1.8（单元）**已完成**；P0.5/P1.8b 现网验收、P1.3–P1.5 未开始 | 质量分 Flags 透参已接 |
-| P2.* | 未开始 | OSPF 多指标 / bonding 细节见专题文 |
+| P2.* | P2.1 **已完成**（质量分/★default 可观测）；P2.2–P2.5 未开始 | OSPF 多指标 / bonding 细节见专题文 |
 | P3.* | Backlog | |
 | P-UX.* | **已完成** | 老配置只提示；断点 760px；`configConflicts.ts` + Config 紧凑布局 |
 | P-AUTO.* | 草案待评审 | L1/L2 无感；L3 需 opt-in；L4 默认不做 |

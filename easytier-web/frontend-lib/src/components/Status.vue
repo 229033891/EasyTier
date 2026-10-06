@@ -5,7 +5,7 @@ import { useI18n } from 'vue-i18n';
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue';
 import { ipv4InetToString, ipv4ToString, ipv6ToString, formatEventTime } from '../modules/utils';
 import { isPanelHeaderInteractiveTarget } from '../modules/panel';
-import { isMeaningfulProxyCidrRouteSync, jitterMs, latencyMs, lossRate, numericValue, peerConns, resolvePeerRemoteAddr, resolveRoutePath, type RoutePeerLabel } from '../modules/statusDisplay';
+import { isMeaningfulProxyCidrRouteSync, jitterMs, latencyMs, lossRate, numericValue, pathQualityCell, pathQualityTip, peerConns, resolvePeerRemoteAddr, resolveRoutePath, type RoutePeerLabel } from '../modules/statusDisplay';
 import { Badge, DataTable, Column, Tag, Button, ScrollPanel, Timeline, Card, Panel, } from 'primevue';
 import NetworkChart from './NetworkChart.vue';
 import PeerConnHistoryChart from './PeerConnHistoryChart.vue';
@@ -658,6 +658,16 @@ const eventLogContent = computed(() => {
               </template>
             </Column>
             <Column :field="latencyMs" :header="t('latency')" />
+            <Column :header="t('path_quality')">
+              <template #body="slotProps">
+                <span
+                  class="path-quality-cell"
+                  v-tooltip.top="{ value: pathQualityTip(slotProps.data) || undefined, escape: true }"
+                >
+                  {{ pathQualityCell(slotProps.data) }}
+                </span>
+              </template>
+            </Column>
             <Column :field="jitterMs" :header="t('jitter')"
               header-class="peer-col-secondary" body-class="peer-col-secondary" />
             <Column :field="txBytes" :header="t('upload_bytes')"

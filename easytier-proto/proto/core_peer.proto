@@ -32,6 +32,10 @@ message PeerConnInfo {
   bytes noise_remote_static_pubkey = 12;
   peer_rpc.SecureAuthLevel secure_auth_level = 13;
   peer_rpc.PeerIdentityType peer_identity_type = 14;
+  // PeerConn quality select (P1.7 / P2.1). Lower is better; same formula as select_conn.
+  float quality_score = 15;
+  // True when loss_rate exceeds the configured loss fuse (may still be used if all paths fused).
+  bool quality_fused = 16;
 }
 
 message PeerInfo {
