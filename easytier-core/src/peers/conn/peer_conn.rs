@@ -1246,7 +1246,7 @@ impl PeerConn {
             Error::WaitRespError(format!(
                 "timed out waiting for first handshake packet: {e:?}"
             ))
-        })?;
+        })??;
         let Some(hdr) = first_pkt.peer_manager_header() else {
             return Err(Error::WaitRespError(
                 "first packet must have peer manager header".to_owned(),
