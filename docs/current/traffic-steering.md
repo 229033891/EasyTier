@@ -61,6 +61,13 @@ IPv6：VIP / 非 `/0` 的 proxy LPM → `exit_nodes`（同样要求下一跳）�
 - 装 TUN 默认路由前，会先把 **underlay 排除宿主路由**（`/32`/`/128`）装到**物理默认网关**上：已连接 peer 隧道的 `resolved_remote_addr`、对端 `stun_info.public_ip`、以及本进程 **config-server / 管理面** 连接目标。卸默认时**先卸 TUN `/0`，再卸排除**  
 - 桌面 DNS：TUN 就绪后，peer / STUN / config-server 域名解析经 `RuntimeDnsResolver`，hickory 套接字绑定物理默认网卡，避免首次查询被 TUN `/0` 吸走  
 - 排除门控：**期望集合将含 TUN `/0`** 时才装（覆盖 exit、逃生阀、`manual_routes` 含 `/0`）  
+- **停止实例 / UI 禁用网络时显式清理**（先 `nic.stop()` 停掉 route updater / Magic DNS，再调 `runtime_host/tun_common.rs::cleanup_tun_leftovers`，避免清理窗口内被重新装回）：  
+  1. 按 `proxy_cidr_route_sync` 的**已安装**集合删本实例装过的 proxy CIDR / `/0`（只删自己装的条目）  
+  2. 按 `packet_plane.public_ipv6_routes()` 删 public-ipv6 **client** 装上的 peer lease 路由（多为 `/128`；Windows 亦可作 client）  
+  3. best-effort 删 TUN 接口上的 `::/0`（exit 与 public-ipv6 本机默认各一条，该集合不在同步状态里）  
+  4. Windows：刷掉 TUN 适配器上的 IPv4 / IPv6 地址——**wintun 适配器是持久设备**，会话结束后接口、IP、路由都不会自动消失，不清就会在 `route print` 里留下指向已失效接口的条目和 on-link 子网路由  
+  5. 按 `underlay_exclude_ips` + 当前物理默认网关卸掉第 3 节钉在**物理网卡**上的 `/32` `/128` 排除路由  
+  注：updater 任务收尾那段清理要等事件总线 `Closed`，而任务自己持有 `global_ctx`，实际等不到，所以停止路径必须自己清一遍；`get_tun_device_name` 在 `nic.stop()` 后仍有效（仅错误路径会清空）  
 - ACL / KCP / QUIC / wrapped-TCP 等旁路通过 `get_peer_id_by_ip_allowing_default_proxy` 仍可解析对端通告的 `/0`  
 - `manual_routes` 开启：整表由手动列表覆盖，**不**自动加出口默认路由  
 - `enable_exit_node` **不**向全网通告 `/0`  

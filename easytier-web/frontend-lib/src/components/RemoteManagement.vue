@@ -1081,16 +1081,6 @@ onUnmounted(() => {
     color: var(--et-placeholder-color, #a8b5c5);
 }
 
-.network-toolbar {
-    flex-shrink: 0;
-    z-index: 20;
-    background: var(--surface-card, #ffffff) !important;
-    border: 1px solid var(--et-border-color, #e2e8f0);
-    border-radius: var(--et-radius, 0.75rem);
-    padding: 0.5rem 0.75rem;
-    margin: 0;
-}
-
 .network-content {
     flex: 1 1 auto;
     display: flex;
@@ -1491,7 +1481,6 @@ onUnmounted(() => {
     }
 
     .network-header,
-    .network-toolbar,
     .network-content,
     .network-sticky-footer {
         background: var(--surface-card, #1e293b) !important;
@@ -1506,8 +1495,7 @@ onUnmounted(() => {
  * ???? min-width: 641px ?? ????? ?640px ???????????? min-width: 0 ???
  */
 @media (min-width: 641px) and (max-width: 768px) {
-    .network-header,
-    .network-toolbar {
+    .network-header {
         padding: 0.5rem 0.6rem;
     }
 

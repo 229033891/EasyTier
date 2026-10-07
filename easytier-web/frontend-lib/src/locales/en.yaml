@@ -119,7 +119,7 @@ logging_remote_hint: Log level applies to the remote EasyTier process. Open log 
 logging_clear: Delete Logs
 logging_clear_confirm: Delete EasyTier log files in the log directory? The active log will be cleared and rotated logs will be removed. In service mode the service log directory is cleared too.
 logging_clear_success: Cleared {count} log file(s)
-logging_clear_partial: Cleared {count} file(s), but some failed: {error}
+logging_clear_partial: 'Cleared {count} file(s), but some failed: {error}'
 logging_clear_failed: Failed to delete logs
 logging_clear_empty: No log files to delete
 logging_copy_recent: Copy Logs

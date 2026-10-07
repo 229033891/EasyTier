@@ -74,7 +74,12 @@ async function onPostRunNetworkInstance(event: Event<unknown>) {
 
 async function onVpnServiceStop(event: Event<unknown>) {
     console.log(`Received event '${EVENTS.VPN_SERVICE_STOP}', raw payload:`, event.payload)
-    await syncMobileVpnService();
+    // VpnService 只存在于移动端。桌面禁用最后一个网络时也会收到这个事件（后端统一
+    // 发出），若不加判断会走到 syncMobileVpnService，去 invoke 桌面未注册的
+    // plugin:vpnservice|get_vpn_status，抛未捕获的 Promise 错误。
+    if (type() === 'android') {
+        await syncMobileVpnService();
+    }
 }
 
 async function onDhcpIpChanged(event: Event<unknown>) {

@@ -134,9 +134,25 @@ pub(super) async fn cleanup_tun_leftovers(
         }
     }
 
-    // 2) IPv6 exit / public-provider 默认路由 (::/0) 只保存在 updater 任务内部，
+    // 2) public-ipv6 client peer leases（多为 /128）：Windows 亦可作 client，
+    //    `run_public_ipv6_route_updater` 会装其它 peer 的 lease 路由，须按同步状态删掉。
+    for route in packet_plane.public_ipv6_routes().await {
+        if let Err(error) = ifcfg
+            .remove_ipv6_route(&ifname, route.address(), route.network_length(), None)
+            .await
+        {
+            tracing::debug!(
+                ?error,
+                route = %route,
+                ifname = %ifname,
+                "failed to remove public ipv6 peer route on TUN stop",
+            );
+        }
+    }
+
+    // 3) IPv6 exit / public-ipv6 本机默认路由 (::/0) 只保存在 updater 任务内部，
     //    同步状态里没有；按目的+接口 best-effort 删除（Windows 后端忽略 metric，
-    //    一次删一条，循环几次即可覆盖 exit 与 public-provider 两条）。
+    //    一次删一条，循环几次即可覆盖 exit 与 public-ipv6 两条）。
     //    不存在的条目只会返回错误并忽略，不影响其它接口。
     for _ in 0..4 {
         let _ = ifcfg
@@ -144,7 +160,7 @@ pub(super) async fn cleanup_tun_leftovers(
             .await;
     }
 
-    // 3) 接口自身的地址：Windows wintun 适配器是持久设备，会话结束后 IP 不会自动
+    // 4) 接口自身的地址：Windows wintun 适配器是持久设备，会话结束后 IP 不会自动
     //    消失，Windows 会一直保留它的 on-link 子网路由（10.144.144.0/24 之类），
     //    该接口也继续参与源地址选择。下次启用会重新下发，删掉是安全的。
     #[cfg(target_os = "windows")]
@@ -162,7 +178,7 @@ pub(super) async fn cleanup_tun_leftovers(
         }
     }
 
-    // 4) exit-node 模式下钉在物理网卡上的 underlay 排除路由（/32、/128）：它们挂在
+    // 5) exit-node 模式下钉在物理网卡上的 underlay 排除路由（/32、/128）：它们挂在
     //    物理接口上，不会随 TUN 关闭消失。updater 收尾那段清理要等事件总线 Closed，
     //    而任务自己持有 global_ctx，永远等不到，所以在这里补一次。
     cleanup_underlay_exclude_routes(packet_plane, &ifname, &ifcfg).await;

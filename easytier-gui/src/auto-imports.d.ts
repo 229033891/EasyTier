@@ -14,6 +14,7 @@ declare global {
   const annotateNetworkInfoFromVpnService: typeof import('./composables/mobile_vpn')['annotateNetworkInfoFromVpnService']
   const annotateNetworkInfoWithMobileVpnRoutes: typeof import('./composables/mobile_vpn')['annotateNetworkInfoWithMobileVpnRoutes']
   const buildTrayMenuItems: typeof import('./composables/tray')['buildTrayMenuItems']
+  const clearLogFiles: typeof import('./composables/backend')['clearLogFiles']
   const clearVpnPortalClients: typeof import('./composables/backend')['clearVpnPortalClients']
   const collectNetworkInfo: typeof import('./composables/backend')['collectNetworkInfo']
   const computed: typeof import('vue')['computed']
@@ -97,6 +98,7 @@ declare global {
   const readLogFile: typeof import('./composables/backend')['readLogFile']
   const readonly: typeof import('vue')['readonly']
   const ref: typeof import('vue')['ref']
+  const registerTrayExitHandler: typeof import('./composables/tray')['registerTrayExitHandler']
   const removeVpnPortalClient: typeof import('./composables/backend')['removeVpnPortalClient']
   const resolveComponent: typeof import('vue')['resolveComponent']
   const runNetworkInstance: typeof import('./composables/backend')['runNetworkInstance']
@@ -118,6 +120,7 @@ declare global {
   const shallowReadonly: typeof import('vue')['shallowReadonly']
   const shallowRef: typeof import('vue')['shallowRef']
   const showMainWindow: typeof import('./composables/tray')['showMainWindow']
+  const stopBackgroundVpnSync: typeof import('./composables/mobile_vpn')['stopBackgroundVpnSync']
   const storeToRefs: typeof import('pinia')['storeToRefs']
   const syncMobileVpnService: typeof import('./composables/mobile_vpn')['syncMobileVpnService']
   const toRaw: typeof import('vue')['toRaw']
@@ -165,6 +168,7 @@ declare module 'vue' {
     readonly annotateNetworkInfoFromVpnService: UnwrapRef<typeof import('./composables/mobile_vpn')['annotateNetworkInfoFromVpnService']>
     readonly annotateNetworkInfoWithMobileVpnRoutes: UnwrapRef<typeof import('./composables/mobile_vpn')['annotateNetworkInfoWithMobileVpnRoutes']>
     readonly buildTrayMenuItems: UnwrapRef<typeof import('./composables/tray')['buildTrayMenuItems']>
+    readonly clearLogFiles: UnwrapRef<typeof import('./composables/backend')['clearLogFiles']>
     readonly clearVpnPortalClients: UnwrapRef<typeof import('./composables/backend')['clearVpnPortalClients']>
     readonly collectNetworkInfo: UnwrapRef<typeof import('./composables/backend')['collectNetworkInfo']>
     readonly computed: UnwrapRef<typeof import('vue')['computed']>
@@ -248,6 +252,7 @@ declare module 'vue' {
     readonly readLogFile: UnwrapRef<typeof import('./composables/backend')['readLogFile']>
     readonly readonly: UnwrapRef<typeof import('vue')['readonly']>
     readonly ref: UnwrapRef<typeof import('vue')['ref']>
+    readonly registerTrayExitHandler: UnwrapRef<typeof import('./composables/tray')['registerTrayExitHandler']>
     readonly removeVpnPortalClient: UnwrapRef<typeof import('./composables/backend')['removeVpnPortalClient']>
     readonly resolveComponent: UnwrapRef<typeof import('vue')['resolveComponent']>
     readonly runNetworkInstance: UnwrapRef<typeof import('./composables/backend')['runNetworkInstance']>
@@ -269,6 +274,7 @@ declare module 'vue' {
     readonly shallowReadonly: UnwrapRef<typeof import('vue')['shallowReadonly']>
     readonly shallowRef: UnwrapRef<typeof import('vue')['shallowRef']>
     readonly showMainWindow: UnwrapRef<typeof import('./composables/tray')['showMainWindow']>
+    readonly stopBackgroundVpnSync: UnwrapRef<typeof import('./composables/mobile_vpn')['stopBackgroundVpnSync']>
     readonly storeToRefs: UnwrapRef<typeof import('pinia')['storeToRefs']>
     readonly syncMobileVpnService: UnwrapRef<typeof import('./composables/mobile_vpn')['syncMobileVpnService']>
     readonly toRaw: UnwrapRef<typeof import('vue')['toRaw']>

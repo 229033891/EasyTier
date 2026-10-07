@@ -145,10 +145,12 @@ impl NativeTunRuntime {
         if let Some(task) = self.static_ip_task.lock().await.take() {
             let _ = task.await;
         }
+        // Stop NicCtx (and Magic DNS) first so route updaters cannot reinstall
+        // entries while cleanup_tun_leftovers is running.
+        self.nic.stop().await;
         if let Some(packet_plane) = self.packet_plane.lock().await.clone() {
             super::tun_common::cleanup_tun_leftovers(&self.global_ctx, &packet_plane).await;
         }
-        self.nic.stop().await;
     }
 
     pub(super) fn attach_fd(&self, _fd: i32) -> anyhow::Result<()> {

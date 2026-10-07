@@ -127,10 +127,14 @@ impl InterfaceControl {
             return;
         };
         let current: io::Result<String> = key.get_value("NameServer");
-        if current
-            .map(|value| value == expected.join(","))
-            .unwrap_or(false)
-        {
+        let ours = match current {
+            Ok(value) => value == expected.join(","),
+            // 写入时 resolvers 为空会走 delete_value，注册表里就没有 NameServer。
+            // 此时「值不存在」同样是我们留下的状态，否则 EnableMulticast 这类
+            // 无条件写入的开关永远回滚不掉。
+            Err(_) => expected.is_empty(),
+        };
+        if ours {
             let _ = Self::delete_value(&key, "NameServer");
             let _ = Self::delete_value(&key, "SearchList");
             let _ = Self::delete_value(&key, "EnableMulticast");

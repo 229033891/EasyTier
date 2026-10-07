@@ -504,8 +504,8 @@ function removeVpnPortalClient(index: number) {
 <template>
   <div class="flex flex-col h-full">
       <div class="config-panels w-full self-center">
-          <Panel v-model:collapsed="panelCollapsed.toolbar" :header="t('config_toolbar')" toggleable
-            :pt="panelHeaderPt('toolbar')">
+          <Panel v-if="$slots['config-toolbar']" v-model:collapsed="panelCollapsed.toolbar"
+            :header="t('config_toolbar')" toggleable :pt="panelHeaderPt('toolbar')">
             <slot name="config-toolbar" />
           </Panel>
           <Panel v-model:collapsed="panelCollapsed.basic" :header="t('basic_settings')" toggleable
