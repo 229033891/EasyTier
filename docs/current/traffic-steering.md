@@ -67,7 +67,11 @@ IPv6：VIP / 非 `/0` 的 proxy LPM → `exit_nodes`（同样要求下一跳）�
   3. best-effort 删 TUN 接口上的 `::/0`（exit 与 public-ipv6 本机默认各一条，该集合不在同步状态里）  
   4. Windows：刷掉 TUN 适配器上的 IPv4 / IPv6 地址——**wintun 适配器是持久设备**，会话结束后接口、IP、路由都不会自动消失，不清就会在 `route print` 里留下指向已失效接口的条目和 on-link 子网路由  
   5. 按 `underlay_exclude_ips` + 当前物理默认网关卸掉第 3 节钉在**物理网卡**上的 `/32` `/128` 排除路由  
-  注：updater 任务收尾那段清理要等事件总线 `Closed`，而任务自己持有 `global_ctx`，实际等不到，所以停止路径必须自己清一遍；`get_tun_device_name` 在 `nic.stop()` 后仍有效（仅错误路径会清空）  
+  注：updater 任务收尾那段清理要等事件总线 `Closed`，而任务自己持有 `global_ctx`，实际等不到，所以停止路径必须自己清一遍；`get_tun_device_name` 在 `nic.stop()` 后仍有效（仅错误路径会清空）
+- **Windows 自动网卡名必须写回配置**，否则每次启用 / 每次重启都会新建一张 `et_*` 网卡（wintun 适配器持久，旧的不会自己消失）：
+  - 配置 `dev_name` 为空时，`virtual_nic.rs::create_tun` 生成 `et_<全机网卡数>_<4 位随机>`；该名字要同时写进 **`GlobalCtx` 运行时 flags**（本实例后续流程用）与**共享 `TomlConfig`**——`GlobalCtx::flags` 只是副本，管理面 `get_network_instance_config` / `collect_network_info` 读的是 `instance.toml_config()`，不写回就永远读回空值
+  - GUI 侧 `easytier-gui/.../manager.rs::persist_runtime_dev_name`：实例启动后读回名字落盘。`run_network_instance` **不等** `start()` 完成，所以 `pre_run_network_instance_hook` 存下的仍是空 `dev_name`；该函数只在「存储里 `dev_name` 为空且非 web 归属」时才轮询，成功一次后后续运行直接跳过
+  - web 归属配置不动：console 侧 reconciler 用 `is_automatic_windows_dev_name` 主动忽略自动名，写回会把自动名当成用户配置  
 - ACL / KCP / QUIC / wrapped-TCP 等旁路通过 `get_peer_id_by_ip_allowing_default_proxy` 仍可解析对端通告的 `/0`  
 - `manual_routes` 开启：整表由手动列表覆盖，**不**自动加出口默认路由  
 - `enable_exit_node` **不**向全网通告 `/0`  

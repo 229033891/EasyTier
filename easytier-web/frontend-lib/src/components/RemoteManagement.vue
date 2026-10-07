@@ -496,6 +496,14 @@ const saveAndRunNewNetwork = async (config?: NetworkTypes.NetworkConfig) => {
         selectedInstanceId.value = { uuid: cfg.instance_id };
         await loadNetworkInstanceIds();
         await loadCurrentNetworkInfo();
+
+        // Windows may have write-back the auto-assigned wintun `dev_name` during
+        // post_run. Refresh so a subsequent Save does not push the stale empty value.
+        try {
+            currentNetworkConfig.value = await props.api.get_network_config(cfg.instance_id);
+        } catch (refreshError) {
+            console.warn('failed to refresh network config after start', refreshError);
+        }
     } catch (e: any) {
         console.error(e);
         toast.add({ severity: 'error', summary: t('web.common.error'), detail: t('web.device_management.start_failed') + ': ' + errorDetail(e), life: TOAST_LIFE.error });

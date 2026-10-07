@@ -586,6 +586,19 @@ impl VirtualNic {
                 let mut flags = self.global_ctx.get_flags();
                 flags.dev_name = random_dev_name.clone();
                 self.global_ctx.set_flags(flags);
+
+                // `GlobalCtx::flags` is a runtime copy; management RPCs read the shared TOML
+                // model instead (`get_network_instance_config` / `collect_network_info` both go
+                // through `instance.toml_config()`). Record the generated name there too —
+                // otherwise every readback reports an empty `dev_name`, the GUI keeps saving an
+                // empty one, and each run allocates a brand-new `et_*` wintun adapter.
+                // Only `dev_name` is touched so runtime-only flag tweaks stay out of the config.
+                use crate::common::config::ConfigLoader as _;
+                let mut config_flags = self.global_ctx.config.get_flags();
+                if config_flags.dev_name != random_dev_name {
+                    config_flags.dev_name = random_dev_name.clone();
+                    self.global_ctx.config.set_flags(config_flags);
+                }
             }
 
             config.platform_config(|config| {

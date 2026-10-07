@@ -48,6 +48,24 @@ impl WebClientHooks for GuiHooks {
     }
 }
 
+/// Matches the Windows auto-generated wintun name from `virtual_nic::create_tun`
+/// (`et_<interface_count>_<4 alnum>`). Kept in sync with
+/// `easytier-web::client_manager::runtime_reconcile::is_automatic_windows_dev_name`.
+fn is_automatic_windows_dev_name(dev_name: &str) -> bool {
+    let Some((interface_count, suffix)) = dev_name
+        .strip_prefix("et_")
+        .and_then(|value| value.split_once('_'))
+    else {
+        return false;
+    };
+    !interface_count.is_empty()
+        && interface_count.bytes().all(|byte| byte.is_ascii_digit())
+        && suffix.len() == 4
+        && suffix
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit())
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 #[derive(Default)]
@@ -169,9 +187,26 @@ impl GUIStorage {
         &self,
         app: &AppHandle,
         inst_id: Uuid,
-        cfg: NetworkConfig,
+        mut cfg: NetworkConfig,
         source: PersistedConfigSource,
     ) -> anyhow::Result<()> {
+        // Stale UI forms often still carry an empty `dev_name` after Windows auto-assigns
+        // `et_<n>_<xxxx>` and `persist_runtime_dev_name` writes it back. Do not let a later
+        // Save wipe that durable adapter identity — otherwise the next enable allocates a
+        // brand-new wintun NIC again.
+        if cfg.dev_name.as_deref().map_or(true, |name| name.is_empty()) {
+            if let Some(existing) = self.network_configs.get(&inst_id) {
+                if let Some(stored_name) = existing
+                    .config
+                    .dev_name
+                    .as_deref()
+                    .filter(|name| is_automatic_windows_dev_name(name))
+                {
+                    cfg.dev_name = Some(stored_name.to_owned());
+                }
+            }
+        }
+
         let source = self
             .network_configs
             .get(&inst_id)
@@ -448,6 +483,85 @@ impl GUIClientManager {
         app.emit("post_run_network_instance", instance_id.to_string())
             .map_err(|e| e.to_string())?;
 
+        // Windows only: the kernel may have assigned an auto-generated wintun adapter name.
+        // Emitted first so the UI is not held up by the readback below. Best-effort on
+        // purpose — the network is already running, so a persistence hiccup here must not
+        // turn a successful enable into an error.
+        #[cfg(target_os = "windows")]
+        let _ = self.persist_runtime_dev_name(app, *instance_id).await;
+
+        Ok(())
+    }
+
+    /// Persist the wintun adapter name the kernel assigned at startup.
+    ///
+    /// On Windows an empty `dev_name` makes the kernel invent `et_<ifcount>_<xxxx>` while
+    /// creating the adapter. That name now reaches the management readback, but the instance
+    /// is started asynchronously — `run_network_instance` returns before `create_tun` runs — so
+    /// the config persisted by `pre_run_network_instance_hook` still carries an empty
+    /// `dev_name`. Without this write-back the next launch (or the next enable, if the app was
+    /// killed while enabled) picks a *different* name and leaves the previous `et_*` adapter
+    /// behind, so every restart adds another NIC.
+    ///
+    /// Only user-owned configs are touched: web-owned configs are authoritative on the console
+    /// side, whose reconciler deliberately ignores automatic Windows device names
+    /// (`is_automatic_windows_dev_name`).
+    #[cfg(target_os = "windows")]
+    pub(crate) async fn persist_runtime_dev_name(
+        &self,
+        app: &AppHandle,
+        instance_id: uuid::Uuid,
+    ) -> Result<(), String> {
+        const ATTEMPTS: usize = 15;
+        const INTERVAL: std::time::Duration = std::time::Duration::from_millis(200);
+
+        let Some(stored) = self
+            .storage
+            .get_network_config(app.clone(), &instance_id.to_string())
+            .await
+            .map_err(|e| e.to_string())?
+        else {
+            return Ok(());
+        };
+        if stored.source == PersistedConfigSource::Web {
+            return Ok(());
+        }
+        // Nothing to do once a concrete name is already stored; this is what keeps the
+        // readback cost a one-off per config instead of a delay on every run.
+        if stored
+            .config
+            .dev_name
+            .as_deref()
+            .is_some_and(|name| !name.is_empty())
+        {
+            return Ok(());
+        }
+
+        for attempt in 0..ATTEMPTS {
+            if attempt > 0 {
+                tokio::time::sleep(INTERVAL).await;
+            }
+            let Ok(runtime) = self
+                .handle_get_network_config(app.clone(), instance_id)
+                .await
+            else {
+                // Instance not up yet, or config readback is read-only for this instance.
+                continue;
+            };
+            // A failed RPC falls back to the stored config, which is exactly the empty
+            // `dev_name` we started from — require a non-empty name to make progress.
+            let Some(dev_name) = runtime.dev_name.filter(|name| !name.is_empty()) else {
+                continue;
+            };
+
+            let mut updated = stored.config.clone();
+            updated.dev_name = Some(dev_name);
+            self.storage
+                .save_config(app, instance_id, updated, stored.source)
+                .map_err(|e| e.to_string())?;
+            return Ok(());
+        }
+
         Ok(())
     }
 
@@ -584,8 +698,19 @@ impl RemoteClientManager<AppHandle, GUIConfig, anyhow::Error> for GUIClientManag
 
 #[cfg(test)]
 mod tests {
-    use super::{PersistedConfigSource, StoredGuiConfig};
+    use super::{PersistedConfigSource, StoredGuiConfig, is_automatic_windows_dev_name};
     use easytier::proto::api::manage::NetworkConfig;
+
+    #[test]
+    fn automatic_windows_dev_name_matches_et_count_suffix() {
+        assert!(is_automatic_windows_dev_name("et_12_ab3d"));
+        assert!(is_automatic_windows_dev_name("et_0_0000"));
+        assert!(!is_automatic_windows_dev_name(""));
+        assert!(!is_automatic_windows_dev_name("et0"));
+        assert!(!is_automatic_windows_dev_name("et_12_ABCD")); // uppercase rejected
+        assert!(!is_automatic_windows_dev_name("et_12_abcde")); // suffix too long
+        assert!(!is_automatic_windows_dev_name("custom_tun"));
+    }
 
     #[test]
     fn stored_gui_config_defaults_missing_source_to_legacy() {
