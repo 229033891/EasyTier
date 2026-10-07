@@ -98,6 +98,9 @@ impl NativeTunRuntime {
                 .await
                 {
                     tracing::error!(?error, "failed to attach mobile TUN fd");
+                    // Surface failure so GUI/reconcile can react instead of
+                    // leaving a "connected" UI with a dead data plane (A8).
+                    global_ctx.set_tun_device_error(format!("failed to attach mobile TUN fd: {error}"));
                 }
             }
         }));
@@ -117,9 +120,16 @@ impl NativeTunRuntime {
     }
 
     pub(super) fn attach_fd(&self, fd: i32) -> anyhow::Result<()> {
-        self.tun_fd
-            .try_send(fd)
-            .map_err(|error| anyhow::anyhow!("failed to send TUN fd: {error}"))
+        use tokio::sync::mpsc::error::TrySendError;
+        match self.tun_fd.try_send(fd) {
+            Ok(()) => Ok(()),
+            Err(TrySendError::Full(_)) => {
+                anyhow::bail!("TUN fd channel full; instance not consuming fds")
+            }
+            Err(TrySendError::Closed(_)) => {
+                anyhow::bail!("TUN fd receiver closed; instance not ready for mobile TUN")
+            }
+        }
     }
 
     pub(super) fn dhcp_host(

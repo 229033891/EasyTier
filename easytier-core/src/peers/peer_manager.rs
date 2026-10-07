@@ -99,6 +99,7 @@ pub struct PeerSnapshot {
 pub struct NodeSnapshot {
     pub peer_id: PeerId,
     pub ipv4_addr: Option<cidr::Ipv4Inet>,
+    pub ipv6_addr: Option<cidr::Ipv6Inet>,
     pub proxy_networks: Vec<ProxyNetworkConfig>,
     pub hostname: String,
     pub stun_info: StunInfo,
@@ -1266,6 +1267,7 @@ impl PeerManagerCore {
         NodeSnapshot {
             peer_id: self.my_peer_id,
             ipv4_addr: self.context.ipv4(),
+            ipv6_addr: self.context.ipv6(),
             proxy_networks: self.context.proxy_networks(),
             hostname: self.context.hostname(),
             stun_info: self.context.stun_info(),

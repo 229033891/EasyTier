@@ -249,18 +249,35 @@ async fn get_logging_level() -> Result<String, String> {
 }
 
 #[tauri::command]
-async fn set_tun_fd(fd: i32) -> Result<(), String> {
+async fn set_tun_fd(fd: i32, instance_id: Option<String>) -> Result<(), String> {
     let Some(instance_manager) = INSTANCE_MANAGER.read().await.clone() else {
         return Err("set_tun_fd is not supported in remote mode".to_string());
     };
-    if let Some(uuid) = get_client_manager!()?
-        .get_enabled_instances_with_tun_ids()
-        .next()
-    {
-        instance_manager
-            .attach_tun_fd(uuid, fd)
-            .map_err(|e| e.to_string())?;
-    }
+    let uuid = if let Some(id) = instance_id {
+        id.parse::<uuid::Uuid>()
+            .map_err(|e| format!("invalid instance_id for set_tun_fd: {e}"))?
+    } else {
+        // `get_client_manager!()` yields a guard temporary; the iterator borrows
+        // it, so collect inside the same statement instead of holding the
+        // iterator (E0716 otherwise).
+        let ids: Vec<uuid::Uuid> = get_client_manager!()?
+            .get_enabled_instances_with_tun_ids()
+            .collect();
+        let Some(first) = ids.first().copied() else {
+            // Do not silently succeed — frontend would keep running=true (A6).
+            return Err("no enabled TUN instance to attach fd".to_string());
+        };
+        if ids.len() > 1 {
+            tracing::warn!(
+                %first,
+                "multiple TUN instances enabled; attaching fd to the first one"
+            );
+        }
+        first
+    };
+    instance_manager
+        .attach_tun_fd(uuid, fd)
+        .map_err(|e| e.to_string())?;
     Ok(())
 }
 

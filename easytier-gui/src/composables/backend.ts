@@ -135,8 +135,11 @@ export async function clearLogFiles(extraDirs?: string[]) {
   })
 }
 
-export async function setTunFd(fd: number) {
-  return await invoke('set_tun_fd', { fd })
+export async function setTunFd(fd: number, instanceId?: string) {
+  return await invoke('set_tun_fd', {
+    fd,
+    instanceId: instanceId ?? null,
+  })
 }
 
 export async function getEasytierVersion() {

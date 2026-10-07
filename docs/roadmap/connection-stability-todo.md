@@ -272,7 +272,25 @@ P1.6 stats jitter/loss 上报 + P1.1/P1.2 透参
 
 ---
 
-## 8. 待决问题（讨论用）
+## 8. 安卓 VPN 生命周期（来自 [`android-vpn-connection-audit-2026-10-07.md`](./android-vpn-connection-audit-2026-10-07.md)）
+
+与本文 S1–S8（协议/选路）**正交**；A1–A14 中可落地项已在工作区修复，下列两项仍建议在本 Roadmap 单独立项：
+
+| 项 | 级别 | 问题 | 建议方向 |
+|----|------|------|----------|
+| **A3** | P0 | 对账 / 10s sync 全在 WebView JS 定时器；Doze / 后台 WebView 节流 → 孤儿 VPN、配置变更不收敛 | Rust 或 Kotlin **30s watchdog**：原生 `get_vpn_status` + 与 enabled TUN 实例对账；仅 UI 决策留 JS |
+| **A9** | P1 | 无 `ConnectivityManager` / `setUnderlyingNetworks` / `NetworkCallback`；Wi‑Fi↔蜂窝切换后数十秒～数分钟才靠 ping 失败重连 | 插件注册 `registerDefaultNetworkCallback`，emit 事件触发 connector 重建；按需 `setUnderlyingNetworks` |
+
+**勾选**
+
+| 项 | 状态 |
+|----|------|
+| A3 Rust/Kotlin watchdog | 未开始 |
+| A9 网络切换 | 未开始 |
+
+---
+
+## 9. 待决问题（讨论用）
 
 1. ~~§2.5 互斥 / 老配置~~：**已拍板** — 从严禁选；老配置读入**只提示、不强制改值**。
 2. ~~紧凑布局 / 断点~~：**已拍板** — 桌面 4 列×2 行（8 字段占 2 行）；移动端断点 **760px** 回单列。

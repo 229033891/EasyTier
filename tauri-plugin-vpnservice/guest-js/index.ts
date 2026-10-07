@@ -15,6 +15,8 @@ export interface InvokeResponse {
 
 export interface StartVpnRequest {
   ipv4Addr?: string;
+  /** Instance virtual IPv6 with prefix, e.g. `fd00::1/64`. */
+  ipv6Addr?: string;
   routes?: string[];
   dns?: string;
   disallowedApplications?: string[];

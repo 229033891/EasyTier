@@ -36,12 +36,23 @@ vi.mock('@tauri-apps/api/core', () => ({
   addPluginListener: mocks.addPluginListener,
 }))
 
-vi.mock('easytier-frontend-lib', () => ({
-  Utils: {
-    UuidToStr: (value: unknown) => String(value),
-    ipv4ToString: (address: { addr: string }) => address.addr,
-  },
-}))
+vi.mock('easytier-frontend-lib', async () => {
+  const { IPv6 } = await import('ip-num/IPNumber')
+  return {
+    Utils: {
+      UuidToStr: (value: unknown) => String(value),
+      ipv4ToString: (address: { addr: string }) => address.addr,
+      ipv6ToString: (address: { part1: number, part2: number, part3: number, part4: number }) => {
+        return IPv6.fromBigInt(
+          (BigInt(address.part1 ?? 0) << BigInt(96))
+          + (BigInt(address.part2 ?? 0) << BigInt(64))
+          + (BigInt(address.part3 ?? 0) << BigInt(32))
+          + BigInt(address.part4 ?? 0),
+        ).toString()
+      },
+    },
+  }
+})
 
 vi.mock('tauri-plugin-vpnservice-api', () => ({
   consume_vpn_tile_action: mocks.consumeVpnTileAction,
@@ -87,6 +98,10 @@ async function loadVpnModule() {
 
 beforeEach(() => {
   vi.useFakeTimers()
+  // Each loadVpnModule() starts a background sync interval. resetModules() does
+  // not dispose it, so without this the intervals pile up across tests and fire
+  // during a later test's clock advance.
+  vi.clearAllTimers()
   vi.resetModules()
   mocks.listeners.clear()
   mocks.configs.clear()
@@ -104,6 +119,42 @@ beforeEach(() => {
   mocks.setTunFd.mockClear()
   mocks.startVpn.mockClear()
   mocks.stopVpn.mockClear()
+})
+
+describe('mobile VPN virtual IPv6', () => {
+  it('formats MyNodeInfo.virtual_ipv6 for VpnService addAddress', async () => {
+    const vpn = await loadVpnModule()
+    expect(vpn.formatVirtualIpv6ForVpn(undefined)).toBeUndefined()
+    // Proto Ipv6Addr stores 16 bytes as four big-endian u32 chunks (see common.proto).
+    expect(vpn.formatVirtualIpv6ForVpn({
+      address: { part1: 0xfd00_0000, part2: 0, part3: 0, part4: 1 },
+      network_length: 64,
+    })).toBe('fd00:0:0:0:0:0:0:1/64')
+  })
+
+  it('passes ipv6Addr to start_vpn when network info includes virtual_ipv6', async () => {
+    setConfig('A')
+    setReady('A', '10.0.0.1')
+    mocks.networkInfo.set('A', {
+      my_node_info: {
+        virtual_ipv4: {
+          address: { addr: '10.0.0.1' },
+          network_length: 24,
+        },
+        virtual_ipv6: {
+          address: { part1: 0xfd00_0000, part2: 0, part3: 0, part4: 1 },
+          network_length: 64,
+        },
+      },
+      routes: [],
+    })
+    const vpn = await loadVpnModule()
+    await vpn.onNetworkInstanceChange('A')
+    expect(mocks.startVpn).toHaveBeenCalledWith(expect.objectContaining({
+      ipv4Addr: '10.0.0.1/24',
+      ipv6Addr: 'fd00:0:0:0:0:0:0:1/64',
+    }))
+  })
 })
 
 describe('mobile VPN route sync annotate', () => {
@@ -321,5 +372,102 @@ describe('mobile VPN tile action delivery', () => {
 
     expect(await vpn.consumePendingMobileVpnTileAction()).toBe(true)
     expect(handler).toHaveBeenCalledWith('start')
+  })
+})
+
+describe('mobile VPN TUN device error recovery', () => {
+  /** Simulate a running VPN whose native side keeps reporting healthy. */
+  function setRunningVpn() {
+    setConfig('A')
+    setReady('A', '10.0.0.1')
+    mocks.getVpnStatus.mockResolvedValue({
+      running: true,
+      ipv4Addr: '10.0.0.1/24',
+      routes: [],
+    })
+    mocks.listNetworkInstanceIds.mockResolvedValue({ running_inst_ids: ['A'] })
+  }
+
+  let clockBase = 0
+  beforeEach(() => {
+    clockBase = Date.now()
+  })
+
+  /**
+   * Move `Date.now()` forward without firing timers. The grace window and the
+   * rebuild throttle are pure wall-clock logic, so this isolates them from the
+   * background sync interval.
+   */
+  function setClockOffset(offsetMs: number) {
+    vi.setSystemTime(clockBase + offsetMs)
+  }
+
+  it('rebuilds the VPN when the core reports a TUN device error', async () => {
+    setRunningVpn()
+    const vpn = await loadVpnModule()
+    await vpn.onNetworkInstanceChange('A')
+    expect(mocks.startVpn).toHaveBeenCalledTimes(1)
+
+    // Leave the start/stop transition grace window (15s) first.
+    setClockOffset(20000)
+    mocks.startVpn.mockClear()
+    mocks.stopVpn.mockClear()
+
+    await vpn.handleMobileTunDeviceError('A')
+
+    expect(mocks.stopVpn).toHaveBeenCalledTimes(1)
+    expect(mocks.startVpn).toHaveBeenCalledTimes(1)
+  })
+
+  it('ignores a TUN device error reported during a VPN transition', async () => {
+    setRunningVpn()
+    const vpn = await loadVpnModule()
+    await vpn.onNetworkInstanceChange('A')
+    mocks.startVpn.mockClear()
+    mocks.stopVpn.mockClear()
+
+    // No clock offset: the start transition grace window is still open, so a
+    // deliberate fd close must not be mistaken for a failure.
+    await vpn.handleMobileTunDeviceError('A')
+
+    expect(mocks.stopVpn).not.toHaveBeenCalled()
+    expect(mocks.startVpn).not.toHaveBeenCalled()
+  })
+
+  it('ignores a TUN device error from an instance that does not own the VPN', async () => {
+    setRunningVpn()
+    setConfig('B')
+    const vpn = await loadVpnModule()
+    await vpn.onNetworkInstanceChange('A')
+    setClockOffset(20000)
+    mocks.startVpn.mockClear()
+    mocks.stopVpn.mockClear()
+
+    await vpn.handleMobileTunDeviceError('B')
+
+    expect(mocks.stopVpn).not.toHaveBeenCalled()
+    expect(mocks.startVpn).not.toHaveBeenCalled()
+  })
+
+  it('throttles repeated rebuilds so a permanently bad fd cannot flap', async () => {
+    setRunningVpn()
+    const vpn = await loadVpnModule()
+    await vpn.onNetworkInstanceChange('A')
+
+    setClockOffset(20000)
+    await vpn.handleMobileTunDeviceError('A')
+    expect(mocks.stopVpn).toHaveBeenCalledTimes(1)
+    mocks.startVpn.mockClear()
+    mocks.stopVpn.mockClear()
+
+    // Past the 15s transition grace, but still inside the 30s rebuild floor.
+    setClockOffset(36000)
+    await vpn.handleMobileTunDeviceError('A')
+    expect(mocks.stopVpn).not.toHaveBeenCalled()
+
+    // Once the floor elapses the recovery must be allowed again.
+    setClockOffset(56000)
+    await vpn.handleMobileTunDeviceError('A')
+    expect(mocks.stopVpn).toHaveBeenCalledTimes(1)
   })
 })

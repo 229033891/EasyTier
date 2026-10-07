@@ -456,8 +456,14 @@ export interface Url {
   url: string
 }
 
+export interface Ipv6Inet {
+  address: Ipv6Addr
+  network_length: number
+}
+
 export interface NodeInfo {
   virtual_ipv4: Ipv4Inet,
+  virtual_ipv6?: Ipv6Inet,
   hostname: string
   version: string
   ips: {

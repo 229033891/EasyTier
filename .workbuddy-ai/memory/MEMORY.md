@@ -8,19 +8,30 @@
 - 全量编译 + LTO 链接耗时很长（数分钟起），未经确认直接开编会浪费大量时间。
 - 仅改代码、排查问题、看类型或构建配置时，**不要顺手触发全量编译**。
 - 只有用户明确说「打包 / 生成 exe / 出可部署产物」时才编译；届时先问清平台、用途、是否要 embed 一体包，日常迭代优先 `release-fast`。
-- **例外：`cargo check` / `vue-tsc` / `vitest` 属于验证手段，不是打包产物，可以主动跑**（见下面「环境备注」）。
+- **例外：`vue-tsc` / `vitest` 属于验证手段，不是打包产物，可以主动跑**（见下面「环境备注」）。
 
 详细步骤与说明见 `docs/easytier-web-build-and-deploy.md` 第 0 节。
 
+## 不要用本地 Rust 编译/check 作为验证手段（强制，2026-10-07 用户表态）
+
+**2026-10-07 用户明确说：「本地环境编译会报错，请跳过」。** 本机 `cargo check` 无论 debug 还是 `--profile release-fast`，都会卡在 C 依赖上（`windivert-sys` / `zstd-sys` / `ring` 的 `cl.exe` 退出码 2，debug profile 必挂；release-fast 也要先过一遍这些 crate）。因此：
+
+- **改完 Rust 不要跑 `cargo check` / `cargo build` 去「验证」**，也不要因为它报错就去修 C 依赖或环境——那不是本任务的信号。
+- Rust 改动一律**静态核对**（读代码、对签名、查调用点），编译交给用户 / CI。
+- `tun_mobile.rs` 之类 `#[cfg(mobile)]` 的代码本地无论如何都覆盖不到，别指望本地能查出来。
+- 能跑的验证只剩：`cd easytier-gui && ./node_modules/.bin/vue-tsc --noEmit`、`./node_modules/.bin/vitest run <file>`，以及 Kotlin 的静态核对。
+- 需要交叉核对签名时可直接读 cargo 缓存里的依赖源码（如 `~/.cargo/git/checkouts/rust-tun-*/.../src/async/unix_device.rs`）。
+
 ## 环境备注
 
-- **`cargo check` 现在可以跑**（2026-09-30 实测，此前记录的「沙箱拒绝写 target」已不成立）：`D:\EasyTier\target` 可写，`cargo check -p easytier-web --all-targets` 首次约 10 分钟（aws-lc-sys 等要实编），之后改 easytier-web 只需 8~20 秒。
-- **但 `cargo test` 跑不起来**：测试二进制能编译链接，启动时 `STATUS_DLL_NOT_FOUND (0xc0000135)`。已排除随包 DLL（只有运行时动态加载的 wintun/Packet）与系统 VC 运行库，属环境问题，同环境跑其它 crate 的测试也一样。
+- **`cargo test` 跑不起来**：测试二进制能编译链接，启动时 `STATUS_DLL_NOT_FOUND (0xc0000135)`。已排除随包 DLL（只有运行时动态加载的 wintun/Packet）与系统 VC 运行库，属环境问题，同环境跑其它 crate 的测试也一样。
 - 需要 SQL 层验证时，可行办法是**用 Python `sqlite3` 从源码正则抽出建表/查询 SQL 直接跑**（绕开 Rust 编译与测试运行时），已验证有效。
 - cargo 路径：`C:\Users\Administrator\.cargo\bin\cargo.exe`（不在默认 PATH，需显式加入）。`rustfmt` 只装在 `1.95.0` 工具链上（不是 rust-toolchain.toml 指定的 `1.95`），要用 `rustup run 1.95.0 rustfmt --edition 2024 <file>`；它只能查语法，查不出类型错误。
-- **Rust 侧两个易踩的坑**：
+- **Rust 侧几个易踩的坑**：
   1. `i64::div_ceil` 在 1.95 上仍属 unstable 的 `int_roundings`（只有无符号整数稳定了），要用 `(a + b - 1) / b`。
   2. `DeleteMany::filter` 来自 `QueryFilter` trait，不是 inherent 方法；不 `use QueryFilter as _` 会解析到 `Iterator::filter` 报「is not an iterator」。而 `DatabaseConnection::query_all` 是 inherent，加 `ConnectionTrait` 反而报 unused import。
+  3. `Box::<dyn Any + Send>::downcast` **按值消费** self（`fn downcast<T>(self: Box<Self>)`）→ 不能 `if let Ok(a) = b.downcast::<A>() {} else if let Ok(c) = b.downcast::<B>() {}`（E0382），要用 `match` + `Err(boxed)` 重新绑定。
+  4. `let it = temp_guard().iter_like();` 这种「临时值当接收者、返回值借用它」的写法是 E0716；要么把 guard 绑到名字上，要么 `.collect()` 成 owned 容器。
 
 ## 本机 Windows 构建前置依赖（已全部装好缓存，构建前加这些环境变量）
 

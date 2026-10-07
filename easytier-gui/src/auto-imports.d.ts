@@ -29,6 +29,7 @@ declare global {
   const effectScope: typeof import('vue')['effectScope']
   const executeVpnTileAction: typeof import('./composables/mobile_vpn_tile')['executeVpnTileAction']
   const formatMobileVpnRouteSync: typeof import('./composables/mobile_vpn')['formatMobileVpnRouteSync']
+  const formatVirtualIpv6ForVpn: typeof import('./composables/mobile_vpn')['formatVirtualIpv6ForVpn']
   const generateMenuItem: typeof import('./composables/tray')['generateMenuItem']
   const generateNetworkConfig: typeof import('./composables/backend')['generateNetworkConfig']
   const getActivePinia: typeof import('pinia')['getActivePinia']
@@ -44,6 +45,7 @@ declare global {
   const getServiceStatus: typeof import('./composables/backend')['getServiceStatus']
   const getVpnPortalInfo: typeof import('./composables/backend')['getVpnPortalInfo']
   const h: typeof import('vue')['h']
+  const handleMobileTunDeviceError: typeof import('./composables/mobile_vpn')['handleMobileTunDeviceError']
   const initMobileVpnService: typeof import('./composables/mobile_vpn')['initMobileVpnService']
   const initRpcConnection: typeof import('./composables/backend')['initRpcConnection']
   const initService: typeof import('./composables/backend')['initService']
@@ -183,6 +185,7 @@ declare module 'vue' {
     readonly effectScope: UnwrapRef<typeof import('vue')['effectScope']>
     readonly executeVpnTileAction: UnwrapRef<typeof import('./composables/mobile_vpn_tile')['executeVpnTileAction']>
     readonly formatMobileVpnRouteSync: UnwrapRef<typeof import('./composables/mobile_vpn')['formatMobileVpnRouteSync']>
+    readonly formatVirtualIpv6ForVpn: UnwrapRef<typeof import('./composables/mobile_vpn')['formatVirtualIpv6ForVpn']>
     readonly generateMenuItem: UnwrapRef<typeof import('./composables/tray')['generateMenuItem']>
     readonly generateNetworkConfig: UnwrapRef<typeof import('./composables/backend')['generateNetworkConfig']>
     readonly getActivePinia: UnwrapRef<typeof import('pinia')['getActivePinia']>
@@ -198,6 +201,7 @@ declare module 'vue' {
     readonly getServiceStatus: UnwrapRef<typeof import('./composables/backend')['getServiceStatus']>
     readonly getVpnPortalInfo: UnwrapRef<typeof import('./composables/backend')['getVpnPortalInfo']>
     readonly h: UnwrapRef<typeof import('vue')['h']>
+    readonly handleMobileTunDeviceError: UnwrapRef<typeof import('./composables/mobile_vpn')['handleMobileTunDeviceError']>
     readonly initMobileVpnService: UnwrapRef<typeof import('./composables/mobile_vpn')['initMobileVpnService']>
     readonly initRpcConnection: UnwrapRef<typeof import('./composables/backend')['initRpcConnection']>
     readonly initService: UnwrapRef<typeof import('./composables/backend')['initService']>

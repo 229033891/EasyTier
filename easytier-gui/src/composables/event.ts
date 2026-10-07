@@ -3,7 +3,7 @@ import { type } from "@tauri-apps/plugin-os";
 import { NetworkTypes } from "easytier-frontend-lib"
 import { Utils } from "easytier-frontend-lib";
 import { normalizeConfigSource } from './config_source'
-import { onNetworkInstanceUpdate } from './mobile_vpn'
+import { handleMobileTunDeviceError, onNetworkInstanceUpdate } from './mobile_vpn'
 
 interface StoredGuiConfig {
     config: NetworkTypes.NetworkConfig
@@ -18,6 +18,7 @@ const EVENTS = Object.freeze({
     DHCP_IP_CHANGED: 'dhcp_ip_changed',
     PROXY_CIDRS_UPDATED: 'proxy_cidrs_updated',
     EVENT_LAGGED: 'event_lagged',
+    TUN_DEVICE_ERROR: 'tun_device_error',
 });
 
 function onSaveConfigs(event: Event<StoredGuiConfig[]>) {
@@ -104,6 +105,18 @@ async function onEventLagged(event: Event<unknown>) {
     }
 }
 
+/**
+ * The core lost its TUN while the native VpnService may still report running.
+ * Recovery is a full VPN rebuild, debounced inside mobile_vpn.
+ */
+async function onTunDeviceError(event: Event<unknown>) {
+    const instanceId = normalizeInstanceIdPayload(event.payload)
+    console.warn(`Received event '${EVENTS.TUN_DEVICE_ERROR}' for instance: ${instanceId}`);
+    if (type() === 'android') {
+        await handleMobileTunDeviceError(instanceId);
+    }
+}
+
 export async function listenGlobalEvents() {
     const unlisteners = [
         await listen(EVENTS.SAVE_CONFIGS, onSaveConfigs),
@@ -113,6 +126,7 @@ export async function listenGlobalEvents() {
         await listen(EVENTS.DHCP_IP_CHANGED, onDhcpIpChanged),
         await listen(EVENTS.PROXY_CIDRS_UPDATED, onProxyCidrsUpdated),
         await listen(EVENTS.EVENT_LAGGED, onEventLagged),
+        await listen(EVENTS.TUN_DEVICE_ERROR, onTunDeviceError),
     ];
 
     return () => {

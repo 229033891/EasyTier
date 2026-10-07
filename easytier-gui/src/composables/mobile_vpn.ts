@@ -17,6 +17,8 @@ interface vpnStatus {
   running: boolean
   ipv4Addr: string | null | undefined
   ipv4Cidr: number | null | undefined
+  /** Virtual IPv6 with prefix, e.g. `fd00::1/64`. */
+  ipv6Addr: string | null | undefined
   routes: string[]
   dns: string | null | undefined
 }
@@ -24,6 +26,15 @@ interface vpnStatus {
 let vpnReconcileTimer: ReturnType<typeof setTimeout> | null = null
 const VPN_RECONCILE_INTERVAL_MS = 2000
 const VPN_RECONCILE_MAX_ATTEMPTS = 60
+
+/**
+ * Grace window after a start/stop begins. Native TUN teardown during a normal
+ * replace closes the fd on purpose, which makes the core report a TUN error —
+ * that must not be mistaken for a failure and trigger another restart.
+ */
+const VPN_TRANSITION_GRACE_MS = 15000
+/** Floor between two TUN-error driven rebuilds, so a permanently bad fd cannot flap. */
+const VPN_TUN_ERROR_REBUILD_INTERVAL_MS = 30000
 
 let desiredVpnInstanceId: string | undefined
 let activeVpnInstanceId: string | undefined
@@ -33,11 +44,14 @@ let vpnReconcileQueue: Promise<void> = Promise.resolve()
 let vpnPermissionRequest: Promise<boolean> | null = null
 let vpnTileActionHandler: ((action: VpnTileAction) => Promise<void>) | undefined
 let vpnTileActionQueue: Promise<void> = Promise.resolve()
+let vpnTransitionDeadline = 0
+let lastTunErrorRebuildAt = 0
 
 const curVpnStatus: vpnStatus = {
   running: false,
   ipv4Addr: undefined,
   ipv4Cidr: undefined,
+  ipv6Addr: undefined,
   routes: [],
   dns: undefined,
 }
@@ -286,6 +300,7 @@ function scheduleVpnReconcile(instanceId: string, generation: number, reason: st
 function resetVpnConfigStatus() {
   curVpnStatus.ipv4Addr = undefined
   curVpnStatus.ipv4Cidr = undefined
+  curVpnStatus.ipv6Addr = undefined
   curVpnStatus.routes = []
   curVpnStatus.dns = undefined
 }
@@ -319,10 +334,42 @@ async function waitVpnStatus(target_status: boolean, timeout_sec: number) {
   const start_time = Date.now()
   while (curVpnStatus.running !== target_status) {
     if (Date.now() - start_time > timeout_sec * 1000) {
+      // Event may have been missed; recheck native before failing (A5).
+      try {
+        syncVpnStatusFromNative(await get_vpn_status())
+      }
+      catch (e) {
+        console.warn('vpn status recheck failed', e)
+      }
+      if (curVpnStatus.running === target_status) {
+        return
+      }
       throw new Error('wait vpn status timeout')
     }
     await new Promise(r => setTimeout(r, 50))
   }
+}
+
+/** Match desktop TUN MTU: config.mtu (default 1380), minus 20 when encryption is on (A11). */
+function resolveVpnMtu(config: { mtu?: number | null, disable_encryption?: boolean | null }) {
+  let mtu = typeof config.mtu === 'number' && config.mtu > 0 ? config.mtu : 1380
+  if (!config.disable_encryption) {
+    mtu = Math.max(mtu - 20, 576)
+  }
+  return mtu
+}
+
+/** Format `MyNodeInfo.virtual_ipv6` for Android VpnService `addAddress` (R3). */
+export function formatVirtualIpv6ForVpn(
+  virtualIpv6?: NetworkTypes.Ipv6Inet | null,
+): string | undefined {
+  if (!virtualIpv6?.address)
+    return undefined
+  const addr = Utils.ipv6ToString(virtualIpv6.address)
+  if (!addr?.length)
+    return undefined
+  const prefix = virtualIpv6.network_length ?? 128
+  return `${addr}/${prefix}`
 }
 
 async function doStopVpn(force = false) {
@@ -331,68 +378,110 @@ async function doStopVpn(force = false) {
     activeVpnInstanceId = undefined
     return
   }
+  // Native teardown closes the TUN fd, which makes the core report a TUN error.
+  // Suppress error-driven rebuilds while a deliberate transition is in flight (R1).
+  vpnTransitionDeadline = Date.now() + VPN_TRANSITION_GRACE_MS
   console.log('stop vpn')
   const stop_ret = await stop_vpn()
   console.log('stop vpn', JSON.stringify((stop_ret)))
   if (wasRunning) {
-    await waitVpnStatus(false, 3)
+    await waitVpnStatus(false, 8)
   }
 
   activeVpnInstanceId = undefined
   resetVpnConfigStatus()
 }
 
-async function doStartVpn(instanceId: string, ipv4Addr: string, cidr: number, routes: string[], dns?: string) {
+async function doStartVpn(
+  instanceId: string,
+  ipv4Addr: string,
+  cidr: number,
+  routes: string[],
+  dns?: string,
+  mtu = 1360,
+  ipv6WithPrefix?: string,
+) {
   if (curVpnStatus.running) {
     return
   }
 
-  console.log('start vpn service', ipv4Addr, cidr, routes, dns)
+  // `start_vpn` internally replaces the TUN (stopInternal → establish), so the
+  // old fd close will surface as a core TUN error. Cover the whole transition (R1).
+  vpnTransitionDeadline = Date.now() + VPN_TRANSITION_GRACE_MS
+
+  console.log('start vpn service', ipv4Addr, cidr, routes, dns, mtu, ipv6WithPrefix)
   const request = {
     ipv4Addr: `${ipv4Addr}/${cidr}`,
+    ...(ipv6WithPrefix ? { ipv6Addr: ipv6WithPrefix } : {}),
     routes,
     dns,
     disallowedApplications: ['com.kkrainbow.easytier'],
-    mtu: 1300,
+    mtu,
   }
 
-  let start_ret = await start_vpn(request)
-  console.log('start vpn response', JSON.stringify(start_ret))
-  if (start_ret?.errorMsg === 'need_prepare') {
-    const granted = await requestVpnPermission()
-    if (!granted) {
-      throw new Error('vpn_permission_denied')
-    }
-    start_ret = await start_vpn(request)
-    console.log('start vpn retry response', JSON.stringify(start_ret))
-  }
-
-  if (start_ret?.errorMsg?.length) {
-    throw new Error(start_ret.errorMsg)
-  }
-  await waitVpnStatus(true, 3)
-
-  curVpnStatus.ipv4Addr = ipv4Addr
-  curVpnStatus.ipv4Cidr = cidr
-  curVpnStatus.routes = normalizeRouteList(routes)
-  curVpnStatus.dns = dns
+  // Claim ownership before waiting for vpn_service_start so a slow establish
+  // cannot be mis-read as "owner changed" by the next reconcile (A5).
+  // Note: start_vpn → stopInternal emits vpn_service_stop which clears the
+  // owner via onVpnServiceStop; re-assert after each start_vpn call.
   activeVpnInstanceId = instanceId
+
+  try {
+    let start_ret = await start_vpn(request)
+    activeVpnInstanceId = instanceId
+    console.log('start vpn response', JSON.stringify(start_ret))
+    if (start_ret?.errorMsg === 'need_prepare') {
+      const granted = await requestVpnPermission()
+      if (!granted) {
+        throw new Error('vpn_permission_denied')
+      }
+      start_ret = await start_vpn(request)
+      activeVpnInstanceId = instanceId
+      console.log('start vpn retry response', JSON.stringify(start_ret))
+    }
+
+    if (start_ret?.errorMsg?.length) {
+      throw new Error(start_ret.errorMsg)
+    }
+    await waitVpnStatus(true, 8)
+
+    curVpnStatus.ipv4Addr = ipv4Addr
+    curVpnStatus.ipv4Cidr = cidr
+    curVpnStatus.ipv6Addr = ipv6WithPrefix
+    curVpnStatus.routes = normalizeRouteList(routes)
+    curVpnStatus.dns = dns
+    activeVpnInstanceId = instanceId
+  }
+  catch (e) {
+    if (activeVpnInstanceId === instanceId && !curVpnStatus.running) {
+      activeVpnInstanceId = undefined
+    }
+    throw e
+  }
 }
 
 async function onVpnServiceStart(payload: any) {
   console.log('vpn service start', JSON.stringify(payload))
   curVpnStatus.running = true
   if (payload.fd) {
-    await setTunFd(payload.fd).catch((e) => {
+    try {
+      await setTunFd(payload.fd, activeVpnInstanceId)
+    }
+    catch (e) {
+      // Do not leave running=true when core never got the fd (R1 partial).
       console.error('set tun fd failed', e)
-    })
+      curVpnStatus.running = false
+      activeVpnInstanceId = undefined
+      resetVpnConfigStatus()
+    }
   }
 }
 
 async function onVpnServiceStop(payload: any) {
   console.log('vpn service stop', JSON.stringify(payload))
   curVpnStatus.running = false
-  activeVpnInstanceId = undefined
+  // Keep activeVpnInstanceId: start_vpn's stopInternal emits this event while
+  // replacing the TUN, and clearing the owner here races with vpn_service_start
+  // → setTunFd. Intentional stops clear the owner in doStopVpn.
   resetVpnConfigStatus()
 }
 
@@ -583,12 +672,14 @@ async function reconcileNetworkInstance(instanceId: string, generation: number) 
   const routes = getRoutesForVpn(curNetworkInfo?.routes, config)
 
   const dns = config.enable_magic_dns ? '100.100.100.53' : undefined
+  const virtualIpv6WithPrefix = formatVirtualIpv6ForVpn(curNetworkInfo.my_node_info?.virtual_ipv6)
 
   const ipChanged = virtual_ip !== curVpnStatus.ipv4Addr
   const cidrChanged = network_length !== curVpnStatus.ipv4Cidr
+  const ipv6Changed = virtualIpv6WithPrefix !== curVpnStatus.ipv6Addr
   const routesChanged = JSON.stringify(routes) !== JSON.stringify(curVpnStatus.routes)
   const dnsChanged = dns != curVpnStatus.dns
-  const configChanged = ipChanged || cidrChanged || routesChanged || dnsChanged
+  const configChanged = ipChanged || cidrChanged || ipv6Changed || routesChanged || dnsChanged
   const shouldStartVpn = !curVpnStatus.running
 
   if (shouldStartVpn || configChanged) {
@@ -606,7 +697,15 @@ async function reconcileNetworkInstance(instanceId: string, generation: number) 
       if (!isCurrentVpnReconcile(instanceId, generation))
         return
 
-      await doStartVpn(instanceId, virtual_ip, network_length, routes, dns)
+      await doStartVpn(
+        instanceId,
+        virtual_ip,
+        network_length,
+        routes,
+        dns,
+        resolveVpnMtu(config),
+        virtualIpv6WithPrefix,
+      )
       if (!isCurrentVpnReconcile(instanceId, generation) && activeVpnInstanceId === instanceId) {
         await doStopVpn()
       }
@@ -673,6 +772,64 @@ export async function onNetworkInstanceUpdate(instanceId: string) {
 
   const generation = beginVpnReconcile(instanceId)
   await enqueueVpnReconcile(instanceId, generation)
+}
+
+/**
+ * The core lost its TUN device while the native VpnService may still report
+ * `running` (see `GlobalCtxEvent::TunDeviceError` → `tun_device_error`). The
+ * only recovery is a full teardown + rebuild, because a dead fd cannot be
+ * revived by the core itself.
+ *
+ * Two guards keep this from turning into a restart loop:
+ * - `vpnTransitionDeadline`: a normal replace closes the old fd on purpose, so
+ *   errors reported during a start/stop window are expected and ignored.
+ * - `VPN_TUN_ERROR_REBUILD_INTERVAL_MS`: a permanently bad fd would otherwise
+ *   flap forever, so rebuilds are rate-limited.
+ */
+export async function handleMobileTunDeviceError(instanceId: string) {
+  if (!instanceId)
+    return
+
+  const now = Date.now()
+  if (now < vpnTransitionDeadline) {
+    console.info('ignore TUN device error during VPN transition', instanceId)
+    return
+  }
+
+  // `lastTunErrorRebuildAt` starts at 0 (= "never rebuilt"), so the sentinel
+  // check is required — otherwise the very first TUN error after launch would
+  // be swallowed by the throttle window.
+  if (lastTunErrorRebuildAt > 0 && now - lastTunErrorRebuildAt < VPN_TUN_ERROR_REBUILD_INTERVAL_MS) {
+    console.warn(
+      'throttle TUN device error rebuild',
+      instanceId,
+      VPN_TUN_ERROR_REBUILD_INTERVAL_MS,
+    )
+    return
+  }
+
+  // Only act on the instance we actually drive; a stale instance that the GUI
+  // already stopped must not resurrect the VPN.
+  if (instanceId !== activeVpnInstanceId && instanceId !== desiredVpnInstanceId) {
+    console.info('ignore TUN device error from unrelated instance', instanceId)
+    return
+  }
+
+  lastTunErrorRebuildAt = now
+  console.warn('core TUN device failed; tearing down and rebuilding VPN', instanceId)
+
+  await enqueueVpnTask(async () => {
+    try {
+      await doStopVpn(true)
+    }
+    catch (e) {
+      console.error('stop vpn after TUN device error failed', e)
+    }
+  })
+
+  if (instanceId === desiredVpnInstanceId) {
+    await onNetworkInstanceUpdate(instanceId)
+  }
 }
 
 async function isNoTunEnabled(instanceId: string | undefined) {

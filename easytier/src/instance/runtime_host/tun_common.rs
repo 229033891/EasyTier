@@ -17,22 +17,39 @@ use crate::{
 };
 
 struct NicCtxContainer {
-    _nic_ctx: Option<Box<dyn Any + Send>>,
+    nic_ctx: Option<Box<dyn Any + Send>>,
     magic_dns: MagicDnsRuntime,
 }
 
 impl NicCtxContainer {
     fn new(nic_ctx: NicCtx, magic_dns: MagicDnsRuntime) -> Self {
         Self {
-            _nic_ctx: Some(Box::new(nic_ctx)),
+            nic_ctx: Some(Box::new(nic_ctx)),
             magic_dns,
         }
     }
 
     fn packet_drain(tasks: JoinSet<()>) -> Self {
         Self {
-            _nic_ctx: Some(Box::new(tasks)),
+            nic_ctx: Some(Box::new(tasks)),
             magic_dns: MagicDnsRuntime::default(),
+        }
+    }
+
+    async fn shutdown_tasks(&mut self) {
+        let Some(boxed) = self.nic_ctx.take() else {
+            return;
+        };
+        // `Box::<dyn Any + Send>::downcast` consumes the box, so the second
+        // attempt must re-bind it from `Err` instead of reusing `boxed`.
+        match boxed.downcast::<NicCtx>() {
+            Ok(nic) => nic.shutdown().await,
+            Err(boxed) => {
+                if let Ok(mut tasks) = boxed.downcast::<JoinSet<()>>() {
+                    tasks.abort_all();
+                    while tasks.join_next().await.is_some() {}
+                }
+            }
         }
     }
 }
@@ -66,8 +83,11 @@ impl TunNicState {
 
     pub(super) async fn stop(&self) {
         let mut old = self.nic_ctx.lock().await.take();
-        if let Some(nic) = old.as_mut() {
-            nic.magic_dns.stop().await;
+        if let Some(container) = old.as_mut() {
+            container.magic_dns.stop().await;
+            // Join aborted NIC tasks so AsyncFd epoll DEL finishes before a
+            // replacement TUN reuses the same fd number (A10).
+            container.shutdown_tasks().await;
         }
         drop(old);
     }

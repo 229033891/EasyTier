@@ -461,6 +461,23 @@ impl GUIClientManager {
                                 ) => {
                                     let _ = app_clone.emit("proxy_cidrs_updated", &instance_id_str);
                                 }
+                                // The core lost its TUN (read stream ended, sink fused,
+                                // or the Android fd could not be attached). The native
+                                // VpnService may still report "running", so the GUI has to
+                                // tear it down and rebuild — `set_tun_device_error` alone
+                                // never reaches `error_msg` (it is not `latest_error`).
+                                Ok(
+                                    easytier::common::global_ctx::GlobalCtxEvent::TunDeviceError(
+                                        err,
+                                    ),
+                                ) => {
+                                    tracing::warn!(
+                                        instance = %instance_id_str,
+                                        %err,
+                                        "native TUN device failed; notifying GUI",
+                                    );
+                                    let _ = app_clone.emit("tun_device_error", &instance_id_str);
+                                }
                                 Ok(_) => {}
                                 Err(tokio::sync::broadcast::error::RecvError::Closed) => {
                                     break;
