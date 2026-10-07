@@ -23,7 +23,7 @@
     }
   },
   "productName": "ET",
-  "version": "2.7.41",
+  "version": "2.7.42",
   "identifier": "com.kkrainbow.easytier",
   "plugins": {
     "shell": {
