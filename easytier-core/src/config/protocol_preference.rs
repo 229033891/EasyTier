@@ -102,9 +102,7 @@ pub fn rewrite_url_scheme(url: &Url, scheme: &str) -> Option<Url> {
     if next.set_scheme(scheme).is_err() {
         let raw = url.as_str();
         let prefix = format!("{}:", url.scheme());
-        let Some(rest) = raw.strip_prefix(&prefix) else {
-            return None;
-        };
+        let rest = raw.strip_prefix(&prefix)?;
         next = Url::parse(&format!("{scheme}:{rest}")).ok()?;
     }
     if let Some(port) = port_to_keep {
