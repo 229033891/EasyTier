@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { useConfirm, useToast } from 'primevue'
+import { useToast } from 'primevue'
 import Button from 'primevue/button'
 import Dialog from 'primevue/dialog'
 import InputText from 'primevue/inputtext'
@@ -19,7 +19,6 @@ const visible = defineModel<boolean>('visible', { default: false })
 
 const { t } = useI18n()
 const toast = useToast()
-const confirm = useConfirm()
 
 const loggingLevel = ref('warn')
 const loggingLevelLive = ref(true)
@@ -251,22 +250,8 @@ async function onClearLogs() {
   if (!canClearLogs.value || isClearing.value || isSaving.value) {
     return
   }
-  confirm.require({
-    message: t('logging_clear_confirm'),
-    header: t('logging_clear'),
-    icon: 'pi pi-exclamation-triangle',
-    rejectProps: {
-      label: t('web.common.cancel'),
-      severity: 'secondary',
-      outlined: true,
-    },
-    acceptProps: {
-      label: t('logging_clear'),
-      severity: 'danger',
-    },
-    accept: async () => {
-      isClearing.value = true
-      try {
+  isClearing.value = true
+  try {
         const raw = await props.api.clearLogFiles!()
         const result: ClearLogFilesResult = typeof raw === 'number'
           ? { cleared: raw, errors: [], dirs: [] }
@@ -318,8 +303,6 @@ async function onClearLogs() {
       finally {
         isClearing.value = false
       }
-    },
-  })
 }
 </script>
 
