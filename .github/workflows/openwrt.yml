@@ -40,8 +40,9 @@ jobs:
         "easytier-rpc-build/**", "easytier-web/**",
         ".github/workflows/openwrt.yml", ".github/actions/**"]
     outputs:
-      # Skip when no RELEVANT_PATHS changed (e.g. docs-only). Code / workflow /
-      # lockfile / release-metadata under those globs still force a full run.
+      # Path-based skip was removed for push: a green run with zero artifacts
+      # looked like an empty package. Keep concurrent/identical-duplicate skip;
+      # PR still path-filters.
       should_skip: >-
         ${{
           steps.skip_check.outputs.should_skip == 'true' ||
@@ -57,7 +58,7 @@ jobs:
           concurrent_skipping: 'same_content_newer'
           skip_after_successful_duplicate: 'true'
           cancel_others: 'true'
-          paths: ${{ env.RELEVANT_PATHS }}
+          # Do NOT pass `paths` on push packaging (see linux.yml).
 
       - id: path_filter
         if: >-

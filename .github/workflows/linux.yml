@@ -30,8 +30,9 @@ jobs:
         "easytier-web/**", ".github/workflows/linux.yml",
         ".github/actions/**"]
     outputs:
-      # Skip when no RELEVANT_PATHS changed (e.g. docs-only). Code / workflow /
-      # lockfile / release-metadata under those globs still force a full run.
+      # Path-based skip was removed for push: a green run with zero artifacts
+      # looked like an "empty package" and ET Release could pick it as success.
+      # Keep concurrent/identical-duplicate skip only; PR still path-filters.
       should_skip: >-
         ${{
           steps.skip_check.outputs.should_skip == 'true' ||
@@ -47,7 +48,8 @@ jobs:
           concurrent_skipping: 'same_content_newer'
           skip_after_successful_duplicate: 'true'
           cancel_others: 'true'
-          paths: ${{ env.RELEVANT_PATHS }}
+          # Do NOT pass `paths` on push packaging: unrelated-path skips still
+          # conclude success with no ET-* artifacts.
 
       - id: path_filter
         if: >-
@@ -173,15 +175,23 @@ jobs:
           )
           for SRC in easytier-core easytier-cli easytier-web-embed; do
             BIN="./target/$TARGET/release/${SRC}${SUFFIX}"
-            if [[ -f "$BIN" ]]; then
-              if [[ -x "$UPX_BIN" ]]; then
-                # Default UPX level (was --lzma --best); compare artifact size on next run.
-                "$UPX_BIN" "$BIN" || true
-              fi
-              mv "$BIN" "./artifacts/objects/${RENAME[$SRC]}${SUFFIX}"
+            if [[ ! -f "$BIN" ]]; then
+              echo "::error::missing build output: ${BIN}"
+              exit 1
             fi
+            if [[ -x "$UPX_BIN" ]]; then
+              # Default UPX level (was --lzma --best); compare artifact size on next run.
+              "$UPX_BIN" "$BIN" || true
+            fi
+            mv "$BIN" "./artifacts/objects/${RENAME[$SRC]}${SUFFIX}"
           done
 
+          shopt -s nullglob
+          built=(./artifacts/objects/*)
+          if [[ ${#built[@]} -eq 0 ]]; then
+            echo "::error::Linux package directory is empty"
+            exit 1
+          fi
           mv ./artifacts/objects/* ./artifacts/
           rm -rf ./artifacts/objects/
 

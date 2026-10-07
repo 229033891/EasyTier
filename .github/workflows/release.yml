@@ -128,9 +128,21 @@ jobs:
             exit 0
           fi
 
+          # True when the run uploaded at least one ET-* packaging artifact.
+          # Path-skipped workflows conclude success with zero artifacts; those
+          # must not be treated as a usable package for this SHA.
+          run_has_et_artifacts() {
+            local id="$1"
+            local count
+            count="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${id}/artifacts" \
+              --jq '[.artifacts[] | select(.name | startswith("ET-"))] | length')"
+            [ "${count:-0}" -gt 0 ]
+          }
+
           resolve_run() {
             local workflow="$1"
             local want_sha="$2"
+            local ids=""
             local id=""
             # NOTE: `gh --jq` does NOT accept `jq --arg`. Writing
             #   --jq --arg sha "$want_sha" '...'
@@ -139,24 +151,31 @@ jobs:
             # release is skipped ("missing ET Linux ET Windows ET Android")
             # even when all builds succeeded. Use native `--commit` instead.
             if [ -n "$want_sha" ]; then
-              id="$(gh run list \
+              ids="$(gh run list \
                 --workflow "$workflow" \
                 --branch "$branch" \
                 --commit "$want_sha" \
                 --status success \
-                --limit 5 \
+                --limit 10 \
                 --json databaseId,conclusion \
-                --jq '[.[] | select(.conclusion == "success")][0].databaseId // empty')"
+                --jq '[.[] | select(.conclusion == "success") | .databaseId] | .[]')"
             else
-              id="$(gh run list \
+              ids="$(gh run list \
                 --workflow "$workflow" \
                 --branch "$branch" \
                 --status success \
-                --limit 1 \
+                --limit 10 \
                 --json databaseId \
-                --jq '.[0].databaseId // empty')"
+                --jq '.[].databaseId')"
             fi
-            echo "$id"
+            for id in $ids; do
+              if run_has_et_artifacts "$id"; then
+                echo "$id"
+                return 0
+              fi
+              echo "Ignoring ${workflow} run ${id}: success but no ET-* artifacts (likely path-skipped)" >&2
+            done
+            echo ""
           }
 
           describe_run() {
