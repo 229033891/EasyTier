@@ -251,9 +251,11 @@ mod tests {
                 .map(|u| u.as_str().to_owned())
                 .collect::<Vec<_>>(),
             vec![
+                // wss is WHATWG-special → empty path serializes as `/`;
+                // tcp/udp are non-special → no trailing slash (matches dial URL).
                 "wss://10.0.0.2:2200/".to_owned(),
-                "tcp://10.0.0.2:2200/".to_owned(),
-                "udp://10.0.0.2:2200/".to_owned(),
+                "tcp://10.0.0.2:2200".to_owned(),
+                "udp://10.0.0.2:2200".to_owned(),
             ]
         );
     }
