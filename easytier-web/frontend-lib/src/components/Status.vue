@@ -1171,12 +1171,10 @@ const eventLogContent = computed(() => {
 }
 
 @media (max-width: 640px) {
-  .peer-table-scroll :deep(.peer-col-secondary) {
-    display: none !important;
-  }
-
+  /* Keep all peer columns on narrow screens; table scrolls horizontally
+     via .peer-table-scroll (overflow-x: auto). */
   .peer-table-scroll :deep(.peer-route-table) {
-    min-width: 22rem;
+    min-width: 36rem;
   }
 
   .peer-addr-cell,
