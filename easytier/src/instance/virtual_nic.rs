@@ -568,7 +568,29 @@ impl VirtualNic {
             }
 
             if !dev_name.is_empty() {
-                config.tun_name(&dev_name);
+                match crate::arch::windows::interface_exists(&dev_name) {
+                    Some(true) => {
+                        config.tun_name(&dev_name);
+                    }
+                    Some(false) => {
+                        // Stale config name (adapter deleted / cleaned). rust-tun still does
+                        // open→fail→create; emit a clear WARN and keep the name so recreate
+                        // reuses the configured adapter identity.
+                        tracing::warn!(
+                            %dev_name,
+                            "configured WinTun adapter not found; recreating with the same name"
+                        );
+                        config.tun_name(&dev_name);
+                    }
+                    None => {
+                        // Enumeration failed — do not claim the adapter is missing.
+                        tracing::warn!(
+                            %dev_name,
+                            "failed to enumerate network interfaces; proceeding with configured WinTun name"
+                        );
+                        config.tun_name(&dev_name);
+                    }
+                }
             } else {
                 use rand::distr::Distribution as _;
                 let c = crate::arch::windows::interface_count()?;
@@ -581,6 +603,10 @@ impl VirtualNic {
                     .to_lowercase();
 
                 let random_dev_name = format!("et_{}_{}", c, s);
+                tracing::info!(
+                    %random_dev_name,
+                    "allocating new WinTun adapter name (dev_name was empty)"
+                );
                 config.tun_name(random_dev_name.clone());
 
                 let mut flags = self.global_ctx.get_flags();

@@ -16,6 +16,7 @@ use crate::{
     packet::ZCPacket,
     peers::{
         PeerPacketFilter,
+        error::take_path_unavailable_warn_token,
         peer_manager::{PeerManagerCore, PipelineRegistrationGuard},
     },
 };
@@ -107,7 +108,15 @@ impl<R: IcmpProxyRuntime + 'static> IcmpProxyService<R> {
                     header.set_latency_first(latency_first);
                     let to_peer_id = header.to_peer_id.into();
                     if let Err(err) = peer_manager.send_msg_for_proxy(packet, to_peer_id).await {
-                        tracing::error!(?err, "send ICMP proxy response to peer failed");
+                        if err.is_expected_path_unavailable() {
+                            if take_path_unavailable_warn_token(to_peer_id) {
+                                tracing::warn!(?err, "send ICMP proxy response to peer failed");
+                            } else {
+                                tracing::debug!(?err, "send ICMP proxy response to peer failed");
+                            }
+                        } else {
+                            tracing::error!(?err, "send ICMP proxy response to peer failed");
+                        }
                     }
                 }
             });

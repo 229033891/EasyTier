@@ -549,8 +549,12 @@ impl PeerConn {
                 match self.wait_handshake(&mut need_retry).await {
                     Ok(rsp) => return Ok(rsp),
                     Err(e) => {
-                        tracing::warn!("wait handshake error: {:?}", e);
-                        if !need_retry {
+                        // `need_retry == false` means the stream ended before a handshake
+                        // packet (closed / recv error) — expected on teardown, not a decode bug.
+                        if need_retry {
+                            tracing::warn!("wait handshake error: {:?}", e);
+                        } else {
+                            tracing::debug!("wait handshake error: {:?}", e);
                             return Err(e);
                         }
                     }
@@ -846,9 +850,12 @@ impl PeerConn {
         };
 
         let mut hs = builder
-            .prologue(&prologue)?
-            .local_private_key(&local_private_key)?
-            .build_initiator()?;
+            .prologue(&prologue)
+            .map_err(|e| Error::WaitRespError(format!("set noise prologue failed: {e:?}")))?
+            .local_private_key(&local_private_key)
+            .map_err(|e| Error::WaitRespError(format!("set noise local key failed: {e:?}")))?
+            .build_initiator()
+            .map_err(|e| Error::WaitRespError(format!("build noise initiator failed: {e:?}")))?;
 
         self.send_noise_msg(
             msg1_pb,
@@ -865,7 +872,8 @@ impl PeerConn {
             Duration::from_secs(5),
             self.recv_next_peer_manager_packet(Some(PacketType::NoiseHandshakeMsg2)),
         )
-        .await??;
+        .await
+        .map_err(|e| Error::WaitRespError(format!("timed out waiting for noise msg2: {e:?}")))??;
         self.record_control_rx(&network.network_name, msg2.buf_len() as u64);
         let remote_peer_id = msg2.get_src_peer_id().expect("missing src peer id");
         if let Some(hint) = self.peer_id_hint
@@ -1052,9 +1060,12 @@ impl PeerConn {
         let (local_static_private_key, local_static_pubkey) = self.get_keypair()?;
 
         let mut hs = builder
-            .prologue(&prologue)?
-            .local_private_key(&local_static_private_key)?
-            .build_responder()?;
+            .prologue(&prologue)
+            .map_err(|e| Error::WaitRespError(format!("set noise prologue failed: {e:?}")))?
+            .local_private_key(&local_static_private_key)
+            .map_err(|e| Error::WaitRespError(format!("set noise local key failed: {e:?}")))?
+            .build_responder()
+            .map_err(|e| Error::WaitRespError(format!("build noise responder failed: {e:?}")))?;
 
         let remote_peer_id = first_msg1
             .get_src_peer_id()
@@ -1132,7 +1143,8 @@ impl PeerConn {
             Duration::from_secs(5),
             self.recv_next_peer_manager_packet(Some(PacketType::NoiseHandshakeMsg3)),
         )
-        .await??;
+        .await
+        .map_err(|e| Error::WaitRespError(format!("timed out waiting for noise msg3: {e:?}")))??;
         self.record_control_rx(&remote_network_name, msg3_pkt.buf_len() as u64);
         let msg3_pb = Self::decode_handshake_message::<PeerConnNoiseMsg3Pb>(
             PacketType::NoiseHandshakeMsg3,
@@ -1229,7 +1241,12 @@ impl PeerConn {
             Duration::from_secs(5),
             self.recv_next_peer_manager_packet(None),
         )
-        .await??;
+        .await
+        .map_err(|e| {
+            Error::WaitRespError(format!(
+                "timed out waiting for first handshake packet: {e:?}"
+            ))
+        })?;
         let Some(hdr) = first_pkt.peer_manager_header() else {
             return Err(Error::WaitRespError(
                 "first packet must have peer manager header".to_owned(),

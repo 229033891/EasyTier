@@ -13,6 +13,7 @@ use crate::{
     packet::{PacketType, ZCPacket, ZCPacketType},
     peers::{
         PeerPacketFilter,
+        error::take_path_unavailable_warn_token,
         peer_manager::{PeerManagerCore, PipelineRegistrationGuard},
     },
     process_runtime::ProtectedTcpPortRegistry,
@@ -253,13 +254,34 @@ impl WrappedTransportProxyModule {
                 let role = datagram.role;
                 let packet = datagram.into_packet(peer_manager.my_peer_id());
                 if let Err(error) = peer_manager.send_msg_for_proxy(packet, peer_id).await {
-                    tracing::error!(
-                        ?error,
-                        ?transport,
-                        ?role,
-                        peer_id,
-                        "failed to send wrapped transport packet"
-                    );
+                    if error.is_expected_path_unavailable() {
+                        // Sustained outage: one WARN / 30s / peer; rest debug.
+                        if take_path_unavailable_warn_token(peer_id) {
+                            tracing::warn!(
+                                ?error,
+                                ?transport,
+                                ?role,
+                                peer_id,
+                                "failed to send wrapped transport packet"
+                            );
+                        } else {
+                            tracing::debug!(
+                                ?error,
+                                ?transport,
+                                ?role,
+                                peer_id,
+                                "failed to send wrapped transport packet"
+                            );
+                        }
+                    } else {
+                        tracing::error!(
+                            ?error,
+                            ?transport,
+                            ?role,
+                            peer_id,
+                            "failed to send wrapped transport packet"
+                        );
+                    }
                 }
             }
         });

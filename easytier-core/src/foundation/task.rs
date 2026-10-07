@@ -171,10 +171,18 @@ where
                     match task.await {
                         Ok(Ok(_)) => {}
                         Ok(Err(task_ret)) => {
-                            tracing::error!(
+                            tracing::warn!(
                                 target: "easytier_core::peers::peer_task",
                                 ?task_ret,
                                 "hole punching task failed"
+                            );
+                        }
+                        Err(e) if e.is_cancelled() => {
+                            // Intentional abort when peer no longer needs the task.
+                            tracing::debug!(
+                                target: "easytier_core::peers::peer_task",
+                                ?e,
+                                "hole punching task aborted"
                             );
                         }
                         Err(e) => {

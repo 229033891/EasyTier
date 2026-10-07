@@ -297,13 +297,38 @@ impl log::Log for Logger {
     }
 
     fn log(&self, record: &LogRecord<'_>) {
-        if self.enabled(record.target(), record.level()) {
-            self.emit(record.level(), record.target(), &record.args().to_string());
+        let target = record.target();
+        let level = record.level();
+        // Only format args for content matching when demote could apply; otherwise
+        // skip formatting until the record is actually enabled.
+        if level == Level::Error && target.starts_with("wintun") {
+            let message = record.args().to_string();
+            let level = effective_log_level(target, level, &message);
+            if self.enabled(target, level) {
+                self.emit(level, target, &message);
+            }
+            return;
+        }
+        if self.enabled(target, level) {
+            self.emit(level, target, &record.args().to_string());
         }
     }
 
     fn flush(&self) {
         self.flush_file();
+    }
+}
+
+/// rust-tun always tries Adapter::open before create; a miss logs ERROR from the
+/// native WinTun DLL even when create then succeeds. Demote that expected noise.
+fn effective_log_level(target: &str, level: Level, message: &str) -> Level {
+    if level == Level::Error
+        && target.starts_with("wintun")
+        && message.contains("Failed to find matching adapter")
+    {
+        Level::Debug
+    } else {
+        level
     }
 }
 
@@ -492,6 +517,47 @@ mod tests {
         assert!(!filter.enabled("hyper::client", Level::Error));
         assert!(!filter.enabled("other", Level::Info));
         assert!(filter.enabled("other", Level::Warn));
+    }
+
+    #[test]
+    fn demotes_wintun_adapter_miss_error_to_debug() {
+        let msg = "WinTun: Failed to find matching adapter name: 找不到元素。 (Code 0x00000490)";
+        assert_eq!(
+            effective_log_level("wintun::log", Level::Error, msg),
+            Level::Debug
+        );
+        assert_eq!(
+            effective_log_level("wintun", Level::Error, msg),
+            Level::Debug
+        );
+    }
+
+    #[test]
+    fn does_not_demote_unrelated_wintun_or_other_errors() {
+        assert_eq!(
+            effective_log_level(
+                "wintun::log",
+                Level::Error,
+                "WinTun: Failed to create adapter"
+            ),
+            Level::Error
+        );
+        assert_eq!(
+            effective_log_level(
+                "other::log",
+                Level::Error,
+                "Failed to find matching adapter name"
+            ),
+            Level::Error
+        );
+        assert_eq!(
+            effective_log_level(
+                "wintun::log",
+                Level::Warn,
+                "Failed to find matching adapter name"
+            ),
+            Level::Warn
+        );
     }
 
     #[test]

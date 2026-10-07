@@ -71,6 +71,15 @@ pub fn interface_count() -> io::Result<usize> {
     Ok(ifaces.len())
 }
 
+/// Quiet existence check (no ERROR log). Used before WinTun open/create.
+///
+/// Returns `None` if the interface list could not be enumerated (caller should
+/// not treat that as "adapter missing").
+pub fn interface_exists(iface_name: &str) -> Option<bool> {
+    let ifaces = network_interface::NetworkInterface::show().ok()?;
+    Some(ifaces.iter().any(|iface| iface.name == iface_name))
+}
+
 pub fn find_interface_index(iface_name: &str) -> io::Result<u32> {
     let ifaces = network_interface::NetworkInterface::show().map_err(|e| {
         io::Error::new(

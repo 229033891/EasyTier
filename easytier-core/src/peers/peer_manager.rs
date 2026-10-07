@@ -62,7 +62,7 @@ use super::{
         PeerPacketPolicy, PeerStunInfoSource,
     },
     credential_manager::{CredentialManager, CredentialStorage},
-    error::Error,
+    error::{Error, take_path_unavailable_warn_token},
     foreign_network::client::ForeignNetworkClient,
     foreign_network::{ForeignNetworkEntryInfo, ForeignNetworkManager, ForeignNetworkRpcRegistrar},
     peer_center::instance::PeerCenterPeerManagerTrait,
@@ -3192,8 +3192,16 @@ impl PeerPacketRouter {
                 to_peer_id,
             )
             .await;
-            if ret.is_err() {
-                tracing::error!(?ret, ?to_peer_id, ?from_peer_id, "forward packet error");
+            if let Err(ref e) = ret {
+                if e.is_expected_path_unavailable() {
+                    if take_path_unavailable_warn_token(to_peer_id) {
+                        tracing::warn!(?ret, ?to_peer_id, ?from_peer_id, "forward packet error");
+                    } else {
+                        tracing::debug!(?ret, ?to_peer_id, ?from_peer_id, "forward packet error");
+                    }
+                } else {
+                    tracing::error!(?ret, ?to_peer_id, ?from_peer_id, "forward packet error");
+                }
             }
         } else {
             if packet_type == PacketType::RelayHandshake as u8

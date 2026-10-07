@@ -50,13 +50,20 @@ impl<T: Tunnel> MpscTunnel<T> {
         let task = tokio::spawn(async move {
             loop {
                 if let Err(e) = Self::forward_one_round(&mut rx, &mut sink, send_timeout).await {
-                    tracing::error!(?e, "forward error");
+                    if matches!(e, TunnelError::Shutdown) {
+                        tracing::debug!(?e, "forward error");
+                    } else {
+                        tracing::error!(?e, "forward error");
+                    }
                     break;
                 }
             }
             rx.close();
             let close_ret = timeout(Duration::from_secs(5), sink.close()).await;
-            tracing::warn!(?close_ret, "mpsc close sink");
+            match &close_ret {
+                Ok(Ok(())) => tracing::debug!(?close_ret, "mpsc close sink"),
+                _ => tracing::warn!(?close_ret, "mpsc close sink"),
+            }
         });
 
         Self {
@@ -89,7 +96,11 @@ impl<T: Tunnel> MpscTunnel<T> {
 
         while let Ok(item) = rx.try_recv() {
             if let Err(e) = sink.feed(item).await {
-                tracing::error!(?e, "feed error");
+                if matches!(e, TunnelError::Shutdown) {
+                    tracing::debug!(?e, "feed error");
+                } else {
+                    tracing::error!(?e, "feed error");
+                }
                 return Err(e);
             }
         }
@@ -110,7 +121,11 @@ impl<T: Tunnel> MpscTunnel<T> {
         {
             Ok(Ok(_)) => Ok(()),
             Ok(Err(e)) => {
-                tracing::error!(?e, "forward error");
+                if matches!(e, TunnelError::Shutdown) {
+                    tracing::debug!(?e, "forward error");
+                } else {
+                    tracing::error!(?e, "forward error");
+                }
                 Err(e)
             }
             Err(e) => {
