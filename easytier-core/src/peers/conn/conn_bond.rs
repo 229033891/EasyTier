@@ -133,7 +133,7 @@ pub fn in_quality_band(score: f64, best: f64, cfg: ConnSelectConfig) -> bool {
     rel <= cfg.switch_margin || delta <= cfg.switch_abs_margin
 }
 
-fn eligible_for_bond<'a>(scored: &'a [BondCandidate]) -> Vec<&'a BondCandidate> {
+fn eligible_for_bond(scored: &[BondCandidate]) -> Vec<&BondCandidate> {
     if scored.is_empty() {
         return Vec::new();
     }
@@ -304,7 +304,9 @@ pub fn flow_key_from_payload(payload: &[u8]) -> u64 {
     hasher.finish()
 }
 
-fn parse_ip_flow_key(payload: &[u8]) -> Option<(u8, [u8; 16], [u8; 16], u16, u16)> {
+type IpFlowKey = (u8, [u8; 16], [u8; 16], u16, u16);
+
+fn parse_ip_flow_key(payload: &[u8]) -> Option<IpFlowKey> {
     if payload.is_empty() {
         return None;
     }

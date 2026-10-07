@@ -291,9 +291,8 @@ impl Peer {
                 let idx = bond_member_index(key, members.len());
                 // On member failure drop the cached set so the next packet rebuilds
                 // without a half-dead member (matches single-path cache-clear semantics).
-                return members[idx].send_msg(msg).await.map_err(|e| {
+                return members[idx].send_msg(msg).await.inspect_err(|_| {
                     self.bond_conns.store(None);
-                    e
                 });
             }
             // Fall through to single-path select if bond set empty.

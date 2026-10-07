@@ -670,12 +670,9 @@ fn active_client_url_for_connector(
     configured: &Url,
     preference: &[String],
 ) -> Option<Url> {
-    for candidate in crate::config::preference_candidate_urls(configured, preference) {
-        if client_url_is_alive(peer_manager, &candidate) {
-            return Some(candidate);
-        }
-    }
-    None
+    crate::config::preference_candidate_urls(configured, preference)
+        .into_iter()
+        .find(|candidate| client_url_is_alive(peer_manager, candidate))
 }
 
 fn find_configured_connector_for_url(

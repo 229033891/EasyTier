@@ -100,12 +100,7 @@ impl NativeTunRuntime {
                 Err(error) => {
                     let err = anyhow::Error::new(error).context("attach mobile TUN fd");
                     let retry = attempt < MAX_ATTEMPTS && Self::is_transient_attach_error(&err);
-                    tracing::warn!(
-                        ?err,
-                        attempt,
-                        retry,
-                        "failed to attach mobile TUN fd"
-                    );
+                    tracing::warn!(?err, attempt, retry, "failed to attach mobile TUN fd");
                     if !retry {
                         return Err(err);
                     }
@@ -142,7 +137,8 @@ impl NativeTunRuntime {
                     tracing::error!(?error, "failed to attach mobile TUN fd");
                     // Surface failure so GUI/reconcile can react instead of
                     // leaving a "connected" UI with a dead data plane (A8).
-                    global_ctx.set_tun_device_error(format!("failed to attach mobile TUN fd: {error}"));
+                    global_ctx
+                        .set_tun_device_error(format!("failed to attach mobile TUN fd: {error}"));
                 }
             }
         }));

@@ -859,8 +859,7 @@ impl TomlConfig {
         merged_hashmap.extend(flags_hashmap);
         let mut flags: Flags = serde_json::from_value(serde_json::Value::Object(merged_hashmap))?;
         // P-AUTO.L1: CSV preference list; legacy single value stays length-1.
-        flags.default_protocol =
-            crate::config::normalize_default_protocol(&flags.default_protocol);
+        flags.default_protocol = crate::config::normalize_default_protocol(&flags.default_protocol);
         Ok(flags)
     }
 }

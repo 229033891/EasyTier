@@ -15,8 +15,7 @@ use url::Url;
 /// Schemes that participate in preference lists (Direct sort + config allowlist).
 /// Mirrors dialable schemes in `connectivity::protocol::protocol_transport`
 /// except `ring` (rendezvous-only, filtered out by both connectors).
-pub const PREFERENCE_SCHEMES: &[&str] =
-    &["tcp", "udp", "ws", "wss", "quic", "wg", "faketcp"];
+pub const PREFERENCE_SCHEMES: &[&str] = &["tcp", "udp", "ws", "wss", "quic", "wg", "faketcp"];
 
 /// Schemes safe to cross-rewrite on manual peer URLs.
 /// WireGuard / FakeTCP keep a distinct transport fingerprint and must not be
@@ -60,10 +59,6 @@ pub fn protocol_preference_sort_key(preference: &[String], scheme: &str) -> u32 
     }
 }
 
-fn is_preference_scheme(scheme: &str) -> bool {
-    PREFERENCE_SCHEMES.contains(&scheme)
-}
-
 fn is_rewriteable_scheme(scheme: &str) -> bool {
     REWRITEABLE_SCHEMES.contains(&scheme)
 }
@@ -102,9 +97,18 @@ pub fn rewrite_url_scheme(url: &Url, scheme: &str) -> Option<Url> {
     }
     let port_to_keep = source_effective_port(url);
     let mut next = url.clone();
-    next.set_scheme(scheme).ok()?;
+    // WHATWG "special" schemes (ws/wss/http/…) cannot `set_scheme` into
+    // non-special ones (tcp/udp/quic) and vice versa — rebuild instead.
+    if next.set_scheme(scheme).is_err() {
+        let raw = url.as_str();
+        let prefix = format!("{}:", url.scheme());
+        let Some(rest) = raw.strip_prefix(&prefix) else {
+            return None;
+        };
+        next = Url::parse(&format!("{scheme}:{rest}")).ok()?;
+    }
     if let Some(port) = port_to_keep {
-        // Always re-apply: set_scheme clears defaults; without this, wss→tcp
+        // Always re-apply: scheme changes clear defaults; without this, wss→tcp
         // would dial EasyTier tcp default 11010 instead of 443.
         if next.set_port(Some(port)).is_err() {
             tracing::warn!(%url, %scheme, port, "rewrite_url_scheme: set_port failed");
@@ -188,16 +192,26 @@ mod tests {
     #[test]
     fn sort_key_prefers_earlier_list_entries() {
         let pref = parse_protocol_preference("wss,tcp,udp");
-        assert!(protocol_preference_sort_key(&pref, "wss") > protocol_preference_sort_key(&pref, "tcp"));
-        assert!(protocol_preference_sort_key(&pref, "tcp") > protocol_preference_sort_key(&pref, "udp"));
+        assert!(
+            protocol_preference_sort_key(&pref, "wss") > protocol_preference_sort_key(&pref, "tcp")
+        );
+        assert!(
+            protocol_preference_sort_key(&pref, "tcp") > protocol_preference_sort_key(&pref, "udp")
+        );
         assert_eq!(protocol_preference_sort_key(&pref, "quic"), 0);
     }
 
     #[test]
     fn sort_key_includes_wg_and_faketcp_for_direct() {
         let pref = parse_protocol_preference("wg,faketcp,tcp");
-        assert!(protocol_preference_sort_key(&pref, "wg") > protocol_preference_sort_key(&pref, "faketcp"));
-        assert!(protocol_preference_sort_key(&pref, "faketcp") > protocol_preference_sort_key(&pref, "tcp"));
+        assert!(
+            protocol_preference_sort_key(&pref, "wg")
+                > protocol_preference_sort_key(&pref, "faketcp")
+        );
+        assert!(
+            protocol_preference_sort_key(&pref, "faketcp")
+                > protocol_preference_sort_key(&pref, "tcp")
+        );
     }
 
     #[test]
@@ -290,10 +304,10 @@ mod tests {
     #[test]
     fn preference_schemes_cover_rewriteable() {
         for scheme in REWRITEABLE_SCHEMES {
-            assert!(is_preference_scheme(scheme));
+            assert!(PREFERENCE_SCHEMES.contains(scheme));
         }
-        assert!(is_preference_scheme("wg"));
-        assert!(is_preference_scheme("faketcp"));
+        assert!(PREFERENCE_SCHEMES.contains(&"wg"));
+        assert!(PREFERENCE_SCHEMES.contains(&"faketcp"));
         assert!(!is_rewriteable_scheme("wg"));
         assert!(!is_rewriteable_scheme("faketcp"));
         assert!(!is_rewriteable_scheme("ring"));

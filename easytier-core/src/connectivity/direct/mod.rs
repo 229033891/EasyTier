@@ -472,8 +472,7 @@ where
         }
 
         // P-AUTO.L1: ordered CSV preference; higher sort key is tried first.
-        let preference =
-            crate::config::parse_protocol_preference(&self.options.default_protocol);
+        let preference = crate::config::parse_protocol_preference(&self.options.default_protocol);
         available_listeners.sort_by_key(|listener| {
             crate::config::protocol_preference_sort_key(&preference, listener.scheme())
         });
