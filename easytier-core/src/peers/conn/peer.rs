@@ -10,6 +10,10 @@ use tokio::{select, sync::mpsc};
 
 use tracing::Instrument;
 
+use super::conn_bond::{
+    BondCandidate, BondConfig, bond_member_index, conn_diversity_class, flow_key_from_payload,
+    pick_bond_set,
+};
 use super::conn_select::{ConnMetrics, ConnSelectConfig, pick_default_conn, score_conn};
 use super::peer_conn::{PeerConn, PeerConnId};
 use crate::peers::{
@@ -42,6 +46,8 @@ pub struct Peer {
     shutdown_notifier: Arc<tokio::sync::Notify>,
 
     default_conn: Arc<ArcSwapOption<PeerConn>>,
+    /// Cached bond members when `peer_link_bond_count > 1` (cleared with default_conn).
+    bond_conns: Arc<ArcSwapOption<Vec<ArcPeerConn>>>,
     default_conn_update_lock: Arc<Mutex<()>>,
     /// Survives periodic default_conn cache clears for hysteresis (P1.7).
     last_default_conn_id: AtomicCell<Option<PeerConnId>>,
@@ -66,6 +72,7 @@ impl Peer {
         let peer_public_key = Arc::new(RwLock::new(None));
         let peer_public_key_copy = peer_public_key.clone();
         let default_conn = Arc::new(ArcSwapOption::empty());
+        let bond_conns = Arc::new(ArcSwapOption::empty());
         let default_conn_update_lock = Arc::new(Mutex::new(()));
         let last_default_conn_id = AtomicCell::new(None);
         let better_streak = AtomicU32::new(0);
@@ -74,6 +81,7 @@ impl Peer {
         let shutdown_notifier_copy = shutdown_notifier.clone();
         let context_copy = context.clone();
         let default_conn_copy = default_conn.clone();
+        let bond_conns_copy_close = bond_conns.clone();
         let default_conn_update_lock_copy = default_conn_update_lock.clone();
         let close_event_listener = AbortOnDropHandle::new(tokio::spawn(
             async move {
@@ -100,6 +108,16 @@ impl Peer {
                                         .is_some_and(|cached| Arc::ptr_eq(cached, conn))
                                     {
                                         default_conn_copy.store(None);
+                                    }
+                                    // Drop bond cache if the closed conn was a member.
+                                    if bond_conns_copy_close
+                                        .load()
+                                        .as_ref()
+                                        .is_some_and(|members| {
+                                            members.iter().any(|m| Arc::ptr_eq(m, conn))
+                                        })
+                                    {
+                                        bond_conns_copy_close.store(None);
                                     }
                                 }
                                 removed_conn
@@ -133,11 +151,13 @@ impl Peer {
 
         let conns_copy = conns.clone();
         let default_conn_copy = default_conn.clone();
+        let bond_conns_copy = bond_conns.clone();
         let default_conn_clear_task = AbortOnDropHandle::new(tokio::spawn(async move {
             loop {
                 crate::foundation::time::sleep(std::time::Duration::from_secs(5)).await;
                 if conns_copy.len() > 1 {
                     default_conn_copy.store(None);
+                    bond_conns_copy.store(None);
                 }
             }
         }));
@@ -153,6 +173,7 @@ impl Peer {
 
             shutdown_notifier,
             default_conn,
+            bond_conns,
             default_conn_update_lock,
             last_default_conn_id,
             better_streak,
@@ -256,6 +277,28 @@ impl Peer {
     }
 
     pub async fn send_msg(&self, msg: ZCPacket) -> Result<(), Error> {
+        let bond = BondConfig::from_flags(&self.context.flags());
+        if bond.enabled() {
+            let members = self.select_bond_conns(bond);
+            if let Some(members) = members
+                && !members.is_empty()
+            {
+                // Prefer precomputed key (plaintext before encrypt); payload hash
+                // is only a fallback for paths that never set bond_flow_key.
+                let key = msg
+                    .bond_flow_key()
+                    .unwrap_or_else(|| flow_key_from_payload(msg.payload()));
+                let idx = bond_member_index(key, members.len());
+                // On member failure drop the cached set so the next packet rebuilds
+                // without a half-dead member (matches single-path cache-clear semantics).
+                return members[idx].send_msg(msg).await.map_err(|e| {
+                    self.bond_conns.store(None);
+                    e
+                });
+            }
+            // Fall through to single-path select if bond set empty.
+        }
+
         let default_conn = self.default_conn.load();
         if let Some(conn) = default_conn.as_ref() {
             conn.send_msg(msg).await?;
@@ -269,6 +312,68 @@ impl Peer {
         conn.send_msg(msg).await?;
 
         Ok(())
+    }
+
+    /// Build / refresh the bond member cache (diversity-first, replica-fill).
+    fn select_bond_conns(&self, bond: BondConfig) -> Option<Arc<Vec<ArcPeerConn>>> {
+        if let Some(cached) = self.bond_conns.load_full()
+            && !cached.is_empty()
+            && cached.iter().all(|c| !c.is_closed())
+        {
+            return Some(cached);
+        }
+
+        let _update_guard = self.default_conn_update_lock.lock();
+        // Re-check under lock.
+        if let Some(cached) = self.bond_conns.load_full()
+            && !cached.is_empty()
+            && cached.iter().all(|c| !c.is_closed())
+        {
+            return Some(cached);
+        }
+
+        let cfg = ConnSelectConfig::from_flags(&self.context.flags());
+        let mut candidates = Vec::with_capacity(self.conns.len());
+        let mut by_id = std::collections::HashMap::with_capacity(self.conns.len());
+        for entry in self.conns.iter() {
+            let conn = entry.value().clone();
+            if conn.is_closed() {
+                continue;
+            }
+            let stats = conn.get_stats();
+            let metrics = ConnMetrics {
+                conn_id: conn.get_conn_id(),
+                latency_us: stats.latency_us,
+                loss_rate: conn.loss_rate(),
+                jitter_us: stats.jitter_us,
+                is_hole_punched: conn.is_hole_punched(),
+            };
+            candidates.push(BondCandidate {
+                scored: score_conn(&metrics, cfg),
+                class: conn_diversity_class(&conn),
+            });
+            by_id.insert(conn.get_conn_id(), conn);
+        }
+
+        let ids = pick_bond_set(&candidates, bond, cfg);
+        if ids.is_empty() {
+            self.bond_conns.store(None);
+            return None;
+        }
+        let mut members: Vec<ArcPeerConn> = ids
+            .into_iter()
+            .filter_map(|id| by_id.get(&id).cloned())
+            .collect();
+        if members.is_empty() {
+            self.bond_conns.store(None);
+            return None;
+        }
+        // Stable order so 5s cache rebuild keeps the same flow→member mapping
+        // when the member set is unchanged (conn_id is stable).
+        members.sort_by_key(|c| c.get_conn_id());
+        let members = Arc::new(members);
+        self.bond_conns.store(Some(members.clone()));
+        Some(members)
     }
 
     pub async fn close_peer_conn(&self, conn_id: &PeerConnId) -> Result<(), Error> {
@@ -325,12 +430,23 @@ impl Peer {
         let by_id: std::collections::HashMap<_, _> =
             scored.iter().map(|s| (s.conn_id, *s)).collect();
 
+        // Bond membership for status: conn ids currently in the bond send set.
+        let bond_members: std::collections::HashSet<PeerConnId> = self
+            .bond_conns
+            .load_full()
+            .map(|members| members.iter().map(|c| c.get_conn_id()).collect())
+            .unwrap_or_default();
+
         live.into_iter()
-            .map(|(conn_id, _, mut info)| {
+            .map(|(conn_id, conn, mut info)| {
                 if let Some(s) = by_id.get(&conn_id) {
                     info.quality_score = s.score as f32;
                     info.quality_fused = s.fused;
                     info.unverified_hole_punch = s.unverified_hole_punch;
+                }
+                if bond_members.contains(&conn_id) {
+                    info.in_bond_set = true;
+                    info.bond_class = conn_diversity_class(&conn).scheme;
                 }
                 info
             })
@@ -339,6 +455,13 @@ impl Peer {
 
     pub fn has_live_conns(&self) -> bool {
         self.conns.iter().any(|entry| !entry.value().is_closed())
+    }
+
+    pub fn live_conn_count(&self) -> usize {
+        self.conns
+            .iter()
+            .filter(|entry| !entry.value().is_closed())
+            .count()
     }
 
     pub fn has_directly_connected_conn(&self) -> bool {

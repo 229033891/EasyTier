@@ -2,11 +2,12 @@
 
 ## Status
 
-- Status: **Roadmap**（语义已拍板；**代码未实现**）
+- Status: **Roadmap**（Phase **2a 已合入**代码；2b 维持 + 状态标注已合入；默认 `bond_count=1`）
 - 日期：2026-10-07
-- 最近审阅：2026-10-07（异质优先在**指标大致相当**时生效；同质复制每类建议上限 **3–5**；约束次序与质量档示例已补）
+- 最近审阅：2026-10-07（Phase 2a：`conn_bond` + `Peer::send_msg` 按流分摊；flags `peer_link_bond_count` / `peer_link_replica_fill_max`）
 - 索引：[`../README.md`](../README.md)
-- **现状行为**：[`../current/peer-connections.md`](../current/peer-connections.md)（今日仍单 `default_conn`，多连接仅为热备）
+- **现状行为**：[`../current/peer-connections.md`](../current/peer-connections.md)（默认单 `default_conn`；可选 bonding）
+- **代码锚点**：`easytier-core/src/peers/conn/conn_bond.rs`、`peer.rs`（`select_bond_conns` / `send_msg`）
 - **连接稳定性 / 质量门**：[`connection-stability-todo.md`](./connection-stability-todo.md)（综合分、熔断；与 bonding **正交**，默认 `bond_count=1`）
 - **市场对比**：[`market-comparison-2026-10.md`](./market-comparison-2026-10.md)（ZeroTier Multipath；Tailscale 仍单路径；VeloCloud DMPO 为站间 SD-WAN）
 
@@ -136,18 +137,18 @@ MVP：**按流哈希 + diversity-first 成员集（不足 replica-fill）**；`b
 - 状态面列出各 PeerConn、`default_conn`（★）、质量分分项（已大部分落地，见稳定性 TODO P2.1）。  
 - 文档 / UI：**多连接 ≠ 已聚合带宽**；热备条数 ≠ 聚合带宽（Current + 稳定性 P2.2）。
 
-### Phase 2a — 发送 MVP（第一刀）
+### Phase 2a — 发送 MVP（第一刀）✅
 
-1. 配置：`peer_link_bond_count`（默认 **1**，硬顶建议 **5**）；`replica_fill_max`（默认 **5**，建议范围 3–5）。  
+1. 配置：`peer_link_bond_count`（默认 **1**，硬顶 **5**）；`peer_link_replica_fill_max`（默认 **5**）。  
 2. `send_msg`：`N==1` → 今日 `default_conn`；`N>1` → 对已有多 conn **按流**选 bond 成员。  
 3. 成员集：质量门 → **同质量档内**协议 / remote 多样性优先 → 不足则同质补齐（每类 ≤ `replica_fill_max`）。  
 4. 尚不强制「主动狂开」新隧道；优先用已存活的异质连接。
 
 ### Phase 2b — 主动维持 N + 风暴控制
 
-1. 对直连 peer 主动维持最多 N 条存活隧道（与 hole punch / `lazy_p2p` / alive-URL 去重协同）。  
-2. 拨号退避、上限、失败冷却。  
-3. 状态面标注「in bond set」与 diversity 键摘要。
+1. 对直连 peer 主动维持最多 N 条存活隧道（与 hole punch / `lazy_p2p` / alive-URL 去重协同；**已合入**：`bond` 未满的 peer 继续参与 direct 拨号，沿用既有 5s 周期与拨号内退避）。
+2. 拨号退避、上限、失败冷却（沿用 direct 既有 `[1,2,2,5,5,10,30,60]s` 内退避 + 5s 外层周期）。
+3. 状态面标注「in bond set」与 diversity 键摘要（**已合入**：`PeerConnInfo.in_bond_set` / `bond_class`；CLI 主表与 GUI 状态表展示）。
 
 ### Phase 3 — 出口多样性与增强
 
@@ -189,5 +190,5 @@ MVP：**按流哈希 + diversity-first 成员集（不足 replica-fill）**；`b
 
 - **需求成立**：现状多连接不能解决单连接限速；纯同质复制也不足以最大化稳定性。  
 - **成员语义已拍板**：指标大致相当时 **异质优先**；不足则 **同质补齐**（每类一般 **3–5**，默认 5）。  
-- **当前状态：仅文档；代码未实现。出口/`bind_device` 多样性属 Phase 3。**  
-- 启动实现时以 **Phase 2a** 为第一刀，并在同一 PR 更新 Current 发送路径说明。
+- **当前状态**：Phase **2a**（按流发送 + diversity 成员集）与 Phase **2b**（主动补链 + 状态标注）已合入；默认 `bond_count=1`。出口/`bind_device` 多样性仍属 Phase 3。  
+- sticky key 须在压缩/加密前计算（`ZCPacket.bond_flow_key`），避免经典 AEAD 路径按包喷洒。

@@ -55,6 +55,11 @@ message PeerConnInfo {
   // verified by a successful ping exchange. Such connections are excluded from
   // default_conn selection and OSPF edge cost advertising.
   bool unverified_hole_punch = 17;
+  // PeerConn bonding (Phase 2b): true when this connection is currently in the
+  // bond member set used for per-flow sending (`bond_count > 1`).
+  bool in_bond_set = 18;
+  // Short diversity summary of this member, e.g. the tunnel scheme ("udp").
+  string bond_class = 19;
 }
 
 message PeerInfo {

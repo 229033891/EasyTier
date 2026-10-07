@@ -128,6 +128,9 @@ message NetworkConfig {
   optional uint32 conn_select_switch_margin_pct = 83;
   optional uint32 conn_select_switch_abs_margin_milli = 84;
   optional uint32 conn_select_switch_windows = 85;
+  // PeerConn bonding (Phase 2a). Unset / 0 on FlagsInConfig defaults → bond_count=1, replica_fill_max=5.
+  optional uint32 peer_link_bond_count = 86;
+  optional uint32 peer_link_replica_fill_max = 87;
 }
 
 message DnsHostEntry {

@@ -674,6 +674,30 @@ function removeVpnPortalClient(index: number) {
                 </div>
               </div>
 
+              <div class="flex flex-row gap-x-9 flex-wrap">
+                <div class="config-compact-field">
+                  <div class="config-compact-label flex items-center gap-1">
+                    <label for="peer_link_bond_count">{{ t('peer_link_bond_count') }}</label>
+                    <i class="pi pi-question-circle config-help-tip" tabindex="0"
+                      v-tooltip.top="{ value: t('peer_link_bond_count_help'), escape: false }" role="img"></i>
+                  </div>
+                  <InputNumber id="peer_link_bond_count" v-model="curNetwork.peer_link_bond_count"
+                    aria-describedby="peer_link_bond_count-help" :format="false" :min="1" :max="5" fluid
+                    :placeholder="t('peer_link_bond_count_placeholder')" />
+                </div>
+
+                <div class="config-compact-field">
+                  <div class="config-compact-label flex items-center gap-1">
+                    <label for="peer_link_replica_fill_max">{{ t('peer_link_replica_fill_max') }}</label>
+                    <i class="pi pi-question-circle config-help-tip" tabindex="0"
+                      v-tooltip.top="{ value: t('peer_link_replica_fill_max_help'), escape: false }" role="img"></i>
+                  </div>
+                  <InputNumber id="peer_link_replica_fill_max" v-model="curNetwork.peer_link_replica_fill_max"
+                    aria-describedby="peer_link_replica_fill_max-help" :format="false" :min="1" fluid
+                    :placeholder="t('peer_link_replica_fill_max_placeholder')" />
+                </div>
+              </div>
+
               <div class="flex flex-col gap-2">
                 <div class="config-inline-field">
                   <div class="config-inline-label flex items-center gap-1">

@@ -345,7 +345,10 @@ where
                 ) && data.peer_manager.has_recent_traffic(route.peer_id, now);
                 route.peer_id != my_peer_id
                     && (static_allowed || dynamic_allowed)
-                    && !data.peer_manager.has_directly_connected_conn(route.peer_id)
+                    // Bonding fill (Phase 2b): peers below their bond target stay
+                    // eligible even with a direct conn, so extra tunnels get dialed.
+                    && (!data.peer_manager.has_directly_connected_conn(route.peer_id)
+                        || data.peer_manager.peer_needs_bond_fill(route.peer_id))
                     && !data.peer_blacklist.contains(&route.peer_id)
             })
             .map(|route| route.peer_id)
@@ -405,13 +408,43 @@ where
             };
 
             tracing::info!(?ip_list, dst_peer_id, "got direct-connect IP list");
+            let live_before = self
+                .peer_manager
+                .get_peer_map()
+                .get_peer_by_id(dst_peer_id)
+                .map(|p| p.live_conn_count())
+                .unwrap_or(0);
             let result = self
                 .try_direct_connect_with_ip_list(dst_peer_id, ip_list)
                 .await;
             tracing::info!(?result, dst_peer_id, "direct-connect attempt returned");
-            if self.peer_manager.has_directly_connected_conn(dst_peer_id) {
+            let has_direct = self.peer_manager.has_directly_connected_conn(dst_peer_id);
+            let needs_fill = self.peer_manager.peer_needs_bond_fill(dst_peer_id);
+            // Today's behavior: stop once any direct conn exists and bonding is off.
+            if has_direct && !needs_fill {
                 return Ok(());
             }
+            // Bond fill: one full listener pass is enough. If we still need more
+            // tunnels, yield so PeerTaskManager can reschedule (avoids spinning
+            // get_ip_list forever when no additional tunnel can be opened).
+            if has_direct && needs_fill {
+                let live_after = self
+                    .peer_manager
+                    .get_peer_map()
+                    .get_peer_by_id(dst_peer_id)
+                    .map(|p| p.live_conn_count())
+                    .unwrap_or(0);
+                if live_after <= live_before {
+                    tracing::debug!(
+                        dst_peer_id,
+                        live_before,
+                        live_after,
+                        "bond fill made no progress this pass; reschedule later"
+                    );
+                }
+                return Ok(());
+            }
+            // Still no direct conn — keep retrying with backoff like before.
         }
     }
 
@@ -464,7 +497,9 @@ where
                     .await;
             }
             let _ = tasks.join_all().await;
-            if self.peer_manager.has_directly_connected_conn(dst_peer_id) {
+            if self.peer_manager.has_directly_connected_conn(dst_peer_id)
+                && !self.peer_manager.peer_needs_bond_fill(dst_peer_id)
+            {
                 return Ok(());
             }
         }
@@ -595,11 +630,21 @@ where
 
         let backoffs_ms = [1000i64, 2000, 4000];
         for attempt in 0..=backoffs_ms.len() {
-            if self.peer_manager.has_directly_connected_conn(dst_peer_id) {
+            // When bonding still needs more tunnels, do not short-circuit just
+            // because one direct conn already exists — otherwise Phase 2b fill
+            // never dials a second URL.
+            let has_direct = self.peer_manager.has_directly_connected_conn(dst_peer_id);
+            let needs_fill = self.peer_manager.peer_needs_bond_fill(dst_peer_id);
+            if has_direct && !needs_fill {
                 return Ok(());
             }
             let result = self.connect_to_url_once(dst_peer_id, &url).await;
-            if result.is_ok() || self.peer_manager.has_directly_connected_conn(dst_peer_id) {
+            if result.is_ok() {
+                return Ok(());
+            }
+            let has_direct = self.peer_manager.has_directly_connected_conn(dst_peer_id);
+            let needs_fill = self.peer_manager.peer_needs_bond_fill(dst_peer_id);
+            if has_direct && !needs_fill {
                 return Ok(());
             }
             if attempt == backoffs_ms.len() {

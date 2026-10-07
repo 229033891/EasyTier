@@ -53,6 +53,7 @@ use super::{
     PeerPacketFilter,
     acl::AclFilter,
     conn::{
+        conn_bond::{BondConfig, bond_fill_needed, flow_key_from_payload},
         peer_conn::{PeerConn, PeerConnId},
         peer_map::{PeerMap, direct_peer_info},
         peer_session::PeerSessionStore,
@@ -1566,6 +1567,22 @@ impl PeerManagerCore {
         }
     }
 
+    /// Whether this peer still needs more tunnels for bonding
+    /// (`peer_link_bond_count` target not yet reached with live conns).
+    /// `false` unless bonding is enabled — callers keep today's behavior then.
+    pub fn peer_needs_bond_fill(&self, peer_id: PeerId) -> bool {
+        let bond = BondConfig::from_flags(&self.context.flags());
+        if !bond.enabled() {
+            return false;
+        }
+        let live = self
+            .peers
+            .get_peer_by_id(peer_id)
+            .map(|peer| peer.live_conn_count())
+            .unwrap_or(0);
+        bond_fill_needed(&bond, live)
+    }
+
     pub async fn add_client_tunnel(
         &self,
         tunnel: Box<dyn Tunnel>,
@@ -2707,6 +2724,9 @@ impl PeerOutboundPacketRouter {
         self.mark_recent_traffic_with_policy(dst_peer_id, packet_policy);
         self.check_p2p_only_before_send(dst_peer_id, packet_policy)?;
 
+        // Sticky key must be taken from plaintext before compress/encrypt.
+        msg.set_bond_flow_key(flow_key_from_payload(msg.payload()));
+
         self.counters
             .compress_tx_bytes_before
             .add(msg.buf_len() as u64);
@@ -2869,6 +2889,9 @@ impl PeerOutboundPacketRouter {
         if !self.run_nic_packet_process_pipeline(&mut msg).await {
             return Ok(());
         }
+        // Sticky key from plaintext IP before compress/encrypt (classic AEAD
+        // would otherwise make per-packet ciphertext hash → bond spray).
+        msg.set_bond_flow_key(flow_key_from_payload(msg.payload()));
         let packet_policy = self.context.packet_policy();
         let cur_to_peer_id = msg.peer_manager_header().unwrap().to_peer_id.into();
         if cur_to_peer_id != 0 {
@@ -3150,6 +3173,9 @@ impl PeerPacketRouter {
                     || packet_type == PacketType::KcpSrc as u8
                     || packet_type == PacketType::KcpDst as u8
                 {
+                    if ret.bond_flow_key().is_none() {
+                        ret.set_bond_flow_key(flow_key_from_payload(ret.payload()));
+                    }
                     let _ = try_compress_and_encrypt(
                         self.compress_algo,
                         &self.encryptor,

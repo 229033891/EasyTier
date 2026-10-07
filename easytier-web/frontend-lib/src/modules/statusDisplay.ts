@@ -358,6 +358,10 @@ export type ConnQualityLine = {
   /** Lower is better; undefined if backend omitted score */
   score?: number
   fused: boolean
+  /** True when backend flags this conn in the bond send set (Phase 2b) */
+  inBond: boolean
+  /** Diversity summary from backend (`bond_class`), e.g. udp */
+  bondClass?: string
   latencyMs?: number
   jitterMs?: number
   lossPct?: number
@@ -378,11 +382,16 @@ export function connQualityLines(info: PeerRoutePair): ConnQualityLine[] {
     const score = typeof conn.quality_score === 'number' && Number.isFinite(conn.quality_score)
       ? conn.quality_score
       : undefined
+    const bondClass = typeof conn.bond_class === 'string' && conn.bond_class.trim()
+      ? conn.bond_class.trim()
+      : undefined
     return {
       proto: oneConnProto(conn.tunnel),
       isDefault: !!preferId && conn.conn_id === preferId,
       score,
       fused: !!conn.quality_fused,
+      inBond: !!conn.in_bond_set,
+      bondClass,
       latencyMs: latencyUs === undefined ? undefined : Math.ceil(latencyUs / 1000),
       jitterMs: jitterUs === undefined ? undefined : Math.ceil(jitterUs / 1000),
       lossPct: loss === undefined ? undefined : Math.round(loss * 100),
@@ -391,7 +400,7 @@ export function connQualityLines(info: PeerRoutePair): ConnQualityLine[] {
   })
 }
 
-/** Compact cell: default score + standby count, e.g. `0.042 · +1`. */
+/** Compact cell: default score + standby count, e.g. `0.042 · +1`, plus `· bond×2` when bonded. */
 export function pathQualityCell(info: PeerRoutePair): string {
   const lines = connQualityLines(info)
   if (!lines.length)
@@ -402,9 +411,11 @@ export function pathQualityCell(info: PeerRoutePair): string {
     ? '—'
     : primary.score.toFixed(3)
   const fusedMark = primary.fused ? '!' : ''
-  return standby > 0
+  const base = standby > 0
     ? `${scoreText}${fusedMark} · +${standby}`
     : `${scoreText}${fusedMark}`
+  const bonded = lines.filter(l => l.inBond).length
+  return bonded > 0 ? `${base} · bond×${bonded}` : base
 }
 
 /** Multi-line tip explaining each PeerConn for operators. */
@@ -419,7 +430,8 @@ export function pathQualityTip(info: PeerRoutePair): string {
     const jit = line.jitterMs === undefined ? '—' : `${line.jitterMs}ms`
     const loss = line.lossPct === undefined ? '—' : `${line.lossPct}%`
     const fused = line.fused ? ' fused' : ''
-    return `${role} ${line.proto} score=${score} rtt=${lat} jitter=${jit} loss=${loss}${fused}`
+    const bond = line.inBond ? (line.bondClass ? ` bond(${line.bondClass})` : ' bond') : ''
+    return `${role} ${line.proto} score=${score} rtt=${lat} jitter=${jit} loss=${loss}${fused}${bond}`
   }).join('\n')
 }
 

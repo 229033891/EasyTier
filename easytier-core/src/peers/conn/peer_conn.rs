@@ -1561,6 +1561,9 @@ impl PeerConn {
             quality_score: 0.0,
             quality_fused: false,
             unverified_hole_punch: false,
+            // Filled by Peer::list_peer_conns from the bond send set (Phase 2b).
+            in_bond_set: false,
+            bond_class: String::new(),
         }
     }
 
