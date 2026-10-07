@@ -117,6 +117,12 @@ message FlagsInConfig {
   uint32 conn_select_switch_abs_margin_milli = 54;
   // Consecutive reselect windows before switch (default 2 when unset; runtime min 1).
   uint32 conn_select_switch_windows = 55;
+
+  // PeerConn bonding (Phase 2a). Default 1 = single default_conn (today's behavior).
+  // Hard cap applied at runtime (suggested max 5).
+  uint32 peer_link_bond_count = 56;
+  // Max same diversity-class replicas when filling bond set (default 5; range often 3–5).
+  uint32 peer_link_replica_fill_max = 57;
 }
 
 message RpcDescriptor {

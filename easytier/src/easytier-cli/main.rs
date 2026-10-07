@@ -1548,7 +1548,14 @@ impl<'a> CommandHandler<'a> {
                     loss_rate: format!("{:.1}%", p.get_loss_rate().unwrap_or(0.0) * 100.0),
                     rx_bytes: format_size(p.get_rx_bytes().unwrap_or(0), humansize::DECIMAL),
                     tx_bytes: format_size(p.get_tx_bytes().unwrap_or(0), humansize::DECIMAL),
-                    tunnel_proto: p.get_conn_protos().unwrap_or_default().join(","),
+                    tunnel_proto: {
+                        let base = p.get_conn_protos().unwrap_or_default().join(",");
+                        match p.get_bond_summary() {
+                            Some(bond) if !base.is_empty() => format!("{base} [{bond}]"),
+                            Some(bond) => bond,
+                            None => base,
+                        }
+                    },
                     nat_type: p.get_udp_nat_type(),
                     id: route.peer_id.to_string(),
                     version: if route.version.is_empty() {

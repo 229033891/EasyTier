@@ -109,6 +109,8 @@ pub mod instance {
                 quality_score: value.quality_score,
                 quality_fused: value.quality_fused,
                 unverified_hole_punch: value.unverified_hole_punch,
+                in_bond_set: value.in_bond_set,
+                bond_class: value.bond_class,
             }
         }
     }
@@ -261,6 +263,31 @@ pub mod instance {
             }
 
             if ret.is_empty() { None } else { Some(ret) }
+        }
+
+        /// Bond membership summary for status surfaces, e.g. `bondx2(udp+tcp)`.
+        /// `None` when bonding is off (no member flagged) — callers render nothing.
+        pub fn get_bond_summary(&self) -> Option<String> {
+            let p = self.peer.as_ref()?;
+            let mut count = 0u32;
+            let mut classes = vec![];
+            for conn in p.conns.iter() {
+                if !conn.in_bond_set {
+                    continue;
+                }
+                count += 1;
+                if !conn.bond_class.is_empty() && !classes.contains(&conn.bond_class) {
+                    classes.push(conn.bond_class.clone());
+                }
+            }
+            if count == 0 {
+                return None;
+            }
+            Some(if classes.is_empty() {
+                format!("bondx{count}")
+            } else {
+                format!("bondx{count}({})", classes.join("+"))
+            })
         }
 
         pub fn get_udp_nat_type(&self) -> String {

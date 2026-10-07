@@ -140,6 +140,52 @@ describe('status display helpers', () => {
     expect(pathQualityCell(pair)).toBe('2.100!')
   })
 
+  it('marks bond members in the quality cell and tooltip', () => {
+    const defaultConnId = '00000001-0002-0003-0004-000000000005'
+    const conns = [
+      {
+        conn_id: defaultConnId,
+        tunnel: { tunnel_type: 'udp' },
+        stats: { latency_us: '9000', jitter_us: '1000' },
+        loss_rate: '0.02',
+        quality_score: 0.042,
+        quality_fused: false,
+        in_bond_set: true,
+        bond_class: 'udp',
+      },
+      {
+        conn_id: 'standby',
+        tunnel: { tunnel_type: 'tcp' },
+        stats: { latency_us: '2000', jitter_us: '500' },
+        loss_rate: '0.01',
+        quality_score: 0.1,
+        quality_fused: false,
+        in_bond_set: true,
+        bond_class: 'tcp',
+      },
+    ]
+    const pair = peerRoutePairWithDefaultConn(conns, defaultConnId)
+    expect(pathQualityCell(pair)).toBe('0.042 · +1 · bond×2')
+    expect(pathQualityTip(pair)).toContain('★ udp score=0.042 rtt=9ms jitter=1ms loss=2% bond(udp)')
+    expect(pathQualityTip(pair)).toContain('· tcp score=0.100 rtt=2ms jitter=1ms loss=1% bond(tcp)')
+  })
+
+  it('omits bond marks when backend does not flag members', () => {
+    const defaultConnId = '00000001-0002-0003-0004-000000000005'
+    const pair = peerRoutePairWithDefaultConn([
+      {
+        conn_id: defaultConnId,
+        tunnel: { tunnel_type: 'udp' },
+        stats: { latency_us: '9000' },
+        loss_rate: '0.02',
+        quality_score: 0.042,
+        quality_fused: false,
+      },
+    ], defaultConnId)
+    expect(pathQualityCell(pair)).toBe('0.042')
+    expect(pathQualityTip(pair)).not.toContain('bond')
+  })
+
   it('detects meaningful proxy CIDR route sync summaries', () => {
     expect(isMeaningfulProxyCidrRouteSync('desired=[-] installed=[-] exit=false')).toBe(false)
     expect(isMeaningfulProxyCidrRouteSync('desired=[-] installed=[-] exit=false dns=')).toBe(false)

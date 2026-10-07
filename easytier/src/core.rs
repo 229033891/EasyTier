@@ -681,6 +681,20 @@ struct NetworkOptions {
     instance_recv_bps_limit: Option<u64>,
 
     #[arg(
+        long = "peer-link-bond-count",
+        env = "ET_PEER_LINK_BOND_COUNT",
+        help = t!("core_clap.peer_link_bond_count").to_string(),
+    )]
+    peer_link_bond_count: Option<u32>,
+
+    #[arg(
+        long = "peer-link-replica-fill-max",
+        env = "ET_PEER_LINK_REPLICA_FILL_MAX",
+        help = t!("core_clap.peer_link_replica_fill_max").to_string(),
+    )]
+    peer_link_replica_fill_max: Option<u32>,
+
+    #[arg(
         long,
         value_delimiter = ',',
         help = t!("core_clap.tcp_whitelist").to_string(),
@@ -1356,6 +1370,10 @@ impl NetworkOptions {
         f.instance_recv_bps_limit = self
             .instance_recv_bps_limit
             .unwrap_or(f.instance_recv_bps_limit);
+        f.peer_link_bond_count = self.peer_link_bond_count.unwrap_or(f.peer_link_bond_count);
+        f.peer_link_replica_fill_max = self
+            .peer_link_replica_fill_max
+            .unwrap_or(f.peer_link_replica_fill_max);
         f.multi_thread_count = self.multi_thread_count.unwrap_or(f.multi_thread_count);
         f.disable_relay_kcp = self.disable_relay_kcp.unwrap_or(f.disable_relay_kcp);
         f.disable_relay_quic = self.disable_relay_quic.unwrap_or(f.disable_relay_quic);

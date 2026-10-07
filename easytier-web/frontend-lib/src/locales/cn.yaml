@@ -571,6 +571,17 @@ instance_recv_bps_limit_help: |-
   留空表示不限速。
 instance_recv_bps_limit_placeholder: 留空表示不限速
 
+peer_link_bond_count: 多链路聚合数
+peer_link_bond_count_help: |-
+  一对 peer 之间并行发送的目标 PeerConn 条数。1（默认）保持单链路发送；2–5 按内层 IP 五元组把不同流分摊到多条隧道，可突破单连接限速（多用户/多流场景最有效；单个 RDP 等单流仍受单条上限）。
+  需要有多条存活隧道才有效；上限 5。
+peer_link_bond_count_placeholder: 留空为默认值1
+peer_link_replica_fill_max: 同类补齐上限
+peer_link_replica_fill_max_help: |-
+  补齐 bond 集合时，同一多样性类别（协议 + 对端地址）的成员数量上限，默认 5。出口/网卡多样性属后续阶段。
+  留空为默认值。
+peer_link_replica_fill_max_placeholder: 留空为默认值5
+
 mapped_listeners: 公网宣告地址
 mapped_listeners_help: |-
   告诉其他节点「用哪个公网地址能连到我」，用于 UPnP / STUN 自动探测不准或不可用的环境。

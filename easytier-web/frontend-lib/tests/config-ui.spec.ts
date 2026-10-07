@@ -601,6 +601,26 @@ describe('Config.vue network config projection', () => {
     })
   })
 
+  it('projects bond count controls and omits them from backend JSON when blank', async () => {
+    const { curNetwork, wrapper } = mountConfig()
+    await nextTick()
+
+    // Blank (null) means unset: backend falls back to bond_count=1 / replica_fill_max=5.
+    expect(input(wrapper, '#peer_link_bond_count').value).toBe('')
+    expect(input(wrapper, '#peer_link_replica_fill_max').value).toBe('')
+    const blankBackend = toBackendNetworkConfig(curNetwork) as Record<string, unknown>
+    expect('peer_link_bond_count' in blankBackend).toBe(false)
+    expect('peer_link_replica_fill_max' in blankBackend).toBe(false)
+
+    await setInput(wrapper, '#peer_link_bond_count', '3')
+    await setInput(wrapper, '#peer_link_replica_fill_max', '4')
+    expect(curNetwork.peer_link_bond_count).toBe(3)
+    expect(curNetwork.peer_link_replica_fill_max).toBe(4)
+    const backend = toBackendNetworkConfig(curNetwork) as Record<string, unknown>
+    expect(backend.peer_link_bond_count).toBe(3)
+    expect(backend.peer_link_replica_fill_max).toBe(4)
+  })
+
   it('round-trips every visible boolean config control into backend JSON', async () => {
     const config = makeConfig()
     const originalFlagValues = new Map(

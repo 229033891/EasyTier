@@ -537,6 +537,10 @@ impl ZCPacketType {
 pub struct ZCPacket {
     inner: BytesMut,
     packet_type: ZCPacketType,
+    /// Local-only sticky key for PeerConn bonding. Not on the wire; set from
+    /// plaintext inner IP 5-tuple *before* compress/encrypt so send path can
+    /// hash after encryption without spraying packets across bond members.
+    bond_flow_key: Option<u64>,
 }
 
 impl ZCPacket {
@@ -552,6 +556,7 @@ impl ZCPacket {
         Self {
             inner: BytesMut::new(),
             packet_type: ZCPacketType::NIC,
+            bond_flow_key: None,
         }
     }
 
@@ -559,7 +564,18 @@ impl ZCPacket {
         Self {
             inner: buf,
             packet_type,
+            bond_flow_key: None,
         }
+    }
+
+    /// Attach a precomputed bonding flow key (plaintext 5-tuple hash).
+    pub fn set_bond_flow_key(&mut self, key: u64) {
+        self.bond_flow_key = Some(key);
+    }
+
+    /// Bonding flow key if the sender attached one before compress/encrypt.
+    pub fn bond_flow_key(&self) -> Option<u64> {
+        self.bond_flow_key
     }
 
     pub fn new_with_payload(payload: &[u8]) -> Self {
@@ -776,6 +792,7 @@ impl ZCPacket {
 
         tracing::trace!(?self.packet_type, ?target_packet_type, ?new_offset, "convert zc packet type");
 
+        let bond_flow_key = self.bond_flow_key;
         if new_offset == INVALID_OFFSET {
             // copy peer manager header and payload to new buffer
             let tunnel_payload = self.tunnel_payload();
@@ -785,11 +802,15 @@ impl ZCPacket {
             let mut buf = BytesMut::with_capacity(new_pm_offset + tunnel_payload.len());
             unsafe { buf.set_len(new_pm_offset) };
             buf.extend_from_slice(tunnel_payload);
-            return Self::new_from_buf(buf, target_packet_type);
+            let mut pkt = Self::new_from_buf(buf, target_packet_type);
+            pkt.bond_flow_key = bond_flow_key;
+            return pkt;
         }
 
         self.inner.advance(new_offset);
-        Self::new_from_buf(self.inner, target_packet_type)
+        let mut pkt = Self::new_from_buf(self.inner, target_packet_type);
+        pkt.bond_flow_key = bond_flow_key;
+        pkt
     }
 
     pub fn into_bytes(self) -> Bytes {

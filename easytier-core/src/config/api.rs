@@ -174,6 +174,12 @@ pub fn network_config_from_toml(config: &TomlConfig) -> NetworkConfig {
     result.conn_select_switch_windows = (flags.conn_select_switch_windows
         != default_flags.conn_select_switch_windows)
         .then_some(flags.conn_select_switch_windows);
+    result.peer_link_bond_count = (flags.peer_link_bond_count
+        != default_flags.peer_link_bond_count)
+        .then_some(flags.peer_link_bond_count);
+    result.peer_link_replica_fill_max = (flags.peer_link_replica_fill_max
+        != default_flags.peer_link_replica_fill_max)
+        .then_some(flags.peer_link_replica_fill_max);
     result.enable_udp_broadcast_relay = Some(flags.enable_udp_broadcast_relay);
     result.disable_sym_hole_punching = Some(flags.disable_sym_hole_punching);
     result.enable_magic_dns = Some(flags.accept_dns);

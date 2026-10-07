@@ -163,6 +163,8 @@ const FORM_MANAGED_FLAG_FIELDS: &[&str] = &[
     "conn_select_switch_margin_pct",
     "conn_select_switch_abs_margin_milli",
     "conn_select_switch_windows",
+    "peer_link_bond_count",
+    "peer_link_replica_fill_max",
 ];
 
 #[cfg(all(
@@ -677,6 +679,12 @@ impl NetworkConfigExt for NetworkConfig {
         if let Some(v) = self.conn_select_switch_windows {
             flags.conn_select_switch_windows = v;
         }
+        if let Some(v) = self.peer_link_bond_count {
+            flags.peer_link_bond_count = v;
+        }
+        if let Some(v) = self.peer_link_replica_fill_max {
+            flags.peer_link_replica_fill_max = v;
+        }
 
         if let Some(acl) = self.acl.as_ref()
             && !acl.is_empty()
@@ -891,6 +899,12 @@ impl NetworkConfigExt for NetworkConfig {
         result.conn_select_switch_windows = (flags.conn_select_switch_windows
             != default_flags.conn_select_switch_windows)
             .then_some(flags.conn_select_switch_windows);
+        result.peer_link_bond_count = (flags.peer_link_bond_count
+            != default_flags.peer_link_bond_count)
+            .then_some(flags.peer_link_bond_count);
+        result.peer_link_replica_fill_max = (flags.peer_link_replica_fill_max
+            != default_flags.peer_link_replica_fill_max)
+            .then_some(flags.peer_link_replica_fill_max);
         result.instance_recv_bps_limit =
             (flags.instance_recv_bps_limit != u64::MAX).then_some(flags.instance_recv_bps_limit);
         result.enable_private_mode = Some(flags.private_mode);

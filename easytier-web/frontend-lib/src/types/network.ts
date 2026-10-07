@@ -53,6 +53,8 @@ export type NetworkConfig = Omit<
   | 'mtu'
   | 'networking_method'
   | 'socket_mark'
+  | 'peer_link_bond_count'
+  | 'peer_link_replica_fill_max'
 > & {
   instance_id: string
   mtu: number | null
@@ -65,6 +67,13 @@ export type NetworkConfig = Omit<
   socket_mark: number | null
   /** D+: opt-in peer `/0` without local exit_nodes. */
   allow_peer_default_without_exit?: boolean | null
+  /**
+   * 多链路聚合目标并行数。null = 未设置（后端按默认 1 处理，走单 default_conn）。
+   * 前端输入框留空即为 null。
+   */
+  peer_link_bond_count: number | null
+  /** bond 补齐时同多样性类别成员上限。null = 未设置（后端按默认 5 处理）。 */
+  peer_link_replica_fill_max: number | null
 }
 
 export type NormalizedAclV1 = AclV1 & {
@@ -169,6 +178,8 @@ export function DEFAULT_NETWORK_CONFIG(): NetworkConfig {
     socks5_port: 1080,
     mtu: null,
     instance_recv_bps_limit: null,
+    peer_link_bond_count: null,
+    peer_link_replica_fill_max: null,
     mapped_listeners: [],
     enable_magic_dns: false,
     enable_private_mode: false,
@@ -335,6 +346,8 @@ export function normalizeNetworkConfig(config: NetworkConfig): NetworkConfig {
 
   applyNetworkingMethod(normalized, { fillPeerUrlsFromPeers: true })
   normalized.mtu = normalizeNumberForInput(normalized.mtu)
+  normalized.peer_link_bond_count = normalizeNumberForInput(normalized.peer_link_bond_count as number | null | undefined)
+  normalized.peer_link_replica_fill_max = normalizeNumberForInput(normalized.peer_link_replica_fill_max as number | null | undefined)
   normalized.socket_mark = normalizeNumberForInput(normalized.socket_mark as number | null | undefined)
   // 枚举/算法串归一到 canonical 默认值，避免下拉框显示空白。
   // 0（Invalid）与 1（None）等价、'' 与 'aes-gcm' 等价，所以这么夹不会改变语义。
@@ -376,6 +389,9 @@ export function toBackendNetworkConfig(config: NetworkConfig): NetworkConfig {
 
   applyNetworkingMethod(backend)
   backend.mtu = normalizeNumberForInput(config.mtu) ?? undefined
+  // null 必须转成 undefined（字段缺席），否则后端会把「未设置」当成「设为 0」处理
+  backend.peer_link_bond_count = normalizeNumberForInput(config.peer_link_bond_count) ?? undefined
+  backend.peer_link_replica_fill_max = normalizeNumberForInput(config.peer_link_replica_fill_max) ?? undefined
   // null 必须转成 undefined（字段缺席），否则后端会把「未设置」当成「设为 0」处理
   backend.socket_mark = normalizeNumberForInput(config.socket_mark) ?? undefined
   backend.instance_recv_bps_limit = toBackendUint64(config.instance_recv_bps_limit)
@@ -509,6 +525,10 @@ export interface PeerConnInfo {
   quality_score?: number
   /** Loss above fuse threshold (may still be default if all paths fused). */
   quality_fused?: boolean
+  /** In bond send set when peer_link_bond_count > 1 (Phase 2b). */
+  in_bond_set?: boolean
+  /** Short diversity summary of a bond member, e.g. tunnel scheme ("udp"). */
+  bond_class?: string
 }
 
 export interface PeerRoutePair {
