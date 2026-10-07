@@ -2,12 +2,12 @@
 
 ## Status
 
-- Status: **Roadmap**（Checklist；P-UX + P0.1–P0.4 + P1.1/P1.2/P1.6–P1.8 + P2.1/P2.3 已落地；下一步 P0.5 / P2.2 或 P-AUTO.L1）
+- Status: **Roadmap**（Checklist；P-UX + P0.1–P0.4 + P1.1/P1.2/P1.6–P1.8 + P2.1/P2.3 已落地；P2.2 文档侧已对齐；下一步 P0.5 / P2.2 UI 或 P-AUTO.L1）
 - 日期：2026-10-06
-- 最近审阅：2026-10-06（`latency_first` UI/文案改为「质量优先选路」；配置键不变）
+- 最近审阅：2026-10-07（P2.2 文档：Current「热备 ≠ 聚合」+ bonding 异质优先语义拍板；**不**把 bonding 实现并入稳定性 P0）
 - 背景：对照 OpenVPN / IPsec 的「固定隧道 + 强保活」模型，梳理 EasyTier Mesh（多 PeerConn + 打洞 + 中继）的稳定性差距与可落地项；**另纳入 2026-10-06 用户反馈：高级选项互斥缺校验、长表单占空间、单协议配置失败后无智能回落**
 - 相关 Current：[`../current/peer-connections.md`](../current/peer-connections.md)、[`../current/tunnels-and-transport.md`](../current/tunnels-and-transport.md)
-- 相关 Roadmap：[`traffic-camouflage.md`](./traffic-camouflage.md)、[`multi-link-bonding.md`](./multi-link-bonding.md)、[`market-comparison-2026-10.md`](./market-comparison-2026-10.md)、[`upstream-port-todo.md`](./upstream-port-todo.md)（#2632 TCP 打洞 1s ping）
+- 相关 Roadmap：[`traffic-camouflage.md`](./traffic-camouflage.md)、[`multi-link-bonding.md`](./multi-link-bonding.md)（异质优先 / 同质补齐；代码未实现）、[`market-comparison-2026-10.md`](./market-comparison-2026-10.md)、[`upstream-port-todo.md`](./upstream-port-todo.md)（#2632 TCP 打洞 1s ping）
 - 索引：[`../README.md`](../README.md)
 
 **硬约束（全文适用）**
@@ -165,15 +165,19 @@ score = w_lat * norm(rtt)
 
 ### P2 — 可观测、路由代价与带宽
 
+标记说明：`[x]` 已完成；`[ ]` 未开始；`[~]` 部分完成（子项注明剩余工作与跟踪去处）。
+
 - [x] **P2.1** 状态面明确：各 PeerConn、`default_conn`、质量分分项（rtt/loss/jitter）、是否仅冗余
   - `PeerConnInfo.quality_score` / `quality_fused`（与 `select_conn` 同源）；Status「质量分」列 + tooltip（★ default / · 热备 / `!` 熔断 / `+N` 热备数）
   - Connector 存活仍走既有 `ListConnector`（CLI）；Web Status 本项未嵌入 connector 列表
-- [ ] **P2.2** 文档/UI：多连接 ≠ 已聚合带宽（对齐 Current `peer-connections.md`）
+- [~] **P2.2** 文档/UI：多连接 ≠ 已聚合带宽（对齐 Current `peer-connections.md`）
+  - **文档已完成（2026-10-07）**：Current §2/§4「热备 ≠ 聚合」；[`multi-link-bonding.md`](./multi-link-bonding.md) Phase 1 文案与异质优先语义
+  - **UI/帮助文案仍待**：产品帮助只描述 Current，须同步「多连接不是带宽聚合」（不引用 Roadmap 实现细节）；待建跟踪项，完成后方可关闭 P2.2
 - [x] **P2.3** 将丢包/抖动（综合分）纳入 OSPF / `latency_first` 边代价；带防震荡与可观测
   - 发布端 `direct_peer_info`：`quality_score`→`DirectConnectedPeerInfo.latency_ms`（`score*1000` + 熔断加成）；发布 hysteresis `min_delta=20`
   - Dijkstra / peer-center `RouteCostCalculator` 不变（仍读 `latency_ms`）；零 loss/jitter 时量级≈原 RTT ms
   - 可观测：Status `path_latency*` 在 LeastCost 下反映质量代价；PeerConn 质量分列（P2.1）
-- [ ] **P2.4** 按需推进 [`multi-link-bonding.md`](./multi-link-bonding.md)（按流哈希；坏链路按质量熔断）；默认 N=1
+- [ ] **P2.4** 按需推进 [`multi-link-bonding.md`](./multi-link-bonding.md)（**独立专题，非本清单 P0**）：按流哈希；同质量档内异质优先、同质每类 3–5 补齐；坏链路质量熔断；默认 N=1；出口/`bind_device` 见该文 Phase 3
 - [ ] **P2.5** 丢包场景下 KCP/QUIC proxy 的启用策略产品化（可配置，非隐性默认）
 
 ### P-UX — 配置面正确性与密度（对应 S7；纯前端，低风险）
@@ -225,7 +229,7 @@ score = w_lat * norm(rtt)
 | 环境阻断 443 但放行自定义端口 | 只要配置指向可达端口即可通 |
 | 环境阻断 UDP | 可通过用户指定的 TCP/`wss`/QUIC 建连，不依赖打洞 |
 | 多 URL 配置 | 全部维持连接，按质量分自动选择，无档位概念 |
-| 多 PeerConn | 仍可热备切换；bonding 仅在 P2 启用后加带宽 |
+| 多 PeerConn | 仍可热备切换；**不等于**聚合带宽；bonding 见专题文，启用后按流分摊且成员异质优先 |
 | 低 RTT 高丢包 vs 略高 RTT 低丢包 | 默认选后者（综合分）；超过丢包阈值不得占 `default_conn` |
 | 质量分接近、RTT 抖动 | 不因单次探测频繁切换（hysteresis） |
 | 文案 / 模板 | 出现「自定义端口」说明；无「仅支持 443」表述 |
@@ -261,7 +265,7 @@ P1.6 stats jitter/loss 上报 + P1.1/P1.2 透参
 |----|------|------|
 | P0.* | P0.1–P0.4 **已完成（档位已简化删除）**；P0.5 验收未开始 | 全量拨号 + 质量选路 + 文档/模板 |
 | P1.* | P1.1/P1.2/P1.6–P1.8（单元）**已完成**；P0.5/P1.8b 现网验收、P1.3–P1.5 未开始 | 质量分 Flags 透参已接 |
-| P2.* | P2.1 **已完成**（质量分/★default 可观测）；P2.2–P2.5 未开始 | OSPF 多指标 / bonding 细节见专题文 |
+| P2.* | P2.1/P2.3 **已完成**；P2.2 文档已对齐、UI 待做；P2.4–P2.5 未开始 | bonding 实现与异质策略见 [`multi-link-bonding.md`](./multi-link-bonding.md)，不并入稳定性 P0 |
 | P3.* | Backlog | |
 | P-UX.* | **已完成** | 老配置只提示；断点 760px；`configConflicts.ts` + Config 紧凑布局 |
 | P-AUTO.* | 草案待评审 | L1/L2 无感；L3 需 opt-in；L4 默认不做 |

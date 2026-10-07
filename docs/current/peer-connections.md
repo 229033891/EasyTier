@@ -3,9 +3,9 @@
 ## Status
 
 - Status: **Current**
-- 最近审阅：2026-10-06
+- 最近审阅：2026-10-07
 - 范围：同一对 peer 之间的 `PeerConn` / 默认发送路径
-- 规划中的多链路带宽聚合见：[`../roadmap/multi-link-bonding.md`](../roadmap/multi-link-bonding.md)
+- 规划中的多链路带宽聚合（异质优先，**未实现**）见：[`../roadmap/multi-link-bonding.md`](../roadmap/multi-link-bonding.md)
 - 连接稳定性（质量选路 / 保底）见：[`../roadmap/connection-stability-todo.md`](../roadmap/connection-stability-todo.md)
 - 隧道 scheme 与伪装差距见：[`tunnels-and-transport.md`](./tunnels-and-transport.md)
 - 索引：[`../README.md`](../README.md)
@@ -39,7 +39,8 @@
 
 - CLI / 状态里可能看到 `peer_conn_count > 1`。  
 - **有效吞吐仍受当前默认那条隧道限制**。  
-- 多连接今天的用途是 **路径冗余、选优、故障切换**，不是带宽聚合。
+- 多连接今天的用途是 **路径冗余、选优、故障切换**，不是带宽聚合。  
+- **热备条数 ≠ 聚合带宽**；状态里同时出现 tcp+udp 只表示多条隧道存活，**不会**按协议或宽带拆流发送。
 
 ### 2.1 链路度量（今日）
 
@@ -82,17 +83,29 @@ uri = "wss://relay.example.com/et"   # 隐式 443；仅当网络放行 443 时�
 部分网络对单条 TCP/UDP 流有带宽上限。  
 在现状模型下，即使两端之间有多条 PeerConn，数据面仍只使用 `default_conn`，**无法靠多连接叠加带宽**。
 
-若需要该能力，见 Roadmap：[`../roadmap/multi-link-bonding.md`](../roadmap/multi-link-bonding.md)。
+---
+
+## 4. 缺口（非今日行为）
+
+以下 **尚未实现**；读者与 UI 文案不得写成 Current 能力：
+
+| 缺口 | 说明 | Roadmap |
+|------|------|---------|
+| 多链路并行发送（bonding） | `bond_count>1` 时按流哈希分摊到多条 PeerConn | [`../roadmap/multi-link-bonding.md`](../roadmap/multi-link-bonding.md) |
+| 异质成员集 | 指标大致相当时优先不同协议 / 出口 / remote；不足时同质补齐（每类约 3–5） | 同上（`diversity-first, replica-fill`） |
+| 双宽带自动拆流 | Socket 选项层虽有 `bind_device`（指定发包网卡），无「按多网卡维持 N 条并计入 diversity」的控制器 | 同上 Phase 3 |
+
+今日已有的多协议并存、质量选 `default_conn`、断链后切热备，**不等于**上表能力。
 
 ---
 
-## 4. 验收对照（现状）
+## 5. 验收对照（现状）
 
 | 场景 | 期望（今天） |
 |------|----------------|
 | 两节点仅一条存活隧道 | 全部流量走该隧道 |
-| 两节点多条存活隧道 | 状态可列出多条；发送仍只走 `default_conn`（通常为质量分更优者） |
+| 两节点多条存活隧道 | 状态可列出多条；发送仍只走 `default_conn`（通常为质量分更优者）；热备 ≠ 聚合 |
 | 默认隧道断开 | 重新 `select_conn`，切到另一条存活连接（若有） |
-| 希望 N 条并行加带宽 | **未实现** |
+| 希望 N 条并行加带宽 / 按协议或宽带拆流 | **未实现**（见 §4） |
 
-> 代码已合入，单元验收通过；非 443 保底组网（P0.5）与双路径现网抽样（P1.8b）待补，见 Roadmap。
+> 质量选路相关单元验收已合入；bonding 仅文档立项。非 443 保底组网（P0.5）与双路径现网抽样（P1.8b）待补，见 [`../roadmap/connection-stability-todo.md`](../roadmap/connection-stability-todo.md)。
