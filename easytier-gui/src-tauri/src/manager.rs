@@ -194,17 +194,15 @@ impl GUIStorage {
         // `et_<n>_<xxxx>` and `persist_runtime_dev_name` writes it back. Do not let a later
         // Save wipe that durable adapter identity — otherwise the next enable allocates a
         // brand-new wintun NIC again.
-        if cfg.dev_name.as_deref().map_or(true, |name| name.is_empty()) {
-            if let Some(existing) = self.network_configs.get(&inst_id) {
-                if let Some(stored_name) = existing
-                    .config
-                    .dev_name
-                    .as_deref()
-                    .filter(|name| is_automatic_windows_dev_name(name))
-                {
-                    cfg.dev_name = Some(stored_name.to_owned());
-                }
-            }
+        if cfg.dev_name.as_deref().is_none_or(|name| name.is_empty())
+            && let Some(existing) = self.network_configs.get(&inst_id)
+            && let Some(stored_name) = existing
+                .config
+                .dev_name
+                .as_deref()
+                .filter(|name| is_automatic_windows_dev_name(name))
+        {
+            cfg.dev_name = Some(stored_name.to_owned());
         }
 
         let source = self
