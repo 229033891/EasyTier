@@ -171,7 +171,11 @@ fn cmp_candidate_score_then_id(a: &BondCandidate, b: &BondCandidate) -> std::cmp
 /// Pick up to `bond.bond_count` member ids: quality band → diversity → replica fill.
 ///
 /// Returns ordered member ids (best-first among early diversity picks). Empty if no candidates.
-pub fn pick_bond_set(candidates: &[BondCandidate], bond: BondConfig, cfg: ConnSelectConfig) -> Vec<PeerConnId> {
+pub fn pick_bond_set(
+    candidates: &[BondCandidate],
+    bond: BondConfig,
+    cfg: ConnSelectConfig,
+) -> Vec<PeerConnId> {
     let n = bond.bond_count.max(1) as usize;
     let replica_max = bond.replica_fill_max.max(1) as usize;
 
@@ -191,7 +195,8 @@ pub fn pick_bond_set(candidates: &[BondCandidate], bond: BondConfig, cfg: ConnSe
         .copied()
         .filter(|c| in_quality_band(c.scored.score, best_score, cfg))
         .collect();
-    band.sort_by(cmp_candidate_score_then_id);
+    // `band` holds `&BondCandidate`, so sort_by sees `&&BondCandidate`.
+    band.sort_by(|a, b| cmp_candidate_score_then_id(a, b));
 
     let mut selected: Vec<PeerConnId> = Vec::with_capacity(n.min(band.len().max(1)));
     let mut class_count: HashMap<DiversityClass, usize> = HashMap::new();
@@ -254,7 +259,7 @@ pub fn pick_bond_set(candidates: &[BondCandidate], bond: BondConfig, cfg: ConnSe
             fill_pool.push(*c);
         }
     }
-    fill_pool.sort_by(cmp_candidate_score_then_id);
+    fill_pool.sort_by(|a, b| cmp_candidate_score_then_id(a, b));
 
     for c in fill_pool {
         if selected.len() >= n {
@@ -290,7 +295,10 @@ pub fn flow_key_from_payload(payload: &[u8]) -> u64 {
         key.hash(&mut hasher);
     } else {
         // Fallback: sticky-ish hash of payload head (non-IP / RPC / tests).
-        payload.get(..32.min(payload.len())).unwrap_or(payload).hash(&mut hasher);
+        payload
+            .get(..32.min(payload.len()))
+            .unwrap_or(payload)
+            .hash(&mut hasher);
         payload.len().hash(&mut hasher);
     }
     hasher.finish()
@@ -348,7 +356,7 @@ fn transport_ports(proto: u8, transport: &[u8]) -> (u16, u16) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::peers::conn::conn_select::{conn_quality_score, score_conn, ConnMetrics};
+    use crate::peers::conn::conn_select::{ConnMetrics, conn_quality_score, score_conn};
     use uuid::Uuid;
 
     fn id(n: u8) -> PeerConnId {
@@ -413,13 +421,7 @@ mod tests {
         assert_eq!(set.len(), 2);
         let schemes: std::collections::HashSet<_> = set
             .iter()
-            .map(|cid| {
-                if *cid == id(3) {
-                    "tcp"
-                } else {
-                    "udp"
-                }
-            })
+            .map(|cid| if *cid == id(3) { "tcp" } else { "udp" })
             .collect();
         assert!(
             schemes.contains("udp") && schemes.contains("tcp"),

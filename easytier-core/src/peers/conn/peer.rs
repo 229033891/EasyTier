@@ -113,7 +113,7 @@ impl Peer {
                                     if bond_conns_copy_close
                                         .load()
                                         .as_ref()
-                                        .is_some_and(|members| {
+                                        .is_some_and(|members: &Arc<Vec<ArcPeerConn>>| {
                                             members.iter().any(|m| Arc::ptr_eq(m, conn))
                                         })
                                     {
