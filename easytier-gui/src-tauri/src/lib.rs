@@ -847,30 +847,41 @@ async fn get_config_server_status(app: AppHandle) -> Result<ConfigServerStatusDt
     // Same-process owner (normal mode): status and sync share the report registry.
     if let Some(client) = easytier_core::management::config_server_report_client() {
         let status = easytier_core::management::config_server_status();
+        let connected = client.is_connected();
+        // When live-connected, never surface a stale dial error from a prior attempt.
+        let last_error = if connected {
+            String::new()
+        } else {
+            status.last_error.unwrap_or_default()
+        };
         return Ok(ConfigServerStatusDto {
             enabled: true,
-            connected: client.is_connected(),
-            last_error: status.last_error.unwrap_or_default(),
+            connected,
+            last_error,
         });
     }
 
     // Service / remote mode: query the process that owns the WebClient via RPC.
+    // Returning a fake "not connected" Ok here would make the UI show "连接中"
+    // forever while the service/RPC is actually unreachable — surface that as Err.
     let client_manager = get_client_manager!()?;
     let Some(client) = client_manager.get_rpc_client(app) else {
-        return Ok(ConfigServerStatusDto {
-            enabled: false,
-            connected: false,
-            last_error: String::new(),
-        });
+        // Stable code for frontend i18n (not a free-form English sentence).
+        return Err("rpc_client_unavailable".into());
     };
     let response = client
         .get_config_server_status(BaseController::default(), GetConfigServerStatusRequest {})
         .await
         .map_err(|e| e.to_string())?;
+    let last_error = if response.connected {
+        String::new()
+    } else {
+        response.last_error
+    };
     Ok(ConfigServerStatusDto {
         enabled: response.enabled,
         connected: response.connected,
-        last_error: response.last_error,
+        last_error,
     })
 }
 
@@ -1011,6 +1022,109 @@ async fn read_log_file(
     // Best-effort flush so the latest lines are visible.
     log::flush();
     read_file_tail(&path, clamp_log_read_bytes(max_bytes))
+}
+
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ClearLogFilesResult {
+    cleared: u32,
+    errors: Vec<String>,
+    dirs: Vec<String>,
+}
+
+fn clear_easytier_logs_in_dir(log_dir: &std::path::Path) -> (u32, Vec<String>) {
+    let mut cleared = 0u32;
+    let mut errors = Vec::new();
+    if !log_dir.is_dir() {
+        return (0, errors);
+    }
+    let entries = match std::fs::read_dir(log_dir) {
+        Ok(entries) => entries,
+        Err(e) => {
+            errors.push(format!("{}: {}", log_dir.display(), e));
+            return (0, errors);
+        }
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+            continue;
+        };
+        if !is_easytier_log_file(name) {
+            continue;
+        }
+        let result = if name == "easytier.log" {
+            // Prefer truncate for the live file; fall back to remove.
+            match std::fs::OpenOptions::new()
+                .write(true)
+                .truncate(true)
+                .open(&path)
+            {
+                Ok(_) => Ok(()),
+                Err(truncate_err) => std::fs::remove_file(&path).map_err(|remove_err| {
+                    format!("truncate: {truncate_err}; remove: {remove_err}")
+                }),
+            }
+        } else {
+            std::fs::remove_file(&path).map_err(|e| e.to_string())
+        };
+        match result {
+            Ok(()) => cleared += 1,
+            Err(e) => errors.push(format!("{}: {e}", path.display())),
+        }
+    }
+    (cleared, errors)
+}
+
+/// Clear EasyTier log files in the GUI log directory and optional extra dirs
+/// (e.g. service-mode `file_log_dir`).
+/// Rotated files (`easytier.log.*`) are deleted; the active `easytier.log` is
+/// truncated so an in-use logger handle is less likely to fail on Windows.
+/// Partial failures are always reported in `errors` (never silently ignored).
+#[tauri::command]
+async fn clear_log_files(
+    app: tauri::AppHandle,
+    extra_dirs: Option<Vec<String>>,
+) -> Result<ClearLogFilesResult, String> {
+    log::flush();
+
+    let mut dirs: Vec<std::path::PathBuf> = Vec::new();
+    if let Ok(gui_dir) = get_log_dir(&app) {
+        dirs.push(gui_dir);
+    }
+    if let Some(extra) = extra_dirs {
+        for dir in extra {
+            let trimmed = dir.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            let path = std::path::PathBuf::from(trimmed);
+            if path.is_dir() && !dirs.iter().any(|d| d == &path) {
+                dirs.push(path);
+            }
+        }
+    }
+
+    let mut cleared = 0u32;
+    let mut errors = Vec::new();
+    let mut cleared_dirs = Vec::new();
+    for dir in &dirs {
+        let (n, dir_errors) = clear_easytier_logs_in_dir(dir);
+        cleared += n;
+        errors.extend(dir_errors);
+        cleared_dirs.push(dir.to_string_lossy().to_string());
+    }
+
+    // Always return structured result: callers must treat non-empty `errors`
+    // as a partial (or total) failure — never ignore leftover locked files.
+    Ok(ClearLogFilesResult {
+        cleared,
+        errors,
+        dirs: cleared_dirs,
+    })
 }
 
 #[cfg(not(target_os = "android"))]
@@ -1175,6 +1289,7 @@ pub fn run_gui() -> std::process::ExitCode {
             get_log_dir_path,
             list_log_files,
             read_log_file,
+            clear_log_files,
         ])
         .on_window_event(|_win, event| match event {
             #[cfg(not(target_os = "android"))]

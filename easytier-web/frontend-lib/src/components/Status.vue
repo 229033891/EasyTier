@@ -589,7 +589,7 @@ const eventLogContent = computed(() => {
           toggleable :pt="panelHeaderPt('nodeDetails')">
           <div class="node-detail-groups status-panel-body">
             <div v-for="group in myNodeInfoGroups" :key="group.key" class="node-info-group">
-              <span class="node-info-group-title" :title="t(group.titleKey)">
+              <span class="node-info-group-title">
                 {{ t(group.titleKey) }}
                 <span v-if="group.chips.length > 1" class="node-info-group-count">
                   ({{ group.chips.length }})
@@ -600,7 +600,6 @@ const eventLogContent = computed(() => {
                   v-for="(chip, i) in group.chips"
                   :key="i"
                   class="node-info-chip"
-                  v-tooltip.top="chip.label"
                 >{{ chip.label }}</span>
               </div>
               <Button v-if="group.chips.length" size="small" severity="secondary" text rounded icon="pi pi-copy"
@@ -658,6 +657,10 @@ const eventLogContent = computed(() => {
               </template>
             </Column>
             <Column :field="latencyMs" :header="t('latency')" />
+            <Column :field="jitterMs" :header="t('jitter')"
+              header-class="peer-col-secondary" body-class="peer-col-secondary" />
+            <Column :field="lossRate" :header="t('loss_rate')"
+              header-class="peer-col-secondary" body-class="peer-col-secondary" />
             <Column :header="t('path_quality')">
               <template #body="slotProps">
                 <span
@@ -668,13 +671,9 @@ const eventLogContent = computed(() => {
                 </span>
               </template>
             </Column>
-            <Column :field="jitterMs" :header="t('jitter')"
-              header-class="peer-col-secondary" body-class="peer-col-secondary" />
             <Column :field="txBytes" :header="t('upload_bytes')"
               header-class="peer-col-secondary" body-class="peer-col-secondary" />
             <Column :field="rxBytes" :header="t('download_bytes')"
-              header-class="peer-col-secondary" body-class="peer-col-secondary" />
-            <Column :field="lossRate" :header="t('loss_rate')"
               header-class="peer-col-secondary" body-class="peer-col-secondary" />
             <Column :field="natType" :header="t('nat_type')"
               header-class="peer-col-secondary" body-class="peer-col-secondary" />

@@ -49,6 +49,7 @@ vpn_portal_remove_client: Remove Client
 dev_name: TUN interface name
 advanced_settings: Advanced Settings
 basic_settings: Basic Settings
+config_toolbar: Config Operations
 listener_urls: Local Listen Addresses
 rpc_port: RPC Port
 port: Port
@@ -115,6 +116,16 @@ logging_file: Log File
 logging_timestamps_local_hint: Log files are written in UTC; timestamps here are converted to your local timezone for reading.
 logging_retention_hint: Up to 3 rotated log files are kept (daily rotation; ~3 days at normal volume, not a fixed time window).
 logging_remote_hint: Log level applies to the remote EasyTier process. Open log files on the device to view recent content.
+logging_clear: Delete Logs
+logging_clear_confirm: Delete EasyTier log files in the log directory? The active log will be cleared and rotated logs will be removed. In service mode the service log directory is cleared too.
+logging_clear_success: Cleared {count} log file(s)
+logging_clear_partial: Cleared {count} file(s), but some failed: {error}
+logging_clear_failed: Failed to delete logs
+logging_clear_empty: No log files to delete
+logging_copy_recent: Copy Logs
+logging_copy_recent_success: Copied the latest {count} log line(s)
+logging_copy_recent_empty: No log content to copy
+logging_copy_recent_failed: Failed to copy logs
 vpn_tile_no_network: No configured network
 vpn_tile_no_network_description: Configure a network in EasyTier before using the VPN tile.
 vpn_tile_started: VPN network started
@@ -593,6 +604,11 @@ dhcp_experimental_warning: Experimental warning! if there is an IP conflict in t
 tray:
   show: Show / Hide
   exit: Exit
+  start_service: Start Service
+  stop_service: Stop Service
+  restart_service: Restart Service
+  uninstall_service: Uninstall Service
+  service_status: "Service Status: {status}"
 
 about:
   title: About
@@ -933,17 +949,26 @@ mode:
   service: Service
   remote: Remote
   normal_description: Run EasyTier in this app. Closing the GUI also stops the network.
-  service_description: Install as a system service with start-on-boot; it keeps running after you quit the GUI.
+  service_description: Install as a system service with start-on-boot; it keeps running after you close the window. Tray Exit stops the service.
   remote_description: Manage a node that is already running on another machine via RPC. This PC does not run the core network; configure the config server on the remote side if needed.
   service_status: Service Status
   service_status_running: Running
   service_status_stopped: Stopped
   service_status_notinstalled: Not Installed
   uninstall_service: Uninstall Service
+  start_service: Start Service
   stop_service: Stop Service
+  restart_service: Restart Service
   uninstall_service_confirm: Are you sure you want to uninstall the service?
+  stop_service_confirm: Stop the service? Networking will stop until you start it again.
+  restart_service_confirm: Restart the service? Networking will be briefly interrupted.
   uninstall_service_success: Service uninstalled successfully, switched back to normal mode
+  start_service_success: Service started successfully
   stop_service_success: Service stopped successfully
+  restart_service_success: Service restarted successfully
+  service_status_timeout: "Timed out waiting for service status (expected {expected}, current {actual})"
+  service_stop_before_exit_failed: Could not stop the service before exit; exit cancelled
+  operation_in_progress: Another operation is in progress; please try again shortly
   remote_rpc_address_empty: Remote RPC Address cannot be empty
   service_config_empty: Service Config cannot be empty
   rpc_connection_failed: "RPC connection failed: {error}"
@@ -972,8 +997,11 @@ config-server:
   status_disconnected: Not Connected
   status_connecting: Connecting
   status_failed: Connection Failed
+  status_unavailable: Status Unavailable
+  status_owner_down: Service Not Running
   status_service: Managed by service process
   status_remote: Not available in remote mode
+  rpc_unavailable: Cannot query config-server status (RPC unavailable)
   connect_timeout: Connection timed out. Please check that the config server address is correct.
   reverted: Restored the previous address
   update_service_confirm: The service will be restarted to apply changes, do you want to continue?

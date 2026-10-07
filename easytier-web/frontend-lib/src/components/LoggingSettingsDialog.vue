@@ -1,15 +1,15 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { useToast } from 'primevue'
+import { useConfirm, useToast } from 'primevue'
 import Button from 'primevue/button'
 import Dialog from 'primevue/dialog'
 import InputText from 'primevue/inputtext'
 import Select from 'primevue/select'
 import Textarea from 'primevue/textarea'
 import { TOAST_LIFE } from '../modules/toast'
-import { normalizeLoggerLevel, type LoggingSettingsApi, type LoggerLevelState } from '../modules/logging'
-import { localizeLogTimestamps } from '../modules/utils'
+import { normalizeLoggerLevel, takeLastLogLines, type LoggingSettingsApi, type LoggerLevelState, type ClearLogFilesResult } from '../modules/logging'
+import { localizeLogTimestamps, formatApiErrorDetail } from '../modules/utils'
 
 const props = defineProps<{
   api: LoggingSettingsApi
@@ -19,6 +19,7 @@ const visible = defineModel<boolean>('visible', { default: false })
 
 const { t } = useI18n()
 const toast = useToast()
+const confirm = useConfirm()
 
 const loggingLevel = ref('warn')
 const loggingLevelLive = ref(true)
@@ -28,6 +29,11 @@ const selectedLogFile = ref('')
 const loggingContent = ref('')
 const isSaving = ref(false)
 const isLoading = ref(false)
+const isClearing = ref(false)
+const isCopying = ref(false)
+
+/** Trailing lines copied by the footer "Copy Logs" action. */
+const RECENT_LOG_LINES = 100
 
 const loggingLevelOptions = computed(() =>
   ['off', 'error', 'warn', 'info', 'debug', 'trace'].map(level => ({
@@ -39,6 +45,14 @@ const loggingLevelOptions = computed(() =>
 const canShowLogContent = computed(() =>
   !props.api.remoteOnly && !!props.api.listLogFiles && !!props.api.readLogFile,
 )
+
+const canClearLogs = computed(() =>
+  canShowLogContent.value && typeof props.api.clearLogFiles === 'function',
+)
+
+const hasLogFiles = computed(() => loggingFiles.value.length > 0)
+
+const canCopyRecentLogs = computed(() => canShowLogContent.value && hasLogFiles.value)
 
 function applyLoggerLevelResult(result: string | LoggerLevelState) {
   if (typeof result === 'string') {
@@ -177,6 +191,136 @@ async function copyLoggingDir() {
     })
   }
 }
+
+async function writeClipboard(text: string) {
+  if (props.api.copyText) {
+    await props.api.copyText(text)
+    return
+  }
+  if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(text)
+    return
+  }
+  throw new Error('clipboard unavailable')
+}
+
+async function onCopyRecentLogs() {
+  if (!canCopyRecentLogs.value || isCopying.value || isClearing.value || isSaving.value)
+    return
+  isCopying.value = true
+  try {
+    // Refresh from disk so the clipboard gets the latest lines, not a stale viewer buffer.
+    if (selectedLogFile.value && props.api.readLogFile) {
+      const raw = await props.api.readLogFile(selectedLogFile.value)
+      loggingContent.value = localizeLogTimestamps(raw)
+    }
+    const text = takeLastLogLines(loggingContent.value, RECENT_LOG_LINES)
+    if (!text) {
+      toast.add({
+        severity: 'info',
+        summary: t('logging_copy_recent'),
+        detail: t('logging_copy_recent_empty'),
+        life: TOAST_LIFE.info,
+      })
+      return
+    }
+    await writeClipboard(text)
+    const count = text.split('\n').length
+    toast.add({
+      severity: 'success',
+      summary: t('web.common.success'),
+      detail: t('logging_copy_recent_success', { count }),
+      life: TOAST_LIFE.success,
+    })
+  }
+  catch (e) {
+    console.error('Failed to copy recent logs', e)
+    toast.add({
+      severity: 'error',
+      summary: t('error'),
+      detail: `${t('logging_copy_recent_failed')}: ${formatApiErrorDetail(e, t)}`,
+      life: TOAST_LIFE.severe,
+    })
+  }
+  finally {
+    isCopying.value = false
+  }
+}
+
+async function onClearLogs() {
+  if (!canClearLogs.value || isClearing.value || isSaving.value) {
+    return
+  }
+  confirm.require({
+    message: t('logging_clear_confirm'),
+    header: t('logging_clear'),
+    icon: 'pi pi-exclamation-triangle',
+    rejectProps: {
+      label: t('web.common.cancel'),
+      severity: 'secondary',
+      outlined: true,
+    },
+    acceptProps: {
+      label: t('logging_clear'),
+      severity: 'danger',
+    },
+    accept: async () => {
+      isClearing.value = true
+      try {
+        const raw = await props.api.clearLogFiles!()
+        const result: ClearLogFilesResult = typeof raw === 'number'
+          ? { cleared: raw, errors: [], dirs: [] }
+          : raw
+        selectedLogFile.value = ''
+        await loadLoggingContent()
+        if (result.errors.length > 0) {
+          const errorDetail = result.errors.join('; ')
+          if (result.cleared > 0) {
+            toast.add({
+              severity: 'warn',
+              summary: t('logging_clear'),
+              detail: t('logging_clear_partial', {
+                count: result.cleared,
+                error: errorDetail,
+              }),
+              life: TOAST_LIFE.severe,
+            })
+          }
+          else {
+            toast.add({
+              severity: 'error',
+              summary: t('error'),
+              detail: `${t('logging_clear_failed')}: ${errorDetail}`,
+              life: TOAST_LIFE.severe,
+            })
+          }
+        }
+        else {
+          toast.add({
+            severity: result.cleared > 0 ? 'success' : 'info',
+            summary: result.cleared > 0 ? t('web.common.success') : t('logging_clear'),
+            detail: result.cleared > 0
+              ? t('logging_clear_success', { count: result.cleared })
+              : t('logging_clear_empty'),
+            life: TOAST_LIFE.success,
+          })
+        }
+      }
+      catch (e) {
+        console.error('Failed to clear logs', e)
+        toast.add({
+          severity: 'error',
+          summary: t('error'),
+          detail: `${t('logging_clear_failed')}: ${formatApiErrorDetail(e, t)}`,
+          life: TOAST_LIFE.severe,
+        })
+      }
+      finally {
+        isClearing.value = false
+      }
+    },
+  })
+}
 </script>
 
 <template>
@@ -270,9 +414,36 @@ async function copyLoggingDir() {
       </div>
     </div>
     <template #footer>
-      <Button :label="t('web.common.cancel')" icon="pi pi-times" @click="visible = false" text />
-      <Button :label="t('web.common.save')" icon="pi pi-save" @click="onSave" autofocus :loading="isSaving"
-        :disabled="!loggingLevelLive && !!api.remoteOnly" />
+      <div class="logging-footer">
+        <div class="logging-footer-left">
+          <Button
+            v-if="canShowLogContent"
+            :label="t('logging_copy_recent')"
+            icon="pi pi-copy"
+            severity="secondary"
+            text
+            :loading="isCopying"
+            :disabled="!canCopyRecentLogs || isSaving || isLoading || isClearing"
+            @click="onCopyRecentLogs"
+          />
+          <Button
+            v-if="canClearLogs"
+            :label="t('logging_clear')"
+            icon="pi pi-trash"
+            severity="danger"
+            text
+            :loading="isClearing"
+            :disabled="!hasLogFiles || isSaving || isLoading || isCopying"
+            @click="onClearLogs"
+          />
+        </div>
+        <div class="logging-footer-actions">
+          <Button :label="t('web.common.cancel')" icon="pi pi-times" @click="visible = false" text
+            :disabled="isClearing || isCopying" />
+          <Button :label="t('web.common.save')" icon="pi pi-save" @click="onSave" autofocus :loading="isSaving"
+            :disabled="isClearing || isCopying || (!loggingLevelLive && !!api.remoteOnly)" />
+        </div>
+      </div>
     </template>
   </Dialog>
 </template>
@@ -332,5 +503,24 @@ async function copyLoggingDir() {
   word-break: break-word;
   overflow-x: hidden;
   line-height: 1.25;
+}
+
+.logging-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  width: 100%;
+}
+
+.logging-footer-left,
+.logging-footer-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.logging-footer-actions {
+  margin-left: auto;
 }
 </style>

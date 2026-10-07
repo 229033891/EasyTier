@@ -109,16 +109,16 @@ beforeEach(() => {
 describe('mobile VPN route sync annotate', () => {
   it('formats VpnService routes like L2 proxy_cidr_route_sync', async () => {
     const vpn = await loadVpnModule()
-    expect(vpn.formatMobileVpnRouteSync([])).toBe('desired=[-] installed=[-] exit=false dns=')
+    expect(vpn.formatMobileVpnRouteSync([])).toBe('desired=[-] installed=[-] exit=false')
     expect(vpn.formatMobileVpnRouteSync(['10.0.0.0/24', '0.0.0.0/0'])).toBe(
-      'desired=[10.0.0.0/24,0.0.0.0/0] installed=[10.0.0.0/24,0.0.0.0/0] exit=true dns=',
+      'desired=[10.0.0.0/24,0.0.0.0/0] installed=[10.0.0.0/24,0.0.0.0/0] exit=true',
     )
-    expect(vpn.formatMobileVpnRouteSync(['10.0.0.0/24'], '100.100.100.53')).toBe(
-      'desired=[10.0.0.0/24] installed=[10.0.0.0/24] exit=false dns=100.100.100.53',
+    expect(vpn.formatMobileVpnRouteSync(['10.0.0.0/24'])).toBe(
+      'desired=[10.0.0.0/24] installed=[10.0.0.0/24] exit=false',
     )
     expect(vpn.annotateNetworkInfoWithMobileVpnRoutes({
       proxy_cidr_route_sync: 'desired=[-] installed=[-] exit=false',
-    }, 'other-instance').proxy_cidr_route_sync).toBe('desired=[-] installed=[-] exit=false dns=')
+    }, 'other-instance').proxy_cidr_route_sync).toBe('desired=[-] installed=[-] exit=false')
   })
 
   it('does not treat Java Array.toString junk as route characters', async () => {
@@ -153,7 +153,7 @@ describe('mobile VPN route sync annotate', () => {
     expect(vpn.getMobileVpnInstalledRoutes('A')).toEqual(['10.0.0.1/24'])
     expect(vpn.getMobileVpnPushedDns('A')).toBe('100.100.100.53')
     expect(annotated.proxy_cidr_route_sync).toBe(
-      'desired=[10.0.0.1/24] installed=[10.0.0.1/24] exit=false dns=100.100.100.53',
+      'desired=[10.0.0.1/24] installed=[10.0.0.1/24] exit=false',
     )
   })
 
@@ -170,8 +170,8 @@ describe('mobile VPN route sync annotate', () => {
     expect(vpn.getMobileVpnInstalledRoutes('A')).toEqual(['10.0.0.1/24'])
     expect(vpn.getMobileVpnInstalledRoutes('B')).toEqual([])
     expect(vpn.getMobileVpnInstalledRoutes()).toEqual(['10.0.0.1/24'])
-    expect(vpn.formatMobileVpnRouteSync(vpn.getMobileVpnInstalledRoutes('B'), vpn.getMobileVpnPushedDns('B'))).toBe(
-      'desired=[-] installed=[-] exit=false dns=',
+    expect(vpn.formatMobileVpnRouteSync(vpn.getMobileVpnInstalledRoutes('B'))).toBe(
+      'desired=[-] installed=[-] exit=false',
     )
   })
 })

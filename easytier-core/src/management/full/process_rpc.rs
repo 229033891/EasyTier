@@ -801,13 +801,20 @@ where
         // ReportManagedNetworkConfig share one source of truth.
         let report = config_server_client::config_server_report_client();
         let status = config_server_status::snapshot();
+        let connected = report
+            .as_ref()
+            .map(|client| client.is_connected())
+            .unwrap_or(status.connected);
+        // When live-connected, never surface a stale dial error from a prior attempt.
+        let last_error = if connected {
+            String::new()
+        } else {
+            status.last_error.unwrap_or_default()
+        };
         Ok(GetConfigServerStatusResponse {
             enabled: report.is_some() || status.enabled,
-            connected: report
-                .as_ref()
-                .map(|client| client.is_connected())
-                .unwrap_or(status.connected),
-            last_error: status.last_error.unwrap_or_default(),
+            connected,
+            last_error,
         })
     }
 

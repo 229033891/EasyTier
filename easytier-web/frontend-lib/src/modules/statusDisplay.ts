@@ -427,13 +427,15 @@ export function pathQualityTip(info: PeerRoutePair): string {
  * Default/uninitialized L2 summary before the desktop route updater reports,
  * or on platforms (Android) where ifcfg is a no-op and VpnService owns routes.
  * Showing this string as "sync status" is misleading.
+ * Legacy Android summaries may carry a trailing `dns=` suffix (now removed);
+ * treat those placeholders as not meaningful as well.
  */
 export function isMeaningfulProxyCidrRouteSync(syncSummary?: string | null): boolean {
   if (!syncSummary?.trim())
     return false
   // Empty placeholder with no last_error — not useful observability.
-  // Optional trailing `dns=` (Android VpnService; empty means none pushed).
-  if (/^desired=\[-\]\s*installed=\[-\]\s*exit=(true|false)(\s+dns=)?$/.test(syncSummary.trim()))
+  // Optional trailing `dns=...` is a legacy Android VpnService suffix.
+  if (/^desired=\[-\]\s*installed=\[-\]\s*exit=(true|false)(\s+dns=.*)?$/.test(syncSummary.trim()))
     return false
   return true
 }

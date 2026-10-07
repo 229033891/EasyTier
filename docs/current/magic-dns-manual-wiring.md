@@ -116,4 +116,5 @@ dig @100.100.100.53 hostname.et.net
 - **与 Tailscale 同机**：MagicDNS 用 **`100.100.100.53`**（不是 `.100`），避免与 Tailscale `100.100.100.100` 冲突。
 - **上游只能填 IP 字面量**（首期）：`1.1.1.1`、`udp://8.8.8.8:53`、`[fd00::1]:53` 可以；填 hostname 会报 invalid address。DoT/DoH / 域名上游另立项。
 - **kill -9 / 异常退出**：systemd drop-in 可能残留，mesh 域名会黑洞到下次正常启动（`close()` 会删文件）。卸载脚本应删除 `/etc/systemd/resolved.conf.d/easytier-magic-dns.conf`（仅当文件带 EasyTier 头）。
+- **Windows 停止清理**：正常禁用网络 / 退出时会自动删除本实例装过的代理 CIDR 路由（含 `::/0`）与 TUN 网卡上写入的 `NameServer`（仅回滚自己写过的值）。kill 进程等非正常退出仍可能残留，下次启用→禁用一次即可清掉。
 - **混编旧核心当选 MagicDNS server（:49813）**：旧版会静默丢掉 `static_hosts` 等未知字段，静态 hosts 可能暂时不可见。控制台对 `< 2.7.4` 会标「客户端过旧」并提示；升级或保证新版本节点抢到 server 后再验 hosts。

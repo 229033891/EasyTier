@@ -24,6 +24,7 @@ pub(super) struct NativeTunRuntime {
     tun_fd: mpsc::Sender<i32>,
     tun_fd_receiver: Mutex<Option<mpsc::Receiver<i32>>>,
     task: Mutex<Option<tokio::task::JoinHandle<()>>>,
+    packet_plane: Mutex<Option<Arc<CorePacketPlane>>>,
 }
 
 impl NativeTunRuntime {
@@ -36,6 +37,7 @@ impl NativeTunRuntime {
             tun_fd,
             tun_fd_receiver: Mutex::new(Some(tun_fd_receiver)),
             task: Mutex::new(None),
+            packet_plane: Mutex::new(None),
         }
     }
 
@@ -74,6 +76,7 @@ impl NativeTunRuntime {
 
     pub(super) async fn prepare(&self, packet_plane: Arc<CorePacketPlane>) -> anyhow::Result<()> {
         self.nic.drain().await;
+        *self.packet_plane.lock().await = Some(packet_plane.clone());
         let Some(mut tun_fds) = self.tun_fd_receiver.lock().await.take() else {
             return Ok(());
         };
@@ -104,6 +107,9 @@ impl NativeTunRuntime {
     pub(super) async fn shutdown(&self) {
         if let Some(task) = self.task.lock().await.take() {
             let _ = task.await;
+        }
+        if let Some(packet_plane) = self.packet_plane.lock().await.clone() {
+            super::tun_common::cleanup_tun_leftovers(&self.global_ctx, &packet_plane).await;
         }
         self.nic.stop().await;
     }

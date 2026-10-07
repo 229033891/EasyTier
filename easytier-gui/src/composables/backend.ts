@@ -122,6 +122,19 @@ export async function readLogFile(fileName: string, maxBytes?: number) {
   return await invoke<string>('read_log_file', { fileName, maxBytes })
 }
 
+export interface ClearLogFilesResult {
+  cleared: number
+  errors: string[]
+  dirs: string[]
+}
+
+/** Delete rotated logs and truncate active easytier.log in GUI + optional extra dirs. */
+export async function clearLogFiles(extraDirs?: string[]) {
+  return await invoke<ClearLogFilesResult>('clear_log_files', {
+    extraDirs: extraDirs?.length ? extraDirs : null,
+  })
+}
+
 export async function setTunFd(fd: number) {
   return await invoke('set_tun_fd', { fd })
 }

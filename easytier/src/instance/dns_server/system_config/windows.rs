@@ -21,6 +21,20 @@ pub fn is_windows_10_or_better() -> io::Result<bool> {
 // 假设 interface_guid 是你的网络接口 GUID
 pub struct InterfaceControl {
     interface_guid: String,
+    /// 最近一次写入的 nameservers（v4），close() 只回滚自己写过的值，
+    /// 避免误删用户自有或其它实例的 DNS 配置。
+    last_nameservers_v4: std::sync::Mutex<Option<Vec<String>>>,
+    last_nameservers_v6: std::sync::Mutex<Option<Vec<String>>>,
+}
+
+fn store_nameservers(slot: &std::sync::Mutex<Option<Vec<String>>>, values: Vec<String>) {
+    if let Ok(mut guard) = slot.lock() {
+        *guard = Some(values);
+    }
+}
+
+fn take_nameservers(slot: &std::sync::Mutex<Option<Vec<String>>>) -> Option<Vec<String>> {
+    slot.lock().ok().and_then(|mut guard| guard.take())
 }
 
 impl InterfaceControl {
@@ -28,6 +42,8 @@ impl InterfaceControl {
     pub fn new(interface_guid: &str) -> Self {
         InterfaceControl {
             interface_guid: interface_guid.to_string(),
+            last_nameservers_v4: std::sync::Mutex::new(None),
+            last_nameservers_v6: std::sync::Mutex::new(None),
         }
     }
 
@@ -76,6 +92,7 @@ impl InterfaceControl {
             // 禁用 LLMNR（通过 DisableMulticast）
             key4.set_value("EnableMulticast", &0u32)?;
         }
+        store_nameservers(&self.last_nameservers_v4, ipsv4);
 
         // IPv6 处理
         if let Ok(key6) = RegistryManager::open_interface_key(
@@ -95,7 +112,42 @@ impl InterfaceControl {
             }
             key6.set_value("EnableMulticast", &0u32)?;
         }
+        store_nameservers(&self.last_nameservers_v6, ipsv6);
 
+        Ok(())
+    }
+
+    /// 只回滚本实例写过的值：当前注册表仍等于写入值时才删除，
+    /// 否则说明已被用户或其它实例改动，直接放过。
+    fn revert_if_ours(&self, prefix: &str, expected: Option<Vec<String>>) {
+        let Some(expected) = expected else {
+            return;
+        };
+        let Ok(key) = RegistryManager::open_interface_key(&self.interface_guid, prefix) else {
+            return;
+        };
+        let current: io::Result<String> = key.get_value("NameServer");
+        if current
+            .map(|value| value == expected.join(","))
+            .unwrap_or(false)
+        {
+            let _ = Self::delete_value(&key, "NameServer");
+            let _ = Self::delete_value(&key, "SearchList");
+            let _ = Self::delete_value(&key, "EnableMulticast");
+        }
+    }
+
+    pub fn close(&self) -> io::Result<()> {
+        self.revert_if_ours(
+            RegistryManager::IPV4_TCPIP_INTERFACE_PREFIX,
+            take_nameservers(&self.last_nameservers_v4),
+        );
+        self.revert_if_ours(
+            RegistryManager::IPV6_TCPIP_INTERFACE_PREFIX,
+            take_nameservers(&self.last_nameservers_v6),
+        );
+        // 刷新缓存 best-effort：关闭路径上绝不 panic，失败直接忽略
+        let _ = Command::new("ipconfig").arg("/flushdns").output();
         Ok(())
     }
 
@@ -157,7 +209,7 @@ impl SystemConfig for WindowsDNSManager {
     }
 
     fn close(&self) -> io::Result<()> {
-        Ok(())
+        self.interface_control.close()
     }
 }
 

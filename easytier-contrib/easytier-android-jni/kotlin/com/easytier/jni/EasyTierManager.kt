@@ -138,6 +138,9 @@ class EasyTierManager(
 
             if (networkInfo == null) {
                 Log.d(TAG, "未找到实例 $instanceName 的网络信息")
+                // 实例可能已被远端（Web 控制台）删除：core 已无此实例，
+                // 残留的 VpnService 会把 DNS/路由指向黑洞，必须跟随停掉。
+                stopVpnServiceOnInstanceGone()
                 return
             }
 
@@ -146,6 +149,8 @@ class EasyTierManager(
             // 检查实例是否正在运行
             if (!networkInfo.running) {
                 Log.w(TAG, "EasyTier 实例未运行: ${networkInfo.error_msg}")
+                // 同上：实例停了（本地/远端禁用），VPN 不能独自留着。
+                stopVpnServiceOnInstanceGone()
                 return
             }
 
@@ -261,6 +266,17 @@ class EasyTierManager(
         } catch (e: Exception) {
             Log.e(TAG, "停止 VpnService 时发生异常", e)
         }
+    }
+
+    /**
+     * 实例消失/停止时的跟随清理：停掉残留 VPN 并重置已记录的网络状态，
+     * 避免陈旧路由与 DNS 指向黑洞；实例恢复后监控会重新拉起 VPN。
+     * 未启动过时 `stopVpnService` 是空操作，可安全调用。
+     */
+    private fun stopVpnServiceOnInstanceGone() {
+        stopVpnService()
+        currentIpv4 = null
+        currentProxyCidrs = emptyList()
     }
 
     /** 获取当前状态信息 */

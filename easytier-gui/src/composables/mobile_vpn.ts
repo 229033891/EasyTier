@@ -135,15 +135,13 @@ function toVpnRouteCidr(raw: string): string | undefined {
   return cidr
 }
 
-/** Format VpnService routes + DNS into the L2 proxy_cidr_route_sync summary string. */
+/** Format VpnService routes into the L2 proxy_cidr_route_sync summary string. */
 export function formatMobileVpnRouteSync(
   routes: string[] = getMobileVpnInstalledRoutes(),
-  dns: string = getMobileVpnPushedDns(),
 ): string {
   const joined = routes.length ? routes.join(',') : '-'
   const exit = routes.some(route => route === '0.0.0.0/0')
-  // dns= empty means VpnService did not push a DNS server.
-  return `desired=[${joined}] installed=[${joined}] exit=${exit} dns=${dns}`
+  return `desired=[${joined}] installed=[${joined}] exit=${exit}`
 }
 
 /**
@@ -157,7 +155,6 @@ export function annotateNetworkInfoWithMobileVpnRoutes<T extends { proxy_cidr_ro
 ): T {
   info.proxy_cidr_route_sync = formatMobileVpnRouteSync(
     getMobileVpnInstalledRoutes(instanceId),
-    getMobileVpnPushedDns(instanceId),
   )
   return info
 }
@@ -703,6 +700,46 @@ async function findRunningTunInstanceId() {
 
 export async function initMobileVpnService() {
   await registerVpnServiceListener()
+  startBackgroundVpnSync()
+}
+
+/**
+ * Background sync body. Must NOT go through `enqueueVpnTask`: that helper
+ * chains onto the serial queue, and re-entering it from inside a queued task
+ * would deadlock. `syncMobileVpnService` is safe to run directly — its
+ * follow-up work (`onNetworkInstanceChange`) enqueues itself, and overlapping
+ * runs are disambiguated by reconcile generations.
+ */
+function runBackgroundVpnSync() {
+  void syncMobileVpnService().catch((error) => {
+    console.error('background vpn service sync failed', error)
+  })
+}
+
+let backgroundVpnSyncTimer: ReturnType<typeof setInterval> | null = null
+/**
+ * Interval (ms) for background VPN reconciliation on mobile.
+ *
+ * Native-side changes that bypass the GUI command path — e.g. disabling a
+ * network from the web console, which destroys the core instance without
+ * emitting any tauri event — would otherwise leave a stale VpnService
+ * (routes + pushed DNS) behind. The sync is cheap (one status + one
+ * instance-list query) and every run is idempotent: no drift means no-op.
+ */
+const BACKGROUND_VPN_SYNC_INTERVAL_MS = 10000
+
+function startBackgroundVpnSync() {
+  if (backgroundVpnSyncTimer) {
+    return
+  }
+  backgroundVpnSyncTimer = setInterval(runBackgroundVpnSync, BACKGROUND_VPN_SYNC_INTERVAL_MS)
+}
+
+export function stopBackgroundVpnSync() {
+  if (backgroundVpnSyncTimer) {
+    clearInterval(backgroundVpnSyncTimer)
+    backgroundVpnSyncTimer = null
+  }
 }
 
 export async function prepareVpnService(instanceId: string) {

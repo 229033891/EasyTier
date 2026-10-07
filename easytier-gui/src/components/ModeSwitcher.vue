@@ -1,15 +1,13 @@
 <script setup lang="ts">
-import { computed, watch, onMounted, ref } from 'vue';
+import { computed, watch, onMounted, ref } from 'vue'
 import type { Mode, ServiceMode, RemoteMode, NormalMode, WebClientConfig } from '~/composables/mode'
 import { loadFileLogLevel } from '~/composables/mode'
 import { appConfigDir, appLogDir } from '@tauri-apps/api/path'
 import { join } from '@tauri-apps/api/path'
-import { getServiceStatus, type ServiceStatus } from '~/composables/backend'
 
 const { t } = useI18n()
 
 const model = defineModel<Mode>({ required: true })
-const emit = defineEmits(['uninstall-service', 'stop-service'])
 
 const props = defineProps<{
   /** Android: only Normal mode is available (no service/remote). */
@@ -21,8 +19,6 @@ const props = defineProps<{
 
 const defaultConfigDir = ref('')
 const defaultLogDir = ref('')
-const serviceStatus = ref<ServiceStatus>('NotInstalled')
-const isServiceStatusLoaded = ref(false)
 
 const showConfigServer = computed(() => model.value.mode === 'normal' || model.value.mode === 'service')
 
@@ -83,13 +79,24 @@ const modeOptions = computed(() => {
   return options
 })
 
+const modeDescription = computed(() => {
+  switch (model.value.mode) {
+    case 'service':
+      return t('mode.service_description')
+    case 'remote':
+      return t('mode.remote_description')
+    default:
+      return t('mode.normal_description')
+  }
+})
+
 const normalMode = computed({
   get: () => model.value.mode === 'normal' ? model.value as NormalMode : undefined,
   set: (value) => {
     if (value) {
       model.value = value
     }
-  }
+  },
 })
 
 const rpcListenOptions = computed(() => [
@@ -126,7 +133,7 @@ const serviceMode = computed({
     if (value) {
       model.value = value
     }
-  }
+  },
 })
 
 const remoteMode = computed({
@@ -135,20 +142,7 @@ const remoteMode = computed({
     if (value) {
       model.value = value
     }
-  }
-})
-
-const statusColorClass = computed(() => {
-  switch (serviceStatus.value) {
-    case 'Running':
-      return 'text-green-600'
-    case 'Stopped':
-      return 'text-orange-600'
-    case 'NotInstalled':
-      return 'text-gray-600'
-    default:
-      return 'text-gray-600'
-  }
+  },
 })
 
 watch(() => [
@@ -200,11 +194,6 @@ watch(() => model.value.mode, async (newMode, oldMode) => {
   if (newMode === oldMode)
     return
 
-  if (newMode === 'service' && !isServiceStatusLoaded.value) {
-    serviceStatus.value = await getServiceStatus()
-    isServiceStatusLoaded.value = true
-  }
-
   const oldModelValue = { ...model.value }
 
   const prevConfigServerUrl = (oldModelValue as WebClientConfig).config_server_url
@@ -251,20 +240,21 @@ watch(() => model.value.mode, async (newMode, oldMode) => {
 
 <template>
   <div class="flex flex-col gap-4">
-    <div>
-      <SelectButton id="mode-select" v-model="model.mode" :options="modeOptions" option-label="label"
-        option-value="value" fluid :disabled="normalModeOnly" />
+    <div class="flex items-center gap-2">
+      <label for="mode-select" class="shrink-0">{{ t('mode.title') }}</label>
+      <Select
+        id="mode-select"
+        v-model="model.mode"
+        :options="modeOptions"
+        option-label="label"
+        option-value="value"
+        class="flex-1"
+        :disabled="normalModeOnly"
+      />
     </div>
 
-    <!-- Mode descriptions -->
-    <div v-if="model.mode === 'normal'" class="text-sm text-gray-500">
-      {{ t('mode.normal_description') }}
-    </div>
-    <div v-else-if="model.mode === 'service'" class="text-sm text-gray-500">
-      {{ t('mode.service_description') }}
-    </div>
-    <div v-else-if="model.mode === 'remote'" class="text-sm text-gray-500">
-      {{ t('mode.remote_description') }}
+    <div class="text-sm text-gray-500">
+      {{ modeDescription }}
     </div>
 
     <!-- Desktop-only: Android uses in-process RPC and cannot listen on a TCP portal. -->
@@ -305,18 +295,6 @@ watch(() => model.value.mode, async (newMode, oldMode) => {
       <div class="flex items-center gap-2">
         <label for="log-dir">{{ t('mode.log_dir') }}</label>
         <InputText id="log-dir" v-model="serviceMode.file_log_dir" class="flex-1" />
-      </div>
-      <div class="flex items-center gap-2 justify-between">
-        <div class="flex items-center gap-2">
-          <label>{{ t('mode.service_status') }}</label>
-          <span :class="statusColorClass">{{ t(`mode.service_status_${serviceStatus.toLowerCase()}`) }}</span>
-        </div>
-        <div class="flex items-center gap-2">
-          <Button :label="t('mode.stop_service')" icon="pi pi-stop-circle" v-if="serviceStatus === 'Running'"
-            @click="emit('stop-service')" severity="warn" text />
-          <Button :label="t('mode.uninstall_service')" icon="pi pi-trash" v-if="serviceStatus !== 'NotInstalled'"
-            @click="emit('uninstall-service')" severity="danger" text />
-        </div>
       </div>
     </div>
 

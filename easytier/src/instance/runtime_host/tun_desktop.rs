@@ -28,6 +28,7 @@ pub(super) struct NativeTunRuntime {
     cancel: CancellationToken,
     nic: TunNicState,
     static_ip_task: Mutex<Option<JoinHandle<()>>>,
+    packet_plane: Mutex<Option<Arc<CorePacketPlane>>>,
 }
 
 impl NativeTunRuntime {
@@ -37,6 +38,7 @@ impl NativeTunRuntime {
             cancel,
             nic: TunNicState::empty(),
             static_ip_task: Mutex::new(None),
+            packet_plane: Mutex::new(None),
         }
     }
 
@@ -132,6 +134,7 @@ impl NativeTunRuntime {
 
     pub(super) async fn prepare(&self, packet_plane: Arc<CorePacketPlane>) -> anyhow::Result<()> {
         self.nic.drain().await;
+        *self.packet_plane.lock().await = Some(packet_plane.clone());
         if !self.global_ctx.get_flags().no_tun {
             self.start_static_ip(packet_plane).await?;
         }
@@ -141,6 +144,9 @@ impl NativeTunRuntime {
     pub(super) async fn shutdown(&self) {
         if let Some(task) = self.static_ip_task.lock().await.take() {
             let _ = task.await;
+        }
+        if let Some(packet_plane) = self.packet_plane.lock().await.clone() {
+            super::tun_common::cleanup_tun_leftovers(&self.global_ctx, &packet_plane).await;
         }
         self.nic.stop().await;
     }

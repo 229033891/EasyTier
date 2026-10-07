@@ -203,7 +203,9 @@ describe('RemoteManagement config save', () => {
           tooltip: () => {},
         },
         stubs: {
-          Config: true,
+          Config: {
+            template: '<div data-stub="config"><slot name="config-toolbar" /></div>',
+          },
           ConfigEditDialog: true,
           Status: true,
         },

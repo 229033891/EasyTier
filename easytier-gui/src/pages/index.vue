@@ -7,7 +7,14 @@ import { open } from '@tauri-apps/plugin-shell'
 import { exit } from '@tauri-apps/plugin-process'
 import { I18nUtils, RemoteManagement, LoggingSettingsDialog, Utils, TOAST_LIFE, type LoggingSettingsApi } from 'easytier-frontend-lib'
 import type { MenuItem } from 'primevue/menuitem'
-import { useTray, setTrayRunState } from '~/composables/tray'
+import {
+  useTray,
+  setTrayRunState,
+  setTrayMenu,
+  buildTrayMenuItems,
+  showMainWindow,
+  registerTrayExitHandler,
+} from '~/composables/tray'
 import {
   consumePendingMobileVpnTileAction,
   initMobileVpnService,
@@ -28,22 +35,31 @@ import {
 } from '~/composables/mode'
 import { saveLastNetworkInstanceId, loadLastNetworkInstanceId } from '~/composables/config'
 import ModeSwitcher from '~/components/ModeSwitcher.vue'
-import { getEasytierVersion, getServiceStatus, getLoggingLevel, listLogFiles, readLogFile, setLoggingLevel, type ServiceStatus } from '~/composables/backend'
+import { getEasytierVersion, getServiceStatus, getLoggingLevel, listLogFiles, readLogFile, clearLogFiles, setLoggingLevel, type ServiceStatus } from '~/composables/backend'
 
 const { t, locale } = useI18n()
 const confirm = useConfirm()
 const aboutVisible = ref(false)
 const modeDialogVisible = ref(false)
 const configServerConnected = ref(false)
+const configServerEnabled = ref(false)
 const configServerLastError = ref('')
+/** Set when GUI cannot query status (e.g. service RPC down) — not a config-server dial error. */
+const configServerProbeError = ref('')
 const currentMode = ref<Mode>({ mode: 'normal' })
 const editingMode = ref<Mode>({ mode: 'normal' })
 const isModeSaving = ref(false)
 const manualDisconnect = ref(false)
+/** Last service status shown in the tray menu (avoids unnecessary rebuilds). */
+let lastTrayServiceStatus: ServiceStatus | undefined
+/** Monotonic token so concurrent refreshTrayMenu calls cannot apply stale menus. */
+let trayMenuGeneration = 0
+/** Service mode: owner process is stopped / not installed (not a config-server outage). */
+const configServerOwnerDown = ref(false)
 
 const showAutostartHint = ref(false)
 
-type ConfigServerStatus = 'connected' | 'disconnected' | 'connecting' | 'failed' | 'remote'
+type ConfigServerStatus = 'connected' | 'disconnected' | 'connecting' | 'failed' | 'unavailable' | 'owner_down' | 'remote'
 
 const configServerStatus = computed<ConfigServerStatus>(() => {
   const mode = currentMode.value
@@ -51,9 +67,21 @@ const configServerStatus = computed<ConfigServerStatus>(() => {
     return 'remote'
   if (!(mode.mode === 'normal' || mode.mode === 'service') || !mode.config_server_url?.trim())
     return 'disconnected'
+  if (configServerOwnerDown.value)
+    return 'owner_down'
+  // Cannot reach the process that owns the client — do not pretend the
+  // config-server itself failed (common when the Windows service is stopped).
+  if (configServerProbeError.value)
+    return 'unavailable'
+  if (configServerConnected.value)
+    return 'connected'
+  // Client is installed and retrying (may still carry last dial error as detail).
+  if (configServerEnabled.value)
+    return 'connecting'
+  // URL configured but no client yet, or init failed before the dialer started.
   if (configServerLastError.value)
     return 'failed'
-  return configServerConnected.value ? 'connected' : 'connecting'
+  return 'connecting'
 })
 
 const configServerStatusSeverity = computed(() => {
@@ -61,8 +89,10 @@ const configServerStatusSeverity = computed(() => {
     case 'connected':
       return 'success'
     case 'failed':
+    case 'unavailable':
       return 'danger'
     case 'connecting':
+    case 'owner_down':
       return 'warn'
     default:
       return 'secondary'
@@ -71,33 +101,68 @@ const configServerStatusSeverity = computed(() => {
 
 const configServerStatusLabel = computed(() => t(`config-server.status_${configServerStatus.value}`))
 
+/** Error text shown under the badge: probe failure wins, else last dial error. */
+const configServerDisplayError = computed(() => {
+  if (configServerOwnerDown.value)
+    return ''
+  return configServerProbeError.value || configServerLastError.value || ''
+})
+
+function formatConfigServerProbeError(e: unknown): string {
+  const raw = Utils.formatApiErrorDetail(e, t)
+  if (raw.includes('rpc_client_unavailable'))
+    return t('config-server.rpc_unavailable')
+  return raw
+}
+
+function notifyOperationInProgress() {
+  toast.add({
+    severity: 'warn',
+    summary: t('web.common.warning'),
+    detail: t('mode.operation_in_progress'),
+    life: TOAST_LIFE.warn,
+  })
+}
+
 async function refreshConfigServerConnection() {
   try {
     const mode = currentMode.value
     if (!(mode.mode === 'normal' || mode.mode === 'service') || !mode.config_server_url?.trim()) {
       configServerConnected.value = false
+      configServerEnabled.value = false
       configServerLastError.value = ''
+      configServerProbeError.value = ''
+      configServerOwnerDown.value = false
       return
     }
 
     const status = await getConfigServerStatus()
+    configServerProbeError.value = ''
+    configServerOwnerDown.value = false
+    configServerEnabled.value = !!status.enabled
     configServerConnected.value = !!status.connected
     if (status.connected) {
       configServerLastError.value = ''
     }
-    else if (status.lastError) {
-      configServerLastError.value = status.lastError
-    }
-    else if (status.enabled) {
-      // Client is retrying without a recorded failure — clear a stale red badge.
-      configServerLastError.value = ''
+    else {
+      // Keep empty string when retrying without a recorded failure.
+      configServerLastError.value = status.lastError || ''
     }
   }
   catch (e) {
     configServerConnected.value = false
+    configServerEnabled.value = false
+    // Probe/RPC failure is not the config-server dial error.
     if (currentMode.value.mode === 'service') {
-      configServerLastError.value = Utils.formatApiErrorDetail(e, t)
+      const svc = await getServiceStatus().catch(() => null)
+      if (svc === 'Stopped' || svc === 'NotInstalled') {
+        configServerOwnerDown.value = true
+        configServerProbeError.value = ''
+        return
+      }
     }
+    configServerOwnerDown.value = false
+    configServerProbeError.value = formatConfigServerProbeError(e)
     console.error('Failed to refresh config server connection', e)
   }
 }
@@ -120,7 +185,13 @@ async function waitForConfigServerOutcome(
     if (configServerConnected.value) {
       return 'connected'
     }
-    if (configServerLastError.value) {
+    if (configServerProbeError.value) {
+      return 'failed'
+    }
+    // Fail fast only when the client never started (init error). While enabled,
+    // lastError means a dial attempt failed and the background dialer is retrying —
+    // keep waiting until connected or timeout.
+    if (configServerLastError.value && !configServerEnabled.value) {
       return 'failed'
     }
     await new Promise(resolve => setTimeout(resolve, 500))
@@ -129,7 +200,7 @@ async function waitForConfigServerOutcome(
   if (configServerConnected.value) {
     return 'connected'
   }
-  if (configServerLastError.value) {
+  if (configServerProbeError.value || configServerLastError.value) {
     return 'failed'
   }
   return 'timeout'
@@ -191,8 +262,8 @@ async function onModeSave() {
         && !!nextEndpoint.url
         && (configServerChanged || prev.mode !== 'normal')
       if (shouldWaitForConfigServer) {
-        if (configServerLastError.value && !configServerConnected.value) {
-          const detail = configServerLastError.value
+        if (configServerDisplayError.value && !configServerConnected.value) {
+          const detail = configServerDisplayError.value
           await initWithMode(prev)
           editingMode.value = next
           toast.add({
@@ -208,7 +279,7 @@ async function onModeSave() {
         if (outcome !== 'connected' && outcome !== 'disabled') {
           const detail = outcome === 'timeout'
             ? t('config-server.connect_timeout')
-            : (configServerLastError.value || t('config-server.status_failed'))
+            : (configServerDisplayError.value || t('config-server.status_failed'))
           await initWithMode(prev)
           editingMode.value = next
           toast.add({
@@ -269,7 +340,154 @@ async function onModeSave() {
   await doSave()
 }
 
+function serviceStatusLabel(status: ServiceStatus) {
+  return t(`mode.service_status_${status.toLowerCase()}`)
+}
+
+async function refreshTrayMenu(forceStatus?: ServiceStatus) {
+  if (type() === 'android')
+    return
+
+  const generation = ++trayMenuGeneration
+  const serviceMode = currentMode.value.mode === 'service'
+  let serviceStatus: ServiceStatus | undefined
+  if (serviceMode) {
+    serviceStatus = forceStatus ?? await getServiceStatus().catch(() => lastTrayServiceStatus ?? 'NotInstalled')
+    if (generation !== trayMenuGeneration)
+      return
+    lastTrayServiceStatus = serviceStatus
+  }
+  else {
+    lastTrayServiceStatus = undefined
+  }
+
+  const items = await buildTrayMenuItems({
+    showLabel: t('tray.show'),
+    exitLabel: t('tray.exit'),
+    serviceMode,
+    serviceStatus,
+    serviceLabels: serviceMode && serviceStatus
+      ? {
+          status: t('tray.service_status', { status: serviceStatusLabel(serviceStatus) }),
+          start: t('tray.start_service'),
+          stop: t('tray.stop_service'),
+          restart: t('tray.restart_service'),
+          uninstall: t('tray.uninstall_service'),
+        }
+      : undefined,
+    actions: {
+      onExit: () => void exitApp(),
+      onStartService: () => void onStartService(),
+      onStopService: () => void onStopService(),
+      onRestartService: () => void onRestartService(),
+      onUninstallService: () => void onUninstallService(),
+    },
+  })
+  if (generation !== trayMenuGeneration)
+    return
+  await setTrayMenu(items)
+}
+
+async function reconnectServiceRpc() {
+  if (currentMode.value.mode !== 'service')
+    return
+  const url = normalizeServiceRpcUrl(currentMode.value.rpc_portal)
+  await connectRpcWithRetries(false, url, 5)
+  clientRunning.value = await isClientRunning().catch(() => false)
+  await setTrayRunState(clientRunning.value)
+  await refreshConfigServerConnection()
+}
+
+async function onStartService() {
+  if (currentMode.value.mode !== 'service')
+    return
+  if (isModeSaving.value) {
+    notifyOperationInProgress()
+    return
+  }
+  isModeSaving.value = true
+  try {
+    await setServiceStatus(true)
+    await waitForServiceStatus('Running')
+    await reconnectServiceRpc()
+    toast.add({
+      severity: 'success',
+      summary: t('web.common.success'),
+      detail: t('mode.start_service_success'),
+      life: TOAST_LIFE.success,
+    })
+  }
+  catch (e: any) {
+    toast.add({
+      severity: 'error',
+      summary: t('error'),
+      detail: Utils.formatApiErrorDetail(e, t),
+      life: TOAST_LIFE.severe,
+    })
+    console.error('Error starting service', e)
+  }
+  finally {
+    isModeSaving.value = false
+    await refreshTrayMenu()
+  }
+}
+
+async function onRestartService() {
+  if (currentMode.value.mode !== 'service')
+    return
+  if (isModeSaving.value) {
+    notifyOperationInProgress()
+    return
+  }
+  await showMainWindow()
+  confirm.require({
+    message: t('mode.restart_service_confirm'),
+    header: t('mode.restart_service'),
+    icon: 'pi pi-exclamation-triangle',
+    rejectProps: {
+      label: t('web.common.cancel'),
+      severity: 'secondary',
+      outlined: true,
+    },
+    acceptProps: {
+      label: t('mode.restart_service'),
+      severity: 'warn',
+    },
+    accept: async () => {
+      isModeSaving.value = true
+      try {
+        await bounceService()
+        await reconnectServiceRpc()
+        toast.add({
+          severity: 'success',
+          summary: t('web.common.success'),
+          detail: t('mode.restart_service_success'),
+          life: TOAST_LIFE.success,
+        })
+      }
+      catch (e: any) {
+        toast.add({
+          severity: 'error',
+          summary: t('error'),
+          detail: Utils.formatApiErrorDetail(e, t),
+          life: TOAST_LIFE.severe,
+        })
+        console.error('Error restarting service', e)
+      }
+      finally {
+        isModeSaving.value = false
+        await refreshTrayMenu()
+      }
+    },
+  })
+}
+
 async function onUninstallService() {
+  if (isModeSaving.value) {
+    notifyOperationInProgress()
+    return
+  }
+  await showMainWindow()
   confirm.require({
     message: t('mode.uninstall_service_confirm'),
     header: t('mode.uninstall_service'),
@@ -277,32 +495,74 @@ async function onUninstallService() {
     rejectProps: {
       label: t('web.common.cancel'),
       severity: 'secondary',
-      outlined: true
+      outlined: true,
     },
     acceptProps: {
       label: t('mode.uninstall_service'),
-      severity: 'danger'
+      severity: 'danger',
     },
     accept: async () => {
       isModeSaving.value = true
       try {
-        await initWithMode({ ...currentMode.value, mode: 'normal' });
+        await initWithMode({ ...currentMode.value, mode: 'normal' })
         await initService(undefined)
-        toast.add({ severity: 'success', summary: t('web.common.success'), detail: t('mode.uninstall_service_success'), life: TOAST_LIFE.success })
+        toast.add({
+          severity: 'success',
+          summary: t('web.common.success'),
+          detail: t('mode.uninstall_service_success'),
+          life: TOAST_LIFE.success,
+        })
         modeDialogVisible.value = false
-      } catch (e: any) {
+      }
+      catch (e: any) {
         toast.add({
           severity: 'error',
           summary: t('error'),
           detail: Utils.formatApiErrorDetail(e, t),
           life: TOAST_LIFE.severe,
         })
-        console.error("Error uninstalling service", e)
-      } finally {
+        console.error('Error uninstalling service', e)
+      }
+      finally {
         isModeSaving.value = false
+        await refreshTrayMenu()
       }
     },
-  });
+  })
+}
+
+async function exitApp() {
+  if (isModeSaving.value) {
+    notifyOperationInProgress()
+    await showMainWindow()
+    return
+  }
+  if (currentMode.value.mode === 'service') {
+    try {
+      const status = await getServiceStatus()
+      if (status === 'Running') {
+        manualDisconnect.value = true
+        await setServiceStatus(false)
+        await waitForServiceStatus('Stopped', 40, 250)
+      }
+      const after = await getServiceStatus()
+      if (after === 'Running') {
+        throw new Error(t('mode.service_stop_before_exit_failed'))
+      }
+    }
+    catch (e) {
+      console.error('Failed to stop service before exit', e)
+      toast.add({
+        severity: 'error',
+        summary: t('error'),
+        detail: Utils.formatApiErrorDetail(e, t),
+        life: TOAST_LIFE.severe,
+      })
+      await showMainWindow()
+      return
+    }
+  }
+  await exit(0)
 }
 
 function stripModeMetadata(mode: Mode) {
@@ -320,33 +580,64 @@ function modeConfigChanged(next: Mode) {
 }
 
 async function onStopService() {
-  isModeSaving.value = true
-  manualDisconnect.value = true
-  try {
-    await setServiceStatus(false)
-    toast.add({ severity: 'success', summary: t('web.common.success'), detail: t('mode.stop_service_success'), life: TOAST_LIFE.success })
-    modeDialogVisible.value = false
+  if (currentMode.value.mode !== 'service')
+    return
+  if (isModeSaving.value) {
+    notifyOperationInProgress()
+    return
   }
-  catch (e: any) {
-    toast.add({
-      severity: 'error',
-      summary: t('error'),
-      detail: Utils.formatApiErrorDetail(e, t),
-      life: TOAST_LIFE.severe,
-    })
-    console.error("Error stopping service", e)
-  }
-  finally {
-    isModeSaving.value = false
-  }
+  await showMainWindow()
+  confirm.require({
+    message: t('mode.stop_service_confirm'),
+    header: t('mode.stop_service'),
+    icon: 'pi pi-exclamation-triangle',
+    rejectProps: {
+      label: t('web.common.cancel'),
+      severity: 'secondary',
+      outlined: true,
+    },
+    acceptProps: {
+      label: t('mode.stop_service'),
+      severity: 'warn',
+    },
+    accept: async () => {
+      isModeSaving.value = true
+      manualDisconnect.value = true
+      try {
+        await setServiceStatus(false)
+        await waitForServiceStatus('Stopped')
+        clientRunning.value = false
+        await setTrayRunState(false)
+        toast.add({
+          severity: 'success',
+          summary: t('web.common.success'),
+          detail: t('mode.stop_service_success'),
+          life: TOAST_LIFE.success,
+        })
+      }
+      catch (e: any) {
+        toast.add({
+          severity: 'error',
+          summary: t('error'),
+          detail: Utils.formatApiErrorDetail(e, t),
+          life: TOAST_LIFE.severe,
+        })
+        console.error('Error stopping service', e)
+      }
+      finally {
+        isModeSaving.value = false
+        await refreshTrayMenu()
+      }
+    },
+  })
 }
 
 function sleep(ms: number) {
   return new Promise(resolve => setTimeout(resolve, ms))
 }
 
-/** Wait until Windows/macOS service reaches an expected status (or timeout). */
-async function waitForServiceStatus(expected: ServiceStatus, attempts = 30, intervalMs = 200): Promise<ServiceStatus> {
+/** Wait until Windows/macOS service reaches an expected status; throws on timeout. */
+async function waitForServiceStatus(expected: ServiceStatus, attempts = 40, intervalMs = 250): Promise<ServiceStatus> {
   let status = await getServiceStatus()
   for (let i = 0; i < attempts; i++) {
     if (status === expected)
@@ -354,7 +645,10 @@ async function waitForServiceStatus(expected: ServiceStatus, attempts = 30, inte
     await sleep(intervalMs)
     status = await getServiceStatus()
   }
-  return status
+  throw new Error(t('mode.service_status_timeout', {
+    expected: serviceStatusLabel(expected),
+    actual: serviceStatusLabel(status),
+  }))
 }
 
 /**
@@ -395,12 +689,18 @@ async function initWithMode(mode: Mode) {
 
   if (currentMode.value.mode === 'service' && mode.mode !== 'service') {
     let serviceStatus = await getServiceStatus()
-    if (serviceStatus === "Running") {
+    if (serviceStatus === 'Running') {
       manualDisconnect.value = true
       await setServiceStatus(false)
-      serviceStatus = await waitForServiceStatus('Stopped', 10, 100)
+      try {
+        serviceStatus = await waitForServiceStatus('Stopped')
+      }
+      catch {
+        // Soft-fail: mode switch still proceeds if uninstallable (Stopped).
+        serviceStatus = await getServiceStatus()
+      }
     }
-    if (serviceStatus === "Stopped") {
+    if (serviceStatus === 'Stopped') {
       await initService(undefined)
     }
   }
@@ -498,17 +798,24 @@ async function initWithMode(mode: Mode) {
     }
     catch (e: any) {
       configServerConnected.value = false
+      configServerEnabled.value = false
+      configServerProbeError.value = ''
+      configServerOwnerDown.value = false
       configServerLastError.value = Utils.formatApiErrorDetail(e, t)
       console.error('Failed to init web client', e)
     }
   }
   else if (mode.mode === 'service') {
     // Config-server client runs inside the service process; poll its status via RPC.
-    configServerLastError.value = ''
+    configServerProbeError.value = ''
+    configServerOwnerDown.value = false
   }
   else {
     configServerConnected.value = false
+    configServerEnabled.value = false
     configServerLastError.value = ''
+    configServerProbeError.value = ''
+    configServerOwnerDown.value = false
   }
   if (mode.mode === 'normal' || mode.mode === 'service') {
     await refreshConfigServerConnection()
@@ -524,6 +831,7 @@ async function initWithMode(mode: Mode) {
   saveMode(mode)
   clientRunning.value = await isClientRunning()
   await setTrayRunState(clientRunning.value)
+  await refreshTrayMenu()
 }
 
 onMounted(async () => {
@@ -562,8 +870,11 @@ onMounted(async () => {
   })
 });
 
+let toast = useToast()
+// Register before building the tray so early Exit always goes through exitApp
+// (stop service in service mode) instead of a bare process exit.
+registerTrayExitHandler(() => exitApp())
 useTray(true)
-let toast = useToast();
 
 const remoteClient = computed(() => new GUIRemoteClient());
 const instanceId = ref<string | undefined>(undefined);
@@ -640,6 +951,16 @@ onMounted(async () => {
       clientRunning.value = false
       console.error("Error checking client running status", e)
     }
+    if (currentMode.value.mode === 'service' && !isModeSaving.value) {
+      try {
+        const status = await getServiceStatus()
+        if (status !== lastTrayServiceStatus)
+          await refreshTrayMenu(status)
+      }
+      catch (e) {
+        console.error('Error checking service status for tray', e)
+      }
+    }
   }, 1000)
 
   onUnmounted(() => {
@@ -657,10 +978,7 @@ async function reconnectClient() {
 
 onMounted(async () => {
   window.setTimeout(async () => {
-    await setTrayMenu([
-      await MenuItemShow(t('tray.show')),
-      await MenuItemExit(t('tray.exit')),
-    ])
+    await refreshTrayMenu()
   }, 1000)
 })
 
@@ -701,12 +1019,21 @@ const loggingApi = computed<LoggingSettingsApi>(() => ({
   getLogDir: getLogDirPath,
   listLogFiles,
   readLogFile,
+  clearLogFiles: async () => {
+    const extraDirs = currentMode.value.mode === 'service' && currentMode.value.file_log_dir?.trim()
+      ? [currentMode.value.file_log_dir.trim()]
+      : []
+    return clearLogFiles(extraDirs)
+  },
   canOpenLogDir: type() !== 'android',
   openLogDir: async () => {
     await open(await getLogDirPath())
   },
   copyLogDir: async () => {
     await writeText(await getLogDirPath())
+  },
+  copyText: async (text: string) => {
+    await writeText(text)
   },
 }))
 
@@ -738,10 +1065,7 @@ const setting_menu_items: Ref<MenuItem[]> = ref([
     icon: 'pi pi-language',
     command: async () => {
       await I18nUtils.loadLanguageAsync((locale.value === 'en' ? 'cn' : 'en'))
-      await setTrayMenu([
-        await MenuItemShow(t('tray.show')),
-        await MenuItemExit(t('tray.exit')),
-      ])
+      await refreshTrayMenu()
     },
   },
   {
@@ -760,7 +1084,7 @@ const setting_menu_items: Ref<MenuItem[]> = ref([
     label: () => t('exit_app'),
     icon: 'pi pi-power-off',
     command: async () => {
-      await exit(1)
+      await exitApp()
     },
   },
 ])
@@ -791,9 +1115,7 @@ async function connectRpcClient(isNormalMode: boolean, url?: string) {
         :normal-mode-only="type() === 'android'"
         :config-server-status-label="configServerStatusLabel"
         :config-server-status-severity="configServerStatusSeverity"
-        :config-server-last-error="configServerStatus === 'failed' ? configServerLastError : ''"
-        @uninstall-service="onUninstallService"
-        @stop-service="onStopService"
+        :config-server-last-error="configServerDisplayError"
       />
       <template #footer>
         <Button :label="t('web.common.cancel')" icon="pi pi-times" @click="modeDialogVisible = false" text

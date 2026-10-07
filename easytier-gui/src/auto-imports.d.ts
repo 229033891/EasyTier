@@ -13,6 +13,7 @@ declare global {
   const addVpnPortalClient: typeof import('./composables/backend')['addVpnPortalClient']
   const annotateNetworkInfoFromVpnService: typeof import('./composables/mobile_vpn')['annotateNetworkInfoFromVpnService']
   const annotateNetworkInfoWithMobileVpnRoutes: typeof import('./composables/mobile_vpn')['annotateNetworkInfoWithMobileVpnRoutes']
+  const buildTrayMenuItems: typeof import('./composables/tray')['buildTrayMenuItems']
   const clearVpnPortalClients: typeof import('./composables/backend')['clearVpnPortalClients']
   const collectNetworkInfo: typeof import('./composables/backend')['collectNetworkInfo']
   const computed: typeof import('vue')['computed']
@@ -57,6 +58,7 @@ declare global {
   const listLogFiles: typeof import('./composables/backend')['listLogFiles']
   const listNetworkInstanceIds: typeof import('./composables/backend')['listNetworkInstanceIds']
   const listenGlobalEvents: typeof import('./composables/event')['listenGlobalEvents']
+  const loadFileLogLevel: typeof import('./composables/mode')['loadFileLogLevel']
   const loadLastNetworkInstanceId: typeof import('./composables/config')['loadLastNetworkInstanceId']
   const loadMode: typeof import('./composables/mode')['loadMode']
   const mapActions: typeof import('pinia')['mapActions']
@@ -87,6 +89,7 @@ declare global {
   const onUnmounted: typeof import('vue')['onUnmounted']
   const onUpdated: typeof import('vue')['onUpdated']
   const onWatcherCleanup: typeof import('vue')['onWatcherCleanup']
+  const parseFileLogLevel: typeof import('./composables/mode')['parseFileLogLevel']
   const parseNetworkConfig: typeof import('./composables/backend')['parseNetworkConfig']
   const prepareVpnService: typeof import('./composables/mobile_vpn')['prepareVpnService']
   const provide: typeof import('vue')['provide']
@@ -97,6 +100,7 @@ declare global {
   const removeVpnPortalClient: typeof import('./composables/backend')['removeVpnPortalClient']
   const resolveComponent: typeof import('vue')['resolveComponent']
   const runNetworkInstance: typeof import('./composables/backend')['runNetworkInstance']
+  const saveFileLogLevel: typeof import('./composables/mode')['saveFileLogLevel']
   const saveLastNetworkInstanceId: typeof import('./composables/config')['saveLastNetworkInstanceId']
   const saveMode: typeof import('./composables/mode')['saveMode']
   const saveNetworkConfig: typeof import('./composables/backend')['saveNetworkConfig']
@@ -113,6 +117,7 @@ declare global {
   const shallowReactive: typeof import('vue')['shallowReactive']
   const shallowReadonly: typeof import('vue')['shallowReadonly']
   const shallowRef: typeof import('vue')['shallowRef']
+  const showMainWindow: typeof import('./composables/tray')['showMainWindow']
   const storeToRefs: typeof import('pinia')['storeToRefs']
   const syncMobileVpnService: typeof import('./composables/mobile_vpn')['syncMobileVpnService']
   const toRaw: typeof import('vue')['toRaw']
@@ -159,6 +164,7 @@ declare module 'vue' {
     readonly addVpnPortalClient: UnwrapRef<typeof import('./composables/backend')['addVpnPortalClient']>
     readonly annotateNetworkInfoFromVpnService: UnwrapRef<typeof import('./composables/mobile_vpn')['annotateNetworkInfoFromVpnService']>
     readonly annotateNetworkInfoWithMobileVpnRoutes: UnwrapRef<typeof import('./composables/mobile_vpn')['annotateNetworkInfoWithMobileVpnRoutes']>
+    readonly buildTrayMenuItems: UnwrapRef<typeof import('./composables/tray')['buildTrayMenuItems']>
     readonly clearVpnPortalClients: UnwrapRef<typeof import('./composables/backend')['clearVpnPortalClients']>
     readonly collectNetworkInfo: UnwrapRef<typeof import('./composables/backend')['collectNetworkInfo']>
     readonly computed: UnwrapRef<typeof import('vue')['computed']>
@@ -203,6 +209,7 @@ declare module 'vue' {
     readonly listLogFiles: UnwrapRef<typeof import('./composables/backend')['listLogFiles']>
     readonly listNetworkInstanceIds: UnwrapRef<typeof import('./composables/backend')['listNetworkInstanceIds']>
     readonly listenGlobalEvents: UnwrapRef<typeof import('./composables/event')['listenGlobalEvents']>
+    readonly loadFileLogLevel: UnwrapRef<typeof import('./composables/mode')['loadFileLogLevel']>
     readonly loadLastNetworkInstanceId: UnwrapRef<typeof import('./composables/config')['loadLastNetworkInstanceId']>
     readonly loadMode: UnwrapRef<typeof import('./composables/mode')['loadMode']>
     readonly mapActions: UnwrapRef<typeof import('pinia')['mapActions']>
@@ -233,6 +240,7 @@ declare module 'vue' {
     readonly onUnmounted: UnwrapRef<typeof import('vue')['onUnmounted']>
     readonly onUpdated: UnwrapRef<typeof import('vue')['onUpdated']>
     readonly onWatcherCleanup: UnwrapRef<typeof import('vue')['onWatcherCleanup']>
+    readonly parseFileLogLevel: UnwrapRef<typeof import('./composables/mode')['parseFileLogLevel']>
     readonly parseNetworkConfig: UnwrapRef<typeof import('./composables/backend')['parseNetworkConfig']>
     readonly prepareVpnService: UnwrapRef<typeof import('./composables/mobile_vpn')['prepareVpnService']>
     readonly provide: UnwrapRef<typeof import('vue')['provide']>
@@ -243,6 +251,7 @@ declare module 'vue' {
     readonly removeVpnPortalClient: UnwrapRef<typeof import('./composables/backend')['removeVpnPortalClient']>
     readonly resolveComponent: UnwrapRef<typeof import('vue')['resolveComponent']>
     readonly runNetworkInstance: UnwrapRef<typeof import('./composables/backend')['runNetworkInstance']>
+    readonly saveFileLogLevel: UnwrapRef<typeof import('./composables/mode')['saveFileLogLevel']>
     readonly saveLastNetworkInstanceId: UnwrapRef<typeof import('./composables/config')['saveLastNetworkInstanceId']>
     readonly saveMode: UnwrapRef<typeof import('./composables/mode')['saveMode']>
     readonly saveNetworkConfig: UnwrapRef<typeof import('./composables/backend')['saveNetworkConfig']>
@@ -259,6 +268,7 @@ declare module 'vue' {
     readonly shallowReactive: UnwrapRef<typeof import('vue')['shallowReactive']>
     readonly shallowReadonly: UnwrapRef<typeof import('vue')['shallowReadonly']>
     readonly shallowRef: UnwrapRef<typeof import('vue')['shallowRef']>
+    readonly showMainWindow: UnwrapRef<typeof import('./composables/tray')['showMainWindow']>
     readonly storeToRefs: UnwrapRef<typeof import('pinia')['storeToRefs']>
     readonly syncMobileVpnService: UnwrapRef<typeof import('./composables/mobile_vpn')['syncMobileVpnService']>
     readonly toRaw: UnwrapRef<typeof import('vue')['toRaw']>

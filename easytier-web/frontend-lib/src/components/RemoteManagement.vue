@@ -6,8 +6,6 @@ import { useI18n } from 'vue-i18n';
 import * as Api from '../modules/api';
 import * as Utils from '../modules/utils';
 import * as NetworkTypes from '../types/network';
-import { expectedDnsCoverage } from '../modules/dnsCoverage';
-import DnsCoverageBadge from './dns/DnsCoverageBadge.vue';
 import LoggingSettingsDialog from './LoggingSettingsDialog.vue';
 import type { LoggingSettingsApi } from '../modules/logging';
 
@@ -266,19 +264,6 @@ const showConfigPanel = computed(() => {
     }
     // ????????????????ensureConfigModeEditing ?????
     return isConfigMode.value && !!selectedInstanceId.value;
-})
-
-const dnsCoverageState = computed(() => {
-    if (!currentNetworkConfig.value?.enable_magic_dns) {
-        return null
-    }
-    return expectedDnsCoverage({
-        enable_magic_dns: currentNetworkConfig.value.enable_magic_dns,
-        no_tun: currentNetworkConfig.value.no_tun,
-        os_type: props.deviceOsType,
-        easytier_version: props.deviceEasytierVersion ?? '',
-        magic_dns_os_wired: props.deviceMagicDnsOsWired,
-    })
 })
 
 /** ??????????????????????? */
@@ -897,51 +882,6 @@ onUnmounted(() => {
             </div>
         </div>
 
-        <!-- ??????????????????? -->
-        <div v-if="showConfigPanel" class="network-toolbar">
-            <div class="config-toolbar">
-                <div v-if="dnsCoverageState" class="toolbar-zone toolbar-zone--dns-coverage">
-                    <span class="toolbar-zone-label">{{ t('dns.coverage.label') }}</span>
-                    <DnsCoverageBadge :state="dnsCoverageState" />
-                </div>
-                <div class="toolbar-zone">
-                    <span class="toolbar-zone-label">{{ t('web.device_management.toolbar_config_files') }}</span>
-                    <div class="toolbar-zone-actions">
-                        <Button class="config-toolbar-btn" @click="showConfigEditDialog = true" icon="pi pi-file-edit"
-                            :label="t('web.device_management.edit_as_file')" iconPos="left" severity="secondary"
-                            outlined
-                            v-tooltip.bottom="t('web.device_management.edit_as_file_tip')" />
-                        <Button class="config-toolbar-btn" @click="importConfig" icon="pi pi-upload"
-                            :label="t('web.device_management.import_config')" iconPos="left" severity="secondary"
-                            outlined
-                            v-tooltip.bottom="t('web.device_management.import_config_tip')" />
-                        <Button v-if="selectedInstanceId" class="config-toolbar-btn" @click="exportConfig" icon="pi pi-download"
-                            :label="t('web.device_management.export_config')" iconPos="left" severity="secondary"
-                            outlined
-                            v-tooltip.bottom="t('web.device_management.export_config_tip')" />
-                        <Button v-if="canSaveConfig" class="config-toolbar-btn" @click="saveNetworkConfig"
-                            :disabled="!currentNetworkConfig || savingConfig"
-                            icon="pi pi-save" :label="t('web.device_management.save_config')" iconPos="left"
-                            severity="success"
-                            v-tooltip.bottom="t('web.device_management.save_config_tip')" />
-                    </div>
-                </div>
-                <div class="toolbar-zone toolbar-zone--network">
-                    <span class="toolbar-zone-label">{{ t('web.device_management.toolbar_network') }}</span>
-                    <div class="toolbar-zone-actions">
-                        <Button class="config-toolbar-btn" @click="newNetwork" icon="pi pi-plus"
-                            :label="t('web.device_management.add_network')" iconPos="left" severity="success"
-                            v-tooltip.bottom="t('web.device_management.add_network_tip')" />
-                        <Button v-if="selectedInstanceId && currentNetworkControl.deletable.value"
-                            class="config-toolbar-btn" @click="confirmDeleteNetwork" icon="pi pi-trash"
-                            :label="t('web.device_management.delete_network')" iconPos="left" severity="danger"
-                            outlined
-                            v-tooltip.bottom="t('web.device_management.delete_network_tip')" />
-                    </div>
-                </div>
-            </div>
-        </div>
-
         <!-- ?????/????? -->
         <div class="network-content">
             <Message v-if="showStatusDisabledPanel" severity="warn" class="mb-0">
@@ -950,7 +890,47 @@ onUnmounted(() => {
 
             <template v-else-if="showConfigPanel && currentNetworkConfig">
                 <Config :cur-network="currentNetworkConfig" :config-invalid="false"
-                    :hide-run-button="true" @run-network="saveAndRunNewNetwork"></Config>
+                    :hide-run-button="true" @run-network="saveAndRunNewNetwork">
+                    <template #config-toolbar>
+                        <div class="config-toolbar">
+                            <div class="toolbar-zone">
+                                <span class="toolbar-zone-label">{{ t('web.device_management.toolbar_config_files') }}</span>
+                                <div class="toolbar-zone-actions">
+                                    <Button class="config-toolbar-btn" @click="showConfigEditDialog = true" icon="pi pi-file-edit"
+                                        :label="t('web.device_management.edit_as_file')" iconPos="left" severity="secondary"
+                                        outlined
+                                        v-tooltip.bottom="t('web.device_management.edit_as_file_tip')" />
+                                    <Button class="config-toolbar-btn" @click="importConfig" icon="pi pi-upload"
+                                        :label="t('web.device_management.import_config')" iconPos="left" severity="secondary"
+                                        outlined
+                                        v-tooltip.bottom="t('web.device_management.import_config_tip')" />
+                                    <Button v-if="selectedInstanceId" class="config-toolbar-btn" @click="exportConfig" icon="pi pi-download"
+                                        :label="t('web.device_management.export_config')" iconPos="left" severity="secondary"
+                                        outlined
+                                        v-tooltip.bottom="t('web.device_management.export_config_tip')" />
+                                    <Button v-if="canSaveConfig" class="config-toolbar-btn" @click="saveNetworkConfig"
+                                        :disabled="!currentNetworkConfig || savingConfig"
+                                        icon="pi pi-save" :label="t('web.device_management.save_config')" iconPos="left"
+                                        severity="success"
+                                        v-tooltip.bottom="t('web.device_management.save_config_tip')" />
+                                </div>
+                            </div>
+                            <div class="toolbar-zone toolbar-zone--network">
+                                <span class="toolbar-zone-label">{{ t('web.device_management.toolbar_network') }}</span>
+                                <div class="toolbar-zone-actions">
+                                    <Button class="config-toolbar-btn" @click="newNetwork" icon="pi pi-plus"
+                                        :label="t('web.device_management.add_network')" iconPos="left" severity="success"
+                                        v-tooltip.bottom="t('web.device_management.add_network_tip')" />
+                                    <Button v-if="selectedInstanceId && currentNetworkControl.deletable.value"
+                                        class="config-toolbar-btn" @click="confirmDeleteNetwork" icon="pi pi-trash"
+                                        :label="t('web.device_management.delete_network')" iconPos="left" severity="danger"
+                                        outlined
+                                        v-tooltip.bottom="t('web.device_management.delete_network_tip')" />
+                                </div>
+                            </div>
+                        </div>
+                    </template>
+                </Config>
             </template>
             <Message v-else-if="showConfigPanel" severity="info" class="mb-0">
                 {{ t('web.device_management.loading_network_configuration') }}

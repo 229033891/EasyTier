@@ -5,6 +5,12 @@ export interface LogFileInfo {
   active: boolean
 }
 
+export interface ClearLogFilesResult {
+  cleared: number
+  errors: string[]
+  dirs: string[]
+}
+
 /** Result of reading the logger level (live RPC vs preference-only fallback). */
 export interface LoggerLevelState {
   level: string
@@ -18,10 +24,26 @@ export interface LoggingSettingsApi {
   getLogDir?: () => Promise<string>
   listLogFiles?: () => Promise<LogFileInfo[]>
   readLogFile?: (fileName: string, maxBytes?: number) => Promise<string>
+  /** Clear local log files (GUI / hosts that expose file access). */
+  clearLogFiles?: () => Promise<ClearLogFilesResult | number>
   openLogDir?: () => Promise<void>
   copyLogDir?: () => Promise<void>
+  /** Copy arbitrary text (preferred over navigator.clipboard in Tauri). */
+  copyText?: (text: string) => Promise<void>
   canOpenLogDir?: boolean
   remoteOnly?: boolean
+}
+
+/** Latest N lines from a log viewer buffer (keeps trailing newline behavior simple). */
+export function takeLastLogLines(content: string, maxLines = 100): string {
+  const normalized = content.replace(/\r\n/g, '\n').replace(/\r/g, '\n')
+  if (!normalized.trim())
+    return ''
+  const lines = normalized.split('\n')
+  // Drop a single trailing empty line from a final newline so "100 lines" means 100 records.
+  if (lines.length > 0 && lines[lines.length - 1] === '')
+    lines.pop()
+  return lines.slice(-maxLines).join('\n')
 }
 
 const LEVEL_MAP: Record<string, string> = {

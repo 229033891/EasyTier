@@ -119,6 +119,7 @@ function generateAndCopyNetworkSecret() {
 
 /** 可折叠 Panel：默认 Basic 展开，其余收起；整块标题栏可点（触摸友好） */
 const panelCollapsed = reactive({
+  toolbar: true,
   basic: false,
   advanced: true,
   portForwards: true,
@@ -503,6 +504,10 @@ function removeVpnPortalClient(index: number) {
 <template>
   <div class="flex flex-col h-full">
       <div class="config-panels w-full self-center">
+          <Panel v-model:collapsed="panelCollapsed.toolbar" :header="t('config_toolbar')" toggleable
+            :pt="panelHeaderPt('toolbar')">
+            <slot name="config-toolbar" />
+          </Panel>
           <Panel v-model:collapsed="panelCollapsed.basic" :header="t('basic_settings')" toggleable
             :pt="panelHeaderPt('basic')">
             <div class="flex flex-col gap-y-2">

@@ -49,6 +49,7 @@ vpn_portal_remove_client: 删除客户端
 dev_name: TUN接口名称
 advanced_settings: 高级设置
 basic_settings: 基础设置
+config_toolbar: 配置操作
 listener_urls: 本机监听地址
 rpc_port: RPC端口
 port: 端口
@@ -115,6 +116,16 @@ logging_file: 日志文件
 logging_timestamps_local_hint: 日志文件按 UTC 写入；此处时间戳已转换为本地时间便于阅读。
 logging_retention_hint: 最多保留 3 个滚动日志文件（按天切分；正常日志量下约 3 天，非固定时间窗口）。
 logging_remote_hint: 日志级别会应用到远端 EasyTier 进程；查看最近日志请在设备上打开日志文件。
+logging_clear: 删除日志
+logging_clear_confirm: 确定删除日志目录中的 EasyTier 日志文件吗？当前正在写入的日志会被清空，滚动日志会被删除。服务模式下会同时清理服务日志目录。
+logging_clear_success: 已清理 {count} 个日志文件
+logging_clear_partial: 已清理 {count} 个文件，但仍有失败：{error}
+logging_clear_failed: 删除日志失败
+logging_clear_empty: 没有可删除的日志文件
+logging_copy_recent: 复制日志
+logging_copy_recent_success: 已复制最近 {count} 行日志
+logging_copy_recent_empty: 没有可复制的日志内容
+logging_copy_recent_failed: 复制日志失败
 vpn_tile_no_network: 没有已配置的网络
 vpn_tile_no_network_description: 请先在 EasyTier 中配置网络，再使用 VPN 快捷磁贴。
 vpn_tile_started: VPN 网络已启动
@@ -592,6 +603,11 @@ dhcp_experimental_warning: 实验性警告！使用DHCP时如果组网环境中�
 tray:
   show: 显示 / 隐藏
   exit: 退出
+  start_service: 启动服务
+  stop_service: 停止服务
+  restart_service: 重启服务
+  uninstall_service: 卸载服务
+  service_status: "服务状态：{status}"
 
 about:
   title: 关于
@@ -932,17 +948,26 @@ mode:
   service: 服务模式
   remote: 远程模式
   normal_description: 在本机随 GUI 一起运行。关闭 GUI 后网络也会停止。
-  service_description: 安装为系统服务，支持开机自启；退出 GUI 后仍在后台运行。
+  service_description: 安装为系统服务，支持开机自启；关闭窗口后仍在后台运行，托盘「退出」会停止服务。
   remote_description: 通过 RPC 管理其它机器上已运行的节点。本机不运行核心网络；若要对端接入控制台，请在对端配置。
   service_status: 服务状态
   service_status_running: 运行中
   service_status_stopped: 已停止
   service_status_notinstalled: 未安装
   uninstall_service: 卸载服务
+  start_service: 启动服务
   stop_service: 停止服务
+  restart_service: 重启服务
   uninstall_service_confirm: 确定要卸载服务吗？
+  stop_service_confirm: 确定要停止服务吗？停止后网络将中断，直到再次启动。
+  restart_service_confirm: 确定要重启服务吗？重启期间网络会短暂中断。
   uninstall_service_success: 服务卸载成功，已切换回普通模式
+  start_service_success: 服务启动成功
   stop_service_success: 服务停止成功
+  restart_service_success: 服务重启成功
+  service_status_timeout: "等待服务状态超时（期望 {expected}，当前 {actual}）"
+  service_stop_before_exit_failed: 退出前未能停止服务，已取消退出
+  operation_in_progress: 当前有操作正在进行，请稍后再试
   remote_rpc_address_empty: 远程RPC地址不能为空
   service_config_empty: 服务配置不能为空
   rpc_connection_failed: "RPC 连接失败：{error}"
@@ -971,8 +996,11 @@ config-server:
   status_disconnected: 未连接
   status_connecting: 连接中
   status_failed: 连接失败
+  status_unavailable: 状态不可用
+  status_owner_down: 服务未运行
   status_service: 由服务进程连接
   status_remote: 远程模式不适用
+  rpc_unavailable: 无法查询配置服务器状态（RPC 不可用）
   connect_timeout: 连接超时，请检查配置服务器地址是否正确
   reverted: 已恢复为原地址
   update_service_confirm: 将重启服务以应用更改，是否继续？

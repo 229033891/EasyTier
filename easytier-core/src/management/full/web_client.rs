@@ -605,10 +605,13 @@ async fn web_client_routine(
             }
         };
 
+        // Tunnel is up, but the session is not ready until feature negotiation /
+        // optional secure upgrade succeed. Do not report connected yet — otherwise
+        // the UI flashes "已连接" before GetFeature or the secure handshake fails.
         config_server_status::record_tunnel_remote(connection.info().as_ref());
-        connected.store(true, Ordering::Release);
-        config_server_status::mark_connected();
-        tracing::info!(?connection, "connected to config server");
+        config_server_status::clear_last_error();
+        connected.store(false, Ordering::Release);
+        tracing::info!(?connection, "dialed config server; negotiating session");
         let mut session = WebClientSession::new(connection, controller.clone());
         let support_encryption = match time::timeout(FEATURE_TIMEOUT, session.get_feature()).await {
             Ok(Ok(feature)) => feature.support_encryption,
@@ -660,9 +663,10 @@ async fn web_client_routine(
                 }
             };
             config_server_status::record_tunnel_remote(connection.info().as_ref());
+            let mut session = WebClientSession::new(connection, controller.clone());
             connected.store(true, Ordering::Release);
             config_server_status::mark_connected();
-            let mut session = WebClientSession::new(connection, controller.clone());
+            tracing::info!("connected to config server (secure tunnel)");
             session.start_heartbeat().await;
             session.wait().await;
             connected.store(false, Ordering::Release);
@@ -703,6 +707,9 @@ async fn web_client_routine(
             continue;
         }
 
+        connected.store(true, Ordering::Release);
+        config_server_status::mark_connected();
+        tracing::info!("connected to config server");
         session.start_heartbeat().await;
         session.wait().await;
         connected.store(false, Ordering::Release);
