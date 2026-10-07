@@ -25,7 +25,7 @@ MagicDNS = 节点进程内权威 DNS +（可选）把本机查询指到 fake IP�
 
 开关：`enable_magic_dns` / `--accept-dns` → `flags.accept_dns`。OFF = 不发布、不解析、不改本机 DNS（发布与解析首期仍耦合）。
 
-**Fake IP（硬编码）**：`100.100.100.53`（`MAGIC_DNS_FAKE_IP`）。落在 CGNAT；避开 Tailscale `100.100.100.100`；**不要**改成公网段（如 `6.6.6.6`），也不要再切到 `.54` 等（全网 OS DNS/`/32` 重写）。
+**Fake IP（硬编码）**：`10.10.10.10`（`MAGIC_DNS_FAKE_IP`）。RFC1918 私网地址；避开 Tailscale `100.100.100.100`；**不要**改成公网段（如 `6.6.6.6`），也不要再随意切换（全网 OS DNS/`/32` 重写）。
 
 ---
 
@@ -91,7 +91,7 @@ CLI 示例：`--dns-host` / `--dns-forward` / `--dns-upstream`。控制台：`fr
 |------|----------|------|
 | Windows | ✅ | 接口 NameServer + SearchList |
 | macOS（非 NE） | ✅ | `DarwinConfigurator`（scutil） |
-| Linux + systemd-resolved | ✅ | drop-in `easytier-magic-dns.conf`：`DNS=100.100.100.53` + `Domains=~et.net` |
+| Linux + systemd-resolved | ✅ | drop-in `easytier-magic-dns.conf`：`DNS=10.10.10.10` + `Domains=~et.net` |
 | Linux / OpenWrt 非 systemd | 手工 | 见 [`magic-dns-manual-wiring.md`](./magic-dns-manual-wiring.md) |
 | Android Tauri / JNI | ✅ | VpnService DNS = fake_ip + `/32`（关则 JNI 可回落运营商 DNS） |
 | iOS / macOS-NE | ❌ | 首期明确不支持 |
@@ -110,7 +110,7 @@ CLI 示例：`--dns-host` / `--dns-forward` / `--dns-upstream`。控制台：`fr
 | 转发绑物理网卡 | `magic_dns_forward_connector` / `RuntimeDnsIoProvider` |
 | Linux drop-in | `LinuxResolvedConfigurator` |
 | 覆盖推断 UI | `easytier-web/frontend-lib` → `dnsCoverage.ts` |
-| Fake IP 常量 | `MAGIC_DNS_FAKE_IP` = `100.100.100.53` |
+| Fake IP 常量 | `MAGIC_DNS_FAKE_IP` = `10.10.10.10` |
 
 ---
 

@@ -541,7 +541,7 @@ dns:
     covered_help: 启用魔法 DNS 后，此平台应能自动将系统 DNS 接到 MagicDNS。
     covered_platform_help: 此平台在启用魔法 DNS 时通常可自动接线系统 DNS（徽章未读取具体网络开关）。
     manual_required: 需手动
-    manual_required_help: 静态 hosts 可能已下发，但此系统需按文档手动配置 DNS。见 docs/current/magic-dns-manual-wiring.md（OpenWrt dnsmasq：server=/et.net/100.100.100.53）。
+    manual_required_help: 静态 hosts 可能已下发，但此系统需按文档手动配置 DNS。见 docs/current/magic-dns-manual-wiring.md（OpenWrt dnsmasq：server=/et.net/10.10.10.10）。
     manual_required_platform_help: 此系统通常需手动配置 Magic DNS。见 docs/current/magic-dns-manual-wiring.md。徽章假定网络上已启用魔法 DNS。
     manual_required_docs: 手工接线说明
     manual_required_docs_url: https://github.com/EasyTier/EasyTier/blob/main/docs/current/magic-dns-manual-wiring.md

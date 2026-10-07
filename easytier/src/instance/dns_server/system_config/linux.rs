@@ -207,13 +207,13 @@ mod tests {
     #[test]
     fn build_drop_in_uses_fake_ip_and_tilde_domain() {
         let cfg = OSConfig {
-            nameservers: vec!["100.100.100.53".into()],
+            nameservers: vec!["10.10.10.10".into()],
             search_domains: vec!["et.net.".into()],
             match_domains: vec!["et.net.".into()],
         };
         let content = LinuxResolvedConfigurator::build_drop_in(&cfg).unwrap();
         assert!(content.starts_with(EASYTIER_DROP_IN_HEADER));
-        assert!(content.contains("DNS=100.100.100.53"));
+        assert!(content.contains("DNS=10.10.10.10"));
         assert!(content.contains("Domains=~et.net"));
     }
 
@@ -225,7 +225,7 @@ mod tests {
         // Exercise write/remove helpers directly.
         let cfg = LinuxResolvedConfigurator::with_path(&path);
         let content = LinuxResolvedConfigurator::build_drop_in(&OSConfig {
-            nameservers: vec!["100.100.100.53".into()],
+            nameservers: vec!["10.10.10.10".into()],
             search_domains: vec![],
             match_domains: vec!["et.net.".into()],
         })

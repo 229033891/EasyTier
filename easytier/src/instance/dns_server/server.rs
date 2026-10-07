@@ -572,7 +572,7 @@ mod tests {
         let cfg = RunConfigBuilder::default()
             .general(GeneralConfigBuilder::default().build()?)
             .forward_nameservers(vec!["1.1.1.1".to_string(), "8.8.8.8".to_string()])
-            .excluded_forward_nameservers(vec!["100.100.100.53".parse()?])
+            .excluded_forward_nameservers(vec!["10.10.10.10".parse()?])
             .build()?;
         let forward = build_forward_config(&cfg)?;
         let opts = forward.options.expect("custom upstream must set opts");
@@ -609,7 +609,7 @@ mod tests {
                 domains: vec!["corp.example".to_string(), "INTRA.".to_string()],
                 servers: vec!["10.0.0.53".to_string()],
             }])
-            .excluded_forward_nameservers(vec!["100.100.100.53".parse()?])
+            .excluded_forward_nameservers(vec!["10.10.10.10".parse()?])
             .build()?;
         // Must not panic; installs suffix forward zones + root forwarder.
         let _server = Server::new(cfg)?;

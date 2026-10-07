@@ -189,9 +189,9 @@ describe('status display helpers', () => {
   it('detects meaningful proxy CIDR route sync summaries', () => {
     expect(isMeaningfulProxyCidrRouteSync('desired=[-] installed=[-] exit=false')).toBe(false)
     expect(isMeaningfulProxyCidrRouteSync('desired=[-] installed=[-] exit=false dns=')).toBe(false)
-    expect(isMeaningfulProxyCidrRouteSync('desired=[-] installed=[-] exit=false dns=100.100.100.53')).toBe(false)
+    expect(isMeaningfulProxyCidrRouteSync('desired=[-] installed=[-] exit=false dns=10.10.10.10')).toBe(false)
     expect(isMeaningfulProxyCidrRouteSync(
-      'desired=[10.0.0.0/24] installed=[10.0.0.0/24] exit=false dns=100.100.100.53',
+      'desired=[10.0.0.0/24] installed=[10.0.0.0/24] exit=false dns=10.10.10.10',
     )).toBe(true)
     expect(isMeaningfulProxyCidrRouteSync(
       'desired=[10.0.0.0/24] installed=[10.0.0.0/24] exit=false',

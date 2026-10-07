@@ -200,13 +200,13 @@ describe('mobile VPN route sync annotate', () => {
       running: true,
       ipv4Addr: '10.0.0.1/24',
       routes: '[Ljava.lang.String;@1689abe',
-      dns: '100.100.100.53',
+      dns: '10.10.10.10',
     })
     const annotated = await vpn.annotateNetworkInfoFromVpnService({
       proxy_cidr_route_sync: 'desired=[-] installed=[-] exit=false',
     }, 'A')
     expect(vpn.getMobileVpnInstalledRoutes('A')).toEqual(['10.0.0.1/24'])
-    expect(vpn.getMobileVpnPushedDns('A')).toBe('100.100.100.53')
+    expect(vpn.getMobileVpnPushedDns('A')).toBe('10.10.10.10')
     expect(annotated.proxy_cidr_route_sync).toBe(
       'desired=[10.0.0.1/24] installed=[10.0.0.1/24] exit=false',
     )

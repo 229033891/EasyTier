@@ -602,7 +602,7 @@ function getRoutesForVpn(routes: Route[] | undefined, node_config: NetworkTypes.
   }
 
   if (node_config.enable_magic_dns) {
-    ret.push('100.100.100.53/32')
+    ret.push('10.10.10.10/32')
   }
 
   // sort and dedup
@@ -700,7 +700,7 @@ async function reconcileNetworkInstance(instanceId: string, generation: number) 
 
   const routes = getRoutesForVpn(curNetworkInfo?.routes, config)
 
-  const dns = config.enable_magic_dns ? '100.100.100.53' : undefined
+  const dns = config.enable_magic_dns ? '10.10.10.10' : undefined
   const virtualIpv6WithPrefix = formatVirtualIpv6ForVpn(curNetworkInfo.my_node_info?.virtual_ipv6)
 
   const ipChanged = virtual_ip !== curVpnStatus.ipv4Addr

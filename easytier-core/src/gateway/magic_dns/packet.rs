@@ -263,7 +263,7 @@ mod tests {
             ip.set_total_len((20 + 8 + payload.len()) as u16);
             ip.set_next_header(IpProtocol::Udp);
             ip.set_src_addr("10.0.0.2".parse().unwrap());
-            ip.set_dst_addr("100.100.100.53".parse().unwrap());
+            ip.set_dst_addr("10.10.10.10".parse().unwrap());
             let mut udp = UdpPacket::new_unchecked(ip.payload_mut());
             udp.set_src_port(53000);
             udp.set_dst_port(destination_port);
@@ -282,7 +282,7 @@ mod tests {
             ip.set_total_len(28);
             ip.set_next_header(IpProtocol::Icmp);
             ip.set_src_addr("10.0.0.2".parse().unwrap());
-            ip.set_dst_addr("100.100.100.53".parse().unwrap());
+            ip.set_dst_addr("10.10.10.10".parse().unwrap());
             let mut icmp = Icmpv4Packet::new_unchecked(ip.payload_mut());
             icmp.set_msg_type(Icmpv4Message::EchoRequest);
         }
@@ -293,7 +293,7 @@ mod tests {
         let mut packet = udp_query(b"query", 53);
         let handled = process_magic_dns_packet(
             &mut packet,
-            "100.100.100.53".parse().unwrap(),
+            "10.10.10.10".parse().unwrap(),
             42,
             |query| async move {
                 assert_eq!(query.source, "10.0.0.2:53000".parse().unwrap());
@@ -305,7 +305,7 @@ mod tests {
 
         assert!(handled);
         let ip = Ipv4Packet::new_checked(packet.payload()).unwrap();
-        assert_eq!(ip.src_addr(), "100.100.100.53".parse::<Ipv4Addr>().unwrap());
+        assert_eq!(ip.src_addr(), "10.10.10.10".parse::<Ipv4Addr>().unwrap());
         assert_eq!(ip.dst_addr(), "10.0.0.2".parse::<Ipv4Addr>().unwrap());
         let udp = UdpPacket::new_checked(ip.payload()).unwrap();
         assert_eq!(udp.src_port(), 53);
@@ -327,7 +327,7 @@ mod tests {
         assert!(
             !process_magic_dns_packet(
                 &mut packet,
-                "100.100.100.53".parse().unwrap(),
+                "10.10.10.10".parse().unwrap(),
                 42,
                 |_| async { panic!("invalid IPv4 header must not invoke DNS") },
             )
@@ -344,7 +344,7 @@ mod tests {
         assert!(
             !process_magic_dns_packet(
                 &mut packet,
-                "100.100.100.53".parse().unwrap(),
+                "10.10.10.10".parse().unwrap(),
                 42,
                 |_| async { panic!("short packet must not invoke DNS") },
             )
@@ -362,7 +362,7 @@ mod tests {
         assert!(
             !process_magic_dns_packet(
                 &mut packet,
-                "100.100.100.53".parse().unwrap(),
+                "10.10.10.10".parse().unwrap(),
                 42,
                 |_| async { panic!("invalid UDP length must not invoke DNS") },
             )
@@ -380,7 +380,7 @@ mod tests {
         assert!(
             !process_magic_dns_packet(
                 &mut packet,
-                "100.100.100.53".parse().unwrap(),
+                "10.10.10.10".parse().unwrap(),
                 42,
                 |_| async { panic!("fragmented packet must not invoke DNS") },
             )
@@ -398,7 +398,7 @@ mod tests {
         assert!(
             !process_magic_dns_packet(
                 &mut packet,
-                "100.100.100.53".parse().unwrap(),
+                "10.10.10.10".parse().unwrap(),
                 42,
                 |_| async { Some(vec![0; u16::MAX as usize]) },
             )
@@ -413,7 +413,7 @@ mod tests {
         let mut packet = icmp_echo_request();
         let handled = process_magic_dns_packet(
             &mut packet,
-            "100.100.100.53".parse().unwrap(),
+            "10.10.10.10".parse().unwrap(),
             7,
             |_| async { panic!("ICMP must not invoke DNS") },
         )
@@ -421,7 +421,7 @@ mod tests {
 
         assert!(handled);
         let ip = Ipv4Packet::new_checked(packet.payload()).unwrap();
-        assert_eq!(ip.src_addr(), "100.100.100.53".parse::<Ipv4Addr>().unwrap());
+        assert_eq!(ip.src_addr(), "10.10.10.10".parse::<Ipv4Addr>().unwrap());
         let icmp = Icmpv4Packet::new_checked(ip.payload()).unwrap();
         assert_eq!(icmp.msg_type(), Icmpv4Message::EchoReply);
         assert_eq!(packet.get_dst_peer_id(), Some(7));
@@ -433,7 +433,7 @@ mod tests {
         assert!(
             !process_magic_dns_packet(
                 &mut packet,
-                "100.100.100.53".parse().unwrap(),
+                "10.10.10.10".parse().unwrap(),
                 42,
                 |_| async { Some(Vec::new()) },
             )

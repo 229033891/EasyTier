@@ -31,7 +31,8 @@
 - **`vite build` 会被沙箱删除护栏挡住**：`emptyDir(outDir)` 的 `rmSync` → `spawnSync genie-trash ETIMEDOUT`，在 "N modules transformed" 之后才炸，看着像编译失败其实不是。绕法：先 `mv dist $TEMP/xxx` 把旧产物移走（纯改名不触发护栏）再 build。**同一命令里不要带 `rm -rf`**，会连累整条命令被 SIGTERM。
 - **`eslint --fix` 对依赖虚拟模块的 import 不可信**：`import/no-duplicates` 曾把 `vue-router/auto` 与 `vue-router/auto-routes` 合并（resolver 把两者都解析到 `vue-router.mjs`），丢掉 `routes` 直接改坏 `main.ts`。已在 `eslint.config.js` 对 `src/main.ts` 关闭该规则并加注释。跑完 `--fix` 必须核对 import 的模块说明符集合。
 - `no-console` 已放宽为 `allow: ['log','info','debug','warn','error']` —— WebView console 是安卓 logcat 的唯一日志出口，不要把这些日志降级成 `warn`。
-- **CI 没有前端 lint**（`.github/workflows/test.yml` 的 `check` job 只聚合 `check-fmt/clippy/hack/wasi`），所以 lint 只能靠本地自觉跑。
+- **lint 已进门禁**（2026-10-07）：`easytier-gui/package.json` 的 `build` 改为 `pnpm lint && pnpm --dir ../easytier-web/frontend-lib build && vue-tsc --noEmit && vite build`。lint 放最前是为了快速失败（不必等几分钟的前端构建）。覆盖面：本地 `pnpm build`、`pnpm tauri build`（`tauri.conf.json` 的 `beforeBuildCommand: pnpm build`）、CI 的 `android.yml` / `windows.yml`（经 `prepare-pnpm` 的 `pnpm -r --filter "easytier-gui..." build`）。`test.yml` 里仍然**没有**独立的前端 lint job（其 `check` job 只聚合 `check-fmt/clippy/hack/wasi`）。
+- 在 Git Bash 里跑不了 `pnpm` 时，可用 `node "C:/Program Files/nodejs/node_modules/corepack/dist/pnpm.js" <script>` 代替，实测可用（会按 `packageManager` 字段用 pnpm 9.12.1）。
 
 ## 环境备注
 
