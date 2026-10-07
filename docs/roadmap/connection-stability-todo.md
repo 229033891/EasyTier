@@ -2,9 +2,9 @@
 
 ## Status
 
-- Status: **Roadmap**（Checklist；P-UX + P0.1–P0.4 + P1.1/P1.2/P1.6–P1.8 + P2.1/P2.3 已落地；P2.2 文档侧已对齐；下一步 P0.5 / P2.2 UI 或 P-AUTO.L1）
+- Status: **Roadmap**（Checklist；P-UX + P0.1–P0.4 + P1.1–P1.3/P1.6–P1.8 + P2.1–P2.3 + P-AUTO.L1 已落地；下一步 P0.5 或 P1.5）
 - 日期：2026-10-06
-- 最近审阅：2026-10-07（P2.2 文档：Current「热备 ≠ 聚合」+ bonding 异质优先语义拍板；**不**把 bonding 实现并入稳定性 P0）
+- 最近审阅：2026-10-07（P-AUTO.L1：`default_protocol` CSV 有序 scheme + 直连排序 / 手动 URL×scheme 降级）
 - 背景：对照 OpenVPN / IPsec 的「固定隧道 + 强保活」模型，梳理 EasyTier Mesh（多 PeerConn + 打洞 + 中继）的稳定性差距与可落地项；**另纳入 2026-10-06 用户反馈：高级选项互斥缺校验、长表单占空间、单协议配置失败后无智能回落**
 - 相关 Current：[`../current/peer-connections.md`](../current/peer-connections.md)、[`../current/tunnels-and-transport.md`](../current/tunnels-and-transport.md)
 - 相关 Roadmap：[`traffic-camouflage.md`](./traffic-camouflage.md)、[`multi-link-bonding.md`](./multi-link-bonding.md)（异质优先 / 同质补齐；代码未实现）、[`market-comparison-2026-10.md`](./market-comparison-2026-10.md)、[`upstream-port-todo.md`](./upstream-port-todo.md)（#2632 TCP 打洞 1s ping）
@@ -136,7 +136,7 @@ score = w_lat * norm(rtt)
   - ManualConnector 恢复恒全量重拨（全部 connectors + 按需打洞）；`select_conn` 质量分 + hysteresis 承担选优与防抖
   - 状态面回退为 connector url + status（`Connector.fallback_*`、`current_fallback_index` / `fallback_reason` / tier 字段已删）
   - `p2p_policy_flags.lazy_p2p` 仅跟 `lazy_p2p` 标志，不与 `prefer_peer_relay` 耦合
-  - 非目标：未做 scheme 矩阵（P-AUTO.L1）
+  - scheme 矩阵：已由 P-AUTO.L1 / P1.3 落地（`default_protocol` CSV × 手动 URL 改写）
 - [x] **P0.3** 文档与模板：同时提供「443 示例」与「自定义端口示例」；写明 **443 不一定可用**
   - Current：`tunnels-and-transport.md` / `peer-connections.md` 双端口示例 + 有序列表
   - 用户面：`README.md` / `README_CN.md`、Web `initial_nodes_help`、CLI `peers` 帮助
@@ -151,7 +151,7 @@ score = w_lat * norm(rtt)
 
 - [x] **P1.1** Ping 失败关连接阈值可配置（`flags.ping_fail_close_count`，默认 5；`peer_conn_ping.rs` / `api_input` / TOML）；弱网可调高（如 8～12）
 - [x] **P1.2** `ping_interval_max_sec` 可配置（默认 32；与 per-conn TCP 打洞 1s cap 取更严）；自适应下限仍为 1s 踢拍
-- [ ] **P1.3** 弱网/策略预设：**优先 scheme 列表**可自定义（例：`wss,tcp,quic,udp`），失败按序降级——**不写死「先 443」**
+- [x] **P1.3** 弱网/策略预设：**优先 scheme 列表**可自定义（例：`wss,tcp,quic,udp`），失败按序降级——**不写死「先 443」**（= P-AUTO.L1）
 - [ ] **P1.4** 验证 #2632：TCP/非 UDP 打洞连接 1s ping 在目标环境不再因 idle 掉线（`cargo test` / 现网抽样）
 - [ ] **P1.5** 可选：短时抖动宽限（如短暂丢包不立即拆 conn），避免比 OpenVPN 更「神经质」的闪断
 - [x] **P1.6** 度量：在现有 RTT 窗口上增加 **jitter** 统计，并与已有 `loss_rate` 一并暴露到 `PeerConnStats` / 状态面（`WindowLatency::get_jitter_us`；proto `jitter_us=6`；Status 表展示）
@@ -170,9 +170,9 @@ score = w_lat * norm(rtt)
 - [x] **P2.1** 状态面明确：各 PeerConn、`default_conn`、质量分分项（rtt/loss/jitter）、是否仅冗余
   - `PeerConnInfo.quality_score` / `quality_fused`（与 `select_conn` 同源）；Status「质量分」列 + tooltip（★ default / · 热备 / `!` 熔断 / `+N` 热备数）
   - Connector 存活仍走既有 `ListConnector`（CLI）；Web Status 本项未嵌入 connector 列表
-- [~] **P2.2** 文档/UI：多连接 ≠ 已聚合带宽（对齐 Current `peer-connections.md`）
-  - **文档已完成（2026-10-07）**：Current §2/§4「热备 ≠ 聚合」；[`multi-link-bonding.md`](./multi-link-bonding.md) Phase 1 文案与异质优先语义
-  - **UI/帮助文案仍待**：产品帮助只描述 Current，须同步「多连接不是带宽聚合」（不引用 Roadmap 实现细节）；待建跟踪项，完成后方可关闭 P2.2
+- [x] **P2.2** 文档/UI：多连接 ≠ 已聚合带宽（对齐 Current `peer-connections.md`）
+  - **文档（2026-10-07）**：Current §2/§4「热备 ≠ 聚合」；[`multi-link-bonding.md`](./multi-link-bonding.md) Phase 1 文案与异质优先语义
+  - **UI（2026-10-07）**：Status「质量分」列头 `path_quality_help`；Config `peer_link_bond_count_help` 明确默认 1 = 热备非叠带宽（只描述 Current）
 - [x] **P2.3** 将丢包/抖动（综合分）纳入 OSPF / `latency_first` 边代价；带防震荡与可观测
   - 发布端 `direct_peer_info`：`quality_score`→`DirectConnectedPeerInfo.latency_ms`（`score*1000` + 熔断加成）；发布 hysteresis `min_delta=20`
   - Dijkstra / peer-center `RouteCostCalculator` 不变（仍读 `latency_ms`）；零 loss/jitter 时量级≈原 RTT ms
@@ -192,10 +192,10 @@ score = w_lat * norm(rtt)
 
 ### P-AUTO — 智能探测与优选（新增草案，对应 S8；分 L1-L4）
 
-- [ ] **P-AUTO.L1** 保底降级（无感）：`default_protocol: string` 扩展为有序 scheme 优先列表（如 `wss,tcp,quic,udp`），失败按序尝试；禁 UDP 环境自动落到用户指定的 TCP/`wss`
+- [x] **P-AUTO.L1** 保底降级（无感）：`default_protocol: string` 扩展为有序 scheme 优先列表（如 `wss,tcp,quic,udp`），失败按序尝试；禁 UDP 环境自动落到用户指定的 TCP/`wss`
   - 兼容：单值老配置视为长度 1 列表；与 P0.1 为叠加关系（URL 列表×scheme 矩阵，已拍板）
-  - 验收：只配 UDP 且 UDP 被阻断时，仍可用列表中 TCP/`wss` 建连
-- [ ] **P-AUTO.L2** 质量选路（无感）：即 P1.6-P1.8，不重复
+  - 落地：`config/protocol_preference.rs`；Direct 按列表排序（含 wg/faketcp）；Manual reconnect 仅在 tcp/udp/ws/wss/quic 间改写 scheme（保留源有效端口；wg/faketcp 不改写）；Config MultiSelect + CSV；`ListConnector.url`=配置、`active_url`=获胜拨号；remove 可按任一 URL 匹配；failover 有总超时预算
+- [x] **P-AUTO.L2** 质量选路（无感）：即 P1.6-P1.8，不重复
 - [ ] **P-AUTO.L3** 主动探测 + 推荐（一键应用，需确认）：后台按候选 scheme/代理组合建连试测，记录 RTT/loss/jitter 到 `peer_conn_history` + 状态面，给出“推荐配置” diff
   - 约束：限频限并发、默认关（已拍板）、需用户 opt-in；不试全网一致性参数；对称 NAT 生日攻击式探测默认禁
   - 验收：双路径“低 RTT 高丢包 vs 略高 RTT 低丢包”下推荐后者，并可一键应用
@@ -249,10 +249,9 @@ P1.6 stats jitter/loss 上报 + P1.1/P1.2 透参
   -> P0.3/P0.4 文档与 UI
   -> P0.5 非 443 验收
 并行：P1.4 #2632 验证
-随后：P1.3 scheme 优先列表（若已在 P-AUTO.L1 做，则此处只剩验收）
-       P1.7-P1.8 质量分选路（= P-AUTO.L2）  <- 依赖 P1.6
-再后：P2 可观测 / OSPF 代价评估 / bonding / proxy 策略
-最后：P-AUTO.L3 探测推荐（需 P2.1 状态面）；P-AUTO.L4 默认不启动
+随后：P1.3 / P-AUTO.L1 scheme 优先列表（**已完成**）；P1.7-P1.8 / L2 质量分（**已完成**）
+再后：P2 可观测 / OSPF / bonding / proxy（P2.1–P2.3 **已完成**）
+最后：P-AUTO.L3 探测推荐；P-AUTO.L4 默认不启动；P0.5 现网验收
 ```
 
 拍板前可与 [`discussion-proposal-2026-10.md`](./discussion-proposal-2026-10.md) 轨道 C（连通保底）对齐；**本文强调自定义端点后，轨道 C 叙事应从「wss/443 范式」改为「可配置保底 URL + 可选 443 推荐」**。
@@ -264,15 +263,29 @@ P1.6 stats jitter/loss 上报 + P1.1/P1.2 透参
 | 项 | 状态 | 备注 |
 |----|------|------|
 | P0.* | P0.1–P0.4 **已完成（档位已简化删除）**；P0.5 验收未开始 | 全量拨号 + 质量选路 + 文档/模板 |
-| P1.* | P1.1/P1.2/P1.6–P1.8（单元）**已完成**；P0.5/P1.8b 现网验收、P1.3–P1.5 未开始 | 质量分 Flags 透参已接 |
-| P2.* | P2.1/P2.3 **已完成**；P2.2 文档已对齐、UI 待做；P2.4–P2.5 未开始 | bonding 实现与异质策略见 [`multi-link-bonding.md`](./multi-link-bonding.md)，不并入稳定性 P0 |
+| P1.* | P1.1–P1.3/P1.6–P1.8（单元）**已完成**；P0.5/P1.8b 现网验收、P1.4–P1.5 未开始 | 质量分 Flags 透参已接；P1.3=L1 |
+| P2.* | P2.1–P2.3 **已完成**；P2.4–P2.5 未开始 | bonding 实现与异质策略见 [`multi-link-bonding.md`](./multi-link-bonding.md)，不并入稳定性 P0 |
 | P3.* | Backlog | |
 | P-UX.* | **已完成** | 老配置只提示；断点 760px；`configConflicts.ts` + Config 紧凑布局 |
-| P-AUTO.* | 草案待评审 | L1/L2 无感；L3 需 opt-in；L4 默认不做 |
+| P-AUTO.* | L1/L2 **已完成**；L3/L4 未开始 | L3 需 opt-in；L4 默认不做 |
 
 ---
 
-## 8. 待决问题（讨论用）
+## 8. 安卓 VPN 生命周期（来自 [`android-vpn-connection-audit-2026-10-07.md`](./android-vpn-connection-audit-2026-10-07.md)）
+
+与本文 S1–S8（协议/选路）**正交**；审计 A1–A14 / A3 / A9 可落地项已在工作区修复。细节与复核见审计文档。
+
+**勾选**
+
+| 项 | 状态 |
+|----|------|
+| A3 Rust watchdog（孤儿停 VPN + tick） | **已完成（最小闭环）** — `easytier-gui/src-tauri/src/android_vpn_watchdog.rs` |
+| A3 后台无 WebView 自动拉起 VPN | 未做（需新鲜 virtual IP；避免盲启动） |
+| A9 网络切换 | **已完成** — Kotlin NetworkCallback + `setUnderlyingNetworks`；Rust 关 peer conn 重拨 |
+
+---
+
+## 9. 待决问题（讨论用）
 
 1. ~~§2.5 互斥 / 老配置~~：**已拍板** — 从严禁选；老配置读入**只提示、不强制改值**。
 2. ~~紧凑布局 / 断点~~：**已拍板** — 桌面 4 列×2 行（8 字段占 2 行）；移动端断点 **760px** 回单列。

@@ -115,10 +115,10 @@ export default defineConfig(async () => ({
     },
     hmr: host
       ? {
-        protocol: 'ws',
-        host: findIp(gateway4sync().gateway),
-        port: 1430,
-      }
+          protocol: 'ws',
+          host: findIp(gateway4sync().gateway),
+          port: 1430,
+        }
       : undefined,
   },
 }))

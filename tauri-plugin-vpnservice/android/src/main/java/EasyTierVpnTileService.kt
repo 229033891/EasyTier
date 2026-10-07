@@ -61,7 +61,9 @@ class EasyTierVpnTileService : TileService() {
     }
 
     private fun handleClick() {
-        val action = pendingAction(this) ?: if (TauriVpnService.self == null) ACTION_START else ACTION_STOP
+        // Always decide from live VPN state — do not replay a stale pending
+        // action that may never have been consumed (A14).
+        val action = if (TauriVpnService.self == null) ACTION_START else ACTION_STOP
         savePendingAction(this, action)
         updateTileState()
 

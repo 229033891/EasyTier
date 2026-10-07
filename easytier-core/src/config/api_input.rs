@@ -638,9 +638,11 @@ impl NetworkConfigExt for NetworkConfig {
         }
 
         if let Some(default_protocol) = self.default_protocol.clone() {
-            let normalized = default_protocol.trim().to_ascii_lowercase();
-            if !normalized.is_empty() {
-                flags.default_protocol = normalized;
+            // normalize_default_protocol("") returns "tcp", so guard on the raw
+            // input: empty/blank means "not set", keep the default flags.
+            if !default_protocol.trim().is_empty() {
+                flags.default_protocol =
+                    crate::config::normalize_default_protocol(&default_protocol);
             }
         }
 

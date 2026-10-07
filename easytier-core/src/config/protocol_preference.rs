@@ -1,0 +1,301 @@
+//! Ordered scheme preference for `flags.default_protocol` (P-AUTO.L1).
+//!
+//! Storage remains a single string: comma-separated list (legacy single value =
+//! length-1). Empty / all-invalid → `["tcp"]`.
+//!
+//! Direct connector uses the full preference list to **sort advertised listeners**.
+//! Manual connector only **rewrites** among `REWRITEABLE_SCHEMES` (tcp/udp/ws/wss/quic);
+//! `wg` / `faketcp` stay preference-sortable for Direct but are never URL-rewritten
+//! (incompatible handshake / fingerprint).
+
+use std::collections::HashSet;
+
+use url::Url;
+
+/// Schemes that participate in preference lists (Direct sort + config allowlist).
+/// Mirrors dialable schemes in `connectivity::protocol::protocol_transport`
+/// except `ring` (rendezvous-only, filtered out by both connectors).
+pub const PREFERENCE_SCHEMES: &[&str] =
+    &["tcp", "udp", "ws", "wss", "quic", "wg", "faketcp"];
+
+/// Schemes safe to cross-rewrite on manual peer URLs.
+/// WireGuard / FakeTCP keep a distinct transport fingerprint and must not be
+/// dialed as plain tcp/udp/ws via scheme rewrite.
+pub const REWRITEABLE_SCHEMES: &[&str] = &["tcp", "udp", "ws", "wss", "quic"];
+
+/// Parse `default_protocol` into an ordered, de-duplicated preference list.
+pub fn parse_protocol_preference(raw: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut seen = HashSet::new();
+    for token in raw.split(',') {
+        let scheme = token.trim().to_ascii_lowercase();
+        if scheme.is_empty() {
+            continue;
+        }
+        if !PREFERENCE_SCHEMES.contains(&scheme.as_str()) {
+            tracing::warn!(%scheme, "ignoring unknown default_protocol scheme");
+            continue;
+        }
+        if seen.insert(scheme.clone()) {
+            out.push(scheme);
+        }
+    }
+    if out.is_empty() {
+        out.push("tcp".to_owned());
+    }
+    out
+}
+
+/// Normalize a raw `default_protocol` string to canonical CSV (lowercase, ordered unique).
+pub fn normalize_default_protocol(raw: &str) -> String {
+    parse_protocol_preference(raw).join(",")
+}
+
+/// Sort key for DirectConnector: higher = tried first (popped from list end).
+/// Preference index 0 → highest rank; unknown schemes → 0 (tried last).
+pub fn protocol_preference_sort_key(preference: &[String], scheme: &str) -> u32 {
+    match preference.iter().position(|item| item == scheme) {
+        Some(index) => (preference.len() - index) as u32,
+        None => 0,
+    }
+}
+
+fn is_preference_scheme(scheme: &str) -> bool {
+    PREFERENCE_SCHEMES.contains(&scheme)
+}
+
+fn is_rewriteable_scheme(scheme: &str) -> bool {
+    REWRITEABLE_SCHEMES.contains(&scheme)
+}
+
+/// Effective listen/dial port of `url`: explicit first, else EasyTier / IETF default
+/// for the **source** scheme (so `wss://host/et` → tcp keeps 443, not 11010).
+///
+/// Mirrors `connectivity::protocol::protocol_default_port` for preference schemes
+/// (kept local to avoid config ↔ connectivity cycles).
+fn source_effective_port(url: &Url) -> Option<u16> {
+    if let Some(port) = url.port() {
+        return Some(port);
+    }
+    match url.scheme() {
+        "ws" => Some(80),
+        "wss" => Some(443),
+        "tcp" | "udp" => Some(11010),
+        "wg" => Some(11011),
+        "quic" => Some(11012),
+        "faketcp" => Some(11013),
+        _ => url.port_or_known_default(),
+    }
+}
+
+/// Rewrite `url`'s scheme among rewriteable transports, preserving host/path
+/// and the source effective port. Returns `None` for non-rewriteable source or target.
+pub fn rewrite_url_scheme(url: &Url, scheme: &str) -> Option<Url> {
+    if !is_rewriteable_scheme(url.scheme()) || !is_rewriteable_scheme(scheme) {
+        return None;
+    }
+    // Same scheme: return the original URL as-is so implicit ports
+    // (e.g. `tcp://host`) do not gain an explicit `:11010` duplicate that
+    // would dial the same endpoint twice and misreport `active_url`.
+    if url.scheme() == scheme {
+        return Some(url.clone());
+    }
+    let port_to_keep = source_effective_port(url);
+    let mut next = url.clone();
+    next.set_scheme(scheme).ok()?;
+    if let Some(port) = port_to_keep {
+        // Always re-apply: set_scheme clears defaults; without this, wss→tcp
+        // would dial EasyTier tcp default 11010 instead of 443.
+        if next.set_port(Some(port)).is_err() {
+            tracing::warn!(%url, %scheme, port, "rewrite_url_scheme: set_port failed");
+            return None;
+        }
+    }
+    Some(next)
+}
+
+/// Candidate URLs for manual reconnect: rewriteable preference schemes first,
+/// then the configured URL if it was not already included.
+///
+/// Non-rewriteable peers (`wg` / `faketcp` / `ring` / unknown) are never rewritten.
+pub fn preference_candidate_urls(url: &Url, preference: &[String]) -> Vec<Url> {
+    let original_scheme = url.scheme();
+    if !is_rewriteable_scheme(original_scheme) {
+        // ring / wg / faketcp / unknown: dial the configured URL only.
+        return vec![url.clone()];
+    }
+
+    let mut out = Vec::new();
+    let mut seen = HashSet::new();
+    for scheme in preference {
+        if !is_rewriteable_scheme(scheme) {
+            // Preference may still list wg/faketcp for Direct sort; skip for Manual rewrite.
+            continue;
+        }
+        let Some(candidate) = rewrite_url_scheme(url, scheme) else {
+            continue;
+        };
+        let key = candidate.as_str().to_owned();
+        if seen.insert(key) {
+            out.push(candidate);
+        }
+    }
+    let original_key = url.as_str();
+    if !seen.contains(original_key) {
+        out.push(url.clone());
+    }
+    if out.is_empty() {
+        out.push(url.clone());
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_single_value_and_empty() {
+        assert_eq!(parse_protocol_preference("tcp"), vec!["tcp"]);
+        assert_eq!(parse_protocol_preference("UDP"), vec!["udp"]);
+        assert_eq!(parse_protocol_preference(""), vec!["tcp"]);
+        assert_eq!(parse_protocol_preference("  , , "), vec!["tcp"]);
+    }
+
+    #[test]
+    fn parse_csv_preserves_order_and_dedupes() {
+        assert_eq!(
+            parse_protocol_preference("wss, tcp, quic, tcp, udp"),
+            vec!["wss", "tcp", "quic", "udp"]
+        );
+    }
+
+    #[test]
+    fn parse_drops_unknown_schemes() {
+        assert_eq!(
+            parse_protocol_preference("wg,tcp,ring,wss,faketcp"),
+            vec!["wg", "tcp", "wss", "faketcp"]
+        );
+        assert_eq!(parse_protocol_preference("ring"), vec!["tcp"]);
+    }
+
+    #[test]
+    fn normalize_joins_csv() {
+        assert_eq!(normalize_default_protocol("WSS, TCP"), "wss,tcp");
+        assert_eq!(normalize_default_protocol(""), "tcp");
+    }
+
+    #[test]
+    fn sort_key_prefers_earlier_list_entries() {
+        let pref = parse_protocol_preference("wss,tcp,udp");
+        assert!(protocol_preference_sort_key(&pref, "wss") > protocol_preference_sort_key(&pref, "tcp"));
+        assert!(protocol_preference_sort_key(&pref, "tcp") > protocol_preference_sort_key(&pref, "udp"));
+        assert_eq!(protocol_preference_sort_key(&pref, "quic"), 0);
+    }
+
+    #[test]
+    fn sort_key_includes_wg_and_faketcp_for_direct() {
+        let pref = parse_protocol_preference("wg,faketcp,tcp");
+        assert!(protocol_preference_sort_key(&pref, "wg") > protocol_preference_sort_key(&pref, "faketcp"));
+        assert!(protocol_preference_sort_key(&pref, "faketcp") > protocol_preference_sort_key(&pref, "tcp"));
+    }
+
+    #[test]
+    fn rewrite_keeps_explicit_port() {
+        let url = Url::parse("udp://relay.example:2200/et").unwrap();
+        let tcp = rewrite_url_scheme(&url, "tcp").unwrap();
+        assert_eq!(tcp.scheme(), "tcp");
+        assert_eq!(tcp.port(), Some(2200));
+        assert_eq!(tcp.path(), "/et");
+    }
+
+    #[test]
+    fn rewrite_keeps_implicit_wss_port_when_falling_to_tcp() {
+        let url = Url::parse("wss://relay.example/et").unwrap();
+        assert!(url.port().is_none());
+        let tcp = rewrite_url_scheme(&url, "tcp").unwrap();
+        assert_eq!(tcp.scheme(), "tcp");
+        assert_eq!(tcp.port(), Some(443));
+        assert_eq!(tcp.path(), "/et");
+    }
+
+    #[test]
+    fn rewrite_rejects_wg_and_faketcp() {
+        let wg = Url::parse("wg://10.0.0.2:11011").unwrap();
+        assert!(rewrite_url_scheme(&wg, "tcp").is_none());
+        let tcp = Url::parse("tcp://10.0.0.2:11010").unwrap();
+        assert!(rewrite_url_scheme(&tcp, "wg").is_none());
+        assert!(rewrite_url_scheme(&tcp, "faketcp").is_none());
+    }
+
+    #[test]
+    fn candidates_follow_preference_then_original() {
+        let url = Url::parse("udp://10.0.0.2:2200").unwrap();
+        let pref = parse_protocol_preference("wss,tcp");
+        let candidates = preference_candidate_urls(&url, &pref);
+        assert_eq!(
+            candidates
+                .iter()
+                .map(|u| u.as_str().to_owned())
+                .collect::<Vec<_>>(),
+            vec![
+                "wss://10.0.0.2:2200/".to_owned(),
+                "tcp://10.0.0.2:2200/".to_owned(),
+                "udp://10.0.0.2:2200/".to_owned(),
+            ]
+        );
+    }
+
+    #[test]
+    fn candidates_from_implicit_wss_keep_443_on_tcp() {
+        let url = Url::parse("wss://relay.example/et").unwrap();
+        let pref = parse_protocol_preference("tcp,wss");
+        let candidates = preference_candidate_urls(&url, &pref);
+        assert_eq!(candidates[0].scheme(), "tcp");
+        assert_eq!(candidates[0].port(), Some(443));
+        assert_eq!(candidates[1].scheme(), "wss");
+    }
+
+    #[test]
+    fn ring_is_not_rewritten() {
+        let url = Url::parse("ring://uuid").unwrap();
+        let pref = parse_protocol_preference("tcp,udp");
+        assert_eq!(preference_candidate_urls(&url, &pref), vec![url]);
+    }
+
+    #[test]
+    fn wg_and_faketcp_peers_are_not_rewritten() {
+        let wg = Url::parse("wg://10.0.0.2:11011").unwrap();
+        let pref = parse_protocol_preference("tcp,udp,wg");
+        assert_eq!(preference_candidate_urls(&wg, &pref), vec![wg]);
+
+        let faketcp = Url::parse("faketcp://10.0.0.2:11013").unwrap();
+        assert_eq!(preference_candidate_urls(&faketcp, &pref), vec![faketcp]);
+    }
+
+    #[test]
+    fn candidates_skip_wg_faketcp_targets_in_preference() {
+        let url = Url::parse("tcp://10.0.0.2:2200").unwrap();
+        let pref = parse_protocol_preference("wg,tcp,faketcp,udp");
+        let candidates = preference_candidate_urls(&url, &pref);
+        assert_eq!(
+            candidates
+                .iter()
+                .map(|u| u.scheme().to_owned())
+                .collect::<Vec<_>>(),
+            vec!["tcp".to_owned(), "udp".to_owned()]
+        );
+    }
+
+    #[test]
+    fn preference_schemes_cover_rewriteable() {
+        for scheme in REWRITEABLE_SCHEMES {
+            assert!(is_preference_scheme(scheme));
+        }
+        assert!(is_preference_scheme("wg"));
+        assert!(is_preference_scheme("faketcp"));
+        assert!(!is_rewriteable_scheme("wg"));
+        assert!(!is_rewriteable_scheme("faketcp"));
+        assert!(!is_rewriteable_scheme("ring"));
+    }
+}

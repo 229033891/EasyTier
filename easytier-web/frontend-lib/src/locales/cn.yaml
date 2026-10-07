@@ -207,7 +207,9 @@ latency: 延迟
 path_quality: 质量分
 path_quality_help: |-
   同 peer 多隧道时的综合质量分（越低越好：延迟 + 丢包 + 抖动）。
-  ★ 为当前 default_conn；· 为热备。`!` 表示丢包超过熔断阈值；`+N` 为额外热备条数。
+  ★ 为当前发送路径（default_conn）；· / +N 为热备，用于选优与故障切换——不是带宽聚合。
+  仅当「多链路聚合数」>1 且单元格出现 bond×N 时，不同流才会分摊到多条隧道。
+  `!` 表示丢包超过熔断阈值。
 upload_bytes: 上传
 download_bytes: 下载
 loss_rate: 丢包率
@@ -436,11 +438,12 @@ disable_encryption_algo_conflict_help: |-
   已禁用加密时，加密算法下拉无效。配置不会被自动改写。
 disable_encryption_algo_hint: 已禁用加密，算法设置无效。
 
-default_protocol: 默认连接协议
+default_protocol: 连接协议优先顺序
 default_protocol_help: |-
-  建立对等直连时优先尝试的底层协议。可选 TCP（默认）或 UDP。
-  适合已知某一协议更稳、或想优先走 UDP 低延迟路径的场景。
-  注意：对端需要开放对应监听；优先协议连不上时仍会继续尝试其他可用协议。
+  有序协议列表（逗号分隔存盘）。直连按此顺序尝试对端已宣告的监听。
+  手动 peer URL 仅在 tcp/udp/ws/wss/quic 之间改写 scheme 降级（保留主机与端口，不锁死 443）；wg / faketcp 仍可用于直连排序，但不会对手动 peer 改写。
+  默认仅 tcp。例如 wss,tcp,quic,udp：UDP 被阻断时仍可落到列表中的 TCP/WSS。
+  选择顺序即优先顺序；可用下方序号按钮微调。
 
 encryption_algorithm: 加密算法
 encryption_algorithm_help: |-
@@ -573,7 +576,8 @@ instance_recv_bps_limit_placeholder: 留空表示不限速
 
 peer_link_bond_count: 多链路聚合数
 peer_link_bond_count_help: |-
-  一对 peer 之间并行发送的目标 PeerConn 条数。1（默认）保持单链路发送；2–5 按内层 IP 五元组把不同流分摊到多条隧道，可突破单连接限速（多用户/多流场景最有效；单个 RDP 等单流仍受单条上限）。
+  一对 peer 之间并行发送的目标 PeerConn 条数。1（默认）只走单条 default_conn：多条存活隧道仍是热备切换，不会叠带宽。
+  2–5 按内层 IP 五元组把不同流分摊到多条隧道，可突破单连接限速（多用户/多流场景最有效；单个 RDP 等单流仍受单条上限）。
   需要有多条存活隧道才有效；上限 5。
 peer_link_bond_count_placeholder: 留空为默认值1
 peer_link_replica_fill_max: 同类补齐上限

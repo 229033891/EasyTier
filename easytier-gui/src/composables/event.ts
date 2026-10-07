@@ -1,121 +1,150 @@
-import { Event, listen } from "@tauri-apps/api/event";
-import { type } from "@tauri-apps/plugin-os";
-import { NetworkTypes } from "easytier-frontend-lib"
-import { Utils } from "easytier-frontend-lib";
+import type { Event } from '@tauri-apps/api/event'
+import { listen } from '@tauri-apps/api/event'
+import { type } from '@tauri-apps/plugin-os'
+import { NetworkTypes, Utils } from 'easytier-frontend-lib'
 import { normalizeConfigSource } from './config_source'
-import { onNetworkInstanceUpdate } from './mobile_vpn'
+import { handleMobileTunDeviceError, onNetworkInstanceUpdate } from './mobile_vpn'
 
 interface StoredGuiConfig {
-    config: NetworkTypes.NetworkConfig
-    source?: unknown
+  config: NetworkTypes.NetworkConfig
+  source?: unknown
 }
 
 const EVENTS = Object.freeze({
-    SAVE_CONFIGS: 'save_configs',
-    PRE_RUN_NETWORK_INSTANCE: 'pre_run_network_instance',
-    POST_RUN_NETWORK_INSTANCE: 'post_run_network_instance',
-    VPN_SERVICE_STOP: 'vpn_service_stop',
-    DHCP_IP_CHANGED: 'dhcp_ip_changed',
-    PROXY_CIDRS_UPDATED: 'proxy_cidrs_updated',
-    EVENT_LAGGED: 'event_lagged',
-});
+  SAVE_CONFIGS: 'save_configs',
+  PRE_RUN_NETWORK_INSTANCE: 'pre_run_network_instance',
+  POST_RUN_NETWORK_INSTANCE: 'post_run_network_instance',
+  VPN_SERVICE_STOP: 'vpn_service_stop',
+  DHCP_IP_CHANGED: 'dhcp_ip_changed',
+  PROXY_CIDRS_UPDATED: 'proxy_cidrs_updated',
+  EVENT_LAGGED: 'event_lagged',
+  TUN_DEVICE_ERROR: 'tun_device_error',
+  /** Rust Android VPN watchdog tick (A3); fires even when WebView timers are frozen. */
+  VPN_WATCHDOG_TICK: 'vpn_watchdog_tick',
+})
 
 function onSaveConfigs(event: Event<StoredGuiConfig[]>) {
-    console.log(`Received event '${EVENTS.SAVE_CONFIGS}': ${event.payload}`);
-    localStorage.setItem(
-        'networkList',
-        JSON.stringify(event.payload.map(({ config, source }) => ({
-            config: NetworkTypes.normalizeNetworkConfig(config),
-            source: normalizeConfigSource(source),
-        }))),
-    );
+  console.log(`Received event '${EVENTS.SAVE_CONFIGS}': ${event.payload}`)
+  localStorage.setItem(
+    'networkList',
+    JSON.stringify(event.payload.map(({ config, source }) => ({
+      config: NetworkTypes.normalizeNetworkConfig(config),
+      source: normalizeConfigSource(source),
+    }))),
+  )
 }
 
 function normalizeInstanceIdPayload(payload: unknown): string {
-    if (typeof payload === 'string') {
-        return payload
-    }
+  if (typeof payload === 'string') {
+    return payload
+  }
 
-    if (payload && typeof payload === 'object') {
-        const uuid = payload as Partial<Utils.UUID>
-        if (
-            typeof uuid.part1 === 'number'
-            && typeof uuid.part2 === 'number'
-            && typeof uuid.part3 === 'number'
-            && typeof uuid.part4 === 'number'
-        ) {
-            return Utils.UuidToStr(uuid as Utils.UUID)
-        }
+  if (payload && typeof payload === 'object') {
+    const uuid = payload as Partial<Utils.UUID>
+    if (
+      typeof uuid.part1 === 'number'
+      && typeof uuid.part2 === 'number'
+      && typeof uuid.part3 === 'number'
+      && typeof uuid.part4 === 'number'
+    ) {
+      return Utils.UuidToStr(uuid as Utils.UUID)
     }
+  }
 
-    if (payload == null) {
-        return ''
-    }
+  if (payload == null) {
+    return ''
+  }
 
-    const fallback = String(payload)
-    return fallback === '[object Object]' ? '' : fallback
+  const fallback = String(payload)
+  return fallback === '[object Object]' ? '' : fallback
 }
 
 async function onPreRunNetworkInstance(event: Event<unknown>) {
-    const instanceId = normalizeInstanceIdPayload(event.payload)
-    console.log(`Received event '${EVENTS.PRE_RUN_NETWORK_INSTANCE}', raw payload:`, event.payload, 'normalized:', instanceId)
-    if (type() === 'android') {
-        await prepareVpnService(instanceId);
-    }
+  const instanceId = normalizeInstanceIdPayload(event.payload)
+  console.log(`Received event '${EVENTS.PRE_RUN_NETWORK_INSTANCE}', raw payload:`, event.payload, 'normalized:', instanceId)
+  if (type() === 'android') {
+    await prepareVpnService(instanceId)
+  }
 }
 
 async function onPostRunNetworkInstance(event: Event<unknown>) {
-    const instanceId = normalizeInstanceIdPayload(event.payload)
-    console.log(`Received event '${EVENTS.POST_RUN_NETWORK_INSTANCE}', raw payload:`, event.payload, 'normalized:', instanceId)
-    if (type() === 'android') {
-        await onNetworkInstanceChange(instanceId);
-    }
+  const instanceId = normalizeInstanceIdPayload(event.payload)
+  console.log(`Received event '${EVENTS.POST_RUN_NETWORK_INSTANCE}', raw payload:`, event.payload, 'normalized:', instanceId)
+  if (type() === 'android') {
+    await onNetworkInstanceChange(instanceId)
+  }
 }
 
 async function onVpnServiceStop(event: Event<unknown>) {
-    console.log(`Received event '${EVENTS.VPN_SERVICE_STOP}', raw payload:`, event.payload)
-    // VpnService 只存在于移动端。桌面禁用最后一个网络时也会收到这个事件（后端统一
-    // 发出），若不加判断会走到 syncMobileVpnService，去 invoke 桌面未注册的
-    // plugin:vpnservice|get_vpn_status，抛未捕获的 Promise 错误。
-    if (type() === 'android') {
-        await syncMobileVpnService();
-    }
+  console.log(`Received event '${EVENTS.VPN_SERVICE_STOP}', raw payload:`, event.payload)
+  // VpnService 只存在于移动端。桌面禁用最后一个网络时也会收到这个事件（后端统一
+  // 发出），若不加判断会走到 syncMobileVpnService，去 invoke 桌面未注册的
+  // plugin:vpnservice|get_vpn_status，抛未捕获的 Promise 错误。
+  if (type() === 'android') {
+    await syncMobileVpnService()
+  }
 }
 
 async function onDhcpIpChanged(event: Event<unknown>) {
-    const instanceId = normalizeInstanceIdPayload(event.payload)
-    console.log(`Received event '${EVENTS.DHCP_IP_CHANGED}' for instance: ${instanceId}`);
-    if (type() === 'android') {
-        await onNetworkInstanceUpdate(instanceId);
-    }
+  const instanceId = normalizeInstanceIdPayload(event.payload)
+  console.log(`Received event '${EVENTS.DHCP_IP_CHANGED}' for instance: ${instanceId}`)
+  if (type() === 'android') {
+    await onNetworkInstanceUpdate(instanceId)
+  }
 }
 
 async function onProxyCidrsUpdated(event: Event<unknown>) {
-    const instanceId = normalizeInstanceIdPayload(event.payload)
-    console.log(`Received event '${EVENTS.PROXY_CIDRS_UPDATED}' for instance: ${instanceId}`);
-    if (type() === 'android') {
-        await onNetworkInstanceUpdate(instanceId);
-    }
+  const instanceId = normalizeInstanceIdPayload(event.payload)
+  console.log(`Received event '${EVENTS.PROXY_CIDRS_UPDATED}' for instance: ${instanceId}`)
+  if (type() === 'android') {
+    await onNetworkInstanceUpdate(instanceId)
+  }
 }
 
 async function onEventLagged(event: Event<unknown>) {
-    if (type() === 'android') {
-        await onNetworkInstanceUpdate(normalizeInstanceIdPayload(event.payload));
-    }
+  if (type() === 'android') {
+    await onNetworkInstanceUpdate(normalizeInstanceIdPayload(event.payload))
+  }
+}
+
+/**
+ * The core lost its TUN while the native VpnService may still report running.
+ * Recovery is a full VPN rebuild, debounced inside mobile_vpn.
+ */
+async function onTunDeviceError(event: Event<unknown>) {
+  const instanceId = normalizeInstanceIdPayload(event.payload)
+  console.warn(`Received event '${EVENTS.TUN_DEVICE_ERROR}' for instance: ${instanceId}`)
+  if (type() === 'android') {
+    await handleMobileTunDeviceError(instanceId)
+  }
+}
+
+/**
+ * Native 30s watchdog (A3). Orphan VpnService stop already happened in Rust when
+ * needed; this tick drives start / config-drift reconcile whenever the WebView
+ * is awake enough to run listeners.
+ */
+async function onVpnWatchdogTick(event: Event<unknown>) {
+  if (type() !== 'android')
+    return
+  console.log(`Received event '${EVENTS.VPN_WATCHDOG_TICK}'`, event.payload)
+  await syncMobileVpnService()
 }
 
 export async function listenGlobalEvents() {
-    const unlisteners = [
-        await listen(EVENTS.SAVE_CONFIGS, onSaveConfigs),
-        await listen(EVENTS.PRE_RUN_NETWORK_INSTANCE, onPreRunNetworkInstance),
-        await listen(EVENTS.POST_RUN_NETWORK_INSTANCE, onPostRunNetworkInstance),
-        await listen(EVENTS.VPN_SERVICE_STOP, onVpnServiceStop),
-        await listen(EVENTS.DHCP_IP_CHANGED, onDhcpIpChanged),
-        await listen(EVENTS.PROXY_CIDRS_UPDATED, onProxyCidrsUpdated),
-        await listen(EVENTS.EVENT_LAGGED, onEventLagged),
-    ];
+  const unlisteners = [
+    await listen(EVENTS.SAVE_CONFIGS, onSaveConfigs),
+    await listen(EVENTS.PRE_RUN_NETWORK_INSTANCE, onPreRunNetworkInstance),
+    await listen(EVENTS.POST_RUN_NETWORK_INSTANCE, onPostRunNetworkInstance),
+    await listen(EVENTS.VPN_SERVICE_STOP, onVpnServiceStop),
+    await listen(EVENTS.DHCP_IP_CHANGED, onDhcpIpChanged),
+    await listen(EVENTS.PROXY_CIDRS_UPDATED, onProxyCidrsUpdated),
+    await listen(EVENTS.EVENT_LAGGED, onEventLagged),
+    await listen(EVENTS.TUN_DEVICE_ERROR, onTunDeviceError),
+    await listen(EVENTS.VPN_WATCHDOG_TICK, onVpnWatchdogTick),
+  ]
 
-    return () => {
-        unlisteners.forEach(unlisten => unlisten());
-    };
+  return () => {
+    unlisteners.forEach(unlisten => unlisten())
+  }
 }

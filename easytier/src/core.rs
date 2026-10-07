@@ -1297,9 +1297,11 @@ impl NetworkOptions {
 
         let mut f = cfg.get_flags();
         if let Some(default_protocol) = &self.default_protocol {
-            let normalized = default_protocol.trim().to_ascii_lowercase();
-            if !normalized.is_empty() {
-                f.default_protocol = normalized;
+            // normalize_default_protocol("") returns "tcp", so guard on the raw
+            // input: empty/blank means "not set", keep the existing flags.
+            if !default_protocol.trim().is_empty() {
+                f.default_protocol =
+                    easytier_core::config::normalize_default_protocol(default_protocol);
             }
         };
         if let Some(v) = self.disable_encryption {

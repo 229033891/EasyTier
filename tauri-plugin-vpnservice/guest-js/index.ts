@@ -15,6 +15,8 @@ export interface InvokeResponse {
 
 export interface StartVpnRequest {
   ipv4Addr?: string;
+  /** Instance virtual IPv6 with prefix, e.g. `fd00::1/64`. */
+  ipv6Addr?: string;
   routes?: string[];
   dns?: string;
   disallowedApplications?: string[];
@@ -26,6 +28,9 @@ export interface VpnStatusResponse {
   ipv4Addr?: string;
   routes?: string[];
   dns?: string;
+  /** Bumped on Wi-Fi/cellular switch; Rust/JS use it to force peer reconnect (A9). */
+  underlayNetworkGeneration?: number;
+  underlayNetworkId?: number;
 }
 
 export type VpnTileAction = 'start' | 'stop';

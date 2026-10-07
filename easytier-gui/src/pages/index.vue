@@ -1,20 +1,16 @@
 <script setup lang="ts">
-
-import { type } from '@tauri-apps/plugin-os'
+import type { MenuItem } from 'primevue/menuitem'
 import { invoke } from '@tauri-apps/api/core'
 import { writeText } from '@tauri-apps/plugin-clipboard-manager'
-import { open } from '@tauri-apps/plugin-shell'
+import { type } from '@tauri-apps/plugin-os'
 import { exit } from '@tauri-apps/plugin-process'
-import { I18nUtils, RemoteManagement, LoggingSettingsDialog, Utils, TOAST_LIFE, type LoggingSettingsApi } from 'easytier-frontend-lib'
-import type { MenuItem } from 'primevue/menuitem'
-import {
-  useTray,
-  setTrayRunState,
-  setTrayMenu,
-  buildTrayMenuItems,
-  showMainWindow,
-  registerTrayExitHandler,
-} from '~/composables/tray'
+import { open } from '@tauri-apps/plugin-shell'
+import { I18nUtils, type LoggingSettingsApi, LoggingSettingsDialog, RemoteManagement, TOAST_LIFE, Utils } from 'easytier-frontend-lib'
+import { useConfirm, useToast } from 'primevue'
+import ModeSwitcher from '~/components/ModeSwitcher.vue'
+import { clearLogFiles, getEasytierVersion, getLoggingLevel, getServiceStatus, listLogFiles, readLogFile, type ServiceStatus, setLoggingLevel } from '~/composables/backend'
+import { loadLastNetworkInstanceId, saveLastNetworkInstanceId } from '~/composables/config'
+
 import {
   consumePendingMobileVpnTileAction,
   initMobileVpnService,
@@ -22,23 +18,32 @@ import {
   syncMobileVpnService,
 } from '~/composables/mobile_vpn'
 import { executeVpnTileAction } from '~/composables/mobile_vpn_tile'
-import { GUIRemoteClient } from '~/modules/api'
-
-import { useToast, useConfirm } from 'primevue'
 import {
-  loadMode,
-  saveMode,
-  normalizeServiceRpcUrl,
   loadFileLogLevel,
-  saveFileLogLevel,
+  loadMode,
   type Mode,
+  normalizeServiceRpcUrl,
+  saveFileLogLevel,
+  saveMode,
 } from '~/composables/mode'
-import { saveLastNetworkInstanceId, loadLastNetworkInstanceId } from '~/composables/config'
-import ModeSwitcher from '~/components/ModeSwitcher.vue'
-import { getEasytierVersion, getServiceStatus, getLoggingLevel, listLogFiles, readLogFile, clearLogFiles, setLoggingLevel, type ServiceStatus } from '~/composables/backend'
+import {
+  buildTrayMenuItems,
+  registerTrayExitHandler,
+  setTrayMenu,
+  setTrayRunState,
+  showMainWindow,
+  useTray,
+} from '~/composables/tray'
+import { GUIRemoteClient } from '~/modules/api'
 
 const { t, locale } = useI18n()
 const confirm = useConfirm()
+// Declared up front because the functions below reference them: keeping the
+// declarations at the bottom tripped `ts/no-use-before-define` in 23 places.
+const toast = useToast()
+const remoteClient = computed(() => new GUIRemoteClient())
+const instanceId = ref<string | undefined>(undefined)
+const clientRunning = ref(false)
 const aboutVisible = ref(false)
 const modeDialogVisible = ref(false)
 const configServerConnected = ref(false)
@@ -705,18 +710,18 @@ async function initWithMode(mode: Mode) {
     }
   }
 
-  let url: string | undefined = undefined
+  let url: string | undefined
   let retrys = 1
   switch (mode.mode) {
     case 'remote':
       if (!mode.remote_rpc_address) {
         toast.add({ severity: 'error', summary: t('error'), detail: t('mode.remote_rpc_address_empty'), life: TOAST_LIFE.severe })
-        return initWithMode({ ...mode, mode: 'normal' });
+        return initWithMode({ ...mode, mode: 'normal' })
       }
       url = mode.remote_rpc_address
       // 远程是网络拨号（TCP + RPC 建链）：一两次连不上很常见（移动网络尤甚），给几次重试。
       retrys = 3
-      break;
+      break
     case 'service': {
       // Log level is owned by the Logging dialog preference; keep install args in sync.
       // Compare against preferred *before* writing mode.file_log_level — onMounted passes
@@ -726,11 +731,11 @@ async function initWithMode(mode: Mode) {
       const logLevelChanged = mode.file_log_level !== preferredLogLevel
       if (!mode.config_dir || !mode.file_log_dir || !mode.rpc_portal) {
         toast.add({ severity: 'error', summary: t('error'), detail: t('mode.service_config_empty'), life: TOAST_LIFE.severe })
-        return initWithMode({ ...mode, mode: 'normal' });
+        return initWithMode({ ...mode, mode: 'normal' })
       }
       let serviceStatus = await getServiceStatus()
       const coreVersion = await getEasytierVersion()
-      if (serviceStatus === "NotInstalled" || modeConfigChanged(mode) || mode.installed_core_version !== coreVersion || logLevelChanged) {
+      if (serviceStatus === 'NotInstalled' || modeConfigChanged(mode) || mode.installed_core_version !== coreVersion || logLevelChanged) {
         mode.config_server_url = mode.config_server_url || undefined
         await initService({
           config_dir: mode.config_dir,
@@ -744,18 +749,18 @@ async function initWithMode(mode: Mode) {
         serviceStatus = await getServiceStatus()
       }
       mode.file_log_level = preferredLogLevel
-      if (serviceStatus === "Stopped") {
+      if (serviceStatus === 'Stopped') {
         await setServiceStatus(true)
       }
       url = normalizeServiceRpcUrl(mode.rpc_portal)
       retrys = 5
-      break;
+      break
     }
     case 'normal':
-      url = mode.rpc_portal;
+      url = mode.rpc_portal
       // 带 portal 时同样要过网络；ring（无 portal）是进程内直连，一次即可。
       retrys = url ? 3 : 1
-      break;
+      break
   }
   try {
     await connectRpcWithRetries(mode.mode === 'normal', url, retrys)
@@ -840,14 +845,15 @@ onMounted(async () => {
   if (type() === 'android') {
     try {
       await initMobileVpnService()
-    } catch (e: any) {
-      console.error("easytier init vpn service failed", e)
+    }
+    catch (e: any) {
+      console.error('easytier init vpn service failed', e)
     }
   }
 
   cleanupFns.push(await listenGlobalEvents())
   currentMode.value = loadMode()
-  await initWithMode(currentMode.value);
+  await initWithMode(currentMode.value)
 
   if (type() === 'android') {
     setMobileVpnTileActionHandler(handleMobileVpnTileAction)
@@ -855,8 +861,9 @@ onMounted(async () => {
     try {
       await consumePendingMobileVpnTileAction()
       await syncMobileVpnService()
-    } catch (e: any) {
-      console.error("easytier sync vpn service failed", e)
+    }
+    catch (e: any) {
+      console.error('easytier sync vpn service failed', e)
     }
   }
 
@@ -868,17 +875,12 @@ onMounted(async () => {
   onUnmounted(() => {
     cleanupFns.forEach(unlisten => unlisten())
   })
-});
+})
 
-let toast = useToast()
 // Register before building the tray so early Exit always goes through exitApp
 // (stop service in service mode) instead of a bare process exit.
 registerTrayExitHandler(() => exitApp())
 useTray(true)
-
-const remoteClient = computed(() => new GUIRemoteClient());
-const instanceId = ref<string | undefined>(undefined);
-const clientRunning = ref(false);
 
 async function handleMobileVpnTileAction(action: 'start' | 'stop') {
   try {
@@ -918,9 +920,9 @@ async function handleMobileVpnTileAction(action: 'start' | 'stop') {
 
 watch(instanceId, (newVal) => {
   if (newVal) {
-    saveLastNetworkInstanceId(newVal);
+    saveLastNetworkInstanceId(newVal)
   }
-});
+})
 
 watch(clientRunning, async (newVal, oldVal) => {
   await setTrayRunState(!!newVal)
@@ -933,10 +935,11 @@ watch(clientRunning, async (newVal, oldVal) => {
     if (isModeSaving.value)
       return
     await reconnectClient()
-  } else if (newVal && !oldVal) {
-    const lastInstanceId = loadLastNetworkInstanceId();
+  }
+  else if (newVal && !oldVal) {
+    const lastInstanceId = loadLastNetworkInstanceId()
     if (lastInstanceId) {
-      instanceId.value = lastInstanceId;
+      instanceId.value = lastInstanceId
     }
   }
 })
@@ -947,9 +950,10 @@ onMounted(async () => {
   const timer = setInterval(async () => {
     try {
       clientRunning.value = await isClientRunning()
-    } catch (e) {
+    }
+    catch (e) {
       clientRunning.value = false
-      console.error("Error checking client running status", e)
+      console.error('Error checking client running status', e)
     }
     if (currentMode.value.mode === 'service' && !isModeSaving.value) {
       try {
@@ -1052,7 +1056,7 @@ const settings_menu = ref()
 const setting_menu_items: Ref<MenuItem[]> = ref([
   {
     label: () => {
-      const modeLabel = t('mode.' + currentMode.value.mode)
+      const modeLabel = t(`mode.${currentMode.value.mode}`)
       if (currentMode.value.mode === 'remote')
         return `${t('mode.runtime_settings')}: ${modeLabel}`
       return `${t('mode.runtime_settings')}: ${modeLabel} · ${configServerStatusLabel.value}`
@@ -1091,22 +1095,25 @@ const setting_menu_items: Ref<MenuItem[]> = ref([
 
 async function connectRpcClient(isNormalMode: boolean, url?: string) {
   await initRpcConnection(isNormalMode, url)
-  console.log("easytier rpc connection established, isNormalMode: ", isNormalMode)
+  console.log('easytier rpc connection established, isNormalMode: ', isNormalMode)
 }
-
 </script>
 
 <template>
   <div id="root" class="flex flex-col">
-    <Dialog v-model:visible="aboutVisible" modal :header="t('about.title')" :style="settingsDialogStyle"
-      class="app-dialog">
+    <Dialog
+      v-model:visible="aboutVisible" modal :header="t('about.title')" :style="settingsDialogStyle"
+      class="app-dialog"
+    >
       <About />
       <template #footer>
-        <Button :label="t('close')" icon="pi pi-times" @click="aboutVisible = false" text autofocus />
+        <Button :label="t('close')" icon="pi pi-times" text autofocus @click="aboutVisible = false" />
       </template>
     </Dialog>
-    <Dialog v-model:visible="modeDialogVisible" modal :header="t('mode.runtime_settings')"
-      :style="settingsDialogStyle" class="app-dialog">
+    <Dialog
+      v-model:visible="modeDialogVisible" modal :header="t('mode.runtime_settings')"
+      :style="settingsDialogStyle" class="app-dialog"
+    >
       <Message v-if="showAutostartHint" severity="info" :closable="false" class="mb-3">
         {{ t('mode.autostart_hint') }}
       </Message>
@@ -1118,19 +1125,25 @@ async function connectRpcClient(isNormalMode: boolean, url?: string) {
         :config-server-last-error="configServerDisplayError"
       />
       <template #footer>
-        <Button :label="t('web.common.cancel')" icon="pi pi-times" @click="modeDialogVisible = false" text
-          :disabled="isModeSaving" />
-        <Button :label="t('web.common.save')" icon="pi pi-save" @click="onModeSave" autofocus :loading="isModeSaving" />
+        <Button
+          :label="t('web.common.cancel')" icon="pi pi-times" text :disabled="isModeSaving"
+          @click="modeDialogVisible = false"
+        />
+        <Button :label="t('web.common.save')" icon="pi pi-save" autofocus :loading="isModeSaving" @click="onModeSave" />
       </template>
     </Dialog>
     <LoggingSettingsDialog v-model:visible="loggingDialogVisible" :api="loggingApi" />
 
-    <RemoteManagement v-if="clientRunning" class="flex-1 overflow-y-auto" :api="remoteClient"
-      :pause-auto-refresh="isModeSaving" v-model:instance-id="instanceId">
+    <RemoteManagement
+      v-if="clientRunning" v-model:instance-id="instanceId" class="flex-1 overflow-y-auto"
+      :api="remoteClient" :pause-auto-refresh="isModeSaving"
+    >
       <!-- 与共享底部栏同一行：样式与禁用网络完全一致 -->
       <template #footer-extra>
-        <Button :label="t('system_settings')" icon="pi pi-cog" iconPos="left" severity="secondary"
-          class="network-footer-btn network-footer-btn--muted" @click="settings_menu.toggle($event)" />
+        <Button
+          :label="t('system_settings')" icon="pi pi-cog" icon-pos="left" severity="secondary"
+          class="network-footer-btn network-footer-btn--muted" @click="settings_menu.toggle($event)"
+        />
         <Menu ref="settings_menu" :model="setting_menu_items" :popup="true" class="settings-popup">
           <template #item="{ item, props }">
             <a v-bind="props.action">
@@ -1143,17 +1156,22 @@ async function connectRpcClient(isNormalMode: boolean, url?: string) {
       </template>
     </RemoteManagement>
     <div v-else class="empty-state flex-1 flex flex-col items-center py-12">
-      <i class="pi pi-server text-5xl text-secondary mb-4 opacity-50"></i>
-      <div class="text-xl text-center font-medium mb-3">{{ t('client.not_running') }}
+      <i class="pi pi-server text-5xl text-secondary mb-4 opacity-50" />
+      <div class="text-xl text-center font-medium mb-3">
+        {{ t('client.not_running') }}
       </div>
-      <Button @click="reconnectClient" :loading="isModeSaving" :label="t('client.retry')" icon="pi pi-replay"
-        iconPos="left" />
+      <Button
+        :loading="isModeSaving" :label="t('client.retry')" icon="pi pi-replay" icon-pos="left"
+        @click="reconnectClient"
+      />
     </div>
 
     <!-- RPC 未连接时的兜底：保持设置可用 -->
     <div v-if="!clientRunning" class="bottom-action-bar">
-      <Button :label="t('system_settings')" icon="pi pi-cog" iconPos="left" severity="secondary" class="bottom-bar-btn"
-        @click="settings_menu.toggle($event)" />
+      <Button
+        :label="t('system_settings')" icon="pi pi-cog" icon-pos="left" severity="secondary" class="bottom-bar-btn"
+        @click="settings_menu.toggle($event)"
+      />
       <Menu ref="settings_menu" :model="setting_menu_items" :popup="true" class="settings-popup">
         <template #item="{ item, props }">
           <a v-bind="props.action">

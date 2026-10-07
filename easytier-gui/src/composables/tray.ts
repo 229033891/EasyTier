@@ -1,7 +1,7 @@
+import type { ServiceStatus } from '~/composables/backend'
 import { Menu, MenuItem, PredefinedMenuItem } from '@tauri-apps/api/menu'
 import { TrayIcon } from '@tauri-apps/api/tray'
 import { getCurrentWindow } from '@tauri-apps/api/window'
-import type { ServiceStatus } from '~/composables/backend'
 import pkg from '~/../package.json'
 
 const DEFAULT_TRAY_NAME = 'main'
@@ -92,7 +92,7 @@ export async function useTray(init: boolean = false) {
   return tray
 }
 
-export type TrayServiceLabels = {
+export interface TrayServiceLabels {
   status: string
   start: string
   stop: string
@@ -100,7 +100,7 @@ export type TrayServiceLabels = {
   uninstall: string
 }
 
-export type TrayMenuActions = {
+export interface TrayMenuActions {
   onExit: () => void | Promise<void>
   onStartService?: () => void | Promise<void>
   onStopService?: () => void | Promise<void>
@@ -108,7 +108,7 @@ export type TrayMenuActions = {
   onUninstallService?: () => void | Promise<void>
 }
 
-export type TrayMenuBuildOptions = {
+export interface TrayMenuBuildOptions {
   showLabel: string
   exitLabel: string
   serviceMode?: boolean

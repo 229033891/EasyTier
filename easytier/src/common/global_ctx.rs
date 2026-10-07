@@ -263,10 +263,13 @@ impl GlobalCtx {
 
     #[cfg(any(feature = "tun", test))]
     pub(crate) fn set_tun_device_error(&self, error: String) {
-        let previous = self.tun_device_name.lock().unwrap().clone();
-        self.set_tun_device_name(None);
+        // Keep `tun_device_name` so `cleanup_tun_leftovers` can still find the
+        // adapter after a runtime TUN failure (R6). create_dev failure paths
+        // call this before set_tun_device_ready, so the name stays None there.
+        // DNS exclude is dropped while the data plane is dead; shutdown cleanup
+        // still needs the ifname.
         #[cfg(feature = "dns-resolver")]
-        if let Some(prev) = previous {
+        if let Some(prev) = self.tun_device_name.lock().unwrap().clone() {
             crate::common::dns::unregister_dns_tun_exclude(&prev);
         }
         self.issue_event(GlobalCtxEvent::TunDeviceError(error));
@@ -425,7 +428,11 @@ pub mod tests {
         );
 
         global_ctx.set_tun_device_error("closed".to_string());
-        assert_eq!(global_ctx.get_tun_device_name(), None);
+        // Name must survive so Windows cleanup_tun_leftovers can still run (R6).
+        assert_eq!(
+            global_ctx.get_tun_device_name(),
+            Some("easytier0".to_string())
+        );
         assert_eq!(
             subscriber.recv().await.unwrap(),
             GlobalCtxEvent::TunDeviceError("closed".to_string())

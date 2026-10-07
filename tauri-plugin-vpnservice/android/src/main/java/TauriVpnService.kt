@@ -4,26 +4,40 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Intent
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
+import android.net.NetworkRequest
 import android.net.VpnService
 import android.os.Build
-import android.os.ParcelFileDescriptor
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
+import android.os.ParcelFileDescriptor
 import android.content.pm.ServiceInfo
+import android.util.Log
 import androidx.core.app.NotificationCompat
-import java.net.InetAddress
-import java.util.Arrays
 
 import app.tauri.plugin.JSObject
 
 class TauriVpnService : VpnService() {
     companion object {
+        private const val TAG = "TauriVpnService"
+        private const val UNDERLAY_DEBOUNCE_MS = 400L
+
         @JvmField var triggerCallback: (String, JSObject) -> Unit = { _, _ -> }
         @JvmField var self: TauriVpnService? = null
         @JvmField var ipv4Addr: String? = null
+        @JvmField var ipv6Addr: String? = null
         @JvmField var routes: Array<String> = emptyArray()
         @JvmField var dns: String? = null
 
+        /** Bumped on each underlay (Wi-Fi/cellular) change so Rust can force reconnect (A9). */
+        @JvmField @Volatile var underlayNetworkGeneration: Long = 0
+        @JvmField @Volatile var underlayNetworkId: Long = 0
+
         const val IPV4_ADDR = "IPV4_ADDR"
+        const val IPV6_ADDR = "IPV6_ADDR"
         const val ROUTES = "ROUTES"
         const val DNS = "DNS"
         const val DISALLOWED_APPLICATIONS = "DISALLOWED_APPLICATIONS"
@@ -31,37 +45,87 @@ class TauriVpnService : VpnService() {
 
         private const val NOTIFICATION_CHANNEL_ID = "easytier_vpn_channel"
         private const val NOTIFICATION_ID = 1356
+
+        /**
+         * App-initiated stop (startVpn "replace" / stopVpn). Unlike [onRevoke],
+         * this must not leave [self] null while the service instance is still
+         * alive and about to receive another [onStartCommand].
+         */
+        @JvmStatic
+        fun stopInternal() {
+            self?.stopInternalLocked()
+        }
     }
 
-    private lateinit var vpnInterface: ParcelFileDescriptor
+    private var vpnInterface: ParcelFileDescriptor? = null
+    private var networkCallback: ConnectivityManager.NetworkCallback? = null
+    private val mainHandler = Handler(Looper.getMainLooper())
+    private var pendingUnderlayUpdate: Runnable? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        println("vpn on start command ${intent?.getExtras()} $intent")
-        startVpnForegroundService()
-        var args = intent?.getExtras()
-        ipv4Addr = args?.getString(IPV4_ADDR)
-        routes = args?.getStringArray(ROUTES) ?: emptyArray()
-        dns = args?.getString(DNS)
+        // System restart after kill may deliver a null intent (START_STICKY).
+        // Do not establish a default-parameter orphan TUN — stop cleanly.
+        if (intent == null || intent.extras == null) {
+            Log.w(TAG, "vpn on start command with null intent/extras; stopping")
+            stopSelf()
+            return START_NOT_STICKY
+        }
 
-        vpnInterface = createVpnInterface(args)
-        println("vpn created ${vpnInterface.fd}")
+        Log.i(TAG, "vpn on start command ${intent.extras}")
+        // Re-bind self here: startVpn used to call onRevoke() which nulled self
+        // while this same service instance kept running (A1).
+        self = this
 
-        var event_data = JSObject()
-        event_data.put("fd", vpnInterface.fd)
-        triggerCallback("vpn_service_start", event_data)
-        EasyTierVpnTileService.requestStateUpdate(this)
+        try {
+            startVpnForegroundService()
+            val args = intent.extras
+            // Close any previous PFD before establish to avoid leaking tun fds (A2).
+            closeVpnInterface(emitStopEvent = false)
 
-        return START_STICKY
+            vpnInterface = createVpnInterface(args)
+            val fd = vpnInterface!!.fd
+            Log.i(TAG, "vpn created fd=$fd")
+
+            // Persist the values actually applied (not raw intent strings that
+            // may differ from createVpnInterface defaults).
+            ipv4Addr = args?.getString(IPV4_ADDR) ?: "10.126.126.1/24"
+            ipv6Addr = args?.getString(IPV6_ADDR)
+            routes = args?.getStringArray(ROUTES) ?: emptyArray()
+            dns = args?.getString(DNS)
+
+            registerUnderlayNetworkCallback()
+
+            val eventData = JSObject()
+            eventData.put("fd", fd)
+            triggerCallback("vpn_service_start", eventData)
+            EasyTierVpnTileService.requestStateUpdate(this)
+        } catch (e: Exception) {
+            Log.e(TAG, "vpn start failed", e)
+            closeVpnInterface(emitStopEvent = false)
+            clearStatus()
+            // startVpnForegroundService() already stopped MainForegroundService, so
+            // restore the no-TUN keepalive before dropping our own foreground state —
+            // otherwise a failed start leaves the process with no FGS at all (R2).
+            setMainForegroundServiceEnabled(true)
+            stopForeground(STOP_FOREGROUND_REMOVE)
+            self = null
+            stopSelf()
+            return START_NOT_STICKY
+        }
+
+        // VPN must be started by an explicit user/app action; sticky restart
+        // with a null intent used to create a wrong default TUN (A4).
+        return START_NOT_STICKY
     }
 
     override fun onCreate() {
         super.onCreate()
         self = this
-        println("vpn on create")
+        Log.i(TAG, "vpn on create")
     }
 
     override fun onDestroy() {
-        println("vpn on destroy")
+        Log.i(TAG, "vpn on destroy")
         disconnect()
         setMainForegroundServiceEnabled(true)
         stopForeground(STOP_FOREGROUND_REMOVE)
@@ -70,28 +134,148 @@ class TauriVpnService : VpnService() {
         super.onDestroy()
     }
 
+    /** System revoked VPN permission / another VPN took over. */
     override fun onRevoke() {
-        println("vpn on revoke")
+        Log.i(TAG, "vpn on revoke")
         disconnect()
         setMainForegroundServiceEnabled(true)
         stopForeground(STOP_FOREGROUND_REMOVE)
         self = null
         EasyTierVpnTileService.requestStateUpdate(this)
+        stopSelf()
         super.onRevoke()
     }
 
+    private fun stopInternalLocked() {
+        Log.i(TAG, "vpn stop internal")
+        disconnect()
+        setMainForegroundServiceEnabled(true)
+        stopForeground(STOP_FOREGROUND_REMOVE)
+        // Keep self until onDestroy / a fresh onStartCommand rebinds it.
+        EasyTierVpnTileService.requestStateUpdate(this)
+    }
+
     private fun disconnect() {
-        if (self == this && this::vpnInterface.isInitialized) {
-            triggerCallback("vpn_service_stop", JSObject())
-            vpnInterface.close()
-        }
+        unregisterUnderlayNetworkCallback()
+        closeVpnInterface(emitStopEvent = true)
         clearStatus()
+    }
+
+    private fun closeVpnInterface(emitStopEvent: Boolean) {
+        val iface = vpnInterface ?: return
+        vpnInterface = null
+        if (emitStopEvent) {
+            triggerCallback("vpn_service_stop", JSObject())
+        }
+        try {
+            iface.close()
+        } catch (e: Exception) {
+            Log.w(TAG, "vpn interface close failed", e)
+        }
     }
 
     private fun clearStatus() {
         ipv4Addr = null
+        ipv6Addr = null
         routes = emptyArray()
         dns = null
+    }
+
+    /**
+     * Bind VpnService traffic to the current default underlay and notify Rust/JS
+     * when Wi-Fi ↔ cellular (or similar) switches so peer conns can be rebuilt (A9).
+     */
+    private fun registerUnderlayNetworkCallback() {
+        unregisterUnderlayNetworkCallback()
+        val cm = getSystemService(ConnectivityManager::class.java) ?: return
+        val callback = object : ConnectivityManager.NetworkCallback() {
+            override fun onAvailable(network: Network) {
+                scheduleUnderlayUpdate(network)
+            }
+
+            override fun onCapabilitiesChanged(network: Network, networkCapabilities: NetworkCapabilities) {
+                scheduleUnderlayUpdate(network)
+            }
+
+            override fun onLost(network: Network) {
+                // Debounce: the next default network's onAvailable usually follows.
+                scheduleUnderlayUpdate(null)
+            }
+        }
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                cm.registerDefaultNetworkCallback(callback)
+            } else {
+                cm.registerNetworkCallback(NetworkRequest.Builder().build(), callback)
+            }
+            networkCallback = callback
+            cm.activeNetwork?.let { applyUnderlayNetwork(it, notifyChange = false) }
+        } catch (e: Exception) {
+            Log.w(TAG, "register underlay NetworkCallback failed", e)
+        }
+    }
+
+    private fun unregisterUnderlayNetworkCallback() {
+        pendingUnderlayUpdate?.let { mainHandler.removeCallbacks(it) }
+        pendingUnderlayUpdate = null
+        val callback = networkCallback ?: return
+        networkCallback = null
+        try {
+            getSystemService(ConnectivityManager::class.java)?.unregisterNetworkCallback(callback)
+        } catch (e: Exception) {
+            Log.w(TAG, "unregister underlay NetworkCallback failed", e)
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP_MR1) {
+            try {
+                setUnderlyingNetworks(null)
+            } catch (e: Exception) {
+                Log.w(TAG, "clear setUnderlyingNetworks failed", e)
+            }
+        }
+    }
+
+    private fun scheduleUnderlayUpdate(network: Network?) {
+        pendingUnderlayUpdate?.let { mainHandler.removeCallbacks(it) }
+        val task = Runnable { applyUnderlayNetwork(network, notifyChange = true) }
+        pendingUnderlayUpdate = task
+        mainHandler.postDelayed(task, UNDERLAY_DEBOUNCE_MS)
+    }
+
+    private fun applyUnderlayNetwork(network: Network?, notifyChange: Boolean) {
+        val cm = getSystemService(ConnectivityManager::class.java)
+        val net = network ?: cm?.activeNetwork
+        val netId = when {
+            net == null -> 0L
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.P -> net.networkHandle
+            else -> net.hashCode().toLong()
+        }
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP_MR1) {
+            try {
+                setUnderlyingNetworks(if (net != null) arrayOf(net) else null)
+            } catch (e: Exception) {
+                Log.w(TAG, "setUnderlyingNetworks failed", e)
+            }
+        }
+
+        val previousId = underlayNetworkId
+        underlayNetworkId = netId
+        if (!notifyChange) {
+            return
+        }
+        if (netId == previousId && underlayNetworkGeneration > 0L) {
+            return
+        }
+
+        underlayNetworkGeneration += 1
+        Log.i(
+            TAG,
+            "underlay network changed generation=$underlayNetworkGeneration networkId=$netId",
+        )
+        val data = JSObject()
+        data.put("generation", underlayNetworkGeneration)
+        data.put("networkId", netId)
+        triggerCallback("default_network_changed", data)
     }
 
     private fun startVpnForegroundService() {
@@ -137,14 +321,23 @@ class TauriVpnService : VpnService() {
     private fun setMainForegroundServiceEnabled(enabled: Boolean) {
         val intent = Intent().setClassName(packageName, "$packageName.MainForegroundService")
         if (!enabled) {
-            stopService(intent)
+            try {
+                stopService(intent)
+            } catch (e: Exception) {
+                Log.w(TAG, "stop MainForegroundService failed", e)
+            }
             return
         }
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            startForegroundService(intent)
-        } else {
-            startService(intent)
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                startForegroundService(intent)
+            } else {
+                startService(intent)
+            }
+        } catch (e: Exception) {
+            // API 31+ may reject background FGS starts from onDestroy/onRevoke.
+            Log.w(TAG, "start MainForegroundService failed", e)
         }
     }
 
@@ -160,36 +353,49 @@ class TauriVpnService : VpnService() {
     }
 
     private fun createVpnInterface(args: Bundle?): ParcelFileDescriptor {
-        var builder = Builder()
-                .setSession("TauriVpnService")
-                .setBlocking(false)
-        
-        var mtu = args?.getInt(MTU) ?: 1500
-        var ipv4Addr = args?.getString(IPV4_ADDR) ?: "10.126.126.1/24"
-        var dns: String? = args?.getString(DNS)
-        var routes = args?.getStringArray(ROUTES) ?: emptyArray()
-        var disallowedApplications = args?.getStringArray(DISALLOWED_APPLICATIONS) ?: emptyArray()
+        val builder = Builder()
+            .setSession("TauriVpnService")
+            .setBlocking(false)
 
-        println("vpn create vpn interface. mtu: $mtu, ipv4Addr: $ipv4Addr, dns:" +
-            "$dns, routes: ${java.util.Arrays.toString(routes)}," +
-            "disallowedApplications:  ${java.util.Arrays.toString(disallowedApplications)}")
+        val mtu = args?.getInt(MTU)?.takeIf { it > 0 } ?: 1500
+        val addr = args?.getString(IPV4_ADDR) ?: "10.126.126.1/24"
+        val ipv6WithPrefix = args?.getString(IPV6_ADDR)?.trim()?.takeIf { it.isNotEmpty() }
+        val dnsServer: String? = args?.getString(DNS)
+        val routeList = args?.getStringArray(ROUTES) ?: emptyArray()
+        val disallowedApplications = args?.getStringArray(DISALLOWED_APPLICATIONS) ?: emptyArray()
 
-        val ipParts = ipv4Addr.split("/")
+        Log.i(
+            TAG,
+            "vpn create interface mtu=$mtu ipv4Addr=$addr ipv6Addr=$ipv6WithPrefix dns=$dnsServer " +
+                "routes=${routeList.contentToString()} " +
+                "disallowed=${disallowedApplications.contentToString()}",
+        )
+
+        val ipParts = addr.split("/")
         if (ipParts.size != 2) throw IllegalArgumentException("Invalid IP addr string")
         builder.addAddress(ipParts[0], ipParts[1].toInt())
-        builder.addAddress("fd00::1", 128)
+
+        ipv6WithPrefix?.let { ipv6 ->
+            val v6Parts = ipv6.split("/")
+            if (v6Parts.size != 2) throw IllegalArgumentException("Invalid IPv6 addr string: $ipv6")
+            builder.addAddress(v6Parts[0], v6Parts[1].toInt())
+        }
 
         builder.setMtu(mtu)
-        dns?.let { builder.addDnsServer(it) }
+        dnsServer?.let { builder.addDnsServer(it) }
 
-        for (route in routes) {
-            val ipParts = route.split("/")
-            if (ipParts.size != 2) throw IllegalArgumentException("Invalid route cidr string")
-            builder.addRoute(ipParts[0], ipParts[1].toInt())
+        for (route in routeList) {
+            val parts = route.split("/")
+            if (parts.size != 2) throw IllegalArgumentException("Invalid route cidr string: $route")
+            builder.addRoute(parts[0], parts[1].toInt())
         }
-        
+
         for (app in disallowedApplications) {
-            builder.addDisallowedApplication(app)
+            try {
+                builder.addDisallowedApplication(app)
+            } catch (e: Exception) {
+                Log.w(TAG, "addDisallowedApplication failed for $app", e)
+            }
         }
 
         return builder.also {
@@ -197,7 +403,7 @@ class TauriVpnService : VpnService() {
                 it.setMetered(false)
             }
         }
-        .establish()
-        ?: throw IllegalStateException("Failed to init VpnService")
+            .establish()
+            ?: throw IllegalStateException("Failed to init VpnService")
     }
 }

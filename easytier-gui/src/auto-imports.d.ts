@@ -29,6 +29,7 @@ declare global {
   const effectScope: typeof import('vue')['effectScope']
   const executeVpnTileAction: typeof import('./composables/mobile_vpn_tile')['executeVpnTileAction']
   const formatMobileVpnRouteSync: typeof import('./composables/mobile_vpn')['formatMobileVpnRouteSync']
+  const formatVirtualIpv6ForVpn: typeof import('./composables/mobile_vpn')['formatVirtualIpv6ForVpn']
   const generateMenuItem: typeof import('./composables/tray')['generateMenuItem']
   const generateNetworkConfig: typeof import('./composables/backend')['generateNetworkConfig']
   const getActivePinia: typeof import('pinia')['getActivePinia']
@@ -44,6 +45,7 @@ declare global {
   const getServiceStatus: typeof import('./composables/backend')['getServiceStatus']
   const getVpnPortalInfo: typeof import('./composables/backend')['getVpnPortalInfo']
   const h: typeof import('vue')['h']
+  const handleMobileTunDeviceError: typeof import('./composables/mobile_vpn')['handleMobileTunDeviceError']
   const initMobileVpnService: typeof import('./composables/mobile_vpn')['initMobileVpnService']
   const initRpcConnection: typeof import('./composables/backend')['initRpcConnection']
   const initService: typeof import('./composables/backend')['initService']
@@ -72,6 +74,7 @@ declare global {
   const normalizeConfigSource: typeof import('./composables/config_source')['normalizeConfigSource']
   const normalizeRouteList: typeof import('./composables/mobile_vpn')['normalizeRouteList']
   const normalizeServiceRpcUrl: typeof import('./composables/mode')['normalizeServiceRpcUrl']
+  const notifyUnderlayNetworkChanged: typeof import('./composables/backend')['notifyUnderlayNetworkChanged']
   const onActivated: typeof import('vue')['onActivated']
   const onBeforeMount: typeof import('vue')['onBeforeMount']
   const onBeforeRouteLeave: typeof import('vue-router')['onBeforeRouteLeave']
@@ -183,6 +186,7 @@ declare module 'vue' {
     readonly effectScope: UnwrapRef<typeof import('vue')['effectScope']>
     readonly executeVpnTileAction: UnwrapRef<typeof import('./composables/mobile_vpn_tile')['executeVpnTileAction']>
     readonly formatMobileVpnRouteSync: UnwrapRef<typeof import('./composables/mobile_vpn')['formatMobileVpnRouteSync']>
+    readonly formatVirtualIpv6ForVpn: UnwrapRef<typeof import('./composables/mobile_vpn')['formatVirtualIpv6ForVpn']>
     readonly generateMenuItem: UnwrapRef<typeof import('./composables/tray')['generateMenuItem']>
     readonly generateNetworkConfig: UnwrapRef<typeof import('./composables/backend')['generateNetworkConfig']>
     readonly getActivePinia: UnwrapRef<typeof import('pinia')['getActivePinia']>
@@ -198,6 +202,7 @@ declare module 'vue' {
     readonly getServiceStatus: UnwrapRef<typeof import('./composables/backend')['getServiceStatus']>
     readonly getVpnPortalInfo: UnwrapRef<typeof import('./composables/backend')['getVpnPortalInfo']>
     readonly h: UnwrapRef<typeof import('vue')['h']>
+    readonly handleMobileTunDeviceError: UnwrapRef<typeof import('./composables/mobile_vpn')['handleMobileTunDeviceError']>
     readonly initMobileVpnService: UnwrapRef<typeof import('./composables/mobile_vpn')['initMobileVpnService']>
     readonly initRpcConnection: UnwrapRef<typeof import('./composables/backend')['initRpcConnection']>
     readonly initService: UnwrapRef<typeof import('./composables/backend')['initService']>
@@ -226,6 +231,7 @@ declare module 'vue' {
     readonly normalizeConfigSource: UnwrapRef<typeof import('./composables/config_source')['normalizeConfigSource']>
     readonly normalizeRouteList: UnwrapRef<typeof import('./composables/mobile_vpn')['normalizeRouteList']>
     readonly normalizeServiceRpcUrl: UnwrapRef<typeof import('./composables/mode')['normalizeServiceRpcUrl']>
+    readonly notifyUnderlayNetworkChanged: UnwrapRef<typeof import('./composables/backend')['notifyUnderlayNetworkChanged']>
     readonly onActivated: UnwrapRef<typeof import('vue')['onActivated']>
     readonly onBeforeMount: UnwrapRef<typeof import('vue')['onBeforeMount']>
     readonly onBeforeRouteLeave: UnwrapRef<typeof import('vue-router')['onBeforeRouteLeave']>

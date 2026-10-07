@@ -14,11 +14,16 @@ pub mod dns;
 mod encryption;
 pub mod gateway;
 pub mod peers;
+pub mod protocol_preference;
 pub mod runtime;
 pub mod toml;
 
 pub use dns::{DnsConfig, DnsForwarder, DnsHostEntry};
 pub use encryption::EncryptionAlgorithm;
+pub use protocol_preference::{
+    normalize_default_protocol, parse_protocol_preference, preference_candidate_urls,
+    protocol_preference_sort_key, rewrite_url_scheme, PREFERENCE_SCHEMES, REWRITEABLE_SCHEMES,
+};
 
 pub(crate) const DEFAULT_UDP_STUN_SERVERS: &[&str] = &[
     "txt:stun.easytier.cn",

@@ -221,10 +221,13 @@ enum ConnectorStatus {
 }
 
 message Connector {
+  // Configured peer URL (stable identity for add/remove).
   common.Url url = 1;
   ConnectorStatus status = 2;
   // Tip-only fallback_index / is_active_fallback (removed); never reuse.
   reserved 3, 4;
+  // Winning dial URL when connected via scheme failover (P-AUTO.L1); unset if same as url or unknown.
+  optional common.Url active_url = 5;
 }
 
 message ListConnectorRequest { InstanceIdentifier instance = 1; }

@@ -206,7 +206,9 @@ latency: Latency
 path_quality: Quality
 path_quality_help: |-
   Composite same-peer path score (lower is better: RTT + loss + jitter).
-  ★ is the current default_conn; · are hot standbys. `!` means loss exceeded the fuse; `+N` is extra standby count.
+  ★ is the active send path (default_conn); · / +N are hot standbys for failover — not bandwidth aggregation.
+  Flows spread across tunnels only when Bonded Link Count > 1 and the cell shows bond×N.
+  `!` means loss exceeded the fuse.
 upload_bytes: Upload
 download_bytes: Download
 loss_rate: Loss Rate
@@ -437,11 +439,12 @@ disable_encryption_algo_conflict_help: |-
   Encryption algorithm has no effect while encryption is disabled. Values are not rewritten.
 disable_encryption_algo_hint: Encryption is disabled; algorithm selection is ignored.
 
-default_protocol: Default Connection Protocol
+default_protocol: Connection Protocol Preference
 default_protocol_help: |-
-  Preferred underlay scheme when establishing a direct peer connection. Options: TCP (default) or UDP.
-  Useful when one transport is known to be more stable, or when you want to prefer UDP for lower latency.
-  Note: the peer must expose a matching listener; if the preferred protocol fails, other available schemes are still tried.
+  Ordered protocol list (stored as CSV). Direct connect tries the peer's advertised listeners in this order.
+  Manual peer URLs fail over by rewriting among tcp/udp/ws/wss/quic only (host and ports kept; never forced to 443). wg and faketcp stay in the list for Direct sort but are never rewritten on manual peers.
+  Default is tcp only. Example wss,tcp,quic,udp: if UDP is blocked, TCP/WSS from the list are still tried.
+  Selection order is try order; use the numbered controls below to fine-tune.
 
 encryption_algorithm: Encryption Algorithm
 encryption_algorithm_help: |-
@@ -574,7 +577,8 @@ instance_recv_bps_limit_placeholder: Leave blank for no limit
 
 peer_link_bond_count: Bonded Link Count
 peer_link_bond_count_help: |-
-  Target number of PeerConns sending in parallel between a peer pair. 1 (default) keeps single-link send; 2–5 spreads different flows (inner IP 5-tuple) across tunnels to beat per-connection caps (best for multi-user / multi-flow; a single RDP flow still capped by one tunnel).
+  Target number of PeerConns sending in parallel between a peer pair. 1 (default) uses a single default_conn: extra live tunnels are hot standbys for failover, not stacked bandwidth.
+  2–5 spreads different flows (inner IP 5-tuple) across tunnels to beat per-connection caps (best for multi-user / multi-flow; a single RDP flow still capped by one tunnel).
   Only effective with multiple live tunnels; max 5.
 peer_link_bond_count_placeholder: Leave blank as default 1
 peer_link_replica_fill_max: Same-Class Fill Limit

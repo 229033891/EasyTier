@@ -661,7 +661,19 @@ const eventLogContent = computed(() => {
               header-class="peer-col-secondary" body-class="peer-col-secondary" />
             <Column :field="lossRate" :header="t('loss_rate')"
               header-class="peer-col-secondary" body-class="peer-col-secondary" />
-            <Column :header="t('path_quality')">
+            <Column>
+              <template #header>
+                <span class="path-quality-header">
+                  {{ t('path_quality') }}
+                  <i
+                    class="pi pi-question-circle config-help-tip"
+                    tabindex="0"
+                    role="img"
+                    :aria-label="t('path_quality')"
+                    v-tooltip.top="{ value: t('path_quality_help'), escape: false }"
+                  />
+                </span>
+              </template>
               <template #body="slotProps">
                 <span
                   class="path-quality-cell"
@@ -1150,7 +1162,8 @@ const eventLogContent = computed(() => {
 }
 
 .peer-addr-cell,
-.route-cost-cell {
+.route-cost-cell,
+.path-quality-cell {
   display: inline-block;
   max-width: 16rem;
   overflow: hidden;
@@ -1158,6 +1171,12 @@ const eventLogContent = computed(() => {
   white-space: nowrap;
   vertical-align: bottom;
   font-variant-numeric: tabular-nums;
+}
+
+.path-quality-header {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
 }
 
 .peer-table-scroll {

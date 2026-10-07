@@ -3,6 +3,7 @@ package com.plugin.vpnservice
 import android.app.Activity
 import android.content.Intent
 import android.net.VpnService
+import android.util.Log
 import androidx.activity.result.ActivityResult
 import app.tauri.annotation.Command
 import app.tauri.annotation.ActivityCallback
@@ -22,6 +23,7 @@ class PingArgs {
 @InvokeArg
 class StartVpnArgs {
     var ipv4Addr: String? = null
+    var ipv6Addr: String? = null
     var routes: Array<String> = emptyArray()
     var dns: String? = null
     var disallowedApplications: Array<String> = emptyArray()
@@ -31,10 +33,24 @@ class StartVpnArgs {
 @TauriPlugin
 class VpnServicePlugin(private val activity: Activity) : Plugin(activity) {
     companion object {
+        private const val TAG = "VpnServicePlugin"
+
+        @Volatile
+        private var tileActionReady = false
+
         @Volatile
         private var tileActionCallback: (String) -> Boolean = { false }
 
-        fun dispatchTileAction(action: String): Boolean = tileActionCallback(action)
+        /**
+         * Returns false when the WebView/plugin is not ready so the tile can
+         * fall back to opening the App (A14).
+         */
+        fun dispatchTileAction(action: String): Boolean {
+            if (!tileActionReady) {
+                return false
+            }
+            return tileActionCallback(action)
+        }
     }
 
     private val implementation = Example()
@@ -46,15 +62,17 @@ class VpnServicePlugin(private val activity: Activity) : Plugin(activity) {
     }
 
     override fun load(webView: WebView) {
-        println("load vpn service plugin")
+        Log.i(TAG, "load vpn service plugin")
         TauriVpnService.triggerCallback = { event, data ->
-            println("vpn: triggerCallback $event $data")
+            Log.i(TAG, "vpn triggerCallback $event $data")
             trigger(event, data)
         }
         tileActionCallback = tileActionHandler
+        tileActionReady = true
     }
 
     override fun onDestroy() {
+        tileActionReady = false
         if (tileActionCallback === tileActionHandler) {
             tileActionCallback = { false }
         }
@@ -73,7 +91,7 @@ class VpnServicePlugin(private val activity: Activity) : Plugin(activity) {
     @Command
     fun prepareVpn(invoke: Invoke) {
         activity.runOnUiThread {
-            println("prepare vpn in plugin")
+            Log.i(TAG, "prepare vpn")
             val it = VpnService.prepare(activity)
             if (it != null) {
                 startActivityForResult(invoke, it, "onPrepareVpnResult")
@@ -96,27 +114,33 @@ class VpnServicePlugin(private val activity: Activity) : Plugin(activity) {
     fun startVpn(invoke: Invoke) {
         val args = invoke.parseArgs(StartVpnArgs::class.java)
         activity.runOnUiThread {
-            println("start vpn in plugin, args: $args")
+            Log.i(TAG, "start vpn args=$args")
 
-            TauriVpnService.self?.onRevoke()
-
-            val it = VpnService.prepare(activity)
             val ret = JSObject()
-            if (it != null) {
+            // Check consent before replacing anything: if the permission was
+            // revoked, prepare() is non-null and we must not tear down the VPN
+            // that is still running (R5).
+            if (VpnService.prepare(activity) != null) {
                 ret.put("errorMsg", "need_prepare")
-            } else {
-                val intent = Intent(activity, TauriVpnService::class.java)
-                intent.putExtra(TauriVpnService.IPV4_ADDR, args.ipv4Addr)
-                intent.putExtra(TauriVpnService.ROUTES, args.routes)
-                intent.putExtra(TauriVpnService.DNS, args.dns)
-                intent.putExtra(TauriVpnService.DISALLOWED_APPLICATIONS, args.disallowedApplications)
-                intent.putExtra(TauriVpnService.MTU, args.mtu)
+                invoke.resolve(ret)
+                return@runOnUiThread
+            }
 
-                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
-                    activity.startForegroundService(intent)
-                } else {
-                    activity.startService(intent)
-                }
+            // App-initiated replace: close previous PFD without poisoning self (A1).
+            TauriVpnService.stopInternal()
+
+            val intent = Intent(activity, TauriVpnService::class.java)
+            intent.putExtra(TauriVpnService.IPV4_ADDR, args.ipv4Addr)
+            intent.putExtra(TauriVpnService.IPV6_ADDR, args.ipv6Addr)
+            intent.putExtra(TauriVpnService.ROUTES, args.routes)
+            intent.putExtra(TauriVpnService.DNS, args.dns)
+            intent.putExtra(TauriVpnService.DISALLOWED_APPLICATIONS, args.disallowedApplications)
+            intent.putExtra(TauriVpnService.MTU, args.mtu)
+
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                activity.startForegroundService(intent)
+            } else {
+                activity.startService(intent)
             }
             invoke.resolve(ret)
         }
@@ -125,10 +149,10 @@ class VpnServicePlugin(private val activity: Activity) : Plugin(activity) {
     @Command
     fun stopVpn(invoke: Invoke) {
         activity.runOnUiThread {
-            println("stop vpn in plugin")
-            TauriVpnService.self?.onRevoke()
+            Log.i(TAG, "stop vpn")
+            TauriVpnService.stopInternal()
             activity.stopService(Intent(activity, TauriVpnService::class.java))
-            println("stop vpn in plugin end")
+            Log.i(TAG, "stop vpn end")
             invoke.resolve(JSObject())
         }
     }
@@ -146,6 +170,8 @@ class VpnServicePlugin(private val activity: Activity) : Plugin(activity) {
         }
         ret.put("routes", routes)
         ret.put("dns", TauriVpnService.dns)
+        ret.put("underlayNetworkGeneration", TauriVpnService.underlayNetworkGeneration)
+        ret.put("underlayNetworkId", TauriVpnService.underlayNetworkId)
         invoke.resolve(ret)
     }
 

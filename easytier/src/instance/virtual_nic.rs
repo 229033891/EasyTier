@@ -964,6 +964,7 @@ impl NicCtx {
         // read from nic and write to corresponding tunnel
         let packet_plane = self.packet_plane.clone();
         let close_notifier = self.close_notifier.clone();
+        let global_ctx = self.global_ctx.clone();
         self.tasks.spawn(async move {
             while let Some(ret) = stream.next().await {
                 if ret.is_err() {
@@ -972,6 +973,9 @@ impl NicCtx {
                 }
                 Self::do_forward_nic_to_peers(ret.unwrap(), packet_plane.as_ref()).await;
             }
+            // Surface TUN death so runtime/UI can recover (A7). Intentional
+            // JoinSet abort on shutdown cancels before this path runs.
+            global_ctx.set_tun_device_error("nic closed when recving from it".to_string());
             close_notifier.notify_one();
             tracing::error!("nic closed when recving from it");
         });
@@ -982,9 +986,11 @@ impl NicCtx {
     fn do_forward_peers_to_nic(&mut self, mut sink: Pin<Box<dyn ZCPacketSink>>) {
         let channel = self.peer_packet_receiver.clone();
         let close_notifier = self.close_notifier.clone();
+        let global_ctx = self.global_ctx.clone();
         self.tasks.spawn(async move {
             // unlock until coroutine finished
             let mut channel = channel.lock().await;
+            let mut consecutive_sink_errors = 0u32;
             while let Some(packet) = channel.recv().await {
                 tracing::trace!(
                     "[USER_PACKET] forward packet from peers to nic. packet: {:?}",
@@ -992,12 +998,32 @@ impl NicCtx {
                 );
                 let ret = sink.send(packet.into_tun_packet()).await;
                 if ret.is_err() {
-                    tracing::error!(?ret, "do_forward_tunnel_to_nic sink error");
+                    consecutive_sink_errors = consecutive_sink_errors.saturating_add(1);
+                    tracing::error!(
+                        ?ret,
+                        consecutive_sink_errors,
+                        "do_forward_tunnel_to_nic sink error"
+                    );
+                    // Fuse after repeated failures instead of spinning forever (A7).
+                    if consecutive_sink_errors >= 3 {
+                        break;
+                    }
+                } else {
+                    consecutive_sink_errors = 0;
                 }
+            }
+            if consecutive_sink_errors > 0 {
+                global_ctx.set_tun_device_error("nic closed when sending to it".to_string());
             }
             close_notifier.notify_one();
             tracing::error!("nic closed when sending to it");
         });
+    }
+
+    /// Abort forwarding tasks and wait until AsyncFd teardown completes (A10).
+    pub async fn shutdown(mut self) {
+        self.tasks.abort_all();
+        while self.tasks.join_next().await.is_some() {}
     }
 
     #[cfg(target_os = "windows")]
@@ -2140,19 +2166,14 @@ impl NicCtx {
 
     #[cfg(mobile)]
     pub async fn run_for_mobile(&mut self, tun_fd: std::os::fd::RawFd) -> Result<(), Error> {
+        // Do not emit TunDeviceError here: `tun_mobile` may retry transient
+        // attach races (R7) and only surfaces a final failure to the GUI.
         let tunnel = {
             let mut nic = self.nic.lock().await;
-            match nic.create_dev_for_mobile(tun_fd).await {
-                Ok(ret) => {
-                    self.global_ctx
-                        .set_tun_device_ready(nic.ifname().to_string());
-                    ret
-                }
-                Err(err) => {
-                    self.global_ctx.set_tun_device_error(err.to_string());
-                    return Err(err);
-                }
-            }
+            let ret = nic.create_dev_for_mobile(tun_fd).await?;
+            self.global_ctx
+                .set_tun_device_ready(nic.ifname().to_string());
+            ret
         };
 
         let (stream, sink) = tunnel.split();

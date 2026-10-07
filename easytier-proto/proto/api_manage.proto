@@ -200,6 +200,8 @@ message MyNodeInfo {
   repeated common.Url listeners = 6;
   optional string vpn_portal_cfg = 7 [deprecated = true];
   uint32 peer_id = 8;
+  // Configured virtual IPv6 on this node (for Android VpnService TUN addressing).
+  optional common.Ipv6Inet virtual_ipv6 = 9;
 }
 
 message NetworkInstanceRunningInfo {

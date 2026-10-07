@@ -1,10 +1,14 @@
 import EasyTierFrontendLib, { I18nUtils } from 'easytier-frontend-lib'
-import { createRouter, createWebHistory } from 'vue-router/auto'
-import { routes } from 'vue-router/auto-routes'
-import App from '~/App.vue'
-
-import 'easytier-frontend-lib/style.css'
 import { ConfirmationService, DialogService, ToastService } from 'primevue'
+import { createRouter, createWebHistory } from 'vue-router/auto'
+// `vue-router/auto-routes` is a virtual module (unplugin-vue-router) that only
+// happens to resolve to the same file as `vue-router/auto` for ESLint's node
+// resolver. They must stay two separate imports — see the eslint.config.js
+// override for this file.
+import { routes } from 'vue-router/auto-routes'
+
+import App from '~/App.vue'
+import 'easytier-frontend-lib/style.css'
 import '~/styles.css'
 
 if (import.meta.env.PROD) {

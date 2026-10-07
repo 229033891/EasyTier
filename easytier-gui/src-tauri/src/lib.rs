@@ -3,6 +3,9 @@
 
 mod elevate;
 
+#[cfg(target_os = "android")]
+mod android_vpn_watchdog;
+
 use anyhow::Context;
 #[cfg(target_os = "android")]
 use easytier::instance::factory::subscribe_native_instance_event;
@@ -248,19 +251,47 @@ async fn get_logging_level() -> Result<String, String> {
         .map_err(|e| e.to_string())
 }
 
+/// Android A9: underlay (Wi-Fi/cellular) changed — close peer conns so connectors redial.
+#[cfg(target_os = "android")]
 #[tauri::command]
-async fn set_tun_fd(fd: i32) -> Result<(), String> {
+async fn notify_underlay_network_changed(generation: Option<i64>) -> Result<usize, String> {
+    if let Some(gen) = generation {
+        // Keep watchdog seed in sync so the next 30s tick does not double-fire.
+        android_vpn_watchdog::note_underlay_generation(gen);
+    }
+    android_vpn_watchdog::reconnect_peers_after_underlay_change().await
+}
+
+#[tauri::command]
+async fn set_tun_fd(fd: i32, instance_id: Option<String>) -> Result<(), String> {
     let Some(instance_manager) = INSTANCE_MANAGER.read().await.clone() else {
         return Err("set_tun_fd is not supported in remote mode".to_string());
     };
-    if let Some(uuid) = get_client_manager!()?
-        .get_enabled_instances_with_tun_ids()
-        .next()
-    {
-        instance_manager
-            .attach_tun_fd(uuid, fd)
-            .map_err(|e| e.to_string())?;
-    }
+    let uuid = if let Some(id) = instance_id {
+        id.parse::<uuid::Uuid>()
+            .map_err(|e| format!("invalid instance_id for set_tun_fd: {e}"))?
+    } else {
+        // `get_client_manager!()` yields a guard temporary; the iterator borrows
+        // it, so collect inside the same statement instead of holding the
+        // iterator (E0716 otherwise).
+        let ids: Vec<uuid::Uuid> = get_client_manager!()?
+            .get_enabled_instances_with_tun_ids()
+            .collect();
+        let Some(first) = ids.first().copied() else {
+            // Do not silently succeed — frontend would keep running=true (A6).
+            return Err("no enabled TUN instance to attach fd".to_string());
+        };
+        if ids.len() > 1 {
+            tracing::warn!(
+                %first,
+                "multiple TUN instances enabled; attaching fd to the first one"
+            );
+        }
+        first
+    };
+    instance_manager
+        .attach_tun_fd(uuid, fd)
+        .map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -1256,6 +1287,9 @@ pub fn run_gui() -> std::process::ExitCode {
                 .icon_as_template(true)
                 .build(app)?;
 
+            #[cfg(target_os = "android")]
+            android_vpn_watchdog::start(app.handle().clone());
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -1268,6 +1302,8 @@ pub fn run_gui() -> std::process::ExitCode {
             set_logging_level,
             get_logging_level,
             set_tun_fd,
+            #[cfg(target_os = "android")]
+            notify_underlay_network_changed,
             easytier_version,
             set_dock_visibility,
             list_network_instance_ids,

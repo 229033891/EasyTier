@@ -11,7 +11,10 @@ import {
   DEFAULT_NETWORK_CONFIG,
   emptyDnsConfig,
   NetworkConfig,
+  DEFAULT_PROTOCOL_SCHEMES,
+  normalizeDefaultProtocol,
   normalizeNetworkConfig,
+  parseDefaultProtocolList,
   removeRow,
   type DnsConfig,
   type VpnPortalClientConfig,
@@ -343,18 +346,40 @@ const encryptionAlgoOptions = [
   { value: 'xor', label: 'xor' },
 ]
 
-/** Direct-connect scheme preference (`flags.default_protocol`); UDP is also sorted ahead of other non-default schemes. */
-const defaultProtocolOptions = computed(() => {
-  const options = [
-    { value: 'tcp', label: 'TCP' },
-    { value: 'udp', label: 'UDP' },
-  ]
-  const current = curNetwork.value.default_protocol
-  if (current && !options.some((o) => o.value === current)) {
-    options.unshift({ value: current, label: current })
-  }
-  return options
+/** Ordered scheme preference (`flags.default_protocol` CSV); selection order = try order. */
+const defaultProtocolOptions = DEFAULT_PROTOCOL_SCHEMES.map(value => ({
+  value,
+  label: value.toUpperCase(),
+}))
+
+/**
+ * MultiSelect does not reliably preserve click order. Keep prior preference order
+ * for still-selected schemes; append newly selected in catalog order; reorder only
+ * via moveDefaultProtocol.
+ */
+const defaultProtocolList = computed({
+  get: () => parseDefaultProtocolList(curNetwork.value.default_protocol),
+  set: (list: string[]) => {
+    const selected = new Set((list?.length ? list : ['tcp']).map(s => s.toLowerCase()))
+    const prev = parseDefaultProtocolList(curNetwork.value.default_protocol)
+    const kept = prev.filter(scheme => selected.has(scheme))
+    const added = DEFAULT_PROTOCOL_SCHEMES.filter(
+      scheme => selected.has(scheme) && !kept.includes(scheme),
+    )
+    curNetwork.value.default_protocol = normalizeDefaultProtocol([...kept, ...added].join(','))
+  },
 })
+
+function moveDefaultProtocol(index: number, delta: number) {
+  const list = [...defaultProtocolList.value]
+  const next = index + delta
+  if (next < 0 || next >= list.length)
+    return
+  const tmp = list[index]!
+  list[index] = list[next]!
+  list[next] = tmp
+  curNetwork.value.default_protocol = normalizeDefaultProtocol(list.join(','))
+}
 
 /** CompressionAlgoPb 取值来自 proto：None = 1、Zstd = 2、Invalid = 0（前端不展示 Invalid，未设置时按 None 处理） */
 const dataCompressAlgoOptions = [
@@ -886,9 +911,51 @@ function removeVpnPortalClient(index: number) {
                       <i class="pi pi-question-circle config-help-tip" tabindex="0"
                         v-tooltip.top="{ value: t('default_protocol_help'), escape: false }" role="img"></i>
                     </div>
-                    <Select id="default_protocol" v-model="curNetwork.default_protocol"
-                      :options="defaultProtocolOptions" option-label="label" option-value="value" fluid
-                      class="et-select" />
+                    <MultiSelect
+                      id="default_protocol"
+                      v-model="defaultProtocolList"
+                      :options="defaultProtocolOptions"
+                      option-label="label"
+                      option-value="value"
+                      display="chip"
+                      :show-toggle-all="false"
+                      fluid
+                      class="et-select"
+                    />
+                    <div
+                      v-if="defaultProtocolList.length > 0"
+                      class="default-protocol-order flex flex-col gap-1 mt-1"
+                    >
+                      <div
+                        v-for="(scheme, index) in defaultProtocolList"
+                        :key="scheme"
+                        class="flex items-center gap-1"
+                      >
+                        <span class="text-xs shrink-0">{{ index + 1 }}. {{ scheme.toUpperCase() }}</span>
+                        <Button
+                          type="button"
+                          icon="pi pi-arrow-up"
+                          size="small"
+                          severity="secondary"
+                          text
+                          rounded
+                          :disabled="index === 0 || defaultProtocolList.length < 2"
+                          :aria-label="`move ${scheme} up`"
+                          @click="moveDefaultProtocol(index, -1)"
+                        />
+                        <Button
+                          type="button"
+                          icon="pi pi-arrow-down"
+                          size="small"
+                          severity="secondary"
+                          text
+                          rounded
+                          :disabled="index === defaultProtocolList.length - 1 || defaultProtocolList.length < 2"
+                          :aria-label="`move ${scheme} down`"
+                          @click="moveDefaultProtocol(index, 1)"
+                        />
+                      </div>
+                    </div>
                   </div>
 
                   <div class="config-compact-field">

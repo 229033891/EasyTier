@@ -1,5 +1,6 @@
+import type { Api } from 'easytier-frontend-lib'
 import { invoke } from '@tauri-apps/api/core'
-import { Api, NetworkTypes } from 'easytier-frontend-lib'
+import { NetworkTypes } from 'easytier-frontend-lib'
 import { type ConfigSource, normalizeConfigSource } from './config_source'
 
 type NetworkConfig = NetworkTypes.NetworkConfig
@@ -15,7 +16,7 @@ interface ServiceOptions {
   secure_mode?: boolean
 }
 
-export type ServiceStatus = "Running" | "Stopped" | "NotInstalled"
+export type ServiceStatus = 'Running' | 'Stopped' | 'NotInstalled'
 
 interface StoredGuiConfig {
   config: NetworkConfig
@@ -135,8 +136,18 @@ export async function clearLogFiles(extraDirs?: string[]) {
   })
 }
 
-export async function setTunFd(fd: number) {
-  return await invoke('set_tun_fd', { fd })
+export async function setTunFd(fd: number, instanceId?: string) {
+  return await invoke('set_tun_fd', {
+    fd,
+    instanceId: instanceId ?? null,
+  })
+}
+
+/** Android A9: underlay switched — close peer conns so connectors redial. */
+export async function notifyUnderlayNetworkChanged(generation?: number) {
+  return await invoke<number>('notify_underlay_network_changed', {
+    generation: generation ?? null,
+  })
 }
 
 export async function getEasytierVersion() {
@@ -175,7 +186,7 @@ export async function sendConfigs(enabledNetworks: string[]) {
       config: NetworkTypes.toBackendNetworkConfig(config),
       source,
     })),
-    enabledNetworks
+    enabledNetworks,
   })
 }
 

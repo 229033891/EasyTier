@@ -380,6 +380,10 @@ impl GUIClientManager {
         if !has_tun {
             app.emit("vpn_service_stop", "")
                 .map_err(|e| e.to_string())?;
+            // A3: do not wait for WebView to process the emit — stop VpnService
+            // from Rust so background/Doze cannot leave an orphan TUN.
+            #[cfg(target_os = "android")]
+            crate::android_vpn_watchdog::stop_vpn_if_no_tun(app)?;
         }
         Ok(())
     }
@@ -460,6 +464,23 @@ impl GUIClientManager {
                                     ),
                                 ) => {
                                     let _ = app_clone.emit("proxy_cidrs_updated", &instance_id_str);
+                                }
+                                // The core lost its TUN (read stream ended, sink fused,
+                                // or the Android fd could not be attached). The native
+                                // VpnService may still report "running", so the GUI has to
+                                // tear it down and rebuild — `set_tun_device_error` alone
+                                // never reaches `error_msg` (it is not `latest_error`).
+                                Ok(
+                                    easytier::common::global_ctx::GlobalCtxEvent::TunDeviceError(
+                                        err,
+                                    ),
+                                ) => {
+                                    tracing::warn!(
+                                        instance = %instance_id_str,
+                                        %err,
+                                        "native TUN device failed; notifying GUI",
+                                    );
+                                    let _ = app_clone.emit("tun_device_error", &instance_id_str);
                                 }
                                 Ok(_) => {}
                                 Err(tokio::sync::broadcast::error::RecvError::Closed) => {
