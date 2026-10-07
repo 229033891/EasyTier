@@ -73,8 +73,8 @@ pub(crate) fn stop_vpn_if_no_tun(app: &AppHandle) -> Result<(), String> {
 }
 
 /// Seed / advance the watchdog generation tracker (JS fast-path already acted).
-pub(crate) fn note_underlay_generation(gen: i64) {
-    LAST_UNDERLAY_GENERATION.fetch_max(gen, Ordering::SeqCst);
+pub(crate) fn note_underlay_generation(generation: i64) {
+    LAST_UNDERLAY_GENERATION.fetch_max(generation, Ordering::SeqCst);
 }
 
 /// Force peer reconnect after underlay change (A9). Callable from the plugin
@@ -155,13 +155,13 @@ async fn tick_once(app: &AppHandle) -> Result<(), String> {
         tracing::warn!("android vpn watchdog: VpnService running with no TUN instance; stopping");
         stop_vpn_plugin(app)?;
         action = Some("stop_orphan");
-    } else if let Some(gen) = underlay_gen {
-        let previous = LAST_UNDERLAY_GENERATION.swap(gen, Ordering::SeqCst);
+    } else if let Some(generation) = underlay_gen {
+        let previous = LAST_UNDERLAY_GENERATION.swap(generation, Ordering::SeqCst);
         // First observation only seeds the counter; a later bump means switch.
-        if previous >= 0 && previous != gen {
+        if previous >= 0 && previous != generation {
             tracing::warn!(
                 previous,
-                gen,
+                generation,
                 "android vpn watchdog: underlay network generation changed; reconnecting peers"
             );
             let _ = reconnect_peers_after_underlay_change().await?;

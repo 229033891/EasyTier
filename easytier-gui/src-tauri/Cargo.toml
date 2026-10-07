@@ -41,6 +41,7 @@ tauri-plugin-os = "2.3.2"
 
 uuid.workspace = true
 async-trait.workspace = true
+tracing.workspace = true
 
 url = { workspace = true, features = ["serde"] }
 

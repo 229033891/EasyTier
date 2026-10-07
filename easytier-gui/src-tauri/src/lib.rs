@@ -255,9 +255,10 @@ async fn get_logging_level() -> Result<String, String> {
 #[cfg(target_os = "android")]
 #[tauri::command]
 async fn notify_underlay_network_changed(generation: Option<i64>) -> Result<usize, String> {
-    if let Some(gen) = generation {
+    if let Some(generation) = generation {
         // Keep watchdog seed in sync so the next 30s tick does not double-fire.
-        android_vpn_watchdog::note_underlay_generation(gen);
+        // (`gen` is a reserved keyword on current rustc.)
+        android_vpn_watchdog::note_underlay_generation(generation);
     }
     android_vpn_watchdog::reconnect_peers_after_underlay_change().await
 }
