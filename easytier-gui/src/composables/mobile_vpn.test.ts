@@ -21,6 +21,7 @@ const mocks = vi.hoisted(() => {
     listNetworkInstanceIds: vi.fn<() => Promise<{ running_inst_ids: unknown[] }>>(async () => ({ running_inst_ids: [] })),
     prepareVpn: vi.fn(async () => ({ granted: true })),
     setTunFd: vi.fn(async () => undefined),
+    notifyUnderlayNetworkChanged: vi.fn(async () => 0),
     startVpn: vi.fn(async () => {
       await listeners.get('vpn_service_start')?.({ fd: 1 })
       return {}
@@ -66,6 +67,7 @@ vi.mock('./backend', () => ({
   collectNetworkInfo: mocks.collectNetworkInfo,
   getConfig: mocks.getConfig,
   listNetworkInstanceIds: mocks.listNetworkInstanceIds,
+  notifyUnderlayNetworkChanged: mocks.notifyUnderlayNetworkChanged,
   setTunFd: mocks.setTunFd,
 }))
 
@@ -117,6 +119,8 @@ beforeEach(() => {
   mocks.listNetworkInstanceIds.mockResolvedValue({ running_inst_ids: [] })
   mocks.prepareVpn.mockClear()
   mocks.setTunFd.mockClear()
+  mocks.notifyUnderlayNetworkChanged.mockReset()
+  mocks.notifyUnderlayNetworkChanged.mockResolvedValue(0)
   mocks.startVpn.mockClear()
   mocks.stopVpn.mockClear()
 })
@@ -127,7 +131,7 @@ describe('mobile VPN virtual IPv6', () => {
     expect(vpn.formatVirtualIpv6ForVpn(undefined)).toBeUndefined()
     // Proto Ipv6Addr stores 16 bytes as four big-endian u32 chunks (see common.proto).
     expect(vpn.formatVirtualIpv6ForVpn({
-      address: { part1: 0xfd00_0000, part2: 0, part3: 0, part4: 1 },
+      address: { part1: 0xFD00_0000, part2: 0, part3: 0, part4: 1 },
       network_length: 64,
     })).toBe('fd00:0:0:0:0:0:0:1/64')
   })
@@ -142,7 +146,7 @@ describe('mobile VPN virtual IPv6', () => {
           network_length: 24,
         },
         virtual_ipv6: {
-          address: { part1: 0xfd00_0000, part2: 0, part3: 0, part4: 1 },
+          address: { part1: 0xFD00_0000, part2: 0, part3: 0, part4: 1 },
           network_length: 64,
         },
       },
@@ -469,5 +473,44 @@ describe('mobile VPN TUN device error recovery', () => {
     setClockOffset(56000)
     await vpn.handleMobileTunDeviceError('A')
     expect(mocks.stopVpn).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('mobile VPN underlay network change (A9)', () => {
+  it('registers a default_network_changed plugin listener on init', async () => {
+    await loadVpnModule()
+    expect(mocks.addPluginListener).toHaveBeenCalledWith(
+      'vpnservice',
+      'default_network_changed',
+      expect.any(Function),
+    )
+  })
+
+  it('forwards generation to notifyUnderlayNetworkChanged when the underlay switches', async () => {
+    await loadVpnModule()
+    const listener = mocks.listeners.get('default_network_changed')
+    expect(listener).toBeTypeOf('function')
+
+    await listener?.({ generation: 7, networkId: 42 })
+
+    expect(mocks.notifyUnderlayNetworkChanged).toHaveBeenCalledTimes(1)
+    expect(mocks.notifyUnderlayNetworkChanged).toHaveBeenCalledWith(7)
+  })
+
+  it('still notifies Rust when generation is omitted', async () => {
+    await loadVpnModule()
+    const listener = mocks.listeners.get('default_network_changed')
+    await listener?.({ networkId: 1 })
+
+    expect(mocks.notifyUnderlayNetworkChanged).toHaveBeenCalledWith(undefined)
+  })
+
+  it('swallows notifyUnderlayNetworkChanged rejection without throwing', async () => {
+    mocks.notifyUnderlayNetworkChanged.mockRejectedValueOnce(new Error('backend down'))
+    await loadVpnModule()
+    const listener = mocks.listeners.get('default_network_changed')
+
+    await expect(listener?.({ generation: 2 })).resolves.toBeUndefined()
+    expect(mocks.notifyUnderlayNetworkChanged).toHaveBeenCalledWith(2)
   })
 })

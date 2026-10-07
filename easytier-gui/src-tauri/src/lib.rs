@@ -3,6 +3,9 @@
 
 mod elevate;
 
+#[cfg(target_os = "android")]
+mod android_vpn_watchdog;
+
 use anyhow::Context;
 #[cfg(target_os = "android")]
 use easytier::instance::factory::subscribe_native_instance_event;
@@ -246,6 +249,17 @@ async fn get_logging_level() -> Result<String, String> {
         .get_logging_level()
         .await
         .map_err(|e| e.to_string())
+}
+
+/// Android A9: underlay (Wi-Fi/cellular) changed — close peer conns so connectors redial.
+#[cfg(target_os = "android")]
+#[tauri::command]
+async fn notify_underlay_network_changed(generation: Option<i64>) -> Result<usize, String> {
+    if let Some(gen) = generation {
+        // Keep watchdog seed in sync so the next 30s tick does not double-fire.
+        android_vpn_watchdog::note_underlay_generation(gen);
+    }
+    android_vpn_watchdog::reconnect_peers_after_underlay_change().await
 }
 
 #[tauri::command]
@@ -1273,6 +1287,9 @@ pub fn run_gui() -> std::process::ExitCode {
                 .icon_as_template(true)
                 .build(app)?;
 
+            #[cfg(target_os = "android")]
+            android_vpn_watchdog::start(app.handle().clone());
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -1285,6 +1302,8 @@ pub fn run_gui() -> std::process::ExitCode {
             set_logging_level,
             get_logging_level,
             set_tun_fd,
+            #[cfg(target_os = "android")]
+            notify_underlay_network_changed,
             easytier_version,
             set_dock_visibility,
             list_network_instance_ids,

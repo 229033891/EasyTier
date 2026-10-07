@@ -601,6 +601,24 @@ describe('Config.vue network config projection', () => {
     })
   })
 
+  it('loads legacy single default_protocol and stores ordered CSV from MultiSelect', async () => {
+    const { curNetwork, wrapper } = mountConfig({
+      ...makeConfig(),
+      default_protocol: 'udp',
+    })
+    await nextTick()
+
+    expect(curNetwork.default_protocol).toBe('udp')
+    const multi = wrapper.find('#default_protocol')
+    expect(multi.exists()).toBe(true)
+
+    curNetwork.default_protocol = 'wss,tcp,udp'
+    await nextTick()
+    expect(curNetwork.default_protocol).toBe('wss,tcp,udp')
+    const backend = toBackendNetworkConfig(curNetwork) as Record<string, unknown>
+    expect(backend.default_protocol).toBe('wss,tcp,udp')
+  })
+
   it('projects bond count controls and omits them from backend JSON when blank', async () => {
     const { curNetwork, wrapper } = mountConfig()
     await nextTick()

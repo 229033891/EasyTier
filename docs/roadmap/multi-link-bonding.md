@@ -135,7 +135,7 @@ MVP：**按流哈希 + diversity-first 成员集（不足 replica-fill）**；`b
 ### Phase 1 — 可观测与「准 bonding」基案
 
 - 状态面列出各 PeerConn、`default_conn`（★）、质量分分项（已大部分落地，见稳定性 TODO P2.1）。  
-- 文档 / UI：**多连接 ≠ 已聚合带宽**；热备条数 ≠ 聚合带宽（Current + 稳定性 P2.2）。
+- 文档 / UI：**多连接 ≠ 已聚合带宽**；热备条数 ≠ 聚合带宽（Current + 稳定性 P2.2 **已完成**）。
 
 ### Phase 2a — 发送 MVP（第一刀）✅
 

@@ -471,14 +471,11 @@ where
             anyhow::bail!("peer {dst_peer_id} has no valid listener");
         }
 
+        // P-AUTO.L1: ordered CSV preference; higher sort key is tried first.
+        let preference =
+            crate::config::parse_protocol_preference(&self.options.default_protocol);
         available_listeners.sort_by_key(|listener| {
-            if listener.scheme() == self.options.default_protocol {
-                3
-            } else if listener.scheme() == "udp" {
-                2
-            } else {
-                1
-            }
+            crate::config::protocol_preference_sort_key(&preference, listener.scheme())
         });
 
         while !available_listeners.is_empty() {

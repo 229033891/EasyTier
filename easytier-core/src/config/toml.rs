@@ -858,11 +858,9 @@ impl TomlConfig {
         };
         merged_hashmap.extend(flags_hashmap);
         let mut flags: Flags = serde_json::from_value(serde_json::Value::Object(merged_hashmap))?;
-        // Listener schemes are lowercase; normalize so hand-written "TCP"/"UDP" still match.
-        flags.default_protocol = flags.default_protocol.trim().to_ascii_lowercase();
-        if flags.default_protocol.is_empty() {
-            flags.default_protocol = gen_default_flags().default_protocol;
-        }
+        // P-AUTO.L1: CSV preference list; legacy single value stays length-1.
+        flags.default_protocol =
+            crate::config::normalize_default_protocol(&flags.default_protocol);
         Ok(flags)
     }
 }
@@ -1386,6 +1384,22 @@ default_protocol = "TCP"
         )
         .unwrap();
         assert_eq!(cfg.get_flags().default_protocol, "tcp");
+    }
+
+    #[test]
+    fn toml_default_protocol_csv_is_normalized_ordered_unique() {
+        let cfg = TomlConfig::new_from_str(
+            r#"
+[network_identity]
+network_name = "network-a"
+network_secret = "secret-a"
+
+[flags]
+default_protocol = "WSS, tcp, QUIC, tcp, udp, wg"
+"#,
+        )
+        .unwrap();
+        assert_eq!(cfg.get_flags().default_protocol, "wss,tcp,quic,udp,wg");
     }
 
     #[test]

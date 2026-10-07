@@ -2166,19 +2166,14 @@ impl NicCtx {
 
     #[cfg(mobile)]
     pub async fn run_for_mobile(&mut self, tun_fd: std::os::fd::RawFd) -> Result<(), Error> {
+        // Do not emit TunDeviceError here: `tun_mobile` may retry transient
+        // attach races (R7) and only surfaces a final failure to the GUI.
         let tunnel = {
             let mut nic = self.nic.lock().await;
-            match nic.create_dev_for_mobile(tun_fd).await {
-                Ok(ret) => {
-                    self.global_ctx
-                        .set_tun_device_ready(nic.ifname().to_string());
-                    ret
-                }
-                Err(err) => {
-                    self.global_ctx.set_tun_device_error(err.to_string());
-                    return Err(err);
-                }
-            }
+            let ret = nic.create_dev_for_mobile(tun_fd).await?;
+            self.global_ctx
+                .set_tun_device_ready(nic.ifname().to_string());
+            ret
         };
 
         let (stream, sink) = tunnel.split();

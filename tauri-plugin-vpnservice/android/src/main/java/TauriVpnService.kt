@@ -4,9 +4,15 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Intent
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
+import android.net.NetworkRequest
 import android.net.VpnService
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.os.ParcelFileDescriptor
 import android.content.pm.ServiceInfo
 import android.util.Log
@@ -17,6 +23,7 @@ import app.tauri.plugin.JSObject
 class TauriVpnService : VpnService() {
     companion object {
         private const val TAG = "TauriVpnService"
+        private const val UNDERLAY_DEBOUNCE_MS = 400L
 
         @JvmField var triggerCallback: (String, JSObject) -> Unit = { _, _ -> }
         @JvmField var self: TauriVpnService? = null
@@ -24,6 +31,10 @@ class TauriVpnService : VpnService() {
         @JvmField var ipv6Addr: String? = null
         @JvmField var routes: Array<String> = emptyArray()
         @JvmField var dns: String? = null
+
+        /** Bumped on each underlay (Wi-Fi/cellular) change so Rust can force reconnect (A9). */
+        @JvmField @Volatile var underlayNetworkGeneration: Long = 0
+        @JvmField @Volatile var underlayNetworkId: Long = 0
 
         const val IPV4_ADDR = "IPV4_ADDR"
         const val IPV6_ADDR = "IPV6_ADDR"
@@ -47,6 +58,9 @@ class TauriVpnService : VpnService() {
     }
 
     private var vpnInterface: ParcelFileDescriptor? = null
+    private var networkCallback: ConnectivityManager.NetworkCallback? = null
+    private val mainHandler = Handler(Looper.getMainLooper())
+    private var pendingUnderlayUpdate: Runnable? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         // System restart after kill may deliver a null intent (START_STICKY).
@@ -78,6 +92,8 @@ class TauriVpnService : VpnService() {
             ipv6Addr = args?.getString(IPV6_ADDR)
             routes = args?.getStringArray(ROUTES) ?: emptyArray()
             dns = args?.getString(DNS)
+
+            registerUnderlayNetworkCallback()
 
             val eventData = JSObject()
             eventData.put("fd", fd)
@@ -140,6 +156,7 @@ class TauriVpnService : VpnService() {
     }
 
     private fun disconnect() {
+        unregisterUnderlayNetworkCallback()
         closeVpnInterface(emitStopEvent = true)
         clearStatus()
     }
@@ -162,6 +179,103 @@ class TauriVpnService : VpnService() {
         ipv6Addr = null
         routes = emptyArray()
         dns = null
+    }
+
+    /**
+     * Bind VpnService traffic to the current default underlay and notify Rust/JS
+     * when Wi-Fi ↔ cellular (or similar) switches so peer conns can be rebuilt (A9).
+     */
+    private fun registerUnderlayNetworkCallback() {
+        unregisterUnderlayNetworkCallback()
+        val cm = getSystemService(ConnectivityManager::class.java) ?: return
+        val callback = object : ConnectivityManager.NetworkCallback() {
+            override fun onAvailable(network: Network) {
+                scheduleUnderlayUpdate(network)
+            }
+
+            override fun onCapabilitiesChanged(network: Network, networkCapabilities: NetworkCapabilities) {
+                scheduleUnderlayUpdate(network)
+            }
+
+            override fun onLost(network: Network) {
+                // Debounce: the next default network's onAvailable usually follows.
+                scheduleUnderlayUpdate(null)
+            }
+        }
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                cm.registerDefaultNetworkCallback(callback)
+            } else {
+                cm.registerNetworkCallback(NetworkRequest.Builder().build(), callback)
+            }
+            networkCallback = callback
+            cm.activeNetwork?.let { applyUnderlayNetwork(it, notifyChange = false) }
+        } catch (e: Exception) {
+            Log.w(TAG, "register underlay NetworkCallback failed", e)
+        }
+    }
+
+    private fun unregisterUnderlayNetworkCallback() {
+        pendingUnderlayUpdate?.let { mainHandler.removeCallbacks(it) }
+        pendingUnderlayUpdate = null
+        val callback = networkCallback ?: return
+        networkCallback = null
+        try {
+            getSystemService(ConnectivityManager::class.java)?.unregisterNetworkCallback(callback)
+        } catch (e: Exception) {
+            Log.w(TAG, "unregister underlay NetworkCallback failed", e)
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP_MR1) {
+            try {
+                setUnderlyingNetworks(null)
+            } catch (e: Exception) {
+                Log.w(TAG, "clear setUnderlyingNetworks failed", e)
+            }
+        }
+    }
+
+    private fun scheduleUnderlayUpdate(network: Network?) {
+        pendingUnderlayUpdate?.let { mainHandler.removeCallbacks(it) }
+        val task = Runnable { applyUnderlayNetwork(network, notifyChange = true) }
+        pendingUnderlayUpdate = task
+        mainHandler.postDelayed(task, UNDERLAY_DEBOUNCE_MS)
+    }
+
+    private fun applyUnderlayNetwork(network: Network?, notifyChange: Boolean) {
+        val cm = getSystemService(ConnectivityManager::class.java)
+        val net = network ?: cm?.activeNetwork
+        val netId = when {
+            net == null -> 0L
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.P -> net.networkHandle
+            else -> net.hashCode().toLong()
+        }
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP_MR1) {
+            try {
+                setUnderlyingNetworks(if (net != null) arrayOf(net) else null)
+            } catch (e: Exception) {
+                Log.w(TAG, "setUnderlyingNetworks failed", e)
+            }
+        }
+
+        val previousId = underlayNetworkId
+        underlayNetworkId = netId
+        if (!notifyChange) {
+            return
+        }
+        if (netId == previousId && underlayNetworkGeneration > 0L) {
+            return
+        }
+
+        underlayNetworkGeneration += 1
+        Log.i(
+            TAG,
+            "underlay network changed generation=$underlayNetworkGeneration networkId=$netId",
+        )
+        val data = JSObject()
+        data.put("generation", underlayNetworkGeneration)
+        data.put("networkId", netId)
+        triggerCallback("default_network_changed", data)
     }
 
     private fun startVpnForegroundService() {

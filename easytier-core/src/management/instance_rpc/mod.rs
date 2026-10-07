@@ -420,6 +420,7 @@ fn connector_snapshots_to_api(snapshots: Vec<ManualConnectorSnapshot>) -> Vec<Co
         connectors.push(Connector {
             url: Some(connector.url.into()),
             status: status.into(),
+            active_url: connector.active_url.map(Into::into),
         });
     }
     connectors

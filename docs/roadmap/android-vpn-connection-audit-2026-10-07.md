@@ -2,7 +2,7 @@
 
 ## Status
 
-- Status: **In Progress**（缺陷已核对；可落地项已修，含编译阻塞项 B1/B2、Kotlin R2/R5、前端 R1 闭环；架构项 A3/A9 仍待立项）
+- Status: **Done（代码侧）**（A1–A14 / A3 / A9 / R1–R7 可落地项已修；现场复现与 CI 编译确认仍建议跑一遍）
 - 日期：2026-10-07
 - 分支：`releases/v2.7.41` / 本地工作区
 - 触发：用户反馈「安卓 App 有时候无法连接、卡断」
@@ -13,7 +13,7 @@
 - 相关 Current：[`../current/socket-protection.md`](../current/socket-protection.md)、[`../current/peer-connections.md`](../current/peer-connections.md)
 - 相关 Roadmap：[`connection-stability-todo.md`](./connection-stability-todo.md)（本文的 A 系列缺陷属「安卓侧生命周期」，与该文 S1–S8「协议/选路」问题正交）
 
-> 复核进展见 §6。当前剩余开放项：**R4**（MTU 移动侧余量，产品取舍）、**R7**（`install_mobile_tun` 无原地重试，已有前端重建链）、**A3**（Rust watchdog）、**A9**（网络切换）。B1/B2 为静态判定，仍需在可编译环境确认。
+> 复核进展见 §6。**R4 / R7 已关单**（见 §6.6）。A3/A9 已落地。B1/B2 为静态判定，仍需在可编译环境确认。
 
 ### 修复进度（2026-10-07）
 
@@ -21,18 +21,20 @@
 |---|------|------|
 | A1 | **已修** | `self` 在 `onStartCommand` 重绑；插件改调 `stopInternal()`，不再误用 `onRevoke()` |
 | A2 | **已修** | `establish` 前 `closeVpnInterface`；`vpnInterface` 改为可空并显式关闭 |
-| A3 | **未修** | 架构项：Rust/Kotlin watchdog，并入 connection-stability |
+| A3 | **已修（最小闭环）** | Rust 30s watchdog：无 TUN 实例时插件直接 `stop_vpn`；emit `vpn_watchdog_tick` 驱动前端对账；实例停用钩子同步停 VPN |
 | A4 | **已修** | `START_NOT_STICKY`；null intent/extras 直接 `stopSelf` |
 | A5 | **已修** | 超时前 native 复核；`activeVpnInstanceId` 提前写入；等待窗口 8s |
 | A6 | **已修** | 无实例返回 Err；可选 `instanceId`；失败清 `running`；`tun_device_error` → 前端重建 |
 | A7 | **已修** | TUN 读/写失败发 `TunDeviceError`；sink 连续失败熔断；前端重建 |
-| A8 | **已修** | `install_mobile_tun` 失败 `set_tun_device_error` → 前端重建（无原地重试，见 R7） |
-| A9 | **未修** | 架构项：`ConnectivityManager` / `setUnderlyingNetworks` |
+| A8 | **已修** | `install_mobile_tun` 失败 `set_tun_device_error` → 前端重建；R7 另加瞬态 attach 原地重试 |
+| A9 | **已修** | `NetworkCallback` + `setUnderlyingNetworks`；generation 暴露给 Rust watchdog；关 peer conn 触发 1s 重拨 |
 | A10 | **已修** | `NicCtx::shutdown` + `drain/stop` 等待 JoinSet，避免 fd 复用 EEXIST |
 | A11 | **已修** | `resolveVpnMtu(config)`：`config.mtu` 默认 1380，加密减 20 |
 | A12 | **已修** | 去掉硬编码 `fd00::1/128`；**R3** 已加 `MyNodeInfo.virtual_ipv6` 并按实例下发 |
 | A13 | **已修** | `Log.TAG`；`onStartCommand` try/catch；FGS start try/catch |
 | A14 | **已修** | 瓦片按 `self` 实时状态切换；WebView 未就绪时 `dispatchTileAction` 返回 false |
+| R4 | **已拍板** | 安卓 MTU 对齐桌面；蜂窝余量靠全网调 `mtu` |
+| R7 | **已修** | 瞬态 attach 最多 3 次原地重试，再走前端重建 |
 
 ---
 
@@ -304,7 +306,7 @@ if let Err(error) = Self::install_mobile_tun(...).await {
 |------|------|------|------|
 | 第 1 批（纯 Kotlin，改动小） | A1、A2、A4、A13 | 低 | **已完成** |
 | 第 2 批（Rust 侧健壮性） | A6、A7、A8、A10 | 中 | **已完成**（`TunDeviceError` 上报；JoinSet 等待） |
-| 第 3 批（架构） | A3（Rust watchdog）、A9（网络切换） | 中高 | **仍待做**；建议并入 [`connection-stability-todo.md`](./connection-stability-todo.md) 单独立项 |
+| 第 3 批（架构） | A3（Rust watchdog）、A9（网络切换） | 中高 | **均已完成** |
 | 第 4 批（配置一致性） | A5、A11、A12、A14 | 低 | **已完成** |
 
 ---
@@ -332,8 +334,8 @@ if let Err(error) = Self::install_mobile_tun(...).await {
 | A5 | `waitVpnStatus` 超时前先 `get_vpn_status` 复核（`mobile_vpn.ts:322-329`）；3s→8s；`doStartVpn` 先占 owner 再等事件并多次重申；`onVpnServiceStop` 不再清 owner | 正确；「复核 + 占 owner」正好互相兜底 |
 | A6 | `set_tun_fd(fd, instance_id)`；无实例 Err；前端失败清 `running`；`tun_device_error` 重建 | 已闭环（R1） |
 | A7 | 读流结束 / sink 连续 3 次失败 → `set_tun_device_error` + 熔断；前端重建 | 已闭环（R1/R6） |
-| A8 | attach 失败 → `set_tun_device_error`；前端重建 | 已闭环（R1；无原地重试见 R7） |
-| A11 | `resolveVpnMtu()` 对齐桌面 `flags.mtu - 20`（`mobile_vpn.ts:333-339`） | 正确，见 R4 的取舍说明 |
+| A8 | attach 失败 → `set_tun_device_error`；前端重建 | 已闭环（R1；R7 原地重试已加） |
+| A11 | `resolveVpnMtu()` 对齐桌面 `flags.mtu - 20`（`mobile_vpn.ts:333-339`） | 正确；R4 已拍板保持全网一致 |
 | A12 | 去掉 `addAddress("fd00::1", 128)` | 去掉是对的（原本就是错的），见 R3 |
 | A13 | 全部换 `Log.i/w/e` + TAG；`createVpnInterface` 异常包 try/catch 并清理；`startForegroundService` 包 try/catch | 正确，见 R2 |
 | A14 | 瓦片按 `self == null` 判定、不再复用 pending action；`tileActionReady` 让 WebView 未就绪时回退拉起 App | 正确 |
@@ -409,19 +411,21 @@ first
 
 </details>
 
-**R3 去掉 `fd00::1/128` 后安卓 TUN 完全没有 IPv6 地址。**
-这是「删掉错误值」的正确做法，但目前没有替代值：`MyNodeInfo`（`easytier-proto/proto/api_manage.proto:194-203`）只有 `virtual_ipv4 = 1`，前端拿不到实例真实 IPv6。若网络里用到 IPv6（含 v6 的子网代理 / exit），安卓端会因为没有源地址发不出 v6 包。建议：`MyNodeInfo` 加 `common.Ipv6Inet virtual_ipv6 = 9;`（下一个空号），再由 `doStartVpn` 下发。
+<details>
+<summary>R3 / R4 / R7（已关单，点击展开原文）</summary>
 
-**R4 MTU 1300→1360 的取舍。**
-对齐桌面（`flags.mtu - 20`）是正解，因为 MTU 本来就是**全网一致性**参数。但要意识到移动侧余量变小：1360 + 加密 20 + UDP/IP 28 = 1408 > 部分蜂窝 / PPPoE 的 1400 路径 MTU，大包可能被分片或黑洞。若想保留移动端余量，正确做法是把**全网** `mtu` 调成 1320（两端都变 1300），而不是在安卓端单端硬编码。
+**R3（已修）** — `MyNodeInfo.virtual_ipv6` + `doStartVpn` / Kotlin `addAddress` 下发真实 IPv6。
 
-**R7 A8 的「无重试」仍在。**
-`install_mobile_tun` 失败只记一次事件、fd 已被消费、循环继续等下一个 fd；`consecutive_sink_errors >= 3` 熔断后只退出 sink 任务，读方向仍在跑，实例继续报「在线」。建议在 R1 打通后由前端触发一次完整重建。
+**R4（已拍板）** — 保持 A11：安卓对齐桌面 `flags.mtu - 20`（全网一致性）。移动侧余量变小（1360+加密+UDP/IP 可能 > 部分蜂窝 1400）时，应把**全网** `mtu` 调低（如 1320），不在安卓端单端硬编码。
+
+**R7（已修）** — `install_mobile_tun` 对瞬态 attach 错误（EEXIST / busy）最多 3 次原地重试（50ms×attempt）；耗尽后仍 `set_tun_device_error` → 前端重建（R1）。`run_for_mobile` 中间失败不再提前 emit，避免重试被 GUI 重建打断。
+
+</details>
 
 ### 6.4 已验证 / 未验证
 
 - ✅ `vue-tsc --noEmit` → 0 错
-- ✅ `vitest run` → 22 passed（`mobile_vpn.test.ts` 15 + `mobile_vpn_tile.test.ts` 7），含 ownership / tile / **TUN 错误恢复 4 例**
+- ✅ `vitest run` → 28 passed（`mobile_vpn.test.ts` 21 + `mobile_vpn_tile.test.ts` 7），含 ownership / tile / **TUN 错误恢复 4 例** / **A9 underlay 4 例**
 - ✅ `eslint src/composables/mobile_vpn.test.ts` → 0 错（`mobile_vpn.ts` / `event.ts` 的告警为文件既有风格债，非本次引入）
 - ✅ Kotlin 静态核对：无 `isInitialized` 残留、无已删 import 的引用、`stopInternalLocked` 的 private 跨 companion 访问合法、`@JvmStatic` 调用点正确
 - ✅ Tauri 参数约定：`instanceId`（camelCase）→ `instance_id`（snake_case）与 `backend.ts` 既有约定一致（如 `update_network_config_state`）
@@ -432,10 +436,7 @@ first
 ### 6.5 下一步建议
 
 1. **CI 编译确认** B1/B2 与 `cfg(mobile)` 路径（本地 MSVC 环境跳过）。
-2. **R3**：`MyNodeInfo` 增加 `virtual_ipv6`，`doStartVpn` / Kotlin `addAddress` 下发真实 IPv6。
-3. **R7**（可选）：Rust 侧 `install_mobile_tun` 有限重试，或依赖现有前端重建链即可。
-4. **A3 / A9** 单独立项（Rust watchdog + 网络切换），建议进 [`connection-stability-todo.md`](./connection-stability-todo.md)。
-5. **现场验证**：§5 待确认的三项 + §3 复现用例，尤其 A3 后台 Doze 场景。
+2. **现场验证**：§5 待确认的三项 + §3 复现用例，尤其 A3 后台 Doze、A9 Wi‑Fi↔蜂窝切换、R4 路径 MTU 场景。
 
 ### 6.6 复核跟进（同日，对照工作区）
 
@@ -450,8 +451,10 @@ first
 | R1 | **已修（闭环）** | `manager.rs:469-480` emit `tun_device_error`；`event.ts:112-118/129` 监听；`mobile_vpn.ts` `handleMobileTunDeviceError` → `doStopVpn(true)` + `onNetworkInstanceUpdate` 重建；`setTunFd` 失败清 `running` |
 | R6 | **已修** | `set_tun_device_error` 不再清空 `tun_device_name`，保留给 `cleanup_tun_leftovers` |
 | R3 | **已修** | `MyNodeInfo.virtual_ipv6` + `NodeSnapshot.ipv6_addr` + `doStartVpn`/`ipv6Addr`/Kotlin `addAddress` |
-| R4 / R7 | 仍开放 | MTU 全网余量、attach 原地重试（前端重建已覆盖） |
-| A3 / A9 | 仍开放 | 架构项；已写入 [`connection-stability-todo.md`](./connection-stability-todo.md) §8 |
+| R4 | **已拍板** | 保持桌面对齐的 `resolveVpnMtu`；蜂窝余量靠全网调低 `mtu`，不安卓单端硬编码 |
+| R7 | **已修** | `tun_mobile.rs`：瞬态 attach 最多 3 次原地重试；失败再 `set_tun_device_error`；`run_for_mobile` 不再提前 emit |
+| A3 | **已修（最小闭环）** | `android_vpn_watchdog.rs`：30s 探测 + 孤儿 `stop_vpn`；`notify_vpn_stop_if_no_tun` 同步停；前端听 `vpn_watchdog_tick`。后台「实例在 / VPN 不在」的自动拉起仍依赖 WebView 醒着时的 tick→JS（故意不做无虚拟 IP 的盲启动） |
+| A9 | **已修** | Kotlin `registerDefaultNetworkCallback` + debounce + `setUnderlyingNetworks`；`underlayNetworkGeneration` 进 `get_vpn_status`；Rust watchdog / `notify_underlay_network_changed` 关 peer conn → ManualConnector 1s 重拨；JS 听 `default_network_changed` 快路径 |
 
 **R1 的两道防抖（本次新增，避免修复本身变成重启风暴）**
 

@@ -286,7 +286,11 @@ pub enum ManualConnectorStatus {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ManualConnectorSnapshot {
+    /// Configured peer URL (stable identity for add/remove).
     pub url: Url,
+    /// Winning dial URL when connected via a rewritten scheme; `None` if disconnected
+    /// or the live URL equals `url`.
+    pub active_url: Option<Url>,
     pub status: ManualConnectorStatus,
 }
 
@@ -299,6 +303,13 @@ pub struct ManualConnectorOptions {
     pub allow_interface_bind: bool,
     pub tcp_bind: TcpBindOptions,
     pub udp_bind: UdpBindOptions,
+    /// CSV scheme preference (`flags.default_protocol`); used for URL×scheme failover.
+    #[serde(default = "default_manual_protocol_preference")]
+    pub default_protocol: String,
+}
+
+fn default_manual_protocol_preference() -> String {
+    "tcp".to_owned()
 }
 
 impl Default for ManualConnectorOptions {
@@ -311,6 +322,7 @@ impl Default for ManualConnectorOptions {
             allow_interface_bind: true,
             tcp_bind: TcpBindOptions::default(),
             udp_bind: UdpBindOptions::direct_connect(),
+            default_protocol: default_manual_protocol_preference(),
         }
     }
 }
@@ -475,13 +487,30 @@ where
     }
 
     pub fn remove_connector(&self, url: &Url) -> bool {
+        let preference =
+            crate::config::parse_protocol_preference(&self.data.options.default_protocol);
         let _state_guard = lock(&self.data.state.state_lock);
         if self.data.state.connectors.remove(url).is_some() {
             tracing::warn!(%url, "manual connector removed");
             return true;
         }
+        // Accept active/rewritten URL from ListConnector so operators can remove
+        // the row they see after L1 failover.
+        if let Some(configured) =
+            find_configured_connector_for_url(&self.data.state.connectors, url, &preference)
+        {
+            let _ = self.data.state.connectors.remove(&configured);
+            tracing::warn!(%url, %configured, "manual connector removed via active/candidate URL");
+            return true;
+        }
         if self.data.state.reconnecting.contains(url) {
             self.data.state.removed.insert(url.clone());
+            return true;
+        }
+        if let Some(configured) =
+            find_configured_connector_for_url(&self.data.state.reconnecting, url, &preference)
+        {
+            self.data.state.removed.insert(configured);
             return true;
         }
         false
@@ -498,29 +527,35 @@ where
     pub fn list_connectors(&self) -> Vec<ManualConnectorSnapshot> {
         let _state_guard = lock(&self.data.state.state_lock);
         let peer_manager = self.data.peer_manager.upgrade();
+        let preference =
+            crate::config::parse_protocol_preference(&self.data.options.default_protocol);
         let mut snapshots = self
             .data
             .state
             .connectors
             .iter()
             .map(|entry| {
-                let url = entry.key().clone();
-                let connected = peer_manager
-                    .as_ref()
-                    .is_some_and(|peer_manager| client_url_is_alive(peer_manager, &url));
+                let configured = entry.key().clone();
+                let active = peer_manager.as_ref().and_then(|peer_manager| {
+                    active_client_url_for_connector(peer_manager, &configured, &preference)
+                });
+                let status = if active.is_some() {
+                    ManualConnectorStatus::Connected
+                } else {
+                    ManualConnectorStatus::Disconnected
+                };
+                let active_url = active.filter(|alive| alive != &configured);
                 ManualConnectorSnapshot {
-                    url,
-                    status: if connected {
-                        ManualConnectorStatus::Connected
-                    } else {
-                        ManualConnectorStatus::Disconnected
-                    },
+                    url: configured,
+                    active_url,
+                    status,
                 }
             })
             .collect::<Vec<_>>();
         snapshots.extend(self.data.state.reconnecting.iter().map(|entry| {
             ManualConnectorSnapshot {
                 url: entry.key().clone(),
+                active_url: None,
                 status: ManualConnectorStatus::Connecting,
             }
         }));
@@ -601,13 +636,16 @@ where
         tracing::warn!("peer manager is gone, skip manual reconnect");
         return BTreeSet::new();
     };
+    let preference = crate::config::parse_protocol_preference(&data.options.default_protocol);
     let dead_connectors = data
         .state
         .connectors
         .iter()
         .filter_map(|entry| {
             let url = entry.key();
-            (!client_url_is_alive(&peer_manager, url)).then(|| url.clone())
+            active_client_url_for_connector(&peer_manager, url, &preference)
+                .is_none()
+                .then(|| url.clone())
         })
         .collect::<BTreeSet<_>>();
     for url in &dead_connectors {
@@ -624,6 +662,34 @@ fn client_url_is_alive(peer_manager: &PeerManagerCore, url: &Url) -> bool {
         || peer_manager
             .get_foreign_network_client()
             .is_client_url_alive(url)
+}
+
+/// Winning dial URL among preference candidates for a configured connector, if any is alive.
+fn active_client_url_for_connector(
+    peer_manager: &PeerManagerCore,
+    configured: &Url,
+    preference: &[String],
+) -> Option<Url> {
+    for candidate in crate::config::preference_candidate_urls(configured, preference) {
+        if client_url_is_alive(peer_manager, &candidate) {
+            return Some(candidate);
+        }
+    }
+    None
+}
+
+fn find_configured_connector_for_url(
+    set: &DashSet<Url>,
+    needle: &Url,
+    preference: &[String],
+) -> Option<Url> {
+    set.iter().find_map(|entry| {
+        let configured = entry.key();
+        crate::config::preference_candidate_urls(configured, preference)
+            .iter()
+            .any(|candidate| candidate == needle)
+            .then(|| configured.clone())
+    })
 }
 
 async fn resolve_manual_endpoint(
@@ -731,8 +797,52 @@ where
     H: ManualConnectorHost,
 {
     validate_manual_url(&url)?;
-    let connect_timeout = data.options.connect_timeout(&url, data.protocol.as_ref());
-    tracing::info!(%url, "manual reconnect start");
+    // P-AUTO.L1: try preference schemes in order (URL×scheme), then configured URL.
+    let preference = crate::config::parse_protocol_preference(&data.options.default_protocol);
+    let candidates = crate::config::preference_candidate_urls(&url, &preference);
+    // Cap total failover time so a long preference list cannot stall reconnect for
+    // candidates.len() × connect_timeout × IP versions.
+    let per_attempt = data.options.connect_timeout(&url, data.protocol.as_ref());
+    let budget = (per_attempt.saturating_mul(3)).max(Duration::from_secs(4));
+    // Use std Instant for wall-clock budget (quanta::Instant lacks saturating_duration_since).
+    let deadline = std::time::Instant::now() + budget;
+    let mut last_error = anyhow::anyhow!("no preference candidates for {url}");
+    for candidate in candidates {
+        let now = std::time::Instant::now();
+        if now >= deadline {
+            tracing::warn!(
+                %url,
+                ?budget,
+                "manual preference failover budget exhausted; will retry next cycle"
+            );
+            break;
+        }
+        let remaining = deadline.saturating_duration_since(now);
+        match reconnect_candidate(data.clone(), url.clone(), candidate, remaining).await {
+            Ok(()) => return Ok(()),
+            Err(error) => last_error = error,
+        }
+    }
+    Err(last_error)
+}
+
+async fn reconnect_candidate<H>(
+    data: Arc<ManualConnectorData<H>>,
+    configured_url: Url,
+    url: Url,
+    budget: Duration,
+) -> anyhow::Result<()>
+where
+    H: ManualConnectorHost,
+{
+    let connect_timeout = data
+        .options
+        .connect_timeout(&url, data.protocol.as_ref())
+        .min(budget);
+    if connect_timeout.is_zero() {
+        anyhow::bail!("preference failover budget exhausted before trying {url}");
+    }
+    tracing::info!(%configured_url, %url, ?connect_timeout, "manual reconnect start");
     let normalized_url = match convert_idn_to_ascii(url.clone()) {
         Ok(url) => url,
         Err(error) => {

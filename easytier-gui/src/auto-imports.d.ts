@@ -74,6 +74,7 @@ declare global {
   const normalizeConfigSource: typeof import('./composables/config_source')['normalizeConfigSource']
   const normalizeRouteList: typeof import('./composables/mobile_vpn')['normalizeRouteList']
   const normalizeServiceRpcUrl: typeof import('./composables/mode')['normalizeServiceRpcUrl']
+  const notifyUnderlayNetworkChanged: typeof import('./composables/backend')['notifyUnderlayNetworkChanged']
   const onActivated: typeof import('vue')['onActivated']
   const onBeforeMount: typeof import('vue')['onBeforeMount']
   const onBeforeRouteLeave: typeof import('vue-router')['onBeforeRouteLeave']
@@ -230,6 +231,7 @@ declare module 'vue' {
     readonly normalizeConfigSource: UnwrapRef<typeof import('./composables/config_source')['normalizeConfigSource']>
     readonly normalizeRouteList: UnwrapRef<typeof import('./composables/mobile_vpn')['normalizeRouteList']>
     readonly normalizeServiceRpcUrl: UnwrapRef<typeof import('./composables/mode')['normalizeServiceRpcUrl']>
+    readonly notifyUnderlayNetworkChanged: UnwrapRef<typeof import('./composables/backend')['notifyUnderlayNetworkChanged']>
     readonly onActivated: UnwrapRef<typeof import('vue')['onActivated']>
     readonly onBeforeMount: UnwrapRef<typeof import('vue')['onBeforeMount']>
     readonly onBeforeRouteLeave: UnwrapRef<typeof import('vue-router')['onBeforeRouteLeave']>

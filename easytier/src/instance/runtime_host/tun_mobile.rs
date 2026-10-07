@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::Context as _;
 use cidr::Ipv4Inet;
@@ -48,30 +49,71 @@ impl NativeTunRuntime {
         self.nic.install_receiver(receiver)
     }
 
+    /// True when attach failed because the previous AsyncFd epoll registration
+    /// may still be tearing down (A10 race) — same fd is still valid to retry.
+    /// Matches only EEXIST-style "already registered" failures, not permanent
+    /// ones like "no such device".
+    fn is_transient_attach_error(error: &anyhow::Error) -> bool {
+        let msg = format!("{error:#}").to_ascii_lowercase();
+        // Order matters: check the specific EEXIST signals first. A bare
+        // "exist" substring would also match permanent "does not exist" errors.
+        msg.contains("eexist")
+            || msg.contains("already exists")
+            || msg.contains("file exists")
+            || msg.contains("already registered")
+            || msg.contains("busy")
+            || msg.contains("resource temporarily")
+    }
+
     async fn install_mobile_tun(
         nic_state: TunNicState,
         global_ctx: ArcGlobalCtx,
         packet_plane: Arc<CorePacketPlane>,
         fd: i32,
     ) -> anyhow::Result<()> {
-        nic_state.drain().await;
         if fd <= 0 {
+            nic_state.drain().await;
             return Ok(());
         }
-        let closed = Arc::new(Notify::new());
-        let mut nic = NicCtx::new(
-            global_ctx.clone(),
-            packet_plane.clone(),
-            nic_state.receiver(),
-            closed,
-        );
-        nic.run_for_mobile(fd).await.context("add ip failed")?;
-        let magic_dns = global_ctx
-            .get_ipv4()
-            .map(|ip| MagicDnsRuntime::start(global_ctx, packet_plane, None, ip))
-            .unwrap_or_default();
-        nic_state.install(nic, magic_dns).await;
-        Ok(())
+
+        // R7: limited in-place retry before surfacing TunDeviceError (frontend
+        // rebuild remains the backstop for permanent failures).
+        const MAX_ATTEMPTS: u32 = 3;
+        for attempt in 1..=MAX_ATTEMPTS {
+            nic_state.drain().await;
+            let closed = Arc::new(Notify::new());
+            let mut nic = NicCtx::new(
+                global_ctx.clone(),
+                packet_plane.clone(),
+                nic_state.receiver(),
+                closed,
+            );
+            match nic.run_for_mobile(fd).await {
+                Ok(()) => {
+                    let magic_dns = global_ctx
+                        .get_ipv4()
+                        .map(|ip| MagicDnsRuntime::start(global_ctx, packet_plane, None, ip))
+                        .unwrap_or_default();
+                    nic_state.install(nic, magic_dns).await;
+                    return Ok(());
+                }
+                Err(error) => {
+                    let err = anyhow::Error::new(error).context("attach mobile TUN fd");
+                    let retry = attempt < MAX_ATTEMPTS && Self::is_transient_attach_error(&err);
+                    tracing::warn!(
+                        ?err,
+                        attempt,
+                        retry,
+                        "failed to attach mobile TUN fd"
+                    );
+                    if !retry {
+                        return Err(err);
+                    }
+                    tokio::time::sleep(Duration::from_millis(50 * u64::from(attempt))).await;
+                }
+            }
+        }
+        anyhow::bail!("failed to attach mobile TUN fd after {MAX_ATTEMPTS} attempts")
     }
 
     pub(super) async fn prepare(&self, packet_plane: Arc<CorePacketPlane>) -> anyhow::Result<()> {

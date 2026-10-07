@@ -10,12 +10,15 @@ use tauri::Manager;
 mod mobile;
 
 #[cfg(mobile)]
-use mobile::Vpnservice;
+pub use mobile::Vpnservice;
 
 mod error;
 mod models;
 
 pub use error::{Error, Result};
+pub use models::{
+    StartVpnRequest, Status, VoidRequest, VpnStatus, VpnTileActionResponse,
+};
 
 /// Extensions to [`tauri::App`], [`tauri::AppHandle`] and [`tauri::Window`] to access the vpnservice APIs.
 #[cfg(mobile)]

@@ -380,6 +380,10 @@ impl GUIClientManager {
         if !has_tun {
             app.emit("vpn_service_stop", "")
                 .map_err(|e| e.to_string())?;
+            // A3: do not wait for WebView to process the emit — stop VpnService
+            // from Rust so background/Doze cannot leave an orphan TUN.
+            #[cfg(target_os = "android")]
+            crate::android_vpn_watchdog::stop_vpn_if_no_tun(app)?;
         }
         Ok(())
     }

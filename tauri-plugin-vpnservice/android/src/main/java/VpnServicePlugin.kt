@@ -170,6 +170,8 @@ class VpnServicePlugin(private val activity: Activity) : Plugin(activity) {
         }
         ret.put("routes", routes)
         ret.put("dns", TauriVpnService.dns)
+        ret.put("underlayNetworkGeneration", TauriVpnService.underlayNetworkGeneration)
+        ret.put("underlayNetworkId", TauriVpnService.underlayNetworkId)
         invoke.resolve(ret)
     }
 

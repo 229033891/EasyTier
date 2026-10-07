@@ -389,6 +389,7 @@ impl CoreInstanceConfig {
                     allow_interface_bind: host.allow_interface_bind,
                     tcp_bind: tcp_bind.clone(),
                     udp_bind: udp_bind.clone(),
+                    default_protocol: flags.default_protocol.clone(),
                     ..Default::default()
                 },
                 direct: DirectConnectorOptions {

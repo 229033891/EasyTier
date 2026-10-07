@@ -1,13 +1,8 @@
 <script setup lang="ts">
-import { computed, watch, onMounted, ref } from 'vue'
-import type { Mode, ServiceMode, RemoteMode, NormalMode, WebClientConfig } from '~/composables/mode'
+import type { Mode, NormalMode, RemoteMode, ServiceMode, WebClientConfig } from '~/composables/mode'
+import { appConfigDir, appLogDir, join } from '@tauri-apps/api/path'
+import { computed, onMounted, ref, watch } from 'vue'
 import { loadFileLogLevel } from '~/composables/mode'
-import { appConfigDir, appLogDir } from '@tauri-apps/api/path'
-import { join } from '@tauri-apps/api/path'
-
-const { t } = useI18n()
-
-const model = defineModel<Mode>({ required: true })
 
 const props = defineProps<{
   /** Android: only Normal mode is available (no service/remote). */
@@ -16,6 +11,10 @@ const props = defineProps<{
   configServerStatusSeverity?: string
   configServerLastError?: string
 }>()
+
+const { t } = useI18n()
+
+const model = defineModel<Mode>({ required: true })
 
 const defaultConfigDir = ref('')
 const defaultLogDir = ref('')
@@ -235,7 +234,6 @@ watch(() => model.value.mode, async (newMode, oldMode) => {
     }
   }
 }, { immediate: true })
-
 </script>
 
 <template>
@@ -261,8 +259,10 @@ watch(() => model.value.mode, async (newMode, oldMode) => {
     <div v-if="normalMode && !normalModeOnly" class="flex flex-col gap-2">
       <div class="flex items-center gap-2">
         <label for="rpc-listen-toggle">{{ t('mode.enable_rpc_tcp_listen') }}</label>
-        <SelectButton id="rpc-listen-toggle" v-model="rpcListenEnabled" :options="rpcListenOptions" option-label="label"
-          option-value="value" />
+        <SelectButton
+          id="rpc-listen-toggle" v-model="rpcListenEnabled" :options="rpcListenOptions" option-label="label"
+          option-value="value"
+        />
       </div>
       <div v-if="rpcListenEnabled" class="flex flex-col gap-2">
         <div class="flex items-center gap-2">
@@ -272,13 +272,15 @@ watch(() => model.value.mode, async (newMode, oldMode) => {
         <div class="flex items-center gap-2">
           <label for="rpc-listen-all">{{ t('mode.rpc_listen_all_interfaces') }}</label>
           <i
-            class="pi pi-question-circle config-help-tip" tabindex="0"
-            v-tooltip.top="t('mode.rpc_listen_all_interfaces_hint')"
+            v-tooltip.top="t('mode.rpc_listen_all_interfaces_hint')" class="pi pi-question-circle config-help-tip"
+            tabindex="0"
             :aria-label="t('mode.rpc_listen_all_interfaces_hint')"
             role="img"
           />
-          <SelectButton id="rpc-listen-all" v-model="rpcListenAllInterfaces" :options="rpcListenOptions"
-            option-label="label" option-value="value" />
+          <SelectButton
+            id="rpc-listen-all" v-model="rpcListenAllInterfaces" :options="rpcListenOptions"
+            option-label="label" option-value="value"
+          />
         </div>
       </div>
     </div>
@@ -311,14 +313,16 @@ watch(() => model.value.mode, async (newMode, oldMode) => {
           <label class="m-0 font-medium">{{ t('config-server.title') }}</label>
           <i
             v-if="serviceMode"
-            class="pi pi-question-circle config-help-tip" tabindex="0"
-            v-tooltip.top="t('config-server.service_hint')"
+            v-tooltip.top="t('config-server.service_hint')" class="pi pi-question-circle config-help-tip"
+            tabindex="0"
             :aria-label="t('config-server.service_hint')"
             role="img"
           />
         </div>
-        <Tag v-if="configServerStatusLabel" :severity="configServerStatusSeverity || 'secondary'"
-          :value="configServerStatusLabel" />
+        <Tag
+          v-if="configServerStatusLabel" :severity="configServerStatusSeverity || 'secondary'"
+          :value="configServerStatusLabel"
+        />
       </div>
       <p class="text-xs text-secondary m-0 whitespace-pre-line leading-relaxed">
         {{ t('config-server.description') }}
@@ -328,15 +332,17 @@ watch(() => model.value.mode, async (newMode, oldMode) => {
       </Message>
       <div class="flex flex-col gap-2">
         <label for="config-server-url">{{ t('config-server.address') }}</label>
-        <InputText id="config-server-url" v-model="configServerUrl" class="w-full"
-          :placeholder="t('config-server.address_placeholder')" />
+        <InputText
+          id="config-server-url" v-model="configServerUrl" class="w-full"
+          :placeholder="t('config-server.address_placeholder')"
+        />
       </div>
       <div class="flex items-center gap-2">
         <Checkbox id="config-server-secure" v-model="configServerSecureMode" binary />
         <label for="config-server-secure">{{ t('config-server.secure_mode') }}</label>
         <i
-          class="pi pi-question-circle config-help-tip" tabindex="0"
-          v-tooltip.top="t('config-server.secure_mode_hint')"
+          v-tooltip.top="t('config-server.secure_mode_hint')" class="pi pi-question-circle config-help-tip"
+          tabindex="0"
           :aria-label="t('config-server.secure_mode_hint')"
           role="img"
         />

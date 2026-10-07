@@ -49,7 +49,7 @@ crate 内设计稿（非本索引）：`easytier/docs/`（凭据计划已标 Arc
 | [multi-link-bonding.md](./roadmap/multi-link-bonding.md) | 多 PeerConn 聚合：按流分摊 + **异质优先 / 同质补齐**（语义已拍板，代码未实现） |
 | [traffic-camouflage.md](./roadmap/traffic-camouflage.md) | 传输伪装 / 抗识别（wss 范式与 TLS 外观，Draft） |
 | [connection-stability-todo.md](./roadmap/connection-stability-todo.md) | 连接稳定性优化 TODO（相对 OpenVPN/IPsec；**端点可自定义，不假设 443**） |
-| [android-vpn-connection-audit-2026-10-07.md](./roadmap/android-vpn-connection-audit-2026-10-07.md) | **安卓 App 连接/卡断审查**（VpnService 生命周期 A1–A14 + 复核 R1–R7；A3/A9 待立项） |
+| [android-vpn-connection-audit-2026-10-07.md](./roadmap/android-vpn-connection-audit-2026-10-07.md) | **安卓 App 连接/卡断审查**（VpnService 生命周期 A1–A14 + 复核 R1–R7；A3/A9 已落地） |
 | [web-evolution.md](./roadmap/web-evolution.md) | easytier-web 演进约束与阶段 |
 | [github-release-install.md](./roadmap/github-release-install.md) | GitHub/GHCR 安装升级方案 |
 | [upstream-port-todo.md](./roadmap/upstream-port-todo.md) | 上游 `main` → `dev` cherry-pick 跟踪（P0–P2 已落袋，P3 待发版后） |

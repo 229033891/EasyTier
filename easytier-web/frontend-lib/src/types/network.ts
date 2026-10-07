@@ -335,6 +335,35 @@ function applyNetworkingMethod(
 }
 
 /**
+ * Schemes allowed in `default_protocol` preference CSV (P-AUTO.L1).
+ * Direct sorts advertised listeners by this list (including wg/faketcp).
+ * Manual URL failover only rewrites among tcp/udp/ws/wss/quic on the core side.
+ */
+export const DEFAULT_PROTOCOL_SCHEMES = ['tcp', 'udp', 'ws', 'wss', 'quic', 'wg', 'faketcp'] as const
+
+export type DefaultProtocolScheme = (typeof DEFAULT_PROTOCOL_SCHEMES)[number]
+
+/** Parse CSV / legacy single value into an ordered unique preference list. */
+export function parseDefaultProtocolList(raw: string | null | undefined): DefaultProtocolScheme[] {
+  const allowed = new Set<string>(DEFAULT_PROTOCOL_SCHEMES)
+  const out: DefaultProtocolScheme[] = []
+  const seen = new Set<string>()
+  for (const token of (raw ?? '').split(',')) {
+    const scheme = token.trim().toLowerCase()
+    if (!scheme || !allowed.has(scheme) || seen.has(scheme))
+      continue
+    seen.add(scheme)
+    out.push(scheme as DefaultProtocolScheme)
+  }
+  return out.length > 0 ? out : ['tcp']
+}
+
+/** Canonical CSV for `flags.default_protocol`. */
+export function normalizeDefaultProtocol(raw: string | null | undefined): string {
+  return parseDefaultProtocolList(raw).join(',')
+}
+
+/**
  * Normalize config for form / proto round-trip.
  * Does **not** rewrite mutually exclusive flags — call
  * {@link collectConfigConflictWarnings} for tip-only conflict alerts.
@@ -354,7 +383,7 @@ export function normalizeNetworkConfig(config: NetworkConfig): NetworkConfig {
   normalized.data_compress_algo =
     (normalized.data_compress_algo ?? 0) < 1 ? CompressionAlgoPb.None : normalized.data_compress_algo
   normalized.encryption_algorithm = normalized.encryption_algorithm || 'aes-gcm'
-  normalized.default_protocol = normalized.default_protocol || 'tcp'
+  normalized.default_protocol = normalizeDefaultProtocol(normalized.default_protocol)
   normalized.instance_recv_bps_limit = normalizeUint64ForInput(
     normalized.instance_recv_bps_limit as any,
   )

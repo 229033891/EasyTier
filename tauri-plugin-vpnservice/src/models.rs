@@ -41,6 +41,9 @@ pub struct VpnStatus {
     pub ipv4_addr: Option<String>,
     pub routes: Option<Vec<String>>,
     pub dns: Option<String>,
+    /// Incremented by Kotlin NetworkCallback on underlay switch (A9).
+    pub underlay_network_generation: Option<i64>,
+    pub underlay_network_id: Option<i64>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]

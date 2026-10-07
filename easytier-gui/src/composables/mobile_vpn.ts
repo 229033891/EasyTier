@@ -9,7 +9,13 @@ import {
   stop_vpn,
   type VpnTileAction,
 } from 'tauri-plugin-vpnservice-api'
-import { collectNetworkInfo, getConfig, listNetworkInstanceIds, setTunFd } from './backend'
+import {
+  collectNetworkInfo,
+  getConfig,
+  listNetworkInstanceIds,
+  notifyUnderlayNetworkChanged,
+  setTunFd,
+} from './backend'
 
 type Route = NetworkTypes.Route
 
@@ -20,7 +26,8 @@ interface vpnStatus {
   /** Virtual IPv6 with prefix, e.g. `fd00::1/64`. */
   ipv6Addr: string | null | undefined
   routes: string[]
-  dns: string | null | undefined
+  /** Never `null`: every write site normalizes with `?? undefined`. */
+  dns: string | undefined
 }
 
 let vpnReconcileTimer: ReturnType<typeof setTimeout> | null = null
@@ -114,7 +121,7 @@ export function isValidVpnRouteCidr(cidr: string): boolean {
   if (!Number.isInteger(prefix) || prefix < 0)
     return false
 
-  if (/^\d{1,3}(\.\d{1,3}){3}$/.test(addr)) {
+  if (/^\d{1,3}(?:\.\d{1,3}){3}$/.test(addr)) {
     if (prefix > 32)
       return false
     return addr.split('.').every((octet) => {
@@ -136,7 +143,7 @@ function toVpnRouteCidr(raw: string): string | undefined {
   if (!cidr)
     return undefined
   if (!cidr.includes('/')) {
-    if (!/^\d{1,3}(\.\d{1,3}){3}$/.test(cidr)) {
+    if (!/^\d{1,3}(?:\.\d{1,3}){3}$/.test(cidr)) {
       console.warn('skip vpn route: not a CIDR', raw)
       return undefined
     }
@@ -154,7 +161,7 @@ export function formatMobileVpnRouteSync(
   routes: string[] = getMobileVpnInstalledRoutes(),
 ): string {
   const joined = routes.length ? routes.join(',') : '-'
-  const exit = routes.some(route => route === '0.0.0.0/0')
+  const exit = routes.includes('0.0.0.0/0')
   return `desired=[${joined}] installed=[${joined}] exit=${exit}`
 }
 
@@ -508,6 +515,28 @@ async function registerVpnServiceListener() {
       })
     },
   )
+
+  // A9: Wi-Fi/cellular switch — faster than the 30s Rust watchdog seed path.
+  await addPluginListener(
+    'vpnservice',
+    'default_network_changed',
+    (payload: { generation?: number, networkId?: number }) => {
+      return onDefaultNetworkChanged(payload).catch((error) => {
+        console.error('handle default network changed failed', error)
+      })
+    },
+  )
+}
+
+async function onDefaultNetworkChanged(payload: { generation?: number, networkId?: number }) {
+  console.warn('underlay default network changed', JSON.stringify(payload))
+  try {
+    const closed = await notifyUnderlayNetworkChanged(payload?.generation)
+    console.info('underlay reconnect closed peer conns', closed)
+  }
+  catch (e) {
+    console.error('notify underlay network changed failed', e)
+  }
 }
 
 function isDefaultIpv4Route(cidr: string): boolean {
@@ -678,7 +707,9 @@ async function reconcileNetworkInstance(instanceId: string, generation: number) 
   const cidrChanged = network_length !== curVpnStatus.ipv4Cidr
   const ipv6Changed = virtualIpv6WithPrefix !== curVpnStatus.ipv6Addr
   const routesChanged = JSON.stringify(routes) !== JSON.stringify(curVpnStatus.routes)
-  const dnsChanged = dns != curVpnStatus.dns
+  // Plugin status may carry JSON null while the desired value is undefined;
+  // normalize both sides so null-vs-undefined does not flap every 10s tick.
+  const dnsChanged = (dns ?? undefined) !== (curVpnStatus.dns ?? undefined)
   const configChanged = ipChanged || cidrChanged || ipv6Changed || routesChanged || dnsChanged
   const shouldStartVpn = !curVpnStatus.running
 
@@ -875,13 +906,12 @@ function runBackgroundVpnSync() {
 
 let backgroundVpnSyncTimer: ReturnType<typeof setInterval> | null = null
 /**
- * Interval (ms) for background VPN reconciliation on mobile.
+ * Interval (ms) for foreground VPN reconciliation on mobile.
  *
- * Native-side changes that bypass the GUI command path — e.g. disabling a
- * network from the web console, which destroys the core instance without
- * emitting any tauri event — would otherwise leave a stale VpnService
- * (routes + pushed DNS) behind. The sync is cheap (one status + one
- * instance-list query) and every run is idempotent: no drift means no-op.
+ * A3 moved the authoritative orphan-VPN teardown to a Rust 30s watchdog
+ * (`vpn_watchdog_tick`) that does not depend on WebView timers. This JS
+ * interval remains as a faster path while the UI is awake (config drift /
+ * start after instance ready). It is throttled/frozen in Doze — that is OK.
  */
 const BACKGROUND_VPN_SYNC_INTERVAL_MS = 10000
 
