@@ -1,6 +1,6 @@
 [package]
 name = "easytier-gui"
-version = "2.7.4"
+version = "2.7.41"
 description = "EasyTier GUI"
 authors = ["you"]
 edition.workspace = true
