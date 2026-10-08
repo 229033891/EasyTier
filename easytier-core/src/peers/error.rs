@@ -16,6 +16,10 @@ pub enum Error {
     WaitRespError(String),
     #[error("secret key error: {0}")]
     SecretKeyError(String),
+    /// Configured `peer_public_key` (admin pin) does not match the remote Noise key.
+    /// Preference scheme failover must not treat this as "transport unreachable".
+    #[error("pinned remote static pubkey mismatch")]
+    PinnedRemotePubkeyMismatch,
     #[error("peer has no connection: {0}")]
     PeerNoConnectionError(PeerId),
     #[error("route error: {0:?}")]
@@ -44,6 +48,20 @@ impl Error {
                 | Self::Tunnel(TunnelError::Shutdown)
         )
     }
+
+    /// Wrong admin/peer pin — do not preference-failover to another scheme.
+    pub fn is_pinned_remote_pubkey_mismatch(&self) -> bool {
+        matches!(self, Self::PinnedRemotePubkeyMismatch)
+    }
+}
+
+/// Walk an anyhow chain for [`Error::PinnedRemotePubkeyMismatch`].
+pub fn anyhow_is_pinned_remote_pubkey_mismatch(err: &anyhow::Error) -> bool {
+    err.chain().any(|cause| {
+        cause
+            .downcast_ref::<Error>()
+            .is_some_and(Error::is_pinned_remote_pubkey_mismatch)
+    })
 }
 
 fn now_unix_ms() -> u64 {
@@ -101,6 +119,17 @@ mod tests {
         assert!(!Error::NotFound.is_expected_path_unavailable());
         assert!(!Error::Tunnel(TunnelError::BufferFull).is_expected_path_unavailable());
         assert!(!Error::SecretKeyError("bad".into()).is_expected_path_unavailable());
+        assert!(!Error::PinnedRemotePubkeyMismatch.is_expected_path_unavailable());
+    }
+
+    #[test]
+    fn detects_pinned_mismatch_through_anyhow() {
+        assert!(Error::PinnedRemotePubkeyMismatch.is_pinned_remote_pubkey_mismatch());
+        let wrapped = anyhow::Error::from(Error::PinnedRemotePubkeyMismatch);
+        assert!(anyhow_is_pinned_remote_pubkey_mismatch(&wrapped));
+        assert!(!anyhow_is_pinned_remote_pubkey_mismatch(&anyhow::anyhow!(
+            "transport timeout"
+        )));
     }
 
     #[test]

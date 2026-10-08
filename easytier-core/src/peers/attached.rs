@@ -427,6 +427,7 @@ fn build_peer_snapshot(
     snapshot.flags.disable_relay_data = true;
     snapshot.flags.p2p_only = false;
     snapshot.pinned_peers.clear();
+    snapshot.rebuild_pinned_pubkey_index();
     snapshot.avoid_relay_data_preference = true;
     snapshot.peer_group_memberships.clear();
 

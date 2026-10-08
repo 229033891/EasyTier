@@ -762,9 +762,7 @@ impl PeerConn {
         // 2. Check pinned pubkey
         if let Some(pinned) = pinned_pubkey {
             if pinned != remote_pubkey {
-                return Err(Error::WaitRespError(
-                    "pinned remote static pubkey mismatch".to_owned(),
-                ));
+                return Err(Error::PinnedRemotePubkeyMismatch);
             }
             return Ok(SecureAuthLevel::PeerVerified);
         }
@@ -937,15 +935,29 @@ impl PeerConn {
             None
         };
 
+        // Effective pin: URI match first; else identity hit on any configured pin
+        // (direct / hole-punch / relay remote_addr may not equal the manual URI).
+        let identity_pin = pinned_remote_pubkey
+            .is_none()
+            .then(|| {
+                self.context
+                    .remote_matches_configured_pin(&remote_static)
+                    .then_some(remote_static.as_slice())
+            })
+            .flatten();
+        let effective_pinned_pubkey = pinned_remote_pubkey
+            .as_deref()
+            .or(identity_pin);
+
         // Verify server authentication using unified logic
-        let secure_auth_level = if msg2_pb.role_hint != 1 && pinned_remote_pubkey.is_none() {
+        let secure_auth_level = if msg2_pb.role_hint != 1 && effective_pinned_pubkey.is_none() {
             SecureAuthLevel::EncryptedUnauthenticated
         } else {
             self.verify_remote_auth(
                 msg2_pb.secret_proof_32.as_deref(),
                 &server_handshake_hash,
                 &remote_static,
-                pinned_remote_pubkey.as_deref(),
+                effective_pinned_pubkey,
                 network.network_secret.is_some(),
                 true, // is_initiator
                 &remote_network_name,

@@ -163,6 +163,8 @@ impl PeerRuntimeSnapshot {
         )
         .is_err();
         let (acl_group_declarations, peer_group_memberships) = peer_acl_groups(acl.as_ref());
+        let pinned_pubkey_index =
+            crate::config::peers::build_pinned_pubkey_index(&pinned_peers);
 
         Self {
             runtime: PeerRuntimeConfig {
@@ -182,6 +184,7 @@ impl PeerRuntimeSnapshot {
             avoid_relay_data_preference,
             flags,
             pinned_peers,
+            pinned_pubkey_index,
             peer_group_memberships,
             acl_group_declarations,
             ospf_update_my_foreign_network_interval_sec,
@@ -653,6 +656,11 @@ pub(crate) trait PeerContext: Send + Sync {
         None
     }
 
+    /// True when `remote_pubkey` equals any configured `peer_public_key` (URI-independent).
+    fn remote_matches_configured_pin(&self, _remote_pubkey: &[u8]) -> bool {
+        false
+    }
+
     fn secret_proof(&self, _challenge: &[u8]) -> Option<Hmac<Sha256>> {
         None
     }
@@ -880,6 +888,15 @@ impl PeerContext for CorePeerContext {
             .iter()
             .find(|(uri, _)| *uri == remote_url)
             .and_then(|(_, public_key)| public_key.clone())
+    }
+
+    fn remote_matches_configured_pin(&self, remote_pubkey: &[u8]) -> bool {
+        if remote_pubkey.len() != 32 {
+            return false;
+        }
+        let mut key = [0u8; 32];
+        key.copy_from_slice(remote_pubkey);
+        self.snapshot().pinned_pubkey_index.contains(&key)
     }
 
     fn secret_proof(&self, challenge: &[u8]) -> Option<Hmac<Sha256>> {
@@ -1206,6 +1223,8 @@ pub(crate) mod tests {
                 Some("peer-key".to_owned())
             )]
         );
+        // "peer-key" is not valid 32-byte base64 → skipped when building index
+        assert!(snapshot.pinned_pubkey_index.is_empty());
         assert_eq!(snapshot.ospf_update_my_foreign_network_interval_sec, 17);
         assert_eq!(snapshot.max_direct_conns_per_peer_in_foreign_network, 5);
         assert!(snapshot.hmac_secret_digest);

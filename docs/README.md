@@ -54,12 +54,14 @@ crate 内设计稿（非本索引）：`easytier/docs/`（凭据计划已标 Arc
 | [github-release-install.md](./roadmap/github-release-install.md) | GitHub/GHCR 安装升级方案 |
 | [upstream-port-todo.md](./roadmap/upstream-port-todo.md) | 上游 `main` → `dev` cherry-pick 跟踪（P0–P2 已落袋，P3 待发版后） |
 | [config-edit-unified-actions.md](./roadmap/config-edit-unified-actions.md) | 配置编辑统一操作栏（保存常驻 / 放弃更改真还原 / 运行态重启确认；**Done**） |
+| [credential-pin-preference-failover.md](./roadmap/credential-pin-preference-failover.md) | Admin pin 被协议 preference failover 绕过（ET Test #107/#108；**3+2 已落地，待 CI 确认**） |
 
 ## Ops — 运维
 
 | 文档 | 说明 |
 |------|------|
 | [web-build-deploy.md](./ops/web-build-deploy.md) | Web 打包与 Win/Linux 部署 |
+| [windows-msvc-local-build.md](./ops/windows-msvc-local-build.md) | Windows 本机 MSVC：已装 Build Tools 仍编不过时，先 vcvars 再 cargo |
 | [web-upgrade.md](./ops/web-upgrade.md) | Web 现网升级与保库 |
 | [deploy-install.md](./ops/deploy-install.md) | 安装脚本用法 |
 | [ohos-downstream-builds.md](./ops/ohos-downstream-builds.md) | OHOS 下游构建 |

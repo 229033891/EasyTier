@@ -4,7 +4,11 @@
 //! and derivation behavior that depends on peer-domain logic stays in
 //! `crate::peers`.
 
+use std::collections::HashSet;
+
 use anyhow::Context as _;
+use base64::Engine as _;
+use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use cidr::Ipv6Cidr;
 use easytier_proto::common::{FlagsInConfig, PeerFeatureFlag, SecureModeConfig, StunInfo};
 use serde::{Deserialize, Serialize};
@@ -12,6 +16,41 @@ use serde::{Deserialize, Serialize};
 use crate::proto::acl::{Acl, AclV1, Action, Chain, ChainType, GroupInfo, Protocol, Rule};
 
 use super::{CoreConfig, NetworkIdentity};
+
+/// Decode configured `peer_public_key` strings into a 32-byte identity index.
+/// Invalid / wrong-length entries are skipped (with a warning).
+pub fn build_pinned_pubkey_index(
+    pinned_peers: &[(url::Url, Option<String>)],
+) -> HashSet<[u8; 32]> {
+    let mut index = HashSet::new();
+    for (uri, public_key) in pinned_peers {
+        let Some(public_key) = public_key.as_ref() else {
+            continue;
+        };
+        match BASE64_STANDARD.decode(public_key) {
+            Ok(bytes) if bytes.len() == 32 => {
+                let mut key = [0u8; 32];
+                key.copy_from_slice(&bytes);
+                index.insert(key);
+            }
+            Ok(bytes) => {
+                tracing::warn!(
+                    %uri,
+                    len = bytes.len(),
+                    "skipping pinned peer_public_key with invalid length"
+                );
+            }
+            Err(err) => {
+                tracing::warn!(
+                    %uri,
+                    ?err,
+                    "skipping pinned peer_public_key that failed base64 decode"
+                );
+            }
+        }
+    }
+    index
+}
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct AclRuleConfig {
@@ -238,6 +277,11 @@ pub struct PeerRuntimeSnapshot {
     pub avoid_relay_data_preference: bool,
     pub flags: FlagsInConfig,
     pub pinned_peers: Vec<(url::Url, Option<String>)>,
+    /// Decoded 32-byte keys from `pinned_peers` `Some(pk)` values.
+    /// Identity lookup only (not a network-wide deny list). Rebuilt when
+    /// `pinned_peers` changes; skipped in serde and rebuilt by peer layer.
+    #[serde(skip)]
+    pub pinned_pubkey_index: HashSet<[u8; 32]>,
     pub peer_group_memberships: Vec<PeerGroupIdentity>,
     pub acl_group_declarations: Vec<PeerGroupIdentity>,
     pub ospf_update_my_foreign_network_interval_sec: u64,
@@ -254,12 +298,19 @@ impl PeerRuntimeSnapshot {
             avoid_relay_data_preference,
             flags,
             pinned_peers: Vec::new(),
+            pinned_pubkey_index: HashSet::new(),
             peer_group_memberships: Vec::new(),
             acl_group_declarations: Vec::new(),
             ospf_update_my_foreign_network_interval_sec: 10,
             max_direct_conns_per_peer_in_foreign_network: 3,
             hmac_secret_digest: false,
         }
+    }
+
+    /// Rebuild [`Self::pinned_pubkey_index`] from current [`Self::pinned_peers`].
+    /// Call after any mutation of `pinned_peers` (including `clear()`).
+    pub fn rebuild_pinned_pubkey_index(&mut self) {
+        self.pinned_pubkey_index = build_pinned_pubkey_index(&self.pinned_peers);
     }
 }
 
@@ -355,5 +406,45 @@ mod tests {
         assert!(acl.group.is_none());
         assert_eq!(sanitized.tcp_whitelist, ["22"]);
         assert!(config.acl.unwrap().acl_v1.unwrap().group.is_some());
+    }
+
+    #[test]
+    fn pinned_pubkey_index_decodes_valid_keys_and_skips_invalid() {
+        let valid = [7u8; 32];
+        let valid_b64 = BASE64_STANDARD.encode(valid);
+        let peers = vec![
+            (
+                "tcp://192.0.2.1:1".parse().unwrap(),
+                Some(valid_b64.clone()),
+            ),
+            (
+                "tcp://192.0.2.2:1".parse().unwrap(),
+                Some("not-valid-base64!!!".to_owned()),
+            ),
+            ("tcp://192.0.2.3:1".parse().unwrap(), None),
+            (
+                "tcp://192.0.2.4:1".parse().unwrap(),
+                Some(BASE64_STANDARD.encode([1u8; 16])),
+            ),
+        ];
+        let index = build_pinned_pubkey_index(&peers);
+        assert_eq!(index.len(), 1);
+        assert!(index.contains(&valid));
+    }
+
+    #[test]
+    fn rebuild_pinned_pubkey_index_clears_with_peers() {
+        let valid = [9u8; 32];
+        let mut snapshot = PeerRuntimeSnapshot::default();
+        snapshot.pinned_peers = vec![(
+            "udp://192.0.2.9:9".parse().unwrap(),
+            Some(BASE64_STANDARD.encode(valid)),
+        )];
+        snapshot.rebuild_pinned_pubkey_index();
+        assert!(snapshot.pinned_pubkey_index.contains(&valid));
+
+        snapshot.pinned_peers.clear();
+        snapshot.rebuild_pinned_pubkey_index();
+        assert!(snapshot.pinned_pubkey_index.is_empty());
     }
 }

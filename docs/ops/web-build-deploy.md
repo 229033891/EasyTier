@@ -86,7 +86,7 @@ script\easytier-web-release.cmd    REM 正式包：--release + embed
 | 依赖 | 用途 | 本机放置 / 要求 |
 |------|------|-----------------|
 | **Node.js + pnpm** | 前端 | 已安装且在 PATH |
-| **Rust**（`rust-toolchain.toml`） | 编 `easytier-web` | `rustup` 已装好 |
+| **Rust**（`rust-toolchain.toml`） | 编 `easytier-web` | `rustup` 已装好；Windows MSVC 主机需先加载 vcvars，见 [`windows-msvc-local-build.md`](./windows-msvc-local-build.md) |
 | **wasm-pack** | `config-generator` WASM | `cargo install wasm-pack` 或 PATH 可用 |
 | **wasm-bindgen CLI** | wasm-pack 胶水 | 版本需与 `Cargo.lock` 一致（当前多为 `0.2.128`）；放到 `%USERPROFILE%\.cargo\bin\` 或 `script\tools\wasm-bindgen-<ver>\` |
 | **Binaryen / wasm-opt** | WASM 优化 | `wasm-pack` 固定 **Binaryen `version_117`**。下载 [binaryen-version_117-x86_64-windows.tar.gz](https://github.com/WebAssembly/binaryen/releases/download/version_117/binaryen-version_117-x86_64-windows.tar.gz)，放到 `script\tools\`（脚本会自动解压），或保证存在 `script\tools\binaryen-version_117\bin\wasm-opt.exe` |

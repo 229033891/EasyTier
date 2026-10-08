@@ -732,21 +732,27 @@ async fn resolve_manual_endpoint(
     }
 }
 
+/// Attach peer-identity URL for pin lookup / status.
+///
+/// `identity_url` is the configured peer URI (from `peers`), not a preference-rewritten
+/// dial candidate. Pin matching keys off `TunnelInfo.remote_addr`; using the configured
+/// URI keeps `peer_public_key` enforcement when failover dials e.g. `udp://` after `tcp://`.
 fn apply_resolved_endpoint_info(
     tunnel: Box<dyn Tunnel>,
-    requested_url: Url,
+    identity_url: Url,
     tunnel_prefixes: Vec<String>,
 ) -> Box<dyn Tunnel> {
-    if tunnel_prefixes.is_empty() {
-        return tunnel;
-    }
     let inner_info = tunnel.info().unwrap_or_default();
-    let tunnel_type = format!("{}-{}", tunnel_prefixes.join("-"), inner_info.tunnel_type);
+    let tunnel_type = if tunnel_prefixes.is_empty() {
+        inner_info.tunnel_type.clone()
+    } else {
+        format!("{}-{}", tunnel_prefixes.join("-"), inner_info.tunnel_type)
+    };
     Box::new(ResolvedManualTunnel {
         inner: tunnel,
         info: TunnelInfo {
             local_addr: inner_info.local_addr,
-            remote_addr: Some(requested_url.into()),
+            remote_addr: Some(identity_url.into()),
             resolved_remote_addr: inner_info.resolved_remote_addr.or(inner_info.remote_addr),
             tunnel_type,
         },
@@ -832,7 +838,20 @@ where
         let remaining = deadline.saturating_duration_since(now);
         match reconnect_candidate(data.clone(), url.clone(), candidate, remaining).await {
             Ok(()) => return Ok(()),
-            Err(error) => last_error = error,
+            Err(error) => {
+                // Wrong peer_public_key (admin pin) is not "tcp unreachable" —
+                // do not preference-failover to another scheme (would bypass pin
+                // if TunnelInfo.remote_addr were the dial candidate).
+                if crate::peers::error::anyhow_is_pinned_remote_pubkey_mismatch(&error) {
+                    tracing::warn!(
+                        %url,
+                        %error,
+                        "pinned remote pubkey mismatch; skipping preference failover"
+                    );
+                    return Err(error);
+                }
+                last_error = error;
+            }
         }
     }
     Err(last_error)
@@ -888,6 +907,7 @@ where
         let started_at = Instant::now();
         match reconnect_with_ip_version(
             data.clone(),
+            configured_url.clone(),
             url.clone(),
             ip_version,
             started_at,
@@ -897,6 +917,9 @@ where
         {
             Ok(()) => return Ok(()),
             Err(error) => {
+                if crate::peers::error::anyhow_is_pinned_remote_pubkey_mismatch(&error) {
+                    return Err(error);
+                }
                 emit_connect_error(&data, &url, ip_version, &error);
                 last_error = error;
             }
@@ -907,7 +930,8 @@ where
 
 async fn reconnect_with_ip_version<H>(
     data: Arc<ManualConnectorData<H>>,
-    requested_url: Url,
+    configured_url: Url,
+    dial_url: Url,
     ip_version: IpVersion,
     started_at: Instant,
     connect_timeout: Duration,
@@ -921,7 +945,7 @@ where
         connect_timeout,
         resolve_manual_endpoint(
             data.endpoint_resolver.as_ref(),
-            convert_idn_to_ascii(requested_url.clone())?,
+            convert_idn_to_ascii(dial_url.clone())?,
         ),
     )
     .await?;
@@ -974,7 +998,7 @@ where
         ),
     };
     data.events.emit(CoreEvent::ManualConnecting {
-        url: requested_url.clone(),
+        url: configured_url.clone(),
     });
 
     let tunnel = with_timeout_budget("connect", started_at, connect_timeout, async {
@@ -1010,8 +1034,9 @@ where
         data.protocol.upgrade_client(connected, endpoint.url).await
     })
     .await?;
+    // Pin lookup keys off configured peer URI, not the dialed preference candidate.
     let tunnel =
-        apply_resolved_endpoint_info(tunnel, requested_url.clone(), endpoint.tunnel_prefixes);
+        apply_resolved_endpoint_info(tunnel, configured_url.clone(), endpoint.tunnel_prefixes);
     let peer_manager = data
         .peer_manager
         .upgrade()
@@ -1024,7 +1049,7 @@ where
                 .map_err(anyhow::Error::from)
         })
         .await?;
-    tracing::info!(peer_id, %conn_id, %requested_url, "manual reconnect succeeded");
+    tracing::info!(peer_id, %conn_id, %configured_url, %dial_url, "manual reconnect succeeded");
     Ok(())
 }
 
