@@ -526,9 +526,10 @@ export interface NodeInfo {
 }
 
 export interface StunInfo {
-  udp_nat_type: number
-  tcp_nat_type: number
-  last_update_time: number
+  /** protobuf JSON may emit numeric or enum name (e.g. "FullCone"). */
+  udp_nat_type?: number | string
+  tcp_nat_type?: number | string
+  last_update_time?: number | string
 }
 
 export interface Route {
