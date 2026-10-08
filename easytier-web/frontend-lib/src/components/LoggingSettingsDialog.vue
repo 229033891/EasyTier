@@ -402,7 +402,6 @@ async function onClearLogs() {
           <Button
             v-if="canShowLogContent"
             :label="t('logging_copy_recent')"
-            icon="pi pi-copy"
             severity="secondary"
             text
             :loading="isCopying"
@@ -412,7 +411,6 @@ async function onClearLogs() {
           <Button
             v-if="canClearLogs"
             :label="t('logging_clear')"
-            icon="pi pi-trash"
             severity="danger"
             text
             :loading="isClearing"
@@ -421,9 +419,9 @@ async function onClearLogs() {
           />
         </div>
         <div class="logging-footer-actions">
-          <Button :label="t('web.common.cancel')" icon="pi pi-times" @click="visible = false" text
+          <Button :label="t('web.common.cancel')" @click="visible = false" text
             :disabled="isClearing || isCopying" />
-          <Button :label="t('web.common.save')" icon="pi pi-save" @click="onSave" autofocus :loading="isSaving"
+          <Button :label="t('web.common.save')" @click="onSave" autofocus :loading="isSaving"
             :disabled="isClearing || isCopying || (!loggingLevelLive && !!api.remoteOnly)" />
         </div>
       </div>

@@ -116,13 +116,13 @@ logging_file: 日志文件
 logging_timestamps_local_hint: 日志文件按 UTC 写入；此处时间戳已转换为本地时间便于阅读。
 logging_retention_hint: 最多保留 3 个滚动日志文件（按天切分；正常日志量下约 3 天，非固定时间窗口）。
 logging_remote_hint: 日志级别会应用到远端 EasyTier 进程；查看最近日志请在设备上打开日志文件。
-logging_clear: 删除日志
+logging_clear: 删除
 logging_clear_confirm: 确定删除日志目录中的 EasyTier 日志文件吗？当前正在写入的日志会被清空，滚动日志会被删除。服务模式下会同时清理服务日志目录。
 logging_clear_success: 已清理 {count} 个日志文件
 logging_clear_partial: 已清理 {count} 个文件，但仍有失败：{error}
 logging_clear_failed: 删除日志失败
 logging_clear_empty: 没有可删除的日志文件
-logging_copy_recent: 复制日志
+logging_copy_recent: 复制
 logging_copy_recent_success: 已复制最近 {count} 行日志
 logging_copy_recent_empty: 没有可复制的日志内容
 logging_copy_recent_failed: 复制日志失败
@@ -890,12 +890,17 @@ web:
     network: 网络
     select_network: 选择网络
     create_network: 创建网络
-    cancel_edit: 取消编辑
+    discard_changes: 放弃更改
+    discard_changes_tip: 丢弃未保存的修改，恢复为上次已保存的配置
+    unsaved_changes: 未保存
     more_actions: 更多操作
     edit_as_file: 编辑为文件
     edit_as_file_tip: 以文本方式直接编辑完整配置文件
     save_config: 保存配置
-    save_config_tip: 将当前修改保存到设备，不会立即启动网络
+    save_config_tip: 将当前修改保存到设备（若为控制台托管网络则同步），不会立即启动或重建网络
+    save_config_disabled_no_config: 当前没有可保存的配置
+    save_config_disabled_meta: 正在加载权限信息，请稍候再保存
+    save_config_disabled_readonly: 当前配置为只读，无法保存
     config_saved: 配置已保存
     save_failed: 保存配置失败
     start_failed: 启动网络失败
@@ -936,6 +941,8 @@ web:
     switch_to_status: 前往状态
     switch_to_status_tip: 切换到状态页，查看节点与连接信息
     confirm_start_network: 确定启动该网络吗？
+    confirm_rerun_network: 将用当前草稿重建运行中的网络实例，连接会短暂中断。确定继续？
+    confirm_discard_on_switch: 当前有未保存的修改。切换网络将丢弃这些更改，确定继续？
     confirm_delete_network: 确定删除该网络吗？此操作不可恢复。
     confirm_delete_network_header: 删除网络
     disable_network: 禁用网络

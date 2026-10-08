@@ -116,13 +116,13 @@ logging_file: Log File
 logging_timestamps_local_hint: Log files are written in UTC; timestamps here are converted to your local timezone for reading.
 logging_retention_hint: Up to 3 rotated log files are kept (daily rotation; ~3 days at normal volume, not a fixed time window).
 logging_remote_hint: Log level applies to the remote EasyTier process. Open log files on the device to view recent content.
-logging_clear: Delete Logs
+logging_clear: Delete
 logging_clear_confirm: Delete EasyTier log files in the log directory? The active log will be cleared and rotated logs will be removed. In service mode the service log directory is cleared too.
 logging_clear_success: Cleared {count} log file(s)
 logging_clear_partial: 'Cleared {count} file(s), but some failed: {error}'
 logging_clear_failed: Failed to delete logs
 logging_clear_empty: No log files to delete
-logging_copy_recent: Copy Logs
+logging_copy_recent: Copy
 logging_copy_recent_success: Copied the latest {count} log line(s)
 logging_copy_recent_empty: No log content to copy
 logging_copy_recent_failed: Failed to copy logs
@@ -891,12 +891,17 @@ web:
     network: Network
     select_network: Select Network
     create_network: Create Network
-    cancel_edit: Cancel Edit
+    discard_changes: Discard Changes
+    discard_changes_tip: Discard unsaved edits and reload the last saved config
+    unsaved_changes: Unsaved
     more_actions: More Actions
     edit_as_file: Edit as File
     edit_as_file_tip: Edit the full configuration as plain text
     save_config: Save Config
-    save_config_tip: Save changes to the device without starting the network
+    save_config_tip: Save changes to the device (syncs if this network is console-managed). Does not start or rebuild the network.
+    save_config_disabled_no_config: No config available to save
+    save_config_disabled_meta: Loading permissions — try again in a moment
+    save_config_disabled_readonly: This config is read-only and cannot be saved
     config_saved: Config Saved
     save_failed: Failed to save config
     start_failed: Failed to start network
@@ -937,6 +942,8 @@ web:
     switch_to_status: Go to Status
     switch_to_status_tip: Switch to the status page to view peers and connections
     confirm_start_network: Start this network now?
+    confirm_rerun_network: This will rebuild the running network instance from the current draft and briefly disconnect. Continue?
+    confirm_discard_on_switch: You have unsaved changes. Switching networks will discard them. Continue?
     confirm_delete_network: Delete this network? This cannot be undone.
     confirm_delete_network_header: Delete Network
     disable_network: Disable Network

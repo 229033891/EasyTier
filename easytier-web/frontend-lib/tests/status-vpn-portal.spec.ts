@@ -63,7 +63,6 @@ vi.mock('primevue', () => {
   Panel: PanelStub,
     ScrollPanel: PassThrough,
     Tag: PassThrough,
-    Timeline: PassThrough,
   }
 })
 

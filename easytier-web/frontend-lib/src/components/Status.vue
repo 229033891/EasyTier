@@ -6,7 +6,7 @@ import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue';
 import { ipv4InetToString, ipv4ToString, ipv6ToString, formatEventTime } from '../modules/utils';
 import { isPanelHeaderInteractiveTarget } from '../modules/panel';
 import { jitterMs, latencyMs, lossRate, numericValue, pathQualityCell, pathQualityTip, peerConns, resolvePeerRemoteAddr, resolveRoutePath, udpNatTypeName, type RoutePeerLabel } from '../modules/statusDisplay';
-import { Badge, DataTable, Column, Tag, Button, ScrollPanel, Timeline, Card, Panel, } from 'primevue';
+import { Badge, DataTable, Column, Tag, Button, ScrollPanel, Card, Panel, } from 'primevue';
 import NetworkChart from './NetworkChart.vue';
 import PeerConnHistoryChart from './PeerConnHistoryChart.vue';
 
@@ -753,14 +753,12 @@ const eventLogContent = computed(() => {
           :class="{ 'status-panel--expanded': !panelCollapsed.eventLog }"
           :pt="panelHeaderPt('eventLog')">
           <div class="status-panel-body">
-            <Timeline v-if="eventLogContent.length" :value="eventLogContent">
-              <template #opposite="slotProps">
-                <small class="status-event-time">{{ formatEventTime(slotProps.item.time) }}</small>
-              </template>
-              <template #content="slotProps">
-                <HumanEvent :event="slotProps.item.event" />
-              </template>
-            </Timeline>
+            <ul v-if="eventLogContent.length" class="status-event-list">
+              <li v-for="(item, index) in eventLogContent" :key="index" class="status-event-item">
+                <small class="status-event-time">{{ formatEventTime(item.time) }}</small>
+                <HumanEvent :event="item.event" />
+              </li>
+            </ul>
             <div v-else class="status-empty">—</div>
           </div>
         </Panel>
@@ -1042,9 +1040,35 @@ const eventLogContent = computed(() => {
   color: var(--et-danger, #ef4444);
 }
 
+/* Event log: plain stacked list (no Timeline marker / rail). */
+.status-event-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+}
+
+.status-event-item {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.3rem;
+  min-width: 0;
+  padding-bottom: 0.85rem;
+  border-bottom: 1px solid var(--et-border-color, #e2e8f0);
+}
+
+.status-event-item:last-child {
+  padding-bottom: 0;
+  border-bottom: none;
+}
+
 .status-event-time {
   font-size: var(--et-fs-meta, 0.75rem);
   color: var(--text-color-secondary, #64748b);
+  font-variant-numeric: tabular-nums;
 }
 
 @media (max-width: 640px) {
@@ -1098,6 +1122,10 @@ const eventLogContent = computed(() => {
   .status-empty,
   .status-event-time {
     color: var(--text-color-secondary, #94a3b8);
+  }
+
+  .status-event-item {
+    border-bottom-color: var(--surface-border, #334155);
   }
 
   .node-info-chip,
@@ -1172,27 +1200,6 @@ const eventLogContent = computed(() => {
   .route-cost-cell {
     max-width: 8rem;
   }
-
-  /* 事件时间线：窄屏改为时间在内容上方，避免对侧栏挤压正文 */
-  .status-panels :deep(.p-timeline-event) {
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 0.15rem;
-  }
-
-  .status-panels :deep(.p-timeline-event-opposite) {
-    flex: 0 0 auto !important;
-    padding: 0 !important;
-    text-align: left;
-  }
-
-  .status-panels :deep(.p-timeline-event-separator) {
-    display: none;
-  }
-}
-
-.p-timeline :deep(.p-timeline-event-opposite) {
-  @apply flex-none;
 }
 
 :deep(.p-datatable .p-datatable-column-title) {

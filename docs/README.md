@@ -53,6 +53,7 @@ crate 内设计稿（非本索引）：`easytier/docs/`（凭据计划已标 Arc
 | [web-evolution.md](./roadmap/web-evolution.md) | easytier-web 演进约束与阶段 |
 | [github-release-install.md](./roadmap/github-release-install.md) | GitHub/GHCR 安装升级方案 |
 | [upstream-port-todo.md](./roadmap/upstream-port-todo.md) | 上游 `main` → `dev` cherry-pick 跟踪（P0–P2 已落袋，P3 待发版后） |
+| [config-edit-unified-actions.md](./roadmap/config-edit-unified-actions.md) | 配置编辑统一操作栏（保存常驻 / 放弃更改真还原 / 运行态重启确认；**Done**） |
 
 ## Ops — 运维
 

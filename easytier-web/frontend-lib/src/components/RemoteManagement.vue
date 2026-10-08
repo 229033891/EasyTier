@@ -4,6 +4,10 @@ import { TOAST_LIFE } from '../modules/toast'
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import * as Api from '../modules/api';
+import {
+    captureNormalizedDirtySnapshot,
+    isConfigSnapshotDirty,
+} from '../modules/config-dirty';
 import * as Utils from '../modules/utils';
 import * as NetworkTypes from '../types/network';
 import LoggingSettingsDialog from './LoggingSettingsDialog.vue';
@@ -72,6 +76,30 @@ const curNetworkInfo = ref<NetworkTypes.NetworkInstance | null>(null);
 const showConfigEditDialog = ref(false);
 const isEditingNetwork = ref(false); // Flag to indicate if we're in network editing mode
 const currentNetworkConfig = ref<NetworkTypes.NetworkConfig | undefined>(undefined);
+/** Canonical dirty baseline; retaken after load / save / run refresh. */
+const cleanConfigSnapshot = ref<string | null>(null);
+const isConfigDirty = ref(false);
+
+const applyLoadedNetworkConfig = (config: NetworkTypes.NetworkConfig) => {
+    const { config: normalized, snapshot } = captureNormalizedDirtySnapshot(config);
+    currentNetworkConfig.value = normalized;
+    cleanConfigSnapshot.value = snapshot;
+    isConfigDirty.value = false;
+};
+
+const clearNetworkConfigDraft = () => {
+    currentNetworkConfig.value = undefined;
+    cleanConfigSnapshot.value = null;
+    isConfigDirty.value = false;
+};
+
+watch(
+    currentNetworkConfig,
+    (cfg) => {
+        isConfigDirty.value = isConfigSnapshotDirty(cfg, cleanConfigSnapshot.value);
+    },
+    { deep: true },
+);
 
 const listInstanceIdResponse = ref<Api.ListNetworkInstanceIdResponse | undefined>(undefined);
 
@@ -135,17 +163,35 @@ const currentNetworkControl = {
     })
 }
 
-/** ???????????????????????????? */
+/** Save allowed when meta loaded and config is editable (not READ_ONLY). */
 const canSaveConfig = computed(() => {
     if (!currentNetworkConfig.value) {
         return false;
     }
-    // ??????????????????????????????
     if (!currentNetworkMeta.value || networkMetaLoadFailed.value[currentNetworkConfig.value.instance_id]) {
         return false;
     }
     return currentNetworkControl.editable.value;
 });
+
+const saveConfigDisabledReason = computed(() => {
+    if (canSaveConfig.value) {
+        return '';
+    }
+    if (!currentNetworkConfig.value) {
+        return t('web.device_management.save_config_disabled_no_config');
+    }
+    if (!currentNetworkMeta.value || networkMetaLoadFailed.value[currentNetworkConfig.value.instance_id]) {
+        return t('web.device_management.save_config_disabled_meta');
+    }
+    return t('web.device_management.save_config_disabled_readonly');
+});
+
+const saveConfigTooltip = computed(() =>
+    canSaveConfig.value
+        ? t('web.device_management.save_config_tip')
+        : saveConfigDisabledReason.value,
+);
 
 const savingConfig = ref(false);
 
@@ -198,12 +244,53 @@ const selectedInstanceId = computed({
     get() {
         return instanceList.value.find((instance) => instance.uuid === instanceId.value);
     },
-    set(value: any) {
+    set(value: { uuid: string } | null | undefined) {
         instanceId.value = value ? value.uuid : undefined;
     }
 });
 
-/** ??????????????????? */
+/** Programmatic selection (run/new/etc.) — skips dirty confirm. */
+const setSelectedInstanceId = (uuid: string | undefined) => {
+    instanceId.value = uuid;
+};
+
+/** Confirm before discarding a dirty draft; runs `onAccept` if clean or confirmed. */
+const confirmDiscardIfDirty = (onAccept: () => void) => {
+    if (!isConfigDirty.value || !showConfigPanel.value) {
+        onAccept();
+        return;
+    }
+    confirm.require({
+        message: t('web.device_management.confirm_discard_on_switch'),
+        header: t('web.device_management.discard_changes'),
+        icon: 'pi pi-exclamation-triangle',
+        rejectProps: {
+            label: t('web.common.cancel'),
+            severity: 'secondary',
+            outlined: true,
+        },
+        acceptProps: {
+            label: t('web.device_management.discard_changes'),
+            severity: 'danger',
+        },
+        accept: onAccept,
+    });
+};
+
+/**
+ * Top Select uses one-way binding + this handler so dirty drafts can be
+ * confirmed before assignment (watch cannot block async).
+ */
+const onSelectInstanceId = (value: { uuid: string } | null | undefined) => {
+    const nextUuid = value?.uuid;
+    if (nextUuid === instanceId.value) {
+        return;
+    }
+    confirmDiscardIfDirty(() => {
+        instanceId.value = nextUuid;
+    });
+};
+
 const selectedNetworkRunning = computed(() => {
     const id = selectedInstanceId.value?.uuid;
     return !!id && isRunning(id);
@@ -215,7 +302,7 @@ const selectedNetworkStopped = computed(() => {
 
 watch(selectedInstanceId, async (newVal, oldVal) => {
     try {
-        if (newVal?.uuid !== oldVal?.uuid && (networkIsDisabled.value || isEditingNetwork.value)) {
+        if (newVal?.uuid !== oldVal?.uuid && (networkIsDisabled.value || isEditingNetwork.value || isConfigMode.value)) {
             await loadCurrentNetworkConfig();
         } else {
             await loadCurrentNetworkInfo();
@@ -298,7 +385,7 @@ let currentConfigLoad: { instanceId: string; promise: Promise<void> } | undefine
 const loadCurrentNetworkConfig = async () => {
     const selected = selectedInstanceId.value?.uuid;
     if (!selected) {
-        currentNetworkConfig.value = undefined;
+        clearNetworkConfigDraft();
         return;
     }
 
@@ -306,11 +393,11 @@ const loadCurrentNetworkConfig = async () => {
         return currentConfigLoad.promise;
     }
 
-    currentNetworkConfig.value = undefined;
+    // Keep previous draft visible until the new config arrives (avoid blank flash).
     const promise = (async () => {
         const ret = await props.api.get_network_config(selected);
         if (selectedInstanceId.value?.uuid === selected) {
-            currentNetworkConfig.value = ret;
+            applyLoadedNetworkConfig(ret);
         }
     })();
     currentConfigLoad = { instanceId: selected, promise };
@@ -391,7 +478,24 @@ const confirmStartNetwork = (_event?: Event) => {
 }
 
 const requestSwitchMode = (mode: 'status' | 'config') => {
+    // Leaving config with a dirty draft would be wiped on next ensureConfigModeEditing reload.
+    if (mode === 'status' && isConfigDirty.value && showConfigPanel.value) {
+        confirmDiscardIfDirty(() => {
+            clearNetworkConfigDraft();
+            emits('switchMode', mode);
+        });
+        return;
+    }
     emits('switchMode', mode);
+}
+
+const requestLeave = () => {
+    if (!props.drawerClose) {
+        return;
+    }
+    confirmDiscardIfDirty(() => {
+        props.drawerClose?.();
+    });
 }
 
 /** ????????????????????? */
@@ -493,16 +597,23 @@ const saveAndRunNewNetwork = async (config?: NetworkTypes.NetworkConfig) => {
         delete networkMetaCache.value[cfg.instance_id];
         await loadNetworkMetas([cfg.instance_id]);
 
-        selectedInstanceId.value = { uuid: cfg.instance_id };
+        setSelectedInstanceId(cfg.instance_id);
         await loadNetworkInstanceIds();
         await loadCurrentNetworkInfo();
 
-        // Windows may have write-back the auto-assigned wintun `dev_name` during
-        // post_run. Refresh so a subsequent Save does not push the stale empty value.
+        // Windows may write back auto-assigned wintun `dev_name` during post_run.
+        // Refresh so a subsequent Save does not push a stale empty value.
+        // Guard instance_id: a concurrent selectedInstanceId watch load may race.
         try {
-            currentNetworkConfig.value = await props.api.get_network_config(cfg.instance_id);
+            const refreshed = await props.api.get_network_config(cfg.instance_id);
+            if (instanceId.value === cfg.instance_id) {
+                applyLoadedNetworkConfig(refreshed);
+            }
         } catch (refreshError) {
             console.warn('failed to refresh network config after start', refreshError);
+            if (instanceId.value === cfg.instance_id) {
+                applyLoadedNetworkConfig(cfg);
+            }
         }
     } catch (e: any) {
         console.error(e);
@@ -512,15 +623,48 @@ const saveAndRunNewNetwork = async (config?: NetworkTypes.NetworkConfig) => {
 
     emits('update');
     if (isConfigMode.value) {
-        // ??????/??????????
         isEditingNetwork.value = true;
     } else {
         isEditingNetwork.value = false;
     }
 }
 
+function isNetworkConfigArg(value: unknown): value is NetworkTypes.NetworkConfig {
+    return !!value
+        && typeof value === 'object'
+        && typeof (value as NetworkTypes.NetworkConfig).instance_id === 'string';
+}
+
+/** Running-state re-apply rebuilds the instance; confirm before brief disconnect. */
+const confirmRunNetwork = (config?: NetworkTypes.NetworkConfig | Event) => {
+    // Footer @click must use confirmRunNetwork() — a bare handler would pass the MouseEvent.
+    const cfg = isNetworkConfigArg(config) ? config : currentNetworkConfig.value;
+    if (!cfg) {
+        return;
+    }
+    if (!networkIsDisabled.value && selectedNetworkRunning.value) {
+        confirm.require({
+            message: t('web.device_management.confirm_rerun_network'),
+            header: t('run_network'),
+            icon: 'pi pi-exclamation-triangle',
+            rejectProps: {
+                label: t('web.common.cancel'),
+                severity: 'secondary',
+                outlined: true,
+            },
+            acceptProps: {
+                label: t('run_network'),
+                severity: 'success',
+            },
+            accept: () => { void saveAndRunNewNetwork(cfg) },
+        });
+        return;
+    }
+    void saveAndRunNewNetwork(cfg);
+}
+
 const saveNetworkConfig = async () => {
-    if (!currentNetworkConfig.value || savingConfig.value) {
+    if (!currentNetworkConfig.value || savingConfig.value || !canSaveConfig.value) {
         return;
     }
     savingConfig.value = true;
@@ -529,6 +673,8 @@ const saveNetworkConfig = async () => {
 
         delete networkMetaCache.value[currentNetworkConfig.value.instance_id];
         await loadNetworkMetas([currentNetworkConfig.value.instance_id]);
+
+        applyLoadedNetworkConfig(currentNetworkConfig.value);
 
         toast.add({
             severity: 'success',
@@ -552,8 +698,8 @@ const newNetwork = async () => {
     const newNetworkConfig = props.newConfigGenerator?.() ?? NetworkTypes.DEFAULT_NETWORK_CONFIG();
     try {
         await props.api.save_config(newNetworkConfig);
-        selectedInstanceId.value = { uuid: newNetworkConfig.instance_id };
-        currentNetworkConfig.value = newNetworkConfig;
+        setSelectedInstanceId(newNetworkConfig.instance_id);
+        applyLoadedNetworkConfig(newNetworkConfig);
         isEditingNetwork.value = true;
         await loadNetworkInstanceIds();
     } catch (e) {
@@ -567,8 +713,28 @@ const newNetwork = async () => {
     }
 }
 
-const cancelEditNetwork = () => {
-    isEditingNetwork.value = false;
+/**
+ * Discard unsaved draft by reloading last saved config.
+ * When clean and combined-mode editing a running network, leave edit → status.
+ */
+const discardConfigChanges = async () => {
+    if (isConfigDirty.value) {
+        try {
+            await loadCurrentNetworkConfig();
+        } catch (e: any) {
+            console.error(e);
+            toast.add({
+                severity: 'error',
+                summary: t('web.common.error'),
+                detail: t('web.device_management.load_config_failed') + ': ' + errorDetail(e),
+                life: TOAST_LIFE.error,
+            });
+        }
+        return;
+    }
+    if (isCombinedMode.value && isEditingNetwork.value && !networkIsDisabled.value) {
+        isEditingNetwork.value = false;
+    }
 }
 
 const editNetwork = async () => {
@@ -584,8 +750,8 @@ const editNetwork = async () => {
 
     try {
         const ret = await props.api.get_network_config(instanceId.value!);
-        currentNetworkConfig.value = ret;
-        isEditingNetwork.value = true; // Switch to editing mode instead
+        applyLoadedNetworkConfig(ret);
+        isEditingNetwork.value = true;
     } catch (e: any) {
         console.error(e);
         toast.add({ severity: 'error', summary: t('web.common.error'), detail: t('web.device_management.save_failed') + ': ' + errorDetail(e), life: TOAST_LIFE.error });
@@ -752,21 +918,35 @@ const syncTomlConfig = async (tomlConfig: string): Promise<void> => {
     currentNetworkConfig.value = config;
 }
 
-/** GUI combined 模式底部导航：状态页显示「节点配置」，编辑页显示「取消编辑」。
- *  仅 combined 模式生效，web 的 status / config 模式不受影响。 */
+/** GUI combined：状态页「节点配置」入口（仅 combined）。 */
 const showCombinedEditEntry = computed(() =>
     isCombinedMode.value
     && needShowNetworkStatus.value
     && currentNetworkControl.editable.value
 );
-const showCombinedCancelEdit = computed(() =>
-    isCombinedMode.value && isEditingNetwork.value
-);
-const showCombinedNavZone = computed(() =>
-    showCombinedEditEntry.value || showCombinedCancelEdit.value
+
+/**
+ * 放弃更改：配置面板可见且（脏，或 combined 运行态编辑且干净时用于退出编辑）。
+ * 停止态脏草稿也显示，不限 isEditingNetwork。
+ */
+const showDiscardChanges = computed(() => {
+    if (!showConfigPanel.value || !currentNetworkConfig.value) {
+        return false;
+    }
+    if (isConfigDirty.value) {
+        return true;
+    }
+    return isCombinedMode.value && isEditingNetwork.value && !networkIsDisabled.value;
+});
+
+const showSaveInFooter = computed(() =>
+    showConfigPanel.value && !!currentNetworkConfig.value
 );
 
-/** ????????????????? */
+const showCombinedNavZone = computed(() =>
+    showCombinedEditEntry.value || showDiscardChanges.value || showSaveInFooter.value
+);
+
 const stickyFooterPrimary = computed(() => {
     if (showStatusDisabledPanel.value) {
         return 'start' as const;
@@ -833,10 +1013,11 @@ onUnmounted(() => {
             <div class="network-header-main flex flex-row justify-between items-center gap-2">
                 <!-- ?????? -->
                 <div class="flex-1 min-w-0">
-                    <Select v-model="selectedInstanceId" :options="instanceList" optionLabel="uuid"
+                    <Select :modelValue="selectedInstanceId" :options="instanceList" optionLabel="uuid"
                         class="w-full network-instance-select"
                         inputId="dd-inst-id" :placeholder="t('web.device_management.select_network')"
                         overlay-class="network-select-overlay"
+                        @update:modelValue="onSelectInstanceId"
                         :pt="{
                             root: {
                                 class: [
@@ -863,6 +1044,9 @@ onUnmounted(() => {
                                         </span>
                                         <span v-else>{{ slotProps.value.uuid }}</span>
                                     </span>
+                                    <Tag v-if="isConfigDirty && showConfigPanel" class="network-dirty-tag leading-3 shrink-0"
+                                        severity="warn"
+                                        :value="t('web.device_management.unsaved_changes')" />
                                     <Tag class="network-status-tag leading-3 shrink-0"
                                         :severity="isRunning(slotProps.value.uuid) ? 'success' : 'danger'"
                                         :value="t(isRunning(slotProps.value.uuid) ? 'network_running' : 'network_stopped')" />
@@ -898,7 +1082,7 @@ onUnmounted(() => {
 
             <template v-else-if="showConfigPanel && currentNetworkConfig">
                 <Config :cur-network="currentNetworkConfig" :config-invalid="false"
-                    :hide-run-button="true" @run-network="saveAndRunNewNetwork">
+                    :hide-run-button="true" @run-network="confirmRunNetwork">
                     <template #config-toolbar>
                         <div class="config-toolbar">
                             <div class="toolbar-zone">
@@ -916,11 +1100,6 @@ onUnmounted(() => {
                                         :label="t('web.device_management.export_config')" iconPos="left" severity="secondary"
                                         outlined
                                         v-tooltip.bottom="t('web.device_management.export_config_tip')" />
-                                    <Button v-if="canSaveConfig" class="config-toolbar-btn" @click="saveNetworkConfig"
-                                        :disabled="!currentNetworkConfig || savingConfig"
-                                        icon="pi pi-save" :label="t('web.device_management.save_config')" iconPos="left"
-                                        severity="success"
-                                        v-tooltip.bottom="t('web.device_management.save_config_tip')" />
                                 </div>
                             </div>
                             <div class="toolbar-zone toolbar-zone--network">
@@ -977,21 +1156,25 @@ onUnmounted(() => {
                 class="network-footer-btn network-footer-btn--muted" @click="loggingDialogVisible = true" />
             <!-- GUI 额外按钮（系统设置等）放最左，窄屏单行时更易点到 -->
             <slot name="footer-extra" />
-            <Button v-if="showLeaveInFooter" @click="drawerClose" :label="leaveLabel" severity="secondary"
+            <Button v-if="showLeaveInFooter" @click="requestLeave" :label="leaveLabel" severity="secondary"
                 :icon="leaveIcon" iconPos="left" class="network-footer-btn network-footer-btn--muted"
                 v-tooltip.top="leaveTooltip" />
-            <!-- GUI combined 模式：编辑/取消与运行网络同一样式体系 -->
-            <div v-if="showCombinedNavZone" class="footer-zone">
+            <!-- 左区：节点配置入口 / 放弃更改 / 保存；右区：主操作 -->
+            <div v-if="showCombinedNavZone || isConfigMode || isStatusMode" class="footer-zone">
                 <Button v-if="showCombinedEditEntry" icon="pi pi-cog" severity="secondary"
                     :label="t('web.device_management.switch_to_config')" iconPos="left"
                     class="network-footer-btn network-footer-btn--muted" @click="editNetwork"
                     v-tooltip.top="t('web.device_management.switch_to_config_tip')" />
-                <Button v-if="showCombinedCancelEdit" icon="pi pi-times" severity="secondary"
-                    :label="t('web.device_management.cancel_edit')" iconPos="left"
-                    class="network-footer-btn network-footer-btn--muted" @click="cancelEditNetwork"
-                    v-tooltip.top="t('web.device_management.cancel_edit')" />
-            </div>
-            <div class="footer-zone footer-zone--primary">
+                <Button v-if="showDiscardChanges" icon="pi pi-replay" severity="secondary"
+                    :label="t('web.device_management.discard_changes')" iconPos="left"
+                    class="network-footer-btn network-footer-btn--muted" @click="discardConfigChanges"
+                    v-tooltip.top="t('web.device_management.discard_changes_tip')" />
+                <Button v-if="showSaveInFooter" icon="pi pi-save" severity="success"
+                    :label="t('web.device_management.save_config')" iconPos="left"
+                    class="network-footer-btn network-footer-btn--save"
+                    :disabled="!canSaveConfig || savingConfig"
+                    @click="saveNetworkConfig"
+                    v-tooltip.top="saveConfigTooltip" />
                 <Button v-if="isConfigMode" icon="pi pi-chart-line" severity="secondary"
                     :label="t('web.device_management.switch_to_status')" iconPos="left"
                     class="network-footer-btn network-footer-btn--accent" @click="requestSwitchMode('status')"
@@ -1000,13 +1183,14 @@ onUnmounted(() => {
                     :label="t('web.device_management.switch_to_config')" iconPos="left"
                     class="network-footer-btn network-footer-btn--accent" @click="requestSwitchMode('config')"
                     v-tooltip.top="t('web.device_management.switch_to_config_tip')" />
-
+            </div>
+            <div class="footer-zone footer-zone--primary">
                 <Button v-if="stickyFooterPrimary === 'start'" @click="confirmStartNetwork($event)"
                     :disabled="!currentNetworkControl.deletable.value" :label="t('web.network.start')"
                     severity="success" icon="pi pi-play" iconPos="left" class="network-footer-btn"
                     v-tooltip.top="t('web.device_management.start_network_tip')" />
                 <Button v-else-if="stickyFooterPrimary === 'run'"
-                    @click="saveAndRunNewNetwork(currentNetworkConfig!)" :disabled="!currentNetworkConfig"
+                    @click="confirmRunNetwork()" :disabled="!currentNetworkConfig"
                     :label="t('run_network')" severity="success" icon="pi pi-arrow-right" iconPos="right"
                     class="network-footer-btn"
                     v-tooltip.top="t('run_network_tip')" />
@@ -1279,11 +1463,17 @@ onUnmounted(() => {
     color: #ffffff !important;
 }
 
-:deep(.network-status-tag.p-tag) {
+:deep(.network-status-tag.p-tag),
+:deep(.network-dirty-tag.p-tag) {
     font-weight: 700 !important;
     letter-spacing: 0.02em;
     padding: 0.2rem 0.55rem !important;
     border: none !important;
+}
+
+:deep(.network-dirty-tag.p-tag) {
+    background: color-mix(in srgb, #f59e0b 22%, #ffffff) !important;
+    color: #b45309 !important;
 }
 
 /* ???????????Tag ?????????????? */
@@ -1413,6 +1603,24 @@ onUnmounted(() => {
 
     :deep(.config-toolbar-btn.p-button .p-button-icon),
     :deep(.network-footer-btn.p-button .p-button-icon) {
+        display: none;
+    }
+
+    /* 窄屏保存退为图标，给「放弃更改 / 运行」让出宽度 */
+    :deep(.network-footer-btn--save.p-button) {
+        flex: 0 0 auto;
+        max-width: var(--et-btn, 2.5rem);
+        min-width: var(--et-btn, 2.5rem);
+        width: var(--et-btn, 2.5rem);
+        padding: 0 !important;
+    }
+
+    :deep(.network-footer-btn--save.p-button .p-button-icon) {
+        display: inline-flex;
+        margin: 0;
+    }
+
+    :deep(.network-footer-btn--save.p-button .p-button-label) {
         display: none;
     }
 

@@ -44,9 +44,12 @@ const BOOLEAN_CONFIG_FIELDS = [
   'disable_tcp_hole_punching',
 ] as const satisfies readonly (keyof NetworkConfig)[]
 
+const confirmRequire = vi.fn()
+
 vi.mock('vue-i18n', () => ({
   useI18n: () => ({
     t: (key: string) => key,
+    te: () => true,
   }),
 }))
 
@@ -93,8 +96,17 @@ vi.mock('primevue', async () => {
       options: Array,
     },
     emits: ['update:modelValue'],
-    setup(props, { slots }) {
-      return () => h('div', { 'data-stub': 'select' }, [
+    setup(props, { slots, emit }) {
+      return () => h('div', {
+        'data-stub': 'select',
+        onClick: () => {
+          const opts = (props.options ?? []) as Array<{ uuid: string }>
+          const other = opts.find((o) => o.uuid !== (props.modelValue as { uuid?: string } | undefined)?.uuid)
+          if (other) {
+            emit('update:modelValue', other)
+          }
+        },
+      }, [
         slots.value?.({ value: props.modelValue, placeholder: '' }),
       ])
     },
@@ -118,23 +130,30 @@ vi.mock('primevue', async () => {
     Message: PassThrough,
     Select: SelectStub,
     Tag: PassThrough,
-    useConfirm: () => ({ require: vi.fn() }),
+    useConfirm: () => ({ require: confirmRequire }),
     useToast: () => ({ add: vi.fn() }),
   }
 })
 
 const INSTANCE_ID = '00000000-0000-0000-0000-000000000001'
+const INSTANCE_ID_B = '00000000-0000-0000-0000-000000000002'
 const INSTANCE_UUID = {
   part1: 0,
   part2: 0,
   part3: 0,
   part4: 1,
 }
+const INSTANCE_UUID_B = {
+  part1: 0,
+  part2: 0,
+  part3: 0,
+  part4: 2,
+}
 
-function makeFlagConfig(): NetworkConfig {
+function makeFlagConfig(instanceId = INSTANCE_ID): NetworkConfig {
   const config = {
     ...DEFAULT_NETWORK_CONFIG(),
-    instance_id: INSTANCE_ID,
+    instance_id: instanceId,
     network_name: 'mesh-save',
   }
 
@@ -163,57 +182,100 @@ async function settleRemoteManagement() {
   }
 }
 
+function makeApi(options: {
+  config: NetworkConfig
+  disabled?: boolean
+  running?: boolean
+  secondConfig?: NetworkConfig
+}) {
+  const { config, disabled = true, running = false, secondConfig } = options
+  const configs: Record<string, NetworkConfig> = {
+    [config.instance_id]: cloneConfig(config),
+  }
+  if (secondConfig) {
+    configs[secondConfig.instance_id] = cloneConfig(secondConfig)
+  }
+
+  return {
+    delete_network: vi.fn(),
+    generate_config: vi.fn(),
+    get_network_config: vi.fn(async (id: string) => cloneConfig(configs[id] ?? config)),
+    get_network_info: vi.fn(),
+    get_vpn_portal_info: vi.fn(),
+    get_network_metas: vi.fn(async (instanceIds: string[]) => ({
+      metas: Object.fromEntries(instanceIds.map((id) => [id, {
+        config_permission: 0,
+        inst_id: id === INSTANCE_ID_B ? INSTANCE_UUID_B : INSTANCE_UUID,
+        instance_name: 'mesh-save',
+        network_name: 'mesh-save',
+        source: 2,
+      }])),
+    })),
+    list_network_instance_ids: vi.fn(async () => ({
+      disabled_inst_ids: disabled
+        ? [INSTANCE_UUID, ...(secondConfig ? [INSTANCE_UUID_B] : [])]
+        : (secondConfig && !running ? [INSTANCE_UUID_B] : []),
+      running_inst_ids: running
+        ? [INSTANCE_UUID, ...(secondConfig && running ? [] : [])]
+        : [],
+    })),
+    parse_config: vi.fn(),
+    run_network: vi.fn(async () => undefined),
+    save_config: vi.fn(async () => undefined),
+    update_network_instance_state: vi.fn(),
+    validate_config: vi.fn(),
+  }
+}
+
+async function mountRemote(api: ReturnType<typeof makeApi>, props: Record<string, unknown> = {}) {
+  const wrapper = mount(RemoteManagement, {
+    props: {
+      api,
+      instanceId: INSTANCE_ID,
+      ...props,
+    },
+    global: {
+      directives: {
+        tooltip: () => {},
+      },
+      stubs: {
+        Config: {
+          template: '<div data-stub="config"><slot name="config-toolbar" /></div>',
+        },
+        ConfigEditDialog: true,
+        Status: true,
+      },
+    },
+  })
+  await settleRemoteManagement()
+  return wrapper
+}
+
+function setupState(wrapper: Awaited<ReturnType<typeof mountRemote>>) {
+  return (wrapper.vm as unknown as { $: { setupState: Record<string, any> } }).$.setupState
+}
+
+function networkConfigRef(wrapper: Awaited<ReturnType<typeof mountRemote>>): NetworkConfig {
+  const cfg = setupState(wrapper).currentNetworkConfig
+  return (cfg && typeof cfg === 'object' && 'value' in cfg ? cfg.value : cfg) as NetworkConfig
+}
+
+function readDirty(wrapper: Awaited<ReturnType<typeof mountRemote>>): boolean {
+  const dirty = setupState(wrapper).isConfigDirty
+  return !!(dirty && typeof dirty === 'object' && 'value' in dirty ? dirty.value : dirty)
+}
+
 describe('RemoteManagement config save', () => {
-  it('saves the current network config without dropping boolean fields', async () => {
+  it('saves from the sticky footer without dropping boolean fields', async () => {
     const config = makeFlagConfig()
     const expectedFlags = snapshotBooleanConfigFields(config)
-    const api = {
-      delete_network: vi.fn(),
-      generate_config: vi.fn(),
-      get_network_config: vi.fn(async () => cloneConfig(config)),
-      get_network_info: vi.fn(),
-      get_vpn_portal_info: vi.fn(),
-      get_network_metas: vi.fn(async (instanceIds: string[]) => ({
-        metas: Object.fromEntries(instanceIds.map((id) => [id, {
-          config_permission: 0,
-          inst_id: INSTANCE_UUID,
-          instance_name: 'mesh-save',
-          network_name: 'mesh-save',
-          source: 2,
-        }])),
-      })),
-      list_network_instance_ids: vi.fn(async () => ({
-        disabled_inst_ids: [INSTANCE_UUID],
-        running_inst_ids: [],
-      })),
-      parse_config: vi.fn(),
-      run_network: vi.fn(),
-      save_config: vi.fn(async () => undefined),
-      update_network_instance_state: vi.fn(),
-      validate_config: vi.fn(),
-    }
+    const api = makeApi({ config })
 
-    const wrapper = mount(RemoteManagement, {
-      props: {
-        api,
-        instanceId: INSTANCE_ID,
-      },
-      global: {
-        directives: {
-          tooltip: () => {},
-        },
-        stubs: {
-          Config: {
-            template: '<div data-stub="config"><slot name="config-toolbar" /></div>',
-          },
-          ConfigEditDialog: true,
-          Status: true,
-        },
-      },
-    })
+    const wrapper = await mountRemote(api)
 
     try {
-      await settleRemoteManagement()
+      const toolbarSave = wrapper.find('.config-toolbar button[data-label="web.device_management.save_config"]')
+      expect(toolbarSave.exists()).toBe(false)
 
       const saveButton = wrapper.find('button[data-label="web.device_management.save_config"]')
       expect(saveButton.exists()).toBe(true)
@@ -228,6 +290,98 @@ describe('RemoteManagement config save', () => {
       for (const field of BOOLEAN_CONFIG_FIELDS) {
         expect(savedConfig[field], `${field} should be saved`).toBe(expectedFlags[field])
       }
+    } finally {
+      wrapper.unmount()
+    }
+  })
+
+  it('marks dirty on edit, clears after discard reload', async () => {
+    const config = makeFlagConfig()
+    const api = makeApi({ config })
+    const wrapper = await mountRemote(api)
+
+    try {
+      expect(wrapper.find('[data-value="web.device_management.unsaved_changes"]').exists()).toBe(false)
+
+      networkConfigRef(wrapper).network_name = 'changed-name'
+      await nextTick()
+      await flushPromises()
+
+      expect(readDirty(wrapper)).toBe(true)
+      expect(wrapper.find('[data-value="web.device_management.unsaved_changes"]').exists()).toBe(true)
+
+      const discard = wrapper.find('button[data-label="web.device_management.discard_changes"]')
+      expect(discard.exists()).toBe(true)
+      await discard.trigger('click')
+      await settleRemoteManagement()
+
+      expect(api.get_network_config.mock.calls.length).toBeGreaterThan(1)
+      expect(readDirty(wrapper)).toBe(false)
+      expect(networkConfigRef(wrapper).network_name).toBe('mesh-save')
+    } finally {
+      wrapper.unmount()
+    }
+  })
+
+  it('confirms before switching network when dirty', async () => {
+    confirmRequire.mockClear()
+    const config = makeFlagConfig()
+    const second = makeFlagConfig(INSTANCE_ID_B)
+    second.network_name = 'other'
+    const api = makeApi({ config, secondConfig: second })
+    const wrapper = await mountRemote(api)
+
+    try {
+      networkConfigRef(wrapper).network_name = 'dirty'
+      await nextTick()
+      expect(readDirty(wrapper)).toBe(true)
+
+      await wrapper.find('[data-stub="select"]').trigger('click')
+      await flushPromises()
+
+      expect(confirmRequire).toHaveBeenCalled()
+      const arg = confirmRequire.mock.calls[0][0] as { message: string }
+      expect(arg.message).toBe('web.device_management.confirm_discard_on_switch')
+    } finally {
+      wrapper.unmount()
+    }
+  })
+
+  it('confirms before re-running a live network', async () => {
+    confirmRequire.mockClear()
+    const config = makeFlagConfig()
+    const api = makeApi({ config, disabled: false, running: true })
+    // Combined mode: enter edit on running instance
+    const wrapper = await mountRemote(api)
+
+    try {
+      const editBtn = wrapper.find('button[data-label="web.device_management.switch_to_config"]')
+      expect(editBtn.exists()).toBe(true)
+      await editBtn.trigger('click')
+      await settleRemoteManagement()
+
+      const runBtn = wrapper.find('button[data-label="run_network"]')
+      expect(runBtn.exists()).toBe(true)
+      // Simulate a real click (MouseEvent) — must NOT treat the event as NetworkConfig.
+      await runBtn.trigger('click')
+      await flushPromises()
+
+      expect(confirmRequire).toHaveBeenCalled()
+      const arg = confirmRequire.mock.calls.at(-1)![0] as {
+        message: string
+        accept?: () => void
+      }
+      expect(arg.message).toBe('web.device_management.confirm_rerun_network')
+      expect(api.run_network).not.toHaveBeenCalled()
+
+      arg.accept?.()
+      await settleRemoteManagement()
+
+      expect(api.run_network).toHaveBeenCalledOnce()
+      const [runCfg, remoteSave] = api.run_network.mock.calls[0] as [NetworkConfig, boolean]
+      expect(runCfg.instance_id).toBe(INSTANCE_ID)
+      expect(runCfg.network_name).toBe('mesh-save')
+      expect(typeof remoteSave).toBe('boolean')
     } finally {
       wrapper.unmount()
     }
