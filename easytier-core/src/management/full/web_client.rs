@@ -587,10 +587,11 @@ async fn web_client_routine(
     let mut backoff = RETRY_INTERVAL;
     loop {
         let connection = match connect_config_server(connector.as_ref(), CONNECT_TIMEOUT).await {
-            Ok(connection) => {
-                backoff = RETRY_INTERVAL;
-                connection
-            }
+            // Do NOT reset `backoff` here. A plain dial can keep succeeding while
+            // the secure upgrade / session negotiation fails, and resetting on
+            // dial pinned those retries at RETRY_INTERVAL (1s) forever. Only a
+            // genuinely established session resets the backoff (see below).
+            Ok(connection) => connection,
             Err(error) => {
                 tracing::warn!(
                     %error,
@@ -709,6 +710,8 @@ async fn web_client_routine(
 
         connected.store(true, Ordering::Release);
         config_server_status::mark_connected();
+        // Session is up: this is the point where exponential backoff resets.
+        backoff = RETRY_INTERVAL;
         tracing::info!("connected to config server");
         session.start_heartbeat().await;
         session.wait().await;

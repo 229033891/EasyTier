@@ -587,7 +587,17 @@ where
                     };
                     match result {
                         Ok((url, reconnect_result)) => {
-                            tracing::warn!(?url, ?reconnect_result, "manual reconnect task done");
+                            // A successful reconnect is not a warning; only the
+                            // failing outcome deserves warn.
+                            if reconnect_result.is_ok() {
+                                tracing::info!(?url, ?reconnect_result, "manual reconnect task done");
+                            } else {
+                                tracing::warn!(
+                                    ?url,
+                                    ?reconnect_result,
+                                    "manual reconnect attempt failed"
+                                );
+                            }
                         }
                         Err(error) => {
                             tracing::error!(?error, "manual reconnect task failed");

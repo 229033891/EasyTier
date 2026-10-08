@@ -499,7 +499,7 @@ where
             );
 
             if should_create {
-                tracing::warn!(
+                tracing::info!(
                     max_listeners = MAX_PUBLIC_UDP_HOLE_PUNCH_LISTENERS,
                     "creating udp hole punching listener"
                 );
@@ -642,7 +642,7 @@ where
             }
         });
 
-        tracing::warn!(?mapped_addr, "udp hole punching listener started");
+        tracing::info!(?mapped_addr, "udp hole punching listener started");
 
         Self {
             socket,
