@@ -900,25 +900,25 @@ function removeVpnPortalClient(index: number) {
               </div>
 
               <div class="flex flex-col gap-2">
-                <div class="config-inline-field config-inline-field--top">
-                  <div class="config-inline-label flex items-center gap-1">
+                <div class="config-compact-field config-compact-field--inline config-compact-field--top">
+                  <div class="config-compact-label flex items-center gap-1">
                     <label for="listener_urls">{{ t('listener_urls') }}</label>
                     <i class="pi pi-question-circle config-help-tip" tabindex="0"
                       v-tooltip.top="{ value: t('listener_urls_help'), escape: false }" role="img"></i>
                   </div>
-                  <div class="config-inline-control">
+                  <div class="config-compact-control">
                     <UrlListInput id="listener_urls" v-model="curNetwork.listener_urls" :protos="listenerProtos"
                       :add-label="t('add_listener_url')" placeholder="0.0.0.0" />
                   </div>
                 </div>
 
-                <div class="config-inline-field config-inline-field--top">
-                  <div class="config-inline-label flex items-center gap-1">
+                <div class="config-compact-field config-compact-field--inline config-compact-field--top">
+                  <div class="config-compact-label flex items-center gap-1">
                     <label for="mapped_listeners">{{ t('mapped_listeners') }}</label>
                     <i class="pi pi-question-circle config-help-tip" tabindex="0"
                       v-tooltip.top="{ value: t('mapped_listeners_help'), escape: false }" role="img"></i>
                   </div>
-                  <div class="config-inline-control">
+                  <div class="config-compact-control">
                     <UrlListInput id="mapped_listeners" v-model="curNetwork.mapped_listeners" :protos="protos"
                       :add-label="t('add_mapped_listener')" />
                   </div>

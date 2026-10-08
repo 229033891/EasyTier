@@ -277,6 +277,13 @@ describe('RemoteManagement config save', () => {
       const toolbarSave = wrapper.find('.config-toolbar button[data-label="web.device_management.save_config"]')
       expect(toolbarSave.exists()).toBe(false)
 
+      // Clean draft: footer save stays hidden until the first edit.
+      expect(wrapper.find('button[data-label="web.device_management.save_config"]').exists()).toBe(false)
+
+      networkConfigRef(wrapper).network_name = 'changed-name'
+      await nextTick()
+      await flushPromises()
+
       const saveButton = wrapper.find('button[data-label="web.device_management.save_config"]')
       expect(saveButton.exists()).toBe(true)
       expect(saveButton.attributes('disabled')).toBeUndefined()

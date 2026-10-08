@@ -499,6 +499,20 @@ async function onClearLogs() {
   display: flex;
   align-items: center;
   gap: 0.5rem;
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+/* 复制/删除是 v-if 的，全藏时塌掉左区，否则左半行空白 */
+.logging-footer-left:empty {
+  display: none;
+}
+
+/* 四钮平分整行；可见按钮数 2~4 动态变化，剩余自动均分 */
+.logging-footer-left > :deep(.p-button),
+.logging-footer-actions > :deep(.p-button) {
+  flex: 1 1 0;
+  min-width: 0;
 }
 
 .logging-footer-actions {

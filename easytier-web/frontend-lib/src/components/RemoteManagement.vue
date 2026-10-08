@@ -940,7 +940,7 @@ const showDiscardChanges = computed(() => {
 });
 
 const showSaveInFooter = computed(() =>
-    showConfigPanel.value && !!currentNetworkConfig.value
+    showConfigPanel.value && !!currentNetworkConfig.value && isConfigDirty.value,
 );
 
 const showCombinedNavZone = computed(() =>
@@ -1317,12 +1317,27 @@ onUnmounted(() => {
     align-items: center;
     gap: 0.5rem;
     min-width: 0;
+    /* 与主区/插槽按钮一起平分整行（窄屏四钮等宽占满） */
+    flex: 1 1 0;
 }
 
 .footer-zone--primary {
     justify-content: flex-end;
     margin-left: auto;
-    flex: 1 1 auto;
+    flex: 1 1 0;
+}
+
+/* footer-extra 插槽按钮（系统设置等）同样参与平分 */
+.network-sticky-footer > :deep(.network-footer-btn.p-button) {
+    flex: 1 1 0;
+    min-width: 0;
+}
+
+@media (max-width: 640px) {
+    /* 窄屏藏底部按钮图标，只留短文案，四钮才排得下 */
+    .network-sticky-footer :deep(.network-footer-btn.p-button .p-button-icon) {
+        display: none;
+    }
 }
 
 /* 同高同圆角；宽度随可用空间均分，保证一行排得下 */
