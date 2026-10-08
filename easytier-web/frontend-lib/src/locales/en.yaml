@@ -891,8 +891,8 @@ web:
     network: Network
     select_network: Select Network
     create_network: Create Network
-    discard_changes: Discard Changes
-    discard_changes_tip: Discard unsaved edits and reload the last saved config
+    discard_changes: Cancel Edit
+    discard_changes_tip: Cancel editing and reload the last saved config
     unsaved_changes: Unsaved
     more_actions: More Actions
     edit_as_file: Edit as File

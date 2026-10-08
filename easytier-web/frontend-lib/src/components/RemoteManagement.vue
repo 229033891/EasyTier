@@ -420,12 +420,6 @@ const stopNetwork = async () => {
         await loadNetworkInstanceIds();
         await loadCurrentNetworkInfo();
         emits('update');
-        toast.add({
-            severity: 'success',
-            summary: t('web.device_management.disable_network'),
-            detail: t('web.device_management.stop_success'),
-            life: TOAST_LIFE.success,
-        });
     } catch (e: any) {
         console.error(e);
         toast.add({
@@ -675,13 +669,6 @@ const saveNetworkConfig = async () => {
         await loadNetworkMetas([currentNetworkConfig.value.instance_id]);
 
         applyLoadedNetworkConfig(currentNetworkConfig.value);
-
-        toast.add({
-            severity: 'success',
-            summary: t('web.common.success'),
-            detail: t('web.device_management.config_saved'),
-            life: TOAST_LIFE.success,
-        });
     } catch (e: any) {
         console.error(e);
         toast.add({
@@ -713,25 +700,26 @@ const newNetwork = async () => {
     }
 }
 
-/**
- * Discard unsaved draft by reloading last saved config.
- * When clean and combined-mode editing a running network, leave edit → status.
- */
+/** Discard unsaved draft by reloading last saved config. */
 const discardConfigChanges = async () => {
-    if (isConfigDirty.value) {
-        try {
-            await loadCurrentNetworkConfig();
-        } catch (e: any) {
-            console.error(e);
-            toast.add({
-                severity: 'error',
-                summary: t('web.common.error'),
-                detail: t('web.device_management.load_config_failed') + ': ' + errorDetail(e),
-                life: TOAST_LIFE.error,
-            });
-        }
+    if (!isConfigDirty.value) {
         return;
     }
+    try {
+        await loadCurrentNetworkConfig();
+    } catch (e: any) {
+        console.error(e);
+        toast.add({
+            severity: 'error',
+            summary: t('web.common.error'),
+            detail: t('web.device_management.load_config_failed') + ': ' + errorDetail(e),
+            life: TOAST_LIFE.error,
+        });
+    }
+}
+
+/** Combined 运行态干净编辑：退出编辑回到状态页。 */
+const exitEditNetwork = () => {
     if (isCombinedMode.value && isEditingNetwork.value && !networkIsDisabled.value) {
         isEditingNetwork.value = false;
     }
@@ -926,25 +914,31 @@ const showCombinedEditEntry = computed(() =>
 );
 
 /**
- * 放弃更改：配置面板可见且（脏，或 combined 运行态编辑且干净时用于退出编辑）。
- * 停止态脏草稿也显示，不限 isEditingNetwork。
+ * 取消编辑 + 保存：仅脏时成对显示（停止态 / 运行态编辑相同）。
  */
-const showDiscardChanges = computed(() => {
-    if (!showConfigPanel.value || !currentNetworkConfig.value) {
-        return false;
-    }
-    if (isConfigDirty.value) {
-        return true;
-    }
-    return isCombinedMode.value && isEditingNetwork.value && !networkIsDisabled.value;
-});
-
 const showSaveInFooter = computed(() =>
     showConfigPanel.value && !!currentNetworkConfig.value && isConfigDirty.value,
 );
 
+const showDiscardChanges = computed(() => showSaveInFooter.value);
+
+/**
+ * Combined 运行态干净编辑：单独「前往状态」退出编辑，不与保存成对。
+ */
+const showExitEdit = computed(() =>
+    isCombinedMode.value
+    && isEditingNetwork.value
+    && !networkIsDisabled.value
+    && showConfigPanel.value
+    && !!currentNetworkConfig.value
+    && !isConfigDirty.value,
+);
+
 const showCombinedNavZone = computed(() =>
-    showCombinedEditEntry.value || showDiscardChanges.value || showSaveInFooter.value
+    showCombinedEditEntry.value
+    || showDiscardChanges.value
+    || showSaveInFooter.value
+    || showExitEdit.value
 );
 
 const stickyFooterPrimary = computed(() => {
@@ -1159,28 +1153,32 @@ onUnmounted(() => {
             <Button v-if="showLeaveInFooter" @click="requestLeave" :label="leaveLabel" severity="secondary"
                 :icon="leaveIcon" iconPos="left" class="network-footer-btn network-footer-btn--muted"
                 v-tooltip.top="leaveTooltip" />
-            <!-- 左区：节点配置入口 / 放弃更改 / 保存；右区：主操作 -->
+            <!-- 左区：节点配置入口 / 前往状态 / 取消编辑 / 保存；右区：主操作 -->
             <div v-if="showCombinedNavZone || isConfigMode || isStatusMode" class="footer-zone">
-                <Button v-if="showCombinedEditEntry" icon="pi pi-cog" severity="secondary"
-                    :label="t('web.device_management.switch_to_config')" iconPos="left"
+                <Button v-if="showCombinedEditEntry" severity="secondary"
+                    :label="t('web.device_management.switch_to_config')"
                     class="network-footer-btn network-footer-btn--muted" @click="editNetwork"
                     v-tooltip.top="t('web.device_management.switch_to_config_tip')" />
-                <Button v-if="showDiscardChanges" icon="pi pi-replay" severity="secondary"
-                    :label="t('web.device_management.discard_changes')" iconPos="left"
+                <Button v-if="showExitEdit" severity="secondary"
+                    :label="t('web.device_management.switch_to_status')"
+                    class="network-footer-btn network-footer-btn--muted" @click="exitEditNetwork"
+                    v-tooltip.top="t('web.device_management.switch_to_status_tip')" />
+                <Button v-if="showDiscardChanges" severity="secondary"
+                    :label="t('web.device_management.discard_changes')"
                     class="network-footer-btn network-footer-btn--muted" @click="discardConfigChanges"
                     v-tooltip.top="t('web.device_management.discard_changes_tip')" />
-                <Button v-if="showSaveInFooter" icon="pi pi-save" severity="success"
-                    :label="t('web.device_management.save_config')" iconPos="left"
-                    class="network-footer-btn network-footer-btn--save"
+                <Button v-if="showSaveInFooter" severity="success"
+                    :label="t('web.device_management.save_config')"
+                    class="network-footer-btn"
                     :disabled="!canSaveConfig || savingConfig"
                     @click="saveNetworkConfig"
                     v-tooltip.top="saveConfigTooltip" />
-                <Button v-if="isConfigMode" icon="pi pi-chart-line" severity="secondary"
-                    :label="t('web.device_management.switch_to_status')" iconPos="left"
+                <Button v-if="isConfigMode" severity="secondary"
+                    :label="t('web.device_management.switch_to_status')"
                     class="network-footer-btn network-footer-btn--accent" @click="requestSwitchMode('status')"
                     v-tooltip.top="t('web.device_management.switch_to_status_tip')" />
-                <Button v-else-if="isStatusMode" icon="pi pi-cog" severity="secondary"
-                    :label="t('web.device_management.switch_to_config')" iconPos="left"
+                <Button v-else-if="isStatusMode" severity="secondary"
+                    :label="t('web.device_management.switch_to_config')"
                     class="network-footer-btn network-footer-btn--accent" @click="requestSwitchMode('config')"
                     v-tooltip.top="t('web.device_management.switch_to_config_tip')" />
             </div>
@@ -1191,7 +1189,7 @@ onUnmounted(() => {
                     v-tooltip.top="t('web.device_management.start_network_tip')" />
                 <Button v-else-if="stickyFooterPrimary === 'run'"
                     @click="confirmRunNetwork()" :disabled="!currentNetworkConfig"
-                    :label="t('run_network')" severity="success" icon="pi pi-arrow-right" iconPos="right"
+                    :label="t('run_network')" severity="success"
                     class="network-footer-btn"
                     v-tooltip.top="t('run_network_tip')" />
                 <Button v-else-if="stickyFooterPrimary === 'stop'" @click="stopNetwork()"
@@ -1618,24 +1616,6 @@ onUnmounted(() => {
 
     :deep(.config-toolbar-btn.p-button .p-button-icon),
     :deep(.network-footer-btn.p-button .p-button-icon) {
-        display: none;
-    }
-
-    /* 窄屏保存退为图标，给「放弃更改 / 运行」让出宽度 */
-    :deep(.network-footer-btn--save.p-button) {
-        flex: 0 0 auto;
-        max-width: var(--et-btn, 2.5rem);
-        min-width: var(--et-btn, 2.5rem);
-        width: var(--et-btn, 2.5rem);
-        padding: 0 !important;
-    }
-
-    :deep(.network-footer-btn--save.p-button .p-button-icon) {
-        display: inline-flex;
-        margin: 0;
-    }
-
-    :deep(.network-footer-btn--save.p-button .p-button-label) {
         display: none;
     }
 

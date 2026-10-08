@@ -1141,7 +1141,7 @@ async function connectRpcClient(isNormalMode: boolean, url?: string) {
       <!-- 与共享底部栏同一行：样式与禁用网络完全一致 -->
       <template #footer-extra>
         <Button
-          :label="t('system_settings')" icon="pi pi-cog" icon-pos="left" severity="secondary"
+          :label="t('system_settings')" severity="secondary"
           class="network-footer-btn network-footer-btn--muted" @click="settings_menu.toggle($event)"
         />
         <Menu ref="settings_menu" :model="setting_menu_items" :popup="true" class="settings-popup">

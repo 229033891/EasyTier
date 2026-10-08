@@ -309,6 +309,9 @@ describe('RemoteManagement config save', () => {
 
     try {
       expect(wrapper.find('[data-value="web.device_management.unsaved_changes"]').exists()).toBe(false)
+      // Stopped + clean: save / cancel-edit stay hidden together.
+      expect(wrapper.find('button[data-label="web.device_management.save_config"]').exists()).toBe(false)
+      expect(wrapper.find('button[data-label="web.device_management.discard_changes"]').exists()).toBe(false)
 
       networkConfigRef(wrapper).network_name = 'changed-name'
       await nextTick()
@@ -317,14 +320,46 @@ describe('RemoteManagement config save', () => {
       expect(readDirty(wrapper)).toBe(true)
       expect(wrapper.find('[data-value="web.device_management.unsaved_changes"]').exists()).toBe(true)
 
+      // Stopped + dirty: save and cancel-edit appear together.
       const discard = wrapper.find('button[data-label="web.device_management.discard_changes"]')
+      const save = wrapper.find('button[data-label="web.device_management.save_config"]')
       expect(discard.exists()).toBe(true)
+      expect(save.exists()).toBe(true)
       await discard.trigger('click')
       await settleRemoteManagement()
 
       expect(api.get_network_config.mock.calls.length).toBeGreaterThan(1)
       expect(readDirty(wrapper)).toBe(false)
       expect(networkConfigRef(wrapper).network_name).toBe('mesh-save')
+      expect(wrapper.find('button[data-label="web.device_management.save_config"]').exists()).toBe(false)
+      expect(wrapper.find('button[data-label="web.device_management.discard_changes"]').exists()).toBe(false)
+    } finally {
+      wrapper.unmount()
+    }
+  })
+
+  it('shows exit-edit without save when editing a running network with a clean draft', async () => {
+    const config = makeFlagConfig()
+    const api = makeApi({ config, disabled: false, running: true })
+    const wrapper = await mountRemote(api)
+
+    try {
+      const editBtn = wrapper.find('button[data-label="web.device_management.switch_to_config"]')
+      expect(editBtn.exists()).toBe(true)
+      await editBtn.trigger('click')
+      await settleRemoteManagement()
+
+      expect(wrapper.find('button[data-label="web.device_management.switch_to_status"]').exists()).toBe(true)
+      expect(wrapper.find('button[data-label="web.device_management.save_config"]').exists()).toBe(false)
+      expect(wrapper.find('button[data-label="web.device_management.discard_changes"]').exists()).toBe(false)
+
+      networkConfigRef(wrapper).network_name = 'dirty-while-running'
+      await nextTick()
+      await flushPromises()
+
+      expect(wrapper.find('button[data-label="web.device_management.switch_to_status"]').exists()).toBe(false)
+      expect(wrapper.find('button[data-label="web.device_management.save_config"]').exists()).toBe(true)
+      expect(wrapper.find('button[data-label="web.device_management.discard_changes"]').exists()).toBe(true)
     } finally {
       wrapper.unmount()
     }

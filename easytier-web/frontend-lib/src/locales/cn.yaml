@@ -890,8 +890,8 @@ web:
     network: 网络
     select_network: 选择网络
     create_network: 创建网络
-    discard_changes: 放弃更改
-    discard_changes_tip: 丢弃未保存的修改，恢复为上次已保存的配置
+    discard_changes: 取消编辑
+    discard_changes_tip: 取消当前编辑，恢复为上次已保存的配置
     unsaved_changes: 未保存
     more_actions: 更多操作
     edit_as_file: 编辑为文件
