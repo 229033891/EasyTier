@@ -1,10 +1,20 @@
 //! Ordered scheme preference for `flags.default_protocol` (P-AUTO.L1).
 //!
 //! Storage remains a single string: comma-separated list (legacy single value =
-//! length-1). Empty / all-invalid → `["tcp"]`.
+//! length-1). Empty / all-invalid → `["udp", "tcp"]`.
+//!
+//! `udp` comes first because, among the default-enabled transports, it is the
+//! only one that does not add its own reliability on top: `tcp` / `ws` / `wss` /
+//! `quic` / `faketcp` all retransmit, so any inner TCP flow (RDP, SSH, HTTP)
+//! becomes TCP-over-TCP and stalls under mild packet loss. The previous `tcp`
+//! default also made DirectConnector prefer a peer's TCP listener over its UDP
+//! one. `tcp` stays second so the "UDP is blocked, fall back to TCP" guarantee
+//! still works. `wg` is likewise plain UDP (boringtun) but stays opt-in: it
+//! needs both sides to advertise it and has a larger per-packet overhead.
 //!
 //! Direct connector uses the full preference list to **sort advertised listeners**.
-//! Manual connector only **rewrites** among `REWRITEABLE_SCHEMES` (tcp/udp/ws/wss/quic);
+//! Manual connector **rewrites** among `REWRITEABLE_SCHEMES` (tcp/udp/ws/wss/quic)
+//! but only as failover *after* the configured URL (`preference_candidate_urls`);
 //! `wg` / `faketcp` stay preference-sortable for Direct but are never URL-rewritten
 //! (incompatible handshake / fingerprint).
 
@@ -40,6 +50,7 @@ pub fn parse_protocol_preference(raw: &str) -> Vec<String> {
         }
     }
     if out.is_empty() {
+        out.push("udp".to_owned());
         out.push("tcp".to_owned());
     }
     out
@@ -116,8 +127,16 @@ pub fn rewrite_url_scheme(url: &Url, scheme: &str) -> Option<Url> {
     Some(next)
 }
 
-/// Candidate URLs for manual reconnect: rewriteable preference schemes first,
-/// then the configured URL if it was not already included.
+/// Candidate URLs for manual reconnect: the **configured URL first**, then the
+/// preference schemes as failover (P-AUTO.L1 "保底降级").
+///
+/// The operator's explicit scheme must win. Dialing a preference candidate first
+/// silently overrode it: a configured `udp://` peer was dialed over TCP whenever
+/// TCP was reachable (TCP-over-TCP for every inner TCP flow, e.g. RDP, which
+/// collapses under mild packet loss), and a configured `wss://` peer was tried as
+/// plain `tcp://` first, trading away the TLS camouflage it was chosen for.
+/// The preference list stays useful as failover: `wss://` still falls back to
+/// `tcp://` on the same port when the TLS handshake cannot complete.
 ///
 /// Non-rewriteable peers (`wg` / `faketcp` / `ring` / unknown) are never rewritten.
 pub fn preference_candidate_urls(url: &Url, preference: &[String]) -> Vec<Url> {
@@ -127,8 +146,9 @@ pub fn preference_candidate_urls(url: &Url, preference: &[String]) -> Vec<Url> {
         return vec![url.clone()];
     }
 
-    let mut out = Vec::new();
+    let mut out = vec![url.clone()];
     let mut seen = HashSet::new();
+    seen.insert(url.as_str().to_owned());
     for scheme in preference {
         if !is_rewriteable_scheme(scheme) {
             // Preference may still list wg/faketcp for Direct sort; skip for Manual rewrite.
@@ -142,13 +162,6 @@ pub fn preference_candidate_urls(url: &Url, preference: &[String]) -> Vec<Url> {
             out.push(candidate);
         }
     }
-    let original_key = url.as_str();
-    if !seen.contains(original_key) {
-        out.push(url.clone());
-    }
-    if out.is_empty() {
-        out.push(url.clone());
-    }
     out
 }
 
@@ -160,8 +173,8 @@ mod tests {
     fn parse_single_value_and_empty() {
         assert_eq!(parse_protocol_preference("tcp"), vec!["tcp"]);
         assert_eq!(parse_protocol_preference("UDP"), vec!["udp"]);
-        assert_eq!(parse_protocol_preference(""), vec!["tcp"]);
-        assert_eq!(parse_protocol_preference("  , , "), vec!["tcp"]);
+        assert_eq!(parse_protocol_preference(""), vec!["udp", "tcp"]);
+        assert_eq!(parse_protocol_preference("  , , "), vec!["udp", "tcp"]);
     }
 
     #[test]
@@ -178,13 +191,13 @@ mod tests {
             parse_protocol_preference("wg,tcp,ring,wss,faketcp"),
             vec!["wg", "tcp", "wss", "faketcp"]
         );
-        assert_eq!(parse_protocol_preference("ring"), vec!["tcp"]);
+        assert_eq!(parse_protocol_preference("ring"), vec!["udp", "tcp"]);
     }
 
     #[test]
     fn normalize_joins_csv() {
         assert_eq!(normalize_default_protocol("WSS, TCP"), "wss,tcp");
-        assert_eq!(normalize_default_protocol(""), "tcp");
+        assert_eq!(normalize_default_protocol(""), "udp,tcp");
     }
 
     #[test]
@@ -241,7 +254,7 @@ mod tests {
     }
 
     #[test]
-    fn candidates_follow_preference_then_original() {
+    fn candidates_put_configured_url_first() {
         let url = Url::parse("udp://10.0.0.2:2200").unwrap();
         let pref = parse_protocol_preference("wss,tcp");
         let candidates = preference_candidate_urls(&url, &pref);
@@ -251,23 +264,28 @@ mod tests {
                 .map(|u| u.as_str().to_owned())
                 .collect::<Vec<_>>(),
             vec![
+                // The configured scheme wins; the preference list is failover only.
+                "udp://10.0.0.2:2200".to_owned(),
                 // wss is WHATWG-special → empty path serializes as `/`;
                 // tcp/udp are non-special → no trailing slash (matches dial URL).
                 "wss://10.0.0.2:2200/".to_owned(),
                 "tcp://10.0.0.2:2200".to_owned(),
-                "udp://10.0.0.2:2200".to_owned(),
             ]
         );
     }
 
     #[test]
-    fn candidates_from_implicit_wss_keep_443_on_tcp() {
+    fn candidates_keep_wss_camouflage_then_fall_back_to_tcp() {
         let url = Url::parse("wss://relay.example/et").unwrap();
         let pref = parse_protocol_preference("tcp,wss");
         let candidates = preference_candidate_urls(&url, &pref);
-        assert_eq!(candidates[0].scheme(), "tcp");
-        assert_eq!(candidates[0].port(), Some(443));
-        assert_eq!(candidates[1].scheme(), "wss");
+        // The configured TLS endpoint is tried first, unchanged...
+        assert_eq!(candidates[0].scheme(), "wss");
+        assert_eq!(candidates[0].port(), None); // implicit 443
+        // ...and the downgrade keeps the effective port only as failover.
+        assert_eq!(candidates[1].scheme(), "tcp");
+        assert_eq!(candidates[1].port(), Some(443));
+        assert_eq!(candidates.len(), 2);
     }
 
     #[test]

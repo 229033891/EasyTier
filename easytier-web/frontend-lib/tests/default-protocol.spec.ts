@@ -10,8 +10,8 @@ describe('default_protocol preference CSV (P-AUTO.L1)', () => {
   it('parses legacy single values and empty input', () => {
     expect(parseDefaultProtocolList('tcp')).toEqual(['tcp'])
     expect(parseDefaultProtocolList('UDP')).toEqual(['udp'])
-    expect(parseDefaultProtocolList('')).toEqual(['tcp'])
-    expect(parseDefaultProtocolList(undefined)).toEqual(['tcp'])
+    expect(parseDefaultProtocolList('')).toEqual(['udp', 'tcp'])
+    expect(parseDefaultProtocolList(undefined)).toEqual(['udp', 'tcp'])
   })
 
   it('preserves order, lowercases, and dedupes', () => {
@@ -25,7 +25,7 @@ describe('default_protocol preference CSV (P-AUTO.L1)', () => {
 
   it('drops unknown schemes', () => {
     expect(parseDefaultProtocolList('wg,tcp,ring,wss,faketcp')).toEqual(['wg', 'tcp', 'wss', 'faketcp'])
-    expect(parseDefaultProtocolList('ring')).toEqual(['tcp'])
+    expect(parseDefaultProtocolList('ring')).toEqual(['udp', 'tcp'])
   })
 
   it('normalizes via NetworkConfig round-trip', () => {

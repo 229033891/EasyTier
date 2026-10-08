@@ -1297,8 +1297,8 @@ impl NetworkOptions {
 
         let mut f = cfg.get_flags();
         if let Some(default_protocol) = &self.default_protocol {
-            // normalize_default_protocol("") returns "tcp", so guard on the raw
-            // input: empty/blank means "not set", keep the existing flags.
+            // normalize_default_protocol("") returns the default scheme, so guard
+            // on the raw input: empty/blank means "not set", keep existing flags.
             if !default_protocol.trim().is_empty() {
                 f.default_protocol =
                     easytier_core::config::normalize_default_protocol(default_protocol);

@@ -163,7 +163,7 @@ export function DEFAULT_NETWORK_CONFIG(): NetworkConfig {
     data_compress_algo: CompressionAlgoPb.None,
     prefer_peer_relay: false,
     socket_mark: null,
-    default_protocol: 'tcp',
+    default_protocol: 'udp,tcp',
     disable_tcp_hole_punching: false,
     disable_udp_hole_punching: false,
     disable_upnp: false,
@@ -343,7 +343,14 @@ export const DEFAULT_PROTOCOL_SCHEMES = ['tcp', 'udp', 'ws', 'wss', 'quic', 'wg'
 
 export type DefaultProtocolScheme = (typeof DEFAULT_PROTOCOL_SCHEMES)[number]
 
-/** Parse CSV / legacy single value into an ordered unique preference list. */
+/**
+ * Parse CSV / legacy single value into an ordered unique preference list.
+ *
+ * Empty / all-invalid falls back to the same default the core uses
+ * (`udp,tcp`): udp first so an inner TCP flow (RDP/SSH/HTTP) is not wrapped in
+ * another retransmitting transport, tcp second so "UDP blocked, fall back to
+ * TCP" still works. Keep in sync with `easytier-core/src/config/protocol_preference.rs`.
+ */
 export function parseDefaultProtocolList(raw: string | null | undefined): DefaultProtocolScheme[] {
   const allowed = new Set<string>(DEFAULT_PROTOCOL_SCHEMES)
   const out: DefaultProtocolScheme[] = []
@@ -355,7 +362,7 @@ export function parseDefaultProtocolList(raw: string | null | undefined): Defaul
     seen.add(scheme)
     out.push(scheme as DefaultProtocolScheme)
   }
-  return out.length > 0 ? out : ['tcp']
+  return out.length > 0 ? out : ['udp', 'tcp']
 }
 
 /** Canonical CSV for `flags.default_protocol`. */

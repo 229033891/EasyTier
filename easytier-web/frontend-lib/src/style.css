@@ -197,6 +197,7 @@
 /*
  * 表单控件统一描边/圆角/焦点态。
  * Aura 默认边框过淡时，在白底上看起来像「没边框」；这里统一到 EasyTier token。
+ * 含 multiple AutoComplete（子网代理 / 出口节点等）的 .p-autocomplete-input-multiple。
  */
 .p-inputtext,
 .p-password .p-password-input,
@@ -204,6 +205,7 @@
 .p-select,
 .p-multiselect,
 .p-autocomplete .p-autocomplete-input,
+.p-autocomplete-input-multiple,
 .p-textarea {
   border: 1px solid var(--et-border-color, #e2e8f0) !important;
   border-radius: calc(var(--et-radius, 0.75rem) - 0.125rem) !important;
@@ -212,12 +214,18 @@
   transition: border-color 0.15s ease, box-shadow 0.15s ease, background-color 0.15s ease;
 }
 
+.p-autocomplete-input-multiple {
+  min-height: 2.35rem !important;
+  box-sizing: border-box !important;
+}
+
 .p-inputtext:enabled:hover,
 .p-password:not(.p-disabled) .p-password-input:hover,
 .p-inputnumber:not(.p-disabled) .p-inputnumber-input:hover,
 .p-select:not(.p-disabled):hover,
 .p-multiselect:not(.p-disabled):hover,
 .p-autocomplete:not(.p-disabled) .p-autocomplete-input:hover,
+.p-autocomplete:not(.p-disabled):hover .p-autocomplete-input-multiple,
 .p-textarea:enabled:hover {
   border-color: color-mix(in srgb, var(--primary-color, #0ea5e9) 35%, var(--et-border-color, #e2e8f0)) !important;
 }
@@ -228,6 +236,7 @@
 .p-select:not(.p-disabled).p-focus,
 .p-multiselect:not(.p-disabled).p-focus,
 .p-autocomplete:not(.p-disabled).p-focus .p-autocomplete-input,
+.p-autocomplete:not(.p-disabled).p-focus .p-autocomplete-input-multiple,
 .p-textarea:enabled:focus {
   border-color: var(--primary-color, #0ea5e9) !important;
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary-color, #0ea5e9) 18%, transparent) !important;
@@ -352,6 +361,91 @@
   background: color-mix(in srgb, var(--primary-color, #0ea5e9) 12%, #ffffff) !important;
   border-color: color-mix(in srgb, var(--primary-color, #0ea5e9) 45%, var(--et-border-color, #e2e8f0)) !important;
   color: var(--primary-color, #0ea5e9) !important;
+}
+
+/*
+ * ToggleSwitch 兜底（Win / Android 同源）：
+ * Config 把 ToggleButton 换成开关后，若 Aura token（dt('toggleswitch.*')）未注入，
+ * 宽高/手柄色失效，只剩一小块黑点。用固定值覆盖，不依赖主题变量。
+ */
+.p-toggleswitch {
+  display: inline-block !important;
+  position: relative !important;
+  width: 2.5rem !important;
+  height: 1.4rem !important;
+  flex-shrink: 0 !important;
+  vertical-align: middle;
+}
+
+.p-toggleswitch-input {
+  appearance: none !important;
+  -webkit-appearance: none !important;
+  position: absolute !important;
+  inset: 0 !important;
+  width: 100% !important;
+  height: 100% !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  opacity: 0 !important;
+  z-index: 1 !important;
+  cursor: pointer !important;
+  border: 0 !important;
+  outline: none !important;
+}
+
+.p-toggleswitch-slider {
+  box-sizing: border-box !important;
+  width: 100% !important;
+  height: 100% !important;
+  border-radius: 9999px !important;
+  border: 0 !important;
+  background: #cbd5e1 !important;
+  box-shadow: none !important;
+  transition: background-color 0.15s ease, box-shadow 0.15s ease !important;
+  cursor: pointer;
+}
+
+/* outline 已去掉：焦点环画在滑块上（须写在 slider 基础样式之后，才能压过 box-shadow: none） */
+.p-toggleswitch-input:focus-visible + .p-toggleswitch-slider {
+  box-shadow: 0 0 0 2px #fff, 0 0 0 4px var(--primary-color, #0ea5e9) !important;
+}
+
+.p-toggleswitch-handle {
+  position: absolute !important;
+  top: 50% !important;
+  inset-inline-start: 0.2rem !important;
+  margin-block-start: -0.5rem !important;
+  display: block !important;
+  width: 1rem !important;
+  height: 1rem !important;
+  border-radius: 50% !important;
+  background: #ffffff !important;
+  color: transparent !important;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.28) !important;
+  transition: inset-inline-start 0.15s ease !important;
+}
+
+.p-toggleswitch.p-toggleswitch-checked .p-toggleswitch-slider,
+.p-toggleswitch[data-p-checked='true'] .p-toggleswitch-slider {
+  background: var(--primary-color, #0ea5e9) !important;
+}
+
+.p-toggleswitch.p-toggleswitch-checked .p-toggleswitch-handle,
+.p-toggleswitch[data-p-checked='true'] .p-toggleswitch-handle {
+  inset-inline-start: calc(2.5rem - 1.2rem) !important;
+  background: #ffffff !important;
+}
+
+.p-toggleswitch.p-disabled {
+  opacity: 0.55;
+}
+
+.p-toggleswitch.p-disabled .p-toggleswitch-input {
+  cursor: not-allowed;
+}
+
+.config-inline-control > .p-toggleswitch {
+  margin-block: 0.35rem;
 }
 
 /*

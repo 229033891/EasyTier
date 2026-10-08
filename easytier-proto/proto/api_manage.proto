@@ -111,8 +111,8 @@ message NetworkConfig {
   // DNS policy: static hosts / split forwarders / upstream (see docs/roadmap/dns-policy.md).
   // Older clients ignore this field; behavior degrades to pre-policy MagicDNS.
   optional DnsConfig dns_config = 74;
-  // Prefer this underlay scheme when establishing a direct peer connection
-  // (e.g. "tcp", "udp"). Default is "tcp".
+  // Prefer this underlay scheme order when establishing a direct peer connection
+  // (e.g. "udp", "tcp", "wss"). Default is "udp,tcp".
   optional string default_protocol = 75;
   // Consecutive ping failures before closing a PeerConn (default 5).
   optional uint32 ping_fail_close_count = 76;

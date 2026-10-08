@@ -140,7 +140,7 @@ exit_app: Exit App
 use_latency_first: Quality-First Routing
 show_node_details: Show Node Details
 hide_node_details: Hide Node Details
-chips_placeholder: 'e.g: {0}, select from the dropdown after input'
+chips_placeholder: 'e.g: {0}, press Enter or comma to add'
 hostname_placeholder: 'Leave blank and default to host name: {0}'
 hostname_help: Network node hostname for routing and Magic DNS (e.g. &lt;hostname&gt;.et.net). Independent of the Web console device display name.
 dev_name_placeholder: 'Note: When multiple networks use the same TUN interface name at the same time, there will be a conflict when setting the TUN''s IP. Leave blank to automatically generate a random name.'
@@ -478,11 +478,11 @@ disable_encryption_algo_conflict_help: |-
   Encryption algorithm has no effect while encryption is disabled. Values are not rewritten.
 disable_encryption_algo_hint: Encryption is disabled; algorithm selection is ignored.
 
-default_protocol: Connection Protocol Preference
+default_protocol: Protocol Order
 default_protocol_help: |-
   Ordered protocol list (stored as CSV). Direct connect tries the peer's advertised listeners in this order.
-  Manual peer URLs fail over by rewriting among tcp/udp/ws/wss/quic only (host and ports kept; never forced to 443). wg and faketcp stay in the list for Direct sort but are never rewritten on manual peers.
-  Default is tcp only. Example wss,tcp,quic,udp: if UDP is blocked, TCP/WSS from the list are still tried.
+  Manual peer URLs dial the configured scheme first, and only fail over by rewriting among tcp/udp/ws/wss/quic (host and ports kept; never forced to 443). wg and faketcp stay in the list for Direct sort but are never rewritten on manual peers.
+  Default is udp,tcp: every other common transport (tcp/ws/wss/quic/faketcp) retransmits on its own, which turns an inner TCP flow (RDP/SSH/HTTP) into TCP over TCP that stalls under mild packet loss; tcp stays second so "UDP is blocked, fall back to TCP" still works. Example wss,tcp,quic,udp: if UDP is blocked, TCP/WSS from the list are still tried.
   Selection order is try order; use the numbered controls below to fine-tune.
 
 encryption_algorithm: Encryption Algorithm

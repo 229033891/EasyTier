@@ -309,7 +309,12 @@ pub struct ManualConnectorOptions {
 }
 
 fn default_manual_protocol_preference() -> String {
-    "tcp".to_owned()
+    // Must stay in sync with gen_default_flags() (config/toml.rs): plain udp
+    // first (no retransmission on top of inner TCP), tcp as the blocked-UDP
+    // fallback. This serde default only kicks in on deserialization paths
+    // without flags.default_protocol passthrough, but a split default here
+    // would silently prefer TCP for those instances.
+    "udp,tcp".to_owned()
 }
 
 impl Default for ManualConnectorOptions {
@@ -804,7 +809,7 @@ where
     H: ManualConnectorHost,
 {
     validate_manual_url(&url)?;
-    // P-AUTO.L1: try preference schemes in order (URL×scheme), then configured URL.
+    // P-AUTO.L1: the configured URL dials first; preference schemes are failover.
     let preference = crate::config::parse_protocol_preference(&data.options.default_protocol);
     let candidates = crate::config::preference_candidate_urls(&url, &preference);
     // Cap total failover time so a long preference list cannot stall reconnect for

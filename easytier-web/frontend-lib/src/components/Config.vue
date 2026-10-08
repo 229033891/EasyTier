@@ -204,20 +204,48 @@ function searchInetSuggestions(e: { query: string }) {
   }
 }
 
-const exitNodesSuggestions = ref([''])
+/**
+ * 回车/逗号将输入追加为 chip。
+ * @param typeahead 保留联想时：下拉展开期间不劫持 Enter（留给建议项键盘选择）；仅劫持逗号，或下拉关闭后的回车。
+ */
+function onChipsKeydown(
+  event: KeyboardEvent,
+  values: string[],
+  opts?: { typeahead?: boolean },
+) {
+  if (event.isComposing) return
+  const isEnter = event.key === 'Enter'
+  const isComma = event.key === ',' || event.key === '，'
+  if (!isEnter && !isComma) return
 
-function searchExitNodesSuggestions(e: { query: string }) {
-  const ret = []
-  ret.push(e.query)
-  exitNodesSuggestions.value = ret
-}
+  const input = event.target as HTMLInputElement | null
+  if (!input || input.tagName !== 'INPUT') return
 
-const whitelistSuggestions = ref([''])
+  // 联想下拉展开时：绝不 stopPropagation，避免拦掉 AutoComplete 内部选中
+  if (opts?.typeahead && isEnter && input.getAttribute('aria-expanded') === 'true') {
+    return
+  }
 
-function searchWhitelistSuggestions(e: { query: string }) {
-  const ret = []
-  ret.push(e.query)
-  whitelistSuggestions.value = ret
+  const raw = input.value.trim()
+  if (!raw) return
+
+  event.preventDefault()
+  event.stopImmediatePropagation()
+
+  const next = [...values]
+  let changed = false
+  for (const part of raw.split(/[,，]+/)) {
+    const token = part.trim()
+    if (token && !next.includes(token)) {
+      next.push(token)
+      changed = true
+    }
+  }
+  if (changed) {
+    values.splice(0, values.length, ...next)
+  }
+  input.value = ''
+  input.dispatchEvent(new Event('input', { bubbles: true }))
 }
 
 type AdvancedFlagGroup = 'connectivity' | 'transport' | 'system' | 'security'
@@ -364,7 +392,10 @@ const defaultProtocolOptions = DEFAULT_PROTOCOL_SCHEMES.map(value => ({
 const defaultProtocolList = computed({
   get: () => parseDefaultProtocolList(curNetwork.value.default_protocol),
   set: (list: string[]) => {
-    const selected = new Set((list?.length ? list : ['tcp']).map(s => s.toLowerCase()))
+    // Clearing every entry falls back to the same default as
+    // parseDefaultProtocolList('') ('udp,tcp'), never bare 'tcp' — that would
+    // silently reintroduce the TCP-over-TCP default this UI moved away from.
+    const selected = new Set((list?.length ? list : ['udp', 'tcp']).map(s => s.toLowerCase()))
     const prev = parseDefaultProtocolList(curNetwork.value.default_protocol)
     const kept = prev.filter(scheme => selected.has(scheme))
     const added = DEFAULT_PROTOCOL_SCHEMES.filter(
@@ -728,32 +759,130 @@ function removeVpnPortalClient(index: number) {
                 </div>
               </div>
 
-              <div class="flex flex-col gap-2">
-                <div class="config-inline-field">
-                  <div class="config-inline-label flex items-center gap-1">
+              <div class="config-compact-grid config-compact-grid--inline-two">
+                <div class="config-compact-field config-compact-field--inline">
+                  <div class="config-compact-label flex items-center gap-1">
                     <label for="subnet-proxy">{{ t('proxy_cidrs') }}</label>
                     <i class="pi pi-question-circle config-help-tip" tabindex="0"
                       v-tooltip.top="{ value: t('proxy_cidrs_help'), escape: false }" role="img"></i>
                   </div>
-                  <div class="config-inline-control">
+                  <div class="config-compact-control">
                     <AutoComplete id="subnet-proxy" v-model="curNetwork.proxy_cidrs"
                       :placeholder="t('chips_placeholder', ['10.0.0.0/24'])" multiple fluid
-                      :suggestions="inetSuggestions" @complete="searchInetSuggestions" />
+                      :suggestions="inetSuggestions" @complete="searchInetSuggestions"
+                      @keydown.capture="onChipsKeydown($event, curNetwork.proxy_cidrs, { typeahead: true })" />
                   </div>
                 </div>
 
-                <div class="config-inline-field">
-                  <div class="config-inline-label flex items-center gap-1">
+                <div class="config-compact-field config-compact-field--inline">
+                  <div class="config-compact-label flex items-center gap-1">
                     <label for="exit_nodes">{{ t('exit_nodes') }}</label>
                     <i class="pi pi-question-circle config-help-tip" tabindex="0"
                       v-tooltip.top="{ value: t('exit_nodes_help'), escape: false }" role="img"></i>
                   </div>
-                  <div class="config-inline-control">
+                  <div class="config-compact-control">
                     <AutoComplete id="exit_nodes" v-model="curNetwork.exit_nodes"
                       :placeholder="t('chips_placeholder', ['192.168.8.8'])" multiple fluid
-                      :suggestions="exitNodesSuggestions" @complete="searchExitNodesSuggestions" />
-                    <p v-if="tunControlsDisabled" class="config-field-hint m-0 mt-1">{{ t('no_tun_exit_nodes_hint') }}</p>
+                      :typeahead="false"
+                      @keydown.capture="onChipsKeydown($event, curNetwork.exit_nodes)" />
+                    <p v-if="tunControlsDisabled" class="config-field-hint m-0">{{ t('no_tun_exit_nodes_hint') }}</p>
                   </div>
+                </div>
+              </div>
+
+              <div class="config-compact-grid config-compact-grid--inline-two">
+                <div class="config-compact-field">
+                  <div class="config-compact-label flex items-center gap-1">
+                    <label for="default_protocol">{{ t('default_protocol') }}</label>
+                    <i class="pi pi-question-circle config-help-tip" tabindex="0"
+                      v-tooltip.top="{ value: t('default_protocol_help'), escape: false }" role="img"></i>
+                  </div>
+                  <MultiSelect
+                    id="default_protocol"
+                    v-model="defaultProtocolList"
+                    :options="defaultProtocolOptions"
+                    option-label="label"
+                    option-value="value"
+                    display="chip"
+                    :show-toggle-all="false"
+                    fluid
+                    class="et-select"
+                  />
+                  <div
+                    v-if="defaultProtocolList.length > 0"
+                    class="default-protocol-order flex flex-col gap-1 mt-1"
+                  >
+                    <div
+                      v-for="(scheme, index) in defaultProtocolList"
+                      :key="scheme"
+                      class="flex items-center gap-1"
+                    >
+                      <span class="text-xs shrink-0">{{ index + 1 }}. {{ scheme.toUpperCase() }}</span>
+                      <Button
+                        type="button"
+                        icon="pi pi-arrow-up"
+                        size="small"
+                        severity="secondary"
+                        text
+                        rounded
+                        :disabled="index === 0 || defaultProtocolList.length < 2"
+                        :aria-label="`move ${scheme} up`"
+                        @click="moveDefaultProtocol(index, -1)"
+                      />
+                      <Button
+                        type="button"
+                        icon="pi pi-arrow-down"
+                        size="small"
+                        severity="secondary"
+                        text
+                        rounded
+                        :disabled="index === defaultProtocolList.length - 1 || defaultProtocolList.length < 2"
+                        :aria-label="`move ${scheme} down`"
+                        @click="moveDefaultProtocol(index, 1)"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                <div class="config-compact-field">
+                  <div class="config-compact-label flex items-center gap-1">
+                    <label for="encryption_algorithm">{{ t('encryption_algorithm') }}</label>
+                    <i class="pi pi-question-circle config-help-tip" tabindex="0"
+                      v-tooltip.top="{ value: t(encryptionAlgoHidden ? 'disable_encryption_algo_conflict_help' : 'encryption_algorithm_help'), escape: false }" role="img"></i>
+                  </div>
+                  <Select
+                    v-if="!encryptionAlgoHidden"
+                    id="encryption_algorithm"
+                    v-model="curNetwork.encryption_algorithm"
+                    :options="encryptionAlgoOptions"
+                    option-label="label"
+                    option-value="value"
+                    fluid
+                    class="et-select"
+                    :placeholder="t('encryption_algorithm_placeholder')"
+                  />
+                  <p v-else class="config-field-hint m-0">{{ t('disable_encryption_algo_hint') }}</p>
+                </div>
+
+                <div class="config-compact-field">
+                  <div class="config-compact-label flex items-center gap-1">
+                    <label for="data_compress_algo">{{ t('data_compress_algo') }}</label>
+                    <i class="pi pi-question-circle config-help-tip" tabindex="0"
+                      v-tooltip.top="{ value: t('data_compress_algo_help'), escape: false }" role="img"></i>
+                  </div>
+                  <Select id="data_compress_algo" v-model="curNetwork.data_compress_algo"
+                    :options="dataCompressAlgoOptions" option-label="label" option-value="value" fluid
+                    class="et-select" />
+                </div>
+
+                <div class="config-compact-field">
+                  <div class="config-compact-label flex items-center gap-1">
+                    <label for="socket_mark">{{ t('socket_mark') }}</label>
+                    <i class="pi pi-question-circle config-help-tip" tabindex="0"
+                      v-tooltip.top="{ value: t('socket_mark_help'), escape: false }" role="img"></i>
+                  </div>
+                  <InputNumber id="socket_mark" v-model="curNetwork.socket_mark" :format="false" fluid
+                    :allow-empty="true" :min="0" :max="4294967295" :placeholder="t('socket_mark_placeholder')" />
                 </div>
               </div>
 
@@ -855,8 +984,8 @@ function removeVpnPortalClient(index: number) {
                 <div v-if="curNetwork.enable_relay_network_whitelist" class="config-inline-expand">
                   <AutoComplete id="relay_network_whitelist" v-model="curNetwork.relay_network_whitelist"
                     :placeholder="t('relay_network_whitelist')" multiple fluid
-                    :disabled="relayControlsDisabled"
-                    :suggestions="whitelistSuggestions" @complete="searchWhitelistSuggestions" />
+                    :disabled="relayControlsDisabled" :typeahead="false"
+                    @keydown.capture="onChipsKeydown($event, curNetwork.relay_network_whitelist)" />
                 </div>
 
                 <div class="config-inline-field">
@@ -873,7 +1002,8 @@ function removeVpnPortalClient(index: number) {
                 <div v-if="curNetwork.enable_manual_routes" class="config-inline-expand">
                   <AutoComplete id="routes" v-model="curNetwork.routes"
                     :placeholder="t('chips_placeholder', ['192.168.0.0/16'])" multiple fluid
-                    :suggestions="inetSuggestions" @complete="searchInetSuggestions" />
+                    :suggestions="inetSuggestions" @complete="searchInetSuggestions"
+                    @keydown.capture="onChipsKeydown($event, curNetwork.routes, { typeahead: true })" />
                 </div>
 
                 <div class="config-inline-field">
@@ -907,102 +1037,6 @@ function removeVpnPortalClient(index: number) {
                   <InputText id="ipv6_public_addr_prefix" v-model="curNetwork.ipv6_public_addr_prefix"
                     :placeholder="t('ipv6_public_addr_prefix_placeholder')" fluid
                     aria-describedby="ipv6_public_addr_prefix-help" />
-                </div>
-
-                <div class="config-compact-grid">
-                  <div class="config-compact-field">
-                    <div class="config-compact-label flex items-center gap-1">
-                      <label for="default_protocol">{{ t('default_protocol') }}</label>
-                      <i class="pi pi-question-circle config-help-tip" tabindex="0"
-                        v-tooltip.top="{ value: t('default_protocol_help'), escape: false }" role="img"></i>
-                    </div>
-                    <MultiSelect
-                      id="default_protocol"
-                      v-model="defaultProtocolList"
-                      :options="defaultProtocolOptions"
-                      option-label="label"
-                      option-value="value"
-                      display="chip"
-                      :show-toggle-all="false"
-                      fluid
-                      class="et-select"
-                    />
-                    <div
-                      v-if="defaultProtocolList.length > 0"
-                      class="default-protocol-order flex flex-col gap-1 mt-1"
-                    >
-                      <div
-                        v-for="(scheme, index) in defaultProtocolList"
-                        :key="scheme"
-                        class="flex items-center gap-1"
-                      >
-                        <span class="text-xs shrink-0">{{ index + 1 }}. {{ scheme.toUpperCase() }}</span>
-                        <Button
-                          type="button"
-                          icon="pi pi-arrow-up"
-                          size="small"
-                          severity="secondary"
-                          text
-                          rounded
-                          :disabled="index === 0 || defaultProtocolList.length < 2"
-                          :aria-label="`move ${scheme} up`"
-                          @click="moveDefaultProtocol(index, -1)"
-                        />
-                        <Button
-                          type="button"
-                          icon="pi pi-arrow-down"
-                          size="small"
-                          severity="secondary"
-                          text
-                          rounded
-                          :disabled="index === defaultProtocolList.length - 1 || defaultProtocolList.length < 2"
-                          :aria-label="`move ${scheme} down`"
-                          @click="moveDefaultProtocol(index, 1)"
-                        />
-                      </div>
-                    </div>
-                  </div>
-
-                  <div class="config-compact-field">
-                    <div class="config-compact-label flex items-center gap-1">
-                      <label for="encryption_algorithm">{{ t('encryption_algorithm') }}</label>
-                      <i class="pi pi-question-circle config-help-tip" tabindex="0"
-                        v-tooltip.top="{ value: t(encryptionAlgoHidden ? 'disable_encryption_algo_conflict_help' : 'encryption_algorithm_help'), escape: false }" role="img"></i>
-                    </div>
-                    <Select
-                      v-if="!encryptionAlgoHidden"
-                      id="encryption_algorithm"
-                      v-model="curNetwork.encryption_algorithm"
-                      :options="encryptionAlgoOptions"
-                      option-label="label"
-                      option-value="value"
-                      fluid
-                      class="et-select"
-                      :placeholder="t('encryption_algorithm_placeholder')"
-                    />
-                    <p v-else class="config-field-hint m-0">{{ t('disable_encryption_algo_hint') }}</p>
-                  </div>
-
-                  <div class="config-compact-field">
-                    <div class="config-compact-label flex items-center gap-1">
-                      <label for="data_compress_algo">{{ t('data_compress_algo') }}</label>
-                      <i class="pi pi-question-circle config-help-tip" tabindex="0"
-                        v-tooltip.top="{ value: t('data_compress_algo_help'), escape: false }" role="img"></i>
-                    </div>
-                    <Select id="data_compress_algo" v-model="curNetwork.data_compress_algo"
-                      :options="dataCompressAlgoOptions" option-label="label" option-value="value" fluid
-                      class="et-select" />
-                  </div>
-
-                  <div class="config-compact-field">
-                    <div class="config-compact-label flex items-center gap-1">
-                      <label for="socket_mark">{{ t('socket_mark') }}</label>
-                      <i class="pi pi-question-circle config-help-tip" tabindex="0"
-                        v-tooltip.top="{ value: t('socket_mark_help'), escape: false }" role="img"></i>
-                    </div>
-                    <InputNumber id="socket_mark" v-model="curNetwork.socket_mark" :format="false" fluid
-                      :allow-empty="true" :min="0" :max="4294967295" :placeholder="t('socket_mark_placeholder')" />
-                  </div>
                 </div>
               </div>
 
@@ -1425,6 +1459,7 @@ function removeVpnPortalClient(index: number) {
 .config-compact-field--inline > :deep(.p-inputtext),
 .config-compact-field--inline > :deep(.p-inputnumber),
 .config-compact-field--inline > :deep(.p-inputwrapper),
+.config-compact-field--inline > :deep(.p-autocomplete),
 .config-compact-field--inline > .config-compact-control {
   flex: 1 1 auto;
   min-width: 0;
@@ -1440,11 +1475,13 @@ function removeVpnPortalClient(index: number) {
   flex-direction: column;
   gap: 0.25rem;
   min-width: 0;
+  flex: 1 1 auto;
 }
 
 .config-compact-control > :deep(.p-inputtext),
 .config-compact-control > :deep(.p-inputnumber),
-.config-compact-control > :deep(.p-inputwrapper) {
+.config-compact-control > :deep(.p-inputwrapper),
+.config-compact-control > :deep(.p-autocomplete) {
   width: 100%;
 }
 
@@ -1458,10 +1495,13 @@ function removeVpnPortalClient(index: number) {
   text-overflow: ellipsis;
 }
 
+/* 主机名等行内项：标签固定宽度，输入框左右列对齐 */
 .config-compact-field--inline .config-compact-label {
-  flex: 0 0 auto;
+  flex: 0 0 7.5rem;
+  width: 7.5rem;
+  max-width: 7.5rem;
   min-height: 0;
-  max-width: 9.5rem;
+  box-sizing: border-box;
 }
 
 .config-field-hint {
@@ -1551,8 +1591,11 @@ function removeVpnPortalClient(index: number) {
     grid-template-columns: 1fr;
   }
 
+  /* 窄屏单列仍保持标签同宽，避免输入框参差 */
   .config-compact-field--inline .config-compact-label {
-    max-width: none;
+    flex-basis: 7.5rem;
+    width: 7.5rem;
+    max-width: 7.5rem;
   }
 }
 

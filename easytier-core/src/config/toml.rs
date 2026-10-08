@@ -96,7 +96,12 @@ pub(crate) fn default_instance_name() -> String {
 pub fn gen_default_flags() -> Flags {
     #[allow(deprecated)]
     Flags {
-        default_protocol: "tcp".to_string(),
+        // udp before tcp: every other common transport here adds its own
+        // retransmission, so an inner TCP flow (RDP/SSH/HTTP) would become
+        // TCP-over-TCP and collapse under mild packet loss. tcp stays second so
+        // "UDP is blocked, fall back to TCP" still works. See
+        // `config::protocol_preference` for the full rationale.
+        default_protocol: "udp,tcp".to_string(),
         dev_name: "".to_string(),
         enable_encryption: true,
         enable_ipv6: true,

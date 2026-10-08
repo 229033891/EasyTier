@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { AutoComplete, Button, Checkbox, Dialog, InputNumber, InputText, MultiSelect, Panel, SelectButton, ToggleButton } from 'primevue';
-import { computed, reactive, ref, watch } from 'vue';
+import { computed, reactive, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { AclAction, AclProtocol, AclRule, ensureAclRuleLists } from '../../types/network';
 import { isPanelHeaderInteractiveTarget } from '../../modules/panel';
@@ -73,8 +73,28 @@ function save() {
   close()
 }
 
-// Suggestions for IP/Port AutoComplete
-const genericSuggestions = ref<string[]>([])
+function onChipsKeydown(event: KeyboardEvent, values: string[]) {
+  if (event.isComposing) return
+  if (event.key !== 'Enter' && event.key !== ',' && event.key !== '，') return
+  const input = event.target as HTMLInputElement | null
+  if (!input || input.tagName !== 'INPUT') return
+  const raw = input.value.trim()
+  if (!raw) return
+  event.preventDefault()
+  event.stopImmediatePropagation()
+  const next = [...values]
+  let changed = false
+  for (const part of raw.split(/[,，]+/)) {
+    const token = part.trim()
+    if (token && !next.includes(token)) {
+      next.push(token)
+      changed = true
+    }
+  }
+  if (changed) values.splice(0, values.length, ...next)
+  input.value = ''
+  input.dispatchEvent(new Event('input', { bubbles: true }))
+}
 </script>
 
 <template>
@@ -118,29 +138,29 @@ const genericSuggestions = ref<string[]>([])
         <div class="flex flex-col gap-3">
           <div class="flex flex-col gap-1.5">
             <label class="acl-dlg-label">{{ t('acl.rule.src_ips') }}</label>
-            <AutoComplete v-model="rule.source_ips" multiple fluid :suggestions="genericSuggestions"
-              @complete="genericSuggestions = [$event.query]"
-              :placeholder="t('chips_placeholder', ['10.126.126.0/24'])" />
+            <AutoComplete v-model="rule.source_ips" multiple fluid :typeahead="false"
+              :placeholder="t('chips_placeholder', ['10.126.126.0/24'])"
+              @keydown.capture="onChipsKeydown($event, rule.source_ips)" />
           </div>
           <div class="flex flex-col gap-1.5">
             <label class="acl-dlg-label">{{ t('acl.rule.dst_ips') }}</label>
-            <AutoComplete v-model="rule.destination_ips" multiple fluid :suggestions="genericSuggestions"
-              @complete="genericSuggestions = [$event.query]"
-              :placeholder="t('chips_placeholder', ['10.126.126.2/32'])" />
+            <AutoComplete v-model="rule.destination_ips" multiple fluid :typeahead="false"
+              :placeholder="t('chips_placeholder', ['10.126.126.2/32'])"
+              @keydown.capture="onChipsKeydown($event, rule.destination_ips)" />
           </div>
 
           <div v-if="showPorts" class="flex flex-row gap-4 flex-wrap">
             <div class="flex flex-col gap-1.5 grow">
               <label class="acl-dlg-label">{{ t('acl.rule.src_ports') }}</label>
-              <AutoComplete v-model="rule.source_ports" multiple fluid :suggestions="genericSuggestions"
-                @complete="genericSuggestions = [$event.query]"
-                :placeholder="t('chips_placeholder', ['80, 1000-2000'])" />
+              <AutoComplete v-model="rule.source_ports" multiple fluid :typeahead="false"
+                :placeholder="t('chips_placeholder', ['80, 1000-2000'])"
+                @keydown.capture="onChipsKeydown($event, rule.source_ports)" />
             </div>
             <div class="flex flex-col gap-1.5 grow">
               <label class="acl-dlg-label">{{ t('acl.rule.dst_ports') }}</label>
-              <AutoComplete v-model="rule.ports" multiple fluid :suggestions="genericSuggestions"
-                @complete="genericSuggestions = [$event.query]"
-                :placeholder="t('chips_placeholder', ['80, 1000-2000'])" />
+              <AutoComplete v-model="rule.ports" multiple fluid :typeahead="false"
+                :placeholder="t('chips_placeholder', ['80, 1000-2000'])"
+                @keydown.capture="onChipsKeydown($event, rule.ports)" />
             </div>
           </div>
         </div>

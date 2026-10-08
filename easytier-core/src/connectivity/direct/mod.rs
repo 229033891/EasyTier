@@ -134,7 +134,9 @@ pub struct DirectConnectorOptions {
 impl Default for DirectConnectorOptions {
     fn default() -> Self {
         Self {
-            default_protocol: "tcp".to_owned(),
+            // Mirrors `gen_default_flags()`: prefer plain UDP over TCP so a direct
+            // conn does not turn inner TCP into TCP-over-TCP; tcp is the fallback.
+            default_protocol: "udp,tcp".to_owned(),
             enable_ipv6: true,
             allow_public_server: false,
             bind_device: false,

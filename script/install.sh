@@ -267,7 +267,7 @@ network_name = "default"
 network_secret = "default"
 
 [flags]
-default_protocol = "udp"
+default_protocol = "udp,tcp"
 dev_name = ""
 enable_encryption = true
 enable_ipv6 = true

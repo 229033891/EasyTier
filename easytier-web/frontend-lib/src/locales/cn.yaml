@@ -137,7 +137,7 @@ hide_dock_icon: 隐藏 Dock 图标
 show_dock_icon: 显示 Dock 图标
 exit: 退出
 exit_app: 退出程序
-chips_placeholder: 例如： {0}, 输入后在下拉框中选择生效
+chips_placeholder: 例如： {0}，回车或逗号添加
 show_node_details: 显示节点详细信息
 hide_node_details: 隐藏节点详细信息
 hostname_placeholder: '留空默认为主机名: {0}'
@@ -477,11 +477,11 @@ disable_encryption_algo_conflict_help: |-
   已禁用加密时，加密算法下拉无效。配置不会被自动改写。
 disable_encryption_algo_hint: 已禁用加密，算法设置无效。
 
-default_protocol: 连接协议优先顺序
+default_protocol: 协议顺序
 default_protocol_help: |-
   有序协议列表（逗号分隔存盘）。直连按此顺序尝试对端已宣告的监听。
-  手动 peer URL 仅在 tcp/udp/ws/wss/quic 之间改写 scheme 降级（保留主机与端口，不锁死 443）；wg / faketcp 仍可用于直连排序，但不会对手动 peer 改写。
-  默认仅 tcp。例如 wss,tcp,quic,udp：UDP 被阻断时仍可落到列表中的 TCP/WSS。
+  手动 peer URL 先按配置的 scheme 拨号，失败后才在 tcp/udp/ws/wss/quic 之间改写 scheme 降级（保留主机与端口，不锁死 443）；wg / faketcp 仍可用于直连排序，但不会对手动 peer 改写。
+  默认 udp,tcp：其余常见协议（tcp/ws/wss/quic/faketcp）都自带重传，内层 TCP（RDP/SSH/HTTP）会变成 TCP over TCP，轻微丢包即卡顿；保留 tcp 作第二位是为了「UDP 被阻断时自动落到 TCP」。例如 wss,tcp,quic,udp：UDP 被阻断时仍可落到列表中的 TCP/WSS。
   选择顺序即优先顺序；可用下方序号按钮微调。
 
 encryption_algorithm: 加密算法

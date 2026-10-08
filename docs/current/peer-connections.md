@@ -72,8 +72,8 @@
 | **硬约束** | `disable_p2p`（不主动直连）/ `p2p_only`（绝不中转）/ 允许中转开关（`disable_relay_data` 取反：**仅 OSPF 避让，不硬丢包**） |
 | **遗留可选** | `prefer_peer_relay`：UI 隐藏；**不**抑制打洞；仅 TOML 可启用 OSPF 对端中继拓扑投影（与质量分正交） |
 | **选优** | 同 peer 按 `select_conn` 综合质量分（RTT+loss+jitter）；对端间 OSPF 由 `latency_first`（质量优先选路）在 LeastHop / LeastCost 间切换，LeastCost 边代价同源编码进 `latency_ms`；`lazy_p2p` 减少无业务时的背景打洞 |
-| **协议偏好** | `flags.default_protocol` 为有序 CSV（如 `wss,tcp,quic,udp`；老单值=长度 1；可含 `wg`/`faketcp`）。直连按列表排序对端已宣告监听；手动 peer URL **仅在** tcp/udp/ws/wss/quic 间改写 scheme 降级（保留源有效端口：显式或原 scheme 默认，如 wss→tcp 保 443；`wg`/`faketcp`/`ring` 不改写）。`ListConnector.url` 恒为配置 URL；`active_url` 为降级获胜拨号 URL；remove 可按二者任一匹配 |
-| **Web 控件** | `Config.vue` 基础设置「允许作为中转节点」；高级设置「质量优先选路」(`latency_first`)、「连接协议优先顺序」(`default_protocol`)；`disable_p2p` 在高级设置，但**正向展示为「允许 P2P 直连」**（`inverted` 机制，字段名不变）——配置页开关约定见 [`desktop-gui-and-config-server.md`](./desktop-gui-and-config-server.md) §4 |
+| **协议偏好** | `flags.default_protocol` 为有序 CSV（**默认 `udp,tcp`**；老单值=长度 1；可含 `wg`/`faketcp`）。**为什么 udp 在前**：tcp/ws/wss/quic/faketcp 都自带重传，内层 TCP（RDP/SSH/HTTP）会退化成 TCP over TCP，轻微丢包即卡顿；`udp` 是**默认开启项中**唯一不叠加重传的常用传输（`wg` 也是纯 UDP，但需双方都宣告，故保持 opt-in）。`tcp` 留第二位以保住「UDP 被阻断时自动落到 TCP」。直连按列表排序对端已宣告监听；手动 peer URL **先按配置的 scheme 拨号**，失败后才在 tcp/udp/ws/wss/quic 间改写 scheme 降级（保留源有效端口：显式或原 scheme 默认，如 wss→tcp 保 443；`wg`/`faketcp`/`ring` 不改写）。`ListConnector.url` 恒为配置 URL；`active_url` 为当前存活/降级获胜拨号 URL；remove 可按二者任一匹配 |
+| **Web 控件** | `Config.vue` 基础设置「允许作为中转节点」；高级设置「质量优先选路」(`latency_first`)、「协议顺序」(`default_protocol`)；`disable_p2p` 在高级设置，但**正向展示为「允许 P2P 直连」**（`inverted` 机制，字段名不变）——配置页开关约定见 [`desktop-gui-and-config-server.md`](./desktop-gui-and-config-server.md) §4 |
 
 示例（有序列表；**443 不一定可用**，按实际可达端口填写）：
 
