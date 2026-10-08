@@ -144,8 +144,6 @@ chips_placeholder: 'e.g: {0}, select from the dropdown after input'
 hostname_placeholder: 'Leave blank and default to host name: {0}'
 hostname_help: Network node hostname for routing and Magic DNS (e.g. &lt;hostname&gt;.et.net). Independent of the Web console device display name.
 dev_name_placeholder: 'Note: When multiple networks use the same TUN interface name at the same time, there will be a conflict when setting the TUN''s IP. Leave blank to automatically generate a random name.'
-off_text: Press to disable
-on_text: Press to enable
 show_config: Show Config
 edit_config: Edit Config File
 config_file: Config File
@@ -254,7 +252,7 @@ enable_kcp_proxy: Enable KCP Proxy
 enable_kcp_proxy_help: |-
   Carry TCP traffic to peers over KCP (UDP-based) instead of raw TCP.
   On lossy links this avoids TCP retransmission stalls, noticeably cutting latency and raising throughput.
-  Note: both ends must support KCP; if the peer has "Disable KCP Input" on, it falls back to raw TCP.
+  Note: both ends must support KCP; if the peer has "Allow KCP Input" turned off, it falls back to raw TCP.
 
 disable_kcp_input: Disable KCP Input
 disable_kcp_input_help: |-
@@ -262,11 +260,17 @@ disable_kcp_input_help: |-
   Useful when this node is CPU-bound, or the link is lossless so KCP brings no benefit.
   Note: peers with KCP proxy on fall back to raw TCP automatically — nothing breaks, you just lose the KCP benefit.
 
+allow_kcp_input: Allow KCP Input
+allow_kcp_input_help: |-
+  Accept KCP-proxied TCP streams from others (allowed by default).
+  Unchecking it is equivalent to "Disable KCP Input": this node only accepts raw TCP — useful when the node is CPU-bound, or the link is lossless so KCP brings no benefit.
+  Note: peers with KCP proxy on fall back to raw TCP automatically — nothing breaks, you just lose the KCP benefit.
+
 enable_quic_proxy: Enable QUIC Proxy
 enable_quic_proxy_help: |-
   Carry TCP traffic to peers over QUIC (UDP-based) instead of raw TCP.
   Same purpose as the KCP proxy — lower latency and higher throughput on lossy links; QUIC has more mature congestion control and multiplexing.
-  Note: both ends must support QUIC; if the peer has "Disable QUIC Input" on, it falls back to raw TCP.
+  Note: both ends must support QUIC; if the peer has "Allow QUIC Input" turned off, it falls back to raw TCP.
 
 disable_quic_input: Disable QUIC Input
 disable_quic_input_help: |-
@@ -274,10 +278,22 @@ disable_quic_input_help: |-
   Useful when this node is CPU-bound, or the link is lossless so QUIC brings no benefit.
   Note: peers fall back to raw TCP automatically — nothing breaks.
 
+allow_quic_input: Allow QUIC Input
+allow_quic_input_help: |-
+  Accept QUIC-proxied TCP streams from others (allowed by default).
+  Unchecking it is equivalent to "Disable QUIC Input": this node only accepts raw TCP — useful when the node is CPU-bound, or the link is lossless so QUIC brings no benefit.
+  Note: peers fall back to raw TCP automatically — nothing breaks.
+
 disable_p2p: Disable P2P
 disable_p2p_help: |-
   Stop establishing direct (P2P) connections proactively — all traffic goes through relays — and advertise that peers should not connect to this node directly either.
   Useful for turning this node into a pure relay/server, or when direct links must be tightly restricted.
+  Note: nodes marked "Need P2P" are the exception and will still establish a direct connection.
+
+allow_p2p: Allow P2P Direct
+allow_p2p_help: |-
+  Allow this node to establish direct (P2P) connections proactively, cutting relay overhead and latency (allowed by default).
+  Unchecking it is equivalent to "Disable P2P": all traffic goes through relays, and peers are told not to connect to this node directly — useful for turning this node into a pure relay/server, or when direct links must be tightly restricted.
   Note: nodes marked "Need P2P" are the exception and will still establish a direct connection.
 
 p2p_only: P2P Only
@@ -369,10 +385,22 @@ disable_tcp_hole_punching_help: |-
   Useful when TCP hole punching makes connections unstable on a particular network, or conflicts with the peer's firewall policy.
   Note: without it, TCP-only cases fall back to relays and usually get slower; if UDP hole punching works, direct connectivity is generally unaffected.
 
+allow_tcp_hole_punching: Allow TCP Hole Punching
+allow_tcp_hole_punching_help: |-
+  Allow TCP hole punching for direct connections (allowed by default).
+  Unchecking it is equivalent to "Disable TCP Hole Punching": useful when TCP hole punching makes connections unstable on a particular network, or conflicts with the peer's firewall policy.
+  Note: without it, TCP-only cases fall back to relays and usually get slower; if UDP hole punching works, direct connectivity is generally unaffected.
+
 disable_udp_hole_punching: Disable UDP Hole Punching
 disable_udp_hole_punching_help: |-
   Stop attempting UDP hole punching for direct connections.
   Useful when the ISP rate-limits or scrubs UDP, so hole punching only wastes time.
+  Note: connectivity then depends on TCP hole punching or relays, so the P2P success rate drops.
+
+allow_udp_hole_punching: Allow UDP Hole Punching
+allow_udp_hole_punching_help: |-
+  Allow UDP hole punching for direct connections (allowed by default).
+  Unchecking it is equivalent to "Disable UDP Hole Punching": useful when the ISP rate-limits or scrubs UDP, so hole punching only wastes time.
   Note: connectivity then depends on TCP hole punching or relays, so the P2P success rate drops.
 
 enable_udp_broadcast_relay: UDP Broadcast Relay
@@ -384,10 +412,22 @@ disable_upnp_help: |-
   Useful when the router does not support UPnP, or you do not want the app changing port mappings on its own.
   Note: with this off, if the host sits behind NAT nobody can connect inbound — only outbound connections and hole punching remain. Set up the port mapping on the router manually instead.
 
+allow_upnp: Enable UPnP Port Mapping
+allow_upnp_help: |-
+  Turn on runtime UPnP / NAT-PMP port mapping (on by default).
+  Unchecking it is equivalent to "Disable UPnP": useful when the router does not support UPnP, or you do not want the app changing port mappings on its own.
+  Note: with this off, if the host sits behind NAT nobody can connect inbound — only outbound connections and hole punching remain. Set up the port mapping on the router manually instead.
+
 disable_sym_hole_punching: Disable Symmetric NAT Hole Punching
 disable_sym_hole_punching_help: |-
   Disable UDP hole punching for symmetric NAT (NAT4). That technique enumerates ports via a "birthday attack" and can be flagged as anomalous traffic by the ISP.
   Useful when enabling it gets you throttled or cut off, or the environment cannot tolerate a burst of probe packets.
+  Note: with it disabled, two symmetric-NAT peers generally cannot connect directly and must use a relay.
+
+allow_sym_hole_punching: Allow Symmetric NAT Hole Punching
+allow_sym_hole_punching_help: |-
+  Allow UDP hole punching for symmetric NAT (NAT4) (allowed by default). That technique enumerates ports via a "birthday attack" and can be flagged as anomalous traffic by the ISP.
+  Unchecking it is equivalent to "Disable Symmetric NAT Hole Punching": useful when enabling it gets you throttled or cut off, or the environment cannot tolerate a burst of probe packets.
   Note: with it disabled, two symmetric-NAT peers generally cannot connect directly and must use a relay.
 
 enable_magic_dns: Enable Magic DNS
@@ -412,9 +452,9 @@ prefer_peer_relay_help: |-
 
 # Mutex / dependency hints (Current behaviour only; legacy conflicting values are kept and warned)
 disable_p2p_conflict_help: |-
-  Both "Disable P2P" and "P2P Only / Lazy P2P / Need P2P" are on. With P2P disabled the others have no effect — clear one side. Values are not rewritten automatically.
-disable_p2p_blocks_help: When "Disable P2P" is on, you cannot enable P2P Only, Lazy P2P, or Need P2P.
-p2p_only_blocks_disable_p2p_help: When "P2P Only" is on, you cannot enable Disable P2P.
+  "Allow P2P Direct" is off while "P2P Only / Lazy P2P / Need P2P" is on. With P2P disallowed the others have no effect — clear one side. Values are not rewritten automatically.
+disable_p2p_blocks_help: When "Allow P2P Direct" is off, you cannot enable P2P Only, Lazy P2P, or Need P2P.
+p2p_only_blocks_disable_p2p_help: When "P2P Only" is on, direct P2P must stay enabled.
 p2p_only_latency_first_conflict_help: |-
   With "P2P Only" enabled, quality-first routing is ignored at runtime. Values are not rewritten; you can turn quality-first routing off manually.
 p2p_only_blocks_latency_first_help: Quality-first routing has no effect while "P2P Only" is on, so it cannot be enabled.

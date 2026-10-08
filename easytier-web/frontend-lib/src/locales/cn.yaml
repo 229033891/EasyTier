@@ -143,8 +143,6 @@ hide_node_details: 隐藏节点详细信息
 hostname_placeholder: '留空默认为主机名: {0}'
 hostname_help: 网络节点主机名，用于路由与 Magic DNS（如 &lt;hostname&gt;.et.net）。与 Web 控制台设备列表显示名无关。
 dev_name_placeholder: 注意：当多个网络同时使用相同的TUN接口名称时，将会在设置TUN的IP时产生冲突，留空以自动生成随机名称
-off_text: 点击关闭
-on_text: 点击开启
 show_config: 显示配置
 edit_config: 编辑配置文件
 config_file: 配置文件
@@ -255,7 +253,7 @@ enable_kcp_proxy: 启用 KCP 代理
 enable_kcp_proxy_help: |-
   把发往对端的 TCP 流量改用 KCP（基于 UDP）代理转发。
   在 UDP 有丢包的链路上，能避开 TCP 重传导致的卡顿，明显降低延迟、提高吞吐。
-  注意：需要两端都能跑 KCP；若对端开了「禁用 KCP 输入」，会自动回退为原始 TCP。
+  注意：需要两端都能跑 KCP；若对端关掉了「允许 KCP 输入」，会自动回退为原始 TCP。
 
 disable_kcp_input: 禁用 KCP 输入
 disable_kcp_input_help: |-
@@ -263,11 +261,17 @@ disable_kcp_input_help: |-
   适合本节点 CPU 紧张，或链路本身不丢包（KCP 收益不大）时。
   注意：开启 KCP 代理的对端访问本节点时会自动回退成原始 TCP，功能不受影响，只是失去 KCP 的收益。
 
+allow_kcp_input: 允许 KCP 输入
+allow_kcp_input_help: |-
+  接受别人用 KCP 代理过来的 TCP 流（默认允许）。
+  取消勾选等价于「禁用 KCP 输入」：本节点只收原始 TCP，适合本节点 CPU 紧张，或链路本身不丢包（KCP 收益不大）时。
+  注意：开启 KCP 代理的对端访问本节点时会自动回退成原始 TCP，功能不受影响，只是失去 KCP 的收益。
+
 enable_quic_proxy: 启用 QUIC 代理
 enable_quic_proxy_help: |-
   把发往对端的 TCP 流量改用 QUIC（基于 UDP）代理转发。
   用途与 KCP 代理类似，在丢包链路上降低延迟、提高吞吐；QUIC 的拥塞控制与多路复用更成熟。
-  注意：需要两端都支持 QUIC；若对端开了「禁用 QUIC 输入」，会自动回退为原始 TCP。
+  注意：需要两端都支持 QUIC；若对端关掉了「允许 QUIC 输入」，会自动回退为原始 TCP。
 
 disable_quic_input: 禁用 QUIC 输入
 disable_quic_input_help: |-
@@ -275,10 +279,22 @@ disable_quic_input_help: |-
   适合本节点 CPU 紧张，或链路不丢包（QUIC 收益不大）时。
   注意：对端会自动回退成原始 TCP，功能不受影响。
 
+allow_quic_input: 允许 QUIC 输入
+allow_quic_input_help: |-
+  接受别人用 QUIC 代理过来的 TCP 流（默认允许）。
+  取消勾选等价于「禁用 QUIC 输入」：本节点只收原始 TCP，适合本节点 CPU 紧张，或链路不丢包（QUIC 收益不大）时。
+  注意：对端会自动回退成原始 TCP，功能不受影响。
+
 disable_p2p: 禁用 P2P
 disable_p2p_help: |-
   不再主动与其他节点建立直连（P2P），流量一律走中转；同时声明不希望别人主动连本节点。
   适合让本节点只做中继/服务器，或需要严格限制直连关系的场景。
+  注意：标记了「需要 P2P」的节点例外，仍会与本节点建立直连。
+
+allow_p2p: 允许 P2P 直连
+allow_p2p_help: |-
+  允许本节点主动与其他节点建立直连（P2P），减少中转开销和延迟（默认允许）。
+  取消勾选等价于「禁用 P2P」：流量一律走中转，同时声明不希望别人主动连本节点；适合让本节点只做中继/服务器，或需要严格限制直连关系的场景。
   注意：标记了「需要 P2P」的节点例外，仍会与本节点建立直连。
 
 p2p_only: 仅 P2P
@@ -370,10 +386,22 @@ disable_tcp_hole_punching_help: |-
   适合 TCP 打洞在特定网络下反而导致连接不稳定，或与对端防火墙策略冲突时。
   注意：关闭后 TCP 场景只能走中转，延迟通常更高；如果 UDP 打洞可用，一般不影响直连。
 
+allow_tcp_hole_punching: 允许 TCP 打洞
+allow_tcp_hole_punching_help: |-
+  允许用 TCP 打洞建立直连（默认允许）。
+  取消勾选等价于「禁用 TCP 打洞」：适合 TCP 打洞在特定网络下反而导致连接不稳定，或与对端防火墙策略冲突时。
+  注意：关闭后 TCP 场景只能走中转，延迟通常更高；如果 UDP 打洞可用，一般不影响直连。
+
 disable_udp_hole_punching: 禁用UDP打洞
 disable_udp_hole_punching_help: |-
   不再尝试用 UDP 打洞建立直连。
   适合 UDP 被运营商限制/清洗、打洞只会白耗时间的网络。
+  注意：关闭后只能靠 TCP 打洞或走中转，P2P 成功率会下降。
+
+allow_udp_hole_punching: 允许 UDP 打洞
+allow_udp_hole_punching_help: |-
+  允许用 UDP 打洞建立直连（默认允许）。
+  取消勾选等价于「禁用 UDP 打洞」：适合 UDP 被运营商限制/清洗、打洞只会白耗时间的网络。
   注意：关闭后只能靠 TCP 打洞或走中转，P2P 成功率会下降。
 
 enable_udp_broadcast_relay: UDP 广播中继
@@ -385,10 +413,22 @@ disable_upnp_help: |-
   适合路由器不支持 UPnP，或不想让程序自动修改路由器端口映射的场景。
   注意：关闭后如果本机在 NAT 后面，别人将无法直接连进来，只能由本机主动出连或依赖打洞；需要手动在路由器上做端口映射。
 
+allow_upnp: 启用 UPnP 端口映射
+allow_upnp_help: |-
+  开启运行时的 UPnP / NAT-PMP 自动端口映射（默认开启）。
+  取消勾选等价于「禁用 UPnP」：适合路由器不支持 UPnP，或不想让程序自动修改路由器端口映射的场景。
+  注意：关闭后如果本机在 NAT 后面，别人将无法直接连进来，只能由本机主动出连或依赖打洞；需要手动在路由器上做端口映射。
+
 disable_sym_hole_punching: 禁用对称NAT打洞
 disable_sym_hole_punching_help: |-
   禁用针对对称 NAT（NAT4）的 UDP 打洞。该方式基于「生日攻击」枚举端口，可能被运营商判定为异常流量而封锁。
   适合开启后出现被限速/断流，或环境不允许大量探测包的场景。
+  注意：禁用后对称 NAT 两侧基本无法直连，只能走中转。
+
+allow_sym_hole_punching: 允许对称 NAT 打洞
+allow_sym_hole_punching_help: |-
+  允许针对对称 NAT（NAT4）的 UDP 打洞（默认允许）。该方式基于「生日攻击」枚举端口，可能被运营商判定为异常流量而封锁。
+  取消勾选等价于「禁用对称 NAT 打洞」：适合开启后出现被限速/断流，或环境不允许大量探测包的场景。
   注意：禁用后对称 NAT 两侧基本无法直连，只能走中转。
 
 enable_magic_dns: 启用魔法DNS
@@ -411,9 +451,9 @@ prefer_peer_relay_help: |-
 
 # 互斥 / 依赖提示（只描述 Current 行为；老配置冲突值保留，仅提示）
 disable_p2p_conflict_help: |-
-  当前同时开启了「禁用 P2P」与「仅 P2P / 延迟 P2P / 需要 P2P」。禁用 P2P 时后三者无意义；请取消其一。配置不会被自动改写。
-disable_p2p_blocks_help: 已开启「禁用 P2P」时，不能再勾选仅 P2P、延迟 P2P 或需要 P2P。
-p2p_only_blocks_disable_p2p_help: 已开启「仅 P2P」时，不能再勾选禁用 P2P。
+  当前关掉了「允许 P2P 直连」，同时又开启了「仅 P2P / 延迟 P2P / 需要 P2P」。前者关闭时后三者无意义；请取消其一。配置不会被自动改写。
+disable_p2p_blocks_help: 已关闭「允许 P2P 直连」时，不能再勾选仅 P2P、延迟 P2P 或需要 P2P。
+p2p_only_blocks_disable_p2p_help: 已开启「仅 P2P」时，P2P 直连须保持启用。
 p2p_only_latency_first_conflict_help: |-
   「仅 P2P」开启时，质量优先选路会被运行时忽略。配置不会被自动改写；可手动关闭质量优先选路。
 p2p_only_blocks_latency_first_help: 已开启「仅 P2P」时，质量优先选路无效，无法勾选。

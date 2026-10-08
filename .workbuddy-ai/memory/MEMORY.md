@@ -42,8 +42,40 @@
 - `tauri-plugin-vpnservice/android/.../TauriVpnService.kt` 的 dns/routes 来自 Intent 参数，无硬编码，不用动。
 - 切地址 = 全网 OS DNS/`/32` 重写，属项目级发布决策，别随手改。
 
+## 配置页（高级设置）UI 归属（2026-10-08 查证）
+
+- **Windows 控制台和移动端 App 用的是同一个组件**：`easytier-web/frontend-lib/src/components/Config.vue`。`easytier-gui` 只 `import ... from 'easytier-frontend-lib'`（`main.ts` / `pages/index.vue` 的 `RemoteManagement`），没有自己的配置页。**改一处两边同时生效**，不用做两套。
+- 响应式断点：`@media (max-width: 760px)` → 高级开关分组从 2 列变 1 列、开关项双列；`@media (max-width: 640px)` → `.config-inline-label` 从 11rem 收到 5.5rem、`.config-inline-expand` 的 `margin-left` 归零（展开项和开关失去视觉从属）。
+- 样式分两处：组件内 `<style scoped>`（`.advanced-*`、`.config-compact-*`）+ 全局 `src/style.css`（`.config-inline-field/label/control/expand`，因为 scoped 穿不进子组件）。
+- PrimeVue **4.3.9**，`ToggleSwitch` 可用。
+- **UX 债已修（2026-10-08，方案 A）**：5 个 `ToggleButton class="w-48"`（VPN Portal / 网络白名单 / 自定义路由 / socks5 / 共享 IPv6 子网）已换成 `ToggleSwitch`（去掉固定 192px 宽与 `off-icon="pi pi-times"` 的错位语义）；7 个负逻辑勾选框（`disable_p2p` / `disable_kcp_input` / `disable_quic_input` / `disable_tcp|udp|sym_hole_punching` / `disable_upnp`）已走 `inverted` 机制，正向展示为 `allow_*`（字段名不变）。**反转展示会改变冲突提示的措辞方向，改文案时务必核对 `configConflicts.ts` 里对应的 `*_help` key。**
+
+## 状态页「代理 CIDR 路由同步」的显示规则（2026-10-08 查证 + 改造）
+
+- 数据链路：`api_manage.proto` `NetworkInstanceRunningInfo.proxy_cidr_route_sync` → 后端 `easytier-core/src/management/full/instance_info.rs` 每轮填（源：`easytier/src/instance/virtual_nic.rs` 桌面 L2 路由同步）→ 前端 `Status.vue` 的 `myNodeInfoGroups`。GUI 本地态与 web-client 上报共用 `network_instance_running_info`，**不存在 Windows/web 缺失**。
+- **字段来源因平台而异**：桌面 = L2 路由同步；Android 由 `easytier-gui/src/composables/mobile_vpn.ts` 的 `annotateNetworkInfoWithMobileVpnRoutes` 覆盖写入 VpnService 路由，OHOS 由 `runtime_api.rs` 的 `annotate_ohos_proxy_cidr_route_sync` 覆盖（那边 L2 ifcfg 是 no-op，core 只会报空占位 `desired=[-] installed=[-]`）。
+- **2026-10-08 起改为「字段有值就显示」**（方案 A）：`Status.vue` 用 `routeSync?.trim()` 判定，空占位也照显示，便于确认"确实一条代理路由都没装"。原来的 `isMeaningfulProxyCidrRouteSync()` 判定函数已删除（死代码 + 其单测）。字段缺失（老核心）或全空白仍不显示。
+- 回归测试在 `tests/status-vpn-portal.spec.ts`（挂载 Status.vue；**「节点详情」面板默认折叠，断言前要先点 `button[data-label="node_info_details"]`**）。
+
+## 版本号 bump 的文件清单（2026-10-08 定稿：10 个文件）
+
+「版本号改为 X」= 改这 **10 个文件**里的版本号（`easytier-mini` 也在内，用户 2026-10-08 明确选择一起升）：
+
+1. `Cargo.toml` — 3 处，全在 `[workspace.dependencies]`：`easytier` / `easytier-core` / `easytier-proto`
+2. `Cargo.lock` — 5 处：`easytier` / `easytier-core` / `easytier-proto` / `easytier-web` / `easytier-gui` 的 `version =`（**全仓只有这一个 Cargo.lock**）
+3. `easytier/Cargo.toml`、4. `easytier-core/Cargo.toml`、5. `easytier-proto/Cargo.toml`、6. `easytier-web/Cargo.toml`
+7. `easytier-gui/package.json`、8. `easytier-gui/src-tauri/Cargo.toml`、9. `easytier-gui/src-tauri/tauri.conf.json`
+10. `easytier-contrib/easytier-mini/Cargo.toml`（**易漏**：`2.7.41/42/43` 三次 bump 都漏了它，停在 `2.7.4`）
+
+**不动**：`easytier-contrib/` 下的 `easytier-ffi` / `easytier-android-jni` / `easytier-ios` / `easytier-uptime` / `easytier-ohrs*`（固定 `0.1.0`）、`tauri-plugin-vpnservice`（`0.0.0`）。
+
+**校验手段**：`cargo metadata --no-deps --offline --format-version 1` 应报 6 个包为同一版本（`easytier` / `easytier-core` / `easytier-gui` / `easytier-mini` / `easytier-proto` / `easytier-web`）；残留检查用 `grep -rnE 'X\.Y\.Z([^0-9]|$)'`（**注意 `2.7.4` 是 `2.7.44` 的前缀，必须加 `([^0-9]|$)`**，否则误报；`easytier-gui/package.json` 里的 `@types/node: ^22.7.4` 是无关依赖，别动）。**不要顺手跑 `cargo build` 验证**（见上文「不要用本地 Rust 编译/check 作为验证手段」）。
+
 ## 环境备注
 
+- **`easytier-web/frontend-lib` 有两个测试脚本**：`test:config-ui`（= `vitest run --config vitest.config.ts`）与 `test:network-config`（= `pnpm build && node scripts/test-network-config.mjs`）。**CI 只跑前者**（`linux.yml:77`），后者本地才跑；改完配置序列化相关代码要**两个都跑**。2026-10-08 起两半都绿（脚本的 `allFieldFixture()` 补齐了 11 个 proto 字段，并修了下面那个 BigInt bug）。
+- **protobuf-ts 的 int64/uint64 是 BigInt，JSON 形状却要字符串**（2026-10-08 修）：`toBackendNetworkConfig` 把消息实例展开成普通对象再 `fromJson`，BigInt 会漏出来抛 `Cannot parse JSON bigint`（如 `managed_credentials[].expiry_unix`，非 optional 字段被类初始化成 `0n`，所以只要数组非空必炸）→ 已在 `networkCompat.ts` 的 `dropUnsupportedJsonValues()` 里统一 `bigint → toString()`。**以后往 NetworkConfig 加 int64/uint64 字段（尤其嵌套消息里的），记得确认这条转换覆盖到了。**
+- **`allFieldFixture()` 覆盖检查的坑**：它用 `{...DEFAULT_NETWORK_CONFIG()}`，而 `NetworkConfigPb.create()` 只给**非 optional** 字段填默认值（repeated → `[]`）。所以 repeated 字段"看起来覆盖了"其实值是空的（会被 `toJson` 省略，过不了 round-trip 的「字段必须在场」检查），`optional` 字段则真的缺席。加字段时要显式给值。
 - **`cargo test` 跑不起来**：测试二进制能编译链接，启动时 `STATUS_DLL_NOT_FOUND (0xc0000135)`。已排除随包 DLL（只有运行时动态加载的 wintun/Packet）与系统 VC 运行库，属环境问题，同环境跑其它 crate 的测试也一样。
 - 需要 SQL 层验证时，可行办法是**用 Python `sqlite3` 从源码正则抽出建表/查询 SQL 直接跑**（绕开 Rust 编译与测试运行时），已验证有效。
 - cargo 路径：`C:\Users\Administrator\.cargo\bin\cargo.exe`（不在默认 PATH，需显式加入）。`rustfmt` 只装在 `1.95.0` 工具链上（不是 rust-toolchain.toml 指定的 `1.95`），要用 `rustup run 1.95.0 rustfmt --edition 2024 <file>`；它只能查语法，查不出类型错误。

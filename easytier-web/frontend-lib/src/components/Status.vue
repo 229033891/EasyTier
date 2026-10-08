@@ -5,7 +5,7 @@ import { useI18n } from 'vue-i18n';
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue';
 import { ipv4InetToString, ipv4ToString, ipv6ToString, formatEventTime } from '../modules/utils';
 import { isPanelHeaderInteractiveTarget } from '../modules/panel';
-import { isMeaningfulProxyCidrRouteSync, jitterMs, latencyMs, lossRate, numericValue, pathQualityCell, pathQualityTip, peerConns, resolvePeerRemoteAddr, resolveRoutePath, type RoutePeerLabel } from '../modules/statusDisplay';
+import { jitterMs, latencyMs, lossRate, numericValue, pathQualityCell, pathQualityTip, peerConns, resolvePeerRemoteAddr, resolveRoutePath, type RoutePeerLabel } from '../modules/statusDisplay';
 import { Badge, DataTable, Column, Tag, Button, ScrollPanel, Timeline, Card, Panel, } from 'primevue';
 import NetworkChart from './NetworkChart.vue';
 import PeerConnHistoryChart from './PeerConnHistoryChart.vue';
@@ -251,12 +251,16 @@ const myNodeInfoGroups = computed(() => {
 
   // Prefer the L2 / platform sync summary over a separate Route chip list —
   // both surfaces show the same installed CIDRs; keep one canonical view.
-  const routeSync = props.curNetworkInst.detail?.proxy_cidr_route_sync
-  if (isMeaningfulProxyCidrRouteSync(routeSync)) {
+  // 只要字段有值就展示（哪怕空摘要 desired=[-] installed=[-] exit=...）：
+  // 空摘要不是"没数据"，而是"确实一条代理路由都没装"，让用户一眼确认。
+  // 注意来源因平台而异：桌面是 L2 路由同步；Android/OHOS 由 VpnService / 内核桥
+  // 覆盖写入（L2 ifcfg 在那边是 no-op），所以那边的空摘要等价于"VPN 没装任何路由"。
+  const routeSync = props.curNetworkInst.detail?.proxy_cidr_route_sync?.trim()
+  if (routeSync) {
     groups.push({
       key: 'proxy_cidr_route_sync',
       titleKey: 'node_info_group_proxy_cidr_route_sync',
-      chips: [chip(routeSync!)],
+      chips: [chip(routeSync)],
     })
   }
 

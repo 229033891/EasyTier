@@ -4,6 +4,7 @@ import { defineComponent, h, nextTick, reactive } from 'vue'
 import Config from '../src/components/Config.vue'
 import {
   DEFAULT_NETWORK_CONFIG,
+  normalizeNetworkConfig,
   toBackendNetworkConfig,
   type NetworkConfig,
 } from '../src/types/network'
@@ -45,14 +46,37 @@ const CONFIG_FLAG_FIELDS = [
   'enable_private_mode',
 ] as const satisfies readonly (keyof NetworkConfig)[]
 
+/**
+ * 高级开关里「正向展示」的项：勾选 = 启用，底层仍是 `disable_*` 字段（取反绑定）。
+ * 键是配置字段，值是输入框 id。
+ */
+const INVERTED_FLAG_FIELDS: Partial<Record<keyof NetworkConfig, string>> = {
+  disable_p2p: 'allow_p2p',
+  disable_kcp_input: 'allow_kcp_input',
+  disable_quic_input: 'allow_quic_input',
+  disable_tcp_hole_punching: 'allow_tcp_hole_punching',
+  disable_udp_hole_punching: 'allow_udp_hole_punching',
+  disable_sym_hole_punching: 'allow_sym_hole_punching',
+  disable_upnp: 'allow_upnp',
+}
+
+function flagInputId(field: keyof NetworkConfig): string {
+  return INVERTED_FLAG_FIELDS[field] ?? String(field)
+}
+
+/** 输入框显示值：正向展示的项与底层字段相反。 */
+function flagShownValue(field: keyof NetworkConfig, value: boolean | undefined): boolean {
+  return INVERTED_FLAG_FIELDS[field] ? !value : Boolean(value)
+}
+
 const CONFIG_CHECKBOX_FIELDS = [
   ['dhcp', '#virtual_ip_auto'],
-  ...CONFIG_FLAG_FIELDS.map((field) => [field, `#${field}`] as const),
+  ...CONFIG_FLAG_FIELDS.map((field) => [field, `#${flagInputId(field)}`] as const),
 ] as const satisfies readonly (readonly [keyof NetworkConfig, string])[]
 
 /**
  * 「高级设置」面板中三个布尔开关区（网络白名单 / 自定义路由 / SOCKS5）的渲染顺序。
- * VPN Portal 当前是面板内第一个 ToggleButton，IPv6 公网地址提供者排在这三个开关之后。
+ * VPN Portal 当前是面板内第一个 ToggleSwitch，IPv6 公网地址提供者排在这三个开关之后。
  */
 const CONFIG_TOGGLE_FIELDS = [
   'enable_relay_network_whitelist',
@@ -60,10 +84,10 @@ const CONFIG_TOGGLE_FIELDS = [
   'enable_socks5',
 ] as const satisfies readonly (keyof NetworkConfig)[]
 
-/** 非 VPN ToggleButton 在序列中的起始下标 */
+/** 非 VPN ToggleSwitch 在序列中的起始下标 */
 const CONFIG_TOGGLE_START_INDEX = 1
 
-/** 「VPN Portal」开关在 ToggleButton 序列中的下标 */
+/** 「VPN Portal」开关在 ToggleSwitch 序列中的下标 */
 const VPN_PORTAL_TOGGLE_INDEX = 0
 
 const CONFIG_UI_BOOLEAN_FIELDS = [
@@ -195,14 +219,11 @@ const CheckboxStub = defineComponent({
   },
 })
 
-const ToggleButtonStub = defineComponent({
-  name: 'ToggleButton',
+const ToggleSwitchStub = defineComponent({
+  name: 'ToggleSwitch',
   props: {
     modelValue: Boolean,
-    onIcon: String,
-    offIcon: String,
-    onLabel: String,
-    offLabel: String,
+    inputId: String,
     disabled: Boolean,
   },
   emits: ['update:modelValue'],
@@ -210,13 +231,14 @@ const ToggleButtonStub = defineComponent({
     return () => h('button', {
       type: 'button',
       disabled: props.disabled,
-      'aria-pressed': String(Boolean(props.modelValue)),
-      'data-stub': 'toggle-button',
+      role: 'switch',
+      'aria-checked': String(Boolean(props.modelValue)),
+      'data-stub': 'toggle-switch',
       onClick: () => {
         if (props.disabled) return
         emit('update:modelValue', !props.modelValue)
       },
-    }, props.modelValue ? props.onLabel : props.offLabel)
+    })
   },
 })
 
@@ -445,7 +467,7 @@ function mountConfig(config: NetworkConfig = makeConfig()) {
         Password: PasswordStub,
         Select: SelectStub,
         SelectButton: SelectButtonStub,
-        ToggleButton: ToggleButtonStub,
+        ToggleSwitch: ToggleSwitchStub,
         UrlListInput: UrlListInputStub,
       },
     },
@@ -663,26 +685,28 @@ describe('Config.vue network config projection', () => {
       const el = input(wrapper, selector)
       // Disabled by mutex rules — skip toggle; covered by config-conflicts.spec.ts.
       if (el.disabled) {
-        expect(el.checked, `${field} should still project while disabled`).toBe(originalFlagValues.get(field))
+        expect(el.checked, `${field} should still project while disabled`)
+          .toBe(flagShownValue(field, originalFlagValues.get(field)))
         continue
       }
       const value = originalFlagValues.get(field)
-      expect(el.checked, `${field} should project into UI`).toBe(value)
-      await checkbox.setValue(!value)
+      const shown = flagShownValue(field, value)
+      expect(el.checked, `${field} should project into UI`).toBe(shown)
+      await checkbox.setValue(!shown)
       await nextTick()
       toggledFields.add(field)
     }
 
-    const toggleButtons = wrapper.findAll('button[data-stub="toggle-button"]')
+    const toggleSwitches = wrapper.findAll('button[data-stub="toggle-switch"]')
     const expectedToggleCount =
       CONFIG_TOGGLE_FIELDS.length +
       CONFIG_TOGGLE_START_INDEX +
       (curNetwork.disable_ipv6 ? 0 : 1)
-    expect(toggleButtons).toHaveLength(expectedToggleCount)
+    expect(toggleSwitches).toHaveLength(expectedToggleCount)
     for (const [index, field] of CONFIG_TOGGLE_FIELDS.entries()) {
       const value = originalFlagValues.get(field)
-      const toggle = toggleButtons[index + CONFIG_TOGGLE_START_INDEX]
-      expect(toggle.attributes('aria-pressed'), `${field} should project into UI`)
+      const toggle = toggleSwitches[index + CONFIG_TOGGLE_START_INDEX]
+      expect(toggle.attributes('aria-checked'), `${field} should project into UI`)
         .toBe(String(value))
       if (toggle.attributes('disabled') !== undefined) {
         continue
@@ -701,6 +725,33 @@ describe('Config.vue network config projection', () => {
     }
   })
 
+  // 回归：protobuf-ts 把 int64/uint64 读成 BigInt，而它的 JSON 表示是十进制字符串。
+  // 消息实例被展开后 BigInt 会漏进普通对象，回灌 fromJson 会抛
+  // "Cannot parse JSON bigint"——曾让带 managed_credentials 的配置无法保存。
+  it('round-trips int64 fields nested in managed_credentials into backend JSON', () => {
+    const config = DEFAULT_NETWORK_CONFIG()
+    config.managed_credentials = [
+      {
+        credential_id: 'cred-1',
+        credential_secret: 'cred-1-secret',
+        groups: ['ops'],
+        allow_relay: true,
+        allowed_proxy_cidrs: ['10.30.0.0/16'],
+        // 生成类型声明成 bigint，但 fromJson 走的是 JSON 形状，这里必须是十进制字符串。
+        expiry_unix: '1893456000',
+        reusable: true,
+      } as any,
+    ]
+
+    const normalized = normalizeNetworkConfig(config)
+    const backend = toBackendNetworkConfig(normalized) as Record<string, unknown>
+
+    const entries = backend.managed_credentials as Array<Record<string, unknown>>
+    expect(entries).toHaveLength(1)
+    expect(entries[0].credential_id).toBe('cred-1')
+    expect(entries[0].expiry_unix).toBe('1893456000')
+  })
+
   it('shows conflict banners for legacy disable_p2p + p2p_only without rewriting values', async () => {
     const config = makeConfig()
     config.disable_p2p = true
@@ -715,13 +766,15 @@ describe('Config.vue network config projection', () => {
     expect(curNetwork.p2p_only).toBe(true)
   })
 
-  it('renders disable_p2p as an advanced flag while prefer_peer_relay stays hidden', async () => {
+  it('renders disable_p2p as a positively-labelled advanced flag while prefer_peer_relay stays hidden', async () => {
     const config = makeConfig()
     const { wrapper } = mountConfig(config)
     await nextTick()
 
-    // disable_p2p 是硬约束，保留在高级设置；prefer_peer_relay UI 隐藏（TOML 可选 OSPF 投影）
-    expect(wrapper.find('#disable_p2p').exists()).toBe(true)
+    // disable_p2p 是硬约束，保留在高级设置并正向展示为「允许 P2P 直连」；
+    // prefer_peer_relay UI 隐藏（TOML 可选 OSPF 投影）
+    expect(wrapper.find('#allow_p2p').exists()).toBe(true)
+    expect(wrapper.find('#disable_p2p').exists()).toBe(false)
     expect(wrapper.find('#prefer_peer_relay').exists()).toBe(false)
   })
 
@@ -801,8 +854,8 @@ describe('Config.vue network config projection', () => {
     const { curNetwork, wrapper } = mountConfig(config)
     await nextTick()
 
-    const portalToggle = wrapper.findAll('button[data-stub="toggle-button"]')[VPN_PORTAL_TOGGLE_INDEX]
-    expect(portalToggle.attributes('aria-pressed')).toBe('false')
+    const portalToggle = wrapper.findAll('button[data-stub="toggle-switch"]')[VPN_PORTAL_TOGGLE_INDEX]
+    expect(portalToggle.attributes('aria-checked')).toBe('false')
 
     await portalToggle.trigger('click')
     await nextTick()

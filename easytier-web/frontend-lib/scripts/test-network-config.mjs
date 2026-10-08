@@ -36,6 +36,7 @@ const BOOLEAN_CONFIG_FIELDS = [
   'bind_device',
   'no_tun',
   'enable_exit_node',
+  'allow_peer_default_without_exit',
   'relay_all_peer_rpc',
   'multi_thread',
   'enable_relay_network_whitelist',
@@ -246,6 +247,41 @@ function allFieldFixture() {
     disable_relay_data: true,
     enable_udp_broadcast_relay: true,
     socket_mark: 1234,
+    // 下面这些字段在 proto 里早就有，但夹具一直没跟上，会让
+    // assertFixtureCoversGeneratedFields 报 missing。以后往 api_manage.proto
+    // 的 NetworkConfig 加字段，记得同步补到这里。
+    allow_peer_default_without_exit: true,
+    dns_config: {
+      hosts: [{ name: 'app.internal.', ips: ['10.9.8.20'], ttl_secs: 60 }],
+      forwarders: [{ domains: ['corp.internal.'], servers: ['10.9.8.53'] }],
+      upstream_dns: ['1.1.1.1', 'udp://9.9.9.9:53'],
+    },
+    ping_fail_close_count: 6,
+    ping_interval_max_sec: 32,
+    conn_select_w_lat: 4,
+    conn_select_w_loss: 5,
+    conn_select_w_jitter: 3,
+    conn_select_loss_fuse_pct: 40,
+    conn_select_switch_margin_pct: 20,
+    conn_select_switch_abs_margin_milli: 15,
+    conn_select_switch_windows: 8,
+    // 这两个字段在 DEFAULT_NETWORK_CONFIG() 里是 null，会被后端 JSON 省略
+    // （空 = 用后端默认值），所以要显式给值才能过 round-trip 的「字段必须在场」检查。
+    peer_link_bond_count: 3,
+    peer_link_replica_fill_max: 4,
+    // managed_credentials 由 DEFAULT_NETWORK_CONFIG() 带出空数组，能过「字段覆盖」检查，
+    // 但空 repeated 会被后端 JSON 省略，所以这里必须给一条真实记录才能过 round-trip。
+    managed_credentials: [
+      {
+        credential_id: 'cred-1',
+        credential_secret: 'cred-1-secret',
+        groups: ['ops'],
+        allow_relay: true,
+        allowed_proxy_cidrs: ['10.30.0.0/16'],
+        expiry_unix: '1893456000',
+        reusable: true,
+      },
+    ],
   }
 }
 

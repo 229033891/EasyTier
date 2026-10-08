@@ -45,6 +45,11 @@ function applyLegacyAclDefaults(config: NetworkConfig): NetworkConfig {
 function dropUnsupportedJsonValues(value: unknown): unknown {
   if (value === undefined) return undefined
   if (typeof value === 'number' && !Number.isFinite(value)) return undefined
+  // protobuf-ts 把 int64/uint64 读成 BigInt，而它的 JSON 表示是十进制字符串。
+  // 消息实例被展开成普通对象后 BigInt 会漏出来，再喂回 fromJson 会抛
+  // "Cannot parse JSON bigint"（例如 managed_credentials[].expiry_unix），
+  // 所以这里统一转回字符串。
+  if (typeof value === 'bigint') return value.toString()
 
   if (Array.isArray(value)) {
     return value.map(dropUnsupportedJsonValues).filter((v) => v !== undefined)

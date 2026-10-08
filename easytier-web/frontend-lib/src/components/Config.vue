@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { v4 as uuidv4 } from 'uuid'
-import { AutoComplete, Button, Checkbox, Dialog, InputNumber, InputText, MultiSelect, Panel, Password, Select, ToggleButton, useConfirm, useToast } from 'primevue'
+import { AutoComplete, Button, Checkbox, Dialog, InputNumber, InputText, MultiSelect, Panel, Password, Select, ToggleSwitch, useConfirm, useToast } from 'primevue'
 import { TOAST_LIFE } from '../modules/toast'
 import { isPanelHeaderInteractiveTarget } from '../modules/panel'
 import InputGroup from 'primevue/inputgroup'
@@ -239,8 +239,10 @@ interface BoolFlag {
 
 const bool_flags: BoolFlag[] = [
   { field: 'latency_first', help: 'latency_first_help', group: 'connectivity' },
-  // disable_p2p 是硬约束（政策/防火墙不允许直连），保留为高级开关
-  { field: 'disable_p2p', help: 'disable_p2p_help', group: 'connectivity' },
+  // disable_p2p 是硬约束（政策/防火墙不允许直连）；正向展示为「允许 P2P 直连」，
+  // 避免一堆「禁用/不允许」的负向勾选项混在一起。
+  { field: 'disable_p2p', help: 'disable_p2p_help', group: 'connectivity',
+    inverted: { inputId: 'allow_p2p', label: 'allow_p2p', help: 'allow_p2p_help' } },
   { field: 'p2p_only', help: 'p2p_only_help', group: 'connectivity' },
   { field: 'lazy_p2p', help: 'lazy_p2p_help', group: 'connectivity' },
   { field: 'need_p2p', help: 'need_p2p_help', group: 'connectivity' },
@@ -249,13 +251,19 @@ const bool_flags: BoolFlag[] = [
   { field: 'relay_all_peer_rpc', help: 'relay_all_peer_rpc_help', group: 'connectivity' },
   // disable_relay_data 由基础设置的「允许作为中转节点」正向开关驱动，不再列为高级开关
   { field: 'enable_kcp_proxy', help: 'enable_kcp_proxy_help', group: 'transport' },
-  { field: 'disable_kcp_input', help: 'disable_kcp_input_help', group: 'transport' },
+  { field: 'disable_kcp_input', help: 'disable_kcp_input_help', group: 'transport',
+    inverted: { inputId: 'allow_kcp_input', label: 'allow_kcp_input', help: 'allow_kcp_input_help' } },
   { field: 'enable_quic_proxy', help: 'enable_quic_proxy_help', group: 'transport' },
-  { field: 'disable_quic_input', help: 'disable_quic_input_help', group: 'transport' },
-  { field: 'disable_tcp_hole_punching', help: 'disable_tcp_hole_punching_help', group: 'transport' },
-  { field: 'disable_udp_hole_punching', help: 'disable_udp_hole_punching_help', group: 'transport' },
-  { field: 'disable_sym_hole_punching', help: 'disable_sym_hole_punching_help', group: 'transport' },
-  { field: 'disable_upnp', help: 'disable_upnp_help', group: 'transport' },
+  { field: 'disable_quic_input', help: 'disable_quic_input_help', group: 'transport',
+    inverted: { inputId: 'allow_quic_input', label: 'allow_quic_input', help: 'allow_quic_input_help' } },
+  { field: 'disable_tcp_hole_punching', help: 'disable_tcp_hole_punching_help', group: 'transport',
+    inverted: { inputId: 'allow_tcp_hole_punching', label: 'allow_tcp_hole_punching', help: 'allow_tcp_hole_punching_help' } },
+  { field: 'disable_udp_hole_punching', help: 'disable_udp_hole_punching_help', group: 'transport',
+    inverted: { inputId: 'allow_udp_hole_punching', label: 'allow_udp_hole_punching', help: 'allow_udp_hole_punching_help' } },
+  { field: 'disable_sym_hole_punching', help: 'disable_sym_hole_punching_help', group: 'transport',
+    inverted: { inputId: 'allow_sym_hole_punching', label: 'allow_sym_hole_punching', help: 'allow_sym_hole_punching_help' } },
+  { field: 'disable_upnp', help: 'disable_upnp_help', group: 'transport',
+    inverted: { inputId: 'allow_upnp', label: 'allow_upnp', help: 'allow_upnp_help' } },
   { field: 'enable_udp_broadcast_relay', help: 'enable_udp_broadcast_relay_help', group: 'transport' },
   { field: 'use_smoltcp', help: 'use_smoltcp_help', group: 'transport' },
   { field: 'disable_ipv6', help: 'disable_ipv6_help', group: 'system',
@@ -777,10 +785,10 @@ function removeVpnPortalClient(index: number) {
 
               <div class="flex flex-col gap-2">
                 <div class="config-inline-field">
-                  <label class="config-inline-label">VPN Portal</label>
+                  <label for="vpn_portal_enabled" class="config-inline-label">VPN Portal</label>
                   <div class="config-inline-control">
-                    <ToggleButton v-model="vpnPortalEnabled" on-icon="pi pi-check" off-icon="pi pi-times"
-                      :on-label="t('off_text')" :off-label="t('on_text')" class="w-48" />
+                    <ToggleSwitch v-model="vpnPortalEnabled" input-id="vpn_portal_enabled"
+                      aria-label="VPN Portal" />
                   </div>
                 </div>
                 <div v-if="vpnPortalEnabled" class="config-inline-expand config-inline-expand--flush flex flex-col gap-3">
@@ -839,8 +847,8 @@ function removeVpnPortalClient(index: number) {
                       v-tooltip.top="{ value: t(relayControlsDisabled ? 'p2p_only_blocks_relay_help' : 'relay_network_whitelist_help'), escape: false }" role="img"></i>
                   </div>
                   <div class="config-inline-control">
-                    <ToggleButton v-model="curNetwork.enable_relay_network_whitelist" on-icon="pi pi-check"
-                      off-icon="pi pi-times" :on-label="t('off_text')" :off-label="t('on_text')" class="w-48"
+                    <ToggleSwitch v-model="curNetwork.enable_relay_network_whitelist"
+                      input-id="relay_network_whitelist_enabled" :aria-label="t('relay_network_whitelist')"
                       :disabled="relayControlsDisabled && !curNetwork.enable_relay_network_whitelist" />
                   </div>
                 </div>
@@ -858,8 +866,8 @@ function removeVpnPortalClient(index: number) {
                       v-tooltip.top="{ value: t('manual_routes_help'), escape: false }" role="img"></i>
                   </div>
                   <div class="config-inline-control">
-                    <ToggleButton v-model="curNetwork.enable_manual_routes" on-icon="pi pi-check" off-icon="pi pi-times"
-                      :on-label="t('off_text')" :off-label="t('on_text')" class="w-48" />
+                    <ToggleSwitch v-model="curNetwork.enable_manual_routes" input-id="enable_manual_routes"
+                      :aria-label="t('manual_routes')" />
                   </div>
                 </div>
                 <div v-if="curNetwork.enable_manual_routes" class="config-inline-expand">
@@ -875,8 +883,8 @@ function removeVpnPortalClient(index: number) {
                       v-tooltip.top="{ value: t('socks5_help'), escape: false }" role="img"></i>
                   </div>
                   <div class="config-inline-control">
-                    <ToggleButton v-model="curNetwork.enable_socks5" on-icon="pi pi-check" off-icon="pi pi-times"
-                      :on-label="t('off_text')" :off-label="t('on_text')" class="w-48" />
+                    <ToggleSwitch v-model="curNetwork.enable_socks5" input-id="enable_socks5"
+                      :aria-label="t('socks5')" />
                   </div>
                 </div>
                 <div v-if="curNetwork.enable_socks5" class="config-inline-expand">
@@ -891,8 +899,8 @@ function removeVpnPortalClient(index: number) {
                       v-tooltip.top="{ value: t('ipv6_public_addr_provider_help'), escape: false }" role="img"></i>
                   </div>
                   <div class="config-inline-control">
-                    <ToggleButton v-model="curNetwork.ipv6_public_addr_provider" on-icon="pi pi-check"
-                      off-icon="pi pi-times" :on-label="t('off_text')" :off-label="t('on_text')" class="w-48" />
+                    <ToggleSwitch v-model="curNetwork.ipv6_public_addr_provider"
+                      input-id="ipv6_public_addr_provider" :aria-label="t('ipv6_public_addr_provider')" />
                   </div>
                 </div>
                 <div v-if="!ipv6ControlsHidden && curNetwork.ipv6_public_addr_provider" class="config-inline-expand">

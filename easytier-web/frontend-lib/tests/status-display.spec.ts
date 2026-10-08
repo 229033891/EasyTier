@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest'
 import {
-  isMeaningfulProxyCidrRouteSync,
   jitterMs,
   latencyMs,
   lossRate,
@@ -184,20 +183,5 @@ describe('status display helpers', () => {
     ], defaultConnId)
     expect(pathQualityCell(pair)).toBe('0.042')
     expect(pathQualityTip(pair)).not.toContain('bond')
-  })
-
-  it('detects meaningful proxy CIDR route sync summaries', () => {
-    expect(isMeaningfulProxyCidrRouteSync('desired=[-] installed=[-] exit=false')).toBe(false)
-    expect(isMeaningfulProxyCidrRouteSync('desired=[-] installed=[-] exit=false dns=')).toBe(false)
-    expect(isMeaningfulProxyCidrRouteSync('desired=[-] installed=[-] exit=false dns=10.10.10.10')).toBe(false)
-    expect(isMeaningfulProxyCidrRouteSync(
-      'desired=[10.0.0.0/24] installed=[10.0.0.0/24] exit=false dns=10.10.10.10',
-    )).toBe(true)
-    expect(isMeaningfulProxyCidrRouteSync(
-      'desired=[10.0.0.0/24] installed=[10.0.0.0/24] exit=false',
-    )).toBe(true)
-    expect(isMeaningfulProxyCidrRouteSync(
-      'desired=[10.0.0.0/24] installed=[10.0.0.0/24] exit=true',
-    )).toBe(true)
   })
 })

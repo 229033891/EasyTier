@@ -172,3 +172,76 @@ describe('Status VPN Portal details', () => {
     }
   })
 })
+
+describe('Status proxy CIDR route sync row', () => {
+  function instanceWithRouteSync(summary?: string): NetworkInstance {
+    const inst = runningInstance()
+    inst.detail!.proxy_cidr_route_sync = summary
+    return inst
+  }
+
+  function mountStatus(inst: NetworkInstance) {
+    return mount(Status, {
+      props: {
+        curNetworkInst: inst,
+        api: { get_vpn_portal_info: vi.fn() } as any,
+      },
+      global: {
+        directives: { tooltip: () => {} },
+        stubs: { HumanEvent: true },
+      },
+    })
+  }
+
+  /** 「节点详情」面板默认折叠，分组内容要展开后才渲染。 */
+  async function mountStatusWithDetailsOpen(inst: NetworkInstance) {
+    const wrapper = mountStatus(inst)
+    await wrapper.find('button[data-label="node_info_details"]').trigger('click')
+    await flushPromises()
+    return wrapper
+  }
+
+  // 空摘要不等于「没数据」，而是「确实一条代理路由都没装」：必须显示，别靠整行消失去推断。
+  it('renders the row even when the summary is the empty placeholder', async () => {
+    const wrapper = await mountStatusWithDetailsOpen(
+      instanceWithRouteSync('desired=[-] installed=[-] exit=false'),
+    )
+    try {
+      expect(wrapper.text()).toContain('node_info_group_proxy_cidr_route_sync')
+      expect(wrapper.text()).toContain('desired=[-] installed=[-] exit=false')
+    } finally {
+      wrapper.unmount()
+    }
+  })
+
+  it('renders installed proxy CIDRs when the summary reports them', async () => {
+    const wrapper = await mountStatusWithDetailsOpen(
+      instanceWithRouteSync('desired=[10.0.0.0/24] installed=[10.0.0.0/24] exit=false'),
+    )
+    try {
+      expect(wrapper.text()).toContain('node_info_group_proxy_cidr_route_sync')
+      expect(wrapper.text()).toContain('desired=[10.0.0.0/24] installed=[10.0.0.0/24] exit=false')
+    } finally {
+      wrapper.unmount()
+    }
+  })
+
+  // 字段缺失（老核心 / 非桌面平台）时仍然不占位。
+  it('omits the row when the field is absent', async () => {
+    const wrapper = await mountStatusWithDetailsOpen(instanceWithRouteSync(undefined))
+    try {
+      expect(wrapper.text()).not.toContain('node_info_group_proxy_cidr_route_sync')
+    } finally {
+      wrapper.unmount()
+    }
+  })
+
+  it('omits the row for a blank summary', async () => {
+    const wrapper = await mountStatusWithDetailsOpen(instanceWithRouteSync('   '))
+    try {
+      expect(wrapper.text()).not.toContain('node_info_group_proxy_cidr_route_sync')
+    } finally {
+      wrapper.unmount()
+    }
+  })
+})
