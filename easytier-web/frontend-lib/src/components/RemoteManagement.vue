@@ -477,24 +477,6 @@ const startNetwork = async () => {
     }
 }
 
-const confirmStartNetwork = (_event?: Event) => {
-    confirm.require({
-        message: t('web.device_management.confirm_start_network'),
-        header: t('web.device_management.start_network'),
-        icon: 'pi pi-info-circle',
-        rejectProps: {
-            label: t('web.common.cancel'),
-            severity: 'secondary',
-            outlined: true,
-        },
-        acceptProps: {
-            label: t('web.device_management.start_network'),
-            severity: 'success',
-        },
-        accept: () => { void startNetwork() },
-    });
-}
-
 const requestSwitchMode = (mode: 'status' | 'config') => {
     // Leaving config with a dirty draft would be wiped on next ensureConfigModeEditing reload.
     if (mode === 'status' && isConfigDirty.value && showConfigPanel.value) {
@@ -1099,9 +1081,6 @@ onUnmounted(() => {
         <!-- ?????/????? -->
         <div class="network-content">
             <template v-if="showStatusDisabledPanel">
-                <Message severity="warn" class="mb-3">
-                    {{ t('web.device_management.network_disabled_hint') }}
-                </Message>
                 <Config
                     v-if="statusDisabledConfigPreview"
                     :cur-network="statusDisabledConfigPreview"
@@ -1223,7 +1202,7 @@ onUnmounted(() => {
                     v-tooltip.top="t('web.device_management.switch_to_config_tip')" />
             </div>
             <div class="footer-zone footer-zone--primary">
-                <Button v-if="stickyFooterPrimary === 'start'" @click="confirmStartNetwork($event)"
+                <Button v-if="stickyFooterPrimary === 'start'" @click="startNetwork()"
                     :disabled="!currentNetworkControl.deletable.value"
                     :label="t('web.device_management.start_network')"
                     severity="success" class="network-footer-btn"

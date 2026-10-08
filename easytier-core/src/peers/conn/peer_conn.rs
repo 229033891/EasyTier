@@ -945,9 +945,7 @@ impl PeerConn {
                     .then_some(remote_static.as_slice())
             })
             .flatten();
-        let effective_pinned_pubkey = pinned_remote_pubkey
-            .as_deref()
-            .or(identity_pin);
+        let effective_pinned_pubkey = pinned_remote_pubkey.as_deref().or(identity_pin);
 
         // Verify server authentication using unified logic
         let secure_auth_level = if msg2_pb.role_hint != 1 && effective_pinned_pubkey.is_none() {

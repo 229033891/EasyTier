@@ -17,9 +17,7 @@ use tauri::{AppHandle, Emitter};
 use tauri_plugin_vpnservice::{VoidRequest, VpnserviceExt};
 use tokio::time::{MissedTickBehavior, interval};
 
-use crate::underlay_reconnect_grace::{
-    in_underlay_reconnect_grace, swap_underlay_generation,
-};
+use crate::underlay_reconnect_grace::{in_underlay_reconnect_grace, swap_underlay_generation};
 use crate::{CLIENT_MANAGER, INSTANCE_MANAGER};
 
 const WATCHDOG_INTERVAL: Duration = Duration::from_secs(30);

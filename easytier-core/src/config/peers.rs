@@ -19,9 +19,7 @@ use super::{CoreConfig, NetworkIdentity};
 
 /// Decode configured `peer_public_key` strings into a 32-byte identity index.
 /// Invalid / wrong-length entries are skipped (with a warning).
-pub fn build_pinned_pubkey_index(
-    pinned_peers: &[(url::Url, Option<String>)],
-) -> HashSet<[u8; 32]> {
+pub fn build_pinned_pubkey_index(pinned_peers: &[(url::Url, Option<String>)]) -> HashSet<[u8; 32]> {
     let mut index = HashSet::new();
     for (uri, public_key) in pinned_peers {
         let Some(public_key) = public_key.as_ref() else {
@@ -435,11 +433,13 @@ mod tests {
     #[test]
     fn rebuild_pinned_pubkey_index_clears_with_peers() {
         let valid = [9u8; 32];
-        let mut snapshot = PeerRuntimeSnapshot::default();
-        snapshot.pinned_peers = vec![(
-            "udp://192.0.2.9:9".parse().unwrap(),
-            Some(BASE64_STANDARD.encode(valid)),
-        )];
+        let mut snapshot = PeerRuntimeSnapshot {
+            pinned_peers: vec![(
+                "udp://192.0.2.9:9".parse().unwrap(),
+                Some(BASE64_STANDARD.encode(valid)),
+            )],
+            ..Default::default()
+        };
         snapshot.rebuild_pinned_pubkey_index();
         assert!(snapshot.pinned_pubkey_index.contains(&valid));
 

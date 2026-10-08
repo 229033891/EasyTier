@@ -103,7 +103,11 @@ mod tests {
         arm_underlay_reconnect_grace();
 
         assert!(in_underlay_reconnect_grace());
-        assert_eq!(last_generation(), 3, "extend must not wipe JS-noted generation");
+        assert_eq!(
+            last_generation(),
+            3,
+            "extend must not wipe JS-noted generation"
+        );
         assert!(grace_until_ms() >= until_before);
     }
 

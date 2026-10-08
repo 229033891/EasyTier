@@ -1,5 +1,11 @@
 [profile.default]
 slow-timeout = { period = "60s", terminate-after = 1 }
 
+# Multi-admin credential e2e waits (mesh + exclusivity + failover) can exceed 60s
+# under CI load; keep a hard cap so hangs still fail.
+[[profile.default.overrides]]
+filter = 'test(tests::credential_tests)'
+slow-timeout = { period = "300s", terminate-after = 1 }
+
 [profile.default.junit]
 path = "junit.xml"

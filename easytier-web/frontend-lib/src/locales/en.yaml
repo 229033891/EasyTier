@@ -934,12 +934,10 @@ web:
     no_network_selected: No Network Selected
     select_existing_network_or_create_new: Choose a network above, or click “Add Network”
     select_network_for_status: Select a network instance to view status or start/stop it
-    network_disabled_hint: This network is stopped. Current settings below are read-only. Use Start Network here, or open Node Config to edit.
     switch_to_config: Node Config
     switch_to_config_tip: Switch to the config page to edit this node's network settings
     switch_to_status: Back to Run
     switch_to_status_tip: Return to the run page to view status or start/stop the network
-    confirm_start_network: Start this network now?
     confirm_rerun_network: This will rebuild the running network instance from the current draft and briefly disconnect. Continue?
     confirm_discard_on_switch: You have unsaved changes. Switching networks will discard them. Continue?
     confirm_delete_network: Delete this network? This cannot be undone.

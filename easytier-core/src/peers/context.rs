@@ -163,8 +163,7 @@ impl PeerRuntimeSnapshot {
         )
         .is_err();
         let (acl_group_declarations, peer_group_memberships) = peer_acl_groups(acl.as_ref());
-        let pinned_pubkey_index =
-            crate::config::peers::build_pinned_pubkey_index(&pinned_peers);
+        let pinned_pubkey_index = crate::config::peers::build_pinned_pubkey_index(&pinned_peers);
 
         Self {
             runtime: PeerRuntimeConfig {
