@@ -141,6 +141,17 @@
 - 模板里**没有 `et_` 前缀标签**，新加的 `et_*` 标签不会撞车。
 - **本机没有 makensis 在 PATH 里**，要用绝对路径调 `%LOCALAPPDATA%\tauri\NSIS\makensis.exe`。
 
+## 隧道协议默认优先 TCP → 用户侧表现为 TCP-over-TCP（2026-10-08 分析）
+
+- **默认 `default_protocol` 就是 `tcp`**：`Flags::default()` 里写死 `default_protocol: "tcp"`（`easytier-core/src/config/toml.rs`），`parse_protocol_preference("")` 也回落 `["tcp"]`（`config/protocol_preference.rs`）。
+- **手动 peer URL 会被改写，且"偏好候选"排在配置 URL 之前**：`preference_candidate_urls()` 先按偏好生成候选、最后才追加原始 URL，`reconnect()` 首个成功即返回（`connectivity/manual/mod.rs`）。→ **用户配的 `udp://host:11010` 会先被改写成 `tcp://host:11010` 并优先使用**。有测试固化（`candidates_follow_preference_then_original`），属"有意设计"，但与文档「手动 peer URL 仅 … 改写 scheme **降级**」矛盾（降级应是失败才降）。
+- **直连也按同一偏好排序**（`connectivity/direct/mod.rs` 用 `protocol_preference_sort_key`）→ 默认下打洞成功的直连也是 TCP。
+- **后果**：用户显式配的 UDP/WS/WSS peer 实际跑在 TCP 上；RDP 这类 TCP 业务变成 **TCP-over-TCP**，轻微丢包就卡顿/断链。Tailscale 只有 WireGuard/UDP，天然无此叠加——**这是"同网络下 Tailscale 好、EasyTier 差"的首选解释**。
+- **诊断**：grep 日志 `manual reconnect start`（同时打印 `configured_url` 与候选 `url`，不同=发生改写）；或看 peer 的 `active_url` scheme。
+- **规避**：`default_protocol = "udp"` + 只留 `udp://` peer；或改用 **`wg://`**（`easytier/src/tunnel/wireguard.rs` 是 `boringtun` 真 WireGuard，且 `wg` 不可被 scheme 改写，最接近 Tailscale）。另 MTU 默认 **1380**（Tailscale 是 1280）且全仓**无 MSS clamp**，可降到 1280 减少分片。
+- **不要把默认协议简单改成 udp 了事**：那会让 `tcp://` 配置被优先改写成 udp，是同一个问题的镜像。真正的修法是把**配置的 URL 放回候选第一位**、偏好列表只作失败兜底。
+- **`select_conn` 的丢包权重是 4**（`score = 1*RTT + 4*loss + 1*jitter`，`peers/conn/conn_select.rs`），1% 丢包 ≈ 40ms RTT 惩罚；而丢包率由 ping 探测统计（`peers/conn/peer_conn_ping.rs`），**探测包走 TCP 会被 TCP 重传掩盖** → 丢包时 TCP conn 反而显得更干净，可能把流量进一步推向 TCP。
+
 ## 环境备注
 
 - **`easytier-web/frontend-lib` 有两个测试脚本**：`test:config-ui`（= `vitest run --config vitest.config.ts`）与 `test:network-config`（= `pnpm build && node scripts/test-network-config.mjs`）。**CI 只跑前者**（`linux.yml:77`），后者本地才跑；改完配置序列化相关代码要**两个都跑**。2026-10-08 起两半都绿（脚本的 `allFieldFixture()` 补齐了 11 个 proto 字段，并修了下面那个 BigInt bug）。
