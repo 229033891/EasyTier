@@ -22,12 +22,14 @@ const mocks = vi.hoisted(() => {
     prepareVpn: vi.fn(async () => ({ granted: true })),
     setTunFd: vi.fn(async () => undefined),
     notifyUnderlayNetworkChanged: vi.fn(async () => 0),
+    updateNetworkConfigState: vi.fn(async () => undefined),
     startVpn: vi.fn(async () => {
       await listeners.get('vpn_service_start')?.({ fd: 1 })
       return {}
     }),
     stopVpn: vi.fn(async () => {
-      await listeners.get('vpn_service_stop')?.({})
+      // App-initiated stop must carry reason=app so we do not disable the instance.
+      await listeners.get('vpn_service_stop')?.({ reason: 'app' })
       return {}
     }),
   }
@@ -69,6 +71,7 @@ vi.mock('./backend', () => ({
   listNetworkInstanceIds: mocks.listNetworkInstanceIds,
   notifyUnderlayNetworkChanged: mocks.notifyUnderlayNetworkChanged,
   setTunFd: mocks.setTunFd,
+  updateNetworkConfigState: mocks.updateNetworkConfigState,
 }))
 
 function setConfig(instanceId: string, noTun = false) {
@@ -123,6 +126,8 @@ beforeEach(() => {
   mocks.notifyUnderlayNetworkChanged.mockResolvedValue(0)
   mocks.startVpn.mockClear()
   mocks.stopVpn.mockClear()
+  mocks.updateNetworkConfigState.mockReset()
+  mocks.updateNetworkConfigState.mockResolvedValue(undefined)
 })
 
 describe('mobile VPN virtual IPv6', () => {
@@ -200,13 +205,13 @@ describe('mobile VPN route sync annotate', () => {
       running: true,
       ipv4Addr: '10.0.0.1/24',
       routes: '[Ljava.lang.String;@1689abe',
-      dns: '10.10.10.10',
+      dns: '10.255.255.254',
     })
     const annotated = await vpn.annotateNetworkInfoFromVpnService({
       proxy_cidr_route_sync: 'desired=[-] installed=[-] exit=false',
     }, 'A')
     expect(vpn.getMobileVpnInstalledRoutes('A')).toEqual(['10.0.0.1/24'])
-    expect(vpn.getMobileVpnPushedDns('A')).toBe('10.10.10.10')
+    expect(vpn.getMobileVpnPushedDns('A')).toBe('10.255.255.254')
     expect(annotated.proxy_cidr_route_sync).toBe(
       'desired=[10.0.0.1/24] installed=[10.0.0.1/24] exit=false',
     )
@@ -473,6 +478,98 @@ describe('mobile VPN TUN device error recovery', () => {
     setClockOffset(56000)
     await vpn.handleMobileTunDeviceError('A')
     expect(mocks.stopVpn).toHaveBeenCalledTimes(1)
+  })
+
+  it('disables the ET instance when TUN dies after the OS VPN is already gone', async () => {
+    setRunningVpn()
+    const vpn = await loadVpnModule()
+    await vpn.onNetworkInstanceChange('A')
+    setClockOffset(20000)
+    mocks.startVpn.mockClear()
+    mocks.stopVpn.mockClear()
+
+    // System disconnect already tore down VpnService; core still reports TUN error.
+    mocks.getVpnStatus.mockResolvedValue({ running: false })
+    await vpn.handleMobileTunDeviceError('A')
+
+    expect(mocks.updateNetworkConfigState).toHaveBeenCalledWith('A', true)
+    expect(mocks.startVpn).not.toHaveBeenCalled()
+  })
+})
+
+describe('mobile VPN external disconnect (system VPN UI)', () => {
+  it('disables the owning instance on vpn_service_stop reason=revoke', async () => {
+    setConfig('A')
+    setReady('A', '10.0.0.1')
+    mocks.getVpnStatus.mockResolvedValue({
+      running: true,
+      ipv4Addr: '10.0.0.1/24',
+      routes: [],
+    })
+    const vpn = await loadVpnModule()
+    await vpn.onNetworkInstanceChange('A')
+    expect(mocks.startVpn).toHaveBeenCalledTimes(1)
+
+    await mocks.listeners.get('vpn_service_stop')?.({ reason: 'revoke' })
+
+    expect(mocks.updateNetworkConfigState).toHaveBeenCalledWith('A', true)
+  })
+
+  it('does not disable the instance on app-initiated stop (reason=app)', async () => {
+    setConfig('A')
+    setReady('A', '10.0.0.1')
+    mocks.getVpnStatus.mockResolvedValue({
+      running: true,
+      ipv4Addr: '10.0.0.1/24',
+      routes: [],
+    })
+    const vpn = await loadVpnModule()
+    await vpn.onNetworkInstanceChange('A')
+    mocks.updateNetworkConfigState.mockClear()
+
+    await mocks.listeners.get('vpn_service_stop')?.({ reason: 'app' })
+
+    expect(mocks.updateNetworkConfigState).not.toHaveBeenCalled()
+  })
+})
+
+describe('mobile VPN route-change debounce', () => {
+  it('debounces route-only VpnService rebuilds instead of remounting immediately', async () => {
+    setConfig('A')
+    setReady('A', '10.0.0.1')
+    mocks.getVpnStatus.mockResolvedValue({
+      running: true,
+      ipv4Addr: '10.0.0.1/24',
+      routes: [],
+    })
+    const vpn = await loadVpnModule()
+    await vpn.onNetworkInstanceChange('A')
+    expect(mocks.startVpn).toHaveBeenCalledTimes(1)
+
+    mocks.startVpn.mockClear()
+    mocks.stopVpn.mockClear()
+
+    // Grow proxy routes like OSPF sync after connect (Status remount source).
+    mocks.networkInfo.set('A', {
+      my_node_info: {
+        virtual_ipv4: {
+          address: { addr: '10.0.0.1' },
+          network_length: 24,
+        },
+      },
+      routes: [{ proxy_cidrs: ['192.168.8.0/22'], ipv4_addr: null, next_hop_peer_id: 1 }],
+    })
+
+    await vpn.onNetworkInstanceUpdate('A')
+    expect(mocks.stopVpn).not.toHaveBeenCalled()
+    expect(mocks.startVpn).not.toHaveBeenCalled()
+
+    await vi.advanceTimersByTimeAsync(2499)
+    expect(mocks.stopVpn).not.toHaveBeenCalled()
+
+    await vi.advanceTimersByTimeAsync(1)
+    expect(mocks.stopVpn).toHaveBeenCalledTimes(1)
+    expect(mocks.startVpn).toHaveBeenCalledTimes(1)
   })
 })
 

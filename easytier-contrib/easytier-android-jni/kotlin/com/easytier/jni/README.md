@@ -41,7 +41,7 @@ wire {
 5. 使用 EasyTierManager 可以拉起 EasyTier 实例并启动 Android VpnService 组件。
 
 6. MagicDNS：`NetworkConfig.enable_magic_dns=true` 时，`EasyTierManager` 会把
-   `10.10.10.10/32` 加入路由，并通过 Intent 传 `enable_magic_dns`；
-   `EasyTierVpnService` 将 VpnService DNS 设为 `10.10.10.10`（关闭时仍用
+   `10.255.255.254/32` 加入路由，并通过 Intent 传 `enable_magic_dns`；
+   `EasyTierVpnService` 将 VpnService DNS 设为 `10.255.255.254`（关闭时仍用
    `223.5.5.5` / `114.114.114.114`），与 Tauri GUI 路径对齐。
    参考源文件：`EasyTierVpnService.t.kt`（集成时请纳入宿主 app 编译）。

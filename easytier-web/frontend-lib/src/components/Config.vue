@@ -657,8 +657,8 @@ function removeVpnPortalClient(index: number) {
                 </div>
               </div>
 
-              <div class="config-compact-grid">
-                <div class="config-compact-field">
+              <div class="config-compact-grid config-compact-grid--inline-two">
+                <div class="config-compact-field config-compact-field--inline">
                   <div class="config-compact-label flex items-center gap-1">
                     <label for="hostname">{{ t('hostname') }}</label>
                     <i class="pi pi-question-circle config-help-tip" tabindex="0"
@@ -668,15 +668,17 @@ function removeVpnPortalClient(index: number) {
                     :format="true" :placeholder="t('hostname_placeholder', [props.hostname])" fluid />
                 </div>
 
-                <div class="config-compact-field">
+                <div class="config-compact-field config-compact-field--inline">
                   <label for="dev_name" class="config-compact-label">{{ t('dev_name') }}</label>
-                  <InputText id="dev_name" v-model="curNetwork.dev_name" aria-describedby="dev_name-help"
-                    :format="true" :placeholder="t('dev_name_placeholder')" fluid
-                    :disabled="tunControlsDisabled" />
-                  <p v-if="tunControlsDisabled" class="config-field-hint m-0">{{ t('no_tun_dev_mtu_hint') }}</p>
+                  <div class="config-compact-control">
+                    <InputText id="dev_name" v-model="curNetwork.dev_name" aria-describedby="dev_name-help"
+                      :format="true" :placeholder="t('dev_name_placeholder')" fluid
+                      :disabled="tunControlsDisabled" />
+                    <p v-if="tunControlsDisabled" class="config-field-hint m-0">{{ t('no_tun_dev_mtu_hint') }}</p>
+                  </div>
                 </div>
 
-                <div class="config-compact-field">
+                <div class="config-compact-field config-compact-field--inline">
                   <div class="config-compact-label flex items-center gap-1">
                     <label for="mtu">{{ t('mtu') }}</label>
                     <i class="pi pi-question-circle config-help-tip" tabindex="0"
@@ -687,7 +689,7 @@ function removeVpnPortalClient(index: number) {
                     :disabled="tunControlsDisabled" />
                 </div>
 
-                <div class="config-compact-field">
+                <div class="config-compact-field config-compact-field--inline">
                   <div class="config-compact-label flex items-center gap-1">
                     <label for="instance_recv_bps_limit">{{ t('instance_recv_bps_limit') }}</label>
                     <i class="pi pi-question-circle config-help-tip" tabindex="0"
@@ -697,10 +699,8 @@ function removeVpnPortalClient(index: number) {
                     aria-describedby="instance_recv_bps_limit-help" inputmode="numeric" pattern="[0-9]*"
                     :placeholder="t('instance_recv_bps_limit_placeholder')" fluid />
                 </div>
-              </div>
 
-              <div class="flex flex-row gap-x-9 flex-wrap">
-                <div class="config-compact-field">
+                <div class="config-compact-field config-compact-field--inline">
                   <div class="config-compact-label flex items-center gap-1">
                     <label for="peer_link_bond_count">{{ t('peer_link_bond_count') }}</label>
                     <i class="pi pi-question-circle config-help-tip" tabindex="0"
@@ -711,7 +711,7 @@ function removeVpnPortalClient(index: number) {
                     :placeholder="t('peer_link_bond_count_placeholder')" />
                 </div>
 
-                <div class="config-compact-field">
+                <div class="config-compact-field config-compact-field--inline">
                   <div class="config-compact-label flex items-center gap-1">
                     <label for="peer_link_replica_fill_max">{{ t('peer_link_replica_fill_max') }}</label>
                     <i class="pi pi-question-circle config-help-tip" tabindex="0"
@@ -1409,11 +1409,49 @@ function removeVpnPortalClient(index: number) {
   min-width: 0;
 }
 
+/* 主机名等 6 项：标签与输入同一行，每行两项共三行 */
+.config-compact-grid--inline-two {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.65rem 1.25rem;
+}
+
 .config-compact-field {
   display: flex;
   flex-direction: column;
   gap: 0.35rem;
   min-width: 0;
+}
+
+.config-compact-field--inline {
+  flex-direction: row;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.config-compact-field--inline > :deep(.p-inputtext),
+.config-compact-field--inline > :deep(.p-inputnumber),
+.config-compact-field--inline > :deep(.p-inputwrapper),
+.config-compact-field--inline > .config-compact-control {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.config-compact-field--inline > :deep(.p-inputnumber),
+.config-compact-field--inline > :deep(.p-inputwrapper) {
+  width: auto;
+}
+
+.config-compact-control {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  min-width: 0;
+}
+
+.config-compact-control > :deep(.p-inputtext),
+.config-compact-control > :deep(.p-inputnumber),
+.config-compact-control > :deep(.p-inputwrapper) {
+  width: 100%;
 }
 
 .config-compact-label {
@@ -1424,6 +1462,12 @@ function removeVpnPortalClient(index: number) {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.config-compact-field--inline .config-compact-label {
+  flex: 0 0 auto;
+  min-height: 0;
+  max-width: 9.5rem;
 }
 
 .config-field-hint {
@@ -1508,8 +1552,13 @@ function removeVpnPortalClient(index: number) {
     font-size: 0.85rem;
   }
 
-  .config-compact-grid {
+  .config-compact-grid,
+  .config-compact-grid--inline-two {
     grid-template-columns: 1fr;
+  }
+
+  .config-compact-field--inline .config-compact-label {
+    max-width: none;
   }
 }
 

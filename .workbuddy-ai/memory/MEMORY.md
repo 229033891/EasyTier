@@ -34,6 +34,14 @@
 - **lint 已进门禁**（2026-10-07）：`easytier-gui/package.json` 的 `build` 改为 `pnpm lint && pnpm --dir ../easytier-web/frontend-lib build && vue-tsc --noEmit && vite build`。lint 放最前是为了快速失败（不必等几分钟的前端构建）。覆盖面：本地 `pnpm build`、`pnpm tauri build`（`tauri.conf.json` 的 `beforeBuildCommand: pnpm build`）、CI 的 `android.yml` / `windows.yml`（经 `prepare-pnpm` 的 `pnpm -r --filter "easytier-gui..." build`）。`test.yml` 里仍然**没有**独立的前端 lint job（其 `check` job 只聚合 `check-fmt/clippy/hack/wasi`）。
 - 在 Git Bash 里跑不了 `pnpm` 时，可用 `node "C:/Program Files/nodejs/node_modules/corepack/dist/pnpm.js" <script>` 代替，实测可用（会按 `packageManager` 字段用 pnpm 9.12.1）。
 
+## MagicDNS fake IP（2026-10-08 起 = `10.255.255.254`）
+
+- 单一源头：`easytier/src/instance/dns_server/mod.rs` 的 `pub static MAGIC_DNS_FAKE_IP`。历史：CGNAT `100.100.100.53` → `10.10.10.10` → 现 `10.255.255.254`。`/32` 路由、Windows NameServer、Linux systemd-resolved drop-in、Android VpnService DNS 全部由它派生（`server_instance.rs`：`if !tun_inet.contains(&fake_ip) → add_ipv4_route(...,32)`）。
+- **硬编码副本散落多处，改地址时必须同步**：`easytier-core/src/gateway/magic_dns/packet.rs`（单测）、`easytier/src/instance/dns_server/server.rs` 与 `system_config/linux.rs`（单测）、`easytier-gui/src/composables/mobile_vpn.ts`（+ test）、`easytier-contrib/easytier-android-jni/kotlin/com/easytier/jni/{EasyTierVpnService.t.kt,EasyTierManager.kt,EasyTierJNI.kt,README.md}`、`docs/current/magic-dns.md`、`docs/current/magic-dns-manual-wiring.md`、`docs/roadmap/dns-policy.md`、`easytier-web/frontend-lib/src/locales/{cn,en}.yaml`。
+- 不相关的同名测试地址（不要跟着改）：`easytier-core/src/gateway/proxy/wrapped_tcp_proxy.rs`、`easytier-web/frontend-lib/tests/status-display.spec.ts`。
+- `tauri-plugin-vpnservice/android/.../TauriVpnService.kt` 的 dns/routes 来自 Intent 参数，无硬编码，不用动。
+- 切地址 = 全网 OS DNS/`/32` 重写，属项目级发布决策，别随手改。
+
 ## 环境备注
 
 - **`cargo test` 跑不起来**：测试二进制能编译链接，启动时 `STATUS_DLL_NOT_FOUND (0xc0000135)`。已排除随包 DLL（只有运行时动态加载的 wintun/Packet）与系统 VC 运行库，属环境问题，同环境跑其它 crate 的测试也一样。

@@ -15,6 +15,7 @@ import {
   listNetworkInstanceIds,
   notifyUnderlayNetworkChanged,
   setTunFd,
+  updateNetworkConfigState,
 } from './backend'
 
 type Route = NetworkTypes.Route
@@ -31,8 +32,15 @@ interface vpnStatus {
 }
 
 let vpnReconcileTimer: ReturnType<typeof setTimeout> | null = null
+let vpnRouteRefreshTimer: ReturnType<typeof setTimeout> | null = null
 const VPN_RECONCILE_INTERVAL_MS = 2000
 const VPN_RECONCILE_MAX_ATTEMPTS = 60
+/**
+ * While peers sync, proxy CIDR routes grow for a few seconds. Each change used
+ * to stop+start VpnService immediately (UI remount flicker). Debounce route-only
+ * rebuilds so we apply once after the set settles.
+ */
+const VPN_ROUTE_REFRESH_DEBOUNCE_MS = 2500
 
 /**
  * Grace window after a start/stop begins. Native TUN teardown during a normal
@@ -53,6 +61,8 @@ let vpnTileActionHandler: ((action: VpnTileAction) => Promise<void>) | undefined
 let vpnTileActionQueue: Promise<void> = Promise.resolve()
 let vpnTransitionDeadline = 0
 let lastTunErrorRebuildAt = 0
+/** After route-debounce timer fires, next reconcile must apply (not re-debounce). */
+let forceApplyRouteRefresh = false
 
 const curVpnStatus: vpnStatus = {
   running: false,
@@ -260,12 +270,41 @@ function clearVpnReconcileTimer() {
   }
 }
 
+function clearVpnRouteRefreshTimer() {
+  if (vpnRouteRefreshTimer) {
+    clearTimeout(vpnRouteRefreshTimer)
+    vpnRouteRefreshTimer = null
+  }
+}
+
 function beginVpnReconcile(instanceId?: string) {
   clearVpnReconcileTimer()
+  clearVpnRouteRefreshTimer()
+  forceApplyRouteRefresh = false
   desiredVpnInstanceId = instanceId
   vpnReconcileAttempts = 0
   vpnReconcileGeneration += 1
   return vpnReconcileGeneration
+}
+
+/** Debounce VpnService rebuild when only the route list changed. */
+function scheduleVpnRouteRefresh(instanceId: string, generation: number) {
+  if (!isCurrentVpnReconcile(instanceId, generation))
+    return
+
+  clearVpnRouteRefreshTimer()
+  console.log(
+    'vpn service routes changed; debouncing rebuild',
+    JSON.stringify({ instanceId, delayMs: VPN_ROUTE_REFRESH_DEBOUNCE_MS }),
+  )
+  vpnRouteRefreshTimer = setTimeout(() => {
+    vpnRouteRefreshTimer = null
+    if (!isCurrentVpnReconcile(instanceId, generation))
+      return
+    // Apply once; without this flag reconcile would re-enter debounce forever.
+    forceApplyRouteRefresh = true
+    void enqueueVpnReconcile(instanceId, generation)
+  }, VPN_ROUTE_REFRESH_DEBOUNCE_MS)
 }
 
 function isCurrentVpnReconcile(instanceId: string, generation: number) {
@@ -483,13 +522,47 @@ async function onVpnServiceStart(payload: any) {
   }
 }
 
+/**
+ * System VPN UI "断开" / onRevoke / unexpected destroy: VpnService is gone but
+ * the EasyTier instance may still report 运行中. Mirror tile-stop by disabling
+ * the owning instance so the GUI matches the OS VPN state.
+ */
+async function handleExternalVpnDisconnect(preferredInstanceId?: string) {
+  vpnTransitionDeadline = Date.now() + VPN_TRANSITION_GRACE_MS
+  const instanceId = preferredInstanceId || activeVpnInstanceId || desiredVpnInstanceId
+  activeVpnInstanceId = undefined
+  beginVpnReconcile(undefined)
+  resetVpnConfigStatus()
+  curVpnStatus.running = false
+
+  if (!instanceId)
+    return
+
+  try {
+    console.warn('external VPN disconnect; disabling network instance', instanceId)
+    await updateNetworkConfigState(instanceId, true)
+  }
+  catch (e) {
+    console.error('disable network after external VPN disconnect failed', e)
+  }
+}
+
+function isExternalVpnStopReason(reason: unknown): boolean {
+  return reason === 'revoke' || reason === 'destroy'
+}
+
 async function onVpnServiceStop(payload: any) {
   console.log('vpn service stop', JSON.stringify(payload))
   curVpnStatus.running = false
+  resetVpnConfigStatus()
+
+  if (isExternalVpnStopReason(payload?.reason)) {
+    await handleExternalVpnDisconnect()
+  }
+
   // Keep activeVpnInstanceId: start_vpn's stopInternal emits this event while
   // replacing the TUN, and clearing the owner here races with vpn_service_start
   // → setTunFd. Intentional stops clear the owner in doStopVpn.
-  resetVpnConfigStatus()
 }
 
 async function registerVpnServiceListener() {
@@ -602,7 +675,7 @@ function getRoutesForVpn(routes: Route[] | undefined, node_config: NetworkTypes.
   }
 
   if (node_config.enable_magic_dns) {
-    ret.push('10.10.10.10/32')
+    ret.push('10.255.255.254/32')
   }
 
   // sort and dedup
@@ -700,7 +773,7 @@ async function reconcileNetworkInstance(instanceId: string, generation: number) 
 
   const routes = getRoutesForVpn(curNetworkInfo?.routes, config)
 
-  const dns = config.enable_magic_dns ? '10.10.10.10' : undefined
+  const dns = config.enable_magic_dns ? '10.255.255.254' : undefined
   const virtualIpv6WithPrefix = formatVirtualIpv6ForVpn(curNetworkInfo.my_node_info?.virtual_ipv6)
 
   const ipChanged = virtual_ip !== curVpnStatus.ipv4Addr
@@ -710,10 +783,25 @@ async function reconcileNetworkInstance(instanceId: string, generation: number) 
   // Plugin status may carry JSON null while the desired value is undefined;
   // normalize both sides so null-vs-undefined does not flap every 10s tick.
   const dnsChanged = (dns ?? undefined) !== (curVpnStatus.dns ?? undefined)
-  const configChanged = ipChanged || cidrChanged || ipv6Changed || routesChanged || dnsChanged
+  const criticalChanged = ipChanged || cidrChanged || ipv6Changed || dnsChanged
+  const configChanged = criticalChanged || routesChanged
   const shouldStartVpn = !curVpnStatus.running
 
+  // Already up: route-only drift (common for a few seconds after connect) → debounce.
+  if (
+    curVpnStatus.running
+    && routesChanged
+    && !criticalChanged
+    && !shouldStartVpn
+    && !forceApplyRouteRefresh
+  ) {
+    scheduleVpnRouteRefresh(instanceId, generation)
+    return
+  }
+  forceApplyRouteRefresh = false
+
   if (shouldStartVpn || configChanged) {
+    clearVpnRouteRefreshTimer()
     console.info('vpn service virtual ip changed', JSON.stringify(curVpnStatus), virtual_ip)
     if (curVpnStatus.running) {
       try {
@@ -847,6 +935,21 @@ export async function handleMobileTunDeviceError(instanceId: string) {
   }
 
   lastTunErrorRebuildAt = now
+
+  // If the OS VPN is already down (user disconnected from TauriVpnService UI),
+  // do not rebuild — disable the ET instance so Status leaves 运行中.
+  try {
+    const status = await get_vpn_status()
+    if (!status?.running) {
+      console.warn('TUN device error with VPN already stopped; treating as external disconnect', instanceId)
+      await handleExternalVpnDisconnect(instanceId)
+      return
+    }
+  }
+  catch (e) {
+    console.error('get vpn status after TUN device error failed', e)
+  }
+
   console.warn('core TUN device failed; tearing down and rebuilding VPN', instanceId)
 
   await enqueueVpnTask(async () => {

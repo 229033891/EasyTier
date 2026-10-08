@@ -542,7 +542,7 @@ dns:
     covered_help: With Magic DNS enabled, this platform should wire OS DNS to MagicDNS automatically.
     covered_platform_help: Platform can auto-wire OS DNS when Magic DNS is enabled on a network.
     manual_required: Manual
-    manual_required_help: "Magic DNS hosts may be stored, but this OS needs manual DNS setup. See docs/current/magic-dns-manual-wiring.md (OpenWrt dnsmasq: server=/et.net/10.10.10.10)."
+    manual_required_help: "Magic DNS hosts may be stored, but this OS needs manual DNS setup. See docs/current/magic-dns-manual-wiring.md (OpenWrt dnsmasq: server=/et.net/10.255.255.254)."
     manual_required_platform_help: This OS typically needs manual Magic DNS wiring. See docs/current/magic-dns-manual-wiring.md. Badge assumes Magic DNS is enabled on the network.
     manual_required_docs: Manual setup guide
     manual_required_docs_url: https://github.com/EasyTier/EasyTier/blob/main/docs/current/magic-dns-manual-wiring.md

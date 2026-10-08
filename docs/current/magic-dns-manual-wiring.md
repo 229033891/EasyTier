@@ -9,13 +9,13 @@
 
 ## 背景
 
-MagicDNS 服务地址（fake IP）固定为 **`10.10.10.10`**（`MAGIC_DNS_FAKE_IP`，**当前最终值**——每次切换等于全网 OS DNS/`/32` 路由重写）。
+MagicDNS 服务地址（fake IP）固定为 **`10.255.255.254`**（`MAGIC_DNS_FAKE_IP`，**当前最终值**——每次切换等于全网 OS DNS/`/32` 路由重写）。
 
 选址理由：
 
 1. RFC1918 私网 `10.0.0.0/8`，不可公网路由（否决过 `6.6.6.6` / `3.3.3.3` 等公网段）。
 2. **避开** Tailscale MagicDNS 的 `100.100.100.100`（同机冲突）；亦不再使用历史 CGNAT `100.100.100.53`。
-3. `10.10.10.10` 便于记忆；从旧地址迁过来是一次性拍板，不是中间态。
+3. 由历史地址 `10.10.10.10` 迁移到 `10.255.255.254`（10/8 末尾，几乎不与常见业务网段/网关冲突）；迁移是一次性拍板，不是中间态。
 
 Windows / macOS（非 NE）/ Android（Tauri 与 JNI）会自动接线；**Linux 在检测到 systemd-resolved 时**也会写 drop-in。
 
@@ -36,7 +36,7 @@ Windows / macOS（非 NE）/ Android（Tauri 与 JNI）会自动接线；**Linux
 在 dnsmasq 配置中增加（或 UCI `list server`）：
 
 ```text
-server=/et.net/10.10.10.10
+server=/et.net/10.255.255.254
 ```
 
 含义：后缀 `et.net` 的查询发给 MagicDNS；其它域名仍用 dnsmasq 原有上游。
@@ -52,12 +52,12 @@ uci commit dhcp && /etc/init.d/dnsmasq reload
 自检：
 
 ```sh
-nslookup some-hostname.et.net 10.10.10.10
+nslookup some-hostname.et.net 10.255.255.254
 # 或
-dig @10.10.10.10 some-hostname.et.net A +short
+dig @10.255.255.254 some-hostname.et.net A +short
 ```
 
-应返回 mesh 内虚拟 IP。若超时，先确认节点已启用 MagicDNS，且本机有到 `10.10.10.10/32` 的路由（通常由 EasyTier TUN 自动下发）。
+应返回 mesh 内虚拟 IP。若超时，先确认节点已启用 MagicDNS，且本机有到 `10.255.255.254/32` 的路由（通常由 EasyTier TUN 自动下发）。
 
 ---
 
@@ -70,7 +70,7 @@ dig @10.10.10.10 some-hostname.et.net A +short
 ```ini
 # Added by easytier
 [Resolve]
-DNS=10.10.10.10
+DNS=10.255.255.254
 Domains=~et.net
 ```
 
@@ -93,7 +93,7 @@ resolvectl status   # 应看到 DNS Domain: ~et.net
 若仅作临时调试，可在另一台已接线的节点上查询，或：
 
 ```sh
-dig @10.10.10.10 hostname.et.net
+dig @10.255.255.254 hostname.et.net
 ```
 
 ---
@@ -111,9 +111,9 @@ dig @10.10.10.10 hostname.et.net
 
 ## 5. 常见问题
 
-- **只有 hosts / upstream 配了但仍解析失败**：R3 上游与 hosts 是服务端行为；本机查询若不指向 `10.10.10.10`，永远走不到 MagicDNS。
-- **改了 `tld_dns_zone`**：手工配置里的后缀必须与之一致（例如 `corp.internal` → `server=/corp.internal/10.10.10.10`）。
-- **与 Tailscale 同机**：MagicDNS 用 **`10.10.10.10`**（不是 `.100`），避免与 Tailscale `100.100.100.100` 冲突。
+- **只有 hosts / upstream 配了但仍解析失败**：R3 上游与 hosts 是服务端行为；本机查询若不指向 `10.255.255.254`，永远走不到 MagicDNS。
+- **改了 `tld_dns_zone`**：手工配置里的后缀必须与之一致（例如 `corp.internal` → `server=/corp.internal/10.255.255.254`）。
+- **与 Tailscale 同机**：MagicDNS 用 **`10.255.255.254`**（不是 `.100`），避免与 Tailscale `100.100.100.100` 冲突。
 - **上游只能填 IP 字面量**（首期）：`1.1.1.1`、`udp://8.8.8.8:53`、`[fd00::1]:53` 可以；填 hostname 会报 invalid address。DoT/DoH / 域名上游另立项。
 - **kill -9 / 异常退出**：systemd drop-in 可能残留，mesh 域名会黑洞到下次正常启动（`close()` 会删文件）。卸载脚本应删除 `/etc/systemd/resolved.conf.d/easytier-magic-dns.conf`（仅当文件带 EasyTier 头）。
 - **Windows 停止清理**：正常禁用网络 / 退出时会自动删除本实例装过的代理 CIDR 路由（含 `::/0`）与 TUN 网卡上写入的 `NameServer`（仅回滚自己写过的值）。kill 进程等非正常退出仍可能残留，下次启用→禁用一次即可清掉。

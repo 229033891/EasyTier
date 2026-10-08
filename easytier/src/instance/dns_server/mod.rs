@@ -18,7 +18,7 @@ mod tests;
 
 pub static MAGIC_DNS_INSTANCE_ADDR: &str = "tcp://127.0.0.1:49813";
 pub static MAGIC_DNS_INSTANCE_SOCKET_ADDR: &str = "127.0.0.1:49813";
-pub static MAGIC_DNS_FAKE_IP: &str = "10.10.10.10"; // Private fake DNS IP (was CGNAT 100.100.100.53)
+pub static MAGIC_DNS_FAKE_IP: &str = "10.255.255.254"; // Private fake DNS IP (was CGNAT 100.100.100.53, then 10.10.10.10)
 /// UpdateDnsRecord `client` hint for DnsConfig.hosts (dns-policy R1 channel).
 pub static MAGIC_DNS_STATIC_HOSTS_CLIENT: &str = "static-hosts";
 /// Store key for the elected MagicDNS server's own DnsConfig.hosts.

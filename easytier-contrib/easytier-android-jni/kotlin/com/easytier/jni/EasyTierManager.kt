@@ -179,7 +179,7 @@ class EasyTierManager(
             }
             // MagicDNS fake IP route (align with Tauri mobile_vpn.ts).
             if (enableMagicDns) {
-                newProxyCidrs.add("10.10.10.10/32")
+                newProxyCidrs.add("10.255.255.254/32")
             }
             val dedupedProxyCidrs = newProxyCidrs.distinct().sorted()
 

@@ -136,7 +136,7 @@ object EasyTierJNI {
 
     /**
      * 上报 MagicDNS OS 接线状态（dns-policy B6 二期）。
-     * VpnService 成功将 DNS 设为 10.10.10.10 后传 true；清理时传 false。
+     * VpnService 成功将 DNS 设为 10.255.255.254 后传 true；清理时传 false。
      */
     @JvmStatic external fun setMagicDnsOsWired(wired: Boolean)
 

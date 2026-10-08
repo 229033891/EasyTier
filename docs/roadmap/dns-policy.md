@@ -18,7 +18,7 @@
 - `DnsConfig` hosts / forwarders / upstream_dns + managed + MagicDNS `static_hosts` 通道  
 - 串行 failover 上游、防环绑物理网卡、热重载  
 - 平台接线矩阵 + 控制台覆盖徽章 + `magic_dns_os_wired`  
-- fake IP `10.10.10.10`  
+- fake IP `10.255.255.254`  
 
 历史长文（需求 / 竞速论证 / 落地顺序 / B1–B6 勾选）已吸收进 Current；需要争议上下文时查 git 历史。
 
@@ -48,7 +48,7 @@
 1. 上游 **顺序 failover，不竞速**（NXDOMAIN / GeoDNS / 合规）。  
 2. `upstream_dns` / split 未配 → **系统 DNS**，禁止空=NXDOMAIN。  
 3. hosts **赢** 路由 hostname。  
-4. Fake IP **固定** `10.10.10.10`；否决公网段。  
+4. Fake IP **固定** `10.255.255.254`；否决公网段。  
 5. 首期 **一个** `enable_magic_dns`（发布+解析耦合）。  
 6. 覆盖验收：**禁止**用「配置已下发 + 心跳存活」冒充成功。
 

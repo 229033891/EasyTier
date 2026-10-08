@@ -126,7 +126,9 @@ class TauriVpnService : VpnService() {
 
     override fun onDestroy() {
         Log.i(TAG, "vpn on destroy")
-        disconnect()
+        // External teardown (system kill / leftover iface). Emit before close so
+        // JS can suppress TUN-error rebuild and disable the ET instance.
+        disconnect(reason = "destroy", notifyBeforeClose = true)
         setMainForegroundServiceEnabled(true)
         stopForeground(STOP_FOREGROUND_REMOVE)
         self = null
@@ -134,10 +136,12 @@ class TauriVpnService : VpnService() {
         super.onDestroy()
     }
 
-    /** System revoked VPN permission / another VPN took over. */
+    /** System revoked VPN permission / user disconnected from the VPN tile/settings. */
     override fun onRevoke() {
         Log.i(TAG, "vpn on revoke")
-        disconnect()
+        // Emit stop with reason before closing the fd: otherwise core TunDeviceError
+        // can race ahead and rebuild VpnService while the user asked to disconnect.
+        disconnect(reason = "revoke", notifyBeforeClose = true)
         setMainForegroundServiceEnabled(true)
         stopForeground(STOP_FOREGROUND_REMOVE)
         self = null
@@ -148,24 +152,40 @@ class TauriVpnService : VpnService() {
 
     private fun stopInternalLocked() {
         Log.i(TAG, "vpn stop internal")
-        disconnect()
+        // App-initiated stop/replace — must NOT disable the ET network instance.
+        disconnect(reason = "app", notifyBeforeClose = false)
         setMainForegroundServiceEnabled(true)
         stopForeground(STOP_FOREGROUND_REMOVE)
         // Keep self until onDestroy / a fresh onStartCommand rebinds it.
         EasyTierVpnTileService.requestStateUpdate(this)
     }
 
-    private fun disconnect() {
+    /**
+     * @param reason `"app"` = startVpn replace / stopVpn; `"revoke"` / `"destroy"` =
+     *   external teardown that should sync into the ET GUI (disable instance).
+     * @param notifyBeforeClose when true, fire `vpn_service_stop` before closing
+     *   the PFD so JS can arm the TUN-error grace window first.
+     */
+    private fun disconnect(reason: String, notifyBeforeClose: Boolean) {
         unregisterUnderlayNetworkCallback()
-        closeVpnInterface(emitStopEvent = true)
+        if (notifyBeforeClose && vpnInterface != null) {
+            val eventData = JSObject()
+            eventData.put("reason", reason)
+            triggerCallback("vpn_service_stop", eventData)
+            closeVpnInterface(emitStopEvent = false)
+        } else {
+            closeVpnInterface(emitStopEvent = true, reason = reason)
+        }
         clearStatus()
     }
 
-    private fun closeVpnInterface(emitStopEvent: Boolean) {
+    private fun closeVpnInterface(emitStopEvent: Boolean, reason: String = "app") {
         val iface = vpnInterface ?: return
         vpnInterface = null
         if (emitStopEvent) {
-            triggerCallback("vpn_service_stop", JSObject())
+            val eventData = JSObject()
+            eventData.put("reason", reason)
+            triggerCallback("vpn_service_stop", eventData)
         }
         try {
             iface.close()

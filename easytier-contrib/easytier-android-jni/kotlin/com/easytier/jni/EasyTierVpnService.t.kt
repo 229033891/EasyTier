@@ -64,7 +64,7 @@ class EasyTierVpnService : VpnService() {
             val builder = Builder()
             builder.setSession("EasyTier VPN").addAddress(ip, networkLength)
             if (enableMagicDns) {
-                builder.addDnsServer("10.10.10.10")
+                builder.addDnsServer("10.255.255.254")
             } else {
                 builder.addDnsServer("223.5.5.5")
                 builder.addDnsServer("114.114.114.114")
