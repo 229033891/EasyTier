@@ -62,6 +62,7 @@ crate 内设计稿（非本索引）：`easytier/docs/`（凭据计划已标 Arc
 | [web-upgrade.md](./ops/web-upgrade.md) | Web 现网升级与保库 |
 | [deploy-install.md](./ops/deploy-install.md) | 安装脚本用法 |
 | [ohos-downstream-builds.md](./ops/ohos-downstream-builds.md) | OHOS 下游构建 |
+| [release-version-bump.md](./ops/release-version-bump.md) | **版本号 bump 必改清单**（10 文件 / 17 处）+ 发布分支惯例 |
 
 ## Archive — 历史记录
 

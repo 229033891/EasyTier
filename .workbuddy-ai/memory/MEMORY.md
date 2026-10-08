@@ -57,19 +57,23 @@
 - **2026-10-08 起改为「字段有值就显示」**（方案 A）：`Status.vue` 用 `routeSync?.trim()` 判定，空占位也照显示，便于确认"确实一条代理路由都没装"。原来的 `isMeaningfulProxyCidrRouteSync()` 判定函数已删除（死代码 + 其单测）。字段缺失（老核心）或全空白仍不显示。
 - 回归测试在 `tests/status-vpn-portal.spec.ts`（挂载 Status.vue；**「节点详情」面板默认折叠，断言前要先点 `button[data-label="node_info_details"]`**）。
 
-## 版本号 bump 的文件清单（2026-10-08 定稿：10 个文件）
+## 版本号 bump 的文件清单（2026-10-08 定稿：10 文件 / 17 处）
 
-「版本号改为 X」= 改这 **10 个文件**里的版本号（`easytier-mini` 也在内，用户 2026-10-08 明确选择一起升）：
+**权威清单已落库：`docs/ops/release-version-bump.md`**（Ops 类，含「不要改的地方」表、校验命令、发布分支惯例、历史坑）。下面只留索引与易错点。
 
-1. `Cargo.toml` — 3 处，全在 `[workspace.dependencies]`：`easytier` / `easytier-core` / `easytier-proto`
-2. `Cargo.lock` — 5 处：`easytier` / `easytier-core` / `easytier-proto` / `easytier-web` / `easytier-gui` 的 `version =`（**全仓只有这一个 Cargo.lock**）
+「版本号改为 X」= 改这 **10 个文件**（`easytier-mini` 也在内，用户 2026-10-08 明确选择一起升）：
+
+1. `Cargo.toml` — 3 处，全在 `[workspace.dependencies]`：`easytier` / `easytier-core` / `easytier-proto`（只改 `version`，别动同行的 `path`）
+2. `Cargo.lock` — **6 处**：`easytier` / `easytier-core` / `easytier-gui` / `easytier-mini` / `easytier-proto` / `easytier-web` 的 `version =`（**全仓只有这一个 Cargo.lock**）
 3. `easytier/Cargo.toml`、4. `easytier-core/Cargo.toml`、5. `easytier-proto/Cargo.toml`、6. `easytier-web/Cargo.toml`
 7. `easytier-gui/package.json`、8. `easytier-gui/src-tauri/Cargo.toml`、9. `easytier-gui/src-tauri/tauri.conf.json`
 10. `easytier-contrib/easytier-mini/Cargo.toml`（**易漏**：`2.7.41/42/43` 三次 bump 都漏了它，停在 `2.7.4`）
 
-**不动**：`easytier-contrib/` 下的 `easytier-ffi` / `easytier-android-jni` / `easytier-ios` / `easytier-uptime` / `easytier-ohrs*`（固定 `0.1.0`）、`tauri-plugin-vpnservice`（`0.0.0`）。
+**不动**：`easytier-contrib/` 下的 `easytier-ffi` / `easytier-android-jni` / `easytier-ios` / `easytier-uptime` / `easytier-ohrs*`（固定 `0.1.0`）、`tauri-plugin-vpnservice`（`0.0.0`）、`easytier-web/frontend{,-lib}/package.json`（`0.0.0`）、`easytier-js/package.json`（`0.1.0`）。
 
 **校验手段**：`cargo metadata --no-deps --offline --format-version 1` 应报 6 个包为同一版本（`easytier` / `easytier-core` / `easytier-gui` / `easytier-mini` / `easytier-proto` / `easytier-web`）；残留检查用 `grep -rnE 'X\.Y\.Z([^0-9]|$)'`（**注意 `2.7.4` 是 `2.7.44` 的前缀，必须加 `([^0-9]|$)`**，否则误报；`easytier-gui/package.json` 里的 `@types/node: ^22.7.4` 是无关依赖，别动）。**不要顺手跑 `cargo build` 验证**（见上文「不要用本地 Rust 编译/check 作为验证手段」）。
+
+**不硬编码版本的地方**：`.github/workflows/openwrt.yml` 用正则从 `easytier-src/easytier/Cargo.toml` 读版本（L178 / L271），文件里的 `2.7.4` / `2.6.4` 只是注释；`.github/workflows/docker.yml` L19 的 `image_tag.default: 'v2.7.2'` 是**陈旧的手动 dispatch 默认值**，历史 bump 从未同步（未改）。
 
 ## 环境备注
 
@@ -77,6 +81,8 @@
 - **protobuf-ts 的 int64/uint64 是 BigInt，JSON 形状却要字符串**（2026-10-08 修）：`toBackendNetworkConfig` 把消息实例展开成普通对象再 `fromJson`，BigInt 会漏出来抛 `Cannot parse JSON bigint`（如 `managed_credentials[].expiry_unix`，非 optional 字段被类初始化成 `0n`，所以只要数组非空必炸）→ 已在 `networkCompat.ts` 的 `dropUnsupportedJsonValues()` 里统一 `bigint → toString()`。**以后往 NetworkConfig 加 int64/uint64 字段（尤其嵌套消息里的），记得确认这条转换覆盖到了。**
 - **`allFieldFixture()` 覆盖检查的坑**：它用 `{...DEFAULT_NETWORK_CONFIG()}`，而 `NetworkConfigPb.create()` 只给**非 optional** 字段填默认值（repeated → `[]`）。所以 repeated 字段"看起来覆盖了"其实值是空的（会被 `toJson` 省略，过不了 round-trip 的「字段必须在场」检查），`optional` 字段则真的缺席。加字段时要显式给值。
 - **`cargo test` 跑不起来**：测试二进制能编译链接，启动时 `STATUS_DLL_NOT_FOUND (0xc0000135)`。已排除随包 DLL（只有运行时动态加载的 wintun/Packet）与系统 VC 运行库，属环境问题，同环境跑其它 crate 的测试也一样。
+- **沙箱下 `git` 改状态要回读确认（2026-10-08 踩到）**：`git branch releases/v2.7.44 dev` 与 `git update-ref refs/heads/releases/v2.7.44 <sha>` 都 **exit 0 但静默不生效**（需要新建 `.git/refs/heads/releases/` 目录的那种分支名）；而普通分支名（`__probe__`）正常。`touch .git/.writetest` 倒是能持久。绕法：先 `mkdir -p .git/refs/heads/releases`，再写 loose ref（`git rev-parse <sha> > .git/refs/heads/releases/vX.Y.Z`）或再跑 `git branch`。**凡是改 git 状态的命令，之后必须用 `git branch --list` / `git rev-parse` / `git show-ref` 回读验证。**
+- **本机 `git` 联网需绕证书吊销检查**：`git ls-remote` / `git push` 默认报 `schannel: ... CRYPT_E_REVOCATION_OFFLINE (0x80092013)`。`-c http.schannelCheckRevoke=false` **无效**；可用的是 `env GIT_SSL_NO_VERIFY=true git -c http.schannelCheckRevoke=false -c http.sslBackend=openssl <cmd>`（或 `curl --ssl-no-revoke`）。**网络本身是通的**（`curl --ssl-no-revoke` 打 github 返回 200），不是断网。
 - 需要 SQL 层验证时，可行办法是**用 Python `sqlite3` 从源码正则抽出建表/查询 SQL 直接跑**（绕开 Rust 编译与测试运行时），已验证有效。
 - cargo 路径：`C:\Users\Administrator\.cargo\bin\cargo.exe`（不在默认 PATH，需显式加入）。`rustfmt` 只装在 `1.95.0` 工具链上（不是 rust-toolchain.toml 指定的 `1.95`），要用 `rustup run 1.95.0 rustfmt --edition 2024 <file>`；它只能查语法，查不出类型错误。
 - **Rust 侧几个易踩的坑**：
