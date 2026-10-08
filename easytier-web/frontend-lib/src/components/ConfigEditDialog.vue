@@ -112,7 +112,7 @@ watch(tomlConfig, (newValue) => {
         </div>
         <template #footer>
             <Button type="button" severity="secondary" outlined :label="t('close')" @click="visible = false" />
-            <Button v-if="!props.readonly" type="button" :label="t('save')" @click="handleConfigSave" />
+            <Button v-if="!props.readonly" type="button" :label="t('web.device_management.save_config')" @click="handleConfigSave" />
         </template>
     </Dialog>
 </template>

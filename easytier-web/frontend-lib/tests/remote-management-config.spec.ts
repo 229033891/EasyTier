@@ -240,7 +240,8 @@ async function mountRemote(api: ReturnType<typeof makeApi>, props: Record<string
       },
       stubs: {
         Config: {
-          template: '<div data-stub="config"><slot name="config-toolbar" /></div>',
+          template:
+            '<div data-stub="config" :data-readonly="String(!!$attrs.readOnly || !!$attrs[\'read-only\'])"><div data-slot="config-toolbar" v-if="$slots[\'config-toolbar\']"><slot name="config-toolbar" /></div></div>',
         },
         ConfigEditDialog: true,
         Status: true,
@@ -265,35 +266,65 @@ function readDirty(wrapper: Awaited<ReturnType<typeof mountRemote>>): boolean {
   return !!(dirty && typeof dirty === 'object' && 'value' in dirty ? dirty.value : dirty)
 }
 
-describe('RemoteManagement config save', () => {
-  it('saves from the sticky footer without dropping boolean fields', async () => {
-    const config = makeFlagConfig()
-    const expectedFlags = snapshotBooleanConfigFields(config)
-    const api = makeApi({ config })
+async function enterCombinedConfig(wrapper: Awaited<ReturnType<typeof mountRemote>>) {
+  const editBtn = wrapper.find('button[data-label="web.device_management.switch_to_config"]')
+  expect(editBtn.exists()).toBe(true)
+  await editBtn.trigger('click')
+  await settleRemoteManagement()
+}
 
+describe('RemoteManagement config vs run pages', () => {
+  it('stopped run page shows read-only config + start + node-config, not edit toolbar/run_network', async () => {
+    const config = makeFlagConfig()
+    const api = makeApi({ config, disabled: true })
     const wrapper = await mountRemote(api)
 
     try {
-      const toolbarSave = wrapper.find('.config-toolbar button[data-label="web.device_management.save_config"]')
-      expect(toolbarSave.exists()).toBe(false)
+      const configStub = wrapper.find('[data-stub="config"]')
+      expect(configStub.exists()).toBe(true)
+      expect(configStub.attributes('data-readonly')).toBe('true')
+      expect(wrapper.find('[data-stub="config"] [data-slot="config-toolbar"]').exists()).toBe(false)
+      expect(wrapper.find('button[data-label="web.device_management.start_network"]').exists()).toBe(true)
+      expect(wrapper.find('button[data-label="web.device_management.switch_to_config"]').exists()).toBe(true)
+      expect(wrapper.find('button[data-label="run_network"]').exists()).toBe(false)
+      expect(wrapper.find('button[data-label="web.device_management.save_config"]').exists()).toBe(false)
+    } finally {
+      wrapper.unmount()
+    }
+  })
 
-      // Clean draft: footer save stays hidden until the first edit.
+  it('config page has no start/stop/run primary; dirty shows save+discard pair', async () => {
+    const config = makeFlagConfig()
+    const expectedFlags = snapshotBooleanConfigFields(config)
+    const api = makeApi({ config, disabled: true })
+    const wrapper = await mountRemote(api)
+
+    try {
+      await enterCombinedConfig(wrapper)
+      expect(wrapper.find('[data-stub="config"]').exists()).toBe(true)
+      expect(wrapper.find('button[data-label="web.device_management.start_network"]').exists()).toBe(false)
+      expect(wrapper.find('button[data-label="run_network"]').exists()).toBe(false)
+      expect(wrapper.find('button[data-label="web.device_management.disable_network"]').exists()).toBe(false)
+
+      // Clean config: return-to-run, no save pair.
+      expect(wrapper.find('button[data-label="web.device_management.switch_to_status"]').exists()).toBe(true)
       expect(wrapper.find('button[data-label="web.device_management.save_config"]').exists()).toBe(false)
 
       networkConfigRef(wrapper).network_name = 'changed-name'
       await nextTick()
       await flushPromises()
 
+      expect(wrapper.find('button[data-label="web.device_management.switch_to_status"]').exists()).toBe(false)
       const saveButton = wrapper.find('button[data-label="web.device_management.save_config"]')
+      const discard = wrapper.find('button[data-label="web.device_management.discard_changes"]')
       expect(saveButton.exists()).toBe(true)
-      expect(saveButton.attributes('disabled')).toBeUndefined()
+      expect(discard.exists()).toBe(true)
 
       await saveButton.trigger('click')
       await flushPromises()
 
       expect(api.save_config).toHaveBeenCalledOnce()
       const savedConfig = api.save_config.mock.calls[0][0] as NetworkConfig
-
       for (const field of BOOLEAN_CONFIG_FIELDS) {
         expect(savedConfig[field], `${field} should be saved`).toBe(expectedFlags[field])
       }
@@ -308,10 +339,8 @@ describe('RemoteManagement config save', () => {
     const wrapper = await mountRemote(api)
 
     try {
+      await enterCombinedConfig(wrapper)
       expect(wrapper.find('[data-value="web.device_management.unsaved_changes"]').exists()).toBe(false)
-      // Stopped + clean: save / cancel-edit stay hidden together.
-      expect(wrapper.find('button[data-label="web.device_management.save_config"]').exists()).toBe(false)
-      expect(wrapper.find('button[data-label="web.device_management.discard_changes"]').exists()).toBe(false)
 
       networkConfigRef(wrapper).network_name = 'changed-name'
       await nextTick()
@@ -320,11 +349,8 @@ describe('RemoteManagement config save', () => {
       expect(readDirty(wrapper)).toBe(true)
       expect(wrapper.find('[data-value="web.device_management.unsaved_changes"]').exists()).toBe(true)
 
-      // Stopped + dirty: save and cancel-edit appear together.
       const discard = wrapper.find('button[data-label="web.device_management.discard_changes"]')
-      const save = wrapper.find('button[data-label="web.device_management.save_config"]')
       expect(discard.exists()).toBe(true)
-      expect(save.exists()).toBe(true)
       await discard.trigger('click')
       await settleRemoteManagement()
 
@@ -338,20 +364,21 @@ describe('RemoteManagement config save', () => {
     }
   })
 
-  it('shows exit-edit without save when editing a running network with a clean draft', async () => {
+  it('running page shows stop + node-config; clean edit shows return without save', async () => {
     const config = makeFlagConfig()
     const api = makeApi({ config, disabled: false, running: true })
     const wrapper = await mountRemote(api)
 
     try {
-      const editBtn = wrapper.find('button[data-label="web.device_management.switch_to_config"]')
-      expect(editBtn.exists()).toBe(true)
-      await editBtn.trigger('click')
-      await settleRemoteManagement()
+      expect(wrapper.find('button[data-label="web.device_management.disable_network"]').exists()).toBe(true)
+      expect(wrapper.find('button[data-label="web.device_management.switch_to_config"]').exists()).toBe(true)
+      expect(wrapper.find('button[data-label="run_network"]').exists()).toBe(false)
 
+      await enterCombinedConfig(wrapper)
+
+      expect(wrapper.find('button[data-label="web.device_management.disable_network"]').exists()).toBe(false)
       expect(wrapper.find('button[data-label="web.device_management.switch_to_status"]').exists()).toBe(true)
       expect(wrapper.find('button[data-label="web.device_management.save_config"]').exists()).toBe(false)
-      expect(wrapper.find('button[data-label="web.device_management.discard_changes"]').exists()).toBe(false)
 
       networkConfigRef(wrapper).network_name = 'dirty-while-running'
       await nextTick()
@@ -360,6 +387,23 @@ describe('RemoteManagement config save', () => {
       expect(wrapper.find('button[data-label="web.device_management.switch_to_status"]').exists()).toBe(false)
       expect(wrapper.find('button[data-label="web.device_management.save_config"]').exists()).toBe(true)
       expect(wrapper.find('button[data-label="web.device_management.discard_changes"]').exists()).toBe(true)
+    } finally {
+      wrapper.unmount()
+    }
+  })
+
+  it('web config mode can edit a stopped network (not stuck on read-only/loading)', async () => {
+    const config = makeFlagConfig()
+    const api = makeApi({ config, disabled: true })
+    const wrapper = await mountRemote(api, { mode: 'config' })
+
+    try {
+      const configStub = wrapper.find('[data-stub="config"]')
+      expect(configStub.exists()).toBe(true)
+      expect(configStub.attributes('data-readonly')).toBe('false')
+      expect(wrapper.find('[data-slot="config-toolbar"]').exists()).toBe(true)
+      expect(wrapper.find('button[data-label="web.device_management.start_network"]').exists()).toBe(false)
+      expect(wrapper.find('button[data-label="web.device_management.disable_network"]').exists()).toBe(false)
     } finally {
       wrapper.unmount()
     }
@@ -374,6 +418,7 @@ describe('RemoteManagement config save', () => {
     const wrapper = await mountRemote(api)
 
     try {
+      await enterCombinedConfig(wrapper)
       networkConfigRef(wrapper).network_name = 'dirty'
       await nextTick()
       expect(readDirty(wrapper)).toBe(true)
@@ -384,46 +429,6 @@ describe('RemoteManagement config save', () => {
       expect(confirmRequire).toHaveBeenCalled()
       const arg = confirmRequire.mock.calls[0][0] as { message: string }
       expect(arg.message).toBe('web.device_management.confirm_discard_on_switch')
-    } finally {
-      wrapper.unmount()
-    }
-  })
-
-  it('confirms before re-running a live network', async () => {
-    confirmRequire.mockClear()
-    const config = makeFlagConfig()
-    const api = makeApi({ config, disabled: false, running: true })
-    // Combined mode: enter edit on running instance
-    const wrapper = await mountRemote(api)
-
-    try {
-      const editBtn = wrapper.find('button[data-label="web.device_management.switch_to_config"]')
-      expect(editBtn.exists()).toBe(true)
-      await editBtn.trigger('click')
-      await settleRemoteManagement()
-
-      const runBtn = wrapper.find('button[data-label="run_network"]')
-      expect(runBtn.exists()).toBe(true)
-      // Simulate a real click (MouseEvent) — must NOT treat the event as NetworkConfig.
-      await runBtn.trigger('click')
-      await flushPromises()
-
-      expect(confirmRequire).toHaveBeenCalled()
-      const arg = confirmRequire.mock.calls.at(-1)![0] as {
-        message: string
-        accept?: () => void
-      }
-      expect(arg.message).toBe('web.device_management.confirm_rerun_network')
-      expect(api.run_network).not.toHaveBeenCalled()
-
-      arg.accept?.()
-      await settleRemoteManagement()
-
-      expect(api.run_network).toHaveBeenCalledOnce()
-      const [runCfg, remoteSave] = api.run_network.mock.calls[0] as [NetworkConfig, boolean]
-      expect(runCfg.instance_id).toBe(INSTANCE_ID)
-      expect(runCfg.network_name).toBe('mesh-save')
-      expect(typeof remoteSave).toBe('boolean')
     } finally {
       wrapper.unmount()
     }

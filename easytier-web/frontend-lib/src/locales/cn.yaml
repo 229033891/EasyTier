@@ -933,11 +933,11 @@ web:
     no_network_selected: 未选择网络
     select_existing_network_or_create_new: 从上方选择已有网络，或点击「添加网络」
     select_network_for_status: 请选择网络实例以查看状态或启停
-    network_disabled_hint: 该网络已禁用。可在此启动，或打开「配置」修改设置。
+    network_disabled_hint: 该网络已停止。下方为当前配置（只读）；可「启动网络」，或点「节点配置」修改。
     switch_to_config: 节点配置
     switch_to_config_tip: 切换到配置页，编辑本节点网络参数
-    switch_to_status: 前往状态
-    switch_to_status_tip: 切换到状态页，查看节点与连接信息
+    switch_to_status: 返回运行
+    switch_to_status_tip: 返回运行页（查看状态或启停网络）
     confirm_start_network: 确定启动该网络吗？
     confirm_rerun_network: 将用当前草稿重建运行中的网络实例，连接会短暂中断。确定继续？
     confirm_discard_on_switch: 当前有未保存的修改。切换网络将丢弃这些更改，确定继续？
@@ -945,11 +945,12 @@ web:
     confirm_delete_network_header: 删除网络
     disable_network: 禁用网络
     disable_network_tip: 停止并禁用当前正在运行的网络
+    start_network: 启动网络
     start_network_tip: 启动当前已保存的网络配置
     toolbar_config_files: 配置文件
     toolbar_network: 网络
     toolbar_danger: 危险操作
-    toolbar_save: 保存
+    toolbar_save: 保存配置
 
   network:
     title: 网络

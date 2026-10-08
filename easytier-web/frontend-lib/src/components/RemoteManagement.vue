@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { Button, Message, Select, Tag, useConfirm, useToast, type VirtualScrollerLazyEvent } from 'primevue';
 import { TOAST_LIFE } from '../modules/toast'
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
+import { computed, onMounted, onUnmounted, ref, toRaw, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import * as Api from '../modules/api';
 import {
@@ -341,21 +341,18 @@ const needShowNetworkStatus = computed(() => {
     return true;
 })
 
-/** ??????????? / ??????????? */
+/**
+ * 配置页：Web `mode=config`，或 combined / 显式进入编辑。
+ * 停止态不再自动落在配置（见 config-vs-run-pages：运行空态 + 节点配置入口）。
+ */
 const showConfigPanel = computed(() => {
     if (isStatusMode.value) {
         return false;
     }
-    if (isEditingNetwork.value || networkIsDisabled.value) {
+    if (isEditingNetwork.value) {
         return true;
     }
-    // ????????????????ensureConfigModeEditing ?????
     return isConfigMode.value && !!selectedInstanceId.value;
-})
-
-/** ??????????????????????? */
-const showStatusDisabledPanel = computed(() => {
-    return isStatusMode.value && !!selectedInstanceId.value && networkIsDisabled.value;
 })
 
 const networkIsDisabled = computed(() => {
@@ -364,6 +361,32 @@ const networkIsDisabled = computed(() => {
     }
     return disabledInstanceIds.value.has(selectedInstanceId.value.uuid);
 });
+
+/**
+ * 运行页 · 已停止：只读配置预览 + 启动（Web status / GUI combined，未在编辑时）。
+ */
+const showStatusDisabledPanel = computed(() => {
+    if (!selectedInstanceId.value || !networkIsDisabled.value || isEditingNetwork.value) {
+        return false;
+    }
+    if (showConfigPanel.value) {
+        return false;
+    }
+    return isStatusMode.value || isCombinedMode.value;
+})
+
+/** 停止态只读副本，避免 Config 内部归一化写回脏了真正的草稿 */
+const statusDisabledConfigPreview = ref<NetworkTypes.NetworkConfig | null>(null)
+watch(
+    () => (showStatusDisabledPanel.value ? currentNetworkConfig.value : null),
+    (cfg) => {
+        statusDisabledConfigPreview.value = cfg
+            ? structuredClone(toRaw(cfg)) as NetworkTypes.NetworkConfig
+            : null
+    },
+    { immediate: true },
+)
+
 watch(networkIsDisabled, async (newVal, oldVal) => {
     if (newVal !== oldVal && newVal === true) {
         try {
@@ -417,6 +440,7 @@ const stopNetwork = async () => {
 
     try {
         await props.api.update_network_instance_state(selectedInstanceId.value.uuid, true);
+        isEditingNetwork.value = false;
         await loadNetworkInstanceIds();
         await loadCurrentNetworkInfo();
         emits('update');
@@ -456,7 +480,7 @@ const startNetwork = async () => {
 const confirmStartNetwork = (_event?: Event) => {
     confirm.require({
         message: t('web.device_management.confirm_start_network'),
-        header: t('web.network.start'),
+        header: t('web.device_management.start_network'),
         icon: 'pi pi-info-circle',
         rejectProps: {
             label: t('web.common.cancel'),
@@ -464,7 +488,7 @@ const confirmStartNetwork = (_event?: Event) => {
             outlined: true,
         },
         acceptProps: {
-            label: t('web.network.start'),
+            label: t('web.device_management.start_network'),
             severity: 'success',
         },
         accept: () => { void startNetwork() },
@@ -492,9 +516,12 @@ const requestLeave = () => {
     });
 }
 
-/** ????????????????????? */
+/**
+ * Web `mode=config`：无论运行中还是已停止都进入可编辑配置。
+ * （停止态运行页只读预览走 showStatusDisabledPanel，不走这里。）
+ */
 const ensureConfigModeEditing = async () => {
-    if (!isConfigMode.value || !selectedInstanceId.value || networkIsDisabled.value) {
+    if (!isConfigMode.value || !selectedInstanceId.value) {
         return;
     }
     if (isEditingNetwork.value && currentNetworkConfig.value?.instance_id === selectedInstanceId.value.uuid) {
@@ -718,9 +745,9 @@ const discardConfigChanges = async () => {
     }
 }
 
-/** Combined 运行态干净编辑：退出编辑回到状态页。 */
+/** Combined：退出配置，回到运行页（运行中状态或已停止空态）。 */
 const exitEditNetwork = () => {
-    if (isCombinedMode.value && isEditingNetwork.value && !networkIsDisabled.value) {
+    if (isCombinedMode.value && isEditingNetwork.value) {
         isEditingNetwork.value = false;
     }
 }
@@ -906,15 +933,19 @@ const syncTomlConfig = async (tomlConfig: string): Promise<void> => {
     currentNetworkConfig.value = config;
 }
 
-/** GUI combined：状态页「节点配置」入口（仅 combined）。 */
+/**
+ * GUI combined 运行页「节点配置」：运行中或已停止（只读预览上）均可进入编辑。
+ */
 const showCombinedEditEntry = computed(() =>
     isCombinedMode.value
-    && needShowNetworkStatus.value
+    && !isEditingNetwork.value
+    && !!selectedInstanceId.value
     && currentNetworkControl.editable.value
+    && (needShowNetworkStatus.value || showStatusDisabledPanel.value)
 );
 
 /**
- * 取消编辑 + 保存：仅脏时成对显示（停止态 / 运行态编辑相同）。
+ * 取消编辑 + 保存：仅配置页且脏时成对显示。
  */
 const showSaveInFooter = computed(() =>
     showConfigPanel.value && !!currentNetworkConfig.value && isConfigDirty.value,
@@ -923,12 +954,11 @@ const showSaveInFooter = computed(() =>
 const showDiscardChanges = computed(() => showSaveInFooter.value);
 
 /**
- * Combined 运行态干净编辑：单独「前往状态」退出编辑，不与保存成对。
+ * Combined 配置页干净：返回运行页（运行中或已停止）。
  */
 const showExitEdit = computed(() =>
     isCombinedMode.value
     && isEditingNetwork.value
-    && !networkIsDisabled.value
     && showConfigPanel.value
     && !!currentNetworkConfig.value
     && !isConfigDirty.value,
@@ -941,12 +971,10 @@ const showCombinedNavZone = computed(() =>
     || showExitEdit.value
 );
 
+/** 启停只在运行页；配置页不挂「运行网络」。 */
 const stickyFooterPrimary = computed(() => {
     if (showStatusDisabledPanel.value) {
         return 'start' as const;
-    }
-    if (showConfigPanel.value) {
-        return 'run' as const;
     }
     if (needShowNetworkStatus.value) {
         return 'stop' as const;
@@ -1070,9 +1098,21 @@ onUnmounted(() => {
 
         <!-- ?????/????? -->
         <div class="network-content">
-            <Message v-if="showStatusDisabledPanel" severity="warn" class="mb-0">
-                {{ t('web.device_management.network_disabled_hint') }}
-            </Message>
+            <template v-if="showStatusDisabledPanel">
+                <Message severity="warn" class="mb-3">
+                    {{ t('web.device_management.network_disabled_hint') }}
+                </Message>
+                <Config
+                    v-if="statusDisabledConfigPreview"
+                    :cur-network="statusDisabledConfigPreview"
+                    :config-invalid="false"
+                    :hide-run-button="true"
+                    :read-only="true"
+                />
+                <Message v-else severity="info" class="mb-0">
+                    {{ t('web.device_management.loading_network_configuration') }}
+                </Message>
+            </template>
 
             <template v-else-if="showConfigPanel && currentNetworkConfig">
                 <Config :cur-network="currentNetworkConfig" :config-invalid="false"
@@ -1184,18 +1224,14 @@ onUnmounted(() => {
             </div>
             <div class="footer-zone footer-zone--primary">
                 <Button v-if="stickyFooterPrimary === 'start'" @click="confirmStartNetwork($event)"
-                    :disabled="!currentNetworkControl.deletable.value" :label="t('web.network.start')"
-                    severity="success" icon="pi pi-play" iconPos="left" class="network-footer-btn"
+                    :disabled="!currentNetworkControl.deletable.value"
+                    :label="t('web.device_management.start_network')"
+                    severity="success" class="network-footer-btn"
                     v-tooltip.top="t('web.device_management.start_network_tip')" />
-                <Button v-else-if="stickyFooterPrimary === 'run'"
-                    @click="confirmRunNetwork()" :disabled="!currentNetworkConfig"
-                    :label="t('run_network')" severity="success"
-                    class="network-footer-btn"
-                    v-tooltip.top="t('run_network_tip')" />
                 <Button v-else-if="stickyFooterPrimary === 'stop'" @click="stopNetwork()"
                     :disabled="!currentNetworkControl.deletable.value"
-                    :label="t('web.device_management.disable_network')" severity="danger" icon="pi pi-power-off"
-                    iconPos="left" class="network-footer-btn network-footer-btn--danger"
+                    :label="t('web.device_management.disable_network')" severity="danger"
+                    class="network-footer-btn network-footer-btn--danger"
                     v-tooltip.top="t('web.device_management.disable_network_tip')" />
             </div>
         </div>
@@ -1343,9 +1379,9 @@ onUnmounted(() => {
     flex: 1 1 0;
     width: auto;
     min-width: 0;
-    max-width: var(--et-btn-w, 10rem);
+    max-width: var(--et-btn-w, 11.5rem);
     height: var(--et-btn, 2.5rem) !important;
-    padding: 0 0.9rem !important;
+    padding: 0 0.65rem !important;
     font-size: var(--et-fs-body, 0.875rem) !important;
     font-weight: 600 !important;
     border-radius: var(--et-radius, 0.75rem) !important;
@@ -1355,8 +1391,8 @@ onUnmounted(() => {
 
 :deep(.network-footer-btn.p-button .p-button-label) {
     white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    overflow: visible;
+    text-overflow: clip;
 }
 
 :deep(.network-footer-btn--muted.p-button),

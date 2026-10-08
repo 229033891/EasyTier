@@ -40,6 +40,8 @@ const props = defineProps<{
   hostname?: string
   /** 由父级统一渲染底部操作区时隐藏内置「运行网络」按钮 */
   hideRunButton?: boolean
+  /** 只读预览：不可编辑（运行页已停止态等） */
+  readOnly?: boolean
 }>()
 
 defineEmits(['runNetwork'])
@@ -129,6 +131,23 @@ const panelCollapsed = reactive({
   dns: true,
   acl: true,
 })
+
+/** 只读预览无法点折叠，展开全部面板便于浏览 */
+watch(
+  () => props.readOnly,
+  (readOnly) => {
+    if (!readOnly) {
+      return
+    }
+    panelCollapsed.toolbar = true
+    panelCollapsed.basic = false
+    panelCollapsed.advanced = false
+    panelCollapsed.portForwards = false
+    panelCollapsed.dns = false
+    panelCollapsed.acl = false
+  },
+  { immediate: true },
+)
 
 function ensureDnsConfig(): DnsConfig {
   if (!curNetwork.value.dns_config) {
@@ -477,7 +496,7 @@ onUnmounted(() => {
 });
 
 function syncNormalizedNetwork(network: NetworkConfig | undefined): void {
-  if (!network) {
+  if (!network || props.readOnly) {
     return
   }
 
@@ -569,9 +588,14 @@ function removeVpnPortalClient(index: number) {
 </script>
 
 <template>
-  <div class="flex flex-col h-full">
+  <div
+    class="flex flex-col h-full"
+    :class="{ 'config--readonly': readOnly }"
+    :inert="readOnly || undefined"
+    :aria-readonly="readOnly || undefined"
+  >
       <div class="config-panels w-full self-center">
-          <Panel v-if="$slots['config-toolbar']" v-model:collapsed="panelCollapsed.toolbar"
+          <Panel v-if="$slots['config-toolbar'] && !readOnly" v-model:collapsed="panelCollapsed.toolbar"
             :header="t('config_toolbar')" toggleable :pt="panelHeaderPt('toolbar')">
             <slot name="config-toolbar" />
           </Panel>
@@ -1251,6 +1275,10 @@ function removeVpnPortalClient(index: number) {
 </template>
 
 <style scoped>
+.config--readonly {
+  opacity: 0.96;
+}
+
 .dns-section {
   display: flex;
   flex-direction: column;

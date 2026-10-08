@@ -54,6 +54,7 @@ crate 内设计稿（非本索引）：`easytier/docs/`（凭据计划已标 Arc
 | [github-release-install.md](./roadmap/github-release-install.md) | GitHub/GHCR 安装升级方案 |
 | [upstream-port-todo.md](./roadmap/upstream-port-todo.md) | 上游 `main` → `dev` cherry-pick 跟踪（P0–P2 已落袋，P3 待发版后） |
 | [config-edit-unified-actions.md](./roadmap/config-edit-unified-actions.md) | 配置编辑统一操作栏（保存常驻 / 放弃更改真还原 / 运行态重启确认；**Done**） |
+| [config-vs-run-pages.md](./roadmap/config-vs-run-pages.md) | **配置页 / 运行页职责拆分**（启停只在运行页；配置只保存/返回；多端不同步页签） |
 | [credential-pin-preference-failover.md](./roadmap/credential-pin-preference-failover.md) | Admin pin 被 preference failover 绕过（§4.1 3+2 + §4.6 客户端身份命中已落地；responder 待开工；待 CI） |
 
 ## Ops — 运维
