@@ -47,7 +47,11 @@ pub(crate) fn start(app: AppHandle) {
         loop {
             ticker.tick().await;
             if let Err(error) = tick_once(&app).await {
-                tracing::debug!(%error, "android vpn watchdog tick failed");
+                // Keep this at warn: a silently swallowed tick error means the
+                // whole A3/A14 orphan-VpnService cleanup and the A9 underlay
+                // fallback stop working with zero signal (that is exactly how a
+                // `run_mobile_plugin` name mismatch went unnoticed before).
+                tracing::warn!(%error, "android vpn watchdog tick failed");
             }
         }
     });

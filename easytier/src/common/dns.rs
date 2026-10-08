@@ -33,7 +33,7 @@ use tokio::sync::Semaphore;
 
 use super::error::Error;
 #[cfg(feature = "dns-resolver")]
-use super::ifcfg::{IfConfiger, IfConfiguerTrait};
+use super::ifcfg::{IfConfiger, IfConfiguerTrait, physical_default_lookup_supported};
 use super::netns::NetNS;
 #[cfg(feature = "dns-resolver")]
 use crate::{
@@ -358,11 +358,14 @@ impl RuntimeProvider for RuntimeDnsIoProvider {
         wait_for: Option<Duration>,
     ) -> Pin<Box<dyn Send + Future<Output = io::Result<Self::Tcp>>>> {
         let context = self.context.socket_context();
-        let pin_physical = self.context.netns.is_none() && self.context.socket_mark.is_none();
+        let pin_physical = self.context.is_process_default() && physical_default_lookup_supported();
         Box::pin(async move {
             // Desktop process-default DNS: pin to the physical default so exit
             // TUN /0 cannot swallow queries. Netns / SO_MARK / VPN-protect paths
             // keep historical Disabled bind-device and rely on their own bypass.
+            // Platforms without physical-default lookup (Android/iOS) land there
+            // too — their app-level VPN bypass already keeps DNS off the TUN, and
+            // warning about it every query was pure noise.
             let bind_device = if pin_physical {
                 physical_dns_bind_device(server_addr).await
             } else {
@@ -404,7 +407,7 @@ impl RuntimeProvider for RuntimeDnsIoProvider {
         server_addr: SocketAddr,
     ) -> Pin<Box<dyn Send + Future<Output = io::Result<Self::Udp>>>> {
         let context = self.context.socket_context();
-        let pin_physical = self.context.netns.is_none() && self.context.socket_mark.is_none();
+        let pin_physical = self.context.is_process_default() && physical_default_lookup_supported();
         Box::pin(async move {
             let bind_device = if pin_physical {
                 physical_dns_bind_device(server_addr).await

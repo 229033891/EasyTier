@@ -25,6 +25,18 @@ pub fn init<R: Runtime, C: DeserializeOwned>(
 }
 
 /// Access to the vpnservice APIs.
+///
+/// NOTE: the command string passed to `run_mobile_plugin` MUST be lowerCamelCase
+/// — it is matched against the native method names verbatim:
+///   * Android: `PluginHandle.kt` keys `@Command` methods by `method.name`, and
+///     `@Command` has no name parameter, so only the Kotlin method name matches.
+///   * iOS: `@objc` selector names are camelCase too.
+///
+/// Tauri only applies `heck::AsLowerCamelCase` on the **JS IPC** path
+/// (`tauri/src/webview/mod.rs`), *not* on `run_mobile_plugin`, so the JS API
+/// (`guest-js/index.ts`) keeps its snake_case command names while these Rust
+/// wrappers must use camelCase. Passing snake_case here fails with
+/// "No command <name> found for plugin ...".
 pub struct Vpnservice<R: Runtime>(PluginHandle<R>);
 
 impl<R: Runtime> Vpnservice<R> {
@@ -36,25 +48,25 @@ impl<R: Runtime> Vpnservice<R> {
 
     pub fn prepare_vpn(&self, payload: VoidRequest) -> crate::Result<Status> {
         self.0
-            .run_mobile_plugin("prepare_vpn", payload)
+            .run_mobile_plugin("prepareVpn", payload)
             .map_err(Into::into)
     }
 
     pub fn start_vpn(&self, payload: StartVpnRequest) -> crate::Result<Status> {
         self.0
-            .run_mobile_plugin("start_vpn", payload)
+            .run_mobile_plugin("startVpn", payload)
             .map_err(Into::into)
     }
 
     pub fn stop_vpn(&self, payload: VoidRequest) -> crate::Result<Status> {
         self.0
-            .run_mobile_plugin("stop_vpn", payload)
+            .run_mobile_plugin("stopVpn", payload)
             .map_err(Into::into)
     }
 
     pub fn get_vpn_status(&self, payload: VoidRequest) -> crate::Result<VpnStatus> {
         self.0
-            .run_mobile_plugin("get_vpn_status", payload)
+            .run_mobile_plugin("getVpnStatus", payload)
             .map_err(Into::into)
     }
 
@@ -63,7 +75,7 @@ impl<R: Runtime> Vpnservice<R> {
         payload: VoidRequest,
     ) -> crate::Result<VpnTileActionResponse> {
         self.0
-            .run_mobile_plugin("consume_vpn_tile_action", payload)
+            .run_mobile_plugin("consumeVpnTileAction", payload)
             .map_err(Into::into)
     }
 }

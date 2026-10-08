@@ -17,6 +17,23 @@ mod win;
 #[cfg(target_os = "windows")]
 mod windows;
 
+/// True when this build has a real `find_*_physical_default` implementation.
+///
+/// Mirrors the `mod` / `cfg` gates above — **update together**. Platforms
+/// without an impl (Android, iOS, …) fall back to the trait default `Ok(None)`,
+/// which is indistinguishable from "no physical default route found". Callers
+/// must not report that as "TUN is swallowing DNS": Android keeps the whole app
+/// out of its own VpnService, so its DNS never enters the TUN in the first place.
+#[cfg(feature = "dns-resolver")]
+pub(crate) const fn physical_default_lookup_supported() -> bool {
+    cfg!(any(
+        all(target_os = "linux", feature = "linux-netlink"),
+        all(target_os = "macos", not(feature = "macos-ne")),
+        target_os = "freebsd",
+        target_os = "windows",
+    ))
+}
+
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
 use async_trait::async_trait;
