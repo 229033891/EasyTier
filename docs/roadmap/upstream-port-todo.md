@@ -2,11 +2,11 @@
 
 Status: **Roadmap**（P0–P2 代码已落袋，待 CI / `cargo test`；P3 待发版后独立集成）
 
-- 最近审阅：2026-10-08（发版线由 `v2.7.3d` 更正为当前 `releases/v2.7.44`；对照 `origin/dev`）
+- 最近审阅：2026-10-08（发版线由 `v2.7.3d` 更正为当前发版线，现 `releases/v2.7.45`；对照 `origin/dev`）
 - 背景：`main` 相对 `dev` 多出的提交里，**6 个是上游功能/修复**（#2609、#2622、#2626、#2627、#2632、#2633），其余为 fork 行政提交（README 改指向、sponsor 删除、CI/Docker 同步等，**不移植**）。提交计数会随时间漂移，以 `git log origin/dev..origin/main` 为准。
 - 总原则：**不 `merge main → dev`**（`dev` 大幅领先）。一律 cherry-pick / 适配移植。
 - 上游提交位置：`main` 分支。
-- 发版线：P0–P2 已合入 `dev`；验证通过后跟当前 `releases/v2.7.*` 发版线（2026-10-08 为 `releases/v2.7.44`），不默认双推历史分支。
+- 发版线：P0–P2 已合入 `dev`；验证通过后跟当前 `releases/v2.7.*` 发版线（2026-10-08 为 `releases/v2.7.45`），不默认双推历史分支。
 - 索引：[`../README.md`](../README.md)
 
 ---
