@@ -392,10 +392,15 @@ const defaultProtocolOptions = DEFAULT_PROTOCOL_SCHEMES.map(value => ({
 const defaultProtocolList = computed({
   get: () => parseDefaultProtocolList(curNetwork.value.default_protocol),
   set: (list: string[]) => {
-    // Clearing every entry falls back to the same default as
-    // parseDefaultProtocolList('') ('udp,tcp'), never bare 'tcp' — that would
-    // silently reintroduce the TCP-over-TCP default this UI moved away from.
-    const selected = new Set((list?.length ? list : ['udp', 'tcp']).map(s => s.toLowerCase()))
+    // Clearing every entry resets to the default list outright. Merging the
+    // default into `prev` here would just intersect it: clearing `tcp,wss`
+    // would keep `tcp` and append `udp` -> "tcp,udp", i.e. TCP first again,
+    // which is exactly the TCP-over-TCP default this UI moved away from.
+    if (!list?.length) {
+      curNetwork.value.default_protocol = normalizeDefaultProtocol('')
+      return
+    }
+    const selected = new Set(list.map(s => s.toLowerCase()))
     const prev = parseDefaultProtocolList(curNetwork.value.default_protocol)
     const kept = prev.filter(scheme => selected.has(scheme))
     const added = DEFAULT_PROTOCOL_SCHEMES.filter(

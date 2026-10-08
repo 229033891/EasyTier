@@ -641,6 +641,22 @@ describe('Config.vue network config projection', () => {
     expect(backend.default_protocol).toBe('wss,tcp,udp')
   })
 
+  it('resets to the udp,tcp default when the protocol MultiSelect is cleared', async () => {
+    // Regression: merging the default into the previous list would keep `tcp`
+    // and append `udp` -> "tcp,udp", i.e. TCP first again.
+    const { curNetwork, wrapper } = mountConfig({
+      ...makeConfig(),
+      default_protocol: 'tcp,wss',
+    })
+    await nextTick()
+
+    const multi = wrapper.find('#default_protocol')
+    multi.setValue('')
+    await nextTick()
+
+    expect(curNetwork.default_protocol).toBe('udp,tcp')
+  })
+
   it('projects bond count controls and omits them from backend JSON when blank', async () => {
     const { curNetwork, wrapper } = mountConfig()
     await nextTick()
