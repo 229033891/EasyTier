@@ -150,6 +150,11 @@ export async function notifyUnderlayNetworkChanged(generation?: number) {
   })
 }
 
+/** Android A9: arm startup grace before VpnService establish (seed-only underlay bumps). */
+export async function armUnderlayReconnectGrace() {
+  return await invoke('arm_underlay_reconnect_grace')
+}
+
 export async function getEasytierVersion() {
   return await invoke<string>('easytier_version')
 }

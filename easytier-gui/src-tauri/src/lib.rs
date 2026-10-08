@@ -3,6 +3,9 @@
 
 mod elevate;
 
+#[cfg(any(test, target_os = "android"))]
+mod underlay_reconnect_grace;
+
 #[cfg(target_os = "android")]
 mod android_vpn_watchdog;
 
@@ -263,6 +266,15 @@ async fn notify_underlay_network_changed(generation: Option<i64>) -> Result<usiz
     android_vpn_watchdog::reconnect_peers_after_underlay_change().await
 }
 
+/// Android A9: arm startup grace before VpnService establish so establish-time
+/// underlay callbacks only seed generation and do not tear down peer conns.
+#[cfg(target_os = "android")]
+#[tauri::command]
+fn arm_underlay_reconnect_grace() -> Result<(), String> {
+    android_vpn_watchdog::arm_underlay_reconnect_grace();
+    Ok(())
+}
+
 #[tauri::command]
 async fn set_tun_fd(fd: i32, instance_id: Option<String>) -> Result<(), String> {
     let Some(instance_manager) = INSTANCE_MANAGER.read().await.clone() else {
@@ -293,6 +305,8 @@ async fn set_tun_fd(fd: i32, instance_id: Option<String>) -> Result<(), String> 
     instance_manager
         .attach_tun_fd(uuid, fd)
         .map_err(|e| e.to_string())?;
+    #[cfg(target_os = "android")]
+    android_vpn_watchdog::arm_underlay_reconnect_grace();
     Ok(())
 }
 
@@ -1305,6 +1319,8 @@ pub fn run_gui() -> std::process::ExitCode {
             set_tun_fd,
             #[cfg(target_os = "android")]
             notify_underlay_network_changed,
+            #[cfg(target_os = "android")]
+            arm_underlay_reconnect_grace,
             easytier_version,
             set_dock_visibility,
             list_network_instance_ids,

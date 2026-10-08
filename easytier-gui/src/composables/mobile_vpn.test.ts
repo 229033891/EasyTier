@@ -22,6 +22,7 @@ const mocks = vi.hoisted(() => {
     prepareVpn: vi.fn(async () => ({ granted: true })),
     setTunFd: vi.fn(async () => undefined),
     notifyUnderlayNetworkChanged: vi.fn(async () => 0),
+    armUnderlayReconnectGrace: vi.fn(async () => undefined),
     updateNetworkConfigState: vi.fn(async () => undefined),
     startVpn: vi.fn(async () => {
       await listeners.get('vpn_service_start')?.({ fd: 1 })
@@ -66,6 +67,7 @@ vi.mock('tauri-plugin-vpnservice-api', () => ({
 }))
 
 vi.mock('./backend', () => ({
+  armUnderlayReconnectGrace: mocks.armUnderlayReconnectGrace,
   collectNetworkInfo: mocks.collectNetworkInfo,
   getConfig: mocks.getConfig,
   listNetworkInstanceIds: mocks.listNetworkInstanceIds,
@@ -124,6 +126,8 @@ beforeEach(() => {
   mocks.setTunFd.mockClear()
   mocks.notifyUnderlayNetworkChanged.mockReset()
   mocks.notifyUnderlayNetworkChanged.mockResolvedValue(0)
+  mocks.armUnderlayReconnectGrace.mockReset()
+  mocks.armUnderlayReconnectGrace.mockResolvedValue(undefined)
   mocks.startVpn.mockClear()
   mocks.stopVpn.mockClear()
   mocks.updateNetworkConfigState.mockReset()
@@ -159,10 +163,14 @@ describe('mobile VPN virtual IPv6', () => {
     })
     const vpn = await loadVpnModule()
     await vpn.onNetworkInstanceChange('A')
+    expect(mocks.armUnderlayReconnectGrace).toHaveBeenCalled()
     expect(mocks.startVpn).toHaveBeenCalledWith(expect.objectContaining({
       ipv4Addr: '10.0.0.1/24',
       ipv6Addr: 'fd00:0:0:0:0:0:0:1/64',
     }))
+    // Grace must arm before establish so underlay echoes during start are seed-only.
+    expect(mocks.armUnderlayReconnectGrace.mock.invocationCallOrder[0])
+      .toBeLessThan(mocks.startVpn.mock.invocationCallOrder[0])
   })
 })
 

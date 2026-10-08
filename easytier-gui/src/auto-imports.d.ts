@@ -13,6 +13,7 @@ declare global {
   const addVpnPortalClient: typeof import('./composables/backend')['addVpnPortalClient']
   const annotateNetworkInfoFromVpnService: typeof import('./composables/mobile_vpn')['annotateNetworkInfoFromVpnService']
   const annotateNetworkInfoWithMobileVpnRoutes: typeof import('./composables/mobile_vpn')['annotateNetworkInfoWithMobileVpnRoutes']
+  const armUnderlayReconnectGrace: typeof import('./composables/backend')['armUnderlayReconnectGrace']
   const buildTrayMenuItems: typeof import('./composables/tray')['buildTrayMenuItems']
   const clearLogFiles: typeof import('./composables/backend')['clearLogFiles']
   const clearVpnPortalClients: typeof import('./composables/backend')['clearVpnPortalClients']
@@ -170,6 +171,7 @@ declare module 'vue' {
     readonly addVpnPortalClient: UnwrapRef<typeof import('./composables/backend')['addVpnPortalClient']>
     readonly annotateNetworkInfoFromVpnService: UnwrapRef<typeof import('./composables/mobile_vpn')['annotateNetworkInfoFromVpnService']>
     readonly annotateNetworkInfoWithMobileVpnRoutes: UnwrapRef<typeof import('./composables/mobile_vpn')['annotateNetworkInfoWithMobileVpnRoutes']>
+    readonly armUnderlayReconnectGrace: UnwrapRef<typeof import('./composables/backend')['armUnderlayReconnectGrace']>
     readonly buildTrayMenuItems: UnwrapRef<typeof import('./composables/tray')['buildTrayMenuItems']>
     readonly clearLogFiles: UnwrapRef<typeof import('./composables/backend')['clearLogFiles']>
     readonly clearVpnPortalClients: UnwrapRef<typeof import('./composables/backend')['clearVpnPortalClients']>

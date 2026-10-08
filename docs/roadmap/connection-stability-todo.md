@@ -283,7 +283,7 @@ P1.6 stats jitter/loss 上报 + P1.1/P1.2 透参
 |----|------|
 | A3 Rust watchdog（孤儿停 VPN + tick） | **已完成（最小闭环）** — `easytier-gui/src-tauri/src/android_vpn_watchdog.rs` |
 | A3 后台无 WebView 自动拉起 VPN | 未做（需新鲜 virtual IP；避免盲启动） |
-| A9 网络切换 | **已完成** — Kotlin NetworkCallback + `setUnderlyingNetworks`；Rust 关 peer conn 重拨 |
+| A9 网络切换 | **已完成** — Kotlin NetworkCallback + `setUnderlyingNetworks`；Rust 关 peer conn 重拨；启动假切换见 Ops `android-startup-auto-stop.md` §6（同 netId 去重 + 5s 宽限期） |
 
 ---
 

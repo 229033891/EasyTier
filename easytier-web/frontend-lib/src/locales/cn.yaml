@@ -901,11 +901,9 @@ web:
     save_config_disabled_no_config: 当前没有可保存的配置
     save_config_disabled_meta: 正在加载权限信息，请稍候再保存
     save_config_disabled_readonly: 当前配置为只读，无法保存
-    config_saved: 配置已保存
     save_failed: 保存配置失败
     start_failed: 启动网络失败
     stop_failed: 停用网络失败
-    stop_success: 网络已禁用
     load_config_failed: 加载配置失败
     error_timeout: 操作超时。设备可能正在停止旧网络或处理其他任务，请稍候再试；若网络已在运行，可先到「状态」页确认。
     error_device_offline: 设备未连接或已离线，请确认设备在线后再操作。

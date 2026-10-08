@@ -199,6 +199,8 @@ class TauriVpnService : VpnService() {
         ipv6Addr = null
         routes = emptyArray()
         dns = null
+        underlayNetworkGeneration = 0
+        underlayNetworkId = 0
     }
 
     /**
@@ -207,6 +209,9 @@ class TauriVpnService : VpnService() {
      */
     private fun registerUnderlayNetworkCallback() {
         unregisterUnderlayNetworkCallback()
+        // Fresh session: do not inherit generation/id from a previous VpnService life.
+        underlayNetworkGeneration = 0
+        underlayNetworkId = 0
         val cm = getSystemService(ConnectivityManager::class.java) ?: return
         val callback = object : ConnectivityManager.NetworkCallback() {
             override fun onAvailable(network: Network) {
@@ -229,6 +234,8 @@ class TauriVpnService : VpnService() {
                 cm.registerNetworkCallback(NetworkRequest.Builder().build(), callback)
             }
             networkCallback = callback
+            // Seed id without bumping generation / notifying — establish often fires
+            // an immediate onAvailable for the same default network.
             cm.activeNetwork?.let { applyUnderlayNetwork(it, notifyChange = false) }
         } catch (e: Exception) {
             Log.w(TAG, "register underlay NetworkCallback failed", e)
@@ -283,7 +290,10 @@ class TauriVpnService : VpnService() {
         if (!notifyChange) {
             return
         }
-        if (netId == previousId && underlayNetworkGeneration > 0L) {
+        // Same underlay networkHandle: ignore (capability jitter / establish echo).
+        // Previously required generation > 0, so the first post-seed callback with
+        // the same id still bumped 0→1 and tore down freshly built peer conns.
+        if (netId == previousId) {
             return
         }
 

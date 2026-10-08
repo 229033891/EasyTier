@@ -902,11 +902,9 @@ web:
     save_config_disabled_no_config: No config available to save
     save_config_disabled_meta: Loading permissions — try again in a moment
     save_config_disabled_readonly: This config is read-only and cannot be saved
-    config_saved: Config Saved
     save_failed: Failed to save config
     start_failed: Failed to start network
     stop_failed: Failed to stop network
-    stop_success: Network disabled
     load_config_failed: Failed to load network config
     error_timeout: Operation timed out. The device may still be stopping a previous network or busy with another task. Wait and retry; if the network is already running, check the Status page.
     error_device_offline: The device is offline or not connected. Bring it online and try again.

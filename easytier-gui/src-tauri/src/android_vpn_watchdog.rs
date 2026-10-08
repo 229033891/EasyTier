@@ -10,7 +10,6 @@
 //!   close direct peer conns so ManualConnectorManager's 1s loop redials on the
 //!   new underlay — also without WebView.
 
-use std::sync::atomic::{AtomicI64, Ordering};
 use std::time::Duration;
 
 use serde::Serialize;
@@ -18,12 +17,16 @@ use tauri::{AppHandle, Emitter};
 use tauri_plugin_vpnservice::{VoidRequest, VpnserviceExt};
 use tokio::time::{MissedTickBehavior, interval};
 
+use crate::underlay_reconnect_grace::{
+    in_underlay_reconnect_grace, swap_underlay_generation,
+};
 use crate::{CLIENT_MANAGER, INSTANCE_MANAGER};
 
 const WATCHDOG_INTERVAL: Duration = Duration::from_secs(30);
 
-/// Last underlay generation observed by the watchdog (`-1` = never seen).
-static LAST_UNDERLAY_GENERATION: AtomicI64 = AtomicI64::new(-1);
+pub(crate) use crate::underlay_reconnect_grace::{
+    arm_underlay_reconnect_grace, note_underlay_generation,
+};
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -76,14 +79,13 @@ pub(crate) fn stop_vpn_if_no_tun(app: &AppHandle) -> Result<(), String> {
     stop_vpn_plugin(app)
 }
 
-/// Seed / advance the watchdog generation tracker (JS fast-path already acted).
-pub(crate) fn note_underlay_generation(generation: i64) {
-    LAST_UNDERLAY_GENERATION.fetch_max(generation, Ordering::SeqCst);
-}
-
 /// Force peer reconnect after underlay change (A9). Callable from the plugin
 /// event fast-path and from the watchdog when generation drifts.
 pub(crate) async fn reconnect_peers_after_underlay_change() -> Result<usize, String> {
+    if in_underlay_reconnect_grace() {
+        tracing::info!("skip underlay peer reconnect during startup grace");
+        return Ok(0);
+    }
     let Some(instance_manager) = INSTANCE_MANAGER.read().await.clone() else {
         return Ok(0);
     };
@@ -160,16 +162,25 @@ async fn tick_once(app: &AppHandle) -> Result<(), String> {
         stop_vpn_plugin(app)?;
         action = Some("stop_orphan");
     } else if let Some(generation) = underlay_gen {
-        let previous = LAST_UNDERLAY_GENERATION.swap(generation, Ordering::SeqCst);
+        let previous = swap_underlay_generation(generation);
         // First observation only seeds the counter; a later bump means switch.
         if previous >= 0 && previous != generation {
-            tracing::warn!(
-                previous,
-                generation,
-                "android vpn watchdog: underlay network generation changed; reconnecting peers"
-            );
-            let _ = reconnect_peers_after_underlay_change().await?;
-            action = Some("underlay_reconnect");
+            if in_underlay_reconnect_grace() {
+                tracing::info!(
+                    previous,
+                    generation,
+                    "android vpn watchdog: underlay generation changed during startup grace; seeding only"
+                );
+                action = Some("underlay_seed_grace");
+            } else {
+                tracing::warn!(
+                    previous,
+                    generation,
+                    "android vpn watchdog: underlay network generation changed; reconnecting peers"
+                );
+                let _ = reconnect_peers_after_underlay_change().await?;
+                action = Some("underlay_reconnect");
+            }
         }
     }
 

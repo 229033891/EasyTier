@@ -27,7 +27,7 @@
 | A6 | **已修** | 无实例返回 Err；可选 `instanceId`；失败清 `running`；`tun_device_error` → 前端重建 |
 | A7 | **已修** | TUN 读/写失败发 `TunDeviceError`；sink 连续失败熔断；前端重建 |
 | A8 | **已修** | `install_mobile_tun` 失败 `set_tun_device_error` → 前端重建；R7 另加瞬态 attach 原地重试 |
-| A9 | **已修** | `NetworkCallback` + `setUnderlyingNetworks`；generation 暴露给 Rust watchdog；关 peer conn 触发 1s 重拨 |
+| A9 | **已修** | `NetworkCallback` + `setUnderlyingNetworks`；generation 暴露给 Rust watchdog；关 peer conn 触发 1s 重拨；后续补丁：同 netId 不去 bump + 启动 5s 宽限期（见 [`../ops/android-startup-auto-stop.md`](../ops/android-startup-auto-stop.md) §6） |
 | A10 | **已修** | `NicCtx::shutdown` + `drain/stop` 等待 JoinSet，避免 fd 复用 EEXIST |
 | A11 | **已修** | `resolveVpnMtu(config)`：`config.mtu` 默认 1380，加密减 20 |
 | A12 | **已修** | 去掉硬编码 `fd00::1/128`；**R3** 已加 `MyNodeInfo.virtual_ipv6` 并按实例下发 |
@@ -454,7 +454,7 @@ first
 | R4 | **已拍板** | 保持桌面对齐的 `resolveVpnMtu`；蜂窝余量靠全网调低 `mtu`，不安卓单端硬编码 |
 | R7 | **已修** | `tun_mobile.rs`：瞬态 attach 最多 3 次原地重试；失败再 `set_tun_device_error`；`run_for_mobile` 不再提前 emit |
 | A3 | **已修（最小闭环）** | `android_vpn_watchdog.rs`：30s 探测 + 孤儿 `stop_vpn`；`notify_vpn_stop_if_no_tun` 同步停；前端听 `vpn_watchdog_tick`。后台「实例在 / VPN 不在」的自动拉起仍依赖 WebView 醒着时的 tick→JS（故意不做无虚拟 IP 的盲启动） |
-| A9 | **已修** | Kotlin `registerDefaultNetworkCallback` + debounce + `setUnderlyingNetworks`；`underlayNetworkGeneration` 进 `get_vpn_status`；Rust watchdog / `notify_underlay_network_changed` 关 peer conn → ManualConnector 1s 重拨；JS 听 `default_network_changed` 快路径 |
+| A9 | **已修** | Kotlin `registerDefaultNetworkCallback` + debounce + `setUnderlyingNetworks`；`underlayNetworkGeneration` 进 `get_vpn_status`；Rust watchdog / `notify_underlay_network_changed` 关 peer conn → ManualConnector 1s 重拨；JS 听 `default_network_changed` 快路径。启动误触发另见 Ops [`android-startup-auto-stop.md`](../ops/android-startup-auto-stop.md)：同 `networkHandle` 不 bump、会话清 generation、`arm_underlay_reconnect_grace` 5s（延长不重置已 seed） |
 
 **R1 的两道防抖（本次新增，避免修复本身变成重启风暴）**
 

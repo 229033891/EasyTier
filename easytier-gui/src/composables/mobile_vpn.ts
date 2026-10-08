@@ -10,6 +10,7 @@ import {
   type VpnTileAction,
 } from 'tauri-plugin-vpnservice-api'
 import {
+  armUnderlayReconnectGrace,
   collectNetworkInfo,
   getConfig,
   listNetworkInstanceIds,
@@ -454,6 +455,14 @@ async function doStartVpn(
   // `start_vpn` internally replaces the TUN (stopInternal → establish), so the
   // old fd close will surface as a core TUN error. Cover the whole transition (R1).
   vpnTransitionDeadline = Date.now() + VPN_TRANSITION_GRACE_MS
+  // A9: arm before establish so NetworkCallback / setUnderlyingNetworks echoes
+  // only seed generation and do not close freshly built peer conns.
+  try {
+    await armUnderlayReconnectGrace()
+  }
+  catch (e) {
+    console.warn('arm underlay reconnect grace failed', e)
+  }
 
   console.log('start vpn service', ipv4Addr, cidr, routes, dns, mtu, ipv6WithPrefix)
   const request = {
