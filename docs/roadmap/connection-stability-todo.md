@@ -4,7 +4,7 @@
 
 - Status: **Roadmap**（Checklist；P-UX + P0.1–P0.4 + P1.1–P1.3/P1.6–P1.8 + P2.1–P2.3 + P-AUTO.L1 已落地；下一步 P0.5 或 P1.5）
 - 日期：2026-10-06
-- 最近审阅：2026-10-07（P-AUTO.L1：`default_protocol` CSV 有序 scheme + 直连排序 / 手动 URL×scheme 降级）
+- 最近审阅：2026-10-08（P-UX.4：开关控件统一 `ToggleSwitch` + 9 个负逻辑字段正向展示）；2026-10-07（P-AUTO.L1：`default_protocol` CSV 有序 scheme + 直连排序 / 手动 URL×scheme 降级）
 - 背景：对照 OpenVPN / IPsec 的「固定隧道 + 强保活」模型，梳理 EasyTier Mesh（多 PeerConn + 打洞 + 中继）的稳定性差距与可落地项；**另纳入 2026-10-06 用户反馈：高级选项互斥缺校验、长表单占空间、单协议配置失败后无智能回落**
 - 相关 Current：[`../current/peer-connections.md`](../current/peer-connections.md)、[`../current/tunnels-and-transport.md`](../current/tunnels-and-transport.md)
 - 相关 Roadmap：[`traffic-camouflage.md`](./traffic-camouflage.md)、[`multi-link-bonding.md`](./multi-link-bonding.md)（异质优先 / 同质补齐；代码未实现）、[`market-comparison-2026-10.md`](./market-comparison-2026-10.md)、[`upstream-port-todo.md`](./upstream-port-todo.md)（#2632 TCP 打洞 1s ping）
@@ -189,6 +189,8 @@ score = w_lat * norm(rtt)
   - 改动面：同上 `Config.vue`，复用 VPN Portal 双列 grid 模式；`Select` 与 `InputNumber` 对齐、`placeholder` 不截断需验证
   - 非目标：不改字段语义与后端
 - [x] **P-UX.3** 帮助文案只描述 Current，不引用本 Roadmap 草案（遵守 `docs/README.md` 约定）
+- [x] **P-UX.4** 开关控件与正向展示统一（2026-10-08）：5 处 `ToggleButton`（VPN Portal / 网络白名单 / 自定义路由 / socks5 / 共享 IPv6 子网）改 `ToggleSwitch`；负逻辑字段由 2 个扩到 **9 个**走 `inverted` 正向展示（`disable_p2p` / `disable_kcp_input` / `disable_quic_input` / `disable_tcp|udp|sym_hole_punching` / `disable_upnp` / `disable_ipv6` / `disable_encryption`），字段名与后端语义不变
+  - 约定与踩坑见 [`../current/desktop-gui-and-config-server.md`](../current/desktop-gui-and-config-server.md) §4（反转后冲突文案要同步 `configConflicts.ts` 的 `*_help` key）
 
 ### P-AUTO — 智能探测与优选（新增草案，对应 S8；分 L1-L4）
 

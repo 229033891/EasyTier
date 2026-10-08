@@ -2,11 +2,11 @@
 
 Status: **Roadmap**（P0–P2 代码已落袋，待 CI / `cargo test`；P3 待发版后独立集成）
 
-- 最近审阅：2026-10-06（对照 `origin/dev`；发版线 `releases/v2.7.3d`）
+- 最近审阅：2026-10-08（发版线由 `v2.7.3d` 更正为当前 `releases/v2.7.44`；对照 `origin/dev`）
 - 背景：`main` 相对 `dev` 多出的提交里，**6 个是上游功能/修复**（#2609、#2622、#2626、#2627、#2632、#2633），其余为 fork 行政提交（README 改指向、sponsor 删除、CI/Docker 同步等，**不移植**）。提交计数会随时间漂移，以 `git log origin/dev..origin/main` 为准。
 - 总原则：**不 `merge main → dev`**（`dev` 大幅领先）。一律 cherry-pick / 适配移植。
 - 上游提交位置：`main` 分支。
-- 发版线：P0–P2 已合入 `dev`；验证通过后跟当前 `releases/v2.7.3*` 发版线（现 `v2.7.3d`），不默认双推历史分支。
+- 发版线：P0–P2 已合入 `dev`；验证通过后跟当前 `releases/v2.7.*` 发版线（2026-10-08 为 `releases/v2.7.44`），不默认双推历史分支。
 - 索引：[`../README.md`](../README.md)
 
 ---
@@ -62,7 +62,7 @@ Status: **Roadmap**（P0–P2 代码已落袋，待 CI / `cargo test`；P3 待�
 ## P3 —— 发版后单开分支集成
 
 ### 6. #2622 中央网络控制台 `feat(web): add central network management console`
-- [ ] 当前发版线（`releases/v2.7.3d` 等）收尾后再开独立集成（分支建议 `integrate/central-network`），从 `main` 拉入解冲突
+- [ ] 当前发版线（`releases/v2.7.44` 等）收尾后再开独立集成（分支建议 `integrate/central-network`），从 `main` 拉入解冲突
 - [ ] 规模参考：约 101 文件、约 1.9 万加行；冲突重灾区 `client_manager/`、`REST`、`frontend-lib`（正是 dev 改得最多的区域）
 - [ ] 前置：P0–P2 落袋并完成 CI/`cargo test` 验证
 

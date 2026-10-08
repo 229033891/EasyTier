@@ -1,12 +1,11 @@
 name: ET OpenWrt
 
-# 生成 OpenWrt x86_64 包 (只要这 6 个):
-#   OpenWrt 24.10 (opkg): easytier_<ver>_x86_64.ipk + luci-app-easytier_<ver>_all.ipk
-#                         + luci-i18n-easytier-zh-cn_<ver>_all.ipk (中文语言包)
-#     opkg install /tmp/easytier_*.ipk /tmp/luci-app-easytier_*.ipk /tmp/luci-i18n-easytier-zh-cn_*.ipk
-#   OpenWrt 25.12 (apk):  easytier-<ver>.apk + luci-app-easytier-<ver>.apk
+# 生成 OpenWrt x86_64 包 (只要这 3 个), 仅支持 OpenWrt 25.12+ (apk 包管理器):
+#   OpenWrt 25.12+ (apk): easytier-<ver>.apk + luci-app-easytier-<ver>.apk
 #                         + luci-i18n-easytier-zh-cn-<ver>.apk (中文语言包)
 #     apk add --allow-untrusted /tmp/easytier-*.apk /tmp/luci-app-easytier-*.apk /tmp/luci-i18n-easytier-zh-cn-*.apk
+#
+# 不再生成 OpenWrt <= 24.10 的 opkg/ipk 包 (2026-10-08 拍板; 25.12 起 apk 取代 opkg).
 #
 # 注意: OpenWrt 的 .apk 和 Android 的 easytier-gui.apk 不是同一个东西, 不要混淆.
 # LuCI 界面源码来自 https://github.com/229033891/luci-app-easytier（官方 fork）,
@@ -70,7 +69,7 @@ jobs:
             relevant: ${{ env.RELEVANT_PATHS }}
 
   build-bins:
-    # 先编译 x86_64 musl 静态二进制, 供 easytier ipk/apk 打包用.
+    # 先编译 x86_64 musl 静态二进制, 供 easytier apk 打包用.
     # 包含 easytier-core + easytier-cli (+ easytier-web-embed, LuCI 自建控制台用).
     runs-on: ubuntu-24.04
     needs: pre_job
@@ -137,17 +136,16 @@ jobs:
           path: bins/*
 
   build-openwrt:
-    # 用 OpenWrt SDK 打包. ipk 给 24.10 (opkg), apk 给 25.12 (apk add).
+    # 用 OpenWrt SDK 打包, 只出 apk: OpenWrt 25.12 起 apk 取代 opkg, <=24.10 的 ipk 已不再产出.
     # SDK 镜像 tag 对应关系见 https://github.com/openwrt/docker/pkgs/container/sdk,
-    # 换版本时改下面的 sdk 即可 (apk 格式用 SNAPSHOT, 与 25.12 通用).
+    # 换版本时改下面的 sdk 即可. 必须带补丁号: x86_64-25.12.5 存在, x86_64-25.12 不存在(404).
+    # 保留 matrix 结构 (当前只有一行), 方便以后要加回别的 pkgtype/sdk 时改动最小.
     strategy:
       fail-fast: false
       matrix:
         include:
-          - pkgtype: ipk
-            sdk: "24.10.2"
           - pkgtype: apk
-            sdk: "SNAPSHOT"
+            sdk: "25.12.5"
     runs-on: ubuntu-latest
     needs: [pre_job, build-bins]
     if: needs.pre_job.outputs.should_skip != 'true'
@@ -261,9 +259,9 @@ jobs:
         run: |
           set -e
           mkdir -p dist
-          find out-${{ matrix.pkgtype }}/bin -type f \( -name '*.ipk' -o -name '*.apk' \) -exec cp {} dist/ \;
+          find out-${{ matrix.pkgtype }}/bin -type f -name '*.apk' -exec cp {} dist/ \;
           ls -l dist/
-          # ipk 用下划线 (easytier_1.2.3_x86_64.ipk)；apk 用连字符 (easytier-1.2.3.apk)
+          # apk 用连字符 (easytier-1.2.3.apk / luci-app-easytier-1.2.3-r1.apk)
           pkg="${{ matrix.pkgtype }}"
           ver="$(python3 - <<'PY'
           import re, pathlib
@@ -272,9 +270,9 @@ jobs:
           PY
           )"
           shopt -s nullglob
-          easytier=(dist/easytier_*.${pkg} dist/easytier-*.${pkg})
-          luci=(dist/luci-app-easytier_*.${pkg} dist/luci-app-easytier-*.${pkg})
-          i18n=(dist/luci-i18n-easytier-zh-cn_*.${pkg} dist/luci-i18n-easytier-zh-cn-*.${pkg})
+          easytier=(dist/easytier-*.${pkg})
+          luci=(dist/luci-app-easytier-*.${pkg})
+          i18n=(dist/luci-i18n-easytier-zh-cn-*.${pkg})
           # 只要 easytier 主包 + luci 界面包 + 中文语言包
           # (中文包是 luci-app-easytier 编译时自动带出的子包, 无需加到 PACKAGES 里)
           (( ${#easytier[@]} > 0 )) || { echo "missing easytier .${pkg}"; ls -l dist/; exit 1; }
@@ -282,11 +280,11 @@ jobs:
           (( ${#i18n[@]} > 0 )) || { echo "missing luci-i18n-easytier-zh-cn .${pkg}"; ls -l dist/; exit 1; }
           # Guard against the old MAKEFILE_LIST include bug silently baking 2.6.4.
           # Boundary-aware match (avoid bare *${ver}* matching 2.7.40):
-          #   apk:  easytier-2.7.4.apk / luci-app-easytier-2.7.4-r1.apk
-          #   ipk:  easytier_2.7.4_x86_64.ipk / luci-app-easytier_2.7.4-r1_all.ipk
-          for f in "${easytier[@]}" "${luci[@]}"; do
+          #   easytier-2.7.4.apk / luci-app-easytier-2.7.4-r1.apk
+          #   luci-i18n-easytier-zh-cn-2.7.4.apk
+          for f in "${easytier[@]}" "${luci[@]}" "${i18n[@]}"; do
             base="$(basename "$f")"
-            if [[ "$base" != *"-${ver}.apk" && "$base" != *"-${ver}-"* && "$base" != *"_${ver}.apk" && "$base" != *"_${ver}-"* && "$base" != *"_${ver}_"* ]]; then
+            if [[ "$base" != *"-${ver}.apk" && "$base" != *"-${ver}-"* ]]; then
               echo "package version mismatch: expected ${ver} in ${base}"
               ls -l dist/
               exit 1

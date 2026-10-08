@@ -48,7 +48,8 @@
 - 响应式断点：`@media (max-width: 760px)` → 高级开关分组从 2 列变 1 列、开关项双列；`@media (max-width: 640px)` → `.config-inline-label` 从 11rem 收到 5.5rem、`.config-inline-expand` 的 `margin-left` 归零（展开项和开关失去视觉从属）。
 - 样式分两处：组件内 `<style scoped>`（`.advanced-*`、`.config-compact-*`）+ 全局 `src/style.css`（`.config-inline-field/label/control/expand`，因为 scoped 穿不进子组件）。
 - PrimeVue **4.3.9**，`ToggleSwitch` 可用。
-- **UX 债已修（2026-10-08，方案 A）**：5 个 `ToggleButton class="w-48"`（VPN Portal / 网络白名单 / 自定义路由 / socks5 / 共享 IPv6 子网）已换成 `ToggleSwitch`（去掉固定 192px 宽与 `off-icon="pi pi-times"` 的错位语义）；7 个负逻辑勾选框（`disable_p2p` / `disable_kcp_input` / `disable_quic_input` / `disable_tcp|udp|sym_hole_punching` / `disable_upnp`）已走 `inverted` 机制，正向展示为 `allow_*`（字段名不变）。**反转展示会改变冲突提示的措辞方向，改文案时务必核对 `configConflicts.ts` 里对应的 `*_help` key。**
+- **UX 债已修（2026-10-08，方案 A）**：5 个 `ToggleButton`（VPN Portal / 网络白名单 / 自定义路由 / socks5 / 共享 IPv6 子网）已换成 `ToggleSwitch`（去掉固定 192px 宽与 `off-icon="pi pi-times"` 的错位语义）；负逻辑字段从 2 个扩到 **9 个**走 `inverted` 机制正向展示为 `allow_*`（字段名不变）：`disable_p2p` / `disable_kcp_input` / `disable_quic_input` / `disable_tcp_hole_punching` / `disable_udp_hole_punching` / `disable_sym_hole_punching` / `disable_upnp` / `disable_ipv6` / `disable_encryption`。**反转展示会改变冲突提示的措辞方向，改文案时务必核对 `configConflicts.ts` 里对应的 `*_help` key**（`advancedFlagConflictHelpKey()` 的返回值**优先于** `inverted.help`）。
+- **这套约定已落进文档**：`docs/current/desktop-gui-and-config-server.md` §4（开关控件 + `inverted` + 两个断点）、`docs/current/peer-connections.md` 的「Web 控件」行、`docs/roadmap/connection-stability-todo.md` 的 P-UX.4。**改配置页 UI 先看这几处，别只读代码。**
 
 ## 状态页「代理 CIDR 路由同步」的显示规则（2026-10-08 查证 + 改造）
 
@@ -56,6 +57,7 @@
 - **字段来源因平台而异**：桌面 = L2 路由同步；Android 由 `easytier-gui/src/composables/mobile_vpn.ts` 的 `annotateNetworkInfoWithMobileVpnRoutes` 覆盖写入 VpnService 路由，OHOS 由 `runtime_api.rs` 的 `annotate_ohos_proxy_cidr_route_sync` 覆盖（那边 L2 ifcfg 是 no-op，core 只会报空占位 `desired=[-] installed=[-]`）。
 - **2026-10-08 起改为「字段有值就显示」**（方案 A）：`Status.vue` 用 `routeSync?.trim()` 判定，空占位也照显示，便于确认"确实一条代理路由都没装"。原来的 `isMeaningfulProxyCidrRouteSync()` 判定函数已删除（死代码 + 其单测）。字段缺失（老核心）或全空白仍不显示。
 - 回归测试在 `tests/status-vpn-portal.spec.ts`（挂载 Status.vue；**「节点详情」面板默认折叠，断言前要先点 `button[data-label="node_info_details"]`**）。
+- **已落进文档**：`docs/current/traffic-steering.md` 的「可观测」条目下（含展示规则 + 各平台摘要来源）；Roadmap 侧 `traffic-steering-vNext.md` §5.2 原写「仍待做」已改为已落地。
 
 ## 版本号 bump 的文件清单（2026-10-08 定稿：10 文件 / 17 处）
 
@@ -75,14 +77,34 @@
 
 **不硬编码版本的地方**：`.github/workflows/openwrt.yml` 用正则从 `easytier-src/easytier/Cargo.toml` 读版本（L178 / L271），文件里的 `2.7.4` / `2.6.4` 只是注释；`.github/workflows/docker.yml` L19 的 `image_tag.default: 'v2.7.2'` 是**陈旧的手动 dispatch 默认值**，历史 bump 从未同步（未改）。
 
+## 所有改动一律在 `dev` 分支（强制，2026-10-08 用户表态）
+
+「记得所有修改始终在 dev 分支进行」——**不要**直接在 `releases/*` 上改代码；release 分支只从 dev 的 bump 提交切出、以及后续把 dev 合回去。改完先确认 `git branch --show-current` = `dev`。
+
+## OpenWrt 打包（`.github/workflows/openwrt.yml`，2026-10-08 查证）
+
+- **本仓库只有这一个 OpenWrt 相关文件**：LuCI 界面与 feed Makefile 来自外部仓库 `229033891/luci-app-easytier`（workflow 里 checkout 到 `feed/`，本地**无副本**），所以改 feed 要另开仓库。ipk/apk 的引用也只在这个 workflow 里（README / script / docs 都没有）。
+- 流水线：`build-bins`（musl x86_64 编 `easytier-core` / `easytier-cli` / `easytier-web-embed`，UPX 压缩后传 `ET-openwrt-bins`）→ `build-openwrt`（矩阵）→ `openwrt-result` 聚合。
+- **2026-10-08 起只出 apk（用户拍板，仅支持 OpenWrt 25.12+）**：矩阵由双轨（`ipk`+`24.10.2`、`apk`+`SNAPSHOT`）改为单行 `pkgtype: apk` + `sdk: "25.12.5"`；头注释、`find` 的 `*.ipk` 分支、collect 里带下划线的 glob、版本守卫里的 ipk 模式全部清掉。产出 3 个包：`easytier` + `luci-app-easytier` + 自动带出的 `luci-i18n-easytier-zh-cn`。**artifact 名保留 `ET-openwrt-x86_64-apk`**（release 里的 zip 名 `ET-openwrt-x86_64-apk-<ver>.zip` 不能变，否则老用户脚本失效）。矩阵结构故意留着（单行），以后要加回别的 pkgtype 改动最小。
+- **ghcr `openwrt/sdk` 标签实测**（2026-10-08，用 ghcr token + manifests HEAD 探测）：
+  - `x86_64-SNAPSHOT` ✅、`x86_64-24.10.2` ✅、`x86_64-24.10.4/5/6` ✅
+  - **`x86_64-25.12.0` ~ `x86_64-25.12.5` 全部存在（最新 `25.12.5`）**；`x86_64-25.12`（不带补丁号）**404**
+  - → 已改用固定 `25.12.5`（原为 `SNAPSHOT`，跟 master 会漂到未来大版本、构建不可复现）。
+  - 探测方法：`curl -s --ssl-no-revoke -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $TOKEN" -H "Accept: application/vnd.oci.image.index.v1+json" https://ghcr.io/v2/openwrt/sdk/manifests/<tag>`（token 从 `https://ghcr.io/token?scope=repository%3Aopenwrt%2Fsdk%3Apull&service=ghcr.io` 取）。**注意 tags/list 要翻页（Link 头），且 Python urllib 走不通代理 → 用 curl。**
+- `openwrt/gh-action-sdk` 官方 README 确认**支持 apk**：`KEY_BUILD` 签 ipk feed、`PRIVATE_KEY` 签 apk feed；`ARCH` 接受 `x86_64-22.03.2` 这种带版本的形式。本 workflow **没传签名密钥** → 包未签名 → 设备上必须 `apk add --allow-untrusted`（头注释已写明）。
+- OpenWrt **25.12（2026-03 发布）起 apk 取代 opkg**；≤ 24.10 仍是 opkg/ipk。所以「只支持 25+」= 只出 apk，代价是 24.10 及更老设备拿不到包。
+- `release.yml` 对 OpenWrt artifact 是**按目录名通用处理**（`for x in ls`，只跳过 `ET-openwrt-bins` / `ET-web-dashboard`，其余逐个 `zip`）→ 删掉 ipk 轨**不会**破坏 release.yml。但 artifact 名决定 release 里的 zip 名（现为 `ET-openwrt-x86_64-ipk-<ver>.zip` / `ET-openwrt-x86_64-apk-<ver>.zip`）→ 只出 apk 时**建议保留 `-apk` 后缀**，避免老用户脚本里的文件名失效。
+- 版本号来源：workflow 用正则从 `easytier-src/easytier/Cargo.toml` 读 `version` 生成 `feed/version.mk`，并把 feed Makefile 里的相对 `-include .../version.mk` 改写成绝对 `/feed/version.mk`、把 `PKG_VERSION:=$(or $(EASYTIER_VERSION),2.6.4)` 钉成具体值；改不动会 `SystemExit` 拒绝构建（防止静默产出 2.6.4 的老包）。**所以 bump 版本只需改 `easytier/Cargo.toml`，不用动 workflow。**
+
 ## 环境备注
 
 - **`easytier-web/frontend-lib` 有两个测试脚本**：`test:config-ui`（= `vitest run --config vitest.config.ts`）与 `test:network-config`（= `pnpm build && node scripts/test-network-config.mjs`）。**CI 只跑前者**（`linux.yml:77`），后者本地才跑；改完配置序列化相关代码要**两个都跑**。2026-10-08 起两半都绿（脚本的 `allFieldFixture()` 补齐了 11 个 proto 字段，并修了下面那个 BigInt bug）。
 - **protobuf-ts 的 int64/uint64 是 BigInt，JSON 形状却要字符串**（2026-10-08 修）：`toBackendNetworkConfig` 把消息实例展开成普通对象再 `fromJson`，BigInt 会漏出来抛 `Cannot parse JSON bigint`（如 `managed_credentials[].expiry_unix`，非 optional 字段被类初始化成 `0n`，所以只要数组非空必炸）→ 已在 `networkCompat.ts` 的 `dropUnsupportedJsonValues()` 里统一 `bigint → toString()`。**以后往 NetworkConfig 加 int64/uint64 字段（尤其嵌套消息里的），记得确认这条转换覆盖到了。**
 - **`allFieldFixture()` 覆盖检查的坑**：它用 `{...DEFAULT_NETWORK_CONFIG()}`，而 `NetworkConfigPb.create()` 只给**非 optional** 字段填默认值（repeated → `[]`）。所以 repeated 字段"看起来覆盖了"其实值是空的（会被 `toJson` 省略，过不了 round-trip 的「字段必须在场」检查），`optional` 字段则真的缺席。加字段时要显式给值。
 - **`cargo test` 跑不起来**：测试二进制能编译链接，启动时 `STATUS_DLL_NOT_FOUND (0xc0000135)`。已排除随包 DLL（只有运行时动态加载的 wintun/Packet）与系统 VC 运行库，属环境问题，同环境跑其它 crate 的测试也一样。
-- **沙箱下 `git` 改状态要回读确认（2026-10-08 踩到）**：`git branch releases/v2.7.44 dev` 与 `git update-ref refs/heads/releases/v2.7.44 <sha>` 都 **exit 0 但静默不生效**（需要新建 `.git/refs/heads/releases/` 目录的那种分支名）；而普通分支名（`__probe__`）正常。`touch .git/.writetest` 倒是能持久。绕法：先 `mkdir -p .git/refs/heads/releases`，再写 loose ref（`git rev-parse <sha> > .git/refs/heads/releases/vX.Y.Z`）或再跑 `git branch`。**凡是改 git 状态的命令，之后必须用 `git branch --list` / `git rev-parse` / `git show-ref` 回读验证。**
-- **本机 `git` 联网需绕证书吊销检查**：`git ls-remote` / `git push` 默认报 `schannel: ... CRYPT_E_REVOCATION_OFFLINE (0x80092013)`。`-c http.schannelCheckRevoke=false` **无效**；可用的是 `env GIT_SSL_NO_VERIFY=true git -c http.schannelCheckRevoke=false -c http.sslBackend=openssl <cmd>`（或 `curl --ssl-no-revoke`）。**网络本身是通的**（`curl --ssl-no-revoke` 打 github 返回 200），不是断网。
+- **沙箱下 `git` 改状态要回读确认（2026-10-08 踩到）**：`git branch releases/v2.7.44 dev`、`git branch -f`、`git update-ref`、甚至 `git fetch` 更新 `refs/remotes/*`，都出现 **exit 0 但静默不生效**（`git branch -f` 还把分支搞没了）；`refs/remotes/origin/*` 在 `packed-refs` 里时尤其如此（git 要重写 packed-refs）。绕法：**直接写 loose ref 文件**——`mkdir -p .git/refs/heads/releases` 后 `git rev-parse <rev> > .git/refs/heads/releases/vX.Y.Z`（loose 会遮蔽 packed，已验证跨命令持久）。**凡是改 git 状态的命令，之后必须用 `git branch --list` / `git rev-parse` / `git show-ref` / `git status -sb` 回读验证**，远端真实状态用 `git ls-remote` 核对。
+- **git 2.55 的 `git rev-parse --short` 不接受多个 rev**：`git rev-parse --short dev origin/dev` 报 `fatal: Needed a single revision`。要么去掉 `--short`，要么逐个调用。
+- **本机 `git` 联网需绕证书吊销检查**：`git ls-remote` / `git fetch` / `git push` 默认报 `schannel: ... CRYPT_E_REVOCATION_OFFLINE (0x80092013)`。`-c http.schannelCheckRevoke=false` **无效**；可用的是 `env GIT_SSL_NO_VERIFY=true git -c http.schannelCheckRevoke=false -c http.sslBackend=openssl <cmd>`（或 `curl --ssl-no-revoke`）。**网络本身是通的**（`curl --ssl-no-revoke` 打 github 返回 200），不是断网。
 - 需要 SQL 层验证时，可行办法是**用 Python `sqlite3` 从源码正则抽出建表/查询 SQL 直接跑**（绕开 Rust 编译与测试运行时），已验证有效。
 - cargo 路径：`C:\Users\Administrator\.cargo\bin\cargo.exe`（不在默认 PATH，需显式加入）。`rustfmt` 只装在 `1.95.0` 工具链上（不是 rust-toolchain.toml 指定的 `1.95`），要用 `rustup run 1.95.0 rustfmt --edition 2024 <file>`；它只能查语法，查不出类型错误。
 - **Rust 侧几个易踩的坑**：

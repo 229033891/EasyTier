@@ -3,7 +3,7 @@
 ## Status
 
 - Status: **Current**
-- 最近审阅：2026-10-06
+- 最近审阅：2026-10-08（补：状态页 `proxy_cidr_route_sync` 展示规则与各平台摘要来源）
 - 范围：`exit_nodes` / `enable_exit_node` / `proxy_cidrs` / `manual_routes` / TUN 系统路由同步 / `allow_peer_default_without_exit`
 - 规划中的改动见：[`../roadmap/traffic-steering-vNext.md`](../roadmap/traffic-steering-vNext.md)、[`../roadmap/domain-proxy.md`](../roadmap/domain-proxy.md)；默认路由 Phase 2：[`../roadmap/default-route-and-underlay-excludes.md`](../roadmap/default-route-and-underlay-excludes.md)（论证全文 [`../archive/default-route-and-underlay-excludes-2026-10.md`](../archive/default-route-and-underlay-excludes-2026-10.md)）
 - DNS：[`magic-dns.md`](./magic-dns.md)
@@ -76,6 +76,8 @@ IPv6：VIP / 非 `/0` 的 proxy LPM → `exit_nodes`（同样要求下一跳）�
 - `manual_routes` 开启：整表由手动列表覆盖，**不**自动加出口默认路由  
 - `enable_exit_node` **不**向全网通告 `/0`  
 - 可观测：`NetworkInstanceRunningInfo.proxy_cidr_route_sync` 展示「期望 vs 已安装 vs 最后错误」摘要  
+  - **状态页展示规则**（2026-10-08 起）：字段**有值就展示**，空占位（`desired=[-] installed=[-] exit=…`）也照显示——空摘要不是「没数据」，而是「确实一条代理路由都没装」，便于一眼确认。字段缺失（老核心）或全空白不显示。
+  - **摘要来源因平台而异**，排障时必须先分清：桌面 = L2 路由同步（`easytier/src/instance/virtual_nic.rs::report_proxy_cidr_route_sync`）；Android = GUI `easytier-gui/src/composables/mobile_vpn.ts::annotateNetworkInfoWithMobileVpnRoutes` 按 VpnService 实装路由**覆盖写入**（那边 L2 ifcfg 是 no-op，空占位等价于「VPN 没装任何路由」）；OHOS = `easytier-contrib/easytier-ohrs/src/exports/runtime_api.rs::annotate_ohos_proxy_cidr_route_sync` 覆盖（`nearby_management.rs` 调用）。
 - `add`/`remove` **仅成功时**记入已安装集合；失败 warn，1 秒 interval 对照期望集合重试  
 
 ### 平台差异

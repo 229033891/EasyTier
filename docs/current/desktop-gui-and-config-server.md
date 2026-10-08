@@ -3,7 +3,7 @@
 ## Status
 
 - Status: **Current**
-- 最近审阅：2026-10-04
+- 最近审阅：2026-10-08（补 §4：配置页开关控件 `ToggleSwitch` + 负逻辑字段正向展示约定）
 - 范围：Windows/Linux/macOS 桌面 `easytier-gui`、可选后台服务 `ET-Gui`、config-server 会话与 web-owned 配置回写
 - 索引：[`../README.md`](../README.md)
 - 深度复查记录（含 UI 下拉）：[`../archive/service-mode-web-config-sync-and-select-ui-2026-10-04.md`](../archive/service-mode-web-config-sync-and-select-ui-2026-10-04.md)
@@ -96,7 +96,11 @@ OHOS nearby：`easytier-contrib/.../nearby_management.rs` 对相关方法返回 
 ## 4. 配置页 UI 约定（桌面 / frontend-lib）
 
 - 协议类控件统一 `Select`（端口转发、UrlInput 初始/监听协议等）；少选项切换可保留 `SelectButton`。
+- **开关类控件统一 `ToggleSwitch`**（2026-10-08 起，不再用 `ToggleButton` + 固定宽度 + `on/off-icon`）：布尔项「开」= 功能启用。
+- **负逻辑字段走 `inverted` 机制正向展示**（2026-10-08 起）：底层字段名与后端语义不变，UI 只显示正向标签，避免一屏「禁用 / 不允许」。当前 9 个：`disable_p2p`→「允许 P2P 直连」、`disable_kcp_input`、`disable_quic_input`、`disable_tcp_hole_punching`、`disable_udp_hole_punching`、`disable_sym_hole_punching`、`disable_upnp`、`disable_ipv6`、`disable_encryption`（→ `allow_*`）。**以 `Config.vue` 的 `bool_flags[].inverted` 为准**；实现是 `advancedFlagGroups` 里给 `model` 套一个取反的 computed（`!cfg[field]`），未填过的字段因 proto3 `bool` 默认 `false` 而显示为「开」。
+- **反转展示会改变冲突提示的措辞方向**：改这些字段的 help / 冲突文案时，务必同步 `configConflicts.ts` 里对应的 `*_help` key（例：`disable_p2p_conflict_help`、`p2p_only_blocks_disable_p2p_help`、`disable_ipv6_conflict_help`、`disable_encryption_algo_conflict_help`）。`advancedFlagConflictHelpKey()` 返回的 key 会**优先于** `inverted.help`。
 - 占位提示色：`--et-placeholder-color`（`#a8b5c5`），**不要**用 `--text-color-secondary`（过深，像已填值）。见 `easytier-web/frontend-lib/src/style.css`。
+- **响应式断点两个，别混**：`Config.vue` 的 `@media (max-width: 760px)`（高级开关分组 2 列→1 列、开关项转双列、紧凑网格转单列）；`src/style.css` 的 `@media (max-width: 640px)`（`.config-inline-label` 11rem→5.5rem、`.config-inline-expand` 的 `margin-left` 归零）。`.config-inline-*` 是 Config 与 `dns/*Editor` 共用的全局类，必须放在 `src/style.css`（scoped 穿不进子组件）。
 - 自定义 `Select` `#value` 槽若渲染 placeholder，须显式浅灰色类（例：`RemoteManagement` 的 `network-select-placeholder`）。
 
 ---

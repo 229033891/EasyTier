@@ -3,7 +3,7 @@
 ## Status
 
 - Status: **Current**
-- 最近审阅：2026-10-06
+- 最近审阅：2026-10-08（fake IP 改 `10.255.255.254`；控制台 DNS 编辑器改常显）
 - 范围：进程内 MagicDNS、`DnsConfig`（hosts / Split DNS / 上游）、OS 接线与控制台覆盖信号
 - 手工接线（OpenWrt / 非 systemd）：[`magic-dns-manual-wiring.md`](./magic-dns-manual-wiring.md)
 - 剩余缺口 / 决策留档：[`../roadmap/dns-policy.md`](../roadmap/dns-policy.md)
@@ -51,6 +51,8 @@ MagicDNS = 节点进程内权威 DNS +（可选）把本机查询指到 fake IP�
 | `upstream_dns` | 根 zone 上游列表；空 = 系统 DNS |
 
 CLI 示例：`--dns-host` / `--dns-forward` / `--dns-upstream`。控制台：`frontend-lib` 的 `DnsHostsEditor` / `DnsForwardersEditor` / upstream 列表。
+
+**控制台编辑器常显**（2026-10-08 起）：进入配置页即由 `syncNormalizedNetwork` 补一个空 `dns_config`，DNS 编辑器始终可见，不再需要先点「+配置策略」——即「有 `dns_config`」不代表用户配过策略，别把它当成「已配置」信号。高级设置的「功能开关」分组标题也一并去掉（纯视觉）。
 
 上游格式：**仅 IP 字面量**（如 `1.1.1.1`、`udp://8.8.8.8:53`）；DoT/DoH 与 hostname 上游未做。
 

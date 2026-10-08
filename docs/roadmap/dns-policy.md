@@ -3,7 +3,7 @@
 ## Status
 
 - Status: **Roadmap**（R1–R3 / B6 / Linux drop-in / JNI 对齐 **已落地**；现状 SoT → [`../current/magic-dns.md`](../current/magic-dns.md)）
-- 最近审阅：2026-10-06
+- 最近审阅：2026-10-08（fake IP 改 `10.255.255.254`）
 - 本文只保留**未完成项**与拍板依据摘要；完整实施日志已收敛进 Current，勿再当「待实现全表」读。
 - 手工接线：[`../current/magic-dns-manual-wiring.md`](../current/magic-dns-manual-wiring.md)
 - 相关：[`domain-proxy.md`](./domain-proxy.md)（域名→CIDR 仍未做）、[`traffic-steering.md`](../current/traffic-steering.md)

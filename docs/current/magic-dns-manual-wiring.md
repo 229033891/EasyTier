@@ -3,7 +3,7 @@
 ## Status
 
 - Status: **Current**
-- 最近审阅：2026-10-06
+- 最近审阅：2026-10-08（fake IP 由 `10.10.10.10` 改为 `10.255.255.254`，本文示例已同步）
 - 适用范围：开启 `enable_magic_dns` / `--accept-dns` 后，进程内 MagicDNS 已在跑，但 OS 未自动把查询指到 fake IP 的平台
 - 行为总览：[`magic-dns.md`](./magic-dns.md)；剩余缺口：[`../roadmap/dns-policy.md`](../roadmap/dns-policy.md)；systemd 自动接线见 `LinuxResolvedConfigurator`
 

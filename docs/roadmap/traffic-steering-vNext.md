@@ -4,8 +4,8 @@
 
 - Status: **Roadmap**（域名代理、统一导流模型仍待做；出口 `/0` / D+ 以 Current 为准）
 - 日期：2026-10-03
-- 最近审阅：2026-10-06
-- **已落地（现状文档为准）**：客户端在出口 **可解析且有下一跳** 时本机安装 `0.0.0.0/0`/`::/0`；出口不可达则卸默认路由；`add`/`remove` 仅成功记账并周期性重试；出口机不因 `enable_exit_node` 向 OSPF 通告默认路由；L3 在可解析出口时优先 `exit_nodes` 并打 `exit_node` 标志；对端 `/0` 默认不装 OS（D+）。见 [`../current/traffic-steering.md`](../current/traffic-steering.md)。
+- 最近审阅：2026-10-08（§5.2 可观测项已落地）
+- **已落地（现状文档为准）**：客户端在出口 **可解析且有下一跳** 时本机安装 `0.0.0.0/0`/`::/0`；出口不可达则卸默认路由；`add`/`remove` 仅成功记账并周期性重试；**状态页 `proxy_cidr_route_sync` 展示「期望 vs 已安装 vs 最后错误」**；出口机不因 `enable_exit_node` 向 OSPF 通告默认路由；L3 在可解析出口时优先 `exit_nodes` 并打 `exit_node` 标志；对端 `/0` 默认不装 OS（D+）。见 [`../current/traffic-steering.md`](../current/traffic-steering.md)。
 - 目标读者：产品决策 + 后续实现
 - 索引：[`../README.md`](../README.md)
 - **现状行为（已实现）**：[`../current/traffic-steering.md`](../current/traffic-steering.md)
@@ -176,7 +176,7 @@ B 必须走 MagicDNS / 节点 DNS 覆盖；否则仅 CIDR 生效，二次解析�
 
 ### 5.2 失败语义（修现状缺陷）
 
-`apply_route_changes`：**仅成功时**更新已安装集合；失败打 warn；路由同步任务约每秒用期望集合 reconcile 重试。RPC/状态页展示「期望 vs 已安装 vs 最后错误」仍待做。
+`apply_route_changes`：**仅成功时**更新已安装集合；失败打 warn；路由同步任务约每秒用期望集合 reconcile 重试。RPC/状态页展示「期望 vs 已安装 vs 最后错误」**已落地**（`NetworkInstanceRunningInfo.proxy_cidr_route_sync`，见 [`../current/traffic-steering.md`](../current/traffic-steering.md)）。
 
 ### 5.3 性能与安全护栏
 
