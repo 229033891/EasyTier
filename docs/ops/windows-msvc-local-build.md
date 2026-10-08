@@ -72,11 +72,26 @@ cmd /c 'call "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\
 
 成功标志：`where cl` 指向 `...\MSVC\...\bin\Hostx64\x64\cl.exe`，且 `cl` 能打印编译器横幅。
 
+### `ring` 仍失败：MSVC `D8050`（环境块过大）
+
+已进 vcvars、手工 `cl -c` 某个 `.c` 也成功，但 `cargo` 编 `ring` 报：
+
+`cl: 致命错误 D8050 : 无法执行 …\c1.dll : 未能解析命令行参数记录`
+
+常见原因：**进程环境块过大**（vcvars 注入大量 `WindowsSdk*` / `Framework*` 变量，再叠加 Cursor / 长 `PATH`、长 `CARGO_TARGET_DIR`）。手工 `cl` 环境小能编过；`cargo` 的 build-script 子进程环境更大 → D8050。
+
+处理（任选）：
+
+1. 缩短 `PATH` / `INCLUDE` / `LIB`，只保留 MSVC + UCRT + `cargo`/`rustc` + `system32`；
+2. 使用短 `CARGO_TARGET_DIR`（如 `C:\et`），避免 `D:\…\target\debug\build\ring-…\out\…` 把命令行顶满；
+3. 清掉不必需的 vcvars 派生变量（保留 `VCINSTALLDIR`、`VSCMD_ARG_TGT_ARCH`，`ring` build.rs 会读）；
+4. 确保 `PROTOC` 指向本机 `protoc.exe`（否则后续 `prost-wkt-types` 会另报错）。
+
 ---
 
 ## Agent / 文档约定
 
-- 文档里写「本机 MSVC/ring 编译受阻」时，优先排查 **是否未进 vcvars**，再谈缺组件。
+- 文档里写「本机 MSVC/ring 编译受阻」时，优先排查 **是否未进 vcvars**，再谈 **D8050 / 环境过大**，最后才谈缺组件。
 - **不要**在未加载开发者环境的普通终端里判定「机器没有 MSVC」。
 - 缺组件时：用 VS Installer 给 Build Tools 勾选 **「使用 C++ 的桌面开发」** / **MSVC v143** + **Windows 10/11 SDK**。
 
