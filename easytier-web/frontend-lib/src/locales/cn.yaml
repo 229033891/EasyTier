@@ -216,7 +216,6 @@ loss_rate: 丢包率
 jitter: 抖动
 nat_type: NAT 类型
 
-flags_switch: 功能开关
 advanced_group_connectivity: 连接与路由
 advanced_group_transport: 传输与打洞
 advanced_group_system: 系统与网络
@@ -500,8 +499,6 @@ dns:
   title: DNS 策略
   hosts:
     title: 静态主机
-    enable: 配置策略
-    enable_tip: 添加静态主机、分流转发与默认上游 DNS
     magic_dns_off_hint: DNS 策略会保存在本网络配置中；需开启「启用魔法 DNS」后才会接线生效。
     editor_help: 最高优先级。静态条目在 MagicDNS 上为权威记录，优先于路由 hostname；未命中时再看分流 DNS / 上游 DNS。
     name: 主机名

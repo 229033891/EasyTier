@@ -140,10 +140,6 @@ function ensureDnsConfig(): DnsConfig {
   return curNetwork.value.dns_config
 }
 
-function initDnsHosts() {
-  ensureDnsConfig()
-}
-
 function onToggleablePanelHeaderClick(
   key: keyof typeof panelCollapsed,
   event: Event,
@@ -442,6 +438,8 @@ function syncNormalizedNetwork(network: NetworkConfig | undefined): void {
   }
 
   Object.assign(network, normalizeNetworkConfig(network))
+  // DNS 策略编辑器常显，进入配置页就补一个空 dns_config，省掉「+配置策略」这一步。
+  ensureDnsConfig()
 }
 
 watch(() => curNetwork.value, syncNormalizedNetwork, { immediate: true, deep: false })
@@ -613,7 +611,6 @@ function removeVpnPortalClient(index: number) {
             <div class="flex flex-col gap-y-2">
 
               <div class="advanced-flags-section">
-                <div class="advanced-flags-heading">{{ t('flags_switch') }}</div>
                 <div
                   v-if="conflictWarnings.length"
                   class="config-conflict-banners flex flex-col gap-2"
@@ -1134,6 +1131,7 @@ function removeVpnPortalClient(index: number) {
                 <p v-if="tunControlsDisabled" class="config-field-hint m-0">{{ t('no_tun_magic_dns_hint') }}</p>
               </div>
 
+              <!-- dns_config 由 syncNormalizedNetwork 保证存在；v-if 只用于类型收窄 -->
               <template v-if="curNetwork.dns_config">
                 <div class="dns-section">
                   <div class="dns-section__title">
@@ -1174,10 +1172,6 @@ function removeVpnPortalClient(index: number) {
                   <DnsUpstreamEditor v-model:servers="curNetwork.dns_config.upstream_dns" />
                 </div>
               </template>
-              <div v-else class="flex justify-start">
-                <Button class="et-panel-action-btn" icon="pi pi-plus" :label="t('dns.hosts.enable')"
-                  severity="success" v-tooltip.top="t('dns.hosts.enable_tip')" @click="initDnsHosts" />
-              </div>
             </div>
           </Panel>
 
@@ -1294,14 +1288,6 @@ function removeVpnPortalClient(index: number) {
   display: flex;
   flex-direction: column;
   gap: 0.75rem;
-}
-
-.advanced-flags-heading {
-  color: var(--text-color-secondary, #64748b);
-  font-size: 0.75rem;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
 }
 
 .advanced-flag-groups {
