@@ -94,54 +94,78 @@ resolve_deploy_dir() {
   exit 1
 }
 
+# Docker 需连 daemon；普通用户无权限时自动加 sudo
+docker_ok() {
+  docker info >/dev/null 2>&1
+}
+
 find_compose_cmd() {
-  if docker compose version >/dev/null 2>&1; then
-    COMPOSE=(docker compose)
+  local prefix=()
+  if ! docker_ok; then
+    if command -v sudo >/dev/null 2>&1 && sudo -n docker info >/dev/null 2>&1; then
+      prefix=(sudo)
+      log "当前用户无 Docker 权限，使用 sudo"
+    elif command -v sudo >/dev/null 2>&1; then
+      prefix=(sudo)
+      log "当前用户无 Docker 权限，将使用 sudo（可能提示输入密码）"
+    else
+      err "无法连接 Docker（permission denied）。请用 root，或: sudo usermod -aG docker \$USER 后重新登录"
+      exit 1
+    fi
+  fi
+
+  if "${prefix[@]}" docker compose version >/dev/null 2>&1; then
+    COMPOSE=("${prefix[@]}" docker compose)
     return 0
   fi
   if command -v docker-compose >/dev/null 2>&1; then
-    COMPOSE=(docker-compose)
+    COMPOSE=("${prefix[@]}" docker-compose)
     return 0
   fi
   err "未找到 docker compose 或 docker-compose"
   exit 1
 }
 
-# 从 compose 解析 bind mount 宿主机路径并 mkdir -p（跳过设备/系统只读文件）
+# 仅解析 volumes: 下的 bind mount，避免把 ports / devices / command 误当成目录
 ensure_bind_mount_dirs() {
   local compose_path="$1"
-  local line host
+  local host
 
-  while IFS= read -r line; do
-    line="${line#"${line%%[![:space:]]*}"}"
-    [[ "$line" =~ ^-[[:space:]]+ ]] || continue
-    line="${line#- }"
-    line="${line%%#*}"
-    line="${line%"${line##*[![:space:]]}"}"
-    [[ "$line" == *:* ]] || continue
-
-    host="${line%%:*}"
-    host="${host%"${host##*[![:space:]]}"}"
-    host="${host#"${host%%[![:space:]]*}"}"
-
+  while IFS= read -r host; do
+    [[ -n "$host" ]] || continue
     case "$host" in
-      ""|./|../|./*|../*)
-        continue
-        ;;
-      /dev/*|/etc/machine-id|/proc/*|/sys/*)
-        continue
-        ;;
+      /dev/*|/etc/machine-id|/proc/*|/sys/*) continue ;;
     esac
-
     if [[ "$host" != /* ]]; then
       host="${DEPLOY_DIR}/${host#./}"
     fi
-
     if [[ ! -d "$host" ]]; then
       log "创建目录: $host"
       mkdir -p "$host"
     fi
-  done < <(grep -E '^[[:space:]]+-[[:space:]]+[^[:space:]]+:[^[:space:]]+' "$compose_path" || true)
+  done < <(
+    awk '
+      /^[[:space:]]*#/ { next }
+      /^[[:space:]]+volumes:[[:space:]]*$/ { v=1; next }
+      # 同级其它 key 结束 volumes 段
+      /^[[:space:]]+[a-zA-Z_][a-zA-Z0-9_]*:[[:space:]]*/ {
+        if ($0 !~ /^[[:space:]]+volumes:/) v=0
+      }
+      v && /^[[:space:]]+-[[:space:]]+/ {
+        line=$0
+        sub(/^[[:space:]]+-[[:space:]]+/, "", line)
+        sub(/[[:space:]]+#.*$/, "", line)
+        gsub(/^["'\'']|["'\'']$/, "", line)
+        # host:container[:ro]
+        n = split(line, a, ":")
+        if (n < 2) next
+        h = a[1]
+        # 跳过纯数字端口映射、空路径
+        if (h ~ /^[0-9]+$/ || h == "") next
+        print h
+      }
+    ' "$compose_path"
+  )
 }
 
 compose_profiles() {
