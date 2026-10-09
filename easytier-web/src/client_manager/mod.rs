@@ -22,7 +22,7 @@ use easytier::proto::{
     web::{HeartbeatRequest, HeartbeatResponse},
 };
 use easytier_core::{
-    management::remote_client::{self, RemoteClientError, RemoteClientManager},
+    management::remote_client::{self, RemoteClientError, RemoteClientManager, Storage as _},
     socket::SocketListener,
     tunnel::{Tunnel, web_security},
 };
