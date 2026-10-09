@@ -140,7 +140,8 @@ exit_app: Exit App
 use_latency_first: Quality-First Routing
 show_node_details: Show Node Details
 hide_node_details: Hide Node Details
-chips_placeholder: 'e.g: {0}, press Enter or comma to add'
+chips_placeholder: 'e.g: {0}, press Enter or comma, or click away, to add'
+chips_placeholder_typeahead: 'e.g: {0}, press Enter or comma to add'
 hostname_placeholder: 'Leave blank and default to host name: {0}'
 hostname_help: Network node hostname for routing and Magic DNS (e.g. &lt;hostname&gt;.et.net). Independent of the Web console device display name.
 dev_name_placeholder: 'Note: When multiple networks use the same TUN interface name at the same time, there will be a conflict when setting the TUN''s IP. Leave blank to automatically generate a random name.'
@@ -552,7 +553,6 @@ dns:
     name: Hostname
     name_placeholder: "e.g. app.internal. or *.corp.example"
     ips: IPv4 addresses
-    ips_placeholder: "e.g. 10.1.2.3"
     ttl: TTL
     ttl_unit: seconds
     add: Add host
@@ -574,9 +574,7 @@ dns:
     title: Split DNS
     editor_help: Route matching domain suffixes to dedicated upstream servers (before default upstream). Upstream servers are IP literals only in phase 1.
     domains: Domains
-    domains_placeholder: "e.g. corp.example."
     servers: Servers
-    servers_placeholder: "e.g. 10.0.0.53"
     add: Add forwarder
     add_tip: Add a split DNS forwarder
     remove: Remove forwarder

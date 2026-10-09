@@ -440,6 +440,26 @@ export function toBackendNetworkConfig(config: NetworkConfig): NetworkConfig {
       .map((s) => s.trim())
       .filter((s) => s.length > 0)
   }
+  if (backend.dns_config?.hosts) {
+    // Blank draft host rows (Add → no name/ips yet) must not look dirty just
+    // because the editor injects a default TTL.
+    backend.dns_config.hosts = backend.dns_config.hosts.filter(
+      (h) =>
+        (h.name ?? '').trim().length > 0 ||
+        (h.ips ?? []).some((ip) => (ip ?? '').trim().length > 0),
+    )
+  }
+  if (backend.dns_config?.forwarders) {
+    // Same for split-DNS rows: a row the user added but never filled carries no
+    // information (`reload_split_forwarders` skips domains/servers-empty splits
+    // anyway), so drop it. Keeping it would also make an untouched blank row look
+    // like an unsaved edit.
+    backend.dns_config.forwarders = backend.dns_config.forwarders.filter(
+      (f) =>
+        (f.domains ?? []).some((d) => (d ?? '').trim().length > 0) ||
+        (f.servers ?? []).some((s) => (s ?? '').trim().length > 0),
+    )
+  }
 
   return NetworkConfigPb.toJson(backend, {
     useProtoFieldName: true,

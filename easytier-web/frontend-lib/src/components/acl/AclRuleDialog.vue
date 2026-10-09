@@ -3,6 +3,7 @@ import { AutoComplete, Button, Checkbox, Dialog, InputNumber, InputText, MultiSe
 import { computed, reactive, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { AclAction, AclProtocol, AclRule, ensureAclRuleLists } from '../../types/network';
+import { onChipsFocusOut, onChipsKeydown } from '../../modules/chipsInput';
 import { isPanelHeaderInteractiveTarget } from '../../modules/panel';
 
 const props = defineProps<{
@@ -72,29 +73,6 @@ function save() {
   emit('save', rule.value)
   close()
 }
-
-function onChipsKeydown(event: KeyboardEvent, values: string[]) {
-  if (event.isComposing) return
-  if (event.key !== 'Enter' && event.key !== ',' && event.key !== '，') return
-  const input = event.target as HTMLInputElement | null
-  if (!input || input.tagName !== 'INPUT') return
-  const raw = input.value.trim()
-  if (!raw) return
-  event.preventDefault()
-  event.stopImmediatePropagation()
-  const next = [...values]
-  let changed = false
-  for (const part of raw.split(/[,，]+/)) {
-    const token = part.trim()
-    if (token && !next.includes(token)) {
-      next.push(token)
-      changed = true
-    }
-  }
-  if (changed) values.splice(0, values.length, ...next)
-  input.value = ''
-  input.dispatchEvent(new Event('input', { bubbles: true }))
-}
 </script>
 
 <template>
@@ -140,27 +118,31 @@ function onChipsKeydown(event: KeyboardEvent, values: string[]) {
             <label class="acl-dlg-label">{{ t('acl.rule.src_ips') }}</label>
             <AutoComplete v-model="rule.source_ips" multiple fluid :typeahead="false"
               :placeholder="t('chips_placeholder', ['10.126.126.0/24'])"
-              @keydown.capture="onChipsKeydown($event, rule.source_ips)" />
+              @keydown.capture="onChipsKeydown($event, rule.source_ips ??= [])"
+              @focusout.capture="onChipsFocusOut($event, rule.source_ips ??= [])" />
           </div>
           <div class="flex flex-col gap-1.5">
             <label class="acl-dlg-label">{{ t('acl.rule.dst_ips') }}</label>
             <AutoComplete v-model="rule.destination_ips" multiple fluid :typeahead="false"
               :placeholder="t('chips_placeholder', ['10.126.126.2/32'])"
-              @keydown.capture="onChipsKeydown($event, rule.destination_ips)" />
+              @keydown.capture="onChipsKeydown($event, rule.destination_ips ??= [])"
+              @focusout.capture="onChipsFocusOut($event, rule.destination_ips ??= [])" />
           </div>
 
           <div v-if="showPorts" class="flex flex-row gap-4 flex-wrap">
             <div class="flex flex-col gap-1.5 grow">
               <label class="acl-dlg-label">{{ t('acl.rule.src_ports') }}</label>
               <AutoComplete v-model="rule.source_ports" multiple fluid :typeahead="false"
-                :placeholder="t('chips_placeholder', ['80, 1000-2000'])"
-                @keydown.capture="onChipsKeydown($event, rule.source_ports)" />
+                :placeholder="t('chips_placeholder', ['1000-2000'])"
+                @keydown.capture="onChipsKeydown($event, rule.source_ports ??= [])"
+                @focusout.capture="onChipsFocusOut($event, rule.source_ports ??= [])" />
             </div>
             <div class="flex flex-col gap-1.5 grow">
               <label class="acl-dlg-label">{{ t('acl.rule.dst_ports') }}</label>
               <AutoComplete v-model="rule.ports" multiple fluid :typeahead="false"
-                :placeholder="t('chips_placeholder', ['80, 1000-2000'])"
-                @keydown.capture="onChipsKeydown($event, rule.ports)" />
+                :placeholder="t('chips_placeholder', ['1000-2000'])"
+                @keydown.capture="onChipsKeydown($event, rule.ports ??= [])"
+                @focusout.capture="onChipsFocusOut($event, rule.ports ??= [])" />
             </div>
           </div>
         </div>

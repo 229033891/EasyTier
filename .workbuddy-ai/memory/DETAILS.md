@@ -17,6 +17,9 @@
 - **lint 已进门禁**：`easytier-gui` 的 `build` = `pnpm lint && pnpm --dir ../easytier-web/frontend-lib build && vue-tsc --noEmit && vite build`（覆盖本地 `pnpm build`/`tauri build` 与 CI `android.yml`/`windows.yml`）。`test.yml` 无独立前端 lint job。
 - `frontend-lib` 两个测试脚本：`test:config-ui`（`vitest run --config vitest.config.ts`，CI 只跑这个）与 `test:network-config`（`pnpm build && node scripts/test-network-config.mjs`）。改配置序列化**两个都跑**。
 - **locales `*.yaml` 是 plain scalar → 文案里出现 `: `（冒号+空格）js-yaml 直接解析失败**（`bad indentation of a mapping entry`）；`@modyfi/vite-plugin-yaml` 用的就是 js-yaml → `vite build` 与任何 import `i18n.ts` 的测试全挂。复验：`node -e "require('D:/EasyTier/node_modules/.pnpm/js-yaml@4.1.0/node_modules/js-yaml').load(require('fs').readFileSync('<f>','utf8'))"`。`easytier/locales/app.yml` 的值有双引号，安全。
+- **PrimeVue 4.3.9 `AutoComplete` 在 `multiple` 模式下「失焦不提交」**：`autocomplete/index.mjs::onInput` 里 `if (!this.multiple) this.updateModel(...)` —— multiple 时打字**不进 model**；`onBlur` 只 `$emit('blur')`，**不 commit**。所以只绑 keydown 的 chips 输入（回车/逗号才提交）会**静默丢草稿**（打完字直接点保存/切走）。统一走 `frontend-lib/src/modules/chipsInput.ts`：`onChipsKeydown`（回车/逗号）+ **`onChipsFocusOut`（失焦提交，用 `focusout` 因为 `blur` 不冒泡）**。typeahead 场景要传 `{typeahead:true}`，下拉展开时 Enter 与失焦都不提交（否则会把半截查询词变成 chip）。**新增/改 chips 输入必须同时绑这两个。**
+- 列表编辑器（`DnsHostsEditor`/`DnsForwardersEditor`/`DnsUpstreamEditor`/ACL 弹窗）**不能用 `arr.push`/`splice` 原地改**：`defineModel` 的 setter 不触发 → 不 emit。统一「复制数组 → 整体赋值」（`touchHosts(next)` 模式）。行 key 用 `WeakMap` 按对象身份生成，换数组不会导致 focus 跳。
+- 脏标记快照 `modules/config-dirty.ts` 走 `toBackendNetworkConfig` 序列化后比对 → **序列化时被过滤的东西不算脏**（如空 `upstream_dns` 草稿行被 trim+filter 掉 → 不脏；但空 `forwarders` 行会原样保留 → 脏）。改序列化过滤规则会连带改脏判定。
 - protobuf-ts 的 int64/uint64 是 BigInt、JSON 要字符串：`networkCompat.ts::dropUnsupportedJsonValues()` 统一 `bigint→toString()`。`allFieldFixture()` 用 `{...DEFAULT_NETWORK_CONFIG()}`，`NetworkConfigPb.create()` 只填非 optional → repeated 字段要显式给值。
 
 ## 2. MagicDNS

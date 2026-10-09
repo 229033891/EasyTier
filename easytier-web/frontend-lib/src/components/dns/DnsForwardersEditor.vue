@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { AutoComplete, Button } from 'primevue'
 import { useI18n } from 'vue-i18n'
+import { onChipsFocusOut, onChipsKeydown } from '../../modules/chipsInput'
 import type { DnsForwarder } from '../../types/network'
 
 const forwarders = defineModel('forwarders', {
@@ -24,12 +25,19 @@ function rowKey(row: DnsForwarder): string {
   return key
 }
 
+function touchForwarders(next: DnsForwarder[]) {
+  forwarders.value = next
+}
+
 function addForwarder() {
-  forwarders.value.push({ domains: [], servers: [] })
+  const next = [...forwarders.value, { domains: [], servers: [] }]
+  touchForwarders(next)
 }
 
 function removeForwarder(index: number) {
-  forwarders.value.splice(index, 1)
+  const next = [...forwarders.value]
+  next.splice(index, 1)
+  touchForwarders(next)
 }
 </script>
 
@@ -48,10 +56,12 @@ function removeForwarder(index: number) {
           <AutoComplete
             :id="`dns_fwd_domains_${index}`"
             v-model="row.domains"
-            :placeholder="t('dns.forwarders.domains_placeholder')"
+            :placeholder="t('chips_placeholder', ['corp.example.'])"
             multiple
             fluid
             :typeahead="false"
+            @keydown.capture="onChipsKeydown($event, row.domains ??= [])"
+            @focusout.capture="onChipsFocusOut($event, row.domains ??= [])"
           />
           <Button
             icon="pi pi-trash"
@@ -74,10 +84,12 @@ function removeForwarder(index: number) {
           <AutoComplete
             :id="`dns_fwd_servers_${index}`"
             v-model="row.servers"
-            :placeholder="t('dns.forwarders.servers_placeholder')"
+            :placeholder="t('chips_placeholder', ['10.0.0.53'])"
             multiple
             fluid
             :typeahead="false"
+            @keydown.capture="onChipsKeydown($event, row.servers ??= [])"
+            @focusout.capture="onChipsFocusOut($event, row.servers ??= [])"
           />
         </div>
       </div>

@@ -28,6 +28,7 @@ import {
   isAdvancedFlagDisabled,
   isAdvancedFlagHidden,
 } from '../modules/configConflicts'
+import { onChipsFocusOut, onChipsKeydown } from '../modules/chipsInput'
 import AclManager from './acl/AclManager.vue'
 import DnsHostsEditor from './dns/DnsHostsEditor.vue'
 import DnsForwardersEditor from './dns/DnsForwardersEditor.vue'
@@ -221,50 +222,6 @@ function searchInetSuggestions(e: { query: string }) {
     }
     inetSuggestions.value = ret
   }
-}
-
-/**
- * 回车/逗号将输入追加为 chip。
- * @param typeahead 保留联想时：下拉展开期间不劫持 Enter（留给建议项键盘选择）；仅劫持逗号，或下拉关闭后的回车。
- */
-function onChipsKeydown(
-  event: KeyboardEvent,
-  values: string[],
-  opts?: { typeahead?: boolean },
-) {
-  if (event.isComposing) return
-  const isEnter = event.key === 'Enter'
-  const isComma = event.key === ',' || event.key === '，'
-  if (!isEnter && !isComma) return
-
-  const input = event.target as HTMLInputElement | null
-  if (!input || input.tagName !== 'INPUT') return
-
-  // 联想下拉展开时：绝不 stopPropagation，避免拦掉 AutoComplete 内部选中
-  if (opts?.typeahead && isEnter && input.getAttribute('aria-expanded') === 'true') {
-    return
-  }
-
-  const raw = input.value.trim()
-  if (!raw) return
-
-  event.preventDefault()
-  event.stopImmediatePropagation()
-
-  const next = [...values]
-  let changed = false
-  for (const part of raw.split(/[,，]+/)) {
-    const token = part.trim()
-    if (token && !next.includes(token)) {
-      next.push(token)
-      changed = true
-    }
-  }
-  if (changed) {
-    values.splice(0, values.length, ...next)
-  }
-  input.value = ''
-  input.dispatchEvent(new Event('input', { bubbles: true }))
 }
 
 type AdvancedFlagGroup = 'connectivity' | 'transport' | 'system' | 'security'
@@ -797,9 +754,9 @@ function removeVpnPortalClient(index: number) {
                   </div>
                   <div class="config-compact-control">
                     <AutoComplete id="subnet-proxy" v-model="curNetwork.proxy_cidrs"
-                      :placeholder="t('chips_placeholder', ['10.0.0.0/24'])" multiple fluid
+                      :placeholder="t('chips_placeholder_typeahead', ['10.0.0.0/24'])" multiple fluid
                       :suggestions="inetSuggestions" @complete="searchInetSuggestions"
-                      @keydown.capture="onChipsKeydown($event, curNetwork.proxy_cidrs, { typeahead: true })" />
+                      @keydown.capture="onChipsKeydown($event, curNetwork.proxy_cidrs ??= [], { typeahead: true })" />
                   </div>
                 </div>
 
@@ -813,7 +770,8 @@ function removeVpnPortalClient(index: number) {
                     <AutoComplete id="exit_nodes" v-model="curNetwork.exit_nodes"
                       :placeholder="t('chips_placeholder', ['192.168.8.8'])" multiple fluid
                       :typeahead="false"
-                      @keydown.capture="onChipsKeydown($event, curNetwork.exit_nodes)" />
+                      @keydown.capture="onChipsKeydown($event, curNetwork.exit_nodes ??= [])"
+                      @focusout.capture="onChipsFocusOut($event, curNetwork.exit_nodes ??= [])" />
                     <p v-if="tunControlsDisabled" class="config-field-hint m-0">{{ t('no_tun_exit_nodes_hint') }}</p>
                   </div>
                 </div>
@@ -1020,9 +978,10 @@ function removeVpnPortalClient(index: number) {
                 </div>
                 <div v-if="curNetwork.enable_relay_network_whitelist" class="config-inline-expand">
                   <AutoComplete id="relay_network_whitelist" v-model="curNetwork.relay_network_whitelist"
-                    :placeholder="t('relay_network_whitelist')" multiple fluid
+                    :placeholder="t('chips_placeholder', ['*'])" multiple fluid
                     :disabled="relayControlsDisabled" :typeahead="false"
-                    @keydown.capture="onChipsKeydown($event, curNetwork.relay_network_whitelist)" />
+                    @keydown.capture="onChipsKeydown($event, curNetwork.relay_network_whitelist ??= [])"
+                    @focusout.capture="onChipsFocusOut($event, curNetwork.relay_network_whitelist ??= [])" />
                 </div>
 
                 <div class="config-inline-field">
@@ -1038,9 +997,9 @@ function removeVpnPortalClient(index: number) {
                 </div>
                 <div v-if="curNetwork.enable_manual_routes" class="config-inline-expand">
                   <AutoComplete id="routes" v-model="curNetwork.routes"
-                    :placeholder="t('chips_placeholder', ['192.168.0.0/16'])" multiple fluid
+                    :placeholder="t('chips_placeholder_typeahead', ['192.168.0.0/16'])" multiple fluid
                     :suggestions="inetSuggestions" @complete="searchInetSuggestions"
-                    @keydown.capture="onChipsKeydown($event, curNetwork.routes, { typeahead: true })" />
+                    @keydown.capture="onChipsKeydown($event, curNetwork.routes ??= [], { typeahead: true })" />
                 </div>
 
                 <div class="config-inline-field">

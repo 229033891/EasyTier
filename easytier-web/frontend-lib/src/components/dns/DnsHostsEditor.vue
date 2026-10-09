@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { AutoComplete, Button, InputNumber, InputText } from 'primevue'
 import { useI18n } from 'vue-i18n'
+import { onChipsFocusOut, onChipsKeydown } from '../../modules/chipsInput'
 import {
   addDnsHostRow,
   DEFAULT_DNS_HOST_TTL_SECS,
@@ -29,12 +30,21 @@ function rowKey(row: DnsHostEntry): string {
   return key
 }
 
+/** Replace array so defineModel emits even under one-way parent bindings. */
+function touchHosts(next: DnsHostEntry[]) {
+  hosts.value = next
+}
+
 function addHost() {
-  addDnsHostRow(hosts.value)
+  const next = [...hosts.value]
+  addDnsHostRow(next)
+  touchHosts(next)
 }
 
 function removeHost(index: number) {
-  removeDnsHostRow(index, hosts.value)
+  const next = [...hosts.value]
+  removeDnsHostRow(index, next)
+  touchHosts(next)
 }
 </script>
 
@@ -77,10 +87,12 @@ function removeHost(index: number) {
           <AutoComplete
             :id="`dns_host_ips_${index}`"
             v-model="row.ips"
-            :placeholder="t('dns.hosts.ips_placeholder')"
+            :placeholder="t('chips_placeholder', ['10.1.2.3'])"
             multiple
             fluid
             :typeahead="false"
+            @keydown.capture="onChipsKeydown($event, row.ips ??= [])"
+            @focusout.capture="onChipsFocusOut($event, row.ips ??= [])"
           />
         </div>
       </div>

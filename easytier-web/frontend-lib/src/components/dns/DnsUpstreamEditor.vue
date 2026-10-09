@@ -22,14 +22,21 @@ function rowKey(index: number): string {
   return rowKeys[index]!
 }
 
-function addServer() {
-  servers.value.push('')
+/** Replace array so defineModel emits even under one-way parent bindings. */
+function touchServers(next: string[]) {
+  servers.value = next
   ensureKeys()
 }
 
+function addServer() {
+  touchServers([...servers.value, ''])
+}
+
 function removeServer(index: number) {
-  servers.value.splice(index, 1)
+  const next = [...servers.value]
+  next.splice(index, 1)
   rowKeys.splice(index, 1)
+  touchServers(next)
 }
 </script>
 

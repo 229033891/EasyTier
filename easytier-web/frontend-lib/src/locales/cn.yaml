@@ -137,7 +137,8 @@ hide_dock_icon: 隐藏 Dock 图标
 show_dock_icon: 显示 Dock 图标
 exit: 退出
 exit_app: 退出程序
-chips_placeholder: 例如： {0}，回车或逗号添加
+chips_placeholder: 例如： {0}，回车、逗号或点别处添加
+chips_placeholder_typeahead: 例如： {0}，回车或逗号添加
 show_node_details: 显示节点详细信息
 hide_node_details: 隐藏节点详细信息
 hostname_placeholder: '留空默认为主机名: {0}'
@@ -551,7 +552,6 @@ dns:
     name: 主机名
     name_placeholder: "例如 app.internal. 或 *.corp.example"
     ips: IPv4 地址
-    ips_placeholder: "例如 10.1.2.3"
     ttl: TTL
     ttl_unit: 秒
     add: 添加主机
@@ -573,9 +573,7 @@ dns:
     title: 分流 DNS
     editor_help: 将匹配的域名后缀转发到指定上游（优先于默认上游）。上游为首期仅 IP 字面量。
     domains: 域名
-    domains_placeholder: "例如 corp.example."
     servers: 上游
-    servers_placeholder: "例如 10.0.0.53"
     add: 添加分流
     add_tip: 添加一条分流 DNS 规则
     remove: 删除分流
