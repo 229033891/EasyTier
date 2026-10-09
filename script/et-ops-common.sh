@@ -1592,6 +1592,7 @@ _parse_web_exec_start() {
 
 _parse_core_config_server() {
   local cs_line="$1"
+  local apply_listen="${2:-no}"
   local val
   [[ -n "$cs_line" ]] || return 0
   val="$(printf '%s\n' "$cs_line" | sed -n 's/.*--config-server[[:space:]]\+\([^[:space:]]*\).*/\1/p' | head -1)"
@@ -1599,26 +1600,65 @@ _parse_core_config_server() {
   val="${val#\"}"; val="${val%\"}"; val="${val#\'}"; val="${val%\'}"
   parse_config_server_url "$val"
   if [[ -n "$CS_HOST" ]]; then SERVER_HOST="$CS_HOST"; fi
-  if [[ -n "$CS_PORT" ]]; then CONFIG_PORT="$CS_PORT"; fi
-  if [[ -n "$CS_SCHEME" ]]; then CONFIG_PROTOCOL="$CS_SCHEME"; fi
+  if [[ "$apply_listen" == "yes" ]]; then
+    if [[ -n "$CS_PORT" ]]; then CONFIG_PORT="$CS_PORT"; fi
+    if [[ -n "$CS_SCHEME" ]]; then CONFIG_PROTOCOL="$CS_SCHEME"; fi
+  fi
   if [[ -n "$CS_TOKEN" ]]; then CONFIG_TOKEN="$CS_TOKEN"; fi
   return 0
+}
+
+# systemctl show 有时只返回 path，不含 --api-server-port 等参数；回退读 unit 文件
+_read_unit_exec_start() {
+  local unit="$1"
+  local line f="/etc/systemd/system/${unit}"
+  line="$(systemctl show "$unit" -p ExecStart --value 2>/dev/null || true)"
+  if [[ "$line" == *"--api-server-port"* || "$line" == *"--config-server-port"* || \
+        "$line" == *"--config-server "* ]]; then
+    printf '%s' "$line"
+    return 0
+  fi
+  if [[ -f "$f" ]]; then
+    line="$(tr '\n' ' ' <"$f" | sed -n 's/.*ExecStart=\([^[]*\).*/\1/p' | head -1)"
+    line="${line//\\/ }"
+    if [[ -n "$line" ]]; then
+      printf '%s' "$line"
+      return 0
+    fi
+  fi
+  printf '%s' "$line"
 }
 
 load_runtime_config_from_systemd() {
   # Set by _parse_web_exec_start (must not be local — helper writes this name)
   SYSTEMD_API_HOST=""
   local exec_line cs_line
+  local web_from_unit=no web_api_port="" web_config_port="" web_config_protocol=""
   # Prefer ET-* units; fall back to legacy easytier-* for in-place rename migration
   if systemctl cat ET-web.service &>/dev/null; then
-    exec_line="$(systemctl show ET-web.service -p ExecStart --value 2>/dev/null || true)"
+    exec_line="$(_read_unit_exec_start ET-web.service)"
     _parse_web_exec_start "$exec_line"
+    web_from_unit=yes
+    web_api_port="$API_PORT"
+    web_config_port="$CONFIG_PORT"
+    web_config_protocol="$CONFIG_PROTOCOL"
   elif systemctl cat easytier-web.service &>/dev/null; then
-    exec_line="$(systemctl show easytier-web.service -p ExecStart --value 2>/dev/null || true)"
+    exec_line="$(_read_unit_exec_start easytier-web.service)"
     _parse_web_exec_start "$exec_line"
+    web_from_unit=yes
+    web_api_port="$API_PORT"
+    web_config_port="$CONFIG_PORT"
+    web_config_protocol="$CONFIG_PROTOCOL"
   fi
 
   load_install_options
+
+  # 已部署的 ET-web unit 为准（install-options.env 可能滞后，例如 API 22021 / Nginx 22020）
+  if [[ "$web_from_unit" == "yes" ]]; then
+    API_PORT="$web_api_port"
+    CONFIG_PORT="$web_config_port"
+    CONFIG_PROTOCOL="$web_config_protocol"
+  fi
 
   # systemd --api-host 协议为准，覆盖 install-options.env 中的 NGINX_HTTPS_PROXY
   if [[ -n "${SYSTEMD_API_HOST:-}" ]]; then
@@ -1627,12 +1667,15 @@ load_runtime_config_from_systemd() {
     PUBLIC_HOST="$(normalize_host_input "${PUBLIC_HOST:-}")"
   fi
 
+  # core 的 --config-server 是「连哪里」，不是 web 监听端口；server 场景勿覆盖 CONFIG_*
+  local core_apply_listen=no
+  [[ "$web_from_unit" != "yes" ]] && core_apply_listen=yes
   if systemctl cat ET-core@default.service &>/dev/null; then
-    cs_line="$(systemctl show ET-core@default.service -p ExecStart --value 2>/dev/null || true)"
-    _parse_core_config_server "$cs_line"
+    cs_line="$(_read_unit_exec_start ET-core@default.service)"
+    _parse_core_config_server "$cs_line" "$core_apply_listen"
   elif systemctl cat easytier-core@default.service &>/dev/null; then
-    cs_line="$(systemctl show easytier-core@default.service -p ExecStart --value 2>/dev/null || true)"
-    _parse_core_config_server "$cs_line"
+    cs_line="$(_read_unit_exec_start easytier-core@default.service)"
+    _parse_core_config_server "$cs_line" "$core_apply_listen"
   fi
 
   BACKUP_DIR="${BACKUP_DIR:-${INSTALL_PATH}/backups}"
@@ -1715,6 +1758,24 @@ port_is_listening() {
   return 1
 }
 
+# 升级/重启后 ET-web 可能数秒后才 bind
+wait_for_web_listen() {
+  local need_udp="$1" need_tcp="$2" i
+  for ((i = 1; i <= 15; i++)); do
+    if port_is_listening "$API_PORT" t; then
+      if (( need_udp )) && ! port_is_listening "$CONFIG_PORT" u; then
+        :
+      elif (( need_tcp )) && ! port_is_listening "$CONFIG_PORT" t; then
+        :
+      else
+        return 0
+      fi
+    fi
+    sleep 1
+  done
+  return 1
+}
+
 resolve_dns() {
   local host="$1"
   local result=""
@@ -1761,6 +1822,15 @@ run_health_check() {
   local fail=0
 
   if is_server_installed; then
+    local need_udp=0 need_tcp=0
+    parse_config_protocol_needs
+    need_udp="$NEED_CONFIG_UDP"
+    need_tcp="$NEED_CONFIG_TCP"
+
+    if systemctl is-active --quiet ET-web.service 2>/dev/null; then
+      wait_for_web_listen "$need_udp" "$need_tcp" || true
+    fi
+
     # captcha 路由可能已移除；根路径 / 或 login 任一返回业务码即视为 API 存活
     local api_ok=no api_url="" code="000"
     for api_url in \
@@ -1792,15 +1862,6 @@ run_health_check() {
       fail=1
     fi
 
-    local proto need_udp=0 need_tcp=0
-    IFS=',' read -ra _protos <<<"$CONFIG_PROTOCOL"
-    for proto in "${_protos[@]}"; do
-      proto="$(echo "$proto" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')"
-      case "$proto" in
-        udp) need_udp=1 ;;
-        tcp|ws|wss) need_tcp=1 ;;
-      esac
-    done
     if (( need_udp )); then
       if port_is_listening "$CONFIG_PORT" u; then
         health_print ok "配置下发 UDP" "UDP ${CONFIG_PORT} 正在监听"

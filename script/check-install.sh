@@ -142,6 +142,14 @@ grep -q 'update_ok:-no' "$TARGET" || {
   echo "[fail] update 失败 EXIT trap 应使用 \${update_ok:-no}" >&2
   fail=1
 }
+grep -q '_read_unit_exec_start' "$TARGET" || {
+  echo "[fail] 缺少 _read_unit_exec_start（systemd unit 端口解析）" >&2
+  fail=1
+}
+grep -q 'web_from_unit=yes' "$TARGET" || {
+  echo "[fail] load_runtime_config 应以 ET-web unit 端口为准" >&2
+  fail=1
+}
 
 # set -e 回归：函数末尾 `[[ -n ]] && assign` 失败不得导致静默退出
 echo "[check] set -e helper return status"
