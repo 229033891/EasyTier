@@ -15,13 +15,14 @@ use std::{
 };
 
 use dashmap::DashMap;
+use easytier::common::config::{ConfigSource, config_source_from_rpc};
 use easytier::proto::{
-    api::manage::WebClientService,
+    api::manage::{GetNetworkInstanceConfigRequest, NetworkConfig, WebClientService},
     rpc_types::controller::BaseController,
     web::{HeartbeatRequest, HeartbeatResponse},
 };
 use easytier_core::{
-    management::remote_client::{self, RemoteClientManager},
+    management::remote_client::{self, RemoteClientError, RemoteClientManager},
     socket::SocketListener,
     tunnel::{Tunnel, web_security},
 };
@@ -537,6 +538,7 @@ impl ClientManager {
     }
 }
 
+#[async_trait::async_trait]
 impl
     RemoteClientManager<
         (UserIdInDb, uuid::Uuid),
@@ -560,6 +562,58 @@ impl
         sea_orm::DbErr,
     > {
         self.storage.db()
+    }
+
+    /// Web console: **SQLite first**, device RPC only when no row.
+    ///
+    /// Unlike the trait default (RPC first — required by GUI Windows
+    /// `persist_runtime_dev_name`), the web DB is authoritative for managed
+    /// edits. Preferring storage avoids waiting on a busy agent when opening
+    /// the config page. Device-local edits that never synced back are not
+    /// shown until they appear in SQLite (save from the console overwrites
+    /// the device via reconcile).
+    async fn handle_get_network_config_with_source(
+        &self,
+        identify: (UserIdInDb, uuid::Uuid),
+        inst_id: uuid::Uuid,
+    ) -> Result<(NetworkConfig, ConfigSource), RemoteClientError<sea_orm::DbErr>> {
+        let inst_id_str = inst_id.to_string();
+
+        if let Some(db_row) = self
+            .get_storage()
+            .get_network_config(identify, &inst_id_str)
+            .await
+            .map_err(RemoteClientError::PersistentError)?
+        {
+            return Ok((
+                db_row
+                    .get_network_config()
+                    .map_err(RemoteClientError::PersistentError)?,
+                db_row.get_runtime_network_config_source(),
+            ));
+        }
+
+        // identify is Copy (user_id, machine uuid); reuse after storage miss.
+        if let Some(client) = self.get_rpc_client(identify)
+            && let Ok(resp) = client
+                .get_network_instance_config(
+                    BaseController::default(),
+                    GetNetworkInstanceConfigRequest {
+                        inst_id: Some(inst_id.into()),
+                    },
+                )
+                .await
+            && let Some(config) = resp.config
+        {
+            // No DB row: RPC source or User (same as trait default when storage miss).
+            let source = config_source_from_rpc(resp.source).unwrap_or(ConfigSource::User);
+            return Ok((config, source));
+        }
+
+        Err(RemoteClientError::NotFound(format!(
+            "No such network instance: {}",
+            inst_id_str
+        )))
     }
 }
 

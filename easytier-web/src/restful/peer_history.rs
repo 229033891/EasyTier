@@ -1,7 +1,7 @@
-//! 对端连接历史（延迟 / 流量趋势）查询接口。
+//! 对端连接历史（延迟 / 丢包 / 抖动 / 流量趋势）查询接口。
 //!
 //! 数据由 [`crate::peer_history`] 采样器写入，这里只读并按桶聚合：
-//! - 延迟 / 丢包取桶内**均值**，全桶都拿不到值时为 `null`（前端断线）
+//! - 延迟 / 丢包 / 抖动取桶内**均值**，全桶都拿不到值时为 `null`（前端断线）
 //! - rx/tx 是**累计计数器**，取桶内最大值；速率由前端对相邻桶差分得到
 //! - `bucket_seconds` 由请求的时间跨度算出，保证最多返回约 `MAX_POINTS` 个点
 
@@ -31,6 +31,7 @@ struct PeerConnHistoryPoint {
     t: i64,
     latency_us: Option<i64>,
     loss_rate: Option<f64>,
+    jitter_us: Option<i64>,
     /// 桶内累计计数器最大值
     rx_bytes: i64,
     tx_bytes: i64,
@@ -63,7 +64,7 @@ struct PeerConnHistoryResponse {
 /// 按 peer + 时间桶聚合。
 /// 绑定参数依次为：bucket、bucket、user_id、machine_id、instance_id、from。
 ///
-/// - 延迟/丢包用 `CASE WHEN x >= 0` 把「拿不到」的 -1 排除掉，整桶都没有值时结果是 NULL，
+/// - 延迟/丢包/抖动用 `CASE WHEN x >= 0` 把「拿不到」的 -1 排除掉，整桶都没有值时结果是 NULL，
 ///   前端据此断线，而不是把 0 当成真实延迟画进折线
 /// - rx/tx 是累计计数器，取桶内 MAX；速率由前端对相邻桶差分
 const SERIES_SQL: &str = r#"
@@ -71,6 +72,7 @@ const SERIES_SQL: &str = r#"
            (sampled_at / ?) * ? AS bucket_ts,
            CAST(AVG(CASE WHEN latency_us >= 0 THEN latency_us END) AS INTEGER) AS latency_us,
            AVG(CASE WHEN loss_rate >= 0 THEN loss_rate END) AS loss_rate,
+           CAST(AVG(CASE WHEN jitter_us >= 0 THEN jitter_us END) AS INTEGER) AS jitter_us,
            MAX(rx_bytes) AS rx_bytes,
            MAX(tx_bytes) AS tx_bytes,
            COUNT(*) AS samples
@@ -132,7 +134,7 @@ impl PeerHistoryApi {
         let machine_id = machine_id.to_string();
         let inst_id = inst_id.to_string();
 
-        // 每个 peer 一条曲线：桶内取延迟/丢包均值（拿不到值时保持 NULL）、累计计数器取最大值
+        // 每个 peer 一条曲线：桶内取延迟/丢包/抖动均值（拿不到值时保持 NULL）、累计计数器取最大值
         let rows = db
             .query_all(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
@@ -165,6 +167,9 @@ impl PeerHistoryApi {
                     .map_err(super::convert_db_error)?,
                 loss_rate: row
                     .try_get("", "loss_rate")
+                    .map_err(super::convert_db_error)?,
+                jitter_us: row
+                    .try_get("", "jitter_us")
                     .map_err(super::convert_db_error)?,
                 rx_bytes: row.try_get("", "rx_bytes").unwrap_or(0),
                 tx_bytes: row.try_get("", "tx_bytes").unwrap_or(0),
@@ -244,8 +249,17 @@ mod tests {
     use crate::db::{Db, entity::peer_conn_history};
     use sea_orm::{EntityTrait as _, Set};
 
-    /// 聚合桶行：(peer_id, bucket_ts, latency_us, loss_rate, rx_bytes, tx_bytes, samples)
-    type SeriesRow = (i64, i64, Option<i64>, Option<f64>, i64, i64, i64);
+    /// 聚合桶行：(peer_id, bucket_ts, latency_us, loss_rate, jitter_us, rx_bytes, tx_bytes, samples)
+    type SeriesRow = (
+        i64,
+        i64,
+        Option<i64>,
+        Option<f64>,
+        Option<i64>,
+        i64,
+        i64,
+        i64,
+    );
 
     /// 与 60s 边界对齐，桶边界才会是 T0 / T0+60 / ...
     const T0: i64 = 1_700_000_040;
@@ -255,6 +269,7 @@ mod tests {
         remote_addr: &str,
         latency_us: i64,
         loss_rate: f64,
+        jitter_us: i64,
         rx_bytes: i64,
         tx_bytes: i64,
         sampled_at: i64,
@@ -269,6 +284,7 @@ mod tests {
             tunnel_type: Set("udp".to_string()),
             latency_us: Set(latency_us),
             loss_rate: Set(loss_rate),
+            jitter_us: Set(jitter_us),
             rx_bytes: Set(rx_bytes),
             tx_bytes: Set(tx_bytes),
             conn_count: Set(1),
@@ -277,29 +293,38 @@ mod tests {
         }
     }
 
-    /// peer 7：6 条采样，第 3、4 条延迟/丢包拿不到（采样器写 -1）
+    /// peer 7：6 条采样，第 3、4 条延迟/丢包/抖动拿不到（采样器写 -1）
     /// peer 9：计数器中途重置（连接重建），隧道地址也换过一次
     async fn seed(db: &Db) {
         let samples = [
-            (10_000, 1_000, 2_000),
-            (20_000, 1_600, 2_600),
-            (-1, 2_200, 3_200),
-            (-1, 2_800, 3_800),
-            (30_000, 3_400, 4_400),
-            (40_000, 4_000, 5_000),
+            (10_000, 500, 1_000, 2_000),
+            (20_000, 1_000, 1_600, 2_600),
+            (-1, -1, 2_200, 3_200),
+            (-1, -1, 2_800, 3_800),
+            (30_000, 1_500, 3_400, 4_400),
+            (40_000, 2_000, 4_000, 5_000),
         ];
         let mut rows: Vec<peer_conn_history::ActiveModel> = samples
             .iter()
             .enumerate()
-            .map(|(i, (lat, rx, tx))| {
+            .map(|(i, (lat, jit, rx, tx))| {
                 let loss = if *lat < 0 { -1.0 } else { 0.0 };
-                row(7, "1.2.3.4:11010", *lat, loss, *rx, *tx, T0 + i as i64 * 60)
+                row(
+                    7,
+                    "1.2.3.4:11010",
+                    *lat,
+                    loss,
+                    *jit,
+                    *rx,
+                    *tx,
+                    T0 + i as i64 * 60,
+                )
             })
             .collect();
 
-        rows.push(row(9, "5.6.7.8:11010", 8_000, 0.0, 5_000, 5_000, T0));
-        rows.push(row(9, "5.6.7.8:11010", 8_000, 0.0, 5_500, 5_500, T0 + 60));
-        rows.push(row(9, "9.9.9.9:22022", 9_000, 0.0, 100, 100, T0 + 120));
+        rows.push(row(9, "5.6.7.8:11010", 8_000, 0.0, 400, 5_000, 5_000, T0));
+        rows.push(row(9, "5.6.7.8:11010", 8_000, 0.0, 400, 5_500, 5_500, T0 + 60));
+        rows.push(row(9, "9.9.9.9:22022", 9_000, 0.0, 500, 100, 100, T0 + 120));
 
         peer_conn_history::Entity::insert_many(rows)
             .exec(db.orm_db())
@@ -331,11 +356,13 @@ mod tests {
                 let bucket_ts: i64 = r.try_get("", "bucket_ts").unwrap();
                 let latency_us: Option<i64> = r.try_get("", "latency_us").unwrap();
                 let loss_rate: Option<f64> = r.try_get("", "loss_rate").unwrap();
+                let jitter_us: Option<i64> = r.try_get("", "jitter_us").unwrap();
                 let rx_bytes: i64 = r.try_get("", "rx_bytes").unwrap();
                 let tx_bytes: i64 = r.try_get("", "tx_bytes").unwrap();
                 let samples: i64 = r.try_get("", "samples").unwrap();
                 (
-                    peer_id, bucket_ts, latency_us, loss_rate, rx_bytes, tx_bytes, samples,
+                    peer_id, bucket_ts, latency_us, loss_rate, jitter_us, rx_bytes, tx_bytes,
+                    samples,
                 )
             })
             .collect()
@@ -371,16 +398,18 @@ mod tests {
         // 桶内只有一条采样时原样返回
         assert_eq!(find(&rows, 7, T0).2, Some(10_000));
 
-        // 延迟/丢包全为 -1 的桶 -> NULL（前端断线），而不是被 0 拉低
+        // 延迟/丢包/抖动全为 -1 的桶 -> NULL（前端断线），而不是被 0 拉低
         let missing = find(&rows, 7, T0 + 120);
         assert_eq!(missing.2, None);
         assert_eq!(missing.3, None);
+        assert_eq!(missing.4, None);
         // 但累计计数器照常取 MAX
-        assert_eq!(missing.4, 2_200);
-        assert_eq!(missing.5, 3_200);
+        assert_eq!(missing.5, 2_200);
+        assert_eq!(missing.6, 3_200);
 
-        assert_eq!(find(&rows, 7, T0 + 60).6, 1, "bucket=60 时每桶 1 条采样");
-        assert_eq!(find(&rows, 9, T0).5, 5_000, "peer9 桶内 tx 取 MAX");
+        assert_eq!(find(&rows, 7, T0 + 60).7, 1, "bucket=60 时每桶 1 条采样");
+        assert_eq!(find(&rows, 9, T0).6, 5_000, "peer9 桶内 tx 取 MAX");
+        assert_eq!(find(&rows, 7, T0).4, Some(500), "jitter 原样返回");
     }
 
     #[tokio::test]
@@ -391,13 +420,14 @@ mod tests {
         let rows = run_series(&db, 120).await;
         assert_eq!(rows.len(), 5, "peer7 三个桶 + peer9 两个桶");
 
-        // 两条采样 (10000, 20000) 取均值
+        // 两条采样 (10000, 20000) / jitter (500, 1000) 取均值
         let first = find(&rows, 7, T0);
         assert_eq!(first.2, Some(15_000));
-        assert_eq!(first.6, 2);
+        assert_eq!(first.4, Some(750));
+        assert_eq!(first.7, 2);
         // 累计计数器取 MAX 而不是求和
-        assert_eq!(first.4, 1_600);
-        assert_eq!(first.5, 2_600);
+        assert_eq!(first.5, 1_600);
+        assert_eq!(first.6, 2_600);
 
         // 整桶都拿不到延迟 -> NULL，不会被 0 或相邻桶污染
         assert_eq!(find(&rows, 7, T0 + 120).2, None);

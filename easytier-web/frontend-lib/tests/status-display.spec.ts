@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import {
+  connLatencyMs,
+  connLocalAddr,
+  connLossRate,
+  connPathQualityCell,
+  connPathQualityTip,
+  connRemoteAddr,
+  flattenPeerConnRows,
   jitterMs,
   latencyMs,
   lossRate,
@@ -225,5 +232,96 @@ describe('status display helpers', () => {
     ], defaultConnId)
     expect(pathQualityCell(pair)).toBe('0.042')
     expect(pathQualityTip(pair)).not.toContain('bond')
+  })
+})
+
+describe('flattenPeerConnRows', () => {
+  it('keeps local / no-conn peers as a single row', () => {
+    const local = { route: { hostname: 'me', ipv4_addr: '10.0.0.1' } } as any
+    const relay = peerRoutePair([])
+    const rows = flattenPeerConnRows([local, relay])
+    expect(rows).toHaveLength(2)
+    expect(rows[0].conn).toBeUndefined()
+    expect(rows[1].connCount).toBe(0)
+  })
+
+  it('expands multi-conn peers to one row per tunnel', () => {
+    const defaultConnId = '00000001-0002-0003-0004-000000000005'
+    const pair = peerRoutePairWithDefaultConn([
+      {
+        conn_id: defaultConnId,
+        tunnel: {
+          tunnel_type: 'udp',
+          local_addr: { url: 'udp://192.168.1.2:11010' },
+          remote_addr: { url: 'udp://1.2.3.4:11010' },
+        },
+        stats: { latency_us: '9000', jitter_us: '1000', tx_bytes: '10', rx_bytes: '20' },
+        loss_rate: '0.02',
+        quality_score: 0.042,
+      },
+      {
+        conn_id: 'standby',
+        tunnel: {
+          tunnel_type: 'tcp',
+          local_addr: { url: 'tcp://10.0.0.1:11010' },
+          remote_addr: { url: 'tcp://10.0.0.2:11010' },
+        },
+        stats: { latency_us: '2000', jitter_us: '500', tx_bytes: '1', rx_bytes: '2' },
+        loss_rate: '0.01',
+        quality_score: 0.1,
+      },
+    ], defaultConnId)
+
+    const rows = flattenPeerConnRows([pair])
+    expect(rows).toHaveLength(2)
+    expect(rows[0].isDefault).toBe(true)
+    expect(rows[0].connCount).toBe(2)
+    expect(connLatencyMs(rows[0].conn)).toBe('9ms')
+    expect(connRemoteAddr(rows[0].conn)).toBe('1.2.3.4:11010')
+    expect(connLocalAddr(rows[0].conn)).toBe('192.168.1.2:11010')
+    expect(connPathQualityCell(rows[0].conn, true)).toBe('★ 0.042')
+    expect(rows[1].isDefault).toBe(false)
+    expect(connPathQualityCell(rows[1].conn, false)).toBe('· 0.100')
+  })
+
+  it('connLossRate treats omitted loss_rate as 0% (protobuf JSON omit-zero)', () => {
+    expect(connLossRate(undefined)).toBe('')
+    expect(connLossRate({} as any)).toBe('0%')
+    expect(connLossRate({ loss_rate: '0.05' } as any)).toBe('5%')
+    expect(connLossRate({ loss_rate: 0 } as any)).toBe('0%')
+  })
+
+  it('connPathQualityTip shares tip format with pathQualityTip', () => {
+    const conn = {
+      tunnel: { tunnel_type: 'udp' },
+      stats: { latency_us: '9000', jitter_us: '1000' },
+      loss_rate: '0.02',
+      quality_score: 0.042,
+      in_bond_set: true,
+      bond_class: 'udp',
+    } as any
+    expect(connPathQualityTip(conn, true)).toBe(
+      '★ udp score=0.042 rtt=9ms jitter=1ms loss=2% bond(udp)',
+    )
+  })
+
+  it('falls back to first conn when default_conn_id is stale', () => {
+    const pair = peerRoutePairWithDefaultConn([
+      {
+        conn_id: 'alive-a',
+        tunnel: { tunnel_type: 'udp' },
+        stats: { latency_us: '1000' },
+        quality_score: 0.01,
+      },
+      {
+        conn_id: 'alive-b',
+        tunnel: { tunnel_type: 'tcp' },
+        stats: { latency_us: '2000' },
+        quality_score: 0.02,
+      },
+    ], '00000001-0002-0003-0004-000000000099')
+    const rows = flattenPeerConnRows([pair])
+    expect(rows[0].isDefault).toBe(true)
+    expect(rows[1].isDefault).toBe(false)
   })
 })

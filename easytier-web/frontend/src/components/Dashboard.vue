@@ -32,7 +32,7 @@ const periodFunc = new Utils.PeriodicTask(async () => {
         });
         console.error(e);
     }
-}, 1000);
+}, 2000);
 
 onMounted(async () => {
     periodFunc.start();

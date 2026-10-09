@@ -11,6 +11,7 @@ mod m20261001_000008_user_config_token;
 mod m20261001_000009_user_config_tokens;
 mod m20261001_000010_repair_config_tokens;
 mod m20261002_000011_device_display_name;
+mod m20261009_000012_peer_conn_history_jitter;
 
 pub struct Migrator;
 
@@ -29,6 +30,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20261001_000009_user_config_tokens::Migration),
             Box::new(m20261001_000010_repair_config_tokens::Migration),
             Box::new(m20261002_000011_device_display_name::Migration),
+            Box::new(m20261009_000012_peer_conn_history_jitter::Migration),
         ]
     }
 }

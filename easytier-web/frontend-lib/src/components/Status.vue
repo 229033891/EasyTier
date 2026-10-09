@@ -5,7 +5,24 @@ import { useI18n } from 'vue-i18n';
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue';
 import { ipv4InetToString, ipv4ToString, ipv6ToString, formatEventTime } from '../modules/utils';
 import { isPanelHeaderInteractiveTarget } from '../modules/panel';
-import { jitterMs, latencyMs, lossRate, numericValue, pathQualityCell, pathQualityTip, peerConns, resolvePeerRemoteAddr, resolveRoutePath, udpNatTypeName, type RoutePeerLabel } from '../modules/statusDisplay';
+import {
+  connJitterMs,
+  connLatencyMs,
+  connLocalAddr,
+  connLossRate,
+  connPathQualityCell,
+  connPathQualityTip,
+  connRemoteAddr,
+  flattenPeerConnRows,
+  latencyMs,
+  numericValue,
+  peerConns,
+  resolvePeerRemoteAddr,
+  resolveRoutePath,
+  udpNatTypeName,
+  type PeerConnTableRow,
+  type RoutePeerLabel,
+} from '../modules/statusDisplay';
 import { Badge, DataTable, Column, Tag, Button, ScrollPanel, Card, Panel, } from 'primevue';
 import NetworkChart from './NetworkChart.vue';
 import PeerConnHistoryChart from './PeerConnHistoryChart.vue';
@@ -74,6 +91,72 @@ function peerAddrDisplay(info: PeerRoutePair) {
   return { text: resolved.text, tip: resolved.text }
 }
 
+// peerRouteInfos prepends a synthetic local "route" object (not a full PeerRoutePair).
+const peerConnRows = computed(() => flattenPeerConnRows(peerRouteInfos.value as PeerRoutePair[]))
+
+function rowLatency(row: PeerConnTableRow) {
+  if (row.conn)
+    return connLatencyMs(row.conn)
+  // 中转无直连：回退到路由汇总延迟
+  return latencyMs(row.pair)
+}
+
+function rowJitter(row: PeerConnTableRow) {
+  return connJitterMs(row.conn)
+}
+
+function rowLoss(row: PeerConnTableRow) {
+  return connLossRate(row.conn)
+}
+
+function rowTxBytes(row: PeerConnTableRow) {
+  if (!row.conn) {
+    const tx = statsCommon(row.pair, 'stats.tx_bytes')
+    return tx == null ? '' : humanFileSize(tx)
+  }
+  const tx = numericValue(row.conn.stats?.tx_bytes)
+  return tx == null ? '' : humanFileSize(tx)
+}
+
+function rowRxBytes(row: PeerConnTableRow) {
+  if (!row.conn) {
+    const rx = statsCommon(row.pair, 'stats.rx_bytes')
+    return rx == null ? '' : humanFileSize(rx)
+  }
+  const rx = numericValue(row.conn.stats?.rx_bytes)
+  return rx == null ? '' : humanFileSize(rx)
+}
+
+function rowTunnelProto(row: PeerConnTableRow) {
+  if (!row.conn)
+    return tunnelProto(row.pair)
+  return oneTunnelProto(row.conn.tunnel)
+}
+
+function rowRemoteAddr(row: PeerConnTableRow) {
+  if (row.conn) {
+    const text = connRemoteAddr(row.conn)
+    return { text, tip: text || undefined }
+  }
+  return peerAddrDisplay(row.pair)
+}
+
+function rowLocalAddr(row: PeerConnTableRow) {
+  return connLocalAddr(row.conn)
+}
+
+function rowPathQuality(row: PeerConnTableRow) {
+  if (!row.conn)
+    return ''
+  return connPathQualityCell(row.conn, row.isDefault)
+}
+
+function rowPathQualityTip(row: PeerConnTableRow) {
+  if (!row.conn)
+    return ''
+  return connPathQualityTip(row.conn, row.isDefault)
+}
+
 function routeCostDisplay(info: PeerRoutePair) {
   const me = props.curNetworkInst?.detail?.my_node_info
   const path = resolveRoutePath(info, {
@@ -130,16 +213,6 @@ function humanFileSize(bytes: number, si = false, dp = 1) {
   return `${bytes.toFixed(dp)} ${units[u]}`
 }
 
-function txBytes(info: PeerRoutePair) {
-  const tx = statsCommon(info, 'stats.tx_bytes')
-  return tx == null ? '' : humanFileSize(tx)
-}
-
-function rxBytes(info: PeerRoutePair) {
-  const rx = statsCommon(info, 'stats.rx_bytes')
-  return rx == null ? '' : humanFileSize(rx)
-}
-
 function version(info: PeerRoutePair) {
   return info.route.version === '' ? 'unknown' : info.route.version
 }
@@ -149,6 +222,18 @@ function ipFormat(info: PeerRoutePair) {
   if (typeof ip === 'string')
     return ip
   return ip ? ipv4InetToString(ip) : ''
+}
+
+function rowIpFormat(row: PeerConnTableRow) {
+  return ipFormat(row.pair)
+}
+
+function rowVersion(row: PeerConnTableRow) {
+  return version(row.pair)
+}
+
+function rowNatType(row: PeerConnTableRow) {
+  return natType(row.pair)
 }
 
 function oneTunnelProto(tunnel?: TunnelInfo): string {
@@ -339,12 +424,9 @@ function shouldAvoidRelayData(info: PeerRoutePair): boolean {
   return info.route?.feature_flag?.avoid_relay_data ?? false
 }
 
-const peerCount = computed(() => {
-  if (!peerRouteInfos.value)
-    return 0
-
-  return peerRouteInfos.value.length
-})
+const peerCount = computed(() => peerRouteInfos.value?.length ?? 0)
+/** Rows after flattening multi-conn peers (badge); may exceed peerCount. */
+const peerRowCount = computed(() => peerConnRows.value.length)
 
 // calculate tx/rx rate every 2 seconds
 let rateIntervalId = 0
@@ -588,50 +670,70 @@ const eventLogContent = computed(() => {
           <template #header>
             <div class="flex items-center gap-2">
               <span>{{ t('peer_info') }}</span>
-              <Badge :value="peerCount" severity="info"
-                class="text-xs font-semibold px-2 py-0.5 rounded-full" />
+              <Badge :value="peerRowCount" severity="info"
+                class="text-xs font-semibold px-2 py-0.5 rounded-full"
+                v-tooltip.top="peerRowCount !== peerCount
+                  ? t('peer_info_rows_tip', { peers: peerCount, links: peerRowCount })
+                  : undefined" />
             </div>
           </template>
           <div class="peer-table-scroll status-panel-body">
-          <DataTable :value="peerRouteInfos" column-resize-mode="expand" table-class="peer-route-table">
-            <Column :field="ipFormat" :header="t('virtual_ipv4')" />
+          <DataTable :value="peerConnRows" data-key="key" column-resize-mode="expand" table-class="peer-route-table">
+            <Column :field="rowIpFormat" :header="t('virtual_ipv4')" />
             <Column :header="t('hostname')">
               <template #body="slotProps">
-                <div v-if="!slotProps.data.route.cost || !isPublicServerRoute(slotProps.data)"
-                  v-tooltip.top="slotProps.data.route.hostname">
-                  {{
-                    slotProps.data.route.hostname }}
-                </div>
-                <div v-else v-tooltip.top="slotProps.data.route.hostname" class="space-x-1">
-                  <Tag v-if="isPublicServerRoute(slotProps.data)" severity="info" value="Info">
-                    {{ t('status.server') }}
-                  </Tag>
-                  <Tag v-if="shouldAvoidRelayData(slotProps.data)" severity="warn" value="Warn">
-                    {{ t('status.relay') }}
-                  </Tag>
+                <div class="space-x-1">
+                  <Tag v-if="slotProps.data.connCount > 1 && slotProps.data.isDefault"
+                    severity="success" :value="t('conn_role_primary')" />
+                  <Tag v-else-if="slotProps.data.connCount > 1"
+                    severity="secondary" :value="t('conn_role_standby')" />
+                  <span
+                    v-if="!slotProps.data.pair.route.cost || !isPublicServerRoute(slotProps.data.pair)"
+                    v-tooltip.top="slotProps.data.pair.route.hostname"
+                  >{{ slotProps.data.pair.route.hostname }}</span>
+                  <span
+                    v-else
+                    class="inline-flex flex-wrap items-center gap-1"
+                    v-tooltip.top="slotProps.data.pair.route.hostname"
+                  >
+                    <Tag v-if="isPublicServerRoute(slotProps.data.pair)" severity="info" value="Info">
+                      {{ t('status.server') }}
+                    </Tag>
+                    <Tag v-if="shouldAvoidRelayData(slotProps.data.pair)" severity="warn" value="Warn">
+                      {{ t('status.relay') }}
+                    </Tag>
+                  </span>
                 </div>
               </template>
             </Column>
             <Column :header="t('route_cost')">
               <template #body="slotProps">
-                <span class="route-cost-cell" v-tooltip.top="routeCostDisplay(slotProps.data).tip">
-                  {{ routeCostDisplay(slotProps.data).text }}
+                <span class="route-cost-cell" v-tooltip.top="routeCostDisplay(slotProps.data.pair).tip">
+                  {{ routeCostDisplay(slotProps.data.pair).text }}
                 </span>
               </template>
             </Column>
-            <Column :field="tunnelProto" :header="t('tunnel_proto')"
+            <Column :field="rowTunnelProto" :header="t('tunnel_proto')"
               header-class="peer-col-secondary" body-class="peer-col-secondary" />
+            <Column :header="t('local_addr')"
+              header-class="peer-col-secondary" body-class="peer-col-secondary">
+              <template #body="slotProps">
+                <span class="peer-addr-cell" v-tooltip.top="rowLocalAddr(slotProps.data) || undefined">
+                  {{ rowLocalAddr(slotProps.data) }}
+                </span>
+              </template>
+            </Column>
             <Column :header="t('peer_addr')">
               <template #body="slotProps">
-                <span class="peer-addr-cell" v-tooltip.top="peerAddrDisplay(slotProps.data).tip">
-                  {{ peerAddrDisplay(slotProps.data).text }}
+                <span class="peer-addr-cell" v-tooltip.top="rowRemoteAddr(slotProps.data).tip">
+                  {{ rowRemoteAddr(slotProps.data).text }}
                 </span>
               </template>
             </Column>
-            <Column :field="latencyMs" :header="t('latency')" />
-            <Column :field="jitterMs" :header="t('jitter')"
+            <Column :field="rowLatency" :header="t('latency')" />
+            <Column :field="rowJitter" :header="t('jitter')"
               header-class="peer-col-secondary" body-class="peer-col-secondary" />
-            <Column :field="lossRate" :header="t('loss_rate')"
+            <Column :field="rowLoss" :header="t('loss_rate')"
               header-class="peer-col-secondary" body-class="peer-col-secondary" />
             <Column>
               <template #header>
@@ -649,24 +751,20 @@ const eventLogContent = computed(() => {
               <template #body="slotProps">
                 <span
                   class="path-quality-cell"
-                  v-tooltip.top="{ value: pathQualityTip(slotProps.data) || undefined, escape: true }"
+                  v-tooltip.top="{ value: rowPathQualityTip(slotProps.data) || undefined, escape: true }"
                 >
-                  {{ pathQualityCell(slotProps.data) }}
+                  {{ rowPathQuality(slotProps.data) }}
                 </span>
               </template>
             </Column>
-            <Column :field="txBytes" :header="t('upload_bytes')"
+            <Column :field="rowTxBytes" :header="t('upload_bytes')"
               header-class="peer-col-secondary" body-class="peer-col-secondary" />
-            <Column :field="rxBytes" :header="t('download_bytes')"
+            <Column :field="rowRxBytes" :header="t('download_bytes')"
               header-class="peer-col-secondary" body-class="peer-col-secondary" />
-            <Column :field="natType" :header="t('nat_type')"
+            <Column :field="rowNatType" :header="t('nat_type')"
               header-class="peer-col-secondary" body-class="peer-col-secondary" />
-            <Column :header="t('status.version')"
-              header-class="peer-col-secondary" body-class="peer-col-secondary">
-              <template #body="slotProps">
-                <span>{{ version(slotProps.data) }}</span>
-              </template>
-            </Column>
+            <Column :field="rowVersion" :header="t('status.version')"
+              header-class="peer-col-secondary" body-class="peer-col-secondary" />
           </DataTable>
           </div>
         </Panel>

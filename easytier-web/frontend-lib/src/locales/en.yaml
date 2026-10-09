@@ -185,6 +185,10 @@ vpn_portal_state_error: Error
 show_event_log: Show Event Log
 event_log: Event Log
 peer_info: Peer Info
+peer_info_rows_tip: '{peers} peers · {links} links'
+conn_role_primary: Primary
+conn_role_standby: Standby
+local_addr: Local Address
 peer_conn_history: Peer Connection History
 history_select_peer: Select peer
 history_range_1h: 1 hour
@@ -192,6 +196,8 @@ history_range_6h: 6 hours
 history_range_24h: 24 hours
 history_range_7d: 7 days
 history_latency: Latency
+history_loss: Loss Rate
+history_jitter: Jitter
 history_traffic: Traffic
 history_loading: Loading history
 history_no_data: No history yet (samples accumulate while the network is running)
@@ -203,9 +209,10 @@ hostname: Hostname
 latency: Latency
 path_quality: Quality
 path_quality_help: |-
-  Composite same-peer path score (lower is better: RTT + loss + jitter).
-  ★ is the active send path (default_conn); · / +N are hot standbys for failover — not bandwidth aggregation.
-  Flows spread across tunnels only when Bonded Link Count > 1 and the cell shows bond×N.
+  Per-tunnel path score (lower is better: RTT + loss + jitter).
+  ★ is the active send path (default_conn); · is a hot standby for failover — not bandwidth aggregation.
+  Primary/Standby tags mark multiple links to the same peer.
+  Flows spread across tunnels only when Bonded Link Count > 1 and the cell shows bond.
   `!` means loss exceeded the fuse.
 upload_bytes: Upload
 download_bytes: Download

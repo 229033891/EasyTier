@@ -3,12 +3,13 @@
 ## Status
 
 - Status: **Current**（核心协议、持久化与 Session 增量收敛已落地；§7 body limit 与 checklist 部分仍开放）
-- 最近审阅：2026-10-06
+- 最近审阅：2026-10-09（补：Web GET config **SQLite 权威**；与 GUI RPC 优先的分工见 desktop-gui §2.5）
 - 实施范围：EasyTier Web 的 HTTP 接收、校验、SQLite 持久化和 Session 运行态收敛
 - 上游依赖：后续由 Console 计算并发送 Patch（见 [`../roadmap/web-evolution.md`](../roadmap/web-evolution.md)）
 - 兼容要求：保留现有 Full PUT
 - 索引：[`../README.md`](../README.md)
-- 反向路径（节点 / 桌面 GUI → Console 回写 web-owned）：[`desktop-gui-and-config-server.md`](./desktop-gui-and-config-server.md)
+- 反向路径（节点 / 桌面 GUI → Console 回写 web-owned）：[`desktop-gui-and-config-server.md`](./desktop-gui-and-config-server.md) §2.5
+- 读配置：`ClientManager::handle_get_network_config_with_source` **存储优先**（库有行则不问设备）；无行再 RPC。编辑页保存会覆盖设备未入库的本地改动。
 
 本文记录当前接收端方案。Session 合并已持久化 Patch 的 touched instance IDs，
 并在运行态收敛时读取这些实例的最新持久化状态。重启、通知丢失或无法安全判断

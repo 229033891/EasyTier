@@ -244,6 +244,26 @@ pub mod instance {
             ret
         }
 
+        /// Prefer default conn jitter; otherwise the minimum among conns with stats.
+        pub fn get_jitter_us(&self) -> Option<u64> {
+            let p = self.peer.as_ref()?;
+            let default_conn_id = p.default_conn_id.map(|id| id.to_string());
+            let mut best: Option<u64> = None;
+            for conn in p.conns.iter() {
+                let Some(stats) = &conn.stats else {
+                    continue;
+                };
+                if default_conn_id == Some(conn.conn_id.to_string()) {
+                    return Some(stats.jitter_us);
+                }
+                best = Some(match best {
+                    Some(prev) => prev.min(stats.jitter_us),
+                    None => stats.jitter_us,
+                });
+            }
+            best
+        }
+
         fn get_tunnel_proto_str(tunnel_info: &super::super::common::TunnelInfo) -> String {
             tunnel_info.display_tunnel_type()
         }
@@ -403,7 +423,7 @@ mod tests {
     use bytes::Bytes;
     use prost::Message;
 
-    use super::instance::{PeerConnInfo, PeerInfo, PeerRoutePair};
+    use super::instance::{PeerConnInfo, PeerConnStats, PeerInfo, PeerRoutePair};
     use super::manage::{
         ListNetworkInstanceRequest, ListNetworkInstanceResponse, WebClientService,
         WebClientServiceClient, WebClientServiceDescriptor, WebClientServiceMethodDescriptor,
@@ -547,6 +567,67 @@ mod tests {
             pair.get_loss_rate()
                 .is_some_and(|loss_rate| (loss_rate - 0.4).abs() < 1e-6)
         );
+    }
+
+    #[test]
+    fn peer_route_pair_jitter_us_uses_default_conn_stats() {
+        let default_conn_id = uuid::Uuid::new_v4();
+        let pair = PeerRoutePair {
+            peer: Some(PeerInfo {
+                default_conn_id: Some(default_conn_id.into()),
+                conns: vec![
+                    PeerConnInfo {
+                        conn_id: uuid::Uuid::new_v4().to_string(),
+                        stats: Some(PeerConnStats {
+                            jitter_us: 900,
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    },
+                    PeerConnInfo {
+                        conn_id: default_conn_id.to_string(),
+                        stats: Some(PeerConnStats {
+                            jitter_us: 120,
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    },
+                ],
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        assert_eq!(pair.get_jitter_us(), Some(120));
+    }
+
+    #[test]
+    fn peer_route_pair_jitter_us_skips_conns_without_stats() {
+        let default_conn_id = uuid::Uuid::new_v4();
+        let pair = PeerRoutePair {
+            peer: Some(PeerInfo {
+                default_conn_id: Some(default_conn_id.into()),
+                conns: vec![
+                    PeerConnInfo {
+                        conn_id: default_conn_id.to_string(),
+                        // jitter lives in stats; no stats → fall through to other conns
+                        ..Default::default()
+                    },
+                    PeerConnInfo {
+                        conn_id: uuid::Uuid::new_v4().to_string(),
+                        stats: Some(PeerConnStats {
+                            jitter_us: 50,
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    },
+                ],
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        assert_eq!(pair.get_jitter_us(), Some(50));
     }
 
     #[test]

@@ -46,6 +46,18 @@
         </div>
       </div>
       <div>
+        <div class="peer-history-chart-title">{{ t('history_loss') }}</div>
+        <div class="h-40">
+          <canvas ref="lossCanvas"></canvas>
+        </div>
+      </div>
+      <div>
+        <div class="peer-history-chart-title">{{ t('history_jitter') }}</div>
+        <div class="h-40">
+          <canvas ref="jitterCanvas"></canvas>
+        </div>
+      </div>
+      <div>
         <div class="peer-history-chart-title">{{ t('history_traffic') }}</div>
         <div class="h-40">
           <canvas ref="trafficCanvas"></canvas>
@@ -71,7 +83,7 @@ import {
   Filler,
 } from 'chart.js'
 import type { PeerConnHistoryResponse, PeerConnHistorySeries, RemoteClient } from '../modules/api'
-import { latencyMsSeries, rateSeries } from '../modules/peerHistory'
+import { jitterMsSeries, latencyMsSeries, lossPctSeries, rateSeries } from '../modules/peerHistory'
 
 ChartJS.register(
   CategoryScale,
@@ -139,13 +151,19 @@ function formatTime(unixSeconds: number): string {
 const labels = computed(() => selectedPeer.value?.points.map(p => formatTime(p.t)) ?? [])
 
 const latencyData = computed(() => latencyMsSeries(selectedPeer.value?.points ?? []))
+const lossData = computed(() => lossPctSeries(selectedPeer.value?.points ?? []))
+const jitterData = computed(() => jitterMsSeries(selectedPeer.value?.points ?? []))
 
 const rxRate = computed(() => rateSeries(selectedPeer.value?.points ?? [], 'rx_bytes'))
 const txRate = computed(() => rateSeries(selectedPeer.value?.points ?? [], 'tx_bytes'))
 
 const latencyCanvas = ref<HTMLCanvasElement>()
+const lossCanvas = ref<HTMLCanvasElement>()
+const jitterCanvas = ref<HTMLCanvasElement>()
 const trafficCanvas = ref<HTMLCanvasElement>()
 let latencyChart: ChartJS | null = null
+let lossChart: ChartJS | null = null
+let jitterChart: ChartJS | null = null
 let trafficChart: ChartJS | null = null
 
 const axisFont = { size: 10 }
@@ -212,6 +230,50 @@ function initCharts() {
     })
   }
 
+  if (lossCanvas.value && !lossChart) {
+    lossChart = new ChartJS(lossCanvas.value.getContext('2d')!, {
+      type: 'line',
+      data: {
+        labels: labels.value,
+        datasets: [{
+          label: t('history_loss'),
+          data: lossData.value,
+          borderColor: 'rgb(239, 68, 68)',
+          backgroundColor: 'rgba(239, 68, 68, 0.1)',
+          borderWidth: 2,
+          fill: true,
+          tension: 0.35,
+          pointRadius: 0,
+          pointHoverRadius: 4,
+          spanGaps: true,
+        }],
+      },
+      options: baseOptions(v => `${v}%`, v => `${v}%`, false),
+    })
+  }
+
+  if (jitterCanvas.value && !jitterChart) {
+    jitterChart = new ChartJS(jitterCanvas.value.getContext('2d')!, {
+      type: 'line',
+      data: {
+        labels: labels.value,
+        datasets: [{
+          label: t('history_jitter'),
+          data: jitterData.value,
+          borderColor: 'rgb(168, 85, 247)',
+          backgroundColor: 'rgba(168, 85, 247, 0.1)',
+          borderWidth: 2,
+          fill: true,
+          tension: 0.35,
+          pointRadius: 0,
+          pointHoverRadius: 4,
+          spanGaps: true,
+        }],
+      },
+      options: baseOptions(v => `${v} ms`, v => `${v} ms`, false),
+    })
+  }
+
   if (trafficCanvas.value && !trafficChart) {
     trafficChart = new ChartJS(trafficCanvas.value.getContext('2d')!, {
       type: 'line',
@@ -250,11 +312,32 @@ function initCharts() {
   }
 }
 
+function destroyCharts() {
+  latencyChart?.destroy()
+  lossChart?.destroy()
+  jitterChart?.destroy()
+  trafficChart?.destroy()
+  latencyChart = null
+  lossChart = null
+  jitterChart = null
+  trafficChart = null
+}
+
 function syncCharts() {
   if (latencyChart) {
     latencyChart.data.labels = labels.value
     latencyChart.data.datasets[0].data = latencyData.value
     latencyChart.update('none')
+  }
+  if (lossChart) {
+    lossChart.data.labels = labels.value
+    lossChart.data.datasets[0].data = lossData.value
+    lossChart.update('none')
+  }
+  if (jitterChart) {
+    jitterChart.data.labels = labels.value
+    jitterChart.data.datasets[0].data = jitterData.value
+    jitterChart.update('none')
   }
   if (trafficChart) {
     trafficChart.data.labels = labels.value
@@ -287,11 +370,18 @@ async function load() {
     console.error('Failed to load peer connection history', e)
     loadFailed.value = true
     data.value = undefined
+    // Peers empty → canvas unmounts; clear Chart handles so a later remount can re-init.
+    destroyCharts()
   } finally {
     if (sequence !== loadSequence) return
     loading.value = false
     await nextTick()
     if (sequence !== loadSequence) return
+    // Canvas unmounts when peers empty; drop Chart.js instances so remount can re-init.
+    if (!(data.value?.peers?.length)) {
+      destroyCharts()
+      return
+    }
     initCharts()
     syncCharts()
   }
@@ -310,6 +400,10 @@ watch(() => props.visible, v => {
 watch([() => props.instanceId, hours], () => {
   data.value = undefined
   selectedPeerId.value = undefined
+  // Clearing data unmounts <canvas>; must null Chart handles here (not on every load),
+  // otherwise initCharts sees stale non-null chart vars and skips recreate → blank plots.
+  // Do not destroy at load() start: refresh keeps peers mounted and would flicker.
+  destroyCharts()
   maybeLoad()
 })
 
@@ -324,10 +418,7 @@ onMounted(() => {
 
 onUnmounted(() => {
   loadSequence++
-  latencyChart?.destroy()
-  trafficChart?.destroy()
-  latencyChart = null
-  trafficChart = null
+  destroyCharts()
 })
 </script>
 

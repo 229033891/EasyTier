@@ -1,4 +1,10 @@
-import { NatType, type PeerInfo, type PeerRoutePair, type StunInfo } from '../types/network'
+import {
+  NatType,
+  type PeerConnInfo,
+  type PeerInfo,
+  type PeerRoutePair,
+  type StunInfo,
+} from '../types/network'
 
 const udpNatTypeStrMap: Record<NatType, string> = {
   [NatType.Unknown]: 'Unknown',
@@ -238,7 +244,7 @@ export function resolveRoutePath(
 }
 
 /** 从 tunnel URL 提取 host:port（IPv6 带方括号） */
-function formatTunnelHostPort(url?: string): string {
+export function formatTunnelHostPort(url?: string): string {
   if (!url)
     return ''
 
@@ -402,7 +408,8 @@ export function connQualityLines(info: PeerRoutePair): ConnQualityLine[] {
   return defaultConnFirst(info).map((conn) => {
     const latencyUs = numericValue(conn.stats?.latency_us)
     const jitterUs = numericValue(conn.stats?.jitter_us)
-    const loss = numericValue(conn.loss_rate)
+    // protobuf JSON omits zero loss_rate; treat missing as 0 (same as lossRate()).
+    const loss = numericValue(conn.loss_rate ?? 0)
     const score = typeof conn.quality_score === 'number' && Number.isFinite(conn.quality_score)
       ? conn.quality_score
       : undefined
@@ -422,6 +429,26 @@ export function connQualityLines(info: PeerRoutePair): ConnQualityLine[] {
       remote: conn.tunnel?.remote_addr?.url,
     }
   })
+}
+
+function formatPathQualityTipLine(parts: {
+  role: string
+  proto: string
+  score: string
+  latency: string
+  jitter: string
+  loss: string
+  fused: boolean
+  bondSuffix: string
+}): string {
+  const fused = parts.fused ? ' fused' : ''
+  return `${parts.role} ${parts.proto} score=${parts.score} rtt=${parts.latency} jitter=${parts.jitter} loss=${parts.loss}${fused}${parts.bondSuffix}`
+}
+
+function bondTipSuffix(inBond: boolean, bondClass?: string): string {
+  if (!inBond)
+    return ''
+  return bondClass ? ` bond(${bondClass})` : ' bond'
 }
 
 /** Compact cell: default score + standby count, e.g. `0.042 · +1`, plus `· bond×2` when bonded. */
@@ -448,13 +475,131 @@ export function pathQualityTip(info: PeerRoutePair): string {
   if (!lines.length)
     return ''
   return lines.map((line) => {
-    const role = line.isDefault ? '★' : '·'
     const score = line.score === undefined ? '—' : line.score.toFixed(3)
     const lat = line.latencyMs === undefined ? '—' : `${line.latencyMs}ms`
     const jit = line.jitterMs === undefined ? '—' : `${line.jitterMs}ms`
     const loss = line.lossPct === undefined ? '—' : `${line.lossPct}%`
-    const fused = line.fused ? ' fused' : ''
-    const bond = line.inBond ? (line.bondClass ? ` bond(${line.bondClass})` : ' bond') : ''
-    return `${role} ${line.proto} score=${score} rtt=${lat} jitter=${jit} loss=${loss}${fused}${bond}`
+    return formatPathQualityTipLine({
+      role: line.isDefault ? '★' : '·',
+      proto: line.proto,
+      score,
+      latency: lat,
+      jitter: jit,
+      loss,
+      fused: line.fused,
+      bondSuffix: bondTipSuffix(line.inBond, line.bondClass),
+    })
   }).join('\n')
+}
+
+/** One DataTable row: either a single PeerConn or a peer with no direct tunnels. */
+export type PeerConnTableRow = {
+  key: string
+  pair: PeerRoutePair
+  conn?: PeerConnInfo
+  isDefault: boolean
+  connIndex: number
+  connCount: number
+}
+
+/**
+ * Flatten peer_route_pairs so each direct tunnel is its own row.
+ * Local / relay-only peers (no conns) stay as a single row with `conn` unset.
+ */
+export function flattenPeerConnRows(pairs: PeerRoutePair[]): PeerConnTableRow[] {
+  const rows: PeerConnTableRow[] = []
+
+  for (let pi = 0; pi < pairs.length; pi++) {
+    const pair = pairs[pi]
+    const conns = defaultConnFirst(pair)
+    const preferId = defaultConnId(pair)
+    const peerKey = pair.peer?.peer_id ?? pair.route?.peer_id ?? `idx-${pi}`
+
+    if (!conns.length) {
+      rows.push({
+        key: `peer-${peerKey}`,
+        pair,
+        conn: undefined,
+        isDefault: false,
+        connIndex: 0,
+        connCount: 0,
+      })
+      continue
+    }
+
+    const hasPreferred = !!preferId && conns.some(c => c.conn_id === preferId)
+    conns.forEach((conn, i) => {
+      // Prefer backend default_conn_id; if missing/stale, first ordered conn is primary.
+      const isDefault = hasPreferred ? conn.conn_id === preferId : i === 0
+      rows.push({
+        key: `conn-${conn.conn_id || `${peerKey}-${i}`}`,
+        pair,
+        conn,
+        isDefault,
+        connIndex: i,
+        connCount: conns.length,
+      })
+    })
+  }
+
+  return rows
+}
+
+export function connLatencyMs(conn?: PeerConnInfo): string {
+  const latencyUs = numericValue(conn?.stats?.latency_us)
+  return latencyUs === undefined ? '' : `${Math.ceil(latencyUs / 1000)}ms`
+}
+
+export function connJitterMs(conn?: PeerConnInfo): string {
+  const jitterUs = numericValue(conn?.stats?.jitter_us)
+  return jitterUs === undefined ? '' : `${Math.ceil(jitterUs / 1000)}ms`
+}
+
+export function connLossRate(conn?: PeerConnInfo): string {
+  if (!conn)
+    return ''
+  // protobuf JSON omits zero loss_rate; missing on an existing conn means 0%.
+  const loss = numericValue(conn.loss_rate ?? 0)
+  return loss === undefined ? '' : `${Math.round(loss * 100)}%`
+}
+
+export function connRemoteAddr(conn?: PeerConnInfo): string {
+  return formatTunnelHostPort(conn?.tunnel?.remote_addr?.url)
+}
+
+export function connLocalAddr(conn?: PeerConnInfo): string {
+  return formatTunnelHostPort(conn?.tunnel?.local_addr?.url)
+}
+
+/** Single-conn quality cell for flattened rows (★ / bond / fuse). */
+export function connPathQualityCell(conn?: PeerConnInfo, isDefault = false): string {
+  if (!conn)
+    return ''
+  const score = typeof conn.quality_score === 'number' && Number.isFinite(conn.quality_score)
+    ? conn.quality_score.toFixed(3)
+    : '—'
+  const fused = conn.quality_fused ? '!' : ''
+  const role = isDefault ? '★ ' : '· '
+  const bond = conn.in_bond_set
+    ? (conn.bond_class?.trim() ? ` · bond(${conn.bond_class.trim()})` : ' · bond')
+    : ''
+  return `${role}${score}${fused}${bond}`
+}
+
+export function connPathQualityTip(conn?: PeerConnInfo, isDefault = false): string {
+  if (!conn)
+    return ''
+  const score = typeof conn.quality_score === 'number' && Number.isFinite(conn.quality_score)
+    ? conn.quality_score.toFixed(3)
+    : '—'
+  return formatPathQualityTipLine({
+    role: isDefault ? '★' : '·',
+    proto: oneConnProto(conn.tunnel),
+    score,
+    latency: connLatencyMs(conn) || '—',
+    jitter: connJitterMs(conn) || '—',
+    loss: connLossRate(conn) || '—',
+    fused: !!conn.quality_fused,
+    bondSuffix: bondTipSuffix(!!conn.in_bond_set, conn.bond_class?.trim() || undefined),
+  })
 }

@@ -5,7 +5,8 @@ use serde::{Deserialize, Serialize};
 
 /// 单次采样：某设备上某个网络实例到某个对端 peer 的连接汇总。
 ///
-/// - `latency_us` / `loss_rate` 取该 peer 所有连接里的最优值（延迟取最小、丢包取最小）
+/// - `latency_us` / `jitter_us` / `loss_rate` 优先取 default conn，否则取最优
+///   （延迟/抖动取最小、丢包取首个非 default）；拿不到时写 -1
 /// - `rx_bytes` / `tx_bytes` 是该 peer 所有连接的累计计数器之和（**不是速率**），
 ///   速率由查询侧对相邻采样做差分得到，这样连接重置时也不会把数据写脏
 /// - `sampled_at` 是 unix 秒
@@ -29,6 +30,7 @@ pub struct Model {
     pub tunnel_type: String,
     pub latency_us: i64,
     pub loss_rate: f64,
+    pub jitter_us: i64,
     pub rx_bytes: i64,
     pub tx_bytes: i64,
     pub conn_count: i32,

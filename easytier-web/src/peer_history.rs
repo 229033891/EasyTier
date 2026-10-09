@@ -9,8 +9,11 @@
 //!   没有 IP:端口和延迟可言，跳过。
 //! - **rx/tx 存累计计数器**，不存速率。速率由查询侧对相邻采样做差分，
 //!   这样连接重置（计数器归零）时只是少一个点，不会把库里的数据写脏。
-//! - **拿不到的值写 -1**（延迟/丢包），查询侧按 NULL 处理，避免 0 污染折线。
+//! - **拿不到的值写 -1**（延迟/丢包/抖动），查询侧按 NULL 处理，避免 0 污染折线。
 //! - 单台设备采样失败（离线 / RPC 超时）只记日志，不影响其它设备。
+//! - **优先按 heartbeat 的 running_network_instances 做定向 CollectNetworkInfo**，
+//!   避免对停用实例做全量采集，减轻与状态页 / 心跳 reconcile 的隧道争用；
+//!   尚无 heartbeat 时再回退全量。
 
 use std::{sync::Arc, time::Duration};
 
@@ -59,6 +62,7 @@ struct PeerSample {
     tunnel_type: String,
     latency_us: i64,
     loss_rate: f64,
+    jitter_us: i64,
     rx_bytes: i64,
     tx_bytes: i64,
     conn_count: i32,
@@ -77,12 +81,16 @@ fn aggregate_instance(pairs: &[PeerRoutePair]) -> Vec<PeerSample> {
             continue;
         }
 
-        // 延迟/丢包优先取 default conn（就是实际跑流量的那条），拿不到再退化
+        // 延迟/丢包/抖动优先取 default conn（就是实际跑流量的那条），拿不到再退化
         let latency_us = pair
             .get_latency_ms()
             .map(|ms| (ms * 1000.0).round() as i64)
             .unwrap_or(-1);
         let loss_rate = pair.get_loss_rate().unwrap_or(-1.0);
+        let jitter_us = pair
+            .get_jitter_us()
+            .map(|us| us as i64)
+            .unwrap_or(-1);
         let rx_bytes = pair.get_rx_bytes().unwrap_or(0) as i64;
         let tx_bytes = pair.get_tx_bytes().unwrap_or(0) as i64;
 
@@ -116,6 +124,7 @@ fn aggregate_instance(pairs: &[PeerRoutePair]) -> Vec<PeerSample> {
             tunnel_type,
             latency_us,
             loss_rate,
+            jitter_us,
             rx_bytes,
             tx_bytes,
             conn_count: peer.conns.len() as i32,
@@ -123,6 +132,20 @@ fn aggregate_instance(pairs: &[PeerRoutePair]) -> Vec<PeerSample> {
     }
 
     out
+}
+
+/// 从最近一次 heartbeat 取运行中实例；无 heartbeat 返回 `None`（调用方回退全量）。
+async fn running_inst_ids_from_heartbeat(
+    client_mgr: &ClientManager,
+    client_url: &url::Url,
+) -> Option<Vec<uuid::Uuid>> {
+    let req = client_mgr.get_heartbeat_requests(client_url).await?;
+    Some(
+        req.running_network_instances
+            .into_iter()
+            .map(uuid::Uuid::from)
+            .collect(),
+    )
 }
 
 /// 采集一轮，返回写入的行数
@@ -137,9 +160,21 @@ async fn sample_once(client_mgr: &Arc<ClientManager>, db: &Db) -> usize {
 
     for token in sessions {
         let identify = (token.user_id, token.machine_id);
+        // Prefer scoped collect: empty running list → skip RPC; missing heartbeat → full collect.
+        let inst_ids = match running_inst_ids_from_heartbeat(client_mgr, &token.client_url).await {
+            Some(ids) if ids.is_empty() => {
+                debug!(
+                    machine_id = %token.machine_id,
+                    "peer history: no running instances, skip collect"
+                );
+                continue;
+            }
+            Some(ids) => Some(ids),
+            None => None,
+        };
         let collected = match tokio::time::timeout(
             COLLECT_TIMEOUT,
-            client_mgr.handle_collect_network_info(identify, None),
+            client_mgr.handle_collect_network_info(identify, inst_ids),
         )
         .await
         {
@@ -179,6 +214,7 @@ async fn sample_once(client_mgr: &Arc<ClientManager>, db: &Db) -> usize {
                     tunnel_type: Set(sample.tunnel_type),
                     latency_us: Set(sample.latency_us),
                     loss_rate: Set(sample.loss_rate),
+                    jitter_us: Set(sample.jitter_us),
                     rx_bytes: Set(sample.rx_bytes),
                     tx_bytes: Set(sample.tx_bytes),
                     conn_count: Set(sample.conn_count),
@@ -281,6 +317,10 @@ mod tests {
     };
 
     fn conn(id: &str, latency_us: u64, rx: u64, tx: u64) -> PeerConnInfo {
+        conn_with_jitter(id, latency_us, 1_500, rx, tx)
+    }
+
+    fn conn_with_jitter(id: &str, latency_us: u64, jitter_us: u64, rx: u64, tx: u64) -> PeerConnInfo {
         PeerConnInfo {
             conn_id: id.to_string(),
             peer_id: 7,
@@ -293,6 +333,7 @@ mod tests {
             }),
             stats: Some(PeerConnStats {
                 latency_us,
+                jitter_us,
                 rx_bytes: rx,
                 tx_bytes: tx,
                 ..Default::default()
@@ -328,6 +369,7 @@ mod tests {
         assert_eq!(got[0].remote_addr, "1.2.3.4:11010");
         assert_eq!(got[0].tunnel_type, "udp");
         assert_eq!(got[0].latency_us, 12_500);
+        assert_eq!(got[0].jitter_us, 1_500);
         assert_eq!(got[0].rx_bytes, 1000);
         assert_eq!(got[0].tx_bytes, 2000);
         assert_eq!(got[0].conn_count, 1);
@@ -347,14 +389,15 @@ mod tests {
     #[test]
     fn sums_bytes_and_prefers_best_latency() {
         let pairs = vec![pair(vec![
-            conn("c1", 30_000, 100, 200),
-            conn("c2", 9_000, 1, 2),
+            conn_with_jitter("c1", 30_000, 5_000, 100, 200),
+            conn_with_jitter("c2", 9_000, 800, 1, 2),
         ])];
         let got = aggregate_instance(&pairs);
         assert_eq!(got[0].rx_bytes, 101);
         assert_eq!(got[0].tx_bytes, 202);
         assert_eq!(got[0].conn_count, 2);
-        // 没有 default_conn_id 时取最小延迟
+        // 没有 default_conn_id 时取最小延迟 / 最小抖动
         assert_eq!(got[0].latency_us, 9_000);
+        assert_eq!(got[0].jitter_us, 800);
     }
 }

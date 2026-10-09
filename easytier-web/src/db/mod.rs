@@ -1724,17 +1724,17 @@ impl Db {
             r#"
             INSERT INTO peer_conn_history (
                 user_id, machine_id, instance_id, peer_id, peer_hostname,
-                remote_addr, tunnel_type, latency_us, loss_rate,
+                remote_addr, tunnel_type, latency_us, loss_rate, jitter_us,
                 rx_bytes, tx_bytes, conn_count, sampled_at
             )
             SELECT
                 user_id, ?, instance_id, peer_id, peer_hostname,
-                remote_addr, tunnel_type, latency_us, loss_rate,
+                remote_addr, tunnel_type, latency_us, loss_rate, jitter_us,
                 rx_bytes, tx_bytes, conn_count, sampled_at
             FROM (
                 SELECT
                     user_id, instance_id, peer_id, peer_hostname,
-                    remote_addr, tunnel_type, latency_us, loss_rate,
+                    remote_addr, tunnel_type, latency_us, loss_rate, jitter_us,
                     rx_bytes, tx_bytes, conn_count, sampled_at
                 FROM peer_conn_history
                 WHERE user_id = ? AND machine_id = ?

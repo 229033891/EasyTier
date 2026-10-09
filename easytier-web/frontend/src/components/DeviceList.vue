@@ -53,6 +53,8 @@ const loadDevices = async (): Promise<Array<Utils.DeviceInfo>> => {
 
 const { data: deviceList, loading: devicesLoading, reloading: devicesReloading, error: listError, reload: reloadDevices } = usePollingList<Array<Utils.DeviceInfo>>({
     fetcher: loadDevices,
+    // list_machines 与状态页 CollectNetworkInfo 共享设备隧道；略放宽减轻争用
+    interval: 2000,
 });
 
 function deviceDnsPlatformState(device: Utils.DeviceInfo) {

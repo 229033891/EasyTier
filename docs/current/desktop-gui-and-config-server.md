@@ -3,10 +3,11 @@
 ## Status
 
 - Status: **Current**
-- 最近审阅：2026-10-09（补 §6：配置页 / 运行页职责）
+- 最近审阅：2026-10-09（补 §2.5：读配置权威；GUI RPC 优先 vs Web 存储优先；补 §6：配置页 / 运行页职责）
 - 范围：Windows/Linux/macOS 桌面 `easytier-gui`、可选后台服务 `ET-Gui`、config-server 会话与 web-owned 配置回写
 - 索引：[`../README.md`](../README.md)
 - 深度复查记录（含 UI 下拉）：[`../archive/service-mode-web-config-sync-and-select-ui-2026-10-04.md`](../archive/service-mode-web-config-sync-and-select-ui-2026-10-04.md)
+- 状态面 / 历史 / 配置加载落地：[`../archive/web-status-history-config-2026-10-09.md`](../archive/web-status-history-config-2026-10-09.md)
 - Console Patch 接收端：[`web-managed-config.md`](./web-managed-config.md)
 - Core 边界：[`architecture.md`](./architecture.md)
 
@@ -79,6 +80,17 @@ OHOS nearby：`easytier-contrib/.../nearby_management.rs` 对相关方法返回 
 
 - 本地编辑已落盘后，revision 冲突时**保留本地编辑**；冲突以 Console 当前 revision 提示，可重试推送或从 Console 重载。
 - 新旧 GUI/服务混部：旧服务无新 RPC 方法时，错误应可理解；发布要求 **GUI 与 ET-Gui 成对升级**。
+
+### 2.5 读配置权威：`handle_get_network_config_with_source`
+
+实现：`easytier-core/.../remote_client.rs`（trait 默认）+ Web 覆盖 `easytier-web/.../client_manager/mod.rs`。
+
+| 调用方 | 顺序 | 权威 | 原因 |
+|--------|------|------|------|
+| **GUI / ET-Gui**（trait 默认） | **RPC 优先** → 本地存储兜底 | **运行中实例** | Windows `persist_runtime_dev_name` 必须读到内核已分配的 wintun `dev_name`；库里常仍是空名。若改成存储优先，会 15 次拿到空名并放弃回写，重启后堆积 `et_*` 网卡。 |
+| **Web 控制台**（`ClientManager` 覆盖） | **SQLite 优先** → 设备 RPC 仅当无行 | **Web 库** | 托管编辑以库为准；避免打开配置页时等忙设备。设备本地改过且未回写库的内容，编辑页不显示；从控制台保存会按 reconcile 盖回设备。 |
+
+不要把两套读序合并成「全局存储优先」。
 
 ---
 

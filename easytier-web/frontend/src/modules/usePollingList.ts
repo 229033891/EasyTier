@@ -6,7 +6,7 @@ import { useI18n } from 'vue-i18n';
 export interface PollingListOptions<T> {
     /** 拉取数据的函数，返回值即列表内容 */
     fetcher: () => Promise<T | undefined>;
-    /** 轮询间隔（毫秒），默认 1000 */
+    /** 轮询间隔（毫秒），默认 2000 */
     interval?: number;
     /** 失败时 toast 的标题文案 key，默认 web.device.load_list_failed */
     errorSummaryKey?: string;
@@ -21,7 +21,7 @@ const ERROR_TOAST_INTERVAL_MS = 30_000;
  * 后台轮询失败写入 `error` 并保留上次成功的 data。
  */
 export function usePollingList<T>(options: PollingListOptions<T>) {
-    const { fetcher, interval = 1000, errorSummaryKey = 'web.device.load_list_failed' } = options;
+    const { fetcher, interval = 2000, errorSummaryKey = 'web.device.load_list_failed' } = options;
     const { t } = useI18n();
     const toast = useToast();
 

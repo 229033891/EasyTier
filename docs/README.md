@@ -85,6 +85,7 @@ crate 内设计稿（非本索引）：`easytier/docs/`（凭据计划已标 Arc
 | [quic-proxy-memory-benchmark-2026-07-27.md](./archive/quic-proxy-memory-benchmark-2026-07-27.md) | QUIC proxy 内存 benchmark |
 | [upstream-port-todo.md](./archive/upstream-port-todo.md) | `main` → `dev` cherry-pick 历史跟踪（P0–P2 已落袋；非日常规划） |
 | [config-edit-unified-actions-2026-10-08.md](./archive/config-edit-unified-actions-2026-10-08.md) | 配置编辑统一操作栏（2026-10-08 已落地） |
+| [web-status-history-config-2026-10-09.md](./archive/web-status-history-config-2026-10-09.md) | Web 一链路一行 / 历史丢包+抖动 / 配置读存储优先（2026-10-09） |
 | [android-vpn-connection-audit-2026-10-07.md](./archive/android-vpn-connection-audit-2026-10-07.md) | 安卓 App 连接/卡断审查（A1–A14；代码侧已修） |
 
 ---

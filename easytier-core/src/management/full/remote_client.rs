@@ -325,6 +325,11 @@ where
         identify: T,
         inst_id: uuid::Uuid,
     ) -> Result<(NetworkConfig, ConfigSource), RemoteClientError<E>> {
+        // Default: RPC first (live runtime config), storage fallback.
+        // GUI Windows `persist_runtime_dev_name` depends on this order: storage often
+        // still has an empty `dev_name` while the running instance already has an
+        // auto-assigned wintun name. Web console overrides this method to prefer
+        // SQLite (authoritative for managed edits) — see ClientManager in easytier-web.
         if let Some(client) = self.get_rpc_client(identify.clone())
             && let Ok(resp) = client
                 .get_network_instance_config(

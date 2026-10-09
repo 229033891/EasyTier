@@ -186,6 +186,10 @@ vpn_portal_state_error: 错误
 show_event_log: 显示事件日志
 event_log: 事件日志
 peer_info: 节点信息
+peer_info_rows_tip: '{peers} 个节点 · {links} 条链路'
+conn_role_primary: 主
+conn_role_standby: 备
+local_addr: 本端地址
 peer_conn_history: 对端连接历史
 history_select_peer: 选择对端
 history_range_1h: 1 小时
@@ -193,6 +197,8 @@ history_range_6h: 6 小时
 history_range_24h: 24 小时
 history_range_7d: 7 天
 history_latency: 延迟
+history_loss: 丢包率
+history_jitter: 抖动
 history_traffic: 流量
 history_loading: 正在加载历史数据
 history_no_data: 暂无历史数据（网络运行一段时间后才会积累采样）
@@ -204,9 +210,10 @@ peer_addr: 对端地址
 latency: 延迟
 path_quality: 质量分
 path_quality_help: |-
-  同 peer 多隧道时的综合质量分（越低越好：延迟 + 丢包 + 抖动）。
-  ★ 为当前发送路径（default_conn）；· / +N 为热备，用于选优与故障切换——不是带宽聚合。
-  仅当「多链路聚合数」>1 且单元格出现 bond×N 时，不同流才会分摊到多条隧道。
+  每行一条隧道的质量分（越低越好：延迟 + 丢包 + 抖动）。
+  ★ 为当前发送路径（default_conn）；· 为热备，用于选优与故障切换——不是带宽聚合。
+  主机名旁「主/备」标记同一对端的多条链路。
+  仅当「多链路聚合数」>1 且单元格出现 bond 时，不同流才会分摊到多条隧道。
   `!` 表示丢包超过熔断阈值。
 upload_bytes: 上传
 download_bytes: 下载

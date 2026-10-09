@@ -195,6 +195,12 @@ const saveConfigTooltip = computed(() =>
 
 const savingConfig = ref(false);
 
+/** Status CollectNetworkInfo cadence; ≥2s leaves BidirectRpc room for config / heartbeat / history. */
+const STATUS_POLL_MS = 2000
+/** Config editor only needs occasional running/stopped tags; ~6s with STATUS_POLL_MS. */
+const CONFIG_MODE_LIST_POLL_EVERY = 3
+let pollTick = 0
+
 const instanceList = ref<Array<{ uuid: string; meta?: Api.NetworkMeta }>>([]);
 let instanceListSignature = '';
 const updateInstanceList = () => {
@@ -302,15 +308,17 @@ const selectedNetworkStopped = computed(() => {
 
 watch(selectedInstanceId, async (newVal, oldVal) => {
     try {
+        const loads: Array<Promise<unknown>> = []
         if (newVal?.uuid !== oldVal?.uuid && (networkIsDisabled.value || isEditingNetwork.value || isConfigMode.value)) {
-            await loadCurrentNetworkConfig();
+            loads.push(loadCurrentNetworkConfig())
         } else {
-            await loadCurrentNetworkInfo();
+            loads.push(loadCurrentNetworkInfo())
         }
 
         if (newVal?.uuid && !networkMetaCache.value[newVal.uuid]) {
-            await loadNetworkMetas([newVal.uuid]);
+            loads.push(loadNetworkMetas([newVal.uuid]))
         }
+        await Promise.all(loads)
     } catch (e) {
         console.error('Failed to load selected network', e);
         toast.add({
@@ -506,12 +514,15 @@ const ensureConfigModeEditing = async () => {
     if (!isConfigMode.value || !selectedInstanceId.value) {
         return;
     }
-    if (isEditingNetwork.value && currentNetworkConfig.value?.instance_id === selectedInstanceId.value.uuid) {
-        return;
+    const selected = selectedInstanceId.value.uuid
+    // Already have this instance's draft (e.g. selectedInstanceId watch just loaded it).
+    if (currentNetworkConfig.value?.instance_id === selected) {
+        isEditingNetwork.value = true
+        return
     }
     try {
         await loadCurrentNetworkConfig();
-        if (currentNetworkConfig.value?.instance_id === selectedInstanceId.value.uuid) {
+        if (currentNetworkConfig.value?.instance_id === selected) {
             isEditingNetwork.value = true;
         }
     } catch (e: any) {
@@ -533,6 +544,7 @@ watch(
             return;
         }
         if (isConfigMode.value) {
+            pollTick = 0
             await ensureConfigModeEditing();
         }
     },
@@ -990,11 +1002,25 @@ let periodFunc = new Utils.PeriodicTask(async () => {
         return;
     }
     try {
-        await Promise.all([loadNetworkInstanceIds(), loadCurrentNetworkInfo()]);
+        pollTick += 1
+        const jobs: Array<Promise<unknown>> = []
+        const shouldListIds = !isConfigMode.value
+            || pollTick === 1
+            || pollTick % CONFIG_MODE_LIST_POLL_EVERY === 0
+        if (shouldListIds) {
+            jobs.push(loadNetworkInstanceIds())
+        }
+        // Config page does not show Status; skip info poll (needShowNetworkStatus is false anyway).
+        if (!isConfigMode.value) {
+            jobs.push(loadCurrentNetworkInfo())
+        }
+        if (jobs.length) {
+            await Promise.all(jobs)
+        }
     } catch (e) {
         console.debug(e);
     }
-}, 1000);
+}, STATUS_POLL_MS);
 
 onMounted(async () => {
     periodFunc.start();

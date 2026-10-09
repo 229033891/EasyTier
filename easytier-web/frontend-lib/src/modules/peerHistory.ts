@@ -32,3 +32,20 @@ export function rateSeries(
 export function latencyMsSeries(points: Array<PeerConnHistoryPoint>): Array<number | null> {
   return points.map(p => (p.latency_us == null ? null : Number((p.latency_us / 1000).toFixed(2))))
 }
+
+/**
+ * 丢包率转百分比（0–100）；拿不到时返回 null 让图表断线。
+ * 后端存的是 0–1 小数（与实时节点表 loss_rate 一致）。
+ */
+export function lossPctSeries(points: Array<PeerConnHistoryPoint>): Array<number | null> {
+  return points.map((p) => {
+    if (p.loss_rate == null || !Number.isFinite(p.loss_rate) || p.loss_rate < 0)
+      return null
+    return Number((p.loss_rate * 100).toFixed(2))
+  })
+}
+
+/** 毫秒保留两位小数；拿不到抖动时返回 null 让图表断线 */
+export function jitterMsSeries(points: Array<PeerConnHistoryPoint>): Array<number | null> {
+  return points.map(p => (p.jitter_us == null ? null : Number((p.jitter_us / 1000).toFixed(2))))
+}
