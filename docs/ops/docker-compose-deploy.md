@@ -14,7 +14,8 @@
 | `node` | `ET-core` | NAS / VPS 组网节点（**compose 默认启动**） |
 | `console` | `ET-web-embed` | 自托管 Web 控制台 + 配置下发 |
 
-镜像默认：`m.daocloud.io/ghcr.io/229033891/et:<Release tag>`（国内加速 GHCR）。海外可改回 `ghcr.io/229033891/et:<tag>`。
+镜像默认：`ghcr.io/229033891/et:<Release tag>`。  
+DaoCloud（`m.daocloud.io`）对该镜像**不在白名单**，拉镜像会报 `not in the allowlist`，勿再当作默认加速源。
 
 总方案：[`../roadmap/github-release-install.md`](../roadmap/github-release-install.md)。Linux 二进制安装见 [`deploy-install.md`](./deploy-install.md)。
 
@@ -44,24 +45,25 @@ curl -fsSL -o docker-compose.yml \
 
 ## 2. SSH 一键命令
 
-推荐用 [`script/docker-up.sh`](../../script/docker-up.sh)：**自动解析 compose 里的 bind mount 并 `mkdir -p`**，再 `docker compose up`。
+推荐用 [`script/docker-up.sh`](../../script/docker-up.sh)：**自动解析 volumes 挂载并 `mkdir -p`**，无 Docker 权限时自动加 `sudo`，再 `compose up`。
 
 旧版 Docker 若不支持 `docker compose`，脚本会自动尝试 `docker-compose`。
+
+**飞牛提示：** 普通用户 `admin` 常无 `/var/run/docker.sock` 权限；手写命令请加 `sudo`，或把用户加入 `docker` 组后重新登录。管道 `curl | bash` 遇慢网会长时间无输出，可先下载再执行。
 
 ### 2.0 脚本一键启动（推荐）
 
 ```bash
-# 只启动节点（飞牛 / NAS 常用）
-curl -fsSL https://github.com/229033891/EasyTier/raw/main/script/docker-up.sh \
-  | bash -s node --dir /vol1/1000/docker/easytier --pull
+# 推荐：先下载再执行（可见进度，避免管道假死感）
+curl -fL --connect-timeout 15 --max-time 60 -o /tmp/docker-up.sh \
+  https://github.com/229033891/EasyTier/raw/main/script/docker-up.sh
+bash /tmp/docker-up.sh node --dir /vol1/1000/docker/easytier --pull
 
 # 只启动控制台
-curl -fsSL https://github.com/229033891/EasyTier/raw/main/script/docker-up.sh \
-  | bash -s console --dir /vol1/1000/docker/easytier --pull
+bash /tmp/docker-up.sh console --dir /vol1/1000/docker/easytier --pull
 
 # 同时启动控制台 + 节点
-curl -fsSL https://github.com/229033891/EasyTier/raw/main/script/docker-up.sh \
-  | bash -s all --dir /vol1/1000/docker/easytier --pull
+bash /tmp/docker-up.sh all --dir /vol1/1000/docker/easytier --pull
 ```
 
 本地已有仓库时：
@@ -73,7 +75,9 @@ bash script/docker-up.sh node --dir /vol1/1000/docker/easytier --pull
 ### 2.1 只启动节点（手写 compose 命令）
 
 ```bash
-cd /vol1/1000/docker/easytier && docker compose pull && docker compose up -d
+cd /vol1/1000/docker/easytier
+sudo docker compose pull
+sudo docker compose up -d
 ```
 
 等价于只拉起 `et-node`；`console` 带 `profiles: ["console"]`，默认不会启动。
@@ -81,7 +85,9 @@ cd /vol1/1000/docker/easytier && docker compose pull && docker compose up -d
 ### 2.2 只启动控制台
 
 ```bash
-cd /vol1/1000/docker/easytier && docker compose --profile console pull console && docker compose --profile console up -d console
+cd /vol1/1000/docker/easytier
+sudo docker compose --profile console pull console
+sudo docker compose --profile console up -d console
 ```
 
 若当前已在跑节点，可先停节点再起控制台，或见 §2.3 同时运行。
@@ -89,7 +95,9 @@ cd /vol1/1000/docker/easytier && docker compose --profile console pull console &
 ### 2.3 同时启动控制台 + 节点（同一台机器）
 
 ```bash
-cd /vol1/1000/docker/easytier && docker compose --profile console pull && docker compose --profile console up -d
+cd /vol1/1000/docker/easytier
+sudo docker compose --profile console pull
+sudo docker compose --profile console up -d
 ```
 
 会起两个容器：`et-console`、`et-node`。
@@ -105,22 +113,23 @@ udp://127.0.0.1:22020/admin
 ### 2.4 查看状态 / 日志
 
 ```bash
-cd /vol1/1000/docker/easytier && docker compose ps
-docker compose logs -f node
-docker compose --profile console logs -f console
+cd /vol1/1000/docker/easytier
+sudo docker compose ps
+sudo docker compose logs -f node
+sudo docker compose --profile console logs -f console
 ```
 
 ### 2.5 停止
 
 ```bash
 # 只停节点
-cd /vol1/1000/docker/easytier && docker compose stop node
+cd /vol1/1000/docker/easytier && sudo docker compose stop node
 
 # 只停控制台
-cd /vol1/1000/docker/easytier && docker compose --profile console stop console
+cd /vol1/1000/docker/easytier && sudo docker compose --profile console stop console
 
 # 停掉全部（含 console profile）
-cd /vol1/1000/docker/easytier && docker compose --profile console down
+cd /vol1/1000/docker/easytier && sudo docker compose --profile console down
 ```
 
 ### 2.6 升级（保挂载卷）
@@ -128,7 +137,9 @@ cd /vol1/1000/docker/easytier && docker compose --profile console down
 改 `docker-compose.yml` 里的镜像 tag 后：
 
 ```bash
-cd /vol1/1000/docker/easytier && docker compose --profile console pull && docker compose --profile console up -d
+cd /vol1/1000/docker/easytier
+sudo docker compose --profile console pull
+sudo docker compose --profile console up -d
 ```
 
 仅节点时去掉 `--profile console` 即可。`config/` 与 `et-console-data/` 不会被覆盖。
@@ -145,7 +156,18 @@ cd /vol1/1000/docker/easytier && docker compose --profile console pull && docker
 
 ---
 
-## 4. 与安装脚本的区别
+## 4. 常见问题（飞牛实装）
+
+| 现象 | 原因 | 处理 |
+|------|------|------|
+| `permission denied ... docker.sock` | 用户不在 `docker` 组 | 命令加 `sudo`，或 `sudo usermod -aG docker $USER` 后重新登录 |
+| `not in the allowlist` / DaoCloud 拒绝 | `m.daocloud.io` 未收录本镜像 | 使用 `ghcr.io/229033891/et:<tag>`（compose 默认） |
+| `curl \| bash` 长时间无输出 | `-s` 静默 + 网络慢 | 去掉 `-s`，或先下到 `/tmp` 再 `bash` |
+| 误建 `udp`、`"22020` 等目录 | 旧版 `docker-up.sh` 把 ports 当成 volumes | 删掉误建目录；用已修复脚本（仅解析 `volumes:`） |
+
+---
+
+## 5. 与安装脚本的区别
 
 | 方式 | 适用 |
 |------|------|

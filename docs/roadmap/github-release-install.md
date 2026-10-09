@@ -31,7 +31,7 @@
 
 1. **日常验证**：`workflow_dispatch` 打 Artifact；Docker 用对应 `ET Linux` 的 `run_id` 手动触发。
 2. **对外安装**：走 **Release 附件**（`script/install.sh` / `install.ps1` 默认读 `229033891/EasyTier` 的 latest/tag）。
-3. **Docker**：镜像源为 `ghcr.io/229033891/et:<tag>`；`docker-compose.yml` 默认用 DaoCloud 加速前缀 `m.daocloud.io/ghcr.io/229033891/et:<最新 Release tag>`（海外可改回直连 GHCR）。勿再使用历史第三方同名镜像（ENTRYPOINT / 二进制名不同）。
+3. **Docker**：镜像源为 `ghcr.io/229033891/et:<tag>`（`docker-compose.yml` 默认直连 GHCR）。DaoCloud 公共加速对该镜像不在白名单，不可用。勿再使用历史第三方同名镜像（ENTRYPOINT / 二进制名不同）。
 
 ---
 

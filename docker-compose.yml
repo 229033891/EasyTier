@@ -1,11 +1,11 @@
 # ET Docker Compose（单镜像 ET-core / ET-cli / ET-web-embed）
 #
-# 默认镜像：DaoCloud 加速拉取 GHCR（与最新 Release tag 对齐，当前 v2.7.49）
-#   m.daocloud.io/ghcr.io/229033891/et:v2.7.49
-# 直连 GHCR / 其它 tag（海外或自建加速时改回）：
-#   ghcr.io/229033891/et:v2.7.49        # 正式 Release
+# 默认镜像：直连 GHCR（与最新 Release tag 对齐，当前 v2.7.49）
+#   ghcr.io/229033891/et:v2.7.49
+# 其它 tag：
 #   ghcr.io/229033891/et:dev            # 开发验证（ET Docker 手动打）
 #   ghcr.io/229033891/et:latest         # 仅 main 流水线 mark_latest 时
+# 注意：DaoCloud 公共加速（m.daocloud.io）对该镜像「不在白名单」，不能作为默认源。
 # 安装/升级总方案：docs/roadmap/github-release-install.md
 #
 # 从历史第三方同名镜像迁移注意：
@@ -23,7 +23,7 @@
 services:
   # 飞牛 / NAS 默认：只跑节点
   node:
-    image: m.daocloud.io/ghcr.io/229033891/et:v2.7.49
+    image: ghcr.io/229033891/et:v2.7.49
     container_name: et-node
     restart: unless-stopped
     hostname: FNNAS
@@ -53,7 +53,7 @@ services:
 
   # 可选：本机自托管控制台（默认不启动）
   console:
-    image: m.daocloud.io/ghcr.io/229033891/et:v2.7.49
+    image: ghcr.io/229033891/et:v2.7.49
     container_name: et-console
     profiles: ["console"]
     restart: unless-stopped
