@@ -79,8 +79,8 @@ GREEN='\033[1;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m'
 
-log()  { echo -e "${GREEN}[INFO]${NC} $*"; }
-warn() { echo -e "${YELLOW}[WARN]${NC} $*"; }
+log()  { echo -e "${GREEN}[INFO]${NC} $*" >&2; }
+warn() { echo -e "${YELLOW}[WARN]${NC} $*" >&2; }
 err()  { echo -e "${RED}[ERROR]${NC} $*" >&2; }
 
 usage() {
@@ -2963,9 +2963,9 @@ cmd_update() {
     run_backup_now
   fi
 
-  local update_ok=no
+  update_ok=no
   _update_on_exit() {
-    if [[ "$update_ok" != "yes" ]]; then
+    if [[ "${update_ok:-no}" != "yes" ]]; then
       warn "更新失败或中断，尝试用旧二进制重新启动服务..."
       systemctl daemon-reload 2>/dev/null || true
       start_easytier_services || true

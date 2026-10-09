@@ -128,6 +128,21 @@ parse_config_protocol_needs
 assert_eq "$NEED_CONFIG_UDP" "1" "udp-only needs udp"
 assert_eq "$NEED_CONFIG_TCP" "0" "udp-only no tcp"
 
+# log/warn 必须走 stderr，避免 $(get_latest_release_tag) 等命令替换污染 stdout
+echo "[check] log/warn stderr"
+grep -qE '^log\(\)[[:space:]]*\{[[:space:]]*echo.*>&2' "$TARGET" || {
+  echo "[fail] log() 必须输出到 stderr（tag 命令替换依赖此项）" >&2
+  fail=1
+}
+grep -qE '^warn\(\)[[:space:]]*\{[[:space:]]*echo.*>&2' "$TARGET" || {
+  echo "[fail] warn() 必须输出到 stderr" >&2
+  fail=1
+}
+grep -q 'update_ok:-no' "$TARGET" || {
+  echo "[fail] update 失败 EXIT trap 应使用 \${update_ok:-no}" >&2
+  fail=1
+}
+
 # set -e 回归：函数末尾 `[[ -n ]] && assign` 失败不得导致静默退出
 echo "[check] set -e helper return status"
 SET_E_SMOKE="$(mktemp)"
