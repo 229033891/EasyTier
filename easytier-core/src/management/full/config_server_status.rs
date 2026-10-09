@@ -15,6 +15,7 @@ use url::Url;
 
 use crate::proto::common::{TunnelInfo, Url as ProtoUrl};
 
+#[cfg(not(any(target_os = "wasi", target_arch = "wasm32")))]
 const DNS_LOOKUP_TIMEOUT: Duration = Duration::from_millis(300);
 const DNS_CACHE_TTL: Duration = Duration::from_secs(45);
 
@@ -33,6 +34,7 @@ pub fn set_host_dns_lookup(lookup: Option<HostDnsLookupFn>) {
     *HOST_DNS_LOOKUP.write() = lookup;
 }
 
+#[cfg(not(any(target_os = "wasi", target_arch = "wasm32")))]
 fn host_dns_lookup() -> Option<HostDnsLookupFn> {
     HOST_DNS_LOOKUP.read().clone()
 }

@@ -43,7 +43,7 @@ jobs:
         }}
     steps:
       - id: skip_check
-        uses: fkirc/skip-duplicate-actions@f75f66ce1886f00957d99748a42c724f4330bdcf # v5.3.1
+        uses: fkirc/skip-duplicate-actions@b974a9395958c231af965b70070979a577efa578 # v5.3.2
         with:
           concurrent_skipping: 'same_content_newer'
           skip_after_successful_duplicate: 'true'
@@ -77,7 +77,7 @@ jobs:
         run: pnpm --filter easytier-frontend-lib test:config-ui
 
       - name: Archive artifact
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: ET-web-dashboard
           path: |
@@ -110,7 +110,7 @@ jobs:
           echo "GIT_DESC=$(git log -1 --format=%cd.%h --date=format:%Y-%m-%d_%H:%M:%S)" >> $GITHUB_ENV
 
       - name: Download web artifact
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v8
         with:
           name: ET-web-dashboard
           path: easytier-web/frontend/dist/
@@ -125,7 +125,7 @@ jobs:
           pnpm: false
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2.7.8
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           # The prefix cache key, this can be changed to start a new cache manually.
           # default: "v0-rust"
@@ -196,7 +196,7 @@ jobs:
           rm -rf ./artifacts/objects/
 
       - name: Archive artifact
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: ET-${{ matrix.ARTIFACT_NAME }}
           path: |

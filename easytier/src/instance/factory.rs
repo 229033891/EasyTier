@@ -126,6 +126,7 @@ impl NativeInstanceFactory {
         self
     }
 
+    #[cfg(feature = "management-rpc")]
     fn with_compact_runtime(mut self) -> Self {
         self.compact_runtime = true;
         self

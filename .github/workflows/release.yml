@@ -278,7 +278,7 @@ jobs:
 
       - name: Download Core Artifact
         if: steps.resolve.outputs.skip != 'true'
-        uses: dawidd6/action-download-artifact@v11
+        uses: dawidd6/action-download-artifact@eab87c9830c39eff17e5a6eadb20bfb4bc880477 # v27
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           run_id: ${{ steps.resolve.outputs.core_run_id }}
@@ -287,7 +287,7 @@ jobs:
 
       - name: Download GUI Artifact
         if: steps.resolve.outputs.skip != 'true'
-        uses: dawidd6/action-download-artifact@v11
+        uses: dawidd6/action-download-artifact@eab87c9830c39eff17e5a6eadb20bfb4bc880477 # v27
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           run_id: ${{ steps.resolve.outputs.gui_run_id }}
@@ -296,7 +296,7 @@ jobs:
 
       - name: Download Mobile Artifact
         if: steps.resolve.outputs.skip != 'true'
-        uses: dawidd6/action-download-artifact@v11
+        uses: dawidd6/action-download-artifact@eab87c9830c39eff17e5a6eadb20bfb4bc880477 # v27
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           run_id: ${{ steps.resolve.outputs.mobile_run_id }}
@@ -308,7 +308,7 @@ jobs:
           steps.resolve.outputs.skip != 'true' &&
           steps.resolve.outputs.openwrt_run_id != '0' &&
           steps.resolve.outputs.openwrt_run_id != ''
-        uses: dawidd6/action-download-artifact@v11
+        uses: dawidd6/action-download-artifact@eab87c9830c39eff17e5a6eadb20bfb4bc880477 # v27
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           run_id: ${{ steps.resolve.outputs.openwrt_run_id }}
@@ -347,7 +347,7 @@ jobs:
 
       - name: Create GitHub Release
         if: steps.resolve.outputs.skip != 'true'
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@e598afbe1493e6b1bafb1f389cabb956eab91231 # v3.0.3
         with:
           name: ${{ steps.resolve.outputs.version }}
           tag_name: ${{ steps.resolve.outputs.version }}

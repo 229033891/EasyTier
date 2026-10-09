@@ -43,7 +43,7 @@ jobs:
         }}
     steps:
       - id: skip_check
-        uses: fkirc/skip-duplicate-actions@f75f66ce1886f00957d99748a42c724f4330bdcf # v5.3.1
+        uses: fkirc/skip-duplicate-actions@b974a9395958c231af965b70070979a577efa578 # v5.3.2
         with:
           concurrent_skipping: 'same_content_newer'
           skip_after_successful_duplicate: 'true'
@@ -100,7 +100,7 @@ jobs:
           pnpm-setup-wasm: 'false'
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2.7.8
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           # The prefix cache key, this can be changed to start a new cache manually.
           # default: "v0-rust"
@@ -163,7 +163,7 @@ jobs:
 
       - name: Build GUI
         if: ${{ matrix.GUI_TARGET != '' && (!contains(matrix.GUI_TARGET, 'darwin') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository)) }}
-        uses: tauri-apps/tauri-action@e834788a94591d81e3ae0bd9ec06366f5afb8994 # v0.5.23
+        uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f # action-v1.0.0
         with:
           projectPath: ./easytier-gui
           args: --verbose --target ${{ matrix.GUI_TARGET }} --config tauri.ci.conf.json
@@ -171,7 +171,7 @@ jobs:
       - name: Build GUI (signed and notarized)
         if: ${{ contains(matrix.GUI_TARGET, 'darwin') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
         timeout-minutes: 60
-        uses: tauri-apps/tauri-action@e834788a94591d81e3ae0bd9ec06366f5afb8994 # v0.5.23
+        uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f # action-v1.0.0
         env:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
@@ -284,7 +284,7 @@ jobs:
           rm -rf ./artifacts/objects/
 
       - name: Archive GUI artifact
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: ET-gui-${{ matrix.ARTIFACT_NAME }}
           path: |
@@ -325,7 +325,7 @@ jobs:
 
       - name: Archive headless Windows artifact
         if: ${{ contains(matrix.GUI_TARGET, 'windows') }}
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: ET-${{ matrix.ARTIFACT_NAME }}
           path: |

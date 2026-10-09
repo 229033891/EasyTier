@@ -1,5 +1,6 @@
+#[cfg(not(target_os = "android"))]
+use std::env;
 use std::{
-    env,
     ffi::OsString,
     io::Write as _,
     path::{Path, PathBuf},
@@ -66,6 +67,7 @@ fn resolve_machine_id_state_file(state_dir: Option<&Path>) -> anyhow::Result<Pat
     Ok(state_dir.join("machine_id"))
 }
 
+#[cfg(not(target_os = "android"))]
 fn non_empty_os_string(value: Option<OsString>) -> Option<OsString> {
     value.filter(|value| !value.is_empty())
 }
@@ -523,6 +525,7 @@ mod tests {
         );
     }
 
+    #[cfg(not(target_os = "android"))]
     #[test]
     fn test_non_empty_os_string_filters_empty_values() {
         assert_eq!(non_empty_os_string(Some(OsString::new())), None);

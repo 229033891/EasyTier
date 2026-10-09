@@ -41,7 +41,7 @@ jobs:
         }}
     steps:
       - id: skip_check
-        uses: fkirc/skip-duplicate-actions@f75f66ce1886f00957d99748a42c724f4330bdcf # v5.3.1
+        uses: fkirc/skip-duplicate-actions@b974a9395958c231af965b70070979a577efa578 # v5.3.2
         with:
           concurrent_skipping: 'never'
           skip_after_successful_duplicate: 'true'
@@ -170,7 +170,7 @@ jobs:
           pnpm: true
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2.7.8
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
 
       - uses: taiki-e/install-action@e407f7bafb71fd004bc5c2da3032e5470cbb6ef0 # v2.87.24
         with:
@@ -181,7 +181,7 @@ jobs:
           cargo nextest archive --archive-file tests.tar.zst
           --package easytier --package easytier-core --features full
 
-      - uses: actions/upload-artifact@v5
+      - uses: actions/upload-artifact@v7
         with:
           name: tests
           path: tests.tar.zst
@@ -231,7 +231,7 @@ jobs:
           tool: nextest
 
       - name: Download tests
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v8
         with:
           name: tests
 

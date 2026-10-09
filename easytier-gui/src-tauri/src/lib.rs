@@ -1199,7 +1199,8 @@ fn toggle_window_visibility(app: &tauri::AppHandle) {
     }
 }
 
-fn get_exe_path() -> String {
+#[cfg(not(target_os = "android"))]
+pub(crate) fn get_exe_path() -> String {
     if let Ok(appimage_path) = std::env::var("APPIMAGE")
         && !appimage_path.is_empty()
     {

@@ -10,8 +10,35 @@ use super::netns::NetNS;
 
 #[derive(Clone, Copy, Debug, Default)]
 struct InterfaceState {
+    #[cfg_attr(
+        any(
+            target_os = "android",
+            target_os = "ios",
+            all(target_os = "macos", feature = "macos-ne"),
+            target_env = "ohos"
+        ),
+        allow(dead_code)
+    )]
     is_point_to_point: bool,
+    #[cfg_attr(
+        any(
+            target_os = "android",
+            target_os = "ios",
+            all(target_os = "macos", feature = "macos-ne"),
+            target_env = "ohos"
+        ),
+        allow(dead_code)
+    )]
     is_loopback: bool,
+    #[cfg_attr(
+        any(
+            target_os = "android",
+            target_os = "ios",
+            all(target_os = "macos", feature = "macos-ne"),
+            target_env = "ohos"
+        ),
+        allow(dead_code)
+    )]
     is_up: bool,
     #[cfg(target_os = "linux")]
     is_lower_up: bool,
@@ -100,7 +127,25 @@ pub(crate) fn ip_mask_to_prefix(mask: IpAddr) -> Result<u8, ()> {
 }
 
 struct InterfaceFilter {
+    #[cfg_attr(
+        any(
+            target_os = "android",
+            target_os = "ios",
+            all(target_os = "macos", feature = "macos-ne"),
+            target_env = "ohos"
+        ),
+        allow(dead_code)
+    )]
     iface: NetworkInterface,
+    #[cfg_attr(
+        any(
+            target_os = "android",
+            target_os = "ios",
+            all(target_os = "macos", feature = "macos-ne"),
+            target_env = "ohos"
+        ),
+        allow(dead_code)
+    )]
     state: InterfaceState,
 }
 

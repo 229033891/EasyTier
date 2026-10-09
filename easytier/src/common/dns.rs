@@ -9,6 +9,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+#[cfg(feature = "dns-resolver")]
 use anyhow::Context;
 use async_trait::async_trait;
 use easytier_core::host::dns::{DnsQuery, DnsRecordResolver, DnsResolver, DnsSrvRecord};
@@ -328,11 +329,11 @@ impl RuntimeDnsIoProvider {
 /// Sockets bind to the physical default iface (skipping registered TUN excludes),
 /// matching [`RuntimeDnsResolver`] underlay behavior so configured upstreams
 /// (including VPN-internal ones) do not loop into TUN / packet filter.
-#[cfg(feature = "dns-resolver")]
+#[cfg(feature = "magic-dns")]
 pub(crate) type MagicDnsForwardConnector = GenericConnector<RuntimeDnsIoProvider>;
 
 /// Build a forwarder connector that pins UDP/TCP DNS to the underlay NIC.
-#[cfg(feature = "dns-resolver")]
+#[cfg(feature = "magic-dns")]
 pub(crate) fn magic_dns_forward_connector() -> MagicDnsForwardConnector {
     GenericConnector::new(RuntimeDnsIoProvider::new(RuntimeDnsIoContext {
         netns: None,

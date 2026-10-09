@@ -27,7 +27,7 @@ load_et_ops_common() {
   # curl|bash 或单文件场景：下载公共库到临时文件再 source
   command -v curl >/dev/null 2>&1 || {
     echo "[ERROR] 缺少 et-ops-common.sh 且无 curl，无法继续" >&2
-    exit 1
+        exit 1
   }
   tmp="$(mktemp)"
   if ! curl -fsSL --connect-timeout 20 --max-time 120 "$ET_COMMON_URL" -o "$tmp"; then
