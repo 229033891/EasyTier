@@ -548,9 +548,9 @@ dns:
   hosts:
     title: Static Hosts
     magic_dns_off_hint: DNS policy is stored in this network config. Enable Magic DNS for MagicDNS wiring to take effect.
-    editor_help: Highest priority. Static entries are authoritative on MagicDNS and override route hostnames. Unmatched names fall through to split DNS / upstream DNS.
+    editor_help: "Highest priority. Static entries are authoritative on MagicDNS and override route hostnames. Use *.suffix (syntax: leftmost single-label * only, parent needs at least two labels so *.com is rejected; matching is RFC 4592 multi-label, e.g. *.corp.example → foo.corp.example and a.b.corp.example). Unmatched names fall through to split DNS / upstream DNS."
     name: Hostname
-    name_placeholder: "e.g. app.internal. or db.et.net"
+    name_placeholder: "e.g. app.internal. or *.corp.example"
     ips: IPv4 addresses
     ips_placeholder: "e.g. 10.1.2.3"
     ttl: TTL

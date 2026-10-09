@@ -384,7 +384,7 @@ class TauriVpnService : VpnService() {
 
     private fun createVpnInterface(args: Bundle?): ParcelFileDescriptor {
         val builder = Builder()
-            .setSession("TauriVpnService")
+            .setSession(getString(R.string.vpn_session_name))
             .setBlocking(false)
 
         val mtu = args?.getInt(MTU)?.takeIf { it > 0 } ?: 1500

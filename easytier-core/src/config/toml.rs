@@ -25,7 +25,11 @@ pub const DEFAULT_ET_DNS_ZONE: &str = "et.net.";
 pub const DEFAULT_DNS_HOSTS_TTL_SECS: u32 = 300;
 
 /// Parse CLI `--dns-host` entry: `name=ip[,ip...][@ttl]`.
-/// Example: `app.internal.=10.1.2.3` or `db.et.net=10.1.2.3,10.1.2.4@600`.
+/// Example: `app.internal.=10.1.2.3`, `*.corp.example=10.1.2.3`, or
+/// `db.et.net=10.1.2.3,10.1.2.4@600`.
+///
+/// The name must own a zone with at least two labels, so `*.com` / `com` are
+/// rejected here (see `MIN_STATIC_HOST_ZONE_LABELS`).
 pub fn parse_dns_host_flag(raw: &str) -> anyhow::Result<DnsHostEntry> {
     let raw = raw.trim();
     let (name_ips, ttl_secs) = if let Some((left, ttl)) = raw.rsplit_once('@') {
@@ -48,6 +52,11 @@ pub fn parse_dns_host_flag(raw: &str) -> anyhow::Result<DnsHostEntry> {
     let name = name.trim().to_string();
     if name.is_empty() {
         anyhow::bail!("dns-host name is empty in `{raw}`");
+    }
+    let target = super::dns::classify_host_name(&name)
+        .map_err(|e| anyhow::anyhow!("invalid dns-host name in `{raw}`: {e}"))?;
+    if let Some(reason) = target.reject_reason() {
+        anyhow::bail!("invalid dns-host name in `{raw}`: {reason}");
     }
     let ips = ips_raw
         .split(',')
@@ -735,6 +744,26 @@ impl TomlConfig {
         }
     }
 
+    /// Surface bad `[dns_config] hosts` entries at load time.
+    ///
+    /// Invalid entries are skipped at runtime rather than failing the load: a
+    /// managed/remote config must never stop the node. But config-file users
+    /// otherwise only see the per-entry warn once the DNS server starts, so
+    /// report here too, with the file name.
+    fn warn_invalid_dns_hosts(source_name: &str, config: &Config) {
+        let Some(dns) = config.dns_config.as_ref() else {
+            return;
+        };
+        for (host, reason) in dns.invalid_hosts() {
+            tracing::warn!(
+                source = %source_name,
+                %host,
+                %reason,
+                "ignoring invalid [dns_config] hosts entry; it will be skipped at runtime"
+            );
+        }
+    }
+
     #[cfg(feature = "config-write")]
     fn config_for_dump(&self) -> Config {
         let mut config = self.config.lock().unwrap().clone();
@@ -805,6 +834,7 @@ impl TomlConfig {
         })?;
 
         Self::normalize_config_source(&mut config);
+        Self::warn_invalid_dns_hosts(source_name, &config);
 
         Self::new_from_config(config).map_err(|err| {
             let message = format!("failed to load config from {source_name}: {err}");
@@ -2063,11 +2093,19 @@ servers = ["10.0.0.53"]
         let host_default_ttl = parse_dns_host_flag("app.internal.=10.1.2.3@0").unwrap();
         assert_eq!(host_default_ttl.ttl_secs, None);
 
+        let wild = parse_dns_host_flag("*.corp.example=10.9.9.9").unwrap();
+        assert_eq!(wild.name, "*.corp.example");
+        assert_eq!(wild.ips, vec!["10.9.9.9"]);
+
         let forward = parse_dns_forward_flag("corp.example.,intra.=10.0.0.53").unwrap();
         assert_eq!(forward.domains, vec!["corp.example.", "intra."]);
         assert_eq!(forward.servers, vec!["10.0.0.53"]);
 
         assert!(parse_dns_host_flag("no-equals").is_err());
+        assert!(parse_dns_host_flag("a.*.b=1.1.1.1").is_err());
+        // Single-label zones would own a whole TLD.
+        assert!(parse_dns_host_flag("*.com=1.1.1.1").is_err());
+        assert!(parse_dns_host_flag("com=1.1.1.1").is_err());
         assert!(parse_dns_forward_flag("domains-only").is_err());
     }
 

@@ -547,9 +547,9 @@ dns:
   hosts:
     title: 静态主机
     magic_dns_off_hint: DNS 策略会保存在本网络配置中；需开启「启用魔法 DNS」后才会接线生效。
-    editor_help: 最高优先级。静态条目在 MagicDNS 上为权威记录，优先于路由 hostname；未命中时再看分流 DNS / 上游 DNS。
+    editor_help: 最高优先级。静态条目在 MagicDNS 上为权威记录，优先于路由 hostname。可用 *.suffix（语法仅最左单标签 *，父域至少两级，如 corp.example，*.com 会被拒绝；匹配按 RFC 4592 多级，如 *.corp.example → foo.corp.example 与 a.b.corp.example）。未命中时再看分流 DNS / 上游 DNS。
     name: 主机名
-    name_placeholder: "例如 app.internal. 或 db.et.net"
+    name_placeholder: "例如 app.internal. 或 *.corp.example"
     ips: IPv4 地址
     ips_placeholder: "例如 10.1.2.3"
     ttl: TTL

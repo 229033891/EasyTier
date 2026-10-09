@@ -532,6 +532,127 @@ mod tests {
         Ok(())
     }
 
+    /// Static hosts wildcards install as parent-zone `*.suffix.` A records.
+    #[tokio::test]
+    async fn can_resolve_wildcard_a_record() -> Result<()> {
+        let wildcard = RecordBuilder::default()
+            .rr_type(RecordType::A)
+            .name("*.corp.example.".to_string())
+            .value("10.9.9.9".to_string())
+            .ttl(Duration::from_secs(60))
+            .build()?;
+        let apex = RecordBuilder::default()
+            .rr_type(RecordType::A)
+            .name("corp.example.".to_string())
+            .value("10.9.9.1".to_string())
+            .ttl(Duration::from_secs(60))
+            .build()?;
+        let soa = RecordBuilder::default()
+            .rr_type(RecordType::SOA)
+            .name("corp.example.".to_string())
+            .value(
+                "ns.corp.example. hostmaster.corp.example. 2023101001 7200 3600 1209600 86400"
+                    .to_string(),
+            )
+            .ttl(Duration::from_secs(60))
+            .build()?;
+        let config = RunConfigBuilder::default()
+            .general(
+                GeneralConfigBuilder::default()
+                    .listen_udp("127.0.0.1:0")
+                    .build()?,
+            )
+            .zones(hashmap! {
+                "corp.example.".to_string() => vec![wildcard, apex.clone(), soa],
+            })
+            .build()?;
+
+        let mut server = Server::new(config)?;
+        server.run().await?;
+
+        let local_addr = server.udp_local_addr().unwrap();
+        let stream = UdpClientStream::builder(local_addr, TokioRuntimeProvider::default()).build();
+        let (mut client, background) = Client::connect(stream).await?;
+        let background_task = tokio::spawn(background);
+
+        let apex_resp = client
+            .query(
+                rr::Name::from_str("corp.example")?,
+                rr::DNSClass::IN,
+                rr::RecordType::A,
+            )
+            .await?;
+        assert_eq!(apex_resp.answers().len(), 1);
+        assert_eq!(
+            apex_resp
+                .answers()
+                .first()
+                .unwrap()
+                .clone()
+                .into_parts()
+                .rdata
+                .into_a()
+                .unwrap()
+                .0,
+            "10.9.9.1".parse::<std::net::Ipv4Addr>()?
+        );
+
+        let wild_resp = client
+            .query(
+                rr::Name::from_str("foo.corp.example")?,
+                rr::DNSClass::IN,
+                rr::RecordType::A,
+            )
+            .await?;
+        assert_eq!(wild_resp.answers().len(), 1);
+        assert_eq!(
+            wild_resp
+                .answers()
+                .first()
+                .unwrap()
+                .clone()
+                .into_parts()
+                .rdata
+                .into_a()
+                .unwrap()
+                .0,
+            "10.9.9.9".parse::<std::net::Ipv4Addr>()?
+        );
+
+        // RFC 4592 / hickory inner_lookup_wildcard: multi-label under the parent
+        // also synthesizes from `*.corp.example.` (peels labels until match).
+        let deep_resp = client
+            .query(
+                rr::Name::from_str("a.b.corp.example")?,
+                rr::DNSClass::IN,
+                rr::RecordType::A,
+            )
+            .await?;
+        assert_eq!(
+            deep_resp.answers().len(),
+            1,
+            "multi-label query should match *.corp.example: {deep_resp:?}"
+        );
+        assert_eq!(
+            deep_resp
+                .answers()
+                .first()
+                .unwrap()
+                .clone()
+                .into_parts()
+                .rdata
+                .into_a()
+                .unwrap()
+                .0,
+            "10.9.9.9".parse::<std::net::Ipv4Addr>()?
+        );
+
+        background_task.abort();
+        let _ = background_task.await;
+        server.shutdown().await?;
+        Ok(())
+    }
+
     #[test]
     fn parse_upstream_accepts_ip_port_and_url_forms() -> Result<()> {
         let plain = parse_upstream_nameserver("1.1.1.1")?;

@@ -18,7 +18,10 @@ pub mod protocol_preference;
 pub mod runtime;
 pub mod toml;
 
-pub use dns::{DnsConfig, DnsForwarder, DnsHostEntry};
+pub use dns::{
+    DnsConfig, DnsForwarder, DnsHostEntry, HostZoneTarget, MIN_STATIC_HOST_ZONE_LABELS,
+    SINGLE_LABEL_ZONE_REASON, classify_host_name,
+};
 pub use encryption::EncryptionAlgorithm;
 pub use protocol_preference::{
     PREFERENCE_SCHEMES, REWRITEABLE_SCHEMES, normalize_default_protocol, parse_protocol_preference,

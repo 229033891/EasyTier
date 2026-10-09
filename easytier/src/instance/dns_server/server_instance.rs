@@ -38,7 +38,7 @@ use crate::{
 use anyhow::Context;
 use cidr::Ipv4Inet;
 use easytier_core::config::toml::DEFAULT_DNS_HOSTS_TTL_SECS;
-use easytier_core::config::{DnsConfig, DnsHostEntry};
+use easytier_core::config::{DnsConfig, DnsHostEntry, classify_host_name};
 #[cfg(any(
     target_os = "windows",
     all(target_os = "macos", not(feature = "macos-ne"))
@@ -62,6 +62,8 @@ pub(super) struct MagicDnsServerInstanceData {
     dns_server: Server,
     tun_dev: Option<String>,
     fake_ip: Ipv4Addr,
+    /// MagicDNS route TLD zone (e.g. `et.net.`); wildcards must not own this.
+    magic_tld_zone: String,
     route_store: MagicDnsRecordStore,
     /// Per-client static hosts (`static-hosts:<tunnel>` or `static-hosts:local`).
     static_hosts_by_client: Mutex<BTreeMap<String, Vec<DnsHostEntry>>>,
@@ -172,8 +174,12 @@ impl MagicDnsServerInstanceData {
         Ok(())
     }
 
-    /// Install static hosts as per-name authoritative zones so they win over
+    /// Install static hosts as authoritative Catalog zones so they win over
     /// parent MagicDNS route zones (dns-policy B2). Long TTL by default.
+    ///
+    /// Exact names (`app.internal.`) become a zone with an apex A.
+    /// Single-label wildcards (`*.corp.example`) become parent zone
+    /// `corp.example.` with a `*.corp.example.` A record (RFC 1034).
     pub async fn apply_static_hosts(&self, hosts: &[DnsHostEntry]) -> Result<(), anyhow::Error> {
         self.set_static_hosts_for_client(MAGIC_DNS_STATIC_HOSTS_LOCAL_CLIENT, hosts.to_vec())
             .await
@@ -206,9 +212,6 @@ impl MagicDnsServerInstanceData {
         let forwarders = dns.map(|d| d.forwarders.clone()).unwrap_or_default();
         let upstream = dns.map(|d| d.upstream_dns.clone()).unwrap_or_default();
 
-        self.set_static_hosts_for_client(MAGIC_DNS_STATIC_HOSTS_LOCAL_CLIENT, hosts)
-            .await?;
-
         let splits = forwarders
             .into_iter()
             .map(|f| SplitForwarderConfig {
@@ -216,6 +219,9 @@ impl MagicDnsServerInstanceData {
                 servers: f.servers,
             })
             .collect::<Vec<_>>();
+        // Retain current static/route zones while swapping splits, then reapply
+        // hosts so (1) wildcards see the new split set when skipping conflicts
+        // and (2) exact hosts re-upsert after splits (B2: hosts win).
         let retain_zones: BTreeSet<String> = {
             let mut zones = self
                 .route_store
@@ -225,53 +231,118 @@ impl MagicDnsServerInstanceData {
                 .cloned()
                 .collect::<BTreeSet<_>>();
             zones.extend(self.applied_static_zones.lock().unwrap().iter().cloned());
+            if !self.magic_tld_zone.is_empty() {
+                zones.insert(self.magic_tld_zone.clone());
+            }
             zones
         };
         self.dns_server
             .reload_split_forwarders(&splits, &retain_zones)
+            .await?;
+        self.set_static_hosts_for_client(MAGIC_DNS_STATIC_HOSTS_LOCAL_CLIENT, hosts)
             .await?;
         self.dns_server.reload_root_forwarder(&upstream).await?;
         tracing::info!("MagicDNS dns_config policy reloaded");
         Ok(())
     }
 
+    /// Why a classified static host must not own a Catalog zone (ops / apply share this).
+    fn static_host_skip_reason(
+        &self,
+        target: &easytier_core::config::HostZoneTarget,
+        route_zones: &BTreeSet<String>,
+        split_zones: &BTreeSet<String>,
+    ) -> Option<&'static str> {
+        // Shared syntax/policy verdict: empty zone, single-label zone (`*.com`).
+        if let Some(reason) = target.reject_reason() {
+            return Some(reason);
+        }
+        // Owning a zone that routes also own is not durable: the next
+        // `MagicDnsRecordStore::update()` rebuilds that authority from routes
+        // (wiping route hostnames in the meantime, then flipping back), so it is
+        // refused for exact names too — not just wildcards.
+        if route_zones.contains(&target.zone) {
+            return Some("conflicts with MagicDNS route zone");
+        }
+        // The route TLD zone is installed in `new()` before any route arrives,
+        // so it may not be present in `route_zones` yet.
+        if !self.magic_tld_zone.is_empty() && target.zone == self.magic_tld_zone {
+            return Some("conflicts with MagicDNS TLD zone");
+        }
+        // A wildcard owns its parent zone: if a split forwarder already owns it
+        // the wildcard would shadow every name under it, so the split wins.
+        // Exact child zones (e.g. `app.et.net.`) stay allowed: hosts win (B2).
+        if target.is_wildcard && split_zones.contains(&target.zone) {
+            return Some("wildcard conflicts with split Catalog zone");
+        }
+        None
+    }
+
     async fn reapply_static_hosts(&self) -> Result<(), anyhow::Error> {
-        // Merge by zone name; later client key (BTreeMap order) wins on conflict.
-        let mut merged: BTreeMap<String, DnsHostEntry> = BTreeMap::new();
+        let route_zones: BTreeSet<String> =
+            self.route_store.snapshot().zones.keys().cloned().collect();
+        let split_zones = self.dns_server.split_zones();
+
+        // zone -> (rr_name -> StaticHostRr). Later client key (BTreeMap order) wins
+        // on the same (zone, rr_name); exact apex and `*.zone` can share a zone.
+        let mut zones: BTreeMap<String, BTreeMap<String, StaticHostRr>> = BTreeMap::new();
         {
             let map = self.static_hosts_by_client.lock().unwrap();
             for hosts in map.values() {
                 for entry in hosts {
-                    let zone = normalize_host_zone(&entry.name);
-                    if zone.is_empty() || zone == "." {
-                        tracing::warn!(name = %entry.name, "skipping empty DnsHostEntry name");
+                    let target = match classify_host_name(&entry.name) {
+                        Ok(t) => t,
+                        Err(reason) => {
+                            tracing::warn!(
+                                name = %entry.name,
+                                %reason,
+                                "skipping invalid DnsHostEntry name"
+                            );
+                            continue;
+                        }
+                    };
+                    if let Some(reason) =
+                        self.static_host_skip_reason(&target, &route_zones, &split_zones)
+                    {
+                        tracing::warn!(
+                            name = %entry.name,
+                            zone = %target.zone,
+                            %reason,
+                            "skipping static host"
+                        );
                         continue;
                     }
-                    merged.insert(
-                        zone.clone(),
-                        DnsHostEntry {
-                            name: zone,
-                            ips: entry.ips.clone(),
-                            ttl_secs: entry.ttl_secs,
-                        },
-                    );
+                    zones
+                        .entry(target.zone)
+                        .or_default()
+                        .insert(
+                            target.rr_name.clone(),
+                            StaticHostRr {
+                                rr_name: target.rr_name,
+                                ips: entry.ips.clone(),
+                                ttl_secs: entry.ttl_secs,
+                            },
+                        );
                 }
             }
         }
 
-        let next_zones: BTreeSet<String> = merged.keys().cloned().collect();
-        let route_zones: BTreeSet<String> =
-            self.route_store.snapshot().zones.keys().cloned().collect();
-        let split_zones = self.dns_server.split_zones();
+        // Only zones we successfully upsert count as applied (empty/invalid IP sets
+        // must not block prune of a previously installed authority).
+        let mut applied_next: BTreeSet<String> = BTreeSet::new();
+        let candidate_zones: BTreeSet<String> = zones.keys().cloned().collect();
         let stale_zones: Vec<String> = {
             let applied = self.applied_static_zones.lock().unwrap();
-            applied.difference(&next_zones).cloned().collect()
+            applied.difference(&candidate_zones).cloned().collect()
         };
         for zone in &stale_zones {
-            if route_zones.contains(zone) || split_zones.contains(zone) {
+            if zone == &self.magic_tld_zone
+                || route_zones.contains(zone)
+                || split_zones.contains(zone)
+            {
                 tracing::debug!(
                     zone = %zone,
-                    "keeping catalog zone owned by routes/splits while pruning static hosts"
+                    "keeping catalog zone owned by MagicDNS TLD/routes/splits while pruning static hosts"
                 );
                 continue;
             }
@@ -280,36 +351,51 @@ impl MagicDnsServerInstanceData {
             }
         }
 
-        for (zone, entry) in &merged {
-            let ttl_secs = entry
-                .ttl_secs
-                .filter(|ttl| *ttl > 0)
-                .unwrap_or(DEFAULT_DNS_HOSTS_TTL_SECS);
-            let ttl = Duration::from_secs(ttl_secs as u64);
-
+        for (zone, rrs) in &zones {
             let mut records: Vec<Record> = Vec::new();
-            for ip in &entry.ips {
-                let Ok(addr) = Ipv4Addr::from_str(ip.trim()) else {
-                    tracing::warn!(name = %entry.name, ip = %ip, "skipping invalid host IP");
-                    continue;
-                };
-                let record = RecordBuilder::default()
-                    .rr_type(RecordType::A)
-                    .name(zone.clone())
-                    .value(addr.to_string())
-                    .ttl(ttl)
-                    .build()?;
-                if let Err(e) = record.name() {
-                    tracing::error!("Invalid static host name {}: {}", zone, e);
-                    continue;
+            for rr in rrs.values() {
+                let ttl_secs = rr
+                    .ttl_secs
+                    .filter(|ttl| *ttl > 0)
+                    .unwrap_or(DEFAULT_DNS_HOSTS_TTL_SECS);
+                let ttl = Duration::from_secs(ttl_secs as u64);
+                for ip in &rr.ips {
+                    let Ok(addr) = Ipv4Addr::from_str(ip.trim()) else {
+                        tracing::warn!(
+                            name = %rr.rr_name,
+                            ip = %ip,
+                            "skipping invalid host IP"
+                        );
+                        continue;
+                    };
+                    let record = RecordBuilder::default()
+                        .rr_type(RecordType::A)
+                        .name(rr.rr_name.clone())
+                        .value(addr.to_string())
+                        .ttl(ttl)
+                        .build()?;
+                    if let Err(e) = record.name() {
+                        tracing::error!("Invalid static host name {}: {}", rr.rr_name, e);
+                        continue;
+                    }
+                    records.push(record);
                 }
-                records.push(record);
             }
 
             if records.is_empty() {
+                // Drop a previously applied zone that now has no usable A records.
+                if !route_zones.contains(zone)
+                    && !split_zones.contains(zone)
+                    && zone != &self.magic_tld_zone
+                {
+                    if let Ok(name) = LowerName::from_str(zone) {
+                        self.dns_server.remove(&name).await;
+                    }
+                }
                 continue;
             }
 
+            let a_count = records.len();
             let soa_record = RecordBuilder::default()
                 .rr_type(RecordType::SOA)
                 .name(zone.clone())
@@ -329,26 +415,57 @@ impl MagicDnsServerInstanceData {
                     Arc::new(authority),
                 )
                 .await;
+            applied_next.insert(zone.clone());
             tracing::info!(
                 zone = %zone,
-                records = records.len().saturating_sub(1),
-                ttl_secs,
+                records = a_count,
                 "applied static DNS host zone"
             );
         }
 
-        *self.applied_static_zones.lock().unwrap() = next_zones;
+        *self.applied_static_zones.lock().unwrap() = applied_next;
         Ok(())
     }
 }
 
-/// Absolute DNS zone for a hosts entry (trailing dot, lowercased).
+struct StaticHostRr {
+    rr_name: String,
+    ips: Vec<String>,
+    ttl_secs: Option<u32>,
+}
+
+/// Absolute DNS zone for an exact hosts entry (trailing dot, lowercased).
 pub(crate) fn normalize_host_zone(name: &str) -> String {
-    let trimmed = name.trim().trim_end_matches('.').trim();
-    if trimmed.is_empty() {
-        return String::new();
+    classify_host_name(name)
+        .ok()
+        .filter(|t| !t.is_wildcard)
+        .map(|t| t.zone)
+        .unwrap_or_default()
+}
+
+#[cfg(test)]
+mod host_name_tests {
+    use super::*;
+    use easytier_core::config::HostZoneTarget;
+
+    #[test]
+    fn normalize_skips_wildcards() {
+        assert_eq!(normalize_host_zone("app.internal."), "app.internal.");
+        assert_eq!(normalize_host_zone("*.corp.example"), "");
     }
-    format!("{}.", trimmed.to_ascii_lowercase())
+
+    #[test]
+    fn classify_reexported() {
+        let t = classify_host_name("*.Corp.Example.").unwrap();
+        assert_eq!(
+            t,
+            HostZoneTarget {
+                zone: "corp.example.".into(),
+                rr_name: "*.corp.example.".into(),
+                is_wildcard: true,
+            }
+        );
+    }
 }
 
 #[async_trait::async_trait]
@@ -448,25 +565,34 @@ impl MagicDnsServerRpc for MagicDnsServerInstanceData {
             ret.insert(zone, dns_records);
         }
 
+        let route_zones: BTreeSet<String> =
+            self.route_store.snapshot().zones.keys().cloned().collect();
+        let split_zones = self.dns_server.split_zones();
         let static_hosts = self.static_hosts_by_client.lock().unwrap().clone();
         for hosts in static_hosts.values() {
             for entry in hosts {
-                let zone = normalize_host_zone(&entry.name);
-                if zone.is_empty() {
+                let Ok(target) = classify_host_name(&entry.name) else {
+                    continue;
+                };
+                // Match Catalog apply policy so RPC status does not advertise skipped hosts.
+                if self
+                    .static_host_skip_reason(&target, &route_zones, &split_zones)
+                    .is_some()
+                {
                     continue;
                 }
                 let ttl = entry
                     .ttl_secs
                     .filter(|ttl| *ttl > 0)
                     .unwrap_or(DEFAULT_DNS_HOSTS_TTL_SECS) as i32;
-                let list = ret.entry(zone.clone()).or_default();
+                let list = ret.entry(target.zone).or_default();
                 for ip in &entry.ips {
                     let Ok(addr) = Ipv4Addr::from_str(ip.trim()) else {
                         continue;
                     };
                     list.records.push(DnsRecord {
                         record: Some(dns_record::Record::A(DnsRecordA {
-                            name: zone.clone(),
+                            name: target.rr_name.clone(),
                             value: Some(addr.into()),
                             ttl,
                         })),
@@ -687,10 +813,16 @@ impl MagicDnsServerInstance {
                 .await?;
         }
 
+        // Use configured tld_dns_zone or fall back to DEFAULT_ET_DNS_ZONE if empty
+        let flags = global_ctx.get_flags();
+        let tld_dns_zone_clone = flags.tld_dns_zone.clone();
+        let magic_tld_zone = normalize_host_zone(&tld_dns_zone_clone);
+
         let data = Arc::new(MagicDnsServerInstanceData {
             dns_server,
             tun_dev: tun_dev.clone(),
             fake_ip,
+            magic_tld_zone,
             route_store: MagicDnsRecordStore::default(),
             static_hosts_by_client: Mutex::new(BTreeMap::new()),
             applied_static_zones: Mutex::new(BTreeSet::new()),
@@ -702,10 +834,6 @@ impl MagicDnsServerInstance {
             .registry()
             .register(MagicDnsServerRpcServer::new_arc(data.clone()), "");
         rpc_server.set_hook(data.clone());
-
-        // Use configured tld_dns_zone or fall back to DEFAULT_ET_DNS_ZONE if empty
-        let flags = global_ctx.get_flags();
-        let tld_dns_zone_clone = flags.tld_dns_zone.clone();
 
         data.update_dns_records(std::iter::empty(), &tld_dns_zone_clone)
             .await
