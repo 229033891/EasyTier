@@ -128,6 +128,31 @@ parse_config_protocol_needs
 assert_eq "$NEED_CONFIG_UDP" "1" "udp-only needs udp"
 assert_eq "$NEED_CONFIG_TCP" "0" "udp-only no tcp"
 
+# set -e 回归：函数末尾 `[[ -n ]] && assign` 失败不得导致静默退出
+echo "[check] set -e helper return status"
+SET_E_SMOKE="$(mktemp)"
+cat >"$SET_E_SMOKE" <<'EOF'
+set -euo pipefail
+INSTALL_PATH="/tmp/et-ops-set-e-$$"
+mkdir -p "$INSTALL_PATH"
+# shellcheck source=et-ops-common.sh
+source "$1"
+# 无 install-options.env、无 NAT：这两步在旧版会因 `[[ ]] &&` 返回 1 触发 set -e
+load_install_options
+reconcile_nat_from_runtime
+_parse_web_exec_start ""
+_parse_core_config_server ""
+echo OK
+EOF
+if ! bash "$SET_E_SMOKE" "$TARGET"; then
+  echo "[fail] set -e smoke: load_install_options / reconcile_nat_from_runtime 不应在空配置下失败" >&2
+  rm -f "$SET_E_SMOKE"
+  fail=1
+else
+  rm -f "$SET_E_SMOKE"
+fi
+rm -rf "/tmp/et-ops-set-e-$$" 2>/dev/null || true
+
 if (( fail )); then
   echo "[fail] parser smoke tests failed" >&2
   exit 1

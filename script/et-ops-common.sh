@@ -1354,10 +1354,10 @@ apply_defaults() {
     # Allow pasting a full config-server URL into --server-host
     if [[ "$SERVER_HOST" =~ ^(udp|tcp|ws|wss):// ]]; then
       parse_config_server_url "$SERVER_HOST"
-      [[ -n "$CS_HOST" ]] && SERVER_HOST="$CS_HOST"
-      [[ -n "$CS_PORT" ]] && CONFIG_PORT="$CS_PORT"
-      [[ -n "$CS_SCHEME" ]] && CONFIG_PROTOCOL="$CS_SCHEME"
-      [[ -n "$CS_TOKEN" ]] && CONFIG_TOKEN="$CS_TOKEN"
+      if [[ -n "$CS_HOST" ]]; then SERVER_HOST="$CS_HOST"; fi
+      if [[ -n "$CS_PORT" ]]; then CONFIG_PORT="$CS_PORT"; fi
+      if [[ -n "$CS_SCHEME" ]]; then CONFIG_PROTOCOL="$CS_SCHEME"; fi
+      if [[ -n "$CS_TOKEN" ]]; then CONFIG_TOKEN="$CS_TOKEN"; fi
     else
       # Client dial URL must be single-scheme; collapse listen lists like udp,tcp
       CONFIG_PROTOCOL="$(primary_config_scheme)"
@@ -1372,6 +1372,7 @@ apply_defaults() {
       exit 1
     }
   fi
+  return 0
 }
 
 print_admin_credentials() {
@@ -1576,16 +1577,17 @@ _parse_web_exec_start() {
   local val
   [[ -n "$exec_line" ]] || return 0
   val="$(printf '%s\n' "$exec_line" | sed -n 's/.*--api-server-port[[:space:]]\+\([0-9]\+\).*/\1/p' | head -1)"
-  [[ -n "$val" ]] && API_PORT="$val"
+  if [[ -n "$val" ]]; then API_PORT="$val"; fi
   val="$(printf '%s\n' "$exec_line" | sed -n 's/.*--config-server-port[[:space:]]\+\([0-9]\+\).*/\1/p' | head -1)"
-  [[ -n "$val" ]] && CONFIG_PORT="$val"
+  if [[ -n "$val" ]]; then CONFIG_PORT="$val"; fi
   val="$(printf '%s\n' "$exec_line" | sed -n 's/.*--config-server-protocol[[:space:]]\+\([^[:space:]\\]\+\).*/\1/p' | head -1)"
-  [[ -n "$val" ]] && CONFIG_PROTOCOL="$val"
+  if [[ -n "$val" ]]; then CONFIG_PROTOCOL="$val"; fi
   val="$(printf '%s\n' "$exec_line" | sed -n 's/.*--api-host[[:space:]]\+"*\([^"[:space:]]*\).*/\1/p' | head -1)"
   if [[ -n "$val" ]]; then
     SYSTEMD_API_HOST="$val"
     reconcile_nginx_mode_from_api_host "$val"
   fi
+  return 0
 }
 
 _parse_core_config_server() {
@@ -1596,10 +1598,11 @@ _parse_core_config_server() {
   [[ -n "$val" ]] || return 0
   val="${val#\"}"; val="${val%\"}"; val="${val#\'}"; val="${val%\'}"
   parse_config_server_url "$val"
-  [[ -n "$CS_HOST" ]] && SERVER_HOST="$CS_HOST"
-  [[ -n "$CS_PORT" ]] && CONFIG_PORT="$CS_PORT"
-  [[ -n "$CS_SCHEME" ]] && CONFIG_PROTOCOL="$CS_SCHEME"
-  [[ -n "$CS_TOKEN" ]] && CONFIG_TOKEN="$CS_TOKEN"
+  if [[ -n "$CS_HOST" ]]; then SERVER_HOST="$CS_HOST"; fi
+  if [[ -n "$CS_PORT" ]]; then CONFIG_PORT="$CS_PORT"; fi
+  if [[ -n "$CS_SCHEME" ]]; then CONFIG_PROTOCOL="$CS_SCHEME"; fi
+  if [[ -n "$CS_TOKEN" ]]; then CONFIG_TOKEN="$CS_TOKEN"; fi
+  return 0
 }
 
 load_runtime_config_from_systemd() {
@@ -1633,6 +1636,7 @@ load_runtime_config_from_systemd() {
   fi
 
   BACKUP_DIR="${BACKUP_DIR:-${INSTALL_PATH}/backups}"
+  return 0
 }
 
 is_server_installed() {
@@ -1757,11 +1761,23 @@ run_health_check() {
   local fail=0
 
   if is_server_installed; then
-    local api_url="http://127.0.0.1:${API_PORT}/api/v1/auth/captcha"
-    if curl -fsS -o /dev/null --connect-timeout 5 "$api_url" 2>/dev/null; then
-      health_print ok "Web API" "本机 ${api_url} 可访问"
+    # captcha 路由可能已移除；根路径 / 或 login 任一返回业务码即视为 API 存活
+    local api_ok=no api_url="" code="000"
+    for api_url in \
+      "http://127.0.0.1:${API_PORT}/" \
+      "http://127.0.0.1:${API_PORT}/api/v1/auth/login" \
+      "http://127.0.0.1:${API_PORT}/api/v1/auth/captcha"; do
+      # 不用 curl -f：401/404/405 也说明服务在听
+      code="$(curl -sS -o /dev/null -w '%{http_code}' --connect-timeout 5 "$api_url" 2>/dev/null || echo 000)"
+      if [[ "$code" =~ ^(200|204|301|302|401|403|404|405)$ ]]; then
+        api_ok=yes
+        break
+      fi
+    done
+    if [[ "$api_ok" == "yes" ]]; then
+      health_print ok "Web API" "本机 http://127.0.0.1:${API_PORT}/ 可访问（HTTP ${code}）"
     else
-      health_print fail "Web API" "本机 ${api_url} 不可访问"
+      health_print fail "Web API" "本机 http://127.0.0.1:${API_PORT}/ 不可访问"
       fail=1
     fi
 
@@ -1834,7 +1850,11 @@ run_health_check() {
     fi
   fi
 
-  if systemctl cat ET-core@default.service &>/dev/null; then
+  # 仅当 default 实例已 enable，或（无 web / 无 node0 的纯 client）时检查 @default
+  # server+node0 场景常残留 disabled 的 @default 单元，不应判失败
+  if systemctl is-enabled ET-core@default.service &>/dev/null || \
+     { ! is_server_installed && ! systemctl is-enabled ET-core@node0.service &>/dev/null && \
+       (systemctl cat ET-core@default.service &>/dev/null || [[ -f /etc/systemd/system/ET-core@.service ]]); }; then
     if systemctl is-active --quiet ET-core@default.service 2>/dev/null; then
       health_print ok "客户端节点" "ET-core@default 运行中"
     else
@@ -1843,7 +1863,7 @@ run_health_check() {
     fi
     local cs_host
     cs_host="$(normalize_host_input "${SERVER_HOST:-}")"
-    if [[ -n "$cs_host" ]]; then
+    if [[ -n "$cs_host" && "$cs_host" != "127.0.0.1" && "$cs_host" != "localhost" ]]; then
       local cs_resolved
       cs_resolved="$(resolve_dns "$cs_host" || true)"
       if [[ -n "$cs_resolved" ]]; then
@@ -1852,6 +1872,8 @@ run_health_check() {
         health_print fail "控制台 DNS" "${cs_host} 无法解析"
         fail=1
       fi
+    elif [[ -n "$cs_host" ]]; then
+      health_print ok "控制台地址" "${cs_host}（本机）"
     else
       health_print fail "控制台 DNS" "未配置控制台地址"
       fail=1
@@ -2090,28 +2112,30 @@ save_install_options() {
 
 load_install_options() {
   local val
+  # 注意：在 set -e 下，函数末尾不能是失败的 `[[ ... ]] && ...`（否则会静默退出）
   val="$(read_install_option MODE || true)"
-  [[ -n "$val" ]] && MODE="$val"
+  if [[ -n "$val" ]]; then MODE="$val"; fi
   val="$(read_install_option WITH_NODE || true)"
-  [[ -n "$val" ]] && WITH_NODE="$val"
+  if [[ -n "$val" ]]; then WITH_NODE="$val"; fi
   val="$(read_install_option ENABLE_NAT || true)"
-  [[ -n "$val" ]] && ENABLE_NAT="$val"
+  if [[ -n "$val" ]]; then ENABLE_NAT="$val"; fi
   val="$(read_install_option NAT_WAN_IFACE || true)"
-  [[ -n "$val" ]] && NAT_WAN_IFACE="$val"
+  if [[ -n "$val" ]]; then NAT_WAN_IFACE="$val"; fi
   val="$(read_install_option NGINX_HTTPS_PROXY || true)"
-  [[ -n "$val" ]] && NGINX_HTTPS_PROXY="$val"
+  if [[ -n "$val" ]]; then NGINX_HTTPS_PROXY="$val"; fi
   val="$(read_install_option NGINX_SSL_PORT || true)"
-  [[ -n "$val" ]] && NGINX_SSL_PORT="$val"
+  if [[ -n "$val" ]]; then NGINX_SSL_PORT="$val"; fi
   val="$(read_install_option PUBLIC_HOST || true)"
-  [[ -n "$val" ]] && PUBLIC_HOST="$val"
+  if [[ -n "$val" ]]; then PUBLIC_HOST="$val"; fi
   val="$(read_install_option SERVER_HOST || true)"
-  [[ -n "$val" ]] && SERVER_HOST="$val"
+  if [[ -n "$val" ]]; then SERVER_HOST="$val"; fi
   val="$(read_install_option API_PORT || true)"
-  [[ -n "$val" ]] && API_PORT="$val"
+  if [[ -n "$val" ]]; then API_PORT="$val"; fi
   val="$(read_install_option CONFIG_PORT || true)"
-  [[ -n "$val" ]] && CONFIG_PORT="$val"
+  if [[ -n "$val" ]]; then CONFIG_PORT="$val"; fi
   val="$(read_install_option CONFIG_PROTOCOL || true)"
-  [[ -n "$val" ]] && CONFIG_PROTOCOL="$val"
+  if [[ -n "$val" ]]; then CONFIG_PROTOCOL="$val"; fi
+  return 0
 }
 
 # 从运行态推断 NAT（install-options / ET-nat / unit 标志）
@@ -2129,11 +2153,14 @@ reconcile_nat_from_runtime() {
     if [[ -f /etc/systemd/system/ET-core@.service ]]; then
       exec_line+=" $(tr '\n' ' ' </etc/systemd/system/ET-core@.service)"
     fi
-    [[ "$exec_line" == *"--enable-exit-node"* ]] && ENABLE_NAT="yes"
+    if [[ "$exec_line" == *"--enable-exit-node"* ]]; then
+      ENABLE_NAT="yes"
+    fi
   fi
   if [[ "$ENABLE_NAT" == "yes" && -z "${NAT_WAN_IFACE:-}" && -f "${INSTALL_PATH}/.nat-wan" ]]; then
     NAT_WAN_IFACE="$(tr -d '[:space:]' <"${INSTALL_PATH}/.nat-wan" || true)"
   fi
+  return 0
 }
 
 # core 轻量模式：ExecStart 使用 -c config，而非 --config-server
@@ -2213,16 +2240,21 @@ verify_nginx_https_proxy() {
     esac
   fi
 
-  local pub_api="https://${domain}/api/v1/auth/captcha"
-  if curl -fsS -o /dev/null --connect-timeout 10 "$pub_api" 2>/dev/null; then
-    health_print ok "HTTPS 反代" "${pub_api} 可访问（证书校验通过）"
-  elif curl -fsS -k -o /dev/null --connect-timeout 10 "$pub_api" 2>/dev/null; then
-    health_print fail "HTTPS 证书" "反代可达但证书校验失败（请检查证书链/域名/SNI）"
-    health_print ok "HTTPS 反代" "${pub_api} 可访问（curl -k 跳过校验，生产环境须修复证书）"
-    fails=1
+  local pub_base="https://${domain}/"
+  local pub_code
+  pub_code="$(curl -sS -o /dev/null -w '%{http_code}' --connect-timeout 10 "$pub_base" 2>/dev/null || echo 000)"
+  if [[ "$pub_code" =~ ^(200|204|301|302|401|403|404|405)$ ]]; then
+    health_print ok "HTTPS 反代" "${pub_base} 可访问（证书校验通过，HTTP ${pub_code}）"
   else
-    health_print fail "HTTPS 反代" "${pub_api} 不可达（检查 Nginx/USG NAT/证书）"
-    fails=1
+    pub_code="$(curl -sS -k -o /dev/null -w '%{http_code}' --connect-timeout 10 "$pub_base" 2>/dev/null || echo 000)"
+    if [[ "$pub_code" =~ ^(200|204|301|302|401|403|404|405)$ ]]; then
+      health_print fail "HTTPS 证书" "反代可达但证书校验失败（请检查证书链/域名/SNI）"
+      health_print ok "HTTPS 反代" "${pub_base} 可访问（curl -k，HTTP ${pub_code}）"
+      fails=1
+    else
+      health_print fail "HTTPS 反代" "${pub_base} 不可达（检查 Nginx/NAT/证书）"
+      fails=1
+    fi
   fi
 
   health_print ok "配置下发" "UDP ${CONFIG_PORT} 仍需对外放行（不经 Nginx）"
@@ -3229,7 +3261,10 @@ cmd_status() {
   systemctl status ET-core@default.service --no-pager 2>/dev/null || true
   systemctl status ET-backup.timer --no-pager 2>/dev/null || true
   systemctl status ET-nat.service --no-pager 2>/dev/null || true
-  [[ -f "${INSTALL_PATH}/INSTALL_INFO.txt" ]] && cat "${INSTALL_PATH}/INSTALL_INFO.txt"
+  if [[ -f "${INSTALL_PATH}/INSTALL_INFO.txt" ]]; then
+    cat "${INSTALL_PATH}/INSTALL_INFO.txt"
+  fi
+  return 0
 }
 
 # 入口由 install.sh / update.sh 提供，本文件仅定义函数。
