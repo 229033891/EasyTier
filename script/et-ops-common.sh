@@ -1,35 +1,34 @@
 #!/bin/bash
 #
-# EasyTier 一键部署脚本（参考 openvpn-install 风格）
-# 支持：
-#   1) server  - ET-web-embed（控制台 + 配置下发）+ 可选本机 ET-core 节点
-#   2) client  - 仅 ET-core，连接远程自托管控制台
+# EasyTier 运维公共函数库（勿直接执行）
+# 由 install.sh / update.sh 分别 source，二者互不调用。
 #
-# 官方文档: https://easytier.rs/en/guide/network/web-console
-# 官方安装: https://github.com/EasyTier/EasyTier/blob/main/script/install.sh
+# Release: https://github.com/229033891/EasyTier/releases
 #
-# 用法示例:
-#   sudo bash easytier-install.sh
-#     （交互主菜单：安装 / 更新 / 备份 / 恢复 / 健康检查等）
+# 入口:
+#   sudo bash install.sh          # 安装 / 备份 / 恢复 / 卸载等
+#   sudo bash update.sh           # 从 Release 升级
 #
-#   sudo bash easytier-install.sh install
-#     （交互选择 server/client、下载源、域名等）
-#
-#   sudo bash easytier-install.sh backup
-#   sudo bash easytier-install.sh update
-#   sudo bash easytier-install.sh healthcheck
+
+# 允许被 source；若直接执行则提示
+if [[ "${BASH_SOURCE[0]:-}" == "${0:-}" ]]; then
+  echo "et-ops-common.sh 是函数库，请运行: sudo bash install.sh 或 sudo bash update.sh" >&2
+  exit 1
+fi
 
 set -euo pipefail
 
 INSTALL_PATH="${INSTALL_PATH:-/opt/easytier}"
 CONFIG_DIR="${INSTALL_PATH}/config"
-# 本 fork 的 Release（ET-* 包名）；如需上游包，export GITHUB_REPO=EasyTier/EasyTier
+# 固定从本仓库 Release 拉最新包
 GITHUB_REPO="${GITHUB_REPO:-229033891/EasyTier}"
+RELEASES_PAGE="https://github.com/${GITHUB_REPO}/releases"
 GH_PROXY="${GH_PROXY:-}"
 NO_GH_PROXY="${NO_GH_PROXY:-false}"
 # 国内镜像前缀（空格分隔，GitHub 不可达时依次尝试）
 GH_MIRRORS="${GH_MIRRORS:-https://ghfast.top/ https://mirror.ghproxy.com/}"
 GITHUB_API_LATEST="https://api.github.com/repos/${GITHUB_REPO}/releases/latest"
+GITHUB_RELEASES_LATEST="${RELEASES_PAGE}/latest"
 
 # 默认端口：Web/API 与配置下发共用 22020（TCP / UDP），节点 P2P 11010
 API_PORT="${API_PORT:-22020}"
@@ -38,6 +37,9 @@ CONFIG_PORT="${CONFIG_PORT:-22020}"
 # Client --config-server URL always uses a single scheme (see primary_config_scheme).
 CONFIG_PROTOCOL="${CONFIG_PROTOCOL:-udp,tcp}"
 CORE_PORT="${CORE_PORT:-11010}"
+# core 默认 listeners 额外端口（wg/ws、wss）；与 default.conf 保持一致
+WG_PORT="${WG_PORT:-11011}"
+WSS_PORT="${WSS_PORT:-11012}"
 
 MODE=""
 AUTO=false
@@ -58,6 +60,10 @@ BACKUP_RETENTION_DAYS="${BACKUP_RETENTION_DAYS:-30}"
 BACKUP_HOUR="${BACKUP_HOUR:-3}"
 CONFIGURE_FIREWALL="no"
 ENABLE_FIREWALL="no"
+# NAT/出口转发：内核 ip_forward + MASQUERADE，并启用 enable_exit_node
+ENABLE_NAT="no"
+NAT_WAN_IFACE="${NAT_WAN_IFACE:-}"
+NAT_PROMPT_DONE=false
 NGINX_HTTPS_PROXY="no"
 NGINX_SSL_PORT="${NGINX_SSL_PORT:-443}"
 INSTALL_DEPS="yes"
@@ -78,15 +84,17 @@ warn() { echo -e "${YELLOW}[WARN]${NC} $*"; }
 err()  { echo -e "${RED}[ERROR]${NC} $*" >&2; }
 
 usage() {
-  cat <<'EOF'
-EasyTier 部署脚本（交互式为主）
+  cat <<EOF
+EasyTier Linux 运维脚本
 
-直接运行进入主菜单:
-  sudo bash easytier-install.sh
+Release: ${RELEASES_PAGE}
 
-常用命令（省略子命令时多数会进入交互确认）:
-  install      安装并配置 systemd 服务
-  update       拉取最新 release，替换二进制并重启服务
+独立入口（互不调用，共用 et-ops-common.sh）:
+  sudo bash install.sh     # 安装 / 备份 / 恢复 / 卸载 / 健康检查
+  sudo bash update.sh      # 从 Release 升级已安装实例
+
+install.sh 常用命令:
+  install      安装并配置 systemd 服务（server / client / core）
   restore      从 easytier-db-*.tar.gz 恢复 et.db
   backup       立即备份服务端数据库（server 模式）
   healthcheck  健康检查（API / DNS / 端口监听）
@@ -94,38 +102,28 @@ EasyTier 部署脚本（交互式为主）
   status       查看服务状态
   help         显示帮助
 
+update.sh 常用参数:
+  --auto                 非交互
+  --enable-nat / --no-nat
+  --nat-wan IFACE
+  --configure-firewall
+  --public-host DOMAIN
+  --no-gh-proxy / --gh-proxy URL
+
 交互安装时会依次询问:
-  - 部署模式（server / client）
-  - 域名、端口、备份、防火墙等
-  - 下载源（自动 / 直连 GitHub / 国内镜像）
+  - 部署模式（server / client / core）
+  - 域名、端口、备份、防火墙、NAT、下载源
 
-自动化（CI / 脚本，一般用户无需使用）:
-  install --mode server --auto --public-host DOMAIN
-  install --mode client --auto --server-host DOMAIN --config-token TOKEN
-  install --mode client --auto --server-host 'udp://DOMAIN:22020/TOKEN'
-  restore --file PATH --auto
-  update --auto
-
-常用参数:
-  --config-token TOKEN   接入 Token（不是登录用户名；默认 admin）
-  --config-protocol LIST 服务端监听协议，默认 udp,tcp；客户端 URL 取首个协议
-  --web-username TOKEN   已弃用，等同 --config-token
+自动化安装示例:
+  sudo bash install.sh install --mode server --auto --public-host DOMAIN
+  sudo bash install.sh install --mode client --auto --server-host DOMAIN --config-token TOKEN
+  sudo bash install.sh install --mode core --auto --enable-nat
+  sudo bash update.sh --auto
 
 环境变量（可选）:
-  INSTALL_PATH、GH_MIRRORS、GH_PROXY、NO_GH_PROXY
+  INSTALL_PATH、GITHUB_REPO、GH_MIRRORS、GH_PROXY、NO_GH_PROXY、NAT_WAN_IFACE
 
-防火墙说明:
-  - Ubuntu/Debian 常用 ufw；RHEL/CentOS 常用 firewalld
-  - 本机防火墙未启用时默认不配置本机规则
-  - 公网暴露时仍需在 USG / 安全组放行对应端口
-  Server: TCP 22020（Web，或经 Nginx 443 HTTPS 反代则无需对外 TCP 22020）
-        + UDP 22020（配置下发，必须）、节点 UDP/TCP 11010
-  Client: 出站可达 server 配置端口
-
-Nginx HTTPS 反代须手动部署（脚本不生成 nginx 配置）:
-  将 server_name 改为实际域名，proxy_pass 到 http://127.0.0.1:22020
-  完整示例见 docs/easytier-deploy.md
-  宝塔目标: /www/server/panel/vhost/nginx/<域名>.conf
+完整说明见 docs/ops/deploy-install.md
 EOF
 }
 
@@ -144,6 +142,7 @@ prompt_main_menu() {
   echo
   echo "=========================================="
   echo " EasyTier 部署工具"
+  echo " Release: ${RELEASES_PAGE}"
   echo "=========================================="
   echo
   echo "请选择操作:"
@@ -545,7 +544,6 @@ fetch_file_with_fallback() {
     warn "下载失败或 zip 损坏，尝试下一个源..."
     rm -f "$dest"
   done < <(build_download_candidates "$url")
-  err "所有下载源均失败，请重新运行并在「下载源」步骤选择可用镜像"
   return 1
 }
 
@@ -557,6 +555,7 @@ remove_systemd_units() {
   rm -f /etc/systemd/system/ET-core@.service
   rm -f /etc/systemd/system/ET-backup.service
   rm -f /etc/systemd/system/ET-backup.timer
+  rm -f /etc/systemd/system/ET-nat.service
   # Legacy easytier-* units (pre-rename installs)
   rm -f /etc/systemd/system/easytier-web.service
   rm -f /etc/systemd/system/easytier-core@node0.service
@@ -635,7 +634,31 @@ detect_firewall_backend() {
   echo "none"
 }
 
+# 解析 CONFIG_PROTOCOL（支持逗号列表，如 udp,tcp）→ NEED_CONFIG_UDP / NEED_CONFIG_TCP
+parse_config_protocol_needs() {
+  NEED_CONFIG_UDP=0
+  NEED_CONFIG_TCP=0
+  local proto
+  local -a protos=()
+  IFS=',' read -ra protos <<<"${CONFIG_PROTOCOL}"
+  for proto in "${protos[@]}"; do
+    proto="$(printf '%s' "$proto" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')"
+    case "$proto" in
+      udp) NEED_CONFIG_UDP=1 ;;
+      tcp|ws|wss) NEED_CONFIG_TCP=1 ;;
+    esac
+  done
+}
+
+# 本机节点 / core 时额外放行默认 listeners（wg/ws/wss）
+should_open_extra_core_listeners() {
+  [[ "$MODE" == "core" ]] && return 0
+  [[ "$MODE" == "server" && "$WITH_NODE" == "yes" ]] && return 0
+  return 1
+}
+
 print_firewall_port_hint() {
+  parse_config_protocol_needs
   echo
   log "若对外提供服务，请确保以下端口可达（本机 / 路由器 / 云安全组）:"
   if [[ "$NGINX_HTTPS_PROXY" == "yes" ]]; then
@@ -644,13 +667,20 @@ print_firewall_port_hint() {
   else
     echo "  TCP ${API_PORT}     Web / API"
   fi
-  case "$CONFIG_PROTOCOL" in
-    udp) echo "  UDP ${CONFIG_PORT}     配置下发（Client 直连，必须）" ;;
-    tcp) echo "  TCP ${CONFIG_PORT}     配置下发" ;;
-    ws|wss) echo "  TCP ${CONFIG_PORT}     配置下发 (WebSocket)" ;;
-    *) echo "  ${CONFIG_PROTOCOL} ${CONFIG_PORT}  配置下发" ;;
-  esac
+  if (( NEED_CONFIG_UDP )); then
+    echo "  UDP ${CONFIG_PORT}     配置下发（Client 直连，必须）"
+  fi
+  if (( NEED_CONFIG_TCP )); then
+    echo "  TCP ${CONFIG_PORT}     配置下发（tcp/ws/wss）"
+  fi
+  if (( !NEED_CONFIG_UDP && !NEED_CONFIG_TCP )); then
+    echo "  ${CONFIG_PROTOCOL} ${CONFIG_PORT}  配置下发（未知协议，请手动放行）"
+  fi
   echo "  UDP/TCP ${CORE_PORT}  节点 P2P 组网"
+  if should_open_extra_core_listeners; then
+    echo "  UDP/TCP ${WG_PORT}   WireGuard / WebSocket"
+    echo "  TCP ${WSS_PORT}      WebSocket Secure"
+  fi
   echo
 }
 
@@ -680,37 +710,32 @@ configure_ufw_rules() {
     return 1
   fi
 
+  parse_config_protocol_needs
+
   if [[ "$NGINX_HTTPS_PROXY" == "yes" ]]; then
     if ! ufw_rule_exists "${NGINX_SSL_PORT}/tcp"; then
       ufw allow "${NGINX_SSL_PORT}/tcp" comment 'Nginx HTTPS EasyTier'
       log "UFW: 已放行 TCP ${NGINX_SSL_PORT}（Nginx HTTPS）"
     fi
-    log "Web 经 Nginx 反代，跳过对外放行 TCP ${API_PORT}"
+    log "Web 经 Nginx 反代，跳过对外放行 Web TCP ${API_PORT}（配置下发端口仍按协议放行）"
   elif ! ufw_rule_exists "${API_PORT}/tcp"; then
     ufw allow "${API_PORT}/tcp" comment 'EasyTier Web API'
     log "UFW: 已放行 TCP ${API_PORT}"
   fi
 
-  case "$CONFIG_PROTOCOL" in
-    udp)
-      if ! ufw_rule_exists "${CONFIG_PORT}/udp"; then
-        ufw allow "${CONFIG_PORT}/udp" comment 'EasyTier Config UDP'
-        log "UFW: 已放行 UDP ${CONFIG_PORT}"
-      fi
-      ;;
-    tcp)
-      if ! ufw_rule_exists "${CONFIG_PORT}/tcp"; then
-        ufw allow "${CONFIG_PORT}/tcp" comment 'EasyTier Config TCP'
-        log "UFW: 已放行 TCP ${CONFIG_PORT}"
-      fi
-      ;;
-    ws|wss)
-      if ! ufw_rule_exists "${CONFIG_PORT}/tcp"; then
-        ufw allow "${CONFIG_PORT}/tcp" comment 'EasyTier Config WS'
-        log "UFW: 已放行 TCP ${CONFIG_PORT} (WebSocket)"
-      fi
-      ;;
-  esac
+  # 支持 udp,tcp 等多协议；与 Web 同端口时 ufw_rule_exists 会跳过重复
+  if (( NEED_CONFIG_UDP )); then
+    if ! ufw_rule_exists "${CONFIG_PORT}/udp"; then
+      ufw allow "${CONFIG_PORT}/udp" comment 'EasyTier Config UDP'
+      log "UFW: 已放行 UDP ${CONFIG_PORT}（配置下发）"
+    fi
+  fi
+  if (( NEED_CONFIG_TCP )); then
+    if ! ufw_rule_exists "${CONFIG_PORT}/tcp"; then
+      ufw allow "${CONFIG_PORT}/tcp" comment 'EasyTier Config TCP'
+      log "UFW: 已放行 TCP ${CONFIG_PORT}（配置下发）"
+    fi
+  fi
 
   if ! ufw_rule_exists "${CORE_PORT}/udp"; then
     ufw allow "${CORE_PORT}/udp" comment 'EasyTier P2P UDP'
@@ -721,7 +746,22 @@ configure_ufw_rules() {
     log "UFW: 已放行 TCP ${CORE_PORT}"
   fi
 
-  ufw status numbered 2>/dev/null | grep -E "EasyTier|Nginx|${API_PORT}|${CONFIG_PORT}|${CORE_PORT}|${NGINX_SSL_PORT}" || true
+  if should_open_extra_core_listeners; then
+    if ! ufw_rule_exists "${WG_PORT}/udp"; then
+      ufw allow "${WG_PORT}/udp" comment 'EasyTier WG/WS UDP'
+      log "UFW: 已放行 UDP ${WG_PORT}（WG/WS）"
+    fi
+    if ! ufw_rule_exists "${WG_PORT}/tcp"; then
+      ufw allow "${WG_PORT}/tcp" comment 'EasyTier WG/WS TCP'
+      log "UFW: 已放行 TCP ${WG_PORT}（WG/WS）"
+    fi
+    if ! ufw_rule_exists "${WSS_PORT}/tcp"; then
+      ufw allow "${WSS_PORT}/tcp" comment 'EasyTier WSS'
+      log "UFW: 已放行 TCP ${WSS_PORT}（WSS）"
+    fi
+  fi
+
+  ufw status numbered 2>/dev/null | grep -E "EasyTier|Nginx|${API_PORT}|${CONFIG_PORT}|${CORE_PORT}|${WG_PORT}|${WSS_PORT}|${NGINX_SSL_PORT}" || true
   return 0
 }
 
@@ -739,43 +779,50 @@ configure_firewalld_rules() {
     return 1
   fi
 
+  parse_config_protocol_needs
   local permanent=()
   if [[ "$NGINX_HTTPS_PROXY" == "yes" ]]; then
     if ! firewalld_port_exists "${NGINX_SSL_PORT}/tcp"; then
       permanent+=(--add-port="${NGINX_SSL_PORT}/tcp")
       log "firewalld: 将放行 TCP ${NGINX_SSL_PORT}（Nginx HTTPS）"
     fi
-    log "Web 经 Nginx 反代，跳过对外放行 TCP ${API_PORT}"
+    log "Web 经 Nginx 反代，跳过对外放行 Web TCP ${API_PORT}（配置下发端口仍按协议放行）"
   elif ! firewalld_port_exists "${API_PORT}/tcp"; then
     permanent+=(--add-port="${API_PORT}/tcp")
     log "firewalld: 将放行 TCP ${API_PORT}"
   fi
-  case "$CONFIG_PROTOCOL" in
-    udp)
-      if ! firewalld_port_exists "${CONFIG_PORT}/udp"; then
-        permanent+=(--add-port="${CONFIG_PORT}/udp")
-        log "firewalld: 将放行 UDP ${CONFIG_PORT}"
-      fi
-      ;;
-    tcp|ws|wss)
-      if ! firewalld_port_exists "${CONFIG_PORT}/tcp"; then
-        permanent+=(--add-port="${CONFIG_PORT}/tcp")
-        log "firewalld: 将放行 TCP ${CONFIG_PORT}"
-      fi
-      ;;
-  esac
+  if (( NEED_CONFIG_UDP )) && ! firewalld_port_exists "${CONFIG_PORT}/udp"; then
+    permanent+=(--add-port="${CONFIG_PORT}/udp")
+    log "firewalld: 将放行 UDP ${CONFIG_PORT}（配置下发）"
+  fi
+  if (( NEED_CONFIG_TCP )) && ! firewalld_port_exists "${CONFIG_PORT}/tcp"; then
+    permanent+=(--add-port="${CONFIG_PORT}/tcp")
+    log "firewalld: 将放行 TCP ${CONFIG_PORT}（配置下发）"
+  fi
   if ! firewalld_port_exists "${CORE_PORT}/udp"; then
     permanent+=(--add-port="${CORE_PORT}/udp")
   fi
   if ! firewalld_port_exists "${CORE_PORT}/tcp"; then
     permanent+=(--add-port="${CORE_PORT}/tcp")
   fi
+  if should_open_extra_core_listeners; then
+    if ! firewalld_port_exists "${WG_PORT}/udp"; then
+      permanent+=(--add-port="${WG_PORT}/udp")
+    fi
+    if ! firewalld_port_exists "${WG_PORT}/tcp"; then
+      permanent+=(--add-port="${WG_PORT}/tcp")
+    fi
+    if ! firewalld_port_exists "${WSS_PORT}/tcp"; then
+      permanent+=(--add-port="${WSS_PORT}/tcp")
+    fi
+  fi
 
   for rule in "${permanent[@]}"; do
     firewall-cmd --permanent "$rule"
   done
   firewall-cmd --reload
-  firewall-cmd --list-ports 2>/dev/null | tr ' ' '\n' | grep -E "${API_PORT}|${CONFIG_PORT}|${CORE_PORT}" || true
+  firewall-cmd --list-ports 2>/dev/null | tr ' ' '\n' | \
+    grep -E "${API_PORT}|${CONFIG_PORT}|${CORE_PORT}|${WG_PORT}|${WSS_PORT}|${NGINX_SSL_PORT}" || true
   return 0
 }
 
@@ -834,6 +881,412 @@ configure_server_firewall() {
   esac
 }
 
+# --- NAT / 出口转发 -----------------------------------------------------------
+
+detect_default_wan_iface() {
+  local iface=""
+  if command -v ip >/dev/null 2>&1; then
+    iface="$(ip -4 route show default 2>/dev/null | awk '/default/{for(i=1;i<=NF;i++) if($i=="dev"){print $(i+1); exit}}')"
+    if [[ -z "$iface" ]]; then
+      iface="$(ip -6 route show default 2>/dev/null | awk '/default/{for(i=1;i<=NF;i++) if($i=="dev"){print $(i+1); exit}}')"
+    fi
+  fi
+  if [[ -n "$iface" && -d "/sys/class/net/${iface}" ]]; then
+    echo "$iface"
+    return 0
+  fi
+  return 1
+}
+
+resolve_nat_wan_iface() {
+  local iface="${NAT_WAN_IFACE:-}"
+  if [[ -n "$iface" ]]; then
+    [[ -d "/sys/class/net/${iface}" ]] || {
+      err "指定的 WAN 网卡不存在: ${iface}"
+      return 1
+    }
+    echo "$iface"
+    return 0
+  fi
+  iface="$(detect_default_wan_iface || true)"
+  [[ -n "$iface" ]] || {
+    err "无法自动检测默认路由网卡，请用 --nat-wan IFACE 指定"
+    return 1
+  }
+  echo "$iface"
+}
+
+nat_comment() { echo "ET-NAT"; }
+
+enable_kernel_ip_forward() {
+  local conf="/etc/sysctl.d/99-easytier-forward.conf"
+  cat >"$conf" <<'EOF'
+# Managed by EasyTier install.sh — NAT / exit-node forwarding
+net.ipv4.ip_forward=1
+net.ipv6.conf.all.forwarding=1
+EOF
+  chmod 644 "$conf"
+  # Apply only our keys (avoid failing on unrelated sysctl.d errors)
+  sysctl -w net.ipv4.ip_forward=1 >/dev/null
+  sysctl -w net.ipv6.conf.all.forwarding=1 >/dev/null 2>/dev/null || true
+  local v4
+  v4="$(sysctl -n net.ipv4.ip_forward 2>/dev/null || echo 0)"
+  [[ "$v4" == "1" ]] || {
+    err "启用 net.ipv4.ip_forward 失败（当前=${v4}）"
+    return 1
+  }
+  log "已启用内核转发: net.ipv4.ip_forward=1（持久化 ${conf}）"
+}
+
+disable_kernel_ip_forward_dropin() {
+  rm -f /etc/sysctl.d/99-easytier-forward.conf
+  # 不强制关闭全局 forwarding（可能被其它服务依赖），仅移除本脚本 drop-in
+}
+
+# 幂等写入/清理 iptables 规则（专用 comment，可安全重复执行）
+iptables_ensure() {
+  local table="$1"; shift
+  # remaining: rule args after -A/-D
+  if [[ "$table" == "filter" ]]; then
+    iptables -C "$@" >/dev/null 2>&1 || iptables -A "$@"
+  else
+    iptables -t "$table" -C "$@" >/dev/null 2>&1 || iptables -t "$table" -A "$@"
+  fi
+}
+
+iptables_delete_if_exists() {
+  local table="$1"; shift
+  if [[ "$table" == "filter" ]]; then
+    while iptables -C "$@" >/dev/null 2>&1; do
+      iptables -D "$@" || break
+    done
+  else
+    while iptables -t "$table" -C "$@" >/dev/null 2>&1; do
+      iptables -t "$table" -D "$@" || break
+    done
+  fi
+}
+
+apply_iptables_nat() {
+  local wan="$1"
+  local c
+  c="$(nat_comment)"
+  command -v iptables >/dev/null 2>&1 || {
+    err "需要 iptables 才能配置 NAT"
+    return 1
+  }
+  # RELATED,ESTABLISHED 回程
+  iptables_ensure filter FORWARD -m conntrack --ctstate RELATED,ESTABLISHED -m comment --comment "$c" -j ACCEPT
+  # 允许发往 WAN 的转发
+  iptables_ensure filter FORWARD -o "$wan" -m comment --comment "$c" -j ACCEPT
+  # MASQUERADE
+  iptables_ensure nat POSTROUTING -o "$wan" -m comment --comment "$c" -j MASQUERADE
+  return 0
+}
+
+remove_iptables_nat() {
+  local wan="$1"
+  local c
+  c="$(nat_comment)"
+  command -v iptables >/dev/null 2>&1 || return 0
+  iptables_delete_if_exists nat POSTROUTING -o "$wan" -m comment --comment "$c" -j MASQUERADE
+  iptables_delete_if_exists filter FORWARD -o "$wan" -m comment --comment "$c" -j ACCEPT
+  iptables_delete_if_exists filter FORWARD -m conntrack --ctstate RELATED,ESTABLISHED -m comment --comment "$c" -j ACCEPT
+}
+
+apply_firewalld_masquerade() {
+  command -v firewall-cmd >/dev/null 2>&1 || return 0
+  systemctl is-active --quiet firewalld 2>/dev/null || return 0
+  if firewall-cmd --query-masquerade >/dev/null 2>&1; then
+    log "firewalld: masquerade 已启用"
+    return 0
+  fi
+  firewall-cmd --permanent --add-masquerade >/dev/null 2>&1 || true
+  firewall-cmd --reload >/dev/null 2>&1 || true
+  if firewall-cmd --query-masquerade >/dev/null 2>&1; then
+    log "firewalld: 已启用 masquerade"
+  else
+    warn "firewalld masquerade 未能启用，依赖 iptables NAT 规则"
+  fi
+}
+
+relax_ufw_forward_policy() {
+  # UFW 默认 FORWARD=DROP 会阻断 NAT；仅在启用 UFW 时调整
+  command -v ufw >/dev/null 2>&1 || return 0
+  ufw status 2>/dev/null | grep -qi "Status: active" || return 0
+  local conf="/etc/default/ufw"
+  [[ -f "$conf" ]] || return 0
+  if grep -qE '^DEFAULT_FORWARD_POLICY="ACCEPT"' "$conf" 2>/dev/null; then
+    return 0
+  fi
+  if grep -qE '^DEFAULT_FORWARD_POLICY=' "$conf" 2>/dev/null; then
+    sed -i 's/^DEFAULT_FORWARD_POLICY=.*/DEFAULT_FORWARD_POLICY="ACCEPT"/' "$conf"
+  else
+    echo 'DEFAULT_FORWARD_POLICY="ACCEPT"' >>"$conf"
+  fi
+  ufw reload >/dev/null 2>&1 || true
+  log "UFW: DEFAULT_FORWARD_POLICY 已设为 ACCEPT（NAT 需要）"
+}
+
+write_nat_script() {
+  cat >"${INSTALL_PATH}/ET-nat.sh" <<'EOF'
+#!/bin/bash
+# EasyTier NAT / 出口转发：apply | remove | status
+# 由 install.sh 安装；规则带 comment=ET-NAT，可幂等重复执行。
+set -euo pipefail
+
+INSTALL_PATH="${INSTALL_PATH:-/opt/easytier}"
+NAT_WAN_IFACE="${NAT_WAN_IFACE:-}"
+COMMENT="ET-NAT"
+
+log() { echo "[ET-nat] $*"; }
+warn() { echo "[ET-nat] WARN: $*" >&2; }
+err() { echo "[ET-nat] ERROR: $*" >&2; }
+
+detect_wan() {
+  local iface="${NAT_WAN_IFACE:-}"
+  if [[ -n "$iface" && -d "/sys/class/net/${iface}" ]]; then
+    echo "$iface"
+    return 0
+  fi
+  iface="$(ip -4 route show default 2>/dev/null | awk '/default/{for(i=1;i<=NF;i++) if($i=="dev"){print $(i+1); exit}}')"
+  if [[ -z "$iface" ]]; then
+    iface="$(ip -6 route show default 2>/dev/null | awk '/default/{for(i=1;i<=NF;i++) if($i=="dev"){print $(i+1); exit}}')"
+  fi
+  [[ -n "$iface" && -d "/sys/class/net/${iface}" ]] || return 1
+  echo "$iface"
+}
+
+ensure_forward() {
+  sysctl -w net.ipv4.ip_forward=1 >/dev/null
+  sysctl -w net.ipv6.conf.all.forwarding=1 >/dev/null 2>/dev/null || true
+}
+
+ipt_add() {
+  local table="$1"; shift
+  if [[ "$table" == "filter" ]]; then
+    iptables -C "$@" >/dev/null 2>&1 || iptables -A "$@"
+  else
+    iptables -t "$table" -C "$@" >/dev/null 2>&1 || iptables -t "$table" -A "$@"
+  fi
+}
+
+ipt_del() {
+  local table="$1"; shift
+  if [[ "$table" == "filter" ]]; then
+    while iptables -C "$@" >/dev/null 2>&1; do iptables -D "$@" || break; done
+  else
+    while iptables -t "$table" -C "$@" >/dev/null 2>&1; do iptables -t "$table" -D "$@" || break; done
+  fi
+}
+
+cmd_apply() {
+  command -v iptables >/dev/null 2>&1 || { err "缺少 iptables"; exit 1; }
+  command -v ip >/dev/null 2>&1 || { err "缺少 ip (iproute2)"; exit 1; }
+  local wan
+  wan="$(detect_wan)" || { err "无法检测 WAN 网卡"; exit 1; }
+  ensure_forward
+  ipt_add filter FORWARD -m conntrack --ctstate RELATED,ESTABLISHED -m comment --comment "$COMMENT" -j ACCEPT
+  ipt_add filter FORWARD -o "$wan" -m comment --comment "$COMMENT" -j ACCEPT
+  ipt_add nat POSTROUTING -o "$wan" -m comment --comment "$COMMENT" -j MASQUERADE
+  printf '%s\n' "$wan" >"${INSTALL_PATH}/.nat-wan"
+  log "NAT 已应用: WAN=${wan} MASQUERADE + FORWARD"
+}
+
+cmd_remove() {
+  command -v iptables >/dev/null 2>&1 || exit 0
+  local wan=""
+  [[ -f "${INSTALL_PATH}/.nat-wan" ]] && wan="$(tr -d '[:space:]' <"${INSTALL_PATH}/.nat-wan" || true)"
+  [[ -n "$wan" ]] || wan="$(detect_wan || true)"
+  if [[ -n "$wan" ]]; then
+    ipt_del nat POSTROUTING -o "$wan" -m comment --comment "$COMMENT" -j MASQUERADE
+    ipt_del filter FORWARD -o "$wan" -m comment --comment "$COMMENT" -j ACCEPT
+  fi
+  ipt_del filter FORWARD -m conntrack --ctstate RELATED,ESTABLISHED -m comment --comment "$COMMENT" -j ACCEPT
+  rm -f "${INSTALL_PATH}/.nat-wan"
+  log "NAT 规则已移除"
+}
+
+cmd_status() {
+  local wan="" fwd="0"
+  [[ -f "${INSTALL_PATH}/.nat-wan" ]] && wan="$(tr -d '[:space:]' <"${INSTALL_PATH}/.nat-wan" || true)"
+  [[ -n "$wan" ]] || wan="$(detect_wan || true)"
+  fwd="$(sysctl -n net.ipv4.ip_forward 2>/dev/null || echo 0)"
+  echo "wan=${wan:-unknown}"
+  echo "ip_forward=${fwd}"
+  if [[ -n "$wan" ]] && command -v iptables >/dev/null 2>&1 && \
+     iptables -t nat -C POSTROUTING -o "$wan" -m comment --comment "$COMMENT" -j MASQUERADE >/dev/null 2>&1; then
+    echo "masquerade=yes"
+    exit 0
+  fi
+  echo "masquerade=no"
+  exit 1
+}
+
+case "${1:-}" in
+  apply) cmd_apply ;;
+  remove) cmd_remove ;;
+  status) cmd_status ;;
+  *) echo "Usage: $0 apply|remove|status" >&2; exit 1 ;;
+esac
+EOF
+  chmod 755 "${INSTALL_PATH}/ET-nat.sh"
+}
+
+setup_nat_forwarding() {
+  [[ "$ENABLE_NAT" == "yes" ]] || return 0
+
+  command -v ip >/dev/null 2>&1 || {
+    err "开启 NAT 需要 iproute2（ip 命令）"
+    return 1
+  }
+  if ! command -v iptables >/dev/null 2>&1; then
+    if [[ "$INSTALL_DEPS" == "yes" ]] && command -v apt-get >/dev/null 2>&1; then
+      log "安装依赖: iptables"
+      export DEBIAN_FRONTEND=noninteractive
+      apt-get update -qq
+      apt-get install -y iptables
+    fi
+  fi
+  command -v iptables >/dev/null 2>&1 || {
+    err "开启 NAT 需要 iptables"
+    return 1
+  }
+
+  local wan
+  wan="$(resolve_nat_wan_iface)" || return 1
+  NAT_WAN_IFACE="$wan"
+  log "NAT WAN 网卡: ${wan}"
+
+  enable_kernel_ip_forward || return 1
+  write_nat_script
+
+  cat >/etc/systemd/system/ET-nat.service <<EOF
+[Unit]
+Description=EasyTier NAT / exit-node forwarding
+After=network-online.target
+Wants=network-online.target
+Before=ET-core@default.service ET-core@node0.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+Environment=INSTALL_PATH=${INSTALL_PATH}
+Environment=NAT_WAN_IFACE=${NAT_WAN_IFACE}
+ExecStart=${INSTALL_PATH}/ET-nat.sh apply
+ExecStop=${INSTALL_PATH}/ET-nat.sh remove
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+  systemctl daemon-reload
+  systemctl enable ET-nat.service
+  if ! systemctl restart ET-nat.service; then
+    err "ET-nat.service 启动失败"
+    systemctl status ET-nat.service --no-pager 2>/dev/null || true
+    return 1
+  fi
+
+  apply_firewalld_masquerade
+  relax_ufw_forward_policy
+
+  if ! "${INSTALL_PATH}/ET-nat.sh" status >/dev/null 2>&1; then
+    err "NAT 规则校验失败"
+    return 1
+  fi
+  log "NAT/出口转发已启用并持久化（ET-nat.service）"
+}
+
+remove_nat_forwarding() {
+  if [[ -x "${INSTALL_PATH}/ET-nat.sh" ]]; then
+    "${INSTALL_PATH}/ET-nat.sh" remove 2>/dev/null || true
+  fi
+  systemctl stop ET-nat.service 2>/dev/null || true
+  systemctl disable ET-nat.service 2>/dev/null || true
+  rm -f /etc/systemd/system/ET-nat.service
+  disable_kernel_ip_forward_dropin
+}
+
+verify_nat_forwarding() {
+  # 返回 0=ok；未启用时跳过
+  local enabled="no"
+  if [[ -f "${INSTALL_PATH}/install-options.env" ]]; then
+    enabled="$(read_install_option ENABLE_NAT 2>/dev/null || true)"
+  fi
+  if systemctl is-enabled ET-nat.service &>/dev/null || systemctl is-active --quiet ET-nat.service 2>/dev/null; then
+    enabled="yes"
+  fi
+  [[ "$enabled" == "yes" || "$ENABLE_NAT" == "yes" ]] || return 0
+
+  local fail=0
+  local fwd
+  fwd="$(sysctl -n net.ipv4.ip_forward 2>/dev/null || echo 0)"
+  if [[ "$fwd" == "1" ]]; then
+    health_print ok "IP 转发" "net.ipv4.ip_forward=1"
+  else
+    health_print fail "IP 转发" "net.ipv4.ip_forward=${fwd}（期望 1）"
+    fail=1
+  fi
+
+  if systemctl is-active --quiet ET-nat.service 2>/dev/null; then
+    health_print ok "NAT 服务" "ET-nat.service 已激活"
+  else
+    health_print fail "NAT 服务" "ET-nat.service 未激活"
+    fail=1
+  fi
+
+  if [[ -x "${INSTALL_PATH}/ET-nat.sh" ]] && "${INSTALL_PATH}/ET-nat.sh" status >/dev/null 2>&1; then
+    local st wan
+    st="$("${INSTALL_PATH}/ET-nat.sh" status 2>/dev/null || true)"
+    wan="$(printf '%s\n' "$st" | awk -F= '/^wan=/{print $2}')"
+    health_print ok "MASQUERADE" "WAN=${wan:-?} 规则存在"
+  else
+    health_print fail "MASQUERADE" "未检测到 ET-NAT 规则"
+    fail=1
+  fi
+
+  return "$fail"
+}
+
+prompt_nat_forwarding() {
+  [[ "$AUTO" == "true" ]] && return 0
+  [[ ! -t 0 ]] && return 0
+  # 已通过 CLI 明确指定则不再询问
+  [[ "${NAT_PROMPT_DONE:-}" == "true" ]] && return 0
+
+  echo
+  echo "NAT / 出口节点转发:"
+  echo "  开启后将: 1) 内核 ip_forward  2) iptables MASQUERADE"
+  echo "            3) EasyTier enable_exit_node + proxy_forward_by_system"
+  echo "  适用：本机作为其他节点的上网出口（VPS 出口机）"
+  read -rp "是否开启 NAT/出口转发? [y/N]: " yn
+  if [[ "$yn" =~ ^[Yy]$ ]]; then
+    ENABLE_NAT="yes"
+    local auto_wan=""
+    auto_wan="$(detect_default_wan_iface || true)"
+    if [[ -n "$auto_wan" ]]; then
+      read -rp "WAN 网卡 [${auto_wan}，回车=自动]: " p
+      [[ -n "$p" ]] && NAT_WAN_IFACE="$p"
+    else
+      read -rp "WAN 网卡（必填，如 eth0/ens3）: " p
+      [[ -n "$p" ]] || { err "开启 NAT 须指定 WAN 网卡"; exit 1; }
+      NAT_WAN_IFACE="$p"
+    fi
+  else
+    ENABLE_NAT="no"
+  fi
+  NAT_PROMPT_DONE=true
+}
+
+nat_status_line() {
+  if [[ "$ENABLE_NAT" == "yes" ]]; then
+    echo "NAT/出口转发: 已开启（WAN=${NAT_WAN_IFACE:-auto}，enable_exit_node）"
+  else
+    echo "NAT/出口转发: 未开启"
+  fi
+}
+
 md5_hex() {
   if command -v md5sum >/dev/null 2>&1; then
     echo -n "$1" | md5sum | awk '{print $1}'
@@ -876,6 +1329,11 @@ validate_server_ports() {
 apply_defaults() {
   BACKUP_DIR="${BACKUP_DIR:-${INSTALL_PATH}/backups}"
   apply_config_token_alias
+  case "$(printf '%s' "$ENABLE_NAT" | tr '[:upper:]' '[:lower:]')" in
+    yes|y|true|1) ENABLE_NAT="yes" ;;
+    no|n|false|0|"") ENABLE_NAT="no" ;;
+    *) err "无效 ENABLE_NAT: ${ENABLE_NAT}（须 yes/no）"; exit 1 ;;
+  esac
   validate_port "API" "$API_PORT"
   validate_port "配置下发" "$CONFIG_PORT"
   validate_port "节点" "$CORE_PORT"
@@ -907,6 +1365,12 @@ apply_defaults() {
     SERVER_HOST="$(normalize_host_input "$SERVER_HOST")"
     validate_required_host "控制台地址" "$SERVER_HOST" || exit 1
     validate_config_token "$CONFIG_TOKEN" "接入 Token" || exit 1
+  fi
+  if [[ "$ENABLE_NAT" == "yes" && -n "${NAT_WAN_IFACE:-}" ]]; then
+    [[ -d "/sys/class/net/${NAT_WAN_IFACE}" ]] || {
+      err "NAT WAN 网卡不存在: ${NAT_WAN_IFACE}"
+      exit 1
+    }
   fi
 }
 
@@ -1403,6 +1867,10 @@ run_health_check() {
     fi
   fi
 
+  if ! verify_nat_forwarding; then
+    fail=1
+  fi
+
   echo
   if [[ "$fail" -eq 0 ]]; then
     log "健康检查通过"
@@ -1413,14 +1881,36 @@ run_health_check() {
   return "$fail"
 }
 
+resolve_tag_from_latest_redirect() {
+  # 跟随 https://github.com/<repo>/releases/latest -> /tag/<tag>
+  local loc
+  loc="$(curl -fsSLI --connect-timeout 12 --max-time 30 "$GITHUB_RELEASES_LATEST" 2>/dev/null \
+    | tr -d '\r' \
+    | awk 'BEGIN{IGNORECASE=1} /^location:/ {print $2; exit}')"
+  if [[ -z "$loc" ]]; then
+    return 1
+  fi
+  printf '%s' "$loc" | sed -n 's#.*/tag/\([^/[:space:]]*\).*#\1#p'
+}
+
 get_latest_release_tag() {
   local json tag
-  json="$(fetch_json_with_fallback "$GITHUB_API_LATEST")" || {
-    err "无法获取 release 版本（GitHub 与镜像均失败）"
+  log "查询最新 Release: ${RELEASES_PAGE}"
+  if json="$(fetch_json_with_fallback "$GITHUB_API_LATEST" 2>/dev/null)"; then
+    tag="$(printf '%s' "$json" | grep -o '"tag_name"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed 's/.*"\([^"]*\)"$/\1/')"
+    tag="$(printf '%s' "$tag" | tr -d '[:space:]')"
+    if [[ -n "$tag" ]]; then
+      echo "$tag"
+      return 0
+    fi
+  fi
+  warn "GitHub API 不可用，尝试跟随 releases/latest 重定向..."
+  tag="$(resolve_tag_from_latest_redirect || true)"
+  tag="$(printf '%s' "$tag" | tr -d '[:space:]')"
+  [[ -n "$tag" ]] || {
+    err "无法获取最新 release（请检查 ${RELEASES_PAGE}）"
     return 1
   }
-  tag="$(printf '%s' "$json" | grep -o '"tag_name"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed 's/.*"\([^"]*\)"$/\1/')"
-  [[ -n "$tag" ]] || { err "无法解析 release 版本"; return 1; }
   echo "$tag"
 }
 
@@ -1437,14 +1927,22 @@ download_and_install_binaries() {
   local tag="${2:-}"
   [[ -n "$tag" ]] || tag="$(get_latest_release_tag)"
 
-  # 本 fork 的 Release 包名格式：ET-linux-<arch>-<tag>.zip（如 ET-linux-x86_64-v2.7.0.zip）
-  # 包内一般为子目录 ET-linux-<arch>/，也可能是扁平文件。
-  local base="https://github.com/${GITHUB_REPO}/releases/download/${tag}/ET-linux-${arch}-${tag}.zip"
+  # 包名：ET-linux-<arch>-<tag>.zip（例: ET-linux-x86_64-v2.7.49.zip）
+  # 优先 tag 直链，失败再试 releases/latest/download（同仓库最新）。
+  local asset="ET-linux-${arch}-${tag}.zip"
+  local base_tag="${RELEASES_PAGE}/download/${tag}/${asset}"
+  local base_latest="${RELEASES_PAGE}/latest/download/${asset}"
 
-  log "准备下载 ${tag} (${arch})..."
+  log "准备下载 ${tag} (${arch}) from ${RELEASES_PAGE} ..."
   mkdir -p "$INSTALL_PATH"
-  rm -rf /tmp/easytier-install-extract
-  fetch_file_with_fallback "$base" /tmp/easytier-install.zip
+  rm -rf /tmp/easytier-install-extract /tmp/easytier-install.zip
+  if ! fetch_file_with_fallback "$base_tag" /tmp/easytier-install.zip; then
+    warn "按 tag 下载失败，改试 latest/download ..."
+    if ! fetch_file_with_fallback "$base_latest" /tmp/easytier-install.zip; then
+      err "无法从 ${RELEASES_PAGE} 下载 ${asset}（请检查网络或更换下载源）"
+      return 1
+    fi
+  fi
   unzip -oq /tmp/easytier-install.zip -d /tmp/easytier-install-extract
   # Release zip 通常含 ET-linux-<arch>/；Actions 产物解压后也可能是扁平目录
   local inner=""
@@ -1569,32 +2067,102 @@ api_host_url() {
 }
 
 save_install_options() {
-  [[ "$MODE" == "server" ]] || return 0
   {
-    printf 'NGINX_HTTPS_PROXY=%s\n' "$NGINX_HTTPS_PROXY"
-    printf 'NGINX_SSL_PORT=%s\n' "$NGINX_SSL_PORT"
-    printf 'PUBLIC_HOST=%s\n' "$(normalize_host_input "$PUBLIC_HOST")"
-    printf 'API_PORT=%s\n' "$API_PORT"
-    printf 'CONFIG_PORT=%s\n' "$CONFIG_PORT"
-    printf 'CONFIG_PROTOCOL=%s\n' "$CONFIG_PROTOCOL"
+    printf 'MODE=%s\n' "$MODE"
+    printf 'ENABLE_NAT=%s\n' "$ENABLE_NAT"
+    printf 'NAT_WAN_IFACE=%s\n' "${NAT_WAN_IFACE:-}"
+    if [[ "$MODE" == "server" ]]; then
+      printf 'NGINX_HTTPS_PROXY=%s\n' "$NGINX_HTTPS_PROXY"
+      printf 'NGINX_SSL_PORT=%s\n' "$NGINX_SSL_PORT"
+      printf 'PUBLIC_HOST=%s\n' "$(normalize_host_input "$PUBLIC_HOST")"
+      printf 'API_PORT=%s\n' "$API_PORT"
+      printf 'CONFIG_PORT=%s\n' "$CONFIG_PORT"
+      printf 'CONFIG_PROTOCOL=%s\n' "$CONFIG_PROTOCOL"
+      printf 'WITH_NODE=%s\n' "$WITH_NODE"
+    elif [[ "$MODE" == "client" ]]; then
+      printf 'SERVER_HOST=%s\n' "$(normalize_host_input "$SERVER_HOST")"
+      printf 'CONFIG_PORT=%s\n' "$CONFIG_PORT"
+      printf 'CONFIG_PROTOCOL=%s\n' "$CONFIG_PROTOCOL"
+    fi
   } >"${INSTALL_PATH}/install-options.env"
   chmod 600 "${INSTALL_PATH}/install-options.env"
 }
 
 load_install_options() {
   local val
+  val="$(read_install_option MODE || true)"
+  [[ -n "$val" ]] && MODE="$val"
+  val="$(read_install_option WITH_NODE || true)"
+  [[ -n "$val" ]] && WITH_NODE="$val"
+  val="$(read_install_option ENABLE_NAT || true)"
+  [[ -n "$val" ]] && ENABLE_NAT="$val"
+  val="$(read_install_option NAT_WAN_IFACE || true)"
+  [[ -n "$val" ]] && NAT_WAN_IFACE="$val"
   val="$(read_install_option NGINX_HTTPS_PROXY || true)"
   [[ -n "$val" ]] && NGINX_HTTPS_PROXY="$val"
   val="$(read_install_option NGINX_SSL_PORT || true)"
   [[ -n "$val" ]] && NGINX_SSL_PORT="$val"
   val="$(read_install_option PUBLIC_HOST || true)"
   [[ -n "$val" ]] && PUBLIC_HOST="$val"
+  val="$(read_install_option SERVER_HOST || true)"
+  [[ -n "$val" ]] && SERVER_HOST="$val"
   val="$(read_install_option API_PORT || true)"
   [[ -n "$val" ]] && API_PORT="$val"
   val="$(read_install_option CONFIG_PORT || true)"
   [[ -n "$val" ]] && CONFIG_PORT="$val"
   val="$(read_install_option CONFIG_PROTOCOL || true)"
   [[ -n "$val" ]] && CONFIG_PROTOCOL="$val"
+}
+
+# 从运行态推断 NAT（install-options / ET-nat / unit 标志）
+reconcile_nat_from_runtime() {
+  local exec_line=""
+  if [[ "$ENABLE_NAT" != "yes" ]]; then
+    if systemctl is-enabled ET-nat.service &>/dev/null || \
+       systemctl is-active --quiet ET-nat.service 2>/dev/null; then
+      ENABLE_NAT="yes"
+    fi
+  fi
+  if [[ "$ENABLE_NAT" != "yes" ]]; then
+    exec_line="$(systemctl show ET-core@default.service -p ExecStart --value 2>/dev/null || true)"
+    exec_line+=" $(systemctl show ET-core@node0.service -p ExecStart --value 2>/dev/null || true)"
+    if [[ -f /etc/systemd/system/ET-core@.service ]]; then
+      exec_line+=" $(tr '\n' ' ' </etc/systemd/system/ET-core@.service)"
+    fi
+    [[ "$exec_line" == *"--enable-exit-node"* ]] && ENABLE_NAT="yes"
+  fi
+  if [[ "$ENABLE_NAT" == "yes" && -z "${NAT_WAN_IFACE:-}" && -f "${INSTALL_PATH}/.nat-wan" ]]; then
+    NAT_WAN_IFACE="$(tr -d '[:space:]' <"${INSTALL_PATH}/.nat-wan" || true)"
+  fi
+}
+
+# core 轻量模式：ExecStart 使用 -c config，而非 --config-server
+# 优先看运行中的实例 ExecStart，避免残留的 ET-core@.service 模板误判 client
+is_core_standalone_install() {
+  local exec_line unit_file="/etc/systemd/system/ET-core@.service"
+  exec_line="$(systemctl show ET-core@default.service -p ExecStart --value 2>/dev/null || true)"
+  if [[ -n "$exec_line" ]]; then
+    [[ "$exec_line" == *"--config-server"* ]] && return 1
+    if [[ "$exec_line" == *"-c "* || "$exec_line" == *"--config "* ]]; then
+      return 0
+    fi
+    # 实例存在但既不是 -c 也不是 --config-server：保守视为非 standalone
+    return 1
+  fi
+  # 无 default 实例时，再看模板（纯 core 安装）
+  if [[ -f "$unit_file" ]]; then
+    if grep -q -- '--config-server' "$unit_file" 2>/dev/null; then
+      return 1
+    fi
+    if grep -qE -- '(^|[[:space:]])(-c|--config)[[:space:]]' "$unit_file" 2>/dev/null; then
+      return 0
+    fi
+  fi
+  # 最后才信 install-options 的 MODE=core（且没有 web）
+  if [[ "${MODE:-}" == "core" ]] && ! is_server_installed; then
+    return 0
+  fi
+  return 1
 }
 
 # strict=yes 时检查失败返回 1（healthcheck）；安装时传 no 仅告警
@@ -1699,8 +2267,17 @@ write_core_service() {
   local instance="${2:-default}"
   local after_web="${3:-no}"
   local unit_after="After=network-online.target"
+  local nat_after=""
   if [[ "$after_web" == "yes" ]]; then
     unit_after="After=network-online.target ET-web.service"
+  fi
+  if [[ "$ENABLE_NAT" == "yes" ]]; then
+    unit_after="${unit_after} ET-nat.service"
+    nat_after="Wants=ET-nat.service"
+  fi
+  local nat_flags=""
+  if [[ "$ENABLE_NAT" == "yes" ]]; then
+    nat_flags="$(printf '\n  --enable-exit-node \\\n  --proxy-forward-by-system')"
   fi
   # URL is validated (safe charset); quote for systemd word splitting safety.
   cat >/etc/systemd/system/ET-core@${instance}.service <<EOF
@@ -1708,11 +2285,12 @@ write_core_service() {
 Description=EasyTier Core Node (${instance})
 ${unit_after}
 Wants=network-online.target
+${nat_after}
 
 [Service]
 Type=simple
 WorkingDirectory=${INSTALL_PATH}
-ExecStart=${INSTALL_PATH}/ET-core --config-server "${config_server}"
+ExecStart=${INSTALL_PATH}/ET-core --config-server "${config_server}"${nat_flags}
 Restart=on-failure
 RestartSec=5
 LimitNOFILE=1048576
@@ -1745,18 +2323,28 @@ install_server() {
     warn "自动改密失败，请使用默认 ${DEFAULT_ADMIN_USER}/${DEFAULT_ADMIN_PASS} 登录后手动改密"
   fi
 
+  if [[ "$ENABLE_NAT" == "yes" ]]; then
+    setup_nat_forwarding || {
+      err "NAT 配置失败"
+      exit 1
+    }
+  fi
+
   if [[ "$WITH_NODE" == "yes" ]]; then
     local local_cs
     local_cs="$(build_config_server_url "$CONFIG_PROTOCOL" "127.0.0.1" "$CONFIG_PORT" "$CONFIG_TOKEN")"
     write_core_service "$local_cs" "node0" "yes"
     systemctl enable ET-core@node0.service
     systemctl restart ET-core@node0.service
+  elif [[ "$ENABLE_NAT" == "yes" ]]; then
+    warn "已开启主机 NAT，但未部署本机 ET-core；请在实际出口节点启用 enable_exit_node"
   fi
 
-  local api_url host_clean reg_note pass_note backup_note="" cs_url
+  local api_url host_clean reg_note pass_note backup_note="" cs_url nat_note
   api_url="$(api_host_url "$PUBLIC_HOST")"
   host_clean="$(normalize_host_input "$PUBLIC_HOST")"
   cs_url="$(build_config_server_url "$CONFIG_PROTOCOL" "$host_clean" "$CONFIG_PORT" "$CONFIG_TOKEN")"
+  nat_note="$(nat_status_line)"
   if [[ "$ENABLE_DAILY_BACKUP" == "yes" ]]; then
     backup_note="备份目录: ${BACKUP_DIR}（每日 ${BACKUP_HOUR}:00，保留 ${BACKUP_RETENTION_DAYS} 天）"
   else
@@ -1778,6 +2366,7 @@ Web 控制台: ${api_url}
 ${reg_note}
 ${pass_note}
 凭据文件: ${INSTALL_PATH}/admin-credentials.txt
+${nat_note}
 
 下一步:
 1. 浏览器打开 ${api_url}，使用 admin 账号登录（内置账号，无需注册）
@@ -1819,7 +2408,7 @@ EOF
     warn "示例配置见 docs/easytier-deploy.md；宝塔可放到 /www/server/panel/vhost/nginx/${host_clean}.conf"
     if ! verify_nginx_https_proxy no; then
       warn "Nginx HTTPS 尚未就绪，部署后执行: nginx -t && systemctl reload nginx"
-      warn "然后运行: sudo bash easytier-install.sh healthcheck"
+      warn "然后运行: sudo bash install.sh healthcheck"
     fi
   fi
 
@@ -1836,16 +2425,25 @@ install_client() {
   rm -f /etc/systemd/system/easytier-core@default.service \
     /etc/systemd/system/easytier-core@.service
 
+  if [[ "$ENABLE_NAT" == "yes" ]]; then
+    setup_nat_forwarding || {
+      err "NAT 配置失败"
+      exit 1
+    }
+  fi
+
   write_core_service "$config_server" "default" "no"
   systemctl daemon-reload
   systemctl enable ET-core@default.service
   systemctl restart ET-core@default.service
+  save_install_options
 
   cat >"${INSTALL_PATH}/INSTALL_INFO.txt" <<EOF
 EasyTier Client 安装完成
 ========================
 Config Server: ${config_server}
 接入 Token: ${CONFIG_TOKEN}
+$(nat_status_line)
 
 管理命令:
   systemctl status ET-core@default
@@ -1855,6 +2453,159 @@ Config Server: ${config_server}
 请确保控制台「接入 Token」中已存在 Token「${CONFIG_TOKEN}」（默认内置 admin），并在 Web 中配置网络。
 EOF
   log "Client 模式安装完成"
+  cat "${INSTALL_PATH}/INSTALL_INFO.txt"
+}
+
+write_core_standalone_service() {
+  local unit_after="After=network-online.target"
+  local nat_wants=""
+  local nat_flags=""
+  if [[ "$ENABLE_NAT" == "yes" ]]; then
+    unit_after="After=network-online.target ET-nat.service"
+    nat_wants="Wants=ET-nat.service"
+    nat_flags="$(printf '\n  --enable-exit-node \\\n  --proxy-forward-by-system')"
+  fi
+  cat >/etc/systemd/system/ET-core@.service <<EOF
+[Unit]
+Description=EasyTier Core (%i)
+Wants=network-online.target
+${nat_wants}
+${unit_after}
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+WorkingDirectory=${INSTALL_PATH}
+ExecStart=${INSTALL_PATH}/ET-core -c ${INSTALL_PATH}/config/%i.conf${nat_flags}
+Restart=always
+RestartSec=1s
+LimitNOFILE=1048576
+
+[Install]
+WantedBy=multi-user.target
+EOF
+}
+
+patch_core_config_nat_flags() {
+  local conf="$1"
+  [[ -f "$conf" ]] || return 0
+  if [[ "$ENABLE_NAT" == "yes" ]]; then
+    if grep -qE '^[[:space:]]*enable_exit_node[[:space:]]*=' "$conf"; then
+      sed -i 's/^[[:space:]]*enable_exit_node[[:space:]]*=.*/enable_exit_node = true/' "$conf"
+    else
+      printf '\nenable_exit_node = true\n' >>"$conf"
+    fi
+    if grep -qE '^[[:space:]]*proxy_forward_by_system[[:space:]]*=' "$conf"; then
+      sed -i 's/^[[:space:]]*proxy_forward_by_system[[:space:]]*=.*/proxy_forward_by_system = true/' "$conf"
+    else
+      # Prefer placing near enable_exit_node inside [flags]
+      if grep -qE '^[[:space:]]*enable_exit_node[[:space:]]*=' "$conf"; then
+        sed -i '/^[[:space:]]*enable_exit_node[[:space:]]*=/a proxy_forward_by_system = true' "$conf"
+      else
+        printf 'proxy_forward_by_system = true\n' >>"$conf"
+      fi
+    fi
+  fi
+}
+
+write_core_default_config() {
+  local exit_node="false"
+  local proxy_sys="false"
+  if [[ "$ENABLE_NAT" == "yes" ]]; then
+    exit_node="true"
+    proxy_sys="true"
+  fi
+  mkdir -p "$CONFIG_DIR"
+  if [[ -f "${CONFIG_DIR}/default.conf" ]]; then
+    log "保留已有配置: ${CONFIG_DIR}/default.conf"
+    patch_core_config_nat_flags "${CONFIG_DIR}/default.conf"
+    return 0
+  fi
+  cat >"${CONFIG_DIR}/default.conf" <<EOF
+instance_name = "default"
+dhcp = true
+listeners = [
+    "tcp://0.0.0.0:${CORE_PORT}",
+    "udp://0.0.0.0:${CORE_PORT}",
+    "wg://0.0.0.0:${WG_PORT}",
+    "ws://0.0.0.0:${WG_PORT}/",
+    "wss://0.0.0.0:${WSS_PORT}/",
+]
+exit_nodes = []
+rpc_portal = "0.0.0.0:0"
+
+[[peer]]
+uri = "tcp://public.easytier.top:11010"
+
+[network_identity]
+network_name = "default"
+network_secret = "default"
+
+[flags]
+default_protocol = "udp,tcp"
+dev_name = ""
+enable_encryption = true
+enable_ipv6 = true
+mtu = 1380
+latency_first = false
+enable_exit_node = ${exit_node}
+proxy_forward_by_system = ${proxy_sys}
+no_tun = false
+use_smoltcp = false
+foreign_network_whitelist = "*"
+disable_p2p = false
+p2p_only = false
+relay_all_peer_rpc = false
+disable_tcp_hole_punching = false
+disable_udp_hole_punching = false
+EOF
+}
+
+install_core() {
+  write_core_default_config
+  # 避免与 server/client 的 ET-core@default（--config-server）冲突
+  systemctl stop ET-core@default.service 2>/dev/null || true
+  systemctl disable ET-core@default.service 2>/dev/null || true
+  stop_legacy_easytier_services
+  rm -f /etc/systemd/system/ET-core@default.service \
+    /etc/systemd/system/easytier-core@default.service \
+    /etc/systemd/system/easytier@.service
+
+  if [[ "$ENABLE_NAT" == "yes" ]]; then
+    setup_nat_forwarding || {
+      err "NAT 配置失败"
+      exit 1
+    }
+  fi
+
+  write_core_standalone_service
+  systemctl daemon-reload
+  systemctl enable ET-core@default.service
+  systemctl restart ET-core@default.service
+  save_install_options
+
+  cat >"${INSTALL_PATH}/INSTALL_INFO.txt" <<EOF
+EasyTier Core 轻量安装完成
+========================
+版本: ${INSTALLED_VERSION:-latest}
+安装目录: ${INSTALL_PATH}
+配置文件: ${CONFIG_DIR}/default.conf
+默认端口: ${CORE_PORT}(UDP+TCP)
+默认网络名/密钥: default（请尽快修改）
+$(nat_status_line)
+
+Release: ${RELEASES_PAGE}
+
+管理:
+  systemctl status ET-core@default
+  systemctl restart ET-core@default
+  systemctl stop ET-core@default
+  systemctl status ET-nat.service
+
+多实例: 在 ${CONFIG_DIR}/ 下新增 xxx.conf 后:
+  systemctl enable --now ET-core@xxx
+EOF
+  log "Core 模式安装完成"
   cat "${INSTALL_PATH}/INSTALL_INFO.txt"
 }
 
@@ -1869,10 +2620,12 @@ prompt_interactive() {
     echo "请选择部署模式:"
     echo "  1) server - 控制台 + 可选本机节点（hk VPS 等）"
     echo "  2) client - 仅节点，连接远程控制台（shlt/shdx 等）"
-    read -rp "请输入 [1/2]: " choice
+    echo "  3) core   - 轻量仅 ET-core（本地 config，无 Web 控制台）"
+    read -rp "请输入 [1/2/3]: " choice
     case "$choice" in
       1|"") MODE="server" ;;
       2) MODE="client" ;;
+      3) MODE="core" ;;
       *) err "无效选择"; exit 1 ;;
     esac
     echo
@@ -1889,7 +2642,7 @@ prompt_interactive() {
       read -rp "HTTPS 端口 [${NGINX_SSL_PORT}]: " p
       [[ -n "$p" ]] && NGINX_SSL_PORT="$p"
       log "将使用 https://域名 对外访问，无需对外放行 Web TCP ${API_PORT}；UDP ${CONFIG_PORT} 配置下发仍须放行"
-      log "Nginx 须手动部署并反代到 http://127.0.0.1:${API_PORT}，示例见 docs/easytier-deploy.md"
+      log "Nginx 须手动部署并反代到 http://127.0.0.1:${API_PORT}，示例见 docs/ops/deploy-install.md"
     else
       NGINX_HTTPS_PROXY=no
     fi
@@ -1932,7 +2685,7 @@ prompt_interactive() {
     if [[ "$ADMIN_PASSWORD_PROVIDED" != "true" ]]; then
       log "未指定密码时将自动生成 admin 强密码并在安装完成后打印"
     fi
-  else
+  elif [[ "$MODE" == "client" ]]; then
     prompt_required_host "控制台地址" SERVER_HOST
     read -rp "配置下发端口 [${CONFIG_PORT}]: " p; [[ -n "$p" ]] && CONFIG_PORT="$p"
     read -rp "客户端连接协议 udp/tcp/ws [$(primary_config_scheme)]: " p
@@ -1947,8 +2700,16 @@ prompt_interactive() {
       validate_config_token "$u" "接入 Token" || exit 1
       CONFIG_TOKEN="$u"
     fi
+  else
+    # core: 仅确认安装路径
+    read -rp "安装目录 [${INSTALL_PATH}]: " p
+    if [[ -n "$p" ]]; then
+      INSTALL_PATH="$p"
+      CONFIG_DIR="${INSTALL_PATH}/config"
+    fi
   fi
 
+  prompt_nat_forwarding
   prompt_download_source
 }
 
@@ -2005,6 +2766,7 @@ parse_install_args() {
       --mode) MODE="$2"; shift 2 ;;
       --auto) AUTO=true; shift ;;
       --install-path) INSTALL_PATH="$2"; CONFIG_DIR="${INSTALL_PATH}/config"; shift 2 ;;
+      --skip-folder-verify|--skip-folder-fix) shift ;; # 旧版 install.sh 兼容，已忽略
       --no-gh-proxy) NO_GH_PROXY=true; DOWNLOAD_PRESET=true; shift ;;
       --gh-proxy) GH_PROXY="$2"; NO_GH_PROXY=false; DOWNLOAD_PRESET=true; shift 2 ;;
       --gh-mirrors) GH_MIRRORS="$2"; NO_GH_PROXY=false; DOWNLOAD_PRESET=true; shift 2 ;;
@@ -2032,8 +2794,22 @@ parse_install_args() {
       --nginx-ssl-port) NGINX_SSL_PORT="$2"; shift 2 ;;
       --configure-firewall) CONFIGURE_FIREWALL="yes"; shift ;;
       --enable-firewall) ENABLE_FIREWALL="yes"; CONFIGURE_FIREWALL="yes"; shift ;;
+      --enable-nat|--nat) ENABLE_NAT="yes"; NAT_PROMPT_DONE=true; shift ;;
+      --no-nat) ENABLE_NAT="no"; NAT_PROMPT_DONE=true; shift ;;
+      --nat-wan)
+        NAT_WAN_IFACE="$2"
+        ENABLE_NAT="yes"
+        NAT_PROMPT_DONE=true
+        shift 2
+        ;;
       --no-install-deps) INSTALL_DEPS="no"; shift ;;
       -h|--help) usage; exit 0 ;;
+      # 旧版: install /opt/easytier
+      /*|[a-zA-Z]:*)
+        INSTALL_PATH="$1"
+        CONFIG_DIR="${INSTALL_PATH}/config"
+        shift
+        ;;
       *) err "未知参数: $1"; usage; exit 1 ;;
     esac
   done
@@ -2047,6 +2823,21 @@ parse_common_args() {
       --backup-retention-days) BACKUP_RETENTION_DAYS="$2"; shift 2 ;;
       --file) RESTORE_FILE="$2"; shift 2 ;;
       --auto) AUTO=true; shift ;;
+      --public-host) PUBLIC_HOST="$2"; shift 2 ;;
+      --server-host) SERVER_HOST="$2"; shift 2 ;;
+      --config-token) CONFIG_TOKEN="$2"; shift 2 ;;
+      --config-protocol) CONFIG_PROTOCOL="$2"; shift 2 ;;
+      --config-port) CONFIG_PORT="$2"; shift 2 ;;
+      --enable-nat|--nat) ENABLE_NAT="yes"; NAT_PROMPT_DONE=true; shift ;;
+      --no-nat) ENABLE_NAT="no"; NAT_PROMPT_DONE=true; shift ;;
+      --nat-wan)
+        NAT_WAN_IFACE="$2"
+        ENABLE_NAT="yes"
+        NAT_PROMPT_DONE=true
+        shift 2
+        ;;
+      --configure-firewall) CONFIGURE_FIREWALL="yes"; shift ;;
+      --enable-firewall) ENABLE_FIREWALL="yes"; CONFIGURE_FIREWALL="yes"; shift ;;
       --no-gh-proxy) NO_GH_PROXY=true; DOWNLOAD_PRESET=true; shift ;;
       --gh-proxy) GH_PROXY="$2"; NO_GH_PROXY=false; DOWNLOAD_PRESET=true; shift 2 ;;
       --gh-mirrors) GH_MIRRORS="$2"; NO_GH_PROXY=false; DOWNLOAD_PRESET=true; shift 2 ;;
@@ -2078,34 +2869,61 @@ cmd_update() {
   require_root
   parse_common_args "$@"
   need_cmd
-  [[ -d "$INSTALL_PATH" ]] || { err "未找到 ${INSTALL_PATH}，请先 install"; exit 1; }
+  [[ -d "$INSTALL_PATH" ]] || { err "未找到 ${INSTALL_PATH}，请先: sudo bash install.sh install"; exit 1; }
   if [[ ! -x "${INSTALL_PATH}/ET-core" && ! -x "${INSTALL_PATH}/easytier-core" ]]; then
-    err "未找到 ET-core / easytier-core 二进制"
+    err "未找到 ET-core / easytier-core 二进制，请先 install"
     exit 1
   fi
 
   load_runtime_config_from_systemd
+  # CLI --no-nat / --enable-nat 优先；否则从 install-options / 运行态恢复
+  if [[ "$NAT_PROMPT_DONE" != "true" ]]; then
+    reconcile_nat_from_runtime
+  fi
+  case "$(printf '%s' "$ENABLE_NAT" | tr '[:upper:]' '[:lower:]')" in
+    yes|y|true|1) ENABLE_NAT="yes" ;;
+    *) ENABLE_NAT="no" ;;
+  esac
 
   # Remember which roles were installed (ET-* or legacy) so we can rewrite units
   local had_web=no had_node0=no had_default=no had_backup=no
+  local core_standalone=no
   if unit_present ET-web.service || unit_present easytier-web.service; then
     had_web=yes
+    MODE="${MODE:-server}"
   fi
   if unit_present ET-core@node0.service || unit_present easytier-core@node0.service; then
     had_node0=yes
+    WITH_NODE="yes"
   fi
-  if unit_present ET-core@default.service || unit_present easytier-core@default.service; then
-    had_default=yes
+  if unit_present ET-core@default.service || unit_present easytier-core@default.service || \
+     [[ -f /etc/systemd/system/ET-core@.service ]]; then
+    # template-only core 也可能仅有 ET-core@.service + enabled instance
+    if systemctl is-enabled ET-core@default.service &>/dev/null || \
+       unit_present ET-core@default.service || unit_present easytier-core@default.service; then
+      had_default=yes
+    fi
   fi
   if unit_present ET-backup.timer || unit_present easytier-backup.timer; then
     had_backup=yes
+  fi
+  if is_core_standalone_install; then
+    core_standalone=yes
+    MODE="${MODE:-core}"
+  elif [[ "$had_default" == "yes" && "$had_web" != "yes" ]]; then
+    MODE="${MODE:-client}"
   fi
 
   if is_interactive; then
     prompt_download_source
     echo
-    warn "更新将停止服务、下载最新 release 并重启"
+    log "更新源: ${RELEASES_PAGE}"
+    log "$(nat_status_line)"
+    warn "更新将停止服务、从 Release 下载最新包并重启（保留配置/数据库）"
     confirm_or_cancel "确认更新? [Y/n]: "
+  else
+    log "更新源: ${RELEASES_PAGE}"
+    log "$(nat_status_line)"
   fi
 
   if [[ -f "${INSTALL_PATH}/et.db" ]]; then
@@ -2130,7 +2948,12 @@ cmd_update() {
   arch="$(detect_arch)"
   download_and_install_binaries "$arch"
 
-  # Rewrite systemd units to ET-* ExecStart (critical after binary rename)
+  # 与 install 一致：保留/刷新 NAT（幂等）
+  if [[ "$ENABLE_NAT" == "yes" ]]; then
+    setup_nat_forwarding || warn "NAT 刷新失败，请检查 ET-nat.service"
+  fi
+
+  # Rewrite systemd units（与 install 相同的 write_* 路径，含 NAT 标志）
   if [[ "$had_web" == "yes" ]]; then
     [[ -f "${INSTALL_PATH}/ET-web-embed" ]] || { err "更新包缺少 ET-web-embed"; exit 1; }
     if [[ -z "${PUBLIC_HOST:-}" ]]; then
@@ -2147,14 +2970,28 @@ cmd_update() {
     systemctl enable ET-core@node0.service
   fi
   if [[ "$had_default" == "yes" ]]; then
-    local host_clean config_server
-    host_clean="$(normalize_host_input "${SERVER_HOST:-${PUBLIC_HOST:-127.0.0.1}}")"
-    config_server="$(build_config_server_url "$CONFIG_PROTOCOL" "$host_clean" "$CONFIG_PORT" "$CONFIG_TOKEN")"
-    write_core_service "$config_server" "default" "no"
-    systemctl enable ET-core@default.service
+    if [[ "$core_standalone" == "yes" ]]; then
+      write_core_standalone_service
+      patch_core_config_nat_flags "${CONFIG_DIR}/default.conf"
+      systemctl enable ET-core@default.service
+    else
+      local host_clean config_server
+      host_clean="$(normalize_host_input "${SERVER_HOST:-${PUBLIC_HOST:-127.0.0.1}}")"
+      config_server="$(build_config_server_url "$CONFIG_PROTOCOL" "$host_clean" "$CONFIG_PORT" "$CONFIG_TOKEN")"
+      write_core_service "$config_server" "default" "no"
+      systemctl enable ET-core@default.service
+    fi
   fi
   if [[ "$had_backup" == "yes" ]]; then
     setup_daily_backup
+  fi
+
+  # 可选：与 install 相同方式刷新本机防火墙（须显式传参）
+  if [[ "$CONFIGURE_FIREWALL" == "yes" || "$ENABLE_FIREWALL" == "yes" ]]; then
+    if [[ "$had_web" == "yes" ]]; then
+      MODE="${MODE:-server}"
+      configure_server_firewall
+    fi
   fi
 
   # Drop legacy unit files and old binary names left from pre-rename installs
@@ -2169,15 +3006,29 @@ cmd_update() {
     "${INSTALL_PATH}/easytier-backup.sh"
   rm -f /usr/sbin/easytier-core /usr/sbin/easytier-cli
 
+  save_install_options
+
   systemctl daemon-reload
   log "重启服务..."
   start_easytier_services
+  if [[ "$ENABLE_NAT" == "yes" ]]; then
+    systemctl start ET-nat.service 2>/dev/null || true
+  fi
 
   update_ok=yes
   trap - EXIT
 
-  log "更新完成，版本: ${INSTALLED_VERSION}"
+  log "更新完成，版本: ${INSTALLED_VERSION}（Release: ${RELEASES_PAGE}）"
   verify_boot_services
+  if [[ "$core_standalone" == "yes" && "$had_web" != "yes" ]]; then
+    if systemctl is-active --quiet ET-core@default.service 2>/dev/null; then
+      log "ET-core@default 运行中"
+    else
+      warn "ET-core@default 未运行，请检查: systemctl status ET-core@default"
+    fi
+    verify_nat_forwarding || true
+    return 0
+  fi
   run_health_check || exit 1
 }
 
@@ -2266,7 +3117,8 @@ cmd_backup() {
 cmd_install() {
   parse_install_args "$@"
   if [[ "$AUTO" == "true" ]]; then
-    [[ -n "$MODE" ]] || { err "非交互安装须指定 --mode server|client"; exit 1; }
+    # curl | bash -s install 无 TTY 时默认 core（兼容旧版轻量安装）
+    [[ -n "$MODE" ]] || MODE="core"
     if [[ "$MODE" == "server" && -z "$PUBLIC_HOST" ]]; then
       err "非交互 server 安装须指定 --public-host DOMAIN"
       exit 1
@@ -2278,10 +3130,14 @@ cmd_install() {
   elif is_interactive; then
     prompt_interactive
   elif [[ -z "$MODE" ]]; then
-    err "请直接运行脚本进入交互菜单，或使用: install --mode server|client --auto"
-    exit 1
+    # 管道执行且未指定 --mode：默认轻量 core
+    MODE="core"
+    log "非交互环境，使用 --mode core（轻量安装）"
   fi
-  [[ "$MODE" == "server" || "$MODE" == "client" ]] || { err "模式必须是 server 或 client"; exit 1; }
+  [[ "$MODE" == "server" || "$MODE" == "client" || "$MODE" == "core" ]] || {
+    err "模式必须是 server、client 或 core"
+    exit 1
+  }
 
   apply_defaults
 
@@ -2293,14 +3149,18 @@ cmd_install() {
       if [[ "$NGINX_HTTPS_PROXY" == "yes" ]]; then
         log "Web 访问=https://$(normalize_host_input "$PUBLIC_HOST")（Nginx HTTPS ${NGINX_SSL_PORT}）"
       fi
-    else
+    elif [[ "$MODE" == "client" ]]; then
       log "连接控制台=${SERVER_HOST}"
+    else
+      log "安装目录=${INSTALL_PATH}"
     fi
+    log "$(nat_status_line)"
     log "下载源: $(describe_download_source)"
+    log "Release: ${RELEASES_PAGE}"
     confirm_or_cancel "确认继续安装? [Y/n]: "
   fi
 
-  log "开始安装..."
+  log "开始安装（从 ${RELEASES_PAGE} 拉取最新版）..."
   warn "EasyTier 仍在快速迭代，请自行承担使用风险。"
   need_cmd
   ensure_debian_packages
@@ -2310,15 +3170,25 @@ cmd_install() {
 
   if [[ "$MODE" == "server" ]]; then
     install_server
-  else
+  elif [[ "$MODE" == "client" ]]; then
     install_client
+  else
+    install_core
   fi
   verify_boot_services
+  if [[ "$MODE" == "core" ]]; then
+    if systemctl is-active --quiet ET-core@default.service 2>/dev/null; then
+      log "ET-core@default 运行中"
+    else
+      warn "ET-core@default 未运行，请检查: systemctl status ET-core@default"
+    fi
+    return 0
+  fi
   if ! run_health_check; then
     if [[ "$MODE" == "server" && "$NGINX_HTTPS_PROXY" == "yes" ]]; then
       warn "健康检查未完全通过（常见原因：Nginx HTTPS 尚未部署）"
     else
-      err "健康检查失败，请根据上方提示排查后重试: sudo bash easytier-install.sh healthcheck"
+      err "健康检查失败，请根据上方提示排查后重试: sudo bash install.sh healthcheck"
       exit 1
     fi
   fi
@@ -2334,6 +3204,7 @@ cmd_uninstall() {
   fi
   log "停止服务..."
   remove_daily_backup
+  remove_nat_forwarding
   stop_easytier_services
   systemctl disable ET-web.service 2>/dev/null || true
   systemctl disable ET-core@node0.service 2>/dev/null || true
@@ -2347,7 +3218,7 @@ cmd_uninstall() {
   fi
   rm -f /usr/sbin/ET-core /usr/sbin/ET-cli
   rm -f /usr/sbin/easytier-core /usr/sbin/easytier-cli
-  log "卸载完成"
+  log "卸载完成（已尝试清理 NAT 规则与 ET-nat.service）"
 }
 
 cmd_status() {
@@ -2357,27 +3228,8 @@ cmd_status() {
   systemctl status ET-core@node0.service --no-pager 2>/dev/null || true
   systemctl status ET-core@default.service --no-pager 2>/dev/null || true
   systemctl status ET-backup.timer --no-pager 2>/dev/null || true
+  systemctl status ET-nat.service --no-pager 2>/dev/null || true
   [[ -f "${INSTALL_PATH}/INSTALL_INFO.txt" ]] && cat "${INSTALL_PATH}/INSTALL_INFO.txt"
 }
 
-main() {
-  if [[ $# -eq 0 ]]; then
-    prompt_main_menu
-    return
-  fi
-  local cmd="$1"
-  shift || true
-  case "$cmd" in
-    install)   require_root; cmd_install "$@" ;;
-    update)    cmd_update "$@" ;;
-    restore)   cmd_restore "$@" ;;
-    backup)    cmd_backup "$@" ;;
-    healthcheck) cmd_healthcheck "$@" ;;
-    uninstall) cmd_uninstall ;;
-    status)    cmd_status ;;
-    help|-h|--help) usage ;;
-    *) err "未知命令: $cmd"; usage; exit 1 ;;
-  esac
-}
-
-main "$@"
+# 入口由 install.sh / update.sh 提供，本文件仅定义函数。

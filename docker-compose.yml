@@ -1,46 +1,30 @@
 # ET Docker Compose（单镜像 ET-core / ET-cli / ET-web-embed）
 #
-# 镜像来源（任选其一，替换 <owner> / tag）：
-#   ghcr.io/229033891/et:v2.7.0         # 正式 Release 对应 tag
+# 默认镜像：DaoCloud 加速拉取 GHCR（与最新 Release tag 对齐，当前 v2.7.49）
+#   m.daocloud.io/ghcr.io/229033891/et:v2.7.49
+# 直连 GHCR / 其它 tag（海外或自建加速时改回）：
+#   ghcr.io/229033891/et:v2.7.49        # 正式 Release
 #   ghcr.io/229033891/et:dev            # 开发验证（ET Docker 手动打）
 #   ghcr.io/229033891/et:latest         # 仅 main 流水线 mark_latest 时
-# 国内加速示例：m.daocloud.io/ghcr.io/229033891/et:dev
 # 安装/升级总方案：docs/roadmap/github-release-install.md
 #
-# 从旧版 easytier/easytier:latest 迁移注意：
+# 从历史第三方同名镜像迁移注意：
 #   1. 镜像名改为 ghcr.io/<owner>/et:<tag>（产物前缀 ET-*，ENTRYPOINT 已是 ET-core）
 #   2. 守护进程参数为 --daemon（不是 -d）
 #   3. --config-server 与 -w 等价；--secure-mode 仍可用
 #   4. 若挂载配置目录，需显式 --config-dir /config
 #
-# 控制台：docker compose up -d console
-# 节点：  编辑 node 环境变量后 docker compose --profile node up -d node
+# 默认启动节点：docker compose up -d
+# 可选控制台：  docker compose --profile console up -d console
+# 同时启动二者：docker compose --profile console up -d
+# 详细步骤与 NAS 说明：docs/ops/docker-compose-deploy.md
+# 一键启动（自动 mkdir）：script/docker-up.sh node --dir <部署目录> --pull
 
 services:
-  console:
-    image: ghcr.io/229033891/et:dev
-    container_name: et-console
-    restart: unless-stopped
-    # 镜像默认 ENTRYPOINT 为 ET-core；控制台需改为 ET-web-embed
-    entrypoint: ["/sbin/tini", "--"]
-    command:
-      - ET-web-embed
-      - --db=/app/data/et.db
-      - --config-server-port=22020
-      - --config-server-protocol=udp,tcp
-      # embed 模式下 API + 静态页同端口（勿写 easytier-web-embed，Linux 下大小写敏感）
-      - --api-server-port=8080
-    ports:
-      - "22020:22020/udp"
-      - "22020:22020/tcp"
-      - "8080:8080"
-    volumes:
-      - ./et-console-data:/app/data
-
+  # 飞牛 / NAS 默认：只跑节点
   node:
-    image: ghcr.io/229033891/et:dev
+    image: m.daocloud.io/ghcr.io/229033891/et:v2.7.49
     container_name: et-node
-    profiles: ["node"]
     restart: unless-stopped
     hostname: FNNAS
     network_mode: host
@@ -66,3 +50,25 @@ services:
       - --config-server
       - udp://et.scmec.vip:22020/admin
       - --secure-mode
+
+  # 可选：本机自托管控制台（默认不启动）
+  console:
+    image: m.daocloud.io/ghcr.io/229033891/et:v2.7.49
+    container_name: et-console
+    profiles: ["console"]
+    restart: unless-stopped
+    # 镜像默认 ENTRYPOINT 为 ET-core；控制台需改为 ET-web-embed
+    entrypoint: ["/sbin/tini", "--"]
+    command:
+      - ET-web-embed
+      - --db=/app/data/et.db
+      - --config-server-port=22020
+      - --config-server-protocol=udp,tcp
+      # embed 模式下 API + 静态页同端口（勿写 easytier-web-embed，Linux 下大小写敏感）
+      - --api-server-port=8080
+    ports:
+      - "22020:22020/udp"
+      - "22020:22020/tcp"
+      - "8080:8080"
+    volumes:
+      - ./et-console-data:/app/data

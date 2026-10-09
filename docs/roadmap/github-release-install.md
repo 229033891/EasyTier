@@ -3,7 +3,7 @@
 ## Status
 
 - Status: **Roadmap / Partially landed**（`ET Release` 对 `releases/v*` 自动 Publish **已落地**；客户端内更新、统一安装脚本默认源等仍属后续）
-- 最近审阅：2026-10-06
+- 最近审阅：2026-10-09
 - 现状对照：发版流水线见 `.github/workflows/release.yml`；安装脚本用法见 [`../ops/deploy-install.md`](../ops/deploy-install.md)。
 - 目标：后续**以 GitHub Actions / Release / GHCR 为唯一发版来源**，统一安装与升级路径
 - 索引：[`../README.md`](../README.md)
@@ -11,7 +11,7 @@
   - [`../ops/deploy-install.md`](../ops/deploy-install.md)（Linux 交互脚本用法）
   - [`../ops/web-upgrade.md`](../ops/web-upgrade.md)（控制台保库升级）
   - `docker-compose.yml`（Docker 部署示例）
-  - `script/easytier-install.sh` / `script/install.ps1`
+  - `script/install.sh` / `script/install.ps1`
   - 讨论材料：[`discussion-proposal-2026-10.md`](./discussion-proposal-2026-10.md)、[`market-comparison-2026-10.md`](./market-comparison-2026-10.md)
 
 ---
@@ -30,8 +30,8 @@
 约定：
 
 1. **日常验证**：`workflow_dispatch` 打 Artifact；Docker 用对应 `ET Linux` 的 `run_id` 手动触发。
-2. **对外安装**：走 **Release 附件**（`script/easytier-install.sh` / `install.ps1` 默认读 `229033891/EasyTier` 的 latest/tag）。
-3. **Docker**：优先 `ghcr.io/229033891/et:<tag>`；勿再依赖旧镜像 `easytier/easytier`（ENTRYPOINT / 二进制名不同）。
+2. **对外安装**：走 **Release 附件**（`script/install.sh` / `install.ps1` 默认读 `229033891/EasyTier` 的 latest/tag）。
+3. **Docker**：镜像源为 `ghcr.io/229033891/et:<tag>`；`docker-compose.yml` 默认用 DaoCloud 加速前缀 `m.daocloud.io/ghcr.io/229033891/et:<最新 Release tag>`（海外可改回直连 GHCR）。勿再使用历史第三方同名镜像（ENTRYPOINT / 二进制名不同）。
 
 ---
 
@@ -73,42 +73,13 @@ gh workflow run "ET Release" --ref main \
 
 ---
 
-## 3. 安装方案（按场景）
+## 3. 安装与升级（运维细节）
 
-### 3.1 Linux 控制台 / 节点（二进制，推荐生产）
+Linux / Windows 二进制安装、systemd 模式、`install.sh` / `update.sh` 交互流程：**以 Ops 为准** → [`../ops/deploy-install.md`](../ops/deploy-install.md)。
 
-入口：`script/easytier-install.sh`（文档：[`../ops/deploy-install.md`](../ops/deploy-install.md)）
+Docker：`docker-compose.yml` + [`../ops/docker-compose-deploy.md`](../ops/docker-compose-deploy.md)。升级以换镜像 tag + `pull` / `up` 为主，**挂载卷保库**。
 
-| 模式 | 安装 | 升级 |
-|------|------|------|
-| Server（控制台） | `install --mode server` → systemd `ET-web` + 可选本机节点 | `update`：下 Release 包 → 替换 `/opt/easytier/ET-*` → 重启服务；**保留 `et.db`** |
-| Client（节点） | `install --mode client` → systemd `ET-core@…` + `--config-server` | 同上 `update` |
-
-一键示例：
-
-```bash
-# 控制台
-sudo bash script/easytier-install.sh install --mode server --auto \
-  --public-host et.example.com
-
-# 节点
-sudo bash script/easytier-install.sh install --mode client --auto \
-  --server-host 'udp://et.example.com:22020/admin'
-
-# 升级（已安装机器）
-sudo bash script/easytier-install.sh update
-```
-
-升级原则：**先停服务 → 换二进制 → 启服务 → healthcheck**；数据库与 config 目录不覆盖。
-
-### 3.2 Windows
-
-- 无头：Release 中 `ET-windows-*.zip`  
-- 桌面：NSIS（`ET-gui-*`）；安装钩子会停 `ET-Gui` / 旧 `easytier-gui` 服务后再覆盖  
-
-### 3.3 Docker
-
-见仓库根目录 `docker-compose.yml`；升级以换镜像 tag + `pull` / `up` 为主，**挂载卷保库**。
+本文 §1–§2 侧重 **产物矩阵与发版流水线**；§4 起为客户端内更新与后续增强。
 
 ---
 

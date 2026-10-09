@@ -1,11 +1,11 @@
-# 上游 main → dev 移植 TODO
+# main → dev 移植 TODO（历史跟踪）
 
-Status: **Roadmap**（P0–P2 代码已落袋，待 CI / `cargo test`；P3 待发版后独立集成）
+Status: **Archive**（P0–P2 代码已落袋；日常规划勿再作依据；P3 待发版后独立集成）
 
-- 最近审阅：2026-10-08（发版线由 `v2.7.3d` 更正为当前发版线，现 `releases/v2.7.47`；对照 `origin/dev`）
-- 背景：`main` 相对 `dev` 多出的提交里，**6 个是上游功能/修复**（#2609、#2622、#2626、#2627、#2632、#2633），其余为 fork 行政提交（README 改指向、sponsor 删除、CI/Docker 同步等，**不移植**）。提交计数会随时间漂移，以 `git log origin/dev..origin/main` 为准。
+- 最近审阅：2026-10-09（自 Roadmap 迁入 Archive；去掉源项目表述）
+- 背景：`main` 相对 `dev` 多出的提交里，**6 个是功能/修复**（#2609、#2622、#2626、#2627、#2632、#2633），其余为仓库行政提交（README 改指向、sponsor 删除、CI/Docker 同步等，**不移植**）。提交计数会随时间漂移，以 `git log origin/dev..origin/main` 为准。
 - 总原则：**不 `merge main → dev`**（`dev` 大幅领先）。一律 cherry-pick / 适配移植。
-- 上游提交位置：`main` 分支。
+- 待移植提交位置：`main` 分支。
 - 发版线：P0–P2 已合入 `dev`；验证通过后跟当前 `releases/v2.7.*` 发版线（2026-10-08 为 `releases/v2.7.47`），不默认双推历史分支。
 - 索引：[`../README.md`](../README.md)
 
@@ -40,7 +40,7 @@ Status: **Roadmap**（P0–P2 代码已落袋，待 CI / `cargo test`；P3 待�
 - [x] `PeerConnPinger` / `PingIntervalController` 增加 `max_interval` cap；默认 32s 保留现有 backoff
 - [x] 单测：ping interval controller + tunnel_type 分类 + PeerConn policy
 - [ ] `cargo test -p easytier-core` + fmt（本机 MSVC/ring 编译受阻，待 CI 验证）
-- 说明：直接合必撞（上游 origin 6 变体 vs dev 2 变体）。仅 hole-punch 会传 `is_directly_connected=false`；用「非 UDP」判定避免 FakeTCP host label 漏匹配。
+- 说明：直接合必撞（`main` origin 6 变体 vs `dev` 2 变体）。仅 hole-punch 会传 `is_directly_connected=false`；用「非 UDP」判定避免 FakeTCP host label 漏匹配。
 
 ---
 
@@ -48,7 +48,7 @@ Status: **Roadmap**（P0–P2 代码已落袋，待 CI / `cargo test`；P3 待�
 
 ### 4. #2626 QUIC 缓冲池 `perf(quic-proxy): use BufPool and BufMargins in QuicSocket`
 - [x] `PacketMargins` → `type PacketMargins = BufMargins`；`try_send` 用 `BufPool::write`；`margins.len()` → `margins.size()`（含 `test_gso`）
-- [x] 说明：dev 已有 #2625 的 `BufPool` / `BufMargins`，与上游 #2626 对齐
+- [x] 说明：dev 已有 #2625 的 `BufPool` / `BufMargins`，与 `main` #2626 对齐
 - [ ] `cargo test -p easytier` 相关用例 + fmt（本机 MSVC/ring 编译受阻，待 CI 验证）
 
 ### 5. #2627 WG 缓冲池 `perf(wireguard): rename WG_MAX_PACKET_SIZE and optimize scratch buffers`
@@ -70,6 +70,6 @@ Status: **Roadmap**（P0–P2 代码已落袋，待 CI / `cargo test`；P3 待�
 
 ## 非目标（明确不做）
 
-- 不 `merge main → dev`（会带入 README 改指向、sponsor 删除等 fork 行政提交 + ~19k 行中央控制台）。
-- 不移植 fork 行政提交（README 改指向、sponsor 删除、仅 CI/Docker 对齐类变更；与 `dev` 已对齐的无需再动）。
+- 不 `merge main → dev`（会带入 README 改指向、sponsor 删除等行政提交 + ~19k 行中央控制台）。
+- 不移植行政提交（README 改指向、sponsor 删除、仅 CI/Docker 对齐类变更；与 `dev` 已对齐的无需再动）。
 - P0–P2 代码已落袋，待 CI/`cargo test` 验证；P3 发版后再开独立分支。

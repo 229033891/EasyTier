@@ -4,7 +4,7 @@
 
 - Status: **In progress**（§4.1 **3+2** 已落地；§4.6 **客户端身份命中**已落地；responder 入站 pin 待开工；待 CI / 集成测确认）
 - 日期：2026-10-08
-- 触发：fork `229033891/EasyTier` 发版 CI **ET Test #107 / #108** 连续失败（`releases/v2.7.46`、`v2.7.47`）；对照 **#106（v2.7.45）全绿**
+- 触发：本仓库发版 CI **ET Test #107 / #108** 连续失败（`releases/v2.7.46`、`v2.7.47`）；对照 **#106（v2.7.45）全绿**
 - 索引：[`../README.md`](../README.md)
 - 相关发版：[`../ops/release-version-bump.md`](../ops/release-version-bump.md)
 

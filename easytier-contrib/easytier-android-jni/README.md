@@ -298,6 +298,6 @@ public class EasyTierVpnService extends VpnService {
 
 ## 相关链接
 
-- [EasyTier 主项目](https://github.com/EasyTier/EasyTier)
+- [EasyTier 仓库](https://github.com/229033891/EasyTier)
 - [Android NDK 文档](https://developer.android.com/ndk)
 - [Rust JNI 文档](https://docs.rs/jni/)

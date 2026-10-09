@@ -15,6 +15,8 @@
 
 产品帮助文案（GUI/Web i18n）只描述 **Current** 行为，不引用 Roadmap 草案。
 
+**品牌与溯源（硬约束）**：`current/`、`ops/`、`roadmap/`、根目录 `README*`，以及产品帮助链接（GUI/Web i18n）**不得**出现源项目仓库、官网、社区或旧镜像身份（例如第三方 org 名、源站域名、「上游 / upstream / fork of …」溯源表述）。本仓库自有地址（`229033891/EasyTier`、`ghcr.io/229033891/et`）与协议/DNS 语义上的「上游」除外。`archive/` 可保留历史上下文，但**不得当作规划依据**。
+
 crate 内设计稿（非本索引）：`easytier/docs/`（凭据计划已标 Archive；`RelayPeerMap` / Secure Mode 规格已加 Status，行号可能漂移）。
 
 ---
@@ -46,15 +48,12 @@ crate 内设计稿（非本索引）：`easytier/docs/`（凭据计划已标 Arc
 | [default-route-and-underlay-excludes.md](./roadmap/default-route-and-underlay-excludes.md) | 默认路由 **Phase 2**（`/1`+`/1`）；Phase 1 论证已归档 |
 | [domain-proxy.md](./roadmap/domain-proxy.md) | 域名驱动子网代理 + DNS 答案同步 |
 | [dns-policy.md](./roadmap/dns-policy.md) | DNS 策略**剩余缺口**（现状见 Current `magic-dns.md`） |
-| [multi-link-bonding.md](./roadmap/multi-link-bonding.md) | 多 PeerConn 聚合：按流分摊 + **异质优先 / 同质补齐**（语义已拍板，代码未实现） |
+| [multi-link-bonding.md](./roadmap/multi-link-bonding.md) | 多 PeerConn 聚合：Phase 2a/2b **已合入**（默认 `bond_count=1`）；Phase 3 出口/`bind_device` 多样性待做 |
 | [traffic-camouflage.md](./roadmap/traffic-camouflage.md) | 传输伪装 / 抗识别（wss 范式与 TLS 外观，Draft） |
 | [connection-stability-todo.md](./roadmap/connection-stability-todo.md) | 连接稳定性优化 TODO（相对 OpenVPN/IPsec；**端点可自定义，不假设 443**） |
-| [android-vpn-connection-audit-2026-10-07.md](./roadmap/android-vpn-connection-audit-2026-10-07.md) | **安卓 App 连接/卡断审查**（VpnService 生命周期 A1–A14 + 复核 R1–R7；A3/A9 已落地） |
 | [web-evolution.md](./roadmap/web-evolution.md) | easytier-web 演进约束与阶段 |
 | [github-release-install.md](./roadmap/github-release-install.md) | GitHub/GHCR 安装升级方案 |
-| [upstream-port-todo.md](./roadmap/upstream-port-todo.md) | 上游 `main` → `dev` cherry-pick 跟踪（P0–P2 已落袋，P3 待发版后） |
-| [config-edit-unified-actions.md](./roadmap/config-edit-unified-actions.md) | 配置编辑统一操作栏（保存常驻 / 放弃更改真还原 / 运行态重启确认；**Done**） |
-| [config-vs-run-pages.md](./roadmap/config-vs-run-pages.md) | **配置页 / 运行页职责拆分**（启停只在运行页；配置只保存/返回；多端不同步页签） |
+| [config-vs-run-pages.md](./roadmap/config-vs-run-pages.md) | **配置页 / 运行页**（主体已落地；可选「保存并运行」待做） |
 | [credential-pin-preference-failover.md](./roadmap/credential-pin-preference-failover.md) | Admin pin 被 preference failover 绕过（§4.1 3+2 + §4.6 客户端身份命中已落地；responder 待开工；待 CI） |
 
 ## Ops — 运维
@@ -65,6 +64,7 @@ crate 内设计稿（非本索引）：`easytier/docs/`（凭据计划已标 Arc
 | [windows-msvc-local-build.md](./ops/windows-msvc-local-build.md) | Windows 本机 MSVC：已装 Build Tools 仍编不过时，先 vcvars 再 cargo |
 | [web-upgrade.md](./ops/web-upgrade.md) | Web 现网升级与保库 |
 | [deploy-install.md](./ops/deploy-install.md) | 安装脚本用法 |
+| [docker-compose-deploy.md](./ops/docker-compose-deploy.md) | Docker Compose：节点 / 控制台 / 同时启动（SSH 命令） |
 | [ohos-downstream-builds.md](./ops/ohos-downstream-builds.md) | OHOS 下游构建 |
 | [release-version-bump.md](./ops/release-version-bump.md) | **版本号 bump 必改清单**（10 文件 / 17 处）+ 发布分支惯例 |
 | [android-startup-auto-stop.md](./ops/android-startup-auto-stop.md) | 安卓启动后马上自动停：现象 / 日志定性 / §6 同 netId 去重+宽限期（待新包验收）/ 清数据与重装 |
@@ -83,6 +83,9 @@ crate 内设计稿（非本索引）：`easytier/docs/`（凭据计划已标 Arc
 | [tcp-proxy-flow-key-validation-2026-09-13.md](./archive/tcp-proxy-flow-key-validation-2026-09-13.md) | TCP proxy flow-key 验证 |
 | [tcp-proxy-half-close-validation-2026-09-14.md](./archive/tcp-proxy-half-close-validation-2026-09-14.md) | TCP proxy 半关闭验证 |
 | [quic-proxy-memory-benchmark-2026-07-27.md](./archive/quic-proxy-memory-benchmark-2026-07-27.md) | QUIC proxy 内存 benchmark |
+| [upstream-port-todo.md](./archive/upstream-port-todo.md) | `main` → `dev` cherry-pick 历史跟踪（P0–P2 已落袋；非日常规划） |
+| [config-edit-unified-actions-2026-10-08.md](./archive/config-edit-unified-actions-2026-10-08.md) | 配置编辑统一操作栏（2026-10-08 已落地） |
+| [android-vpn-connection-audit-2026-10-07.md](./archive/android-vpn-connection-audit-2026-10-07.md) | 安卓 App 连接/卡断审查（A1–A14；代码侧已修） |
 
 ---
 
@@ -91,3 +94,4 @@ crate 内设计稿（非本索引）：`easytier/docs/`（凭据计划已标 Arc
 1. Roadmap 文若仍写「不实现 / Draft」，不得当作已交付功能依据。
 2. 从 Roadmap 开工前，先把 Status 改为 Accepted / In progress，并在 Current 中预留或同步缺口说明。
 3. 功能落地后：更新 Current；Roadmap 标记 Superseded 或删减为「剩余缺口」。
+4. 对外与 Current/Ops/Roadmap 文遵守上文「品牌与溯源」硬约束；涉及 `main`/`dev` 分支同步的历史跟踪放 `archive/`。

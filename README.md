@@ -12,14 +12,14 @@
 
 > ✨ A simple, secure, decentralized virtual private network solution powered by Rust and Tokio
 
-Maintained fork of [EasyTier/EasyTier](https://github.com/EasyTier/EasyTier). Releases, CI artifacts, and Docker images (`ghcr.io/229033891/et`) are published from **this** repository.
+Releases, CI artifacts, and Docker images (`ghcr.io/229033891/et`) are published from **this** repository.
 
 <p align="center">
 <img src="assets/config-page.png" width="300" alt="config page">
 <img src="assets/running-page.png" width="300" alt="running page">
 </p>
 
-📚 **[Upstream Docs](https://easytier.cn/en/)** | 🖥️ **[Upstream Web Console](https://easytier.cn/web)** | 📝 **[Download Releases](https://github.com/229033891/EasyTier/releases)** | 🐳 **[Docker Compose](./docker-compose.yml)** | 📖 **[Internal Docs](./docs/README.md)**
+📝 **[Download Releases](https://github.com/229033891/EasyTier/releases)** | 🐳 **[Docker Compose](./docker-compose.yml)** | 📖 **[Docs](./docs/README.md)**
 
 ## Features
 
@@ -49,12 +49,12 @@ Maintained fork of [EasyTier/EasyTier](https://github.com/EasyTier/EasyTier). Re
 
 Choose the installation method that best suits your needs:
 
-Linux (recommended — interactive console / node deploy):
+Linux (recommended — interactive console / node / core deploy):
 ```bash
 # clone then run (most reliable)
 git clone https://github.com/229033891/EasyTier.git
 cd EasyTier
-sudo bash script/easytier-install.sh
+sudo bash script/install.sh
 ```
 
 Windows (recommended, run as Administrator):
@@ -62,12 +62,24 @@ Windows (recommended, run as Administrator):
 irm "https://github.com/229033891/EasyTier/blob/main/script/install.ps1?raw=true" | iex
 ```
 
-Lightweight Linux download-only (no interactive server/client wizard):
+Linux one-liner (downloads latest from [Releases](https://github.com/229033891/EasyTier/releases); non-TTY defaults to core):
 ```bash
-curl -fsSL "https://github.com/229033891/EasyTier/blob/main/script/install.sh?raw=true" | sudo bash -s install
+curl -fsSL "https://github.com/229033891/EasyTier/raw/main/script/install.sh" | sudo bash -s install
 ```
 
-Homebrew (MacOS/Linux; upstream cask):
+Linux upgrade (standalone `update.sh`, does not call `install.sh`; also uses Releases):
+```bash
+# after cloning the repo
+cd EasyTier
+sudo bash script/update.sh
+
+# non-interactive
+sudo bash script/update.sh --auto
+```
+
+Note: `install.sh` handles install/backup/restore/uninstall; `update.sh` handles upgrades; both share `script/et-ops-common.sh`. See the [deploy guide](./docs/ops/deploy-install.md).
+
+Homebrew (MacOS/Linux):
 ```bash
 brew tap brewforge/chinese
 brew install --cask easytier-gui
@@ -79,8 +91,6 @@ cargo install --git https://github.com/229033891/EasyTier.git easytier
 ```
 
 [Pre-built binaries](https://github.com/229033891/EasyTier/releases) · [Deploy guide](./docs/ops/deploy-install.md) · [Docker Compose](./docker-compose.yml) (`ghcr.io/229033891/et`)
-
-[OpenWrt Luci package](https://github.com/EasyTier/luci-app-easytier) (upstream)
 
 ### 🚀 Basic Usage
 
@@ -146,7 +156,7 @@ For self-hosted relays, use **full tunnel URLs** (scheme/host/port/path). **Port
 
 Multiple `-p` / `[[peer]]` entries are all kept connected; the active path is picked automatically by latency/jitter/loss quality.
 
-Once your network is set up successfully, you can easily configure it to start automatically on system boot. Refer to the [One-Click Register Service guide](https://easytier.cn/en/guide/network/oneclick-install-as-service.html) for step-by-step instructions on registering EasyTier as a system service.
+Once your network is set up successfully, you can configure it to start automatically on system boot. See the [deploy guide](./docs/ops/deploy-install.md) for installing and registering EasyTier as a system service.
 
 #### Decentralized Networking
 
@@ -307,11 +317,6 @@ sudo easytier-core --network-name mysharednode --network-secret mysharednode
 ### Contact
 
 - 🐛 **[Issues](https://github.com/229033891/EasyTier/issues)**
-- 💬 **[Upstream Telegram](https://t.me/easytier)**
-- 👥 **Upstream QQ Groups**
-  - No.1 [949700262](https://qm.qq.com/q/wFoTUChqZW)
-  - No.2 [837676408](https://qm.qq.com/q/4V33DrfgHe)
-  - No.3 [957189589](https://qm.qq.com/q/YNyTQjwlai)
 
 ## License
 

@@ -8,7 +8,7 @@
 - 现场案例：2026-10-08，卸载重装后恢复
 - 索引：[`../README.md`](../README.md)
 - 相关：
-  - [`../roadmap/android-vpn-connection-audit-2026-10-07.md`](../roadmap/android-vpn-connection-audit-2026-10-07.md)（A9 underlay / VpnService 生命周期）
+  - [`../archive/android-vpn-connection-audit-2026-10-07.md`](../archive/android-vpn-connection-audit-2026-10-07.md)（A9 underlay / VpnService 生命周期）
   - [`../current/socket-protection.md`](../current/socket-protection.md)（`VpnService.protect`）
 
 ---

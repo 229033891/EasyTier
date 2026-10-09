@@ -12,14 +12,14 @@
 
 > ✨ 一个由 Rust 和 Tokio 驱动的简单、安全、去中心化的异地组网方案
 
-本仓库为 [EasyTier/EasyTier](https://github.com/EasyTier/EasyTier) 的维护分支。Release、CI 产物与 Docker 镜像（`ghcr.io/229033891/et`）均由**本仓库**发布。
+Release、CI 产物与 Docker 镜像（`ghcr.io/229033891/et`）均由**本仓库**发布。
 
 <p align="center">
 <img src="assets/config-page.png" width="300" alt="配置页面">
 <img src="assets/running-page.png" width="300" alt="运行页面">
 </p>
 
-📚 **[上游文档](https://easytier.cn)** | 🖥️ **[上游 Web 控制台](https://easytier.cn/web)** | 📝 **[下载发布版本](https://github.com/229033891/EasyTier/releases)** | 🐳 **[Docker Compose](./docker-compose.yml)** | 📖 **[内部文档索引](./docs/README.md)**
+📝 **[下载发布版本](https://github.com/229033891/EasyTier/releases)** | 🐳 **[Docker Compose](./docker-compose.yml)** | 📖 **[文档索引](./docs/README.md)**
 
 ## 特性
 
@@ -49,12 +49,12 @@
 
 选择最适合您需求的安装方式：
 
-Linux（推荐 — 交互式控制台 / 节点部署）：
+Linux（推荐 — 交互式控制台 / 节点 / 轻量 core）：
 ```bash
 # clone 后本地执行（最稳）
 git clone https://github.com/229033891/EasyTier.git
 cd EasyTier
-sudo bash script/easytier-install.sh
+sudo bash script/install.sh
 ```
 
 Windows（推荐，请以管理员权限运行）：
@@ -62,12 +62,24 @@ Windows（推荐，请以管理员权限运行）：
 irm "https://github.com/229033891/EasyTier/blob/main/script/install.ps1?raw=true" | iex
 ```
 
-Linux 轻量仅下载安装（无交互式 server/client 向导）：
+Linux 一键安装（从 [Releases](https://github.com/229033891/EasyTier/releases) 拉最新包；无 TTY 时默认 core）：
 ```bash
-curl -fsSL "https://github.com/229033891/EasyTier/blob/main/script/install.sh?raw=true" | sudo bash -s install
+curl -fsSL "https://github.com/229033891/EasyTier/raw/main/script/install.sh" | sudo bash -s install
 ```
 
-Homebrew（MacOS/Linux；上游 cask）：
+Linux 升级（独立脚本 `update.sh`，与 `install.sh` 互不调用；同样读 Releases）：
+```bash
+# clone 仓库后
+cd EasyTier
+sudo bash script/update.sh
+
+# 非交互
+sudo bash script/update.sh --auto
+```
+
+说明：`install.sh` 负责安装/备份/恢复/卸载；`update.sh` 负责升级；二者共用 `script/et-ops-common.sh`。详见 [部署说明](./docs/ops/deploy-install.md)。
+
+Homebrew（MacOS/Linux）：
 ```bash
 brew tap brewforge/chinese
 brew install --cask easytier-gui
@@ -79,8 +91,6 @@ cargo install --git https://github.com/229033891/EasyTier.git easytier
 ```
 
 [预编译文件](https://github.com/229033891/EasyTier/releases) · [部署说明](./docs/ops/deploy-install.md) · [Docker Compose](./docker-compose.yml)（`ghcr.io/229033891/et`）
-
-[OpenWrt Luci 软件包](https://github.com/EasyTier/luci-app-easytier)（上游）
 
 ### 🚀 基本用法
 
@@ -296,7 +306,7 @@ easytier-cli vpn-portal
 sudo easytier-core --network-name mysharednode --network-secret mysharednode
 ```
 
-网络设置成功后，您可以轻松配置它以在系统启动时自动启动。请参阅 [一键注册服务指南](https://easytier.cn/en/guide/network/oneclick-install-as-service.html) 了解如何将 EasyTier 注册为系统服务。
+网络设置成功后，您可以配置它以在系统启动时自动启动。请参阅 [部署说明](./docs/ops/deploy-install.md) 了解如何安装并将 EasyTier 注册为系统服务。
 
 ## 相关项目
 
@@ -306,11 +316,6 @@ sudo easytier-core --network-name mysharednode --network-secret mysharednode
 ### 联系方式
 
 - 🐛 **[Issues](https://github.com/229033891/EasyTier/issues)**
-- 💬 **[上游 Telegram](https://t.me/easytier)**
-- 👥 **上游 QQ 群**
-  - 一群 [949700262](https://qm.qq.com/q/wFoTUChqZW)
-  - 二群 [837676408](https://qm.qq.com/q/4V33DrfgHe)
-  - 三群 [957189589](https://qm.qq.com/q/YNyTQjwlai)
 
 ## 许可证
 

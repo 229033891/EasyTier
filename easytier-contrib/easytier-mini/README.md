@@ -49,7 +49,7 @@ easytier-mini --config mini.toml
 Start it as an EasyTier Web managed node with a complete config-server URL:
 
 ```sh
-easytier-mini --config-server udp://config-server.easytier.cn:22020/TOKEN
+easytier-mini --config-server udp://config.example.com:22020/TOKEN
 ```
 
 `--machine-id`, `--hostname`, and `--secure-mode` match the full client's Web

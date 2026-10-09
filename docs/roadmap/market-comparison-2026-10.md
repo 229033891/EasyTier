@@ -4,7 +4,7 @@
 
 - Status: **Roadmap / Discussion**（对比分析材料，**不是**实施规格）
 - 日期：2026-10-03
-- 最近审阅：2026-10-03
+- 最近审阅：2026-10-09（矩阵「今天」列对齐 Current：出口 D+、bonding Phase 2）
 - 索引：[`../README.md`](../README.md)
 - 配套讨论稿：[`discussion-proposal-2026-10.md`](./discussion-proposal-2026-10.md)
 - 用途：后续拍板时对照「成熟产品怎么做」与「EasyTier 该学什么 / 不该硬碰什么」
@@ -35,12 +35,12 @@ EasyTier 当前更接近 **Tailscale / ZeroTier 一类软件 Mesh**，而非华�
 | 能力维度 | Tailscale | ZeroTier | 蒲公英 | 华为 SD-WAN | VeloCloud | EasyTier 今天 | EasyTier 路线 |
 |----------|-----------|----------|--------|-------------|-----------|---------------|---------------|
 | 虚拟网互联 / Mesh | ● | ● | ● | ● | ● | △ | — |
-| **出口节点 = 装默认路由** | ●（exit node） | ◐（需自行路由） | ●（上网/出口类能力，产品化） | ●（站点出口策略） | ● | ○（仅 L3 选路） | ★ 导流 W1 |
+| **出口节点 = 装默认路由** | ●（exit node） | ◐（需自行路由） | ●（上网/出口类能力，产品化） | ●（站点出口策略） | ● | △（可解析 exit 时本机装 `/0`；见 Current） | ★ 域名 Phase B/C |
 | **子网/CIDR 代理** | ●（subnet router） | ● | ● | ● | ● | △（proxy_cidrs） | 保持 |
 | **域名驱动导流** | ●（App Connector：域名→解析→通告路由 + split DNS） | ○ | ◐（偏应用/加速与策略，非开源同构） | ●（应用识别选路） | ●（应用策略） | ○ | ★ domain-proxy |
 | **P2P 失败必有中继** | ●（Peer Relay → DERP/HTTPS） | ●（根服务器/叶） | ●（P2P→转发→强制转发） | ●（Hub/Gateway） | ●（VCG） | ◐（有中继/共享节点，缺「HTTPS 保底」产品档） | ★ camouflage W0/B |
 | **传输伪装 / 抗识别** | ◐（DERP 走 HTTPS，主目标是连通非隐身） | ○ | ◐（自研协议+节点，非公开伪装栈） | ○ | ○ | ○（有 wss/faketcp，无产品档） | ★ 伪装；深度指纹 Backlog |
-| **多链路加带宽** | ○（Issue 诉求；现单路径） | ●（Multipath：flow hash / stripe 等） | ●（多 WAN 负载/选路，偏站点） | ●（多链路负载均衡） | ●（DMPO 带宽聚合） | ○（多 PeerConn 只冗余） | ★ bonding |
+| **多链路加带宽** | ○（Issue 诉求；现单路径） | ●（Multipath：flow hash / stripe 等） | ●（多 WAN 负载/选路，偏站点） | ●（多链路负载均衡） | ●（DMPO 带宽聚合） | ◐（默认单路径；`bond_count>1` 按流分摊） | ★ Phase 3 出口多样 |
 | 链路质量选路（时延/丢包） | ◐（选 exit/路径偏好） | ◐（multipath quality） | ●（智能选路卖点） | ● | ●（DMPO） | ◐（latency_first 等） | 增强期 |
 | 云端零配置 / 硬件 | ◐（SaaS 控制面） | ◐ | ●（软硬+云） | ● | ● | ◐（easytier-web） | web-evolution |
 | 开源 / 自托管控制面 | ●（Headscale 生态） | ◐ | ○ | ○ | ○ | ● | 保持差异化 |

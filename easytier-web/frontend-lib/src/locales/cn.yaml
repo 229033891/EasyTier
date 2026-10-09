@@ -581,7 +581,7 @@ dns:
     manual_required_help: 静态 hosts 可能已下发，但此系统需按文档手动配置 DNS。见 docs/current/magic-dns-manual-wiring.md（OpenWrt dnsmasq：server=/et.net/10.255.255.254）。
     manual_required_platform_help: 此系统通常需手动配置 Magic DNS。见 docs/current/magic-dns-manual-wiring.md。徽章假定网络上已启用魔法 DNS。
     manual_required_docs: 手工接线说明
-    manual_required_docs_url: https://github.com/EasyTier/EasyTier/blob/main/docs/current/magic-dns-manual-wiring.md
+    manual_required_docs_url: https://github.com/229033891/EasyTier/blob/main/docs/current/magic-dns-manual-wiring.md
     unsupported: 不支持
     unsupported_help: 此平台或配置无法自动接线 Magic DNS（如 no_tun、iOS）。
     unsupported_platform_help: 此平台无法自动接线 Magic DNS；徽章假定网络上已启用魔法 DNS。

@@ -214,6 +214,37 @@ jobs:
                   "refusing to build with stale fallback version"
               )
 
+          # luci.mk versions luci-i18n-* via PKG_PO_VERSION (default: findrev
+          # date-hash like 26.268.42210~79b2b01), independent of PKG_VERSION.
+          # Pin it before include luci.mk so zh-cn artifacts match the release
+          # (filename + package Version metadata), and Collect can keep the
+          # strict version guard.
+          luci_mk = pathlib.Path("feed/luci-app-easytier/Makefile")
+          luci_text = luci_mk.read_text()
+          if re.search(r"^PKG_PO_VERSION\s*:=", luci_text, re.M):
+              luci_text2 = re.sub(
+                  r"^PKG_PO_VERSION\s*:=.*$",
+                  f"PKG_PO_VERSION:={ver}",
+                  luci_text,
+                  flags=re.M,
+              )
+          else:
+              luci_text2 = re.sub(
+                  r"^(PKG_VERSION:=.+)$",
+                  rf"\1\nPKG_PO_VERSION:={ver}",
+                  luci_text,
+                  count=1,
+                  flags=re.M,
+              )
+          if f"PKG_PO_VERSION:={ver}" not in luci_text2:
+              raise SystemExit(
+                  f"failed to pin PKG_PO_VERSION:={ver} in {luci_mk.as_posix()}; "
+                  "refusing to build i18n with findrev date-hash version"
+              )
+          if luci_text2 != luci_text:
+              luci_mk.write_text(luci_text2)
+              print(f"pinned PKG_PO_VERSION:={ver} in {luci_mk.as_posix()}")
+
           # easytier 包默认从 GitHub Release 下载旧二进制, 改成用本地现编译的.
           # EASYTIER_FEED_DIR must be an absolute path under the SDK FEED_DIR mount
           # (/feed/...). Using $(dir $(lastword $(MAKEFILE_LIST))) breaks because by
@@ -237,7 +268,7 @@ jobs:
           EOF
           ls -l feed/easytier/bins/
           cat feed/version.mk
-          grep -nE '^(PKG_VERSION|-include)' feed/easytier/Makefile feed/luci-app-easytier/Makefile
+          grep -nE '^(PKG_VERSION|PKG_PO_VERSION|-include)' feed/easytier/Makefile feed/luci-app-easytier/Makefile
           grep -A8 'Build/Prepare' feed/easytier/Makefile
 
       - name: Prepare output dir (SDK action 会 chown 该目录, 不存在会直接失败)
@@ -278,8 +309,9 @@ jobs:
           (( ${#easytier[@]} > 0 )) || { echo "missing easytier .${pkg}"; ls -l dist/; exit 1; }
           (( ${#luci[@]} > 0 )) || { echo "missing luci-app-easytier .${pkg}"; ls -l dist/; exit 1; }
           (( ${#i18n[@]} > 0 )) || { echo "missing luci-i18n-easytier-zh-cn .${pkg}"; ls -l dist/; exit 1; }
-          # Guard against the old MAKEFILE_LIST include bug silently baking 2.6.4.
-          # Boundary-aware match (avoid bare *${ver}* matching 2.7.40):
+          # Guard against MAKEFILE_LIST include bug (stale 2.6.4) and unpinned
+          # PKG_PO_VERSION (luci-i18n date-hash). Boundary-aware match (avoid
+          # bare *${ver}* matching 2.7.40):
           #   easytier-2.7.4.apk / luci-app-easytier-2.7.4-r1.apk
           #   luci-i18n-easytier-zh-cn-2.7.4.apk
           for f in "${easytier[@]}" "${luci[@]}" "${i18n[@]}"; do

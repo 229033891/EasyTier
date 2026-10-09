@@ -2,9 +2,9 @@
 
 ## Status
 
-- Status: **Roadmap**（Phase **2a 已合入**代码；2b 维持 + 状态标注已合入；默认 `bond_count=1`）
+- Status: **Roadmap**（Phase **2a/2b 已合入**；**剩余：Phase 3** 出口/`bind_device` 多样性；默认 `bond_count=1`）
 - 日期：2026-10-07
-- 最近审阅：2026-10-07（Phase 2a：`conn_bond` + `Peer::send_msg` 按流分摊；flags `peer_link_bond_count` / `peer_link_replica_fill_max`）
+- 最近审阅：2026-10-09（Phase 2 已落地；日常行为见 Current `peer-connections.md`）
 - 索引：[`../README.md`](../README.md)
 - **现状行为**：[`../current/peer-connections.md`](../current/peer-connections.md)（默认单 `default_conn`；可选 bonding）
 - **代码锚点**：`easytier-core/src/peers/conn/conn_bond.rs`、`peer.rs`（`select_bond_conns` / `send_msg`）
@@ -13,6 +13,8 @@
 
 发送面 MVP 对齐 **ZeroTier Multipath 的 balance-xor（按流哈希）**。  
 成员面 **不对标** 华为/VeloCloud 包级 DMPO；目标是降低共模故障 + 突破单连接限速，不是站点 SD-WAN。
+
+> **日常阅读**：Phase 2a/2b 行为以 [`../current/peer-connections.md`](../current/peer-connections.md) 为准。下文 §1–§7 保留设计论证；**待实现工作见 §5 Phase 3**。
 
 ---
 

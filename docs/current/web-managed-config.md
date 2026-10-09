@@ -450,10 +450,12 @@ Receiver 不保存 Patch delivery ledger。Publisher 根据自己的完整目标
 
 ### 9.1 Receiver-first rollout
 
-1. 为现有 Full 行为增加 characterization tests。
-2. 将 Full rows/revision 改为一个 atomic transaction。
-3. 为 alternate web-row mutation 增加 revision invalidation。
-4. 增加 PATCH、typed conflict、capacity limits 和 metrics。
+**状态（2026-10）**：Receiver 侧 Full/PATCH、revision CAS、Session 增量收敛**已部署可用**；步骤 1–4 已落地。步骤 5–7 为 Console 逐步启用 Patch 的**历史顺序**（Console 仍可能只发 PUT，Receiver 兼容）。
+
+1. 为现有 Full 行为增加 characterization tests。✅
+2. 将 Full rows/revision 改为一个 atomic transaction。✅
+3. 为 alternate web-row mutation 增加 revision invalidation。✅
+4. 增加 PATCH、typed conflict、capacity limits 和 metrics。✅（§7 body limit 部分仍开放）
 5. 在 Console 仍只发送 PUT 时部署到全部 EasyTier Web 实例。
 6. 完成旧 Console PUT、新 Console PUT/PATCH contract 测试。
 7. 最后启用 Console Patch 发布。

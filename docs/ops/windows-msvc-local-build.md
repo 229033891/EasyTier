@@ -99,4 +99,4 @@ cmd /c 'call "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\
 
 ## 与发版 CI 的关系
 
-发版流水线（如 fork 上 **ET Test**）自带完整 MSVC；本机未 vcvars 失败**不能**用来否定 CI 或跳过应在本机复现的回归。pin / credential 等用例仍以 CI 或已 vcvars 的本机结果为准。
+发版流水线（如本仓库 **ET Test**）自带完整 MSVC；本机未 vcvars 失败**不能**用来否定 CI 或跳过应在本机复现的回归。pin / credential 等用例仍以 CI 或已 vcvars 的本机结果为准。

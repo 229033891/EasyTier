@@ -4,10 +4,10 @@
 
 - Status: **Roadmap**（Checklist；P-UX + P0.1–P0.4 + P1.1–P1.3/P1.6–P1.8 + P2.1–P2.3 + P-AUTO.L1 已落地；下一步 P0.5 或 P1.5）
 - 日期：2026-10-06
-- 最近审阅：2026-10-08（P-UX.4：开关控件统一 `ToggleSwitch` + 9 个负逻辑字段正向展示）；2026-10-07（P-AUTO.L1：`default_protocol` CSV 有序 scheme + 直连排序 / 手动 URL×scheme 降级）
+- 最近审阅：2026-10-09（P2.4 bonding Phase 2 标记已合入；安卓审计迁 Archive）
 - 背景：对照 OpenVPN / IPsec 的「固定隧道 + 强保活」模型，梳理 EasyTier Mesh（多 PeerConn + 打洞 + 中继）的稳定性差距与可落地项；**另纳入 2026-10-06 用户反馈：高级选项互斥缺校验、长表单占空间、单协议配置失败后无智能回落**
 - 相关 Current：[`../current/peer-connections.md`](../current/peer-connections.md)、[`../current/tunnels-and-transport.md`](../current/tunnels-and-transport.md)
-- 相关 Roadmap：[`traffic-camouflage.md`](./traffic-camouflage.md)、[`multi-link-bonding.md`](./multi-link-bonding.md)（异质优先 / 同质补齐；代码未实现）、[`market-comparison-2026-10.md`](./market-comparison-2026-10.md)、[`upstream-port-todo.md`](./upstream-port-todo.md)（#2632 TCP 打洞 1s ping）
+- 相关 Roadmap：[`traffic-camouflage.md`](./traffic-camouflage.md)、[`multi-link-bonding.md`](./multi-link-bonding.md)（Phase 2a/2b 已合入；Phase 3 待做）、[`market-comparison-2026-10.md`](./market-comparison-2026-10.md)
 - 索引：[`../README.md`](../README.md)
 
 **硬约束（全文适用）**
@@ -25,7 +25,7 @@
 | S1 | P2P/打洞失败或被限后体验差 | 有中继能力，缺**可配置**的「失败必有回落路径」产品档 |
 | S2 | 误以为多 PeerConn = 更稳/更快 | 发送只走 `default_conn`（冗余切换，非 bonding） |
 | S3 | 弱网下 UDP 抖动、闪断 | 自适应 ping 较好，但失败阈值偏硬；部分环境需改走 TCP/`wss`/QUIC |
-| S4 | TCP 打洞 idle 被中间设备掐断 | 上游 #2632 已移植 1s ping cap；待验证 |
+| S4 | TCP 打洞 idle 被中间设备掐断 | #2632 已合入：TCP hole-punch 1s ping cap；待验证 |
 | S5 | 「学 OpenVPN 上 443」在部分环境无效 | **443 本身也可能不可用** → 必须自定义端口与协议 |
 | S6 | 低延迟但高丢包/高抖动的路径仍被选中 | ~~`select_conn` / `latency_first` 几乎只看 RTT~~ → 同 peer 与 OSPF 边代价均已用综合质量分（P1.7 / P2.3） |
 | S7 | 互斥/依赖选项可同时选中，误配后难排查 | `api_input.rs` 逐 flag 独立赋值、无互斥校验；`Config.vue:226-268` 平铺 Checkbox，无联动隐藏/禁用 |
@@ -177,7 +177,7 @@ score = w_lat * norm(rtt)
   - 发布端 `direct_peer_info`：`quality_score`→`DirectConnectedPeerInfo.latency_ms`（`score*1000` + 熔断加成）；发布 hysteresis `min_delta=20`
   - Dijkstra / peer-center `RouteCostCalculator` 不变（仍读 `latency_ms`）；零 loss/jitter 时量级≈原 RTT ms
   - 可观测：Status `path_latency*` 在 LeastCost 下反映质量代价；PeerConn 质量分列（P2.1）
-- [ ] **P2.4** 按需推进 [`multi-link-bonding.md`](./multi-link-bonding.md)（**独立专题，非本清单 P0**）：按流哈希；同质量档内异质优先、同质每类 3–5 补齐；坏链路质量熔断；默认 N=1；出口/`bind_device` 见该文 Phase 3
+- [x] **P2.4** [`multi-link-bonding.md`](./multi-link-bonding.md) Phase 2a/2b（按流哈希；异质优先 / 同质补齐；默认 N=1）**已合入**；Phase 3（出口/`bind_device` 多样性）仍见该文
 - [ ] **P2.5** 丢包场景下 KCP/QUIC proxy 的启用策略产品化（可配置，非隐性默认）
 
 ### P-UX — 配置面正确性与密度（对应 S7；纯前端，低风险）
@@ -266,16 +266,16 @@ P1.6 stats jitter/loss 上报 + P1.1/P1.2 透参
 |----|------|------|
 | P0.* | P0.1–P0.4 **已完成（档位已简化删除）**；P0.5 验收未开始 | 全量拨号 + 质量选路 + 文档/模板 |
 | P1.* | P1.1–P1.3/P1.6–P1.8（单元）**已完成**；P0.5/P1.8b 现网验收、P1.4–P1.5 未开始 | 质量分 Flags 透参已接；P1.3=L1 |
-| P2.* | P2.1–P2.3 **已完成**；P2.4–P2.5 未开始 | bonding 实现与异质策略见 [`multi-link-bonding.md`](./multi-link-bonding.md)，不并入稳定性 P0 |
+| P2.* | P2.1–P2.4 **已完成**；P2.5 未开始 | bonding Phase 2 见 [`multi-link-bonding.md`](./multi-link-bonding.md)；Phase 3 仍开放 |
 | P3.* | Backlog | |
 | P-UX.* | **已完成** | 老配置只提示；断点 760px；`configConflicts.ts` + Config 紧凑布局 |
 | P-AUTO.* | L1/L2 **已完成**；L3/L4 未开始 | L3 需 opt-in；L4 默认不做 |
 
 ---
 
-## 8. 安卓 VPN 生命周期（来自 [`android-vpn-connection-audit-2026-10-07.md`](./android-vpn-connection-audit-2026-10-07.md)）
+## 8. 安卓 VPN 生命周期（来自 [`../archive/android-vpn-connection-audit-2026-10-07.md`](../archive/android-vpn-connection-audit-2026-10-07.md)）
 
-与本文 S1–S8（协议/选路）**正交**；审计 A1–A14 / A3 / A9 可落地项已在工作区修复。细节与复核见审计文档。
+与本文 S1–S8（协议/选路）**正交**；审计 A1–A14 / A3 / A9 可落地项已修复。细节见 Archive 审计文；现场 playbook 见 [`../ops/android-startup-auto-stop.md`](../ops/android-startup-auto-stop.md)。
 
 **勾选**
 

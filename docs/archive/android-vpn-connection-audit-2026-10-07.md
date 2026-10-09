@@ -2,8 +2,9 @@
 
 ## Status
 
-- Status: **Done（代码侧）**（A1–A14 / A3 / A9 / R1–R7 可落地项已修；现场复现与 CI 编译确认仍建议跑一遍）
+- Status: **Archive**（代码侧 A1–A14 / A3 / A9 / R1–R7 已修；现场复现与 CI 编译确认仍建议跑一遍）
 - 日期：2026-10-07
+- 最近审阅：2026-10-09（自 Roadmap 迁入）
 - 分支：`releases/v2.7.41` / 本地工作区
 - 触发：用户反馈「安卓 App 有时候无法连接、卡断」
 - 审查范围：
@@ -11,7 +12,8 @@
   - `tauri-plugin-vpnservice`（Kotlin + Rust）
   - core 的 mobile TUN 接入路径（`easytier/src/instance/runtime_host/tun_mobile.rs`、`virtual_nic.rs`）
 - 相关 Current：[`../current/socket-protection.md`](../current/socket-protection.md)、[`../current/peer-connections.md`](../current/peer-connections.md)
-- 相关 Roadmap：[`connection-stability-todo.md`](./connection-stability-todo.md)（本文的 A 系列缺陷属「安卓侧生命周期」，与该文 S1–S8「协议/选路」问题正交）
+- 相关 Roadmap：[`../roadmap/connection-stability-todo.md`](../roadmap/connection-stability-todo.md)（本文的 A 系列缺陷属「安卓侧生命周期」，与该文 S1–S8「协议/选路」问题正交）
+- 相关 Ops：[`../ops/android-startup-auto-stop.md`](../ops/android-startup-auto-stop.md)（A9 启动假切换 / 同 netId 去重）
 
 > 复核进展见 §6。**R4 / R7 已关单**（见 §6.6）。A3/A9 已落地。B1/B2 为静态判定，仍需在可编译环境确认。
 

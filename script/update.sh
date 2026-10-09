@@ -1,15 +1,16 @@
 #!/bin/bash
 #
-# EasyTier Linux 安装入口（独立脚本，不调用 update.sh）
+# EasyTier Linux 升级入口（独立脚本，不调用 install.sh）
 # 共享逻辑: et-ops-common.sh（同目录；缺失时从仓库 raw 拉取）
+# 从 Release 拉取最新包并替换二进制，保留配置/数据库。
 #
 # Release: https://github.com/229033891/EasyTier/releases
 #
 # 用法:
-#   sudo bash install.sh
-#   sudo bash install.sh install
-#   curl -fsSL https://github.com/229033891/EasyTier/raw/main/script/install.sh \
-#     | sudo bash -s install
+#   sudo bash update.sh
+#   sudo bash update.sh --auto
+#   sudo bash update.sh --enable-nat
+#   sudo bash update.sh --configure-firewall
 #
 set -euo pipefail
 
@@ -24,7 +25,6 @@ load_et_ops_common() {
     source "$common"
     return 0
   fi
-  # curl|bash 或单文件场景：下载公共库到临时文件再 source
   command -v curl >/dev/null 2>&1 || {
     echo "[ERROR] 缺少 et-ops-common.sh 且无 curl，无法继续" >&2
     exit 1
@@ -42,25 +42,16 @@ load_et_ops_common() {
 
 load_et_ops_common
 
-install_main() {
-  if [[ $# -eq 0 ]]; then
-    prompt_main_menu
-    return
+update_main() {
+  if [[ "${1:-}" == "help" || "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+    usage
+    exit 0
   fi
-  local cmd="$1"
-  shift || true
-  case "$cmd" in
-    install)   require_root; cmd_install "$@" ;;
-    # 使用库内 cmd_update，绝不 exec update.sh
-    update)    require_root; cmd_update "$@" ;;
-    restore)   cmd_restore "$@" ;;
-    backup)    cmd_backup "$@" ;;
-    healthcheck) cmd_healthcheck "$@" ;;
-    uninstall) cmd_uninstall ;;
-    status)    cmd_status ;;
-    help|-h|--help) usage ;;
-    *) err "未知命令: $cmd"; usage; exit 1 ;;
-  esac
+  if [[ "${1:-}" == "update" ]]; then
+    shift || true
+  fi
+  require_root
+  cmd_update "$@"
 }
 
-install_main "$@"
+update_main "$@"

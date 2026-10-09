@@ -3,7 +3,7 @@
 ## Status
 
 - Status: **Current**
-- 最近审阅：2026-10-08（补 §4：配置页开关控件 `ToggleSwitch` + 负逻辑字段正向展示约定）
+- 最近审阅：2026-10-09（补 §6：配置页 / 运行页职责）
 - 范围：Windows/Linux/macOS 桌面 `easytier-gui`、可选后台服务 `ET-Gui`、config-server 会话与 web-owned 配置回写
 - 索引：[`../README.md`](../README.md)
 - 深度复查记录（含 UI 下拉）：[`../archive/service-mode-web-config-sync-and-select-ui-2026-10-04.md`](../archive/service-mode-web-config-sync-and-select-ui-2026-10-04.md)
@@ -115,7 +115,24 @@ OHOS nearby：`easytier-contrib/.../nearby_management.rs` 对相关方法返回 
 
 ---
 
-## 6. 关键文件速查
+## 6. 配置页 / 运行页职责（Web + GUI）
+
+两端统一为 **两个页面、两种职责**（2026-10-08 已落地）：
+
+| 页面 | 只管什么 | 底部主区 |
+|------|----------|----------|
+| **运行页（状态）** | 看运行信息；启停网络 | **启动 / 停止**；入口「节点配置」 |
+| **配置页** | 改参数；落盘 / 丢弃草稿 | 脏：**取消编辑 + 保存**；干净：**返回运行页**（无启停主按钮） |
+
+- Web：`?mode=status|config`；配置模式不挂启停主按钮。
+- GUI combined：壳内 `isEditingNetwork` 切换；停止态默认运行空态（启动 + 节点配置）。
+- 「取消编辑」= 脏时重拉已保存配置；「返回运行页」= 干净时退出编辑，不重拉。
+- 未保存草稿、当前页签**不同步**跨端；已保存配置与运行态仍走既有 Console / RPC 路径。
+- 可选后续（Roadmap）：配置页次要「保存并运行」— 见 [`../roadmap/config-vs-run-pages.md`](../roadmap/config-vs-run-pages.md)。
+
+---
+
+## 7. 关键文件速查
 
 | 区域 | 路径 |
 |------|------|

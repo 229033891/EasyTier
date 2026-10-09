@@ -2,12 +2,13 @@
 
 ## Status
 
-- Status: **Done**（2026-10-08 已落地）
+- Status: **Archive**（2026-10-08 已落地；日常以 Current 为准）
 - 日期：2026-10-08
+- 最近审阅：2026-10-09（自 Roadmap 迁入）
 - 背景：停止态编辑与运行态编辑共用同一 `Config` 表单，但底部操作、保存可见性、取消语义三处不一致；运行态点“运行网络”无确认直接重建实例断流。
 - 相关代码：`easytier-web/frontend-lib/src/components/RemoteManagement.vue`、`src/modules/config-dirty.ts`；测试 `tests/config-dirty.spec.ts`、`tests/remote-management-config.spec.ts`
 - 相关 Current：[`../current/desktop-gui-and-config-server.md`](../current/desktop-gui-and-config-server.md) §4（配置页开关约定）
-- **后续收紧**：[`config-vs-run-pages.md`](./config-vs-run-pages.md)（配置页不再挂启停主按钮；运行页专管启动/停止）
+- **后续收紧**：[`../roadmap/config-vs-run-pages.md`](../roadmap/config-vs-run-pages.md)（配置页不再挂启停主按钮；运行页专管启动/停止）
 - 索引：[`../README.md`](../README.md)
 
 ---
