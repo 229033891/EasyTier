@@ -5,6 +5,7 @@ members = [
     "easytier-proto",
     "easytier",
     "easytier-web",
+    "easytier-web/config-generator/easytier-config-wasm",
     "easytier-gui/src-tauri",
     "easytier-contrib/easytier-mini",
     "easytier-contrib/easytier-ffi",

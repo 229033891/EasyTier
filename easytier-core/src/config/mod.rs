@@ -9,7 +9,7 @@ pub mod api_input;
     target_arch = "wasm32",
     target_os = "unknown"
 ))]
-mod browser;
+pub mod browser;
 pub mod dns;
 mod encryption;
 pub mod gateway;

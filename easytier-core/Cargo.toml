@@ -12,10 +12,9 @@ categories = ["network-programming"]
 license-file = "../LICENSE"
 
 [lib]
-crate-type = ["rlib", "cdylib"]
-
-[package.metadata.wasm-pack.profile.release]
-wasm-opt = ["-Oz", "--enable-bulk-memory", "--enable-nontrapping-float-to-int"]
+# rlib only: musl defaults to static CRT and cannot emit cdylib (rustc warning).
+# Browser WASM is built via the `easytier-config-wasm` cdylib wrapper.
+crate-type = ["rlib"]
 
 [dependencies]
 anyhow.workspace = true
@@ -90,7 +89,6 @@ getrandom-03 = { package = "getrandom", version = "0.3.4", features = ["wasm_js"
 getrandom-04 = { package = "getrandom", version = "0.4", features = ["wasm_js"] }
 snow = { version = "0.10.0", default-features = false, features = ["default-resolver", "default-resolver-crypto"] }
 uuid = { workspace = true, features = ["js"] }
-wasm-bindgen = "0.2"
 
 [target.'cfg(not(all(target_arch = "wasm32", target_os = "unknown")))'.dependencies]
 snow = "0.10.0"

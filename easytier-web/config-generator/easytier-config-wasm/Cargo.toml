@@ -1,0 +1,20 @@
+[package]
+name = "easytier-config-wasm"
+description = "cdylib WASM bindings for EasyTier browser config generation."
+version = "2.7.5"
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+license-file = "../../../LICENSE"
+
+[lib]
+# cdylib for wasm-pack; rlib so `cargo clippy --all` / musl host checks still
+# have a supported crate type when cdylib is dropped under static CRT.
+crate-type = ["cdylib", "rlib"]
+
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = ["-Oz", "--enable-bulk-memory", "--enable-nontrapping-float-to-int"]
+
+[dependencies]
+easytier-core = { workspace = true, default-features = false, features = ["browser-config"] }
+wasm-bindgen = "0.2"

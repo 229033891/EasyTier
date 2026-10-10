@@ -2658,6 +2658,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "easytier-config-wasm"
+version = "2.7.5"
+dependencies = [
+ "easytier-core",
+ "wasm-bindgen",
+]
+
+[[package]]
 name = "easytier-core"
 version = "2.7.5"
 dependencies = [
@@ -2718,7 +2726,6 @@ dependencies = [
  "tracing",
  "url",
  "uuid",
- "wasm-bindgen",
  "webpki-roots 1.0.9",
  "wildmatch",
  "x25519-dalek 3.0.0",
