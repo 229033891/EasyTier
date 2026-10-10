@@ -7,9 +7,12 @@ pub mod session;
 pub mod storage;
 
 pub(crate) use rpc_timeout::{
-    MANAGED_RPC_FAST_TIMEOUT_MS, MANAGED_RPC_SLOW_TIMEOUT_MS, proxy_rpc_timeout_ms,
-    rpc_controller, slow_rpc_controller,
+    MANAGED_RPC_FAST_TIMEOUT_MS, proxy_rpc_timeout_ms, rpc_controller, slow_rpc_controller,
 };
+/// Test-only re-export (assertions on graded timeouts); kept out of normal
+/// builds so `unused_imports` stays clean.
+#[cfg(test)]
+pub(crate) use rpc_timeout::MANAGED_RPC_SLOW_TIMEOUT_MS;
 
 use std::time::Duration;
 use std::{
@@ -880,10 +883,7 @@ impl
                 .await?;
             self.invalidate_applied_config_revision(identify.0, identify.1)
                 .await;
-        } else if self
-            .should_soft_start_network(identify, &client, inst_id)
-            .await?
-        {
+        } else if self.should_soft_start_network(identify, inst_id).await? {
             tracing::info!(
                 %inst_id,
                 user_id = identify.0,
@@ -922,12 +922,18 @@ impl ClientManager {
     /// Liveness (`list`) uses the fast 5s timeout so offline / hung devices fail
     /// the probe quickly instead of waiting a full 60s. Only after the instance
     /// is listed do we `collect` with the slow timeout (payload can be large).
+    ///
+    /// Fetches its own RPC client instead of borrowing the caller's: the client
+    /// is `Send` but not `Sync`, so holding `&dyn … + Send` across `.await`
+    /// would make this future non-`Send` (E0277).
     async fn should_soft_start_network(
         &self,
         identify: (UserIdInDb, uuid::Uuid),
-        client: &(dyn WebClientService<Controller = BaseController> + Send),
         inst_id: uuid::Uuid,
     ) -> Result<bool, RemoteClientError<sea_orm::DbErr>> {
+        let client = self
+            .get_rpc_client(identify)
+            .ok_or(RemoteClientError::ClientNotFound)?;
         let listed = client
             .list_network_instance(
                 rpc_controller(MANAGED_RPC_FAST_TIMEOUT_MS),

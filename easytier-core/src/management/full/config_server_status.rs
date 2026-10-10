@@ -152,14 +152,6 @@ pub fn mark_disconnected() {
     status.snapshot.connecting_detail = None;
 }
 
-/// Clear a prior dial error after a new TCP tunnel is up but before the
-/// session is fully ready (feature probe / secure upgrade). Keeps
-/// `connected=false` so the UI stays on "connecting" instead of "failed".
-pub fn clear_last_error() {
-    let mut status = STATUS.write();
-    status.snapshot.last_error = None;
-}
-
 /// Progress detail while still connecting (feature probe / secure upgrade).
 ///
 /// Stored in `connecting_detail` — never in `last_error` — so consumers that

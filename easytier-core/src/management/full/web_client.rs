@@ -699,7 +699,8 @@ async fn web_client_routine(
     connector: Box<dyn TunnelDialer>,
 ) {
     let mut backoff = RETRY_INTERVAL;
-    let mut session_end_streak: u32 = 0;
+    // Assigned on every successful session start before any session-end read.
+    let mut session_end_streak: u32;
     loop {
         let connection = match connect_config_server(connector.as_ref(), CONNECT_TIMEOUT).await {
             // Do NOT reset `backoff` here. A plain dial can keep succeeding while
