@@ -507,6 +507,7 @@ impl WebClientService for NearbyWebClientService {
             enabled: false,
             connected: false,
             last_error: String::new(),
+            connecting_detail: String::new(),
         })
     }
 

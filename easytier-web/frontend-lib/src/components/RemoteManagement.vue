@@ -6,6 +6,7 @@ import { useI18n } from 'vue-i18n';
 import * as Api from '../modules/api';
 import {
     captureNormalizedDirtySnapshot,
+    configDirtySnapshot,
     isConfigSnapshotDirty,
 } from '../modules/config-dirty';
 import * as Utils from '../modules/utils';
@@ -69,6 +70,161 @@ function errorDetail(error: unknown): string {
     return Utils.formatApiErrorDetail(error, t);
 }
 
+/** False after unmount — blocks late probes / confirms on a destroyed instance. */
+let managementAlive = true;
+
+function forceReloadLatestConfig() {
+    if (!managementAlive) {
+        return;
+    }
+    void loadCurrentNetworkConfig({ force: true }).catch((reloadError) => {
+        if (!managementAlive) {
+            return;
+        }
+        console.error(reloadError);
+        toast.add({
+            severity: 'error',
+            summary: t('web.common.error'),
+            detail: t('web.device_management.load_config_failed') + ': ' + errorDetail(reloadError),
+            life: TOAST_LIFE.error,
+        });
+    });
+}
+
+/** One-click reload after CAS conflict; returns true when the dialog was shown. */
+function offerReloadOnRevisionConflict(error: unknown): boolean {
+    if (!managementAlive) {
+        return false;
+    }
+    const payload = Utils.extractApiErrorPayload(error);
+    if (Utils.classifyApiError(payload) !== 'revision_conflict') {
+        return false;
+    }
+    const revision = payload.current_config_revision?.trim();
+    const message = revision
+        ? t('web.device_management.confirm_reload_on_revision_conflict_with_rev', { revision })
+        : t('web.device_management.confirm_reload_on_revision_conflict');
+    confirm.require({
+        message,
+        header: t('web.common.error'),
+        icon: 'pi pi-refresh',
+        rejectProps: {
+            label: t('web.common.cancel'),
+            severity: 'secondary',
+            outlined: true,
+        },
+        acceptProps: {
+            label: t('web.device_management.reload_latest_config'),
+            severity: 'warning',
+        },
+        accept: () => forceReloadLatestConfig(),
+    });
+    return true;
+}
+
+/** Avoid spamming stale-server prompts while the same dirty draft is open. */
+let serverStaleNotifiedForBaseline: string | null = null;
+
+function offerReloadOnServerConfigUpdated() {
+    if (!managementAlive) {
+        return;
+    }
+    confirm.require({
+        message: t('web.device_management.confirm_reload_server_updated_while_dirty'),
+        header: t('web.common.warning'),
+        icon: 'pi pi-exclamation-triangle',
+        rejectProps: {
+            label: t('web.device_management.keep_editing'),
+            severity: 'secondary',
+            outlined: true,
+        },
+        acceptProps: {
+            label: t('web.device_management.reload_latest_config'),
+            severity: 'warning',
+        },
+        accept: () => forceReloadLatestConfig(),
+    });
+}
+
+async function refreshCleanConfigRevision(expectedGeneration: number) {
+    if (typeof props.api.get_managed_config_revision !== 'function') {
+        return;
+    }
+    try {
+        const revision = await props.api.get_managed_config_revision!();
+        if (!managementAlive || expectedGeneration !== configLoadGeneration) {
+            return;
+        }
+        cleanConfigRevision.value =
+            typeof revision === 'string' && revision.trim() ? revision.trim() : null;
+    } catch (e) {
+        console.debug('managed-config revision probe failed', e);
+    }
+}
+
+async function checkServerConfigStaleWhileDirty() {
+    if (!managementAlive || !isConfigDirty.value || !showConfigPanel.value) {
+        serverStaleNotifiedForBaseline = null;
+        return;
+    }
+    const selected = selectedInstanceId.value?.uuid;
+    const baselineSnap = cleanConfigSnapshot.value;
+    const probeGeneration = configLoadGeneration;
+    if (!selected || !baselineSnap || baselineSnap.startsWith('\0')) {
+        return;
+    }
+    const notifyKey = `${selected}:${cleanConfigRevision.value ?? baselineSnap}`;
+    if (serverStaleNotifiedForBaseline === notifyKey) {
+        return;
+    }
+
+    try {
+        // Prefer lightweight SQLite revision (no device RPC). Fall back to full config compare.
+        if (typeof props.api.get_managed_config_revision === 'function') {
+            const remoteRevision = await props.api.get_managed_config_revision!();
+            if (
+                !managementAlive
+                || probeGeneration !== configLoadGeneration
+                || selectedInstanceId.value?.uuid !== selected
+                || !isConfigDirty.value
+            ) {
+                return;
+            }
+            const remote =
+                typeof remoteRevision === 'string' && remoteRevision.trim()
+                    ? remoteRevision.trim()
+                    : null;
+            const baselineRev = cleanConfigRevision.value;
+            // Only compare when both sides have a revision; otherwise skip probe.
+            if (baselineRev && remote && remote !== baselineRev) {
+                serverStaleNotifiedForBaseline = notifyKey;
+                offerReloadOnServerConfigUpdated();
+            }
+            return;
+        }
+
+        const remote = await props.api.get_network_config(selected);
+        if (
+            !managementAlive
+            || probeGeneration !== configLoadGeneration
+            || selectedInstanceId.value?.uuid !== selected
+            || !isConfigDirty.value
+        ) {
+            return;
+        }
+        const remoteSnapshot = configDirtySnapshot(
+            captureNormalizedDirtySnapshot(remote).config,
+        );
+        if (remoteSnapshot === null || remoteSnapshot === baselineSnap) {
+            return;
+        }
+        serverStaleNotifiedForBaseline = notifyKey;
+        offerReloadOnServerConfigUpdated();
+    } catch (e) {
+        console.debug('stale-config probe failed', e);
+    }
+}
+
 const configFile = ref();
 
 const curNetworkInfo = ref<NetworkTypes.NetworkInstance | null>(null);
@@ -78,19 +234,27 @@ const isEditingNetwork = ref(false); // Flag to indicate if we're in network edi
 const currentNetworkConfig = ref<NetworkTypes.NetworkConfig | undefined>(undefined);
 /** Canonical dirty baseline; retaken after load / save / run refresh. */
 const cleanConfigSnapshot = ref<string | null>(null);
+/** Machine managed-config revision captured with the clean snapshot (web console). */
+const cleanConfigRevision = ref<string | null>(null);
 const isConfigDirty = ref(false);
 
 const applyLoadedNetworkConfig = (config: NetworkTypes.NetworkConfig) => {
     const { config: normalized, snapshot } = captureNormalizedDirtySnapshot(config);
     currentNetworkConfig.value = normalized;
     cleanConfigSnapshot.value = snapshot;
+    // Reset before async probe so a late previous-machine revision cannot linger.
+    cleanConfigRevision.value = null;
     isConfigDirty.value = false;
+    serverStaleNotifiedForBaseline = null;
+    void refreshCleanConfigRevision(configLoadGeneration);
 };
 
 const clearNetworkConfigDraft = () => {
     currentNetworkConfig.value = undefined;
     cleanConfigSnapshot.value = null;
+    cleanConfigRevision.value = null;
     isConfigDirty.value = false;
+    serverStaleNotifiedForBaseline = null;
 };
 
 watch(
@@ -412,24 +576,54 @@ watch(networkIsDisabled, async (newVal, oldVal) => {
 });
 
 let currentConfigLoad: { instanceId: string; promise: Promise<void> } | undefined;
+/** Bumped on every load (incl. force) so in-flight older responses cannot apply. */
+let configLoadGeneration = 0;
 
-const loadCurrentNetworkConfig = async () => {
+const loadCurrentNetworkConfig = async (opts?: { force?: boolean }) => {
     const selected = selectedInstanceId.value?.uuid;
     if (!selected) {
         clearNetworkConfigDraft();
         return;
     }
 
-    if (currentConfigLoad?.instanceId === selected) {
+    if (!opts?.force && currentConfigLoad?.instanceId === selected) {
         return currentConfigLoad.promise;
     }
+
+    const loadGeneration = ++configLoadGeneration;
 
     // Keep previous draft visible until the new config arrives (avoid blank flash).
     const promise = (async () => {
         const ret = await props.api.get_network_config(selected);
-        if (selectedInstanceId.value?.uuid === selected) {
-            applyLoadedNetworkConfig(ret);
+        if (loadGeneration !== configLoadGeneration) {
+            return;
         }
+        if (selectedInstanceId.value?.uuid !== selected) {
+            return;
+        }
+        // P1-1: do not silently overwrite an unsaved draft (unless force reload).
+        if (
+            !opts?.force
+            && isConfigDirty.value
+            && currentNetworkConfig.value?.instance_id === selected
+        ) {
+            const remoteSnapshot = configDirtySnapshot(
+                captureNormalizedDirtySnapshot(ret).config,
+            );
+            const baseline = cleanConfigSnapshot.value;
+            const notifyKey = `${selected}:${cleanConfigRevision.value ?? baseline}`;
+            if (
+                remoteSnapshot !== null
+                && baseline
+                && remoteSnapshot !== baseline
+                && serverStaleNotifiedForBaseline !== notifyKey
+            ) {
+                serverStaleNotifiedForBaseline = notifyKey;
+                offerReloadOnServerConfigUpdated();
+            }
+            return;
+        }
+        applyLoadedNetworkConfig(ret);
     })();
     currentConfigLoad = { instanceId: selected, promise };
     try {
@@ -463,8 +657,29 @@ const stopNetwork = async () => {
     }
 }
 
-/** ?????????????? */
-const startNetwork = async () => {
+/** Start a disabled network: may push console (SQLite) config onto the device. */
+const startNetwork = () => {
+    if (!selectedInstanceId.value) {
+        return;
+    }
+    confirm.require({
+        message: t('web.device_management.confirm_start_overwrite'),
+        header: t('web.device_management.start_network'),
+        icon: 'pi pi-exclamation-triangle',
+        rejectProps: {
+            label: t('web.common.cancel'),
+            severity: 'secondary',
+            outlined: true,
+        },
+        acceptProps: {
+            label: t('web.device_management.start_network'),
+            severity: 'success',
+        },
+        accept: () => { void doStartNetwork() },
+    });
+}
+
+const doStartNetwork = async () => {
     if (!selectedInstanceId.value) {
         return;
     }
@@ -632,7 +847,14 @@ const saveAndRunNewNetwork = async (config?: NetworkTypes.NetworkConfig) => {
         }
     } catch (e: any) {
         console.error(e);
-        toast.add({ severity: 'error', summary: t('web.common.error'), detail: t('web.device_management.start_failed') + ': ' + errorDetail(e), life: TOAST_LIFE.error });
+        if (!offerReloadOnRevisionConflict(e)) {
+            toast.add({
+                severity: 'error',
+                summary: t('web.common.error'),
+                detail: t('web.device_management.start_failed') + ': ' + errorDetail(e),
+                life: TOAST_LIFE.error,
+            });
+        }
         return;
     }
 
@@ -657,25 +879,26 @@ const confirmRunNetwork = (config?: NetworkTypes.NetworkConfig | Event) => {
     if (!cfg) {
         return;
     }
-    if (!networkIsDisabled.value && selectedNetworkRunning.value) {
-        confirm.require({
-            message: t('web.device_management.confirm_rerun_network'),
-            header: t('run_network'),
-            icon: 'pi pi-exclamation-triangle',
-            rejectProps: {
-                label: t('web.common.cancel'),
-                severity: 'secondary',
-                outlined: true,
-            },
-            acceptProps: {
-                label: t('run_network'),
-                severity: 'success',
-            },
-            accept: () => { void saveAndRunNewNetwork(cfg) },
-        });
-        return;
-    }
-    void saveAndRunNewNetwork(cfg);
+    const rerunning = !networkIsDisabled.value && selectedNetworkRunning.value;
+    confirm.require({
+        message: t(
+            rerunning
+                ? 'web.device_management.confirm_rerun_network'
+                : 'web.device_management.confirm_start_overwrite',
+        ),
+        header: t('run_network'),
+        icon: 'pi pi-exclamation-triangle',
+        rejectProps: {
+            label: t('web.common.cancel'),
+            severity: 'secondary',
+            outlined: true,
+        },
+        acceptProps: {
+            label: t('run_network'),
+            severity: 'success',
+        },
+        accept: () => { void saveAndRunNewNetwork(cfg) },
+    });
 }
 
 const saveNetworkConfig = async () => {
@@ -692,12 +915,14 @@ const saveNetworkConfig = async () => {
         applyLoadedNetworkConfig(currentNetworkConfig.value);
     } catch (e: any) {
         console.error(e);
-        toast.add({
-            severity: 'error',
-            summary: t('web.common.error'),
-            detail: t('web.device_management.save_failed') + ': ' + errorDetail(e),
-            life: TOAST_LIFE.error,
-        });
+        if (!offerReloadOnRevisionConflict(e)) {
+            toast.add({
+                severity: 'error',
+                summary: t('web.common.error'),
+                detail: t('web.device_management.save_failed') + ': ' + errorDetail(e),
+                life: TOAST_LIFE.error,
+            });
+        }
     } finally {
         savingConfig.value = false;
     }
@@ -712,12 +937,14 @@ const newNetwork = async () => {
         await loadNetworkInstanceIds();
     } catch (e) {
         console.error(e);
-        toast.add({
-            severity: 'error',
-            summary: t('web.common.error'),
-            detail: t('web.device_management.save_failed') + ': ' + errorDetail(e),
-            life: TOAST_LIFE.error,
-        });
+        if (!offerReloadOnRevisionConflict(e)) {
+            toast.add({
+                severity: 'error',
+                summary: t('web.common.error'),
+                detail: t('web.device_management.save_failed') + ': ' + errorDetail(e),
+                life: TOAST_LIFE.error,
+            });
+        }
     }
 }
 
@@ -727,7 +954,7 @@ const discardConfigChanges = async () => {
         return;
     }
     try {
-        await loadCurrentNetworkConfig();
+        await loadCurrentNetworkConfig({ force: true });
     } catch (e: any) {
         console.error(e);
         toast.add({
@@ -1014,6 +1241,14 @@ let periodFunc = new Utils.PeriodicTask(async () => {
         if (!isConfigMode.value) {
             jobs.push(loadCurrentNetworkInfo())
         }
+        // P1-1: while dirty, periodically probe whether the server baseline moved.
+        if (
+            isConfigDirty.value
+            && showConfigPanel.value
+            && (pollTick === 1 || pollTick % CONFIG_MODE_LIST_POLL_EVERY === 0)
+        ) {
+            jobs.push(checkServerConfigStaleWhileDirty())
+        }
         if (jobs.length) {
             await Promise.all(jobs)
         }
@@ -1023,10 +1258,13 @@ let periodFunc = new Utils.PeriodicTask(async () => {
 }, STATUS_POLL_MS);
 
 onMounted(async () => {
+    managementAlive = true;
     periodFunc.start();
 });
 
 onUnmounted(() => {
+    managementAlive = false;
+    ++configLoadGeneration; // invalidate in-flight load/probe apply
     periodFunc.stop();
 });
 

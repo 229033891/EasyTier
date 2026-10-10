@@ -70,6 +70,59 @@ export interface Summary {
     network_count: number;
 }
 
+export interface DiagnosticDetail {
+    code: string;
+    param?: string | null;
+}
+
+export interface DiagnosticCheck {
+    id: string;
+    status: string;
+    expected: string;
+    actual: string;
+    detail?: DiagnosticDetail | null;
+}
+
+export interface OverallSummary {
+    code: string;
+    params: string[];
+}
+
+export interface DiagnosticsSnapshot {
+    version: string;
+    api_listen: string;
+    config_server_port: number;
+    config_server_protocol: string;
+    config_server_listening: string[];
+    heartbeat_min_response_ms: number;
+    heartbeat_timeout_ms: number;
+    db_path: string;
+    console_log_level?: string | null;
+    file_log_dir?: string | null;
+    webhook_configured: boolean;
+    oidc_configured: boolean;
+}
+
+export interface SystemDiagnosticsResponse {
+    overall: string;
+    summary: OverallSummary;
+    generated_at: string;
+    checks: DiagnosticCheck[];
+    snapshot: DiagnosticsSnapshot;
+}
+
+export interface RuntimeLogLine {
+    ts: string;
+    level: string;
+    target: string;
+    message: string;
+}
+
+export interface RuntimeLogsResponse {
+    capacity: number;
+    lines: RuntimeLogLine[];
+}
+
 export interface ListNetworkInstanceIdResponse {
     running_inst_ids: Array<Utils.UUID>,
     disabled_inst_ids: Array<Utils.UUID>,
@@ -162,6 +215,16 @@ export class ApiClient {
 
     public async reset_user_password(id: number, new_password: string): Promise<void> {
         await this.client.put(`/users/${id}/password`, { new_password });
+    }
+
+    public async get_system_diagnostics(): Promise<SystemDiagnosticsResponse> {
+        return await this.client.get<any, SystemDiagnosticsResponse>('/admin/system-diagnostics');
+    }
+
+    public async get_runtime_logs(tail: number = 500): Promise<RuntimeLogsResponse> {
+        return await this.client.get<any, RuntimeLogsResponse>('/admin/logs', {
+            params: { tail },
+        });
     }
 
     public async list_config_tokens(): Promise<ConfigTokenInfo[]> {
@@ -420,6 +483,13 @@ class WebRemoteClient implements Api.RemoteClient {
             instance_ids: instance_ids
         });
         return response;
+    }
+    async get_managed_config_revision(): Promise<string | null> {
+        const response = await this.client.get<any, { config_revision?: string | null }>(
+            `/machines/${this.machine_id}/managed-config-revision`,
+        );
+        const revision = response?.config_revision;
+        return typeof revision === 'string' && revision.trim() ? revision : null;
     }
     async get_peer_conn_history(inst_id: string, hours: number): Promise<Api.PeerConnHistoryResponse | undefined> {
         const response = await this.client.get<any, Api.PeerConnHistoryResponse>(

@@ -1,8 +1,9 @@
 use std::{
+    collections::VecDeque,
     fmt::{self, Write as _},
     io::{self, IsTerminal, Write as _},
     sync::{
-        OnceLock,
+        Mutex, OnceLock,
         atomic::{AtomicU8, Ordering},
     },
     time::{SystemTime, UNIX_EPOCH},
@@ -57,6 +58,139 @@ macro_rules! __log__ {
 __log__!(const LOG_TARGET = "CORE");
 
 static LOGGER: OnceLock<Logger> = OnceLock::new();
+static MEMORY_BUFFER: OnceLock<MemoryLogBuffer> = OnceLock::new();
+
+const MEMORY_LOG_MESSAGE_MAX: usize = 2048;
+
+/// One line captured for in-process diagnostics (web console, etc.).
+#[derive(Debug, Clone)]
+pub struct MemoryLogLine {
+    pub ts: String,
+    pub level: String,
+    pub target: String,
+    pub message: String,
+}
+
+struct MemoryLogBuffer {
+    capacity: usize,
+    /// 内存缓冲**自己的**级别阈值，独立于 console/file。
+    /// 否则 `--console-log-level off/warn` 会把 Web 控制台的日志页一起清空。
+    level: LevelFilter,
+    lines: Mutex<VecDeque<MemoryLogLine>>,
+}
+
+impl MemoryLogBuffer {
+    fn new(capacity: usize, level: LevelFilter) -> Self {
+        let capacity = capacity.max(1);
+        Self {
+            capacity,
+            level,
+            lines: Mutex::new(VecDeque::with_capacity(capacity.min(1024))),
+        }
+    }
+
+    /// 该级别是否应进入内存缓冲。
+    fn accepts(&self, level: Level) -> bool {
+        level_is_enabled(level_rank(self.level), level)
+    }
+
+    fn push(&self, ts: String, level: Level, target: &str, message: &str) {
+        // 截断必须按**字符**计数：`message.len()` 是字节数，而中文 1 字 = 3 字节，
+        // 用字节判断会让「截断后反而更长」。短消息（字节 <= 上限 ⇒ 字符必 <= 上限）走快路径。
+        let message = if message.len() <= MEMORY_LOG_MESSAGE_MAX {
+            message.to_string()
+        } else {
+            let mut chars = message.chars();
+            let truncated: String = chars.by_ref().take(MEMORY_LOG_MESSAGE_MAX).collect();
+            if chars.next().is_some() {
+                format!("{truncated}…")
+            } else {
+                truncated
+            }
+        };
+        let line = MemoryLogLine {
+            ts,
+            level: level.to_string().to_ascii_uppercase(),
+            target: target.to_string(),
+            message,
+        };
+        let Ok(mut guard) = self.lines.lock() else {
+            return;
+        };
+        if guard.len() >= self.capacity {
+            guard.pop_front();
+        }
+        guard.push_back(line);
+    }
+
+    fn snapshot(&self, tail: usize) -> (usize, Vec<MemoryLogLine>) {
+        let Ok(guard) = self.lines.lock() else {
+            return (0, Vec::new());
+        };
+        let capacity = self.capacity;
+        if tail == 0 || guard.is_empty() {
+            return (capacity, Vec::new());
+        }
+        let start = guard.len().saturating_sub(tail);
+        (capacity, guard.iter().skip(start).cloned().collect())
+    }
+}
+
+fn memory_buffer_level() -> LevelFilter {
+    MEMORY_BUFFER
+        .get()
+        .map(|buf| buf.level)
+        .unwrap_or(LevelFilter::Off)
+}
+
+/// Raise `log::max_level` / `active_max_level` so the `log` facade and tracing
+/// `max_level_hint` do not filter out lines the memory buffer still wants.
+fn refresh_dispatch_max_level() {
+    let Some(logger) = LOGGER.get() else {
+        return;
+    };
+    let max = logger.max_level();
+    logger
+        .active_max_level
+        .store(level_rank(max), Ordering::Release);
+    log::set_max_level(max);
+}
+
+/// Enable a process-local ring buffer of recent log lines (idempotent first-wins).
+///
+/// 默认以 `INFO` 作为缓冲**自己的**级别阈值 —— 刻意与 console/file 解耦，
+/// 这样 `--console-log-level off`（或 `warn`）不会让 Web 控制台的日志页变成空白。
+///
+/// 启用后会抬升全局 `log::max_level` / tracing hint，否则 facade 在 console 为
+/// `warn`/`off` 时根本不会把 INFO 送到 `enabled()`/`emit()`。
+pub fn enable_memory_buffer(capacity: usize) -> anyhow::Result<()> {
+    enable_memory_buffer_with_level(capacity, LevelFilter::Info)
+}
+
+/// 同 [`enable_memory_buffer`]，但显式指定缓冲的级别阈值。
+pub fn enable_memory_buffer_with_level(
+    capacity: usize,
+    level: LevelFilter,
+) -> anyhow::Result<()> {
+    if MEMORY_BUFFER.get().is_some() {
+        return Ok(()); // already enabled (first wins)
+    }
+    match MEMORY_BUFFER.set(MemoryLogBuffer::new(capacity, level)) {
+        Ok(()) => {
+            refresh_dispatch_max_level();
+            Ok(())
+        }
+        Err(_) => Ok(()), // raced with another caller; first wins
+    }
+}
+
+/// Return up to `tail` most recent lines from the memory buffer (empty if disabled).
+pub fn snapshot_memory_logs(tail: usize) -> (usize, Vec<MemoryLogLine>) {
+    MEMORY_BUFFER
+        .get()
+        .map(|buf| buf.snapshot(tail))
+        .unwrap_or((0, Vec::new()))
+}
 
 pub fn init_console() -> anyhow::Result<()> {
     install(Logger::new(
@@ -95,7 +229,12 @@ fn install(logger: Logger) -> anyhow::Result<()> {
     let logger = LOGGER.get().expect("logger was just initialized");
 
     log::set_logger(logger).map_err(|_| anyhow::anyhow!("a log logger is already installed"))?;
-    log::set_max_level(logger.max_level());
+    // Include memory-buffer level when present (enable-before-init or same process).
+    let max = logger.max_level();
+    logger
+        .active_max_level
+        .store(level_rank(max), Ordering::Release);
+    log::set_max_level(max);
     tracing_backend::install(logger).context("failed to install tracing subscriber")
 }
 
@@ -228,6 +367,14 @@ impl Logger {
     }
 
     fn enabled(&self, target: &str, level: Level) -> bool {
+        // ⚠️ 内存缓冲必须在**这里**放行，不能只在 `emit()` 里判断：
+        // `log` crate 在 `enabled()` 返回 false 时直接跳过，**根本不会**调用 `log()`/`emit()`。
+        // 所以缓冲有自己的级别阈值（默认 INFO），与 console/file 无关。
+        if let Some(buf) = MEMORY_BUFFER.get() {
+            if buf.accepts(level) {
+                return true;
+            }
+        }
         level_is_enabled(self.active_max_level.load(Ordering::Acquire), level)
             && (self.console_enabled(target, level) || self.file.enabled(target, level))
     }
@@ -237,13 +384,18 @@ impl Logger {
     }
 
     fn max_level(&self) -> LevelFilter {
-        self.console.max_level().max(self.file.max_level())
+        self.console
+            .max_level()
+            .max(self.file.max_level())
+            .max(memory_buffer_level())
     }
 
     fn emit(&self, level: Level, target: &str, message: &str) {
         let console_enabled = self.console_enabled(target, level);
         let file_enabled = self.file.enabled(target, level);
-        if !console_enabled && !file_enabled {
+        let memory = MEMORY_BUFFER.get();
+        let memory_enabled = memory.is_some_and(|buf| buf.accepts(level));
+        if !console_enabled && !file_enabled && !memory_enabled {
             return;
         }
 
@@ -260,11 +412,20 @@ impl Logger {
         if file_enabled {
             self.file.emit(&timestamp, level, target, message);
         }
+
+        if let Some(buf) = memory {
+            if buf.accepts(level) {
+                buf.push(timestamp, level, target, message);
+            }
+        }
     }
 
     fn set_file_level(&self, level: LevelFilter) -> anyhow::Result<()> {
+        // `set_level` 的第二参是与 file 合并进 active max 的「另一侧」；
+        // 必须把 memory buffer 级别算进去，否则 reload 文件级别会把全局 max 压回去。
+        let other = self.console.max_level().max(memory_buffer_level());
         self.file
-            .set_level(level, self.console.max_level(), &self.active_max_level)
+            .set_level(level, other, &self.active_max_level)
     }
 
     fn file_level(&self) -> LevelFilter {

@@ -1,4 +1,5 @@
 mod admin_config_tokens;
+mod admin_diagnostics;
 mod admin_users;
 mod auth;
 pub(crate) mod captcha;
@@ -44,8 +45,11 @@ pub struct RestfulServer {
     webhook_config: SharedWebhookConfig,
     db: Db,
     oidc_config: oidc::OidcConfig,
+    diagnostics: Arc<admin_diagnostics::DiagnosticsState>,
     web_router: Option<Router>,
 }
+
+pub use admin_diagnostics::{DiagnosticsState, RuntimeIntentSnapshot};
 
 type AppStateInner = Arc<ClientManager>;
 type AppState = State<AppStateInner>;
@@ -182,6 +186,7 @@ impl RestfulServer {
         feature_flags: Arc<FeatureFlags>,
         oidc_config: oidc::OidcConfig,
         webhook_config: SharedWebhookConfig,
+        diagnostics: Arc<admin_diagnostics::DiagnosticsState>,
     ) -> anyhow::Result<Self> {
         assert!(client_mgr.is_running());
 
@@ -192,6 +197,7 @@ impl RestfulServer {
             webhook_config,
             db,
             oidc_config,
+            diagnostics,
             web_router,
         })
     }
@@ -486,6 +492,7 @@ impl RestfulServer {
             .merge(auth::router())
             .merge(admin_users::router())
             .merge(admin_config_tokens::router())
+            .merge(admin_diagnostics::router())
             .merge(oidc::router())
             .with_state(self.client_mgr.clone())
             .route(
@@ -493,6 +500,7 @@ impl RestfulServer {
                 post(Self::handle_generate_config),
             )
             .route("/api/v1/parse-config", post(Self::handle_parse_config))
+            .layer(Extension(self.diagnostics.clone()))
             .layer(Extension(self.oidc_config.clone()))
             .layer(Extension(self.db.clone()))
             .layer(MessagesManagerLayer)

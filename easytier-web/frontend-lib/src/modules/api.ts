@@ -112,6 +112,12 @@ export interface RemoteClient {
     parse_config(toml_config: string): Promise<ParseConfigResponse>;
     get_network_metas(instance_ids: string[]): Promise<GetNetworkMetasResponse>;
     /**
+     * Machine-scoped managed config revision (console SQLite).
+     * Optional: web console implements it for dirty-draft staleness probes;
+     * GUI direct mode typically omits it.
+     */
+    get_managed_config_revision?(): Promise<string | null | undefined>;
+    /**
      * 对端连接历史（延迟 / 丢包 / 抖动 / 流量趋势）。
      *
      * 只有「配置服务器」形态的实现（web 控制台）才有历史表可查，

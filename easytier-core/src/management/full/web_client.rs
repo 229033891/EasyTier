@@ -38,6 +38,13 @@ const RETRY_INTERVAL: std::time::Duration = std::time::Duration::from_secs(1);
 const MAX_RETRY_INTERVAL: std::time::Duration = std::time::Duration::from_secs(30);
 // Keep retry ownership in this loop when transport or protocol handshakes stall.
 const CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
+/// Secure-mode second dial (after GetFeature). Must cover scheme-fallback
+/// budgets (`SCHEME_FALLBACK_ATTEMPT_TIMEOUT` × 2) plus margin; progress is
+/// surfaced via `mark_connecting_detail`, not by starving the dialer.
+const SECURE_REDIAL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
+/// Per-candidate budget when `udp↔tcp` fallback runs inside one dialer call.
+/// Two attempts stay under [`CONNECT_TIMEOUT`] so the outer wrapper remains a net.
+const SCHEME_FALLBACK_ATTEMPT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(9);
 const FEATURE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(3);
 const DEFAULT_HEARTBEAT_INTERVAL_MS: u32 = 3_500;
 const DEFAULT_HEARTBEAT_TIMEOUT_MS: u32 = 15_000;
@@ -66,6 +73,20 @@ fn next_backoff(current: std::time::Duration) -> std::time::Duration {
         .checked_mul(2)
         .unwrap_or(MAX_RETRY_INTERVAL)
         .min(MAX_RETRY_INTERVAL)
+}
+
+/// Brief delay after a healthy session ends, with mild escalation + jitter.
+///
+/// `streak` counts consecutive session-end reconnects since the last fully
+/// established session; capped so flapping servers do not wait forever.
+fn session_end_reconnect_delay(streak: u32) -> std::time::Duration {
+    let steps = streak.saturating_sub(1).min(3); // 1s, 2s, 4s, 8s
+    let mut base = RETRY_INTERVAL;
+    for _ in 0..steps {
+        base = next_backoff(base);
+    }
+    let jitter_ms = u64::from(rand::random::<u16>() % 1_001); // 0..=1000ms
+    base + std::time::Duration::from_millis(jitter_ms)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -169,6 +190,99 @@ impl ConfigServerEndpoint {
     pub fn token(&self) -> &str {
         &self.token
     }
+}
+
+/// Ordered dial URLs for config-server: configured scheme first, then udp↔tcp.
+///
+/// When `preferred_scheme` matches a candidate (e.g. last successful fallback),
+/// that candidate is tried first to avoid re-paying the failing primary cost.
+///
+/// `ws` / `wss` / `ring` and other schemes are left unchanged (no automatic rewrite).
+pub fn config_server_dial_candidates(primary: &Url, preferred_scheme: Option<&str>) -> Vec<Url> {
+    let mut urls = vec![primary.clone()];
+    if let Some(alternate) = config_server_scheme_alternate(primary) {
+        if !urls.iter().any(|url| url == &alternate) {
+            urls.push(alternate);
+        }
+    }
+    if let Some(preferred) = preferred_scheme {
+        if let Some(index) = urls.iter().position(|url| url.scheme() == preferred) {
+            let chosen = urls.remove(index);
+            urls.insert(0, chosen);
+        }
+    }
+    urls
+}
+
+fn config_server_scheme_alternate(url: &Url) -> Option<Url> {
+    let scheme = match url.scheme() {
+        "udp" => "tcp",
+        "tcp" => "udp",
+        _ => return None,
+    };
+    let mut next = url.clone();
+    next.set_scheme(scheme).ok()?;
+    Some(next)
+}
+
+/// Dial result: tunnel plus the URL scheme that actually connected (for sticky preference).
+pub struct ConfigServerDialOutcome {
+    pub tunnel: Box<dyn Tunnel>,
+    pub connected_url: Url,
+}
+
+/// Dial `primary` (or sticky preferred scheme), then the udp↔tcp alternate on failure.
+pub async fn dial_config_server_with_scheme_fallback<F, Fut>(
+    primary: &Url,
+    preferred_scheme: Option<&str>,
+    mut dial: F,
+) -> anyhow::Result<ConfigServerDialOutcome>
+where
+    F: FnMut(Url) -> Fut,
+    Fut: std::future::Future<Output = anyhow::Result<Box<dyn Tunnel>>>,
+{
+    let candidates = config_server_dial_candidates(primary, preferred_scheme);
+    let split_budget = candidates.len() > 1;
+    let mut errors = Vec::with_capacity(candidates.len());
+
+    for url in candidates {
+        let attempt = dial(url.clone());
+        let result = if split_budget {
+            match time::timeout(SCHEME_FALLBACK_ATTEMPT_TIMEOUT, attempt).await {
+                Ok(inner) => inner,
+                Err(_) => Err(anyhow::anyhow!(
+                    "timed out after {SCHEME_FALLBACK_ATTEMPT_TIMEOUT:?}"
+                )),
+            }
+        } else {
+            attempt.await
+        };
+
+        match result {
+            Ok(tunnel) => {
+                if url.scheme() != primary.scheme() {
+                    tracing::info!(
+                        configured = %primary,
+                        active = %url,
+                        "config-server connected via scheme fallback"
+                    );
+                }
+                return Ok(ConfigServerDialOutcome {
+                    tunnel,
+                    connected_url: url,
+                });
+            }
+            Err(error) => {
+                tracing::warn!(%url, %error, "config-server dial candidate failed");
+                errors.push(format!("{url}: {error}"));
+            }
+        }
+    }
+
+    anyhow::bail!(
+        "config-server connection failed for all dial candidates: {}",
+        errors.join("; ")
+    )
 }
 
 pub struct WebClientConfig {
@@ -585,6 +699,7 @@ async fn web_client_routine(
     connector: Box<dyn TunnelDialer>,
 ) {
     let mut backoff = RETRY_INTERVAL;
+    let mut session_end_streak: u32 = 0;
     loop {
         let connection = match connect_config_server(connector.as_ref(), CONNECT_TIMEOUT).await {
             // Do NOT reset `backoff` here. A plain dial can keep succeeding while
@@ -610,7 +725,8 @@ async fn web_client_routine(
         // optional secure upgrade succeed. Do not report connected yet — otherwise
         // the UI flashes "已连接" before GetFeature or the secure handshake fails.
         config_server_status::record_tunnel_remote(connection.info().as_ref());
-        config_server_status::clear_last_error();
+        // Stable phase codes (not prose): GUI may i18n; raw string remains readable.
+        config_server_status::mark_connecting_detail("phase:negotiating_features");
         connected.store(false, Ordering::Release);
         tracing::info!(?connection, "dialed config server; negotiating session");
         let mut session = WebClientSession::new(connection, controller.clone());
@@ -628,23 +744,31 @@ async fn web_client_routine(
 
         if support_encryption && web_security::web_secure_tunnel_supported() {
             drop(session);
-            let connection = match connect_config_server(connector.as_ref(), CONNECT_TIMEOUT).await
-            {
-                Ok(connection) => connection,
-                Err(error) => {
-                    connected.store(false, Ordering::Release);
-                    config_server_status::mark_error(error.to_string());
-                    tracing::warn!(
-                        %error,
-                        retry_in_ms = backoff.as_millis(),
-                        "failed to reconnect secure config-server tunnel"
-                    );
-                    time::sleep(backoff).await;
-                    backoff = next_backoff(backoff);
-                    continue;
-                }
-            };
+            config_server_status::mark_connecting_detail("phase:secure_redial");
+            tracing::info!(
+                timeout_ms = SECURE_REDIAL_TIMEOUT.as_millis(),
+                "config-server secure upgrade: re-dialing underlay"
+            );
+            let connection =
+                match connect_config_server(connector.as_ref(), SECURE_REDIAL_TIMEOUT).await {
+                    Ok(connection) => connection,
+                    Err(error) => {
+                        connected.store(false, Ordering::Release);
+                        let message = format!("secure_redial_failed: {error}");
+                        config_server_status::mark_error(message.clone());
+                        tracing::warn!(
+                            %error,
+                            retry_in_ms = backoff.as_millis(),
+                            "failed to reconnect secure config-server tunnel"
+                        );
+                        time::sleep(backoff).await;
+                        backoff = next_backoff(backoff);
+                        continue;
+                    }
+                };
             config_server_status::record_tunnel_remote(connection.info().as_ref());
+            config_server_status::mark_connecting_detail("phase:secure_handshake");
+            tracing::info!("config-server secure upgrade: starting handshake");
             let connection = match web_security::upgrade_client_tunnel(connection).await {
                 Ok(connection) => {
                     backoff = RETRY_INTERVAL;
@@ -652,7 +776,8 @@ async fn web_client_routine(
                 }
                 Err(error) => {
                     connected.store(false, Ordering::Release);
-                    config_server_status::mark_error(error.to_string());
+                    let message = format!("secure_handshake_failed: {error}");
+                    config_server_status::mark_error(message.clone());
                     tracing::warn!(
                         %error,
                         retry_in_ms = backoff.as_millis(),
@@ -667,18 +792,22 @@ async fn web_client_routine(
             let mut session = WebClientSession::new(connection, controller.clone());
             connected.store(true, Ordering::Release);
             config_server_status::mark_connected();
+            session_end_streak = 0;
             tracing::info!("connected to config server (secure tunnel)");
             session.start_heartbeat().await;
             session.wait().await;
             connected.store(false, Ordering::Release);
             config_server_status::mark_disconnected();
             // Successful session ended (server close / network drop). Back off
-            // before hot-reconnecting to avoid a reconnect storm.
+            // with mild escalation + jitter before hot-reconnecting.
+            session_end_streak = session_end_streak.saturating_add(1);
+            let delay = session_end_reconnect_delay(session_end_streak);
             tracing::info!(
-                retry_in_ms = RETRY_INTERVAL.as_millis(),
+                retry_in_ms = delay.as_millis(),
+                session_end_streak,
                 "config-server session ended; reconnecting after backoff"
             );
-            time::sleep(RETRY_INTERVAL).await;
+            time::sleep(delay).await;
             continue;
         }
 
@@ -712,16 +841,20 @@ async fn web_client_routine(
         config_server_status::mark_connected();
         // Session is up: this is the point where exponential backoff resets.
         backoff = RETRY_INTERVAL;
+        session_end_streak = 0;
         tracing::info!("connected to config server");
         session.start_heartbeat().await;
         session.wait().await;
         connected.store(false, Ordering::Release);
         config_server_status::mark_disconnected();
+        session_end_streak = session_end_streak.saturating_add(1);
+        let delay = session_end_reconnect_delay(session_end_streak);
         tracing::info!(
-            retry_in_ms = RETRY_INTERVAL.as_millis(),
+            retry_in_ms = delay.as_millis(),
+            session_end_streak,
             "config-server session ended; reconnecting after backoff"
         );
-        time::sleep(RETRY_INTERVAL).await;
+        time::sleep(delay).await;
     }
 }
 
@@ -1079,6 +1212,111 @@ mod tests {
     #[test]
     fn endpoint_rejects_an_empty_token() {
         assert!(ConfigServerEndpoint::parse("udp://example.com", |_| true).is_err());
+    }
+
+    #[test]
+    fn session_end_reconnect_delay_escalates_with_streak() {
+        let first = session_end_reconnect_delay(1);
+        assert!(first >= RETRY_INTERVAL);
+        assert!(first <= RETRY_INTERVAL + std::time::Duration::from_secs(1));
+
+        let fourth = session_end_reconnect_delay(4);
+        // streak 4 → 3 doublings → 8s base + jitter
+        assert!(fourth >= std::time::Duration::from_secs(8));
+        assert!(fourth <= std::time::Duration::from_secs(9));
+    }
+
+    #[test]
+    fn dial_candidates_add_udp_tcp_alternate_only() {
+        let udp: Url = "udp://example.com:22020".parse().unwrap();
+        let tcp: Url = "tcp://example.com:22020".parse().unwrap();
+        let ws: Url = "ws://example.com:22020/team".parse().unwrap();
+        let ring: Url = "ring://example.com/team".parse().unwrap();
+
+        assert_eq!(
+            config_server_dial_candidates(&udp, None)
+                .iter()
+                .map(|u| u.scheme().to_owned())
+                .collect::<Vec<_>>(),
+            vec!["udp", "tcp"]
+        );
+        assert_eq!(
+            config_server_dial_candidates(&tcp, None)
+                .iter()
+                .map(|u| u.scheme().to_owned())
+                .collect::<Vec<_>>(),
+            vec!["tcp", "udp"]
+        );
+        assert_eq!(
+            config_server_dial_candidates(&tcp, Some("udp"))
+                .iter()
+                .map(|u| u.scheme().to_owned())
+                .collect::<Vec<_>>(),
+            vec!["udp", "tcp"]
+        );
+        assert_eq!(config_server_dial_candidates(&ws, None), vec![ws]);
+        assert_eq!(config_server_dial_candidates(&ring, None), vec![ring]);
+    }
+
+    #[tokio::test]
+    async fn scheme_fallback_dials_alternate_after_primary_fails() {
+        let primary: Url = "tcp://example.com:22020".parse().unwrap();
+        let tried = std::sync::Arc::new(StdMutex::new(Vec::new()));
+        let tried_for_dial = tried.clone();
+
+        let outcome = dial_config_server_with_scheme_fallback(&primary, None, |url| {
+            let tried = tried_for_dial.clone();
+            async move {
+                tried.lock().unwrap().push(url.scheme().to_owned());
+                if url.scheme() == "tcp" {
+                    anyhow::bail!("connection refused");
+                }
+                let (tunnel, _peer) = create_ring_tunnel_pair();
+                Ok(tunnel)
+            }
+        })
+        .await
+        .expect("udp fallback should succeed");
+
+        assert_eq!(outcome.connected_url.scheme(), "udp");
+        drop(outcome.tunnel);
+        assert_eq!(*tried.lock().unwrap(), vec!["tcp", "udp"]);
+    }
+
+    #[tokio::test]
+    async fn scheme_fallback_prefers_sticky_scheme_first() {
+        let primary: Url = "tcp://example.com:22020".parse().unwrap();
+        let tried = std::sync::Arc::new(StdMutex::new(Vec::new()));
+        let tried_for_dial = tried.clone();
+
+        let outcome = dial_config_server_with_scheme_fallback(&primary, Some("udp"), |url| {
+            let tried = tried_for_dial.clone();
+            async move {
+                tried.lock().unwrap().push(url.scheme().to_owned());
+                let (tunnel, _peer) = create_ring_tunnel_pair();
+                Ok(tunnel)
+            }
+        })
+        .await
+        .unwrap();
+
+        assert_eq!(outcome.connected_url.scheme(), "udp");
+        assert_eq!(*tried.lock().unwrap(), vec!["udp"]);
+    }
+
+    #[tokio::test]
+    async fn scheme_fallback_reports_all_candidate_errors() {
+        let primary: Url = "udp://example.com:22020".parse().unwrap();
+        let error = dial_config_server_with_scheme_fallback(&primary, None, |url| async move {
+            anyhow::bail!("{} unavailable", url.scheme())
+        })
+        .await
+        .unwrap_err()
+        .to_string();
+
+        assert!(error.contains("all dial candidates"));
+        assert!(error.contains("udp://"));
+        assert!(error.contains("tcp://"));
     }
 
     #[test]

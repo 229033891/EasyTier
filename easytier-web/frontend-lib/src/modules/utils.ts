@@ -150,6 +150,7 @@ export type ApiErrorKind =
     | 'not_found'
     | 'revision_conflict'
     | 'ownership_conflict'
+    | 'validation'
     | 'unauthorized'
     | 'db_error'
     | 'internal_error'
@@ -162,6 +163,8 @@ export type ApiErrorKind =
 export interface ApiErrorPayload {
     message: string
     code?: string
+    /** Present on managed-config revision conflicts (CAS). */
+    current_config_revision?: string
 }
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
@@ -200,6 +203,10 @@ export function extractApiErrorPayload(error: unknown): ApiErrorPayload {
                         return {
                             message,
                             code: readStringField(record, 'code'),
+                            current_config_revision: readStringField(
+                                record,
+                                'current_config_revision',
+                            ),
                         }
                     }
                 } catch {
@@ -215,6 +222,10 @@ export function extractApiErrorPayload(error: unknown): ApiErrorPayload {
             return {
                 message,
                 code: readStringField(record, 'code'),
+                current_config_revision: readStringField(
+                    record,
+                    'current_config_revision',
+                ),
             }
         }
     }
@@ -247,6 +258,13 @@ export function classifyApiError(payload: ApiErrorPayload): ApiErrorKind {
             return 'revision_conflict'
         case 'managed_config_ownership_conflict':
             return 'ownership_conflict'
+        case 'managed_config_invalid':
+            return 'validation'
+        // `restful/auth.rs` emits this exact code; without it the message
+        // fallback below never matches "Not authenticated" and the raw English
+        // string leaks into the UI.
+        case 'unauthorized':
+            return 'unauthorized'
         case 'db_error':
             return 'db_error'
         case 'internal_error':
@@ -272,7 +290,7 @@ export function classifyApiError(payload: ApiErrorPayload): ApiErrorKind {
     if (/client not found/i.test(message)) {
         return 'client_not_found'
     }
-    if (/unauthorized|not logged in|no such user/i.test(message)) {
+    if (/unauthorized|not authenticated|not logged in|no such user/i.test(message)) {
         return 'unauthorized'
     }
     if (/revision conflict|config revision/i.test(message)) {
@@ -284,7 +302,7 @@ export function classifyApiError(payload: ApiErrorPayload): ApiErrorKind {
     return 'unknown'
 }
 
-const API_ERROR_I18N_KEYS: Record<Exclude<ApiErrorKind, 'unknown'>, string> = {
+const API_ERROR_I18N_KEYS: Record<Exclude<ApiErrorKind, 'unknown' | 'validation'>, string> = {
     timeout: 'web.device_management.error_timeout',
     client_not_found: 'web.device_management.error_device_offline',
     not_found: 'web.device_management.error_not_found',
@@ -306,6 +324,13 @@ export function formatApiErrorDetail(
 ): string {
     const payload = extractApiErrorPayload(error)
     const kind = classifyApiError(payload)
+    // Prefer server validation text (already actionable); fall back to i18n.
+    if (kind === 'validation') {
+        return (
+            payload.message.trim()
+            || t('web.device_management.error_validation')
+        )
+    }
     if (kind !== 'unknown') {
         return t(API_ERROR_I18N_KEYS[kind])
     }

@@ -231,6 +231,8 @@ export interface ConfigServerStatus {
   enabled: boolean
   connected: boolean
   lastError: string
+  /** Non-fatal handshake progress (`phase:*`); not a failure. */
+  connectingDetail?: string
 }
 
 export async function getConfigServerStatus() {

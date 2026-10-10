@@ -19,7 +19,8 @@ use crate::{
     host::{dns::HostDnsResolver, management::HostManagementClient, socket::HostSocketRuntime},
     management::{
         ConfigServerEndpoint, ManagementRpcForwarder, WebClient, WebClientBackend, WebClientConfig,
-        config_source_from_rpc, register_forwarded_instance_management_rpc,
+        config_source_from_rpc, dial_config_server_with_scheme_fallback,
+        register_forwarded_instance_management_rpc,
     },
     process_runtime::CoreProcessRuntime,
     proto::{
@@ -139,14 +140,29 @@ fn hosted_network_config(config: &NetworkConfig) -> NetworkConfig {
 struct WasiConfigServerConnector {
     url: Url,
     connector: ManualTunnelConnector<WasiConnectorHost>,
+    preferred_scheme: std::sync::Mutex<Option<String>>,
 }
 
 #[async_trait]
 impl TunnelDialer for WasiConfigServerConnector {
     async fn connect(&self) -> anyhow::Result<Box<dyn Tunnel>> {
-        self.connector
-            .connect(self.url.clone(), IpVersion::Both)
-            .await
+        let preferred = self
+            .preferred_scheme
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone();
+        let outcome = dial_config_server_with_scheme_fallback(
+            &self.url,
+            preferred.as_deref(),
+            |url| self.connector.connect(url, IpVersion::Both),
+        )
+        .await?;
+        *self
+            .preferred_scheme
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) =
+            Some(outcome.connected_url.scheme().to_owned());
+        Ok(outcome.tunnel)
     }
 
     fn remote_url(&self) -> Url {
@@ -342,6 +358,7 @@ impl WasiWebClientRuntime {
                 WasiConfigServerConnector {
                     url: endpoint.connect_url().clone(),
                     connector,
+                    preferred_scheme: std::sync::Mutex::new(None),
                 },
                 WebClientConfig {
                     token: endpoint.token().to_owned(),

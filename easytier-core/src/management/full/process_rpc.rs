@@ -817,10 +817,16 @@ where
         } else {
             status.last_error.unwrap_or_default()
         };
+        let connecting_detail = if connected {
+            String::new()
+        } else {
+            status.connecting_detail.unwrap_or_default()
+        };
         Ok(GetConfigServerStatusResponse {
             enabled: report.is_some() || status.enabled,
             connected,
             last_error,
+            connecting_detail,
         })
     }
 

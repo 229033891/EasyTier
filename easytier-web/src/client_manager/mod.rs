@@ -1,9 +1,15 @@
 #[cfg(test)]
 mod listener_tests;
 mod managed_config;
+mod rpc_timeout;
 mod runtime_reconcile;
 pub mod session;
 pub mod storage;
+
+pub(crate) use rpc_timeout::{
+    MANAGED_RPC_FAST_TIMEOUT_MS, MANAGED_RPC_SLOW_TIMEOUT_MS, proxy_rpc_timeout_ms,
+    rpc_controller, slow_rpc_controller,
+};
 
 use std::time::Duration;
 use std::{
@@ -17,13 +23,20 @@ use std::{
 use dashmap::DashMap;
 use easytier::common::config::{ConfigSource, config_source_from_rpc};
 use easytier::proto::{
-    api::manage::{GetNetworkInstanceConfigRequest, NetworkConfig, WebClientService},
+    api::manage::{
+        CollectNetworkInfoRequest, CollectNetworkInfoResponse, DeleteNetworkInstanceRequest,
+        GetNetworkInstanceConfigRequest, ListNetworkInstanceRequest, NetworkConfig,
+        RunNetworkInstanceRequest, WebClientService,
+    },
     rpc_types::controller::BaseController,
     web::{HeartbeatRequest, HeartbeatResponse},
 };
 use easytier_core::{
-    management::remote_client::{
-        self, PersistentConfig as _, RemoteClientError, RemoteClientManager, Storage as _,
+    management::{
+        config_source_to_rpc,
+        remote_client::{
+            self, PersistentConfig as _, RemoteClientError, RemoteClientManager, Storage as _,
+        },
     },
     socket::SocketListener,
     tunnel::{Tunnel, web_security},
@@ -134,6 +147,11 @@ pub struct ClientManager {
 
     listeners_cnt: Arc<AtomicU32>,
     next_session_epoch: Arc<AtomicU64>,
+    /// 已成功 `listen()` 的 config-server 协议（如 udp/tcp）→ 引用计数。
+    /// 用计数而非 Set：同一协议可能同时存在 v4/v6 两个 listener，退出一个不能整体注销。
+    config_listener_schemes: Arc<DashMap<String, usize>>,
+    /// 已成功绑定的 config-server 端口 → 引用计数（同上）。
+    config_listener_ports: Arc<DashMap<u16, usize>>,
 
     pub(crate) client_sessions: Arc<DashMap<url::Url, Arc<Session>>>,
     storage: Storage,
@@ -167,6 +185,8 @@ impl ClientManager {
 
             listeners_cnt: Arc::new(AtomicU32::new(0)),
             next_session_epoch: Arc::new(AtomicU64::new(0)),
+            config_listener_schemes: Arc::new(DashMap::new()),
+            config_listener_ports: Arc::new(DashMap::new()),
 
             client_sessions,
             storage: Storage::new(db),
@@ -200,6 +220,14 @@ impl ClientManager {
     ) -> Result<url::Url, anyhow::Error> {
         listener.listen().await?;
         let local_url = listener.local_url();
+        let scheme = local_url.scheme().to_ascii_lowercase();
+        let port = local_url
+            .port()
+            .or_else(|| local_url.port_or_known_default());
+        *self.config_listener_schemes.entry(scheme.clone()).or_insert(0) += 1;
+        if let Some(p) = port {
+            *self.config_listener_ports.entry(p).or_insert(0) += 1;
+        }
         self.listeners_cnt.fetch_add(1, Ordering::Relaxed);
         let sessions = self.client_sessions.clone();
         let storage = self.storage.weak_ref();
@@ -209,6 +237,8 @@ impl ClientManager {
         let heartbeat_policy = self.heartbeat_policy;
         let feature_flags = self.feature_flags.clone();
         let webhook_config = self.webhook_config.clone();
+        let schemes_ref = self.config_listener_schemes.clone();
+        let ports_ref = self.config_listener_ports.clone();
         self.tasks.spawn(async move {
             let mut handshakes = JoinSet::new();
             'accept: loop {
@@ -263,6 +293,12 @@ impl ClientManager {
                 }
             }
             listeners_cnt.fetch_sub(1, Ordering::Relaxed);
+            // accept loop 退出 → 注销该 listener 占用的 scheme/port
+            // （引用计数减到 0 才真正移除），否则诊断页会一直显示「在监听」，形成假绿。
+            Self::dec_ref(&schemes_ref, &scheme);
+            if let Some(p) = port {
+                Self::dec_ref(&ports_ref, &p);
+            }
         });
 
         Ok(local_url)
@@ -270,6 +306,52 @@ impl ClientManager {
 
     pub fn is_running(&self) -> bool {
         self.listeners_cnt.load(Ordering::Relaxed) > 0
+    }
+
+    /// Schemes of config-server listeners that successfully bound (sorted, unique).
+    pub fn config_server_listening_schemes(&self) -> Vec<String> {
+        let mut schemes: Vec<String> = self
+            .config_listener_schemes
+            .iter()
+            .map(|e| e.key().clone())
+            .collect();
+        schemes.sort();
+        schemes.dedup();
+        schemes
+    }
+
+    /// Ports of config-server listeners that successfully bound (sorted, unique).
+    pub fn config_server_listening_ports(&self) -> Vec<u16> {
+        let mut ports: Vec<u16> = self
+            .config_listener_ports
+            .iter()
+            .map(|e| *e.key())
+            .collect();
+        ports.sort_unstable();
+        ports.dedup();
+        ports
+    }
+
+    /// 引用计数减一；减到 0 才从 map 里移除。
+    /// 注意：必须先释放 `get_mut` 持有的分片锁再 `remove`，否则会死锁。
+    fn dec_ref<K>(map: &DashMap<K, usize>, key: &K)
+    where
+        K: std::hash::Hash + Eq + Clone,
+    {
+        let should_remove = match map.get_mut(key) {
+            Some(mut count) => {
+                if *count > 1 {
+                    *count -= 1;
+                    false
+                } else {
+                    true
+                }
+            }
+            None => false,
+        };
+        if should_remove {
+            map.remove(key);
+        }
     }
 
     pub async fn list_sessions(&self) -> Vec<StorageToken> {
@@ -289,12 +371,50 @@ impl ClientManager {
         user_id: UserIdInDb,
         machine_id: &uuid::Uuid,
     ) -> Option<Arc<Session>> {
-        let c_url = self
+        // Prefer authorized primary, then any retained / unauthorized URL, then
+        // a live-session scan (covers the NAT port-change window).
+        let mut candidates = self
             .storage
-            .get_client_url_by_machine_id(user_id, machine_id)?;
+            .route_client_urls_by_machine_id(user_id, machine_id);
+        if let Some(authorized) = self.storage.get_client_url_by_machine_id(user_id, machine_id) {
+            candidates.retain(|url| url != &authorized);
+            candidates.insert(0, authorized);
+        }
+        for url in candidates {
+            if let Some(session) = self.running_session_at(&url) {
+                return Some(session);
+            }
+        }
+        self.find_running_session_for_machine(user_id, machine_id)
+    }
+
+    fn running_session_at(&self, client_url: &url::Url) -> Option<Arc<Session>> {
         self.client_sessions
-            .get(&c_url)
+            .get(client_url)
             .and_then(|item| item.is_running().then(|| item.value().clone()))
+    }
+
+    /// Fallback when `user_clients_map` still points at a dead URL during reconnect.
+    fn find_running_session_for_machine(
+        &self,
+        user_id: UserIdInDb,
+        machine_id: &uuid::Uuid,
+    ) -> Option<Arc<Session>> {
+        for entry in self.client_sessions.iter() {
+            let session = entry.value();
+            if !session.is_running() {
+                continue;
+            }
+            if session
+                .bound_machine()
+                .is_some_and(|(bound_user, bound_machine)| {
+                    bound_user == user_id && bound_machine == *machine_id
+                })
+            {
+                return Some(session.clone());
+            }
+        }
+        None
     }
 
     pub async fn disconnect_session_by_machine_id(
@@ -316,7 +436,16 @@ impl ClientManager {
     }
 
     pub async fn list_machine_by_user_id(&self, user_id: UserIdInDb) -> Vec<url::Url> {
-        self.storage.list_user_clients(user_id)
+        // Prefer the URL of a live session (new NAT port) over a stale map entry.
+        self.storage
+            .list_user_client_tokens(user_id)
+            .into_iter()
+            .map(|token| {
+                self.get_session_by_machine_id(user_id, &token.machine_id)
+                    .map(|session| session.client_url().clone())
+                    .unwrap_or(token.client_url)
+            })
+            .collect()
     }
 
     pub async fn reconcile_managed_network_configs(
@@ -616,6 +745,232 @@ impl
             "No such network instance: {}",
             inst_id_str
         )))
+    }
+
+    /// Graded timeout: run/overwrite can exceed the default 5s BaseController.
+    async fn handle_run_network_instance_with_source(
+        &self,
+        identify: (UserIdInDb, uuid::Uuid),
+        config: NetworkConfig,
+        save: bool,
+        source: ConfigSource,
+    ) -> Result<(), RemoteClientError<sea_orm::DbErr>> {
+        let client = self
+            .get_rpc_client(identify)
+            .ok_or(RemoteClientError::ClientNotFound)?;
+        let resp = client
+            .run_network_instance(
+                slow_rpc_controller(),
+                RunNetworkInstanceRequest {
+                    inst_id: None,
+                    config: Some(config.clone()),
+                    overwrite: true,
+                    source: config_source_to_rpc(source),
+                },
+            )
+            .await?;
+
+        if save {
+            self.get_storage()
+                .insert_or_update_user_network_config(
+                    identify,
+                    resp.inst_id.unwrap_or_default().into(),
+                    config,
+                    source,
+                )
+                .await
+                .map_err(RemoteClientError::PersistentError)?;
+        }
+
+        Ok(())
+    }
+
+    /// Graded timeout: collect can exceed 5s when many instances are running.
+    async fn handle_collect_network_info(
+        &self,
+        identify: (UserIdInDb, uuid::Uuid),
+        inst_ids: Option<Vec<uuid::Uuid>>,
+    ) -> Result<CollectNetworkInfoResponse, RemoteClientError<sea_orm::DbErr>> {
+        let client = self
+            .get_rpc_client(identify)
+            .ok_or(RemoteClientError::ClientNotFound)?;
+        let resp = client
+            .collect_network_info(
+                slow_rpc_controller(),
+                CollectNetworkInfoRequest {
+                    inst_ids: inst_ids
+                        .unwrap_or_default()
+                        .into_iter()
+                        .map(|id| id.into())
+                        .collect(),
+                },
+            )
+            .await?;
+
+        Ok(resp)
+    }
+
+    /// Graded timeout: delete + storage update can exceed 5s.
+    ///
+    /// Order: device RPC first, then DB. Deleting the DB row before a successful
+    /// device delete leaves an orphan instance (console blind, still running on
+    /// the node). Prefer a brief "DB still shows it after RPC succeeded" window
+    /// over a lasting orphan.
+    async fn handle_remove_network_instances(
+        &self,
+        identify: (UserIdInDb, uuid::Uuid),
+        inst_ids: Vec<uuid::Uuid>,
+    ) -> Result<(), RemoteClientError<sea_orm::DbErr>> {
+        if inst_ids.is_empty() {
+            return Ok(());
+        }
+        let client = self
+            .get_rpc_client(identify)
+            .ok_or(RemoteClientError::ClientNotFound)?;
+
+        client
+            .delete_network_instance(
+                slow_rpc_controller(),
+                DeleteNetworkInstanceRequest {
+                    inst_ids: inst_ids.iter().copied().map(|id| id.into()).collect(),
+                },
+            )
+            .await?;
+
+        self.get_storage()
+            .delete_network_configs(identify, &inst_ids)
+            .await
+            .map_err(RemoteClientError::PersistentError)?;
+
+        Ok(())
+    }
+
+    /// Enable: soft-start when already healthy + revision OK (no local overwrite).
+    /// Otherwise full `overwrite: true` run. Disable: delete instance.
+    ///
+    /// Callers must not pre-invalidate applied revision before this method —
+    /// soft-start depends on it; we invalidate only when runtime is mutated.
+    async fn handle_update_network_state(
+        &self,
+        identify: (UserIdInDb, uuid::Uuid),
+        inst_id: uuid::Uuid,
+        disabled: bool,
+    ) -> Result<(), RemoteClientError<sea_orm::DbErr>> {
+        let client = self
+            .get_rpc_client(identify)
+            .ok_or(RemoteClientError::ClientNotFound)?;
+
+        let (cfg, source) = self
+            .handle_get_network_config_with_source(identify, inst_id)
+            .await?;
+
+        if disabled {
+            self.get_storage()
+                .insert_or_update_user_network_config(identify, inst_id, cfg.clone(), source)
+                .await
+                .map_err(RemoteClientError::PersistentError)?;
+
+            client
+                .delete_network_instance(
+                    slow_rpc_controller(),
+                    DeleteNetworkInstanceRequest {
+                        inst_ids: vec![inst_id.into()],
+                    },
+                )
+                .await?;
+            self.invalidate_applied_config_revision(identify.0, identify.1)
+                .await;
+        } else if self
+            .should_soft_start_network(identify, &client, inst_id)
+            .await?
+        {
+            tracing::info!(
+                %inst_id,
+                user_id = identify.0,
+                machine_id = %identify.1,
+                "console Start: instance already healthy with matching revision; skip overwrite"
+            );
+        } else {
+            client
+                .run_network_instance(
+                    slow_rpc_controller(),
+                    RunNetworkInstanceRequest {
+                        inst_id: Some(inst_id.into()),
+                        config: Some(cfg),
+                        overwrite: true,
+                        source: config_source_to_rpc(source),
+                    },
+                )
+                .await?;
+            self.invalidate_applied_config_revision(identify.0, identify.1)
+                .await;
+        }
+
+        self.get_storage()
+            .update_network_config_state(identify, inst_id, disabled)
+            .await
+            .map_err(RemoteClientError::PersistentError)?;
+
+        Ok(())
+    }
+}
+
+impl ClientManager {
+    /// Device already running this instance without error, and managed revision
+    /// does not require a full overwrite apply.
+    ///
+    /// Liveness (`list`) uses the fast 5s timeout so offline / hung devices fail
+    /// the probe quickly instead of waiting a full 60s. Only after the instance
+    /// is listed do we `collect` with the slow timeout (payload can be large).
+    async fn should_soft_start_network(
+        &self,
+        identify: (UserIdInDb, uuid::Uuid),
+        client: &(dyn WebClientService<Controller = BaseController> + Send),
+        inst_id: uuid::Uuid,
+    ) -> Result<bool, RemoteClientError<sea_orm::DbErr>> {
+        let listed = client
+            .list_network_instance(
+                rpc_controller(MANAGED_RPC_FAST_TIMEOUT_MS),
+                ListNetworkInstanceRequest {},
+            )
+            .await?;
+        let running = listed
+            .inst_ids
+            .iter()
+            .any(|id| uuid::Uuid::from(*id) == inst_id);
+        if !running {
+            return Ok(false);
+        }
+
+        let collected = client
+            .collect_network_info(
+                slow_rpc_controller(),
+                CollectNetworkInfoRequest {
+                    inst_ids: vec![inst_id.into()],
+                },
+            )
+            .await?;
+        let healthy = collected
+            .info
+            .as_ref()
+            .and_then(|m| m.map.get(&inst_id.to_string()))
+            .is_some_and(|info| {
+                info.running && info.error_msg.as_deref().unwrap_or("").is_empty()
+            });
+        if !healthy {
+            return Ok(false);
+        }
+
+        let persisted = self
+            .db()
+            .get_managed_config_revision(identify)
+            .await
+            .map_err(RemoteClientError::PersistentError)?;
+        Ok(self.storage.revision_allows_soft_start(
+            identify.0,
+            identify.1,
+            persisted.as_deref(),
+        ))
     }
 }
 
@@ -932,6 +1287,76 @@ mod tests {
             mgr.get_session_by_machine_id(user_id, &machine_id)
                 .is_none()
         );
+    }
+
+    #[tokio::test]
+    async fn machine_id_routing_falls_back_to_previous_url_while_primary_is_dead() {
+        let db = Db::memory_db().await;
+        let mgr = ClientManager::new(
+            db.clone(),
+            None,
+            HeartbeatPolicy::default(),
+            Arc::new(FeatureFlags::default()),
+            Arc::new(crate::webhook::WebhookConfig::new(
+                None, None, None, None, None,
+            )),
+        );
+        let user_id = db.auto_create_user("token").await.unwrap().id;
+        let machine_id = uuid::Uuid::new_v4();
+        let old_url = url::Url::parse("tcp://10.0.0.1:1001").unwrap();
+        let new_url = url::Url::parse("tcp://10.0.0.1:2002").unwrap();
+
+        mgr.storage.update_session_client(
+            StorageToken {
+                token: "token".to_string(),
+                client_url: old_url.clone(),
+                machine_id,
+                user_id,
+            },
+            1,
+            true,
+            1,
+        );
+        mgr.storage.update_session_client(
+            StorageToken {
+                token: "token".to_string(),
+                client_url: new_url.clone(),
+                machine_id,
+                user_id,
+            },
+            2,
+            true,
+            2,
+        );
+
+        // Primary (new) URL has no live session; previous (old) still running.
+        let (server, _peer) = easytier_core::tunnel::ring::create_ring_tunnel_pair();
+        let mut old_session = Session::new(
+            mgr.storage.weak_ref(),
+            old_url.clone(),
+            None,
+            HeartbeatPolicy::default(),
+            Arc::new(FeatureFlags::default()),
+            Arc::new(crate::webhook::WebhookConfig::new(
+                None, None, None, None, None,
+            )),
+            1,
+        );
+        old_session.serve(server).await;
+        old_session.mark_route_ready();
+        let old_session = Arc::new(old_session);
+        // Previous-URL fallback only needs the session keyed & running; identity
+        // scan is a secondary path covered by lifecycle/prune tests.
+        mgr.client_sessions.insert(old_url.clone(), old_session.clone());
+
+        let resolved = mgr
+            .get_session_by_machine_id(user_id, &machine_id)
+            .expect("should route via retained previous URL");
+        assert!(Arc::ptr_eq(&resolved, &old_session));
+        assert_eq!(resolved.client_url(), &old_url);
+
+        let listed = mgr.list_machine_by_user_id(user_id).await;
+        assert_eq!(listed, vec![old_url]);
     }
 
     async fn wait_for_validated_user(mgr: &ClientManager, machine_id: uuid::Uuid) -> i32 {

@@ -101,6 +101,11 @@ struct PatchManagedNetworkConfigsJsonReq {
 }
 
 #[derive(Debug, serde::Deserialize, serde::Serialize)]
+struct ManagedConfigRevisionJsonResp {
+    config_revision: Option<String>,
+}
+
+#[derive(Debug, serde::Deserialize, serde::Serialize)]
 struct ListMachineItem {
     client_url: Option<url::Url>,
     info: Option<HeartbeatRequest>,
@@ -118,9 +123,11 @@ impl NetworkApi {
     fn convert_managed_config_error(error: anyhow::Error) -> HttpHandleError {
         let (status, code, current_config_revision) =
             match error.downcast_ref::<crate::client_manager::ManagedConfigError>() {
-                Some(crate::client_manager::ManagedConfigError::Invalid(_)) => {
-                    (StatusCode::BAD_REQUEST, None, None)
-                }
+                Some(crate::client_manager::ManagedConfigError::Invalid(_)) => (
+                    StatusCode::BAD_REQUEST,
+                    Some("managed_config_invalid".to_string()),
+                    None,
+                ),
                 Some(crate::client_manager::ManagedConfigError::RevisionConflict {
                     current,
                     ..
@@ -134,7 +141,13 @@ impl NetworkApi {
                     Some("managed_config_ownership_conflict".to_string()),
                     None,
                 ),
-                None => (StatusCode::INTERNAL_SERVER_ERROR, None, None),
+                // Keep a stable code so the UI never falls through to a raw
+                // `anyhow` string for unexpected wrap errors.
+                None => (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Some("internal_error".to_string()),
+                    None,
+                ),
             };
         (
             status,
@@ -297,16 +310,12 @@ impl NetworkApi {
         };
 
         let user_id = Self::get_user_id(&auth_session)?;
+        // Soft-start (already healthy) must see the current applied revision;
+        // ClientManager invalidates only when it actually mutates runtime.
         client_mgr
-            .invalidate_applied_config_revision(user_id, machine_id)
-            .await;
-        let result = client_mgr
             .handle_update_network_state((user_id, machine_id), inst_id, payload.disabled)
-            .await;
-        client_mgr
-            .invalidate_applied_config_revision(user_id, machine_id)
-            .await;
-        result.map_err(convert_error)?;
+            .await
+            .map_err(convert_error)?;
         Ok(())
     }
 
@@ -325,6 +334,21 @@ impl NetworkApi {
                 .await
                 .map_err(convert_error)?,
         ))
+    }
+
+    /// Lightweight probe for dirty-draft staleness (SQLite only; no device RPC).
+    async fn handle_get_managed_config_revision(
+        auth_session: AuthSession,
+        State(client_mgr): AppState,
+        Path(machine_id): Path<uuid::Uuid>,
+    ) -> Result<Json<ManagedConfigRevisionJsonResp>, HttpHandleError> {
+        let user_id = Self::get_user_id(&auth_session)?;
+        let config_revision = client_mgr
+            .db()
+            .get_managed_config_revision((user_id, machine_id))
+            .await
+            .map_err(convert_db_error)?;
+        Ok(Json(ManagedConfigRevisionJsonResp { config_revision }))
     }
 
     async fn handle_save_network_config(
@@ -544,6 +568,10 @@ impl NetworkApi {
                 "/api/v1/machines/{machine-id}/networks/metas",
                 post(Self::handle_get_network_metas),
             )
+            .route(
+                "/api/v1/machines/{machine-id}/managed-config-revision",
+                get(Self::handle_get_managed_config_revision),
+            )
     }
 }
 
@@ -611,5 +639,24 @@ mod tests {
             Some("managed_config_ownership_conflict")
         );
         assert_eq!(body.current_config_revision, None);
+    }
+
+    #[test]
+    fn invalid_managed_config_exposes_stable_code() {
+        let error = crate::client_manager::ManagedConfigError::Invalid(
+            "config_revision must not be empty".to_string(),
+        );
+        let (status, Json(body)) = NetworkApi::convert_managed_config_error(error.into());
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(body.code.as_deref(), Some("managed_config_invalid"));
+        assert!(body.message.contains("config_revision must not be empty"));
+    }
+
+    #[test]
+    fn unexpected_managed_config_wrap_uses_internal_error_code() {
+        let (status, Json(body)) =
+            NetworkApi::convert_managed_config_error(anyhow::anyhow!("wrapped boom"));
+        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(body.code.as_deref(), Some("internal_error"));
     }
 }

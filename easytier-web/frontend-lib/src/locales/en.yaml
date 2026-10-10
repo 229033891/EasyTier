@@ -734,6 +734,8 @@ web:
     network_list: Network List
     user_list: User Management
     config_tokens: Access Tokens
+    system_diagnostics: System Diagnostics
+    runtime_logs: Runtime Logs
     login_page: Login Page
     settings: Settings
     logout: Logout
@@ -775,6 +777,54 @@ web:
     reset_failed: Failed to reset password
     password_required: Please enter a new password
     cancel: Cancel
+
+  system_diagnostics:
+    hint: Compare this console process's intended startup settings with actual runtime state (not node NetworkConfig).
+    refresh: Refresh
+    copy_snapshot: Copy snapshot
+    copied: Snapshot copied
+    copy_failed: Copy failed
+    load_failed: Failed to load diagnostics
+    value_none: (none)
+    overall_healthy: Healthy
+    overall_degraded: Degraded
+    overall_unhealthy: Unhealthy
+    generated_at: Generated at
+    col_check: Check
+    col_status: Status
+    col_expected: Expected
+    col_actual: Actual
+    col_detail: Detail
+    status_pass: Pass
+    status_fail: Fail
+    status_warn: Warn
+    snapshot: Runtime parameters (evidence)
+    checks:
+      api_up: API service
+      config_server_protocol: Config delivery protocol
+      config_server_port: Config delivery port
+      db_ok: Database
+      heartbeat_sane: Heartbeat parameters
+      webhook: Webhook
+      oidc: OIDC
+    details:
+      listener_mismatch: Registered listeners do not match the startup protocol spec
+      port_not_bound: No bound listener found on the intended port
+      db_query_failed: Lightweight SQLite query failed
+      invalid_params: Invalid parameters
+    overall_summary:
+      all_passed: All checks passed
+      degraded: Some checks failed
+      unhealthy: Critical check failed
+
+  runtime_logs:
+    hint: Recent in-process logs (bounded buffer, not full journal). May contain secrets — do not share externally.
+    refresh: Refresh
+    auto_refresh: Auto-refresh
+    tail: Lines
+    load_failed: Failed to load logs
+    empty: No logs yet
+    capacity: Buffer capacity {capacity}, showing {count} lines
 
   config_tokens:
     create_title: Create Access Token
@@ -915,7 +965,14 @@ web:
     error_device_offline: The device is offline or not connected. Bring it online and try again.
     error_not_found: The network or resource was not found. Refresh and try again.
     error_revision_conflict: The config was updated by another operation. Refresh and try again.
+    confirm_reload_on_revision_conflict: The config was updated by another operation. Discard your local draft and reload the latest server config?
+    confirm_reload_on_revision_conflict_with_rev: "The config was updated by another operation (current revision: {revision}). Discard your local draft and reload?"
+    confirm_reload_server_updated_while_dirty: The server config changed while you have unsaved edits. Reload the latest config?
+    keep_editing: Keep editing
+    reload_latest_config: Reload
+    server_config_updated_while_dirty: The server config changed while you have unsaved edits. Reload, or keep editing (save may conflict).
     error_ownership_conflict: This network is managed by another source and cannot be overwritten.
+    error_validation: Config validation failed. Check the values and try again.
     error_unauthorized: Unauthorized or session expired. Please sign in again.
     error_db: Database operation failed. Please try again later.
     error_internal: Internal server error. Please try again later.
@@ -943,14 +1000,15 @@ web:
     switch_to_config_tip: Switch to the config page to edit this node's network settings
     switch_to_status: Back to Run
     switch_to_status_tip: Return to the run page to view status or start/stop the network
-    confirm_rerun_network: This will rebuild the running network instance from the current draft and briefly disconnect. Continue?
+    confirm_rerun_network: This will force-overwrite the device's local config, rebuild the running instance from the current draft, and briefly disconnect. Continue?
+    confirm_start_overwrite: Starting writes the console-saved config to the device (may overwrite local device config). This is not only waking an existing instance. If the instance is already healthy with a matching revision, the server skips the overwrite. Start anyway?
     confirm_discard_on_switch: You have unsaved changes. Switching networks will discard them. Continue?
     confirm_delete_network: Delete this network? This cannot be undone.
     confirm_delete_network_header: Delete Network
     disable_network: Disable Network
     disable_network_tip: Stop and disable the currently running network
     start_network: Start Network
-    start_network_tip: Start the currently saved network config
+    start_network_tip: Start with the console-saved config; may overwrite local device config (console is authoritative for web-owned)
     toolbar_config_files: Config Files
     toolbar_network: Network
     toolbar_danger: Danger
@@ -1064,6 +1122,9 @@ config-server:
   status_remote: Not available in remote mode
   rpc_unavailable: Cannot query config-server status (RPC unavailable)
   connect_timeout: Connection timed out. Please check that the config server address is correct.
+  phase_negotiating_features: Negotiating features…
+  phase_secure_redial: Re-dialing for secure tunnel…
+  phase_secure_handshake: Completing secure handshake…
   reverted: Restored the previous address
   update_service_confirm: The service will be restarted to apply changes, do you want to continue?
   remote_not_supported: Remote mode does not use a config server. Switch to Normal or Service mode first.

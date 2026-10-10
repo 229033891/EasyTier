@@ -416,6 +416,7 @@ async fn main() {
 
     let cli = Cli::parse();
     log::init_with_default_console_targets(&cli, false, &["CORE", "easytier_web"]).unwrap();
+    let _ = log::enable_memory_buffer(1000);
     tracing::info!(
         version = EASYTIER_VERSION,
         web_instance_id = ?cli.webhook.web_instance_id,
@@ -537,7 +538,8 @@ async fn main() {
     #[cfg(not(feature = "embed"))]
     let web_router_restful = None;
 
-    let oidc_config = if cli.oidc.oidc_issuer_url.is_some() {
+    let oidc_configured = cli.oidc.oidc_issuer_url.is_some();
+    let oidc_config = if oidc_configured {
         match restful::oidc::OidcConfig::from_params(cli.oidc).await {
             Ok(config) => config,
             Err(e) => {
@@ -550,6 +552,27 @@ async fn main() {
         restful::oidc::OidcConfig::disabled()
     };
 
+    let diagnostics = Arc::new(restful::DiagnosticsState {
+        intent: restful::RuntimeIntentSnapshot {
+            version: EASYTIER_VERSION.to_string(),
+            api_listen: format!("{}:{}", cli.api_server_addr, cli.api_server_port),
+            config_server_port: cli.config_server_port,
+            config_server_protocol: cli.config_server_protocol.clone(),
+            heartbeat_min_response_ms: cli.heartbeat_min_response_ms,
+            heartbeat_timeout_ms: cli.heartbeat_timeout_ms,
+            db_path: cli.db.clone(),
+            console_log_level: cli.console_log_level.clone(),
+            file_log_dir: cli.file_log_dir.clone(),
+            webhook_configured: webhook_config
+                .webhook_url
+                .as_deref()
+                .is_some_and(|url| !url.trim().is_empty()),
+            oidc_configured,
+        },
+        client_mgr: mgr.clone(),
+        db: db.clone(),
+    });
+
     let _restful_server_tasks = restful::RestfulServer::new(
         std::net::SocketAddr::new(cli.api_server_addr, cli.api_server_port),
         mgr.clone(),
@@ -558,6 +581,7 @@ async fn main() {
         feature_flags,
         oidc_config,
         webhook_config,
+        diagnostics,
     )
     .await
     .unwrap()

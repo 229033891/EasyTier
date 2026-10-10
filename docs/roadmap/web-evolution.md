@@ -3,7 +3,7 @@
 ## Status
 
 - Status: **Roadmap**
-- 最近审阅：2026-10-03
+- 最近审阅：2026-10-10
 - 状态说明：Active（作为 `easytier-web` 后续开发与升级的指导文档）
 - 适用范围：`easytier-web`（配置服务器 + REST API + 浏览器 UI）
 - 命名约定：产品正式名统一为 **`easytier-web`**（不使用 controller 等别名）；见 [`../current/product-map.md`](../current/product-map.md) 第 1 节
@@ -122,8 +122,9 @@ easytier-core 节点 --(udp/tcp/ws)--->  easytier-web :22020 (默认配置服务
 2. **REST / 内部 API**：稳定性、权限模型、审计、限流；对 breaking 变更做显式版本或兼容期。
 3. **配置发布体验**：在已支持的 Full/Patch 接收能力之上，完善 Console 侧发布、校验、冲突提示（不改节点协议）。
 4. **多租户与安全**：账号体系、OIDC、会话、CSRF/CORS、密钥与 webhook 安全加固。
-5. **可运维性**：配置项文档化、健康检查、备份/迁移 SQLite、日志与指标。
-6. **部署形态**：Windows 服务/安装包说明、Linux systemd/Docker 说明、前后端分离部署指南。
+5. **可运维性**：配置项文档化、健康检查、备份/迁移 SQLite、日志与指标；控制台侧栏「系统诊断 / 运行日志」见 [`web-console-runtime-diagnostics.md`](./web-console-runtime-diagnostics.md)。
+6. **客户端 ↔ 控制台交互**：P0（A–D）与 P1（E）已落地；见 [`client-web-console-interaction.md`](./client-web-console-interaction.md)。P2 / `listening_schemes` 广告 / UI「重连中」为可选后续。
+7. **部署形态**：Windows 服务/安装包说明、Linux systemd/Docker 说明、前后端分离部署指南。
 
 约束：
 
@@ -230,6 +231,8 @@ easytier-core 节点 --(udp/tcp/ws)--->  easytier-web :22020 (默认配置服务
 | 2026-09-29 | Win/Linux 一等公民 | 独立升级路径必须覆盖两平台 |
 | 2026-09-29 | 协议兼容靠冻结接口 | 同步演进是长期模型；短期用「不改节点可见接口」保证兼容 |
 | 2026-09-29 | 正式名统一为 `easytier-web` | 不使用 controller 等别名；三分法为 core / gui / easytier-web |
+| 2026-10-10 | 控制台运维两菜单 | 侧栏「系统诊断」「运行日志」；诊断=预定设置 vs 实际运行；仅 admin；详见 `web-console-runtime-diagnostics.md` |
+| 2026-10-10 | 客户端交互优化立项 | 超时 / Start 覆盖 / 路由层空窗（machine_id 主索引已落地）/ 协议降级；A/B/C 只升 web，D 与部分 P1 属节点侧；详见 `client-web-console-interaction.md` |
 
 ---
 

@@ -285,6 +285,9 @@ message GetConfigServerStatusResponse {
   bool connected = 2;
   // Last connect/handshake failure; empty when connected or not yet failed.
   string last_error = 3;
+  // Non-fatal progress while connecting (e.g. phase:*). Empty when idle/connected.
+  // Must not be treated as a failure; prefer this over stuffing progress into last_error.
+  string connecting_detail = 4;
 }
 
 // Push a web-owned NetworkConfig from a GUI/RPC peer to the process that owns

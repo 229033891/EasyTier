@@ -5,7 +5,9 @@ use async_trait::async_trait;
 use easytier_core::{
     config::toml::ConfigLoader as _,
     connectivity::{manual::ManualTunnelConnector, protocol::raw::TunnelDialer},
-    management::{ConfigServerEndpoint, WebClientConfig},
+    management::{
+        ConfigServerEndpoint, WebClientConfig, dial_config_server_with_scheme_fallback,
+    },
     socket::IpVersion,
     tunnel::Tunnel,
 };
@@ -116,14 +118,30 @@ impl WebClientHooks for DefaultHooks {}
 struct ConfigServerConnector {
     url: Url,
     connector: ManualTunnelConnector<NativeInstanceHost>,
+    /// Last scheme that connected (sticky udp↔tcp preference across reconnects).
+    preferred_scheme: std::sync::Mutex<Option<String>>,
 }
 
 #[async_trait]
 impl TunnelDialer for ConfigServerConnector {
     async fn connect(&self) -> anyhow::Result<Box<dyn Tunnel>> {
-        self.connector
-            .connect(self.url.clone(), IpVersion::Both)
-            .await
+        let preferred = self
+            .preferred_scheme
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone();
+        let outcome = dial_config_server_with_scheme_fallback(
+            &self.url,
+            preferred.as_deref(),
+            |url| self.connector.connect(url, IpVersion::Both),
+        )
+        .await?;
+        *self
+            .preferred_scheme
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) =
+            Some(outcome.connected_url.scheme().to_owned());
+        Ok(outcome.tunnel)
     }
 
     fn remote_url(&self) -> Url {
@@ -162,6 +180,7 @@ pub async fn run_web_client(
         ConfigServerConnector {
             url: endpoint.connect_url().clone(),
             connector,
+            preferred_scheme: std::sync::Mutex::new(None),
         },
         endpoint.token(),
         machine_id,

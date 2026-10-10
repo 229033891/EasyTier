@@ -1236,6 +1236,8 @@ pub struct Session {
     rpc_mgr: BidirectRpcManager,
 
     data: SharedSessionData,
+    /// Stable for the life of this TCP/UDP accept; also the `client_sessions` map key.
+    client_url: url::Url,
 
     webhook_validation_task: Option<AbortOnDropHandle<()>>,
     config_reconcile_task: Option<AbortOnDropHandle<()>>,
@@ -1261,8 +1263,13 @@ impl Session {
         webhook_config: SharedWebhookConfig,
         session_epoch: u64,
     ) -> Self {
-        let mut session_data =
-            SessionData::new(storage, client_url, location, feature_flags, webhook_config);
+        let mut session_data = SessionData::new(
+            storage,
+            client_url.clone(),
+            location,
+            feature_flags,
+            webhook_config,
+        );
         session_data.session_epoch = session_epoch;
         let data = Arc::new(RwLock::new(session_data));
 
@@ -1280,10 +1287,25 @@ impl Session {
         Session {
             rpc_mgr,
             data,
+            client_url,
             webhook_validation_task: None,
             config_reconcile_task: None,
             route_ready: Arc::new(Notify::new()),
         }
+    }
+
+    pub fn client_url(&self) -> &url::Url {
+        &self.client_url
+    }
+
+    /// Sync peek of bound `(user_id, machine_id)` for routing fallbacks.
+    pub(super) fn bound_machine(&self) -> Option<(crate::db::UserIdInDb, uuid::Uuid)> {
+        let Ok(data) = self.data.try_read() else {
+            return None;
+        };
+        data.storage_token
+            .as_ref()
+            .map(|token| (token.user_id, token.machine_id))
     }
 
     pub async fn serve(&mut self, tunnel: Box<dyn Tunnel>) {

@@ -9,7 +9,10 @@ const props = defineProps<{
   normalModeOnly?: boolean
   configServerStatusLabel?: string
   configServerStatusSeverity?: string
+  /** Dial / probe failure — shown as an error Message. */
   configServerLastError?: string
+  /** In-progress handshake phase — shown as info, never as error. */
+  configServerConnectingDetail?: string
 }>()
 
 const { t } = useI18n()
@@ -329,6 +332,14 @@ watch(() => model.value.mode, async (newMode, oldMode) => {
       </p>
       <Message v-if="configServerLastError" severity="error" :closable="false" class="mb-0">
         {{ configServerLastError }}
+      </Message>
+      <Message
+        v-else-if="configServerConnectingDetail"
+        severity="info"
+        :closable="false"
+        class="mb-0"
+      >
+        {{ configServerConnectingDetail }}
       </Message>
       <div class="flex flex-col gap-2">
         <label for="config-server-url">{{ t('config-server.address') }}</label>

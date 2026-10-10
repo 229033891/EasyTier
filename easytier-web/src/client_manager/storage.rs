@@ -24,7 +24,12 @@ struct ClientInfo {
     report_time: i64,
     authorized: bool,
     session_epoch: u64,
+    /// Prior `client_url`s for this machine (newest first). Used so
+    /// `get_session_by_machine_id` can still route while NAT flips ports.
+    previous_client_urls: Vec<url::Url>,
 }
+
+const MAX_PREVIOUS_CLIENT_URLS: usize = 2;
 
 #[derive(Debug, Clone)]
 struct ManagedRuntimeContinuity {
@@ -222,6 +227,36 @@ impl Storage {
         true
     }
 
+    /// Whether console Start may skip a full `overwrite` run.
+    ///
+    /// Unknown / missing runtime state → allow soft start (caller still checks
+    /// device health). Known-empty applied revision or pending reconcile → no.
+    pub(super) fn revision_allows_soft_start(
+        &self,
+        user_id: UserIdInDb,
+        machine_id: uuid::Uuid,
+        persisted_revision: Option<&str>,
+    ) -> bool {
+        let Some(state) = self.current_managed_runtime_state(user_id, machine_id) else {
+            return true;
+        };
+        let state = state.lock().expect("managed runtime state lock poisoned");
+        if state.pending_managed_config_reconcile.is_some() {
+            return false;
+        }
+        if !state.applied_config_revision_known {
+            return true;
+        }
+        match (
+            state.applied_config_revision.as_deref(),
+            persisted_revision.map(str::trim).filter(|s| !s.is_empty()),
+        ) {
+            (None, _) => false,
+            (Some(_), None) => true,
+            (Some(applied), Some(persisted)) => applied == persisted,
+        }
+    }
+
     fn remove_client_info_map(
         map: &DashMap<uuid::Uuid, ClientInfo>,
         stoken: &StorageToken,
@@ -233,6 +268,12 @@ impl Storage {
                 && v.session_epoch == session_epoch
         })
         .is_some()
+    }
+
+    fn push_previous_client_url(previous: &mut Vec<url::Url>, url: url::Url) {
+        previous.retain(|existing| existing != &url);
+        previous.insert(0, url);
+        previous.truncate(MAX_PREVIOUS_CLIENT_URLS);
     }
 
     fn update_client_info_map(map: &DashMap<uuid::Uuid, ClientInfo>, client_info: &ClientInfo) {
@@ -257,7 +298,17 @@ impl Storage {
                         e.storage_token.machine_id,
                         client_info.storage_token.machine_id
                     );
-                    *e = client_info.clone();
+                    let mut next = client_info.clone();
+                    if e.storage_token.client_url != client_info.storage_token.client_url {
+                        next.previous_client_urls = e.previous_client_urls.clone();
+                        Self::push_previous_client_url(
+                            &mut next.previous_client_urls,
+                            e.storage_token.client_url.clone(),
+                        );
+                    } else if next.previous_client_urls.is_empty() {
+                        next.previous_client_urls = e.previous_client_urls.clone();
+                    }
+                    *e = next;
                 }
             })
             .or_insert(client_info.clone());
@@ -296,6 +347,7 @@ impl Storage {
             report_time,
             authorized,
             session_epoch,
+            previous_client_urls: Vec::new(),
         };
         Self::update_client_info_map(&inner, &client_info);
     }
@@ -351,6 +403,31 @@ impl Storage {
                     .then(|| info.storage_token.client_url.clone())
             })
         })
+    }
+
+    /// Candidate `client_url`s for routing RPCs to a machine (primary first).
+    ///
+    /// Includes the current URL even when not yet authorized (webhook / first
+    /// heartbeat window), then retained previous URLs from NAT port changes.
+    pub fn route_client_urls_by_machine_id(
+        &self,
+        user_id: UserIdInDb,
+        machine_id: &uuid::Uuid,
+    ) -> Vec<url::Url> {
+        let Some(info_map) = self.0.user_clients_map.get(&user_id) else {
+            return Vec::new();
+        };
+        let Some(info) = info_map.get(machine_id) else {
+            return Vec::new();
+        };
+        let mut urls = Vec::with_capacity(1 + info.previous_client_urls.len());
+        urls.push(info.storage_token.client_url.clone());
+        for previous in &info.previous_client_urls {
+            if !urls.contains(previous) {
+                urls.push(previous.clone());
+            }
+        }
+        urls
     }
 
     pub fn list_user_clients(&self, user_id: UserIdInDb) -> Vec<url::Url> {
@@ -468,6 +545,48 @@ mod tests {
         storage.remove_client(&user2_token);
 
         assert_eq!(storage.get_client_url_by_machine_id(2, &machine_id), None);
+    }
+
+    #[tokio::test]
+    async fn route_urls_retain_previous_client_url_across_nat_port_change() {
+        let storage = Storage::new(Db::memory_db().await);
+        let machine_id = uuid::Uuid::new_v4();
+        let old = make_storage_token(1, machine_id, "tcp://10.0.0.1:1001");
+        let new = make_storage_token(1, machine_id, "tcp://10.0.0.1:2002");
+
+        storage.update_session_client(old.clone(), 10, true, 1);
+        storage.update_session_client(new.clone(), 20, true, 2);
+
+        let urls = storage.route_client_urls_by_machine_id(1, &machine_id);
+        assert_eq!(urls.first(), Some(&new.client_url));
+        assert!(urls.contains(&old.client_url));
+        assert_eq!(
+            storage.get_client_url_by_machine_id(1, &machine_id),
+            Some(new.client_url)
+        );
+    }
+
+    #[tokio::test]
+    async fn revision_allows_soft_start_when_applied_matches_persisted() {
+        let storage = Storage::new(Db::memory_db().await);
+        let machine_id = uuid::Uuid::new_v4();
+        assert!(storage.revision_allows_soft_start(1, machine_id, Some("rev-a")));
+
+        let state = storage.bind_managed_runtime_state(1, machine_id, None, 1);
+        {
+            let mut runtime = state.lock().unwrap();
+            runtime.applied_config_revision = Some("rev-a".to_string());
+            runtime.applied_config_revision_known = true;
+        }
+        assert!(storage.revision_allows_soft_start(1, machine_id, Some("rev-a")));
+        assert!(!storage.revision_allows_soft_start(1, machine_id, Some("rev-b")));
+
+        {
+            let mut runtime = state.lock().unwrap();
+            runtime.applied_config_revision = None;
+            runtime.applied_config_revision_known = true;
+        }
+        assert!(!storage.revision_allows_soft_start(1, machine_id, Some("rev-a")));
     }
 
     #[tokio::test]

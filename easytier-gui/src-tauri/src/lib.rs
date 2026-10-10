@@ -1011,6 +1011,7 @@ struct ConfigServerStatusDto {
     enabled: bool,
     connected: bool,
     last_error: String,
+    connecting_detail: String,
 }
 
 #[tauri::command]
@@ -1025,10 +1026,16 @@ async fn get_config_server_status(app: AppHandle) -> Result<ConfigServerStatusDt
         } else {
             status.last_error.unwrap_or_default()
         };
+        let connecting_detail = if connected {
+            String::new()
+        } else {
+            status.connecting_detail.unwrap_or_default()
+        };
         return Ok(ConfigServerStatusDto {
             enabled: true,
             connected,
             last_error,
+            connecting_detail,
         });
     }
 
@@ -1049,10 +1056,16 @@ async fn get_config_server_status(app: AppHandle) -> Result<ConfigServerStatusDt
     } else {
         response.last_error
     };
+    let connecting_detail = if response.connected {
+        String::new()
+    } else {
+        response.connecting_detail
+    };
     Ok(ConfigServerStatusDto {
         enabled: response.enabled,
         connected: response.connected,
         last_error,
+        connecting_detail,
     })
 }
 

@@ -59,7 +59,10 @@ pub use process_rpc::{
 };
 #[cfg(target_os = "wasi")]
 pub(crate) use web_client::WebClientBackend;
-pub use web_client::{ConfigServerEndpoint, WebClient, WebClientConfig};
+pub use web_client::{
+    ConfigServerDialOutcome, ConfigServerEndpoint, WebClient, WebClientConfig,
+    config_server_dial_candidates, dial_config_server_with_scheme_fallback,
+};
 
 #[cfg(feature = "management")]
 pub use super::instance_rpc::full::call_instance_json_rpc;

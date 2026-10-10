@@ -7,6 +7,7 @@ use axum::{
 use axum_login::AuthUser as _;
 use easytier::proto::rpc_types::controller::BaseController;
 
+use crate::client_manager::{proxy_rpc_timeout_ms, rpc_controller};
 use crate::db::UserIdInDb;
 
 use super::{AppState, HttpHandleError, convert_rpc_error, other_error};
@@ -20,10 +21,10 @@ pub struct ProxyRpcRequest {
 }
 
 macro_rules! match_service {
-    ($factory:ty, $method_name:expr, $payload:expr, $session:expr) => {{
+    ($factory:ty, $method_name:expr, $payload:expr, $session:expr, $ctrl:expr) => {{
         let client = $session.scoped_client::<$factory>();
         client
-            .json_call_method(BaseController::default(), &$method_name, $payload)
+            .json_call_method($ctrl, &$method_name, $payload)
             .await
     }};
 }
@@ -46,42 +47,50 @@ async fn handle_proxy_rpc_by_session(
             .await;
     }
 
+    let ctrl = rpc_controller(proxy_rpc_timeout_ms(&service_name, &method_name));
+
     let resp = match service_name.as_str() {
         "api.manage.WebClientService" => match_service!(
             easytier::proto::api::manage::WebClientServiceClientFactory<BaseController>,
             method_name,
             payload,
-            session
+            session,
+            ctrl
         ),
         "api.instance.PeerManageRpcService" => match_service!(
             easytier::proto::api::instance::PeerManageRpcClientFactory<BaseController>,
             method_name,
             payload,
-            session
+            session,
+            ctrl
         ),
         "api.instance.PeerCenterManageRpcService" => match_service!(
             easytier::proto::peer_rpc::PeerCenterRpcClientFactory<BaseController>,
             method_name,
             payload,
-            session
+            session,
+            ctrl
         ),
         "api.instance.ConnectorManageRpcService" => match_service!(
             easytier::proto::api::instance::ConnectorManageRpcClientFactory<BaseController>,
             method_name,
             payload,
-            session
+            session,
+            ctrl
         ),
         "api.instance.MappedListenerManageRpcService" => match_service!(
             easytier::proto::api::instance::MappedListenerManageRpcClientFactory<BaseController>,
             method_name,
             payload,
-            session
+            session,
+            ctrl
         ),
         "api.instance.VpnPortalRpcService" => match_service!(
             easytier::proto::api::instance::VpnPortalRpcClientFactory<BaseController>,
             method_name,
             payload,
-            session
+            session,
+            ctrl
         ),
         "api.instance.TcpProxyRpcService" => {
             let client = if let Some(ref domain) = scope {
@@ -94,44 +103,50 @@ async fn handle_proxy_rpc_by_session(
                 >()
             };
             client
-                .json_call_method(BaseController::default(), &method_name, payload)
+                .json_call_method(ctrl, &method_name, payload)
                 .await
         }
         "api.instance.AclManageRpcService" => match_service!(
             easytier::proto::api::instance::AclManageRpcClientFactory<BaseController>,
             method_name,
             payload,
-            session
+            session,
+            ctrl
         ),
         "api.instance.PortForwardManageRpcService" => match_service!(
             easytier::proto::api::instance::PortForwardManageRpcClientFactory<BaseController>,
             method_name,
             payload,
-            session
+            session,
+            ctrl
         ),
         "api.instance.StatsRpcService" => match_service!(
             easytier::proto::api::instance::StatsRpcClientFactory<BaseController>,
             method_name,
             payload,
-            session
+            session,
+            ctrl
         ),
         "api.instance.CredentialManageRpcService" => match_service!(
             easytier::proto::api::instance::CredentialManageRpcClientFactory<BaseController>,
             method_name,
             payload,
-            session
+            session,
+            ctrl
         ),
         "api.logger.LoggerRpcService" => match_service!(
             easytier::proto::api::logger::LoggerRpcClientFactory<BaseController>,
             method_name,
             payload,
-            session
+            session,
+            ctrl
         ),
         "api.config.ConfigRpcService" => match_service!(
             easytier::proto::api::config::ConfigRpcClientFactory<BaseController>,
             method_name,
             payload,
-            session
+            session,
+            ctrl
         ),
         _ => {
             return Err((
@@ -232,6 +247,9 @@ pub fn router_internal() -> Router<super::AppStateInner> {
 #[cfg(test)]
 mod tests {
     use super::proxy_rpc_mutates_runtime_config;
+    use crate::client_manager::{
+        MANAGED_RPC_FAST_TIMEOUT_MS, MANAGED_RPC_SLOW_TIMEOUT_MS, proxy_rpc_timeout_ms,
+    };
 
     #[test]
     fn runtime_config_mutation_detection_covers_proxy_rpc_aliases() {
@@ -273,5 +291,29 @@ mod tests {
                 "{service}/{method} must remain read-only"
             );
         }
+    }
+
+    #[test]
+    fn proxy_rpc_timeout_grades_slow_mutators_and_keeps_reads_fast() {
+        assert_eq!(
+            proxy_rpc_timeout_ms("api.manage.WebClientService", "run_network_instance"),
+            MANAGED_RPC_SLOW_TIMEOUT_MS
+        );
+        assert_eq!(
+            proxy_rpc_timeout_ms("api.manage.WebClientService", "collect_network_info"),
+            MANAGED_RPC_SLOW_TIMEOUT_MS
+        );
+        assert_eq!(
+            proxy_rpc_timeout_ms("api.config.ConfigRpcService", "PatchConfig"),
+            MANAGED_RPC_SLOW_TIMEOUT_MS
+        );
+        assert_eq!(
+            proxy_rpc_timeout_ms("api.manage.WebClientService", "list_network_instance"),
+            MANAGED_RPC_FAST_TIMEOUT_MS
+        );
+        assert_eq!(
+            proxy_rpc_timeout_ms("api.instance.StatsRpcService", "get_stats"),
+            MANAGED_RPC_FAST_TIMEOUT_MS
+        );
     }
 }

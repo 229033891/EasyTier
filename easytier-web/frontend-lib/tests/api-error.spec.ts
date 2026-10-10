@@ -19,7 +19,49 @@ describe('API error formatting', () => {
     ).toEqual({
       message: 'Timeout(Elapsed(()))',
       code: 'rpc_timeout',
+      current_config_revision: undefined,
     })
+  })
+
+  it('extracts current_config_revision on CAS conflicts', () => {
+    expect(
+      extractApiErrorPayload({
+        response: {
+          data: {
+            message: 'revision conflict',
+            code: 'managed_config_revision_conflict',
+            current_config_revision: 'rev-9',
+          },
+        },
+      }),
+    ).toEqual({
+      message: 'revision conflict',
+      code: 'managed_config_revision_conflict',
+      current_config_revision: 'rev-9',
+    })
+  })
+
+  it('keeps managed_config_invalid validation text in formatApiErrorDetail', () => {
+    const t = (key: string) => `i18n:${key}`
+    expect(
+      formatApiErrorDetail(
+        {
+          response: {
+            data: {
+              message: 'config_revision must not be empty',
+              code: 'managed_config_invalid',
+            },
+          },
+        },
+        t,
+      ),
+    ).toBe('config_revision must not be empty')
+    expect(
+      classifyApiError({
+        message: 'config_revision must not be empty',
+        code: 'managed_config_invalid',
+      }),
+    ).toBe('validation')
   })
 
   it('unwraps JSON-string message blobs instead of showing raw JSON', () => {
@@ -32,6 +74,7 @@ describe('API error formatting', () => {
     ).toEqual({
       message: 'Timeout(Elapsed(()))',
       code: undefined,
+      current_config_revision: undefined,
     })
   })
 
@@ -41,6 +84,19 @@ describe('API error formatting', () => {
     ).toBe('timeout')
     expect(classifyApiError({ message: 'Timeout(Elapsed(()))' })).toBe('timeout')
     expect(classifyApiError({ message: 'RPC Error: Timeout(Elapsed(()))' })).toBe('timeout')
+  })
+
+  it('classifies unauthorized from stable code or Not authenticated text', () => {
+    expect(classifyApiError({ message: 'Not authenticated', code: 'unauthorized' })).toBe(
+      'unauthorized',
+    )
+    expect(classifyApiError({ message: 'Not authenticated' })).toBe('unauthorized')
+    expect(
+      formatApiErrorDetail(
+        { response: { data: { message: 'Not authenticated', code: 'unauthorized' } } },
+        (key) => `i18n:${key}`,
+      ),
+    ).toBe('i18n:web.device_management.error_unauthorized')
   })
 
   it('maps known failures to localized copy', () => {

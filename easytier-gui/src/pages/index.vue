@@ -49,6 +49,8 @@ const modeDialogVisible = ref(false)
 const configServerConnected = ref(false)
 const configServerEnabled = ref(false)
 const configServerLastError = ref('')
+/** Non-fatal connecting progress (`phase:*`); separate from lastError failures. */
+const configServerConnectingDetail = ref('')
 /** Set when GUI cannot query status (e.g. service RPC down) — not a config-server dial error. */
 const configServerProbeError = ref('')
 const currentMode = ref<Mode>({ mode: 'normal' })
@@ -106,11 +108,40 @@ const configServerStatusSeverity = computed(() => {
 
 const configServerStatusLabel = computed(() => t(`config-server.status_${configServerStatus.value}`))
 
-/** Error text shown under the badge: probe failure wins, else last dial error. */
-const configServerDisplayError = computed(() => {
+/** Map stable `phase:*` / failure-prefix codes from the dialer to i18n when possible. */
+function localizeConfigServerDetail(raw: string): string {
+  const trimmed = raw.trim()
+  if (!trimmed)
+    return ''
+  const phaseKey: Record<string, string> = {
+    'phase:negotiating_features': 'config-server.phase_negotiating_features',
+    'phase:secure_redial': 'config-server.phase_secure_redial',
+    'phase:secure_handshake': 'config-server.phase_secure_handshake',
+  }
+  const phase = phaseKey[trimmed]
+  if (phase)
+    return t(phase)
+  if (trimmed.startsWith('secure_redial_failed:'))
+    return `${t('config-server.phase_secure_redial')} ${trimmed.slice('secure_redial_failed:'.length).trim()}`
+  if (trimmed.startsWith('secure_handshake_failed:'))
+    return `${t('config-server.phase_secure_handshake')} ${trimmed.slice('secure_handshake_failed:'.length).trim()}`
+  return trimmed
+}
+
+/** Real failure text (probe / dial). Never includes connecting phase codes. */
+const configServerFailureDetail = computed(() => {
   if (configServerOwnerDown.value)
     return ''
-  return configServerProbeError.value || configServerLastError.value || ''
+  return localizeConfigServerDetail(
+    configServerProbeError.value || configServerLastError.value || '',
+  )
+})
+
+/** Non-fatal handshake progress; only when there is no failure to show. */
+const configServerPhaseDetail = computed(() => {
+  if (configServerOwnerDown.value || configServerFailureDetail.value)
+    return ''
+  return localizeConfigServerDetail(configServerConnectingDetail.value)
 })
 
 function formatConfigServerProbeError(e: unknown): string {
@@ -136,6 +167,7 @@ async function refreshConfigServerConnection() {
       configServerConnected.value = false
       configServerEnabled.value = false
       configServerLastError.value = ''
+      configServerConnectingDetail.value = ''
       configServerProbeError.value = ''
       configServerOwnerDown.value = false
       return
@@ -148,15 +180,18 @@ async function refreshConfigServerConnection() {
     configServerConnected.value = !!status.connected
     if (status.connected) {
       configServerLastError.value = ''
+      configServerConnectingDetail.value = ''
     }
     else {
       // Keep empty string when retrying without a recorded failure.
       configServerLastError.value = status.lastError || ''
+      configServerConnectingDetail.value = status.connectingDetail || ''
     }
   }
   catch (e) {
     configServerConnected.value = false
     configServerEnabled.value = false
+    configServerConnectingDetail.value = ''
     // Probe/RPC failure is not the config-server dial error.
     if (currentMode.value.mode === 'service') {
       const svc = await getServiceStatus().catch(() => null)
@@ -267,8 +302,15 @@ async function onModeSave() {
         && !!nextEndpoint.url
         && (configServerChanged || prev.mode !== 'normal')
       if (shouldWaitForConfigServer) {
-        if (configServerDisplayError.value && !configServerConnected.value) {
-          const detail = configServerDisplayError.value
+        // Fail-fast only for sync init failure (enabled=false + lastError).
+        // Connecting phase text must not trigger revert.
+        const initFailed = !configServerConnected.value
+          && !configServerEnabled.value
+          && !!configServerLastError.value
+        if (initFailed || !!configServerProbeError.value) {
+          const detail = localizeConfigServerDetail(
+            configServerProbeError.value || configServerLastError.value,
+          ) || t('config-server.status_failed')
           await initWithMode(prev)
           editingMode.value = next
           toast.add({
@@ -282,9 +324,12 @@ async function onModeSave() {
 
         const outcome = await waitForConfigServerOutcome()
         if (outcome !== 'connected' && outcome !== 'disabled') {
+          const failureDetail = localizeConfigServerDetail(
+            configServerProbeError.value || configServerLastError.value,
+          )
           const detail = outcome === 'timeout'
             ? t('config-server.connect_timeout')
-            : (configServerDisplayError.value || t('config-server.status_failed'))
+            : (failureDetail || t('config-server.status_failed'))
           await initWithMode(prev)
           editingMode.value = next
           toast.add({
@@ -1122,7 +1167,8 @@ async function connectRpcClient(isNormalMode: boolean, url?: string) {
         :normal-mode-only="type() === 'android'"
         :config-server-status-label="configServerStatusLabel"
         :config-server-status-severity="configServerStatusSeverity"
-        :config-server-last-error="configServerDisplayError"
+        :config-server-last-error="configServerFailureDetail"
+        :config-server-connecting-detail="configServerPhaseDetail"
       />
       <template #footer>
         <Button

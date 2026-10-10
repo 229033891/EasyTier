@@ -130,8 +130,13 @@ onUnmounted(() => {
     <div v-if="deviceList === undefined" class="w-full flex justify-center py-8">
         <ProgressSpinner />
     </div>
-    <RemoteManagement v-else :api="remoteClient" v-model:instance-id="selectedInstanceId"
-        :new-config-generator="newConfigGenerator" :full-page="true"
+    <RemoteManagement
+        v-else
+        :key="deviceId"
+        :api="remoteClient"
+        v-model:instance-id="selectedInstanceId"
+        :new-config-generator="newConfigGenerator"
+        :full-page="true"
         :device-os-type="deviceInfo?.os_type"
         :device-easytier-version="deviceInfo?.easytier_version"
         :device-magic-dns-os-wired="deviceInfo?.magic_dns_os_wired"
@@ -140,5 +145,7 @@ onUnmounted(() => {
         :leave-button-label="managementFrom === 'networkList' ? t('web.device.back_to_network_list') : t('web.device.back_to_list')"
         :leave-button-tooltip="managementFrom === 'networkList' ? t('web.device.back_to_network_list_tip') : t('web.device.back_to_list_tip')"
         leave-button-icon="pi pi-arrow-left"
-        :mode="managementMode" @switch-mode="switchManagementMode" />
+        :mode="managementMode"
+        @switch-mode="switchManagementMode"
+    />
 </template>

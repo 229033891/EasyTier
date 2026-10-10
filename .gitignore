@@ -52,8 +52,8 @@ check_core.log
 /artifacts/
 
 # build TEMP only (script/build-common.ps1 sets TEMP here for esbuild).
-# Keep .workbuddy-ai/memory/ tracked for local notes sync.
-.workbuddy-ai/tmp/
+# AI tool scratch / memory notes must not be committed.
+.workbuddy-ai/
 
 # web
 node_modules

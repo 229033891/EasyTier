@@ -150,6 +150,8 @@ const navItems = computed(() => {
     if (isAdmin.value) {
         items.push({ name: 'userList', icon: 'pi pi-users', label: t('web.main.user_list') });
         items.push({ name: 'configTokens', icon: 'pi pi-key', label: t('web.main.config_tokens') });
+        items.push({ name: 'systemDiagnostics', icon: 'pi pi-check-circle', label: t('web.main.system_diagnostics') });
+        items.push({ name: 'runtimeLogs', icon: 'pi pi-list', label: t('web.main.runtime_logs') });
     }
     return items;
 });
@@ -215,7 +217,8 @@ onMounted(async () => {
         const me = await api.value?.get_me();
         isAdmin.value = !!me?.is_admin;
         username.value = me?.username || '';
-        if ((route.name === 'userList' || route.name === 'configTokens') && !isAdmin.value) {
+        if ((route.name === 'userList' || route.name === 'configTokens'
+            || route.name === 'systemDiagnostics' || route.name === 'runtimeLogs') && !isAdmin.value) {
             router.replace({ name: 'dashboard' });
         }
     } catch (e) {

@@ -44,6 +44,8 @@ pub struct ConfigServerStatusSnapshot {
     pub enabled: bool,
     pub connected: bool,
     pub last_error: Option<String>,
+    /// Non-fatal connecting progress (`phase:*`); never a failure signal.
+    pub connecting_detail: Option<String>,
     /// Host from the config-server connect URL (IP literal or DNS name).
     pub endpoint_host: Option<String>,
 }
@@ -71,6 +73,7 @@ static STATUS: RwLock<Status> = RwLock::new(Status {
         enabled: false,
         connected: false,
         last_error: None,
+        connecting_detail: None,
         endpoint_host: None,
     },
     resolved_ips: BTreeSet::new(),
@@ -90,6 +93,7 @@ pub fn mark_enabled() {
     status.snapshot.enabled = true;
     status.snapshot.connected = false;
     status.snapshot.last_error = None;
+    status.snapshot.connecting_detail = None;
 }
 
 /// Remember the config-server connect URL so exit-node default routing can
@@ -137,6 +141,7 @@ pub fn mark_connected() {
     status.snapshot.enabled = true;
     status.snapshot.connected = true;
     status.snapshot.last_error = None;
+    status.snapshot.connecting_detail = None;
 }
 
 pub fn mark_disconnected() {
@@ -144,6 +149,7 @@ pub fn mark_disconnected() {
     if status.snapshot.enabled {
         status.snapshot.connected = false;
     }
+    status.snapshot.connecting_detail = None;
 }
 
 /// Clear a prior dial error after a new TCP tunnel is up but before the
@@ -154,10 +160,25 @@ pub fn clear_last_error() {
     status.snapshot.last_error = None;
 }
 
+/// Progress detail while still connecting (feature probe / secure upgrade).
+///
+/// Stored in `connecting_detail` — never in `last_error` — so consumers that
+/// treat a non-empty last_error as failure do not false-alarm during handshake.
+/// Clears any prior `last_error` so the UI shows progress instead of a stale
+/// failure from the previous dial attempt.
+pub fn mark_connecting_detail(detail: impl Into<String>) {
+    let mut status = STATUS.write();
+    status.snapshot.enabled = true;
+    status.snapshot.connected = false;
+    status.snapshot.last_error = None;
+    status.snapshot.connecting_detail = Some(detail.into());
+}
+
 pub fn mark_error(error: impl Into<String>) {
     let mut status = STATUS.write();
     status.snapshot.enabled = true;
     status.snapshot.connected = false;
+    status.snapshot.connecting_detail = None;
     status.snapshot.last_error = Some(error.into());
 }
 
@@ -338,6 +359,7 @@ mod tests {
                 enabled: true,
                 connected: false,
                 last_error: Some("boom".into()),
+                connecting_detail: None,
                 endpoint_host: None,
             }
         );
@@ -348,6 +370,27 @@ mod tests {
                 enabled: true,
                 connected: true,
                 last_error: None,
+                connecting_detail: None,
+                endpoint_host: None,
+            }
+        );
+        clear();
+    }
+
+    #[tokio::test]
+    async fn connecting_detail_clears_stale_last_error() {
+        let _guard = lock_status().await;
+        clear();
+        mark_enabled();
+        mark_error("previous dial failed");
+        mark_connecting_detail("phase:negotiating_features");
+        assert_eq!(
+            snapshot(),
+            ConfigServerStatusSnapshot {
+                enabled: true,
+                connected: false,
+                last_error: None,
+                connecting_detail: Some("phase:negotiating_features".into()),
                 endpoint_host: None,
             }
         );

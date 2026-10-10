@@ -733,6 +733,8 @@ web:
     network_list: 网络列表
     user_list: 用户管理
     config_tokens: 接入 Token
+    system_diagnostics: 系统诊断
+    runtime_logs: 运行日志
     login_page: 登录页面
     settings: 设置
     logout: 退出登录
@@ -774,6 +776,54 @@ web:
     reset_failed: 重置密码失败
     password_required: 请填写新密码
     cancel: 取消
+
+  system_diagnostics:
+    hint: 对照本控制台进程的预定启动参数与实际运行状态（不是节点 NetworkConfig）。
+    refresh: 刷新
+    copy_snapshot: 复制快照
+    copied: 已复制快照
+    copy_failed: 复制失败
+    load_failed: 加载诊断失败
+    value_none: （无）
+    overall_healthy: 通过
+    overall_degraded: 警告
+    overall_unhealthy: 异常
+    generated_at: 生成时间
+    col_check: 检查项
+    col_status: 状态
+    col_expected: 期望
+    col_actual: 实际
+    col_detail: 说明
+    status_pass: 通过
+    status_fail: 失败
+    status_warn: 警告
+    snapshot: 运行参数（证据）
+    checks:
+      api_up: API 服务
+      config_server_protocol: 配置下发协议
+      config_server_port: 配置下发端口
+      db_ok: 数据库
+      heartbeat_sane: 心跳参数
+      webhook: Webhook
+      oidc: OIDC
+    details:
+      listener_mismatch: 进程已注册的 listener 与启动参数不一致
+      port_not_bound: 未找到与预定端口一致的已绑定 listener
+      db_query_failed: SQLite 轻量查询失败
+      invalid_params: 参数不合法
+    overall_summary:
+      all_passed: 全部检查通过
+      degraded: 存在异常项
+      unhealthy: 关键项异常
+
+  runtime_logs:
+    hint: 进程内最近日志（有界缓冲，非完整 journal）。可能含敏感信息，请勿外传。
+    refresh: 刷新
+    auto_refresh: 自动刷新
+    tail: 行数
+    load_failed: 加载日志失败
+    empty: 暂无日志
+    capacity: 缓冲容量 {capacity}，当前显示 {count} 行
 
   config_tokens:
     create_title: 新建接入 Token
@@ -914,7 +964,14 @@ web:
     error_device_offline: 设备未连接或已离线，请确认设备在线后再操作。
     error_not_found: 未找到对应的网络或资源，请刷新后重试。
     error_revision_conflict: 配置已被其他操作更新，请刷新后重试。
+    confirm_reload_on_revision_conflict: 配置已被其他操作更新。是否丢弃本地草稿并重新加载服务器上的最新配置？
+    confirm_reload_on_revision_conflict_with_rev: "配置已被其他操作更新（当前 revision：{revision}）。是否丢弃本地草稿并重新加载？"
+    confirm_reload_server_updated_while_dirty: 服务器上的配置已更新，本地未保存草稿可能过期。是否重新加载最新配置？
+    keep_editing: 继续编辑
+    reload_latest_config: 重新加载
+    server_config_updated_while_dirty: 服务器上的配置已更新，本地未保存草稿可能过期。可重新加载，或继续编辑后保存（可能冲突）。
     error_ownership_conflict: 该网络由其他来源管理，无法覆盖。
+    error_validation: 配置校验失败，请检查后重试。
     error_unauthorized: 未授权或登录已过期，请重新登录。
     error_db: 数据库操作失败，请稍后重试。
     error_internal: 服务器内部错误，请稍后重试。
@@ -942,14 +999,15 @@ web:
     switch_to_config_tip: 切换到配置页，编辑本节点网络参数
     switch_to_status: 返回运行
     switch_to_status_tip: 返回运行页（查看状态或启停网络）
-    confirm_rerun_network: 将用当前草稿重建运行中的网络实例，连接会短暂中断。确定继续？
+    confirm_rerun_network: 将用当前草稿强制覆盖设备本地配置并重建运行中的实例，连接会短暂中断。确定继续？
+    confirm_start_overwrite: 启动会把控制台已保存的配置写入设备（可能覆盖设备本地配置），不是仅唤醒已有实例。若设备上该实例已在健康运行且 revision 一致，服务端会跳过覆盖。确定启动？
     confirm_discard_on_switch: 当前有未保存的修改。切换网络将丢弃这些更改，确定继续？
     confirm_delete_network: 确定删除该网络吗？此操作不可恢复。
     confirm_delete_network_header: 删除网络
     disable_network: 禁用网络
     disable_network_tip: 停止并禁用当前正在运行的网络
     start_network: 启动网络
-    start_network_tip: 启动当前已保存的网络配置
+    start_network_tip: 用控制台已保存配置启动；可能覆盖设备本地配置（权威在 web-owned 场景下是控制台）
     toolbar_config_files: 配置文件
     toolbar_network: 网络
     toolbar_danger: 危险操作
@@ -1063,6 +1121,9 @@ config-server:
   status_remote: 远程模式不适用
   rpc_unavailable: 无法查询配置服务器状态（RPC 不可用）
   connect_timeout: 连接超时，请检查配置服务器地址是否正确
+  phase_negotiating_features: 正在协商功能特性…
+  phase_secure_redial: 正在重拨安全隧道…
+  phase_secure_handshake: 正在完成安全握手…
   reverted: 已恢复为原地址
   update_service_confirm: 将重启服务以应用更改，是否继续？
   remote_not_supported: 当前为远程模式，不使用配置服务器。请先切换到普通模式或服务模式。
