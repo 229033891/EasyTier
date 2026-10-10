@@ -385,9 +385,6 @@ async function onClearLogs() {
             :disabled="!loggingFiles.length"
             @update:model-value="(value: string) => loadLoggingContent(value)" />
         </div>
-        <p v-if="loggingContent || loggingFiles.length" class="logging-level-hint m-0">
-          {{ t('logging_timestamps_local_hint') }}
-        </p>
         <Textarea
           :model-value="loggingContent || (loggingFiles.length ? '' : t('logging_empty'))"
           class="w-full logging-textarea"

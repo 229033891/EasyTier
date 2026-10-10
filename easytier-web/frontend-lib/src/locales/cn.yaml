@@ -113,7 +113,6 @@ logging_refresh: 刷新
 logging_empty: 暂无日志文件
 logging_load_failed: 加载日志失败
 logging_file: 日志文件
-logging_timestamps_local_hint: 日志文件按 UTC 写入；此处时间戳已转换为本地时间便于阅读。
 logging_retention_hint: 最多保留 3 个滚动日志文件（按天切分；正常日志量下约 3 天，非固定时间窗口）。
 logging_remote_hint: 日志级别会应用到远端 EasyTier 进程；查看最近日志请在设备上打开日志文件。
 logging_clear: 删除
