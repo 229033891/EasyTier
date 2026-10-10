@@ -1494,7 +1494,9 @@ impl PeerManagerCore {
     pub fn get_peer_session_store(&self) -> Arc<PeerSessionStore> {
         self.peer_session_store.clone()
     }
+    /// Packet inject path for NIC/proxy callers; not every feature set uses it.
     #[cfg(feature = "proxy-packet")]
+    #[allow(dead_code)]
     pub(crate) fn get_nic_channel(&self) -> HostPacketSender {
         self.nic_channel.clone()
     }

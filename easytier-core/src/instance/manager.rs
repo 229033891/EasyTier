@@ -504,12 +504,16 @@ impl<F: InstanceFactory> InstanceManager<F> {
         }
     }
 
+    /// Used by web-client session code; Android/GUI feature sets may not call it.
     #[cfg(feature = "web-client")]
+    #[allow(dead_code)]
     pub(crate) fn instance_state_generation(&self) -> usize {
         self.instance_state_changes.generation()
     }
 
+    /// Used by web-client session code; Android/GUI feature sets may not call it.
     #[cfg(feature = "web-client")]
+    #[allow(dead_code)]
     pub(crate) async fn wait_for_instance_state_change(&self, generation: usize) -> usize {
         self.instance_state_changes
             .wait_for_change(generation)
