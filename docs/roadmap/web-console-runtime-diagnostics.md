@@ -21,7 +21,7 @@
 | **系统诊断** | 对照**预定设置**，检查控制台是否按预期在跑；给出通过/异常项与摘要，并可展开运行参数证据 |
 | **运行日志** | 在浏览器内查看控制台进程近期日志（有界缓冲，可刷新/自动滚动） |
 
-二者分开；权限与「用户管理 / 接入 Token」同级（管理员）。
+二者分开；权限与「用户管理 / 接入密钥」同级（管理员）。
 
 「预定设置」来源优先级（实现时写死文档化）：
 
@@ -227,7 +227,7 @@ GET /api/v1/admin/logs?tail=500
 ## 6. 安全与隐私
 
 1. **仅管理员**；普通用户 403。
-2. **禁止**在 snapshot/诊断中返回：密码、session secret、webhook secret、OIDC client_secret、接入 Token、内部 auth token。
+2. **禁止**在 snapshot/诊断中返回：密码、session secret、webhook secret、OIDC client_secret、接入密钥、内部 auth token。
 3. 日志可能含 URL/token 片段：UI 提示勿外传；二期可脱敏。
 4. 无新 DB migration（一期）。
 

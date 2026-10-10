@@ -732,7 +732,7 @@ web:
     network_count: 网络数量
     network_list: 网络列表
     user_list: 用户管理
-    config_tokens: 接入 Token
+    config_tokens: 接入密钥
     system_diagnostics: 系统诊断
     runtime_logs: 运行日志
     login_page: 登录页面
@@ -826,21 +826,21 @@ web:
     capacity: 缓冲容量 {capacity}，当前显示 {count} 行
 
   config_tokens:
-    create_title: 新建接入 Token
-    hint: 客户端填写单个地址，按网络选用 udp://主机:端口/Token 或 tcp://主机:端口/Token（服务端默认同时支持）。例如 Token 为 admin → udp://127.0.0.1:22020/admin。可自定义或留空自动生成。用户名含空格等非法路径字符的老账号升级后会换成 et_ 开头的新 Token，需同步更新客户端 URL。
+    create_title: 新建接入密钥
+    hint: 客户端填写单个地址，按网络选用 udp://主机:端口/密钥 或 tcp://主机:端口/密钥（服务端默认同时支持）。例如密钥为 admin → udp://127.0.0.1:22020/admin。可自定义或留空自动生成。用户名含空格等非法路径字符的老账号升级后会换成 et_ 开头的新密钥，需同步更新客户端 URL。（原称接入 Token）
     create: 创建
-    create_success: Token 已创建
-    create_failed: 创建 Token 失败
-    update_success: Token 已更新
-    update_failed: 更新 Token 失败
-    delete: 删除 Token
-    confirm_delete: 确定删除 Token「{token}」？删除后使用该 Token 的客户端将无法接入。
-    delete_success: Token 已删除
-    delete_failed: 删除 Token 失败
-    empty: 暂无 Token
+    create_success: 接入密钥已创建
+    create_failed: 创建接入密钥失败
+    update_success: 接入密钥已更新
+    update_failed: 更新接入密钥失败
+    delete: 删除接入密钥
+    confirm_delete: 确定删除接入密钥「{token}」？删除后使用该密钥的客户端将无法接入。
+    delete_success: 接入密钥已删除
+    delete_failed: 删除接入密钥失败
+    empty: 暂无接入密钥
     user: 所属用户
     user_required: 请选择用户
-    token: Token / Key
+    token: 接入密钥
     token_placeholder: 例如 admin（留空则自动生成）
     label: 备注
     label_placeholder: 可选备注
@@ -1099,9 +1099,9 @@ config-server:
   address_placeholder: 例如：udp://127.0.0.1:22020/admin 或 tcp://…
   description: |
     接入 Web 控制台（设备列表、远程下发配置）。填写单个地址（一次只能选一种协议）：
-    完整 URL：udp://127.0.0.1:22020/<token> 或 tcp://127.0.0.1:22020/<token>
-    新版服务端默认同时监听 UDP 与 TCP，请按网络环境选择；路径为接入 Token
-    仅 token：admin（使用官方服务器）
+    完整 URL：udp://127.0.0.1:22020/<密钥> 或 tcp://127.0.0.1:22020/<密钥>
+    新版服务端默认同时监听 UDP 与 TCP，请按网络环境选择；路径为接入密钥（原称接入 Token）
+    仅密钥：admin（使用官方服务器）
     留空：不连接，仅在本机 GUI 管理
   secure_mode: 强制安全通道
   secure_mode_hint: 开启后要求配置服务器支持加密隧道；服务器不支持时会持续重试。

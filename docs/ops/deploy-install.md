@@ -115,7 +115,7 @@ sudo bash script/install.sh install --mode server --auto \
   --nginx-https-proxy yes
 ```
 
-Client 节点使用 **接入 Token**（默认 `admin`，可在 Web「接入 Token」页管理），不是登录用户名：
+Client 节点使用 **接入密钥**（原称接入 Token；默认 `admin`，可在 Web「接入密钥」页管理），不是登录用户名：
 
 ```bash
 sudo bash script/install.sh install --mode client --auto \
