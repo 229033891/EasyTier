@@ -490,7 +490,7 @@ default_protocol_help: |-
   有序协议列表（逗号分隔存盘）。直连按此顺序尝试对端已宣告的监听。
   手动 peer URL 先按配置的 scheme 拨号，失败后才在 tcp/udp/ws/wss/quic 之间改写 scheme 降级（保留主机与端口，不锁死 443）；wg / faketcp 仍可用于直连排序，但不会对手动 peer 改写。
   默认 udp,tcp：其余常见协议（tcp/ws/wss/quic/faketcp）都自带重传，内层 TCP（RDP/SSH/HTTP）会变成 TCP over TCP，轻微丢包即卡顿；保留 tcp 作第二位是为了「UDP 被阻断时自动落到 TCP」。例如 wss,tcp,quic,udp：UDP 被阻断时仍可落到列表中的 TCP/WSS。
-  选择顺序即优先顺序；可用下方序号按钮微调。
+  下拉框中的芯片顺序即尝试顺序；新勾选的协议按目录顺序追加到末尾，取消后重新勾选可调整相对位置。
 
 encryption_algorithm: 加密算法
 encryption_algorithm_help: |-

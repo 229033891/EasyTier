@@ -217,6 +217,7 @@ const listenerProtos: { [proto: string]: number } = Object.fromEntries(
 )
 
 const inetSuggestions = ref([''])
+const exitNodeSuggestions = ref([''])
 
 function searchInetSuggestions(e: { query: string }) {
   if (e.query.search('/') >= 0) {
@@ -228,6 +229,12 @@ function searchInetSuggestions(e: { query: string }) {
     }
     inetSuggestions.value = ret
   }
+}
+
+/** Free-text typeahead (IP / hostname); keeps the same AutoComplete chrome as subnet proxy. */
+function searchExitNodeSuggestions(e: { query: string }) {
+  const q = e.query.trim()
+  exitNodeSuggestions.value = q ? [q] : ['']
 }
 
 type AdvancedFlagGroup = 'connectivity' | 'transport' | 'system' | 'security'
@@ -368,8 +375,8 @@ const defaultProtocolOptions = DEFAULT_PROTOCOL_SCHEMES.map(value => ({
 
 /**
  * MultiSelect does not reliably preserve click order. Keep prior preference order
- * for still-selected schemes; append newly selected in catalog order; reorder only
- * via moveDefaultProtocol.
+ * for still-selected schemes; append newly selected in catalog order.
+ * Chip order in the MultiSelect is the try order.
  */
 const defaultProtocolList = computed({
   get: () => parseDefaultProtocolList(curNetwork.value.default_protocol),
@@ -391,17 +398,6 @@ const defaultProtocolList = computed({
     curNetwork.value.default_protocol = normalizeDefaultProtocol([...kept, ...added].join(','))
   },
 })
-
-function moveDefaultProtocol(index: number, delta: number) {
-  const list = [...defaultProtocolList.value]
-  const next = index + delta
-  if (next < 0 || next >= list.length)
-    return
-  const tmp = list[index]!
-  list[index] = list[next]!
-  list[next] = tmp
-  curNetwork.value.default_protocol = normalizeDefaultProtocol(list.join(','))
-}
 
 /** CompressionAlgoPb 取值来自 proto：None = 1、Zstd = 2、Invalid = 0（前端不展示 Invalid，未设置时按 None 处理） */
 const dataCompressAlgoOptions = [
@@ -773,10 +769,9 @@ function removeVpnPortalClient(index: number) {
                   </div>
                   <div class="config-compact-control">
                     <AutoComplete id="exit_nodes" v-model="curNetwork.exit_nodes"
-                      :placeholder="t('chips_placeholder', ['192.168.8.8'])" multiple fluid
-                      :typeahead="false"
-                      @keydown.capture="onChipsKeydown($event, curNetwork.exit_nodes ??= [])"
-                      @focusout.capture="onChipsFocusOut($event, curNetwork.exit_nodes ??= [])" />
+                      :placeholder="t('chips_placeholder_typeahead', ['192.168.8.8'])" multiple fluid
+                      :suggestions="exitNodeSuggestions" @complete="searchExitNodeSuggestions"
+                      @keydown.capture="onChipsKeydown($event, curNetwork.exit_nodes ??= [], { typeahead: true })" />
                     <p v-if="tunControlsDisabled" class="config-field-hint m-0">{{ t('no_tun_exit_nodes_hint') }}</p>
                   </div>
                 </div>
@@ -801,40 +796,6 @@ function removeVpnPortalClient(index: number) {
                       fluid
                       class="et-select"
                     />
-                    <div
-                      v-if="defaultProtocolList.length > 0"
-                      class="default-protocol-order flex flex-col gap-1"
-                    >
-                      <div
-                        v-for="(scheme, index) in defaultProtocolList"
-                        :key="scheme"
-                        class="flex items-center gap-1"
-                      >
-                        <span class="text-xs shrink-0">{{ index + 1 }}. {{ scheme.toUpperCase() }}</span>
-                        <Button
-                          type="button"
-                          icon="pi pi-arrow-up"
-                          size="small"
-                          severity="secondary"
-                          text
-                          rounded
-                          :disabled="index === 0 || defaultProtocolList.length < 2"
-                          :aria-label="`move ${scheme} up`"
-                          @click="moveDefaultProtocol(index, -1)"
-                        />
-                        <Button
-                          type="button"
-                          icon="pi pi-arrow-down"
-                          size="small"
-                          severity="secondary"
-                          text
-                          rounded
-                          :disabled="index === defaultProtocolList.length - 1 || defaultProtocolList.length < 2"
-                          :aria-label="`move ${scheme} down`"
-                          @click="moveDefaultProtocol(index, 1)"
-                        />
-                      </div>
-                    </div>
                   </div>
                 </div>
 
@@ -1462,7 +1423,7 @@ function removeVpnPortalClient(index: number) {
   gap: 0.5rem;
 }
 
-/* Multi-line controls (e.g. protocol preference + order list): label top-aligned with select */
+/* Multi-line controls (e.g. protocol MultiSelect chips): label top-aligned with select */
 .config-compact-field--inline.config-compact-field--top {
   align-items: flex-start;
 }

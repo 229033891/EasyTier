@@ -491,7 +491,7 @@ default_protocol_help: |-
   Ordered protocol list (stored as CSV). Direct connect tries the peer's advertised listeners in this order.
   Manual peer URLs dial the configured scheme first, and only fail over by rewriting among tcp/udp/ws/wss/quic (host and ports kept; never forced to 443). wg and faketcp stay in the list for Direct sort but are never rewritten on manual peers.
   Default is udp,tcp: every other common transport (tcp/ws/wss/quic/faketcp) retransmits on its own, which turns an inner TCP flow (RDP/SSH/HTTP) into TCP over TCP that stalls under mild packet loss; tcp stays second so "UDP is blocked, fall back to TCP" still works. Example wss,tcp,quic,udp: if UDP is blocked, TCP/WSS from the list are still tried.
-  Selection order is try order; use the numbered controls below to fine-tune.
+  Chip order in the dropdown is try order; newly checked schemes are appended in catalog order — uncheck and re-check to change relative position.
 
 encryption_algorithm: Encryption Algorithm
 encryption_algorithm_help: |-
