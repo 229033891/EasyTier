@@ -29,11 +29,13 @@ set "ERR=%ERRORLEVEL%"
 echo.
 if not "%ERR%"=="0" (
   echo Fast package failed, exit code %ERR%.
+  echo See latest log under artifacts\logs\
   pause
   exit /b %ERR%
 )
 
 echo Fast package finished.
 echo Output: artifacts\  (NSIS installer + ET-windows-*\ + .zip)
+echo Logs:   artifacts\logs\easytier-windows-*.log
 pause
 exit /b 0

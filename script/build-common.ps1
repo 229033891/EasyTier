@@ -7,11 +7,12 @@
     $PSScriptRoot here resolves to script\ (this file's directory).
 #>
 
-if (-not $RepoRoot) {
+# StrictMode: never read an unset variable; probe with Get-Variable first.
+if (-not (Get-Variable -Name RepoRoot -Scope Local -ErrorAction SilentlyContinue) -or -not $RepoRoot) {
     throw 'build-common.ps1: $RepoRoot must be set by the caller before dot-sourcing.'
 }
 
-if (-not $CargoBin) {
+if (-not (Get-Variable -Name CargoBin -Scope Local -ErrorAction SilentlyContinue) -or -not $CargoBin) {
     $CargoBin = Join-Path $env:USERPROFILE '.cargo\bin'
 }
 if (Test-Path $CargoBin) {
@@ -23,9 +24,8 @@ $script:WasmOptBinaryenVersion = 'version_117'
 $script:WasmOptWindowsArchiveUrl = "https://github.com/WebAssembly/binaryen/releases/download/$script:WasmOptBinaryenVersion/binaryen-$script:WasmOptBinaryenVersion-x86_64-windows.tar.gz"
 
 # Wall-clock + elapsed since this common module was loaded (per packaging run).
-if (-not $script:EasytierBuildStartedAt) {
-    $script:EasytierBuildStartedAt = Get-Date
-}
+# Assign directly: StrictMode forbids reading an undefined $script: variable.
+$script:EasytierBuildStartedAt = Get-Date
 
 function Get-EasytierLogPrefix {
     $now = Get-Date
@@ -69,6 +69,86 @@ function Write-EasytierBuildElapsed {
     param([string]$Label = 'Total elapsed')
     Write-Host ''
     Write-Log ("{0}: {1}" -f $Label, (Get-EasytierElapsedString)) -Level Ok
+}
+
+function Start-EasytierBuildTranscript {
+    <#
+      Mirror host console to artifacts\logs\<Name>-yyyyMMdd-HHmmss.log
+      (also captured: Write-Host / Write-Log / Invoke-NativeLogged lines).
+    #>
+    param(
+        [Parameter(Mandatory)][string]$Name,
+        [string]$LogDir = ''
+    )
+    if (-not $LogDir) {
+        $LogDir = Join-Path $RepoRoot 'artifacts\logs'
+    }
+    New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
+    $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
+    $safeName = ($Name -replace '[^\w\-]+', '-').Trim('-')
+    if (-not $safeName) { $safeName = 'easytier-build' }
+    $script:EasytierBuildLogPath = Join-Path $LogDir ("{0}-{1}.log" -f $safeName, $stamp)
+    $script:EasytierBuildTranscriptActive = $false
+
+    # Clear a leftover transcript from the same PowerShell session (rare).
+    try { Stop-Transcript -ErrorAction SilentlyContinue | Out-Null } catch { }
+
+    Start-Transcript -Path $script:EasytierBuildLogPath -Force | Out-Null
+    $script:EasytierBuildTranscriptActive = $true
+    Write-Log "Build log: $script:EasytierBuildLogPath" -Level Info
+}
+
+function Stop-EasytierBuildTranscript {
+    if (-not (Get-Variable -Name EasytierBuildTranscriptActive -Scope Script -ErrorAction SilentlyContinue)) {
+        return
+    }
+    if (-not $script:EasytierBuildTranscriptActive) { return }
+
+    $logPath = $null
+    if (Get-Variable -Name EasytierBuildLogPath -Scope Script -ErrorAction SilentlyContinue) {
+        $logPath = $script:EasytierBuildLogPath
+    }
+    $script:EasytierBuildTranscriptActive = $false
+    try { Stop-Transcript -ErrorAction SilentlyContinue | Out-Null } catch { }
+
+    if ($logPath) {
+        Write-Host ''
+        Write-Host ("Build log saved: {0}" -f $logPath) -ForegroundColor Green
+    }
+}
+
+function Invoke-NativeLogged {
+    <#
+      Run a native command and print stdout/stderr to the host console.
+      Critical: do NOT leave native stdout on the success pipeline — PowerShell
+      functions collect that into their return value (e.g. cargo logs become
+      Object[] and break [string]$ArtifactDir parameters).
+      Capture $LASTEXITCODE immediately after the native call (before any pipeline).
+    #>
+    param(
+        [Parameter(Mandatory)][string]$FilePath,
+        [Parameter()][string[]]$ArgumentList = @()
+    )
+    # Native stderr becomes ErrorRecord when merged with 2>&1; under
+    # $ErrorActionPreference=Stop that would abort on cargo/pnpm warnings.
+    $prevEap = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        $lines = & $FilePath @ArgumentList 2>&1
+        $code = $LASTEXITCODE
+    }
+    finally {
+        $ErrorActionPreference = $prevEap
+    }
+    foreach ($line in @($lines)) {
+        if ($line -is [System.Management.Automation.ErrorRecord]) {
+            Write-Host $line.ToString()
+        }
+        else {
+            Write-Host "$line"
+        }
+    }
+    return $code
 }
 
 function Assert-Command([string]$Name) {
@@ -445,6 +525,73 @@ function Copy-EasytierThirdPartyRuntime {
     Write-Log ("Copied runtime: " + ($copied -join ', ') + " -> $DestDir") -Level Ok
 }
 
+function Get-EasytierWebView2BootstrapperPath {
+    # tauri-bundler: dirs::cache_dir()\tauri\MicrosoftEdgeWebview2Setup.exe
+    # On Windows cache_dir == %LOCALAPPDATA%
+    return (Join-Path $env:LOCALAPPDATA 'tauri\MicrosoftEdgeWebview2Setup.exe')
+}
+
+function Test-EasytierWebView2BootstrapperFile([string]$Path) {
+    if (-not (Test-Path -LiteralPath $Path)) { return $false }
+    $len = (Get-Item -LiteralPath $Path).Length
+    # Official evergreen bootstrapper is ~1.8MB; reject truncated downloads.
+    return ($len -ge 800KB)
+}
+
+function Ensure-WebView2BootstrapperLocal {
+    <#
+      NSIS embedBootstrapper needs this file up front. If missing, Tauri downloads
+      from Microsoft CDN at the end of a long build — often fails behind proxies.
+      Fail early (or auto-copy from Downloads/script\tools) before compile.
+    #>
+    $dest = Get-EasytierWebView2BootstrapperPath
+    $destDir = Split-Path $dest -Parent
+    New-Item -ItemType Directory -Force -Path $destDir | Out-Null
+
+    if (Test-EasytierWebView2BootstrapperFile $dest) {
+        $kb = [math]::Round((Get-Item -LiteralPath $dest).Length / 1KB, 1)
+        Write-Log "WebView2 bootstrapper OK: $dest ($kb KB)" -Level Ok
+        return
+    }
+
+    if (Test-Path -LiteralPath $dest) {
+        Write-Warning "WebView2 bootstrapper looks truncated (delete and re-download): $dest"
+        Remove-Item -Force -LiteralPath $dest
+    }
+
+    $candidates = @(
+        (Join-Path $env:USERPROFILE 'Downloads\MicrosoftEdgeWebview2Setup.exe'),
+        (Join-Path $env:USERPROFILE 'Desktop\MicrosoftEdgeWebview2Setup.exe'),
+        (Join-Path $PSScriptRoot 'tools\MicrosoftEdgeWebview2Setup.exe'),
+        (Join-Path $RepoRoot 'MicrosoftEdgeWebview2Setup.exe')
+    ) | Where-Object { $_ }
+
+    foreach ($src in $candidates) {
+        if (Test-EasytierWebView2BootstrapperFile $src) {
+            Write-Log "Copying WebView2 bootstrapper: $src -> $dest"
+            Copy-Item -Force -LiteralPath $src -Destination $dest
+            if (Test-EasytierWebView2BootstrapperFile $dest) {
+                Write-Log "WebView2 bootstrapper ready: $dest" -Level Ok
+                return
+            }
+        }
+    }
+
+    $url = 'https://go.microsoft.com/fwlink/p/?LinkId=2124703'
+    throw @"
+WebView2 bootstrapper missing (needed for GUI NSIS embedBootstrapper).
+
+Download (use browser / direct connection; avoid Fake-IP proxies):
+  $url
+Save as:
+  $dest
+  OR place a copy in Downloads / Desktop / script\tools\ and re-run
+    (script will auto-copy into %LOCALAPPDATA%\tauri\).
+
+Expected size ~1.5–2 MB. Then re-run easytier-windows-*.cmd.
+"@
+}
+
 function Get-CargoArtifactDir {
     param(
         [ValidateSet('Fast', 'Release')]
@@ -469,8 +616,8 @@ function Invoke-EasytierPnpmInstall {
         Write-Warning 'node_modules missing; running pnpm install despite -SkipInstall'
     }
     Write-Step 'pnpm -r install'
-    pnpm -r install
-    if ($LASTEXITCODE -ne 0) { throw "pnpm install failed (exit $LASTEXITCODE)" }
+    $code = Invoke-NativeLogged -FilePath 'pnpm' -ArgumentList @('-r', 'install')
+    if ($code -ne 0) { throw "pnpm install failed (exit $code)" }
 }
 
 function Invoke-EasytierWebFrontendBuild {
@@ -488,8 +635,10 @@ function Invoke-EasytierWebFrontendBuild {
     Invoke-EasytierPnpmInstall -SkipInstall:$SkipInstall
 
     Write-Step 'pnpm build easytier-web frontend workspaces'
-    pnpm -r --workspace-concurrency=1 --filter "./easytier-web/*" build
-    if ($LASTEXITCODE -ne 0) { throw "pnpm frontend build failed (exit $LASTEXITCODE)" }
+    $code = Invoke-NativeLogged -FilePath 'pnpm' -ArgumentList @(
+        '-r', '--workspace-concurrency=1', '--filter', './easytier-web/*', 'build'
+    )
+    if ($code -ne 0) { throw "pnpm frontend build failed (exit $code)" }
 
     $dist = Join-Path $RepoRoot 'easytier-web\frontend\dist'
     if (-not (Test-Path $dist)) {

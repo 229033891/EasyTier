@@ -149,6 +149,9 @@ Set-Location $RepoRoot
 
 $CargoBin = Join-Path $env:USERPROFILE '.cargo\bin'
 . (Join-Path $PSScriptRoot 'build-common.ps1')
+Start-EasytierBuildTranscript -Name 'easytier-windows'
+
+try {
 
 $ArchDir = Get-EasytierWindowsArchDir -Target $Target
 $ArtifactStem = "windows-$ArchDir"
@@ -210,9 +213,23 @@ function Invoke-EasytierGuiFrontendBuild {
     Invoke-EasytierPnpmInstall -SkipInstall:$SkipInstall
     Remove-EasytierGuiCiConf
 
-    Write-Step 'pnpm build easytier-gui (and workspace deps)'
-    pnpm -r --workspace-concurrency=1 --filter 'easytier-gui...' build
-    if ($LASTEXITCODE -ne 0) { throw "pnpm GUI frontend build failed (exit $LASTEXITCODE)" }
+    # Build GUI deps once (frontend-lib, vpnservice-api, …), then GUI app only.
+    # Avoid `easytier-gui...` + package.json `build` which would compile frontend-lib twice.
+    Write-Step 'pnpm build easytier-gui dependencies (easytier-gui^...)'
+    $code = Invoke-NativeLogged -FilePath 'pnpm' -ArgumentList @(
+        '-r', '--workspace-concurrency=1', '--filter', 'easytier-gui^...', 'build'
+    )
+    if ($code -ne 0) { throw "pnpm GUI dependency build failed (exit $code)" }
+
+    Write-Step 'pnpm build:app easytier-gui (lint + vue-tsc + vite; frontend-lib already built)'
+    Push-Location $GuiDir
+    try {
+        $code = Invoke-NativeLogged -FilePath 'pnpm' -ArgumentList @('run', 'build:app')
+        if ($code -ne 0) { throw "pnpm GUI build:app failed (exit $code)" }
+    }
+    finally {
+        Pop-Location
+    }
 
     $dist = Join-Path $GuiDir 'dist\index.html'
     if (-not (Test-Path $dist)) {
@@ -250,8 +267,8 @@ function Invoke-EasytierGuiTauriBuild {
     Write-Step ("pnpm " + ($tauriArgs -join ' ') + "  (cwd: easytier-gui)")
     Push-Location $GuiDir
     try {
-        & pnpm @tauriArgs
-        if ($LASTEXITCODE -ne 0) { throw "tauri build failed (exit $LASTEXITCODE)" }
+        $code = Invoke-NativeLogged -FilePath 'pnpm' -ArgumentList $tauriArgs
+        if ($code -ne 0) { throw "tauri build failed (exit $code)" }
     }
     finally {
         Pop-Location
@@ -307,17 +324,18 @@ function Invoke-EasytierHeadlessBuild {
     }
 
     Write-Step ("cargo " + ($cargoArgs -join ' '))
-    & cargo @cargoArgs
-    if ($LASTEXITCODE -ne 0) { throw "cargo headless build failed (exit $LASTEXITCODE)" }
+    $code = Invoke-NativeLogged -FilePath 'cargo' -ArgumentList $cargoArgs
+    if ($code -ne 0) { throw "cargo headless build failed (exit $code)" }
 
-    $artifactDir = Get-CargoArtifactDir -Profile $Profile -Target $Target
+    $artifactDir = [string](Get-CargoArtifactDir -Profile $Profile -Target $Target)
     $webBuilt = Join-Path $artifactDir 'easytier-web.exe'
     $webEmbed = Join-Path $artifactDir 'easytier-web-embed.exe'
     if (-not (Test-Path $webBuilt)) {
         throw "Build artifact not found: $webBuilt"
     }
-    Copy-Item -Force $webBuilt $webEmbed
-    return $artifactDir
+    Copy-Item -Force $webBuilt $webEmbed | Out-Null
+    # Unary comma: return a single string even if earlier code leaked pipeline output.
+    return , $artifactDir
 }
 
 function Collect-HeadlessArtifacts {
@@ -401,6 +419,13 @@ Write-Log "  GUI:      $(-not $SkipGui)"
 Write-Log "  Headless: $(-not $SkipHeadless)"
 Write-Log "  OutDir:   $OutDir"
 
+# Fail fast: NSIS embedBootstrapper needs a local WebView2 setup exe.
+# Without it Tauri downloads from Microsoft at the very end (often EOF behind proxies).
+if (-not $SkipGui) {
+    Write-Step 'Check local WebView2 bootstrapper (NSIS embed)'
+    Ensure-WebView2BootstrapperLocal
+}
+
 New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
 
 Write-Step "Copy third_party runtime ($ArchDir) into src-tauri (GUI resources)"
@@ -428,7 +453,11 @@ if (-not $SkipHeadless) {
     if (-not $SkipGui -and -not $SkipFrontend) {
         $SkipInstall = $true
     }
-    $artifactDir = Invoke-EasytierHeadlessBuild
+    # -Last 1: defensive if any leftover pipeline noise precedes the path string.
+    $artifactDir = [string]((@(Invoke-EasytierHeadlessBuild) | Select-Object -Last 1))
+    if ([string]::IsNullOrWhiteSpace($artifactDir) -or -not (Test-Path -LiteralPath $artifactDir)) {
+        throw "Headless artifact directory invalid: '$artifactDir'"
+    }
     $headlessDir = Collect-HeadlessArtifacts -ArtifactDir $artifactDir
 }
 
@@ -448,3 +477,7 @@ Write-EasytierBuildElapsed
 Write-Host ''
 Write-Log 'Same layout as CI artifacts ET-gui-* / ET-windows-* (local OutDir).'
 Write-Log 'Web-only builds stay on: script\easytier-web-fast.cmd / easytier-web-release.cmd'
+
+} finally {
+    Stop-EasytierBuildTranscript
+}

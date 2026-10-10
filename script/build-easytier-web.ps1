@@ -140,6 +140,9 @@ Set-Location $RepoRoot
 
 $CargoBin = Join-Path $env:USERPROFILE '.cargo\bin'
 . (Join-Path $PSScriptRoot 'build-common.ps1')
+Start-EasytierBuildTranscript -Name 'easytier-web'
+
+try {
 
 function Start-EasytierWebDev {
     <#
@@ -266,8 +269,8 @@ if (-not $NoEmbed) {
 }
 
 Write-Step ("cargo " + ($cargoArgs -join ' '))
-& cargo @cargoArgs
-if ($LASTEXITCODE -ne 0) { throw "cargo build failed (exit $LASTEXITCODE)" }
+$code = Invoke-NativeLogged -FilePath 'cargo' -ArgumentList $cargoArgs
+if ($code -ne 0) { throw "cargo build failed (exit $code)" }
 
 $isWin = ($env:OS -match 'Windows') -or ($PSVersionTable.Platform -eq 'Win32NT')
 $builtName = if ($isWin) { 'easytier-web.exe' } else { 'easytier-web' }
@@ -307,3 +310,7 @@ Write-EasytierBuildElapsed
 Write-Host ""
 Write-Log 'Run example:'
 Write-Log "  & '$finalPath' --db `"$RepoRoot\et.db`""
+
+} finally {
+    Stop-EasytierBuildTranscript
+}

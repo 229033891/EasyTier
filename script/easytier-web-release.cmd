@@ -29,11 +29,13 @@ set "ERR=%ERRORLEVEL%"
 echo.
 if not "%ERR%"=="0" (
   echo Release package failed, exit code %ERR%.
+  echo See latest log under artifacts\logs\
   pause
   exit /b %ERR%
 )
 
 echo Release package finished.
 echo Binary: target\release\easytier-web-embed.exe
+echo Logs:   artifacts\logs\easytier-web-*.log
 pause
 exit /b 0

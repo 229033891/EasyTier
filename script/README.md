@@ -2,6 +2,8 @@
 
 本目录放本地构建、安装与运维脚本。Windows 打包请**前台**双击 `.cmd` 或在终端运行（便于看日志）。
 
+打包时控制台输出会**同时**写入 `artifacts\logs\`（如 `easytier-windows-yyyyMMdd-HHmmss.log`），失败后可直接打开该文件排查。
+
 更细的 Ops 文档见仓库 [`docs/ops/`](../docs/ops/)。
 
 ---
@@ -53,6 +55,7 @@
 说明：
 
 - **Fast** 时 GUI/NSIS 仍走 cargo `--release`（Tauri 装包目录固定为 `release/`）；`release-fast` 只加速无头 `ET-*`。
+- 打 GUI NSIS 前会检查 `%LOCALAPPDATA%\tauri\MicrosoftEdgeWebview2Setup.exe`（可用 Downloads 预置，脚本会自动拷贝）。
 - MSVC 未进 PATH 时，先按 [`docs/ops/windows-msvc-local-build.md`](../docs/ops/windows-msvc-local-build.md) 加载 vcvars。
 - 依赖备齐说明见 [`docs/ops/windows-build-pack.md`](../docs/ops/windows-build-pack.md)。
 

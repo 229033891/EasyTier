@@ -7,6 +7,7 @@
   "scripts": {
     "dev": "pnpm --dir ../easytier-web/frontend-lib build && vite",
     "build": "pnpm lint && pnpm --dir ../easytier-web/frontend-lib build && vue-tsc --noEmit && vite build",
+    "build:app": "pnpm lint && vue-tsc --noEmit && vite build",
     "preview": "vite preview",
     "test:mobile-vpn": "vitest run src/composables/mobile_vpn.test.ts src/composables/mobile_vpn_tile.test.ts",
     "tauri": "tauri",

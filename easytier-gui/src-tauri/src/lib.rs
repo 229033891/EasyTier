@@ -388,9 +388,13 @@ async fn update_network_config_state(
 /// and eat an `OwnershipConflict` dialog — on every save). The local cache is only
 /// consulted when the owner could not answer at all.
 ///
-/// A missing or `Unspecified` RPC source decodes to `None`, never to `User`
-/// (`config_source_from_rpc`), so old runtimes that omit the field cannot trip the
-/// explicit-`User` arm; they fall through to the local cache as before.
+/// A missing or `Unspecified` RPC source never decodes to `User`
+/// (`config_source_from_rpc` maps it to `None`), and the owner's
+/// `handle_get_network_config_with_source` then falls back to its own storage source
+/// (`remote_client.rs`), so old runtimes that omit the field still report what they
+/// persisted instead of tripping the explicit-`User` arm. `authoritative` reaches this
+/// function as `None` only on an outright RPC failure — the single case where the
+/// local cache is consulted.
 fn should_report_to_config_server(
     authoritative: Option<ConfigSource>,
     local: Option<manager::PersistedConfigSource>,

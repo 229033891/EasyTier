@@ -29,11 +29,13 @@ set "ERR=%ERRORLEVEL%"
 echo.
 if not "%ERR%"=="0" (
   echo Fast package failed, exit code %ERR%.
+  echo See latest log under artifacts\logs\
   pause
   exit /b %ERR%
 )
 
 echo Fast package finished.
 echo Binary: target\release-fast\easytier-web-embed.exe
+echo Logs:   artifacts\logs\easytier-web-*.log
 pause
 exit /b 0

@@ -84,7 +84,7 @@
    取权威 `ConfigSource`，GUI 本地 `storage.persisted_source` 只作兜底。
    判定是**权威优先**而非任一侧 `Web` 即上报（纯函数 `should_report_to_config_server`）：
    owner 明确 `Web` → 上报；明确 `User` → 不上报（即使本地仍是 `Web`）；
-   owner 答不上来 → 才看本地缓存。
+   owner 答不上来（RPC 调用失败）→ 才看本地缓存。
    不可达时跳过上报，**不**让已成功的本地保存变成失败。
 1. 本地持久化成功后；
 2. 先 `report_via_process_client`（normal 同进程命中 registry）；

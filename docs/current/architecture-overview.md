@@ -544,15 +544,19 @@ Current `traffic-steering.md` 未写入任何权限提示 —— 对外文案会
   两个方向的陈旧标记都被堵住：陈旧本地 `User` 压不住必需的上报（D1 本体），
   陈旧本地 `Web` 也压不住明确的 `User` 回答——后者若不堵，de-web 后的配置每次保存
   都会上报并吃一个 `OwnershipConflict` 弹窗（本地标记经 `merge_persisted` 只朝 `Web`
-  单向粘滞，永远回不来）。缺省 / `Unspecified` 的 RPC source 解码为 `None` 而非 `User`，
-  所以旧 runtime 不会误触发明确-`User` 分支。
+  单向粘滞，永远回不来）。缺省 / `Unspecified` 的 RPC source 经 `config_source_from_rpc`
+  解码为 `None` 而非 `User`，随后 owner 侧 `handle_get_network_config_with_source`
+  （`remote_client.rs:344`）会**回退去读自己的 storage source**——所以旧 runtime 不会误
+  触发明确-`User` 分支。`authoritative` 真正为 `None` 只发生在 **RPC 调用失败**（owner
+  答不上来）时，也正是这时才回落到 GUI 本地缓存。
 - 锁获取失败或 RPC 不可用时**跳过上报而非报错**——本地保存此时已成功，
   把它变成失败会让用户看到"保存失败"的假象。
 - **没有**选择给服务进程补 `GuiHooks`：服务进程拿不到 GUI 的 `AppHandle`，
   补了也发不出事件；且 GUI 本地存储仍可能与权威侧不一致，hooks 只会掩盖问题。
 
-回归测试：`web_owned_report_tests`（5 个用例：权威 Web 覆盖本地缺失 / 覆盖陈旧 User、
-本地 Web 兜底、User 与 Legacy 不上报、未知归属不上报）。
+回归测试：`web_owned_report_tests`（7 个用例：权威 Web 覆盖本地缺失 / 覆盖陈旧 User、
+权威 User 覆盖陈旧本地 Web / 权威 User 且无本地标记不上报、本地 Web 兜底、
+User 与 Legacy 不上报、未知归属不上报）。
 
 #### D2.（中）服务重启后首帧 CAS 竞态
 
