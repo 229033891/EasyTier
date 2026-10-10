@@ -133,7 +133,10 @@ const panelCollapsed = reactive({
   acl: true,
 })
 
-/** 只读预览无法点折叠，展开全部面板便于浏览 */
+/**
+ * 只读预览默认展开全部面板便于浏览；标题栏仍可点击，用户能自行折叠。
+ * 表单控件由各面板 content 上的 inert 锁定（见 panelHeaderPt）。
+ */
 watch(
   () => props.readOnly,
   (readOnly) => {
@@ -188,6 +191,9 @@ function panelHeaderPt(key: keyof typeof panelCollapsed) {
       // 阻止加减号区域冒泡到标题栏，避免双重 toggle
       onClick: (event: Event) => event.stopPropagation(),
     },
+    // 只读时锁定表单控件，但保留标题栏可点 —— 否则整棵子树 inert
+    // 会连带禁掉折叠/展开（inert 无法在子节点上被覆盖，只能下沉到内容区）。
+    content: props.readOnly ? { inert: true } : {},
   }
 }
 
@@ -548,7 +554,6 @@ function removeVpnPortalClient(index: number) {
   <div
     class="flex flex-col h-full"
     :class="{ 'config--readonly': readOnly }"
-    :inert="readOnly || undefined"
     :aria-readonly="readOnly || undefined"
   >
       <div class="config-panels w-full self-center">
@@ -1225,7 +1230,8 @@ function removeVpnPortalClient(index: number) {
             </div>
           </Panel>
 
-          <div v-if="!hideRunButton" class="config-run-actions flex justify-center gap-3 pt-3">
+          <!-- 在面板外：不受 content inert 覆盖；只读时必须隐藏，避免去掉根 inert 后仍可点 -->
+          <div v-if="!hideRunButton && !readOnly" class="config-run-actions flex justify-center gap-3 pt-3">
             <Button class="network-footer-btn" :label="actionLabel || t('run_network')" icon="pi pi-arrow-right"
               icon-pos="right" :disabled="configInvalid" @click="$emit('runNetwork', curNetwork)" />
           </div>

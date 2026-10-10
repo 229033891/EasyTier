@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n';
 import { EventType } from '../types/network'
+import { formatCompactJson } from '../modules/jsonFormat'
 import { computed } from 'vue';
 import { Tag } from 'primevue';
 
@@ -36,7 +37,8 @@ const detailText = computed(() => {
     return String(value)
   }
   try {
-    return JSON.stringify(value, null, 2)
+    // 紧凑排版：标量子结构折叠成单行，只占纵向空间，少占横向宽度
+    return formatCompactJson(value)
   } catch {
     return String(value)
   }
@@ -54,12 +56,14 @@ const detailText = computed(() => {
 .human-event {
   display: flex;
   flex-direction: column;
-  align-items: flex-start;
+  /* 不用 flex-start：否则 JSON 盒按内容收缩，横向空间白白浪费（纵向才是瓶颈） */
   gap: 0.5rem;
   min-width: 0;
 }
 
 .human-event-tag {
+  /* 只有标签保持自身宽度，不跟着撑满 */
+  align-self: flex-start;
   max-width: 100%;
 }
 
