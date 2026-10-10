@@ -87,10 +87,7 @@ fn aggregate_instance(pairs: &[PeerRoutePair]) -> Vec<PeerSample> {
             .map(|ms| (ms * 1000.0).round() as i64)
             .unwrap_or(-1);
         let loss_rate = pair.get_loss_rate().unwrap_or(-1.0);
-        let jitter_us = pair
-            .get_jitter_us()
-            .map(|us| us as i64)
-            .unwrap_or(-1);
+        let jitter_us = pair.get_jitter_us().map(|us| us as i64).unwrap_or(-1);
         let rx_bytes = pair.get_rx_bytes().unwrap_or(0) as i64;
         let tx_bytes = pair.get_tx_bytes().unwrap_or(0) as i64;
 
@@ -320,7 +317,13 @@ mod tests {
         conn_with_jitter(id, latency_us, 1_500, rx, tx)
     }
 
-    fn conn_with_jitter(id: &str, latency_us: u64, jitter_us: u64, rx: u64, tx: u64) -> PeerConnInfo {
+    fn conn_with_jitter(
+        id: &str,
+        latency_us: u64,
+        jitter_us: u64,
+        rx: u64,
+        tx: u64,
+    ) -> PeerConnInfo {
         PeerConnInfo {
             conn_id: id.to_string(),
             peer_id: 7,

@@ -73,7 +73,7 @@ impl UserDisabledWebInstanceStore for NativeUserDisabledWebInstanceStore {
         NativeConfigFileStorage
             .read(path)
             .await?
-            .map(|bytes| String::from_utf8(bytes))
+            .map(String::from_utf8)
             .transpose()
             .map_err(|error| {
                 anyhow::anyhow!("user-disabled web instances are not valid UTF-8: {error}")

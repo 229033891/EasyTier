@@ -9,7 +9,6 @@ use std::{
     time::{Duration, Instant},
 };
 
-#[cfg(feature = "dns-resolver")]
 use anyhow::Context;
 use async_trait::async_trait;
 use easytier_core::host::dns::{DnsQuery, DnsRecordResolver, DnsResolver, DnsSrvRecord};

@@ -384,10 +384,9 @@ impl MagicDnsServerInstanceData {
                 if !route_zones.contains(zone)
                     && !split_zones.contains(zone)
                     && zone != &self.magic_tld_zone
+                    && let Ok(name) = LowerName::from_str(zone)
                 {
-                    if let Ok(name) = LowerName::from_str(zone) {
-                        self.dns_server.remove(&name).await;
-                    }
+                    self.dns_server.remove(&name).await;
                 }
                 continue;
             }
