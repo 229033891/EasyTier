@@ -2010,7 +2010,7 @@ download_and_install_binaries() {
   local tag="${2:-}"
   [[ -n "$tag" ]] || tag="$(get_latest_release_tag)"
 
-  # 包名：ET-linux-<arch>-<tag>.zip（例: ET-linux-x86_64-v2.7.49.zip）
+  # 包名：ET-linux-<arch>-<tag>.zip（例: ET-linux-x86_64-v2.7.5.zip）
   # 优先 tag 直链，失败再试 releases/latest/download（同仓库最新）。
   local asset="ET-linux-${arch}-${tag}.zip"
   local base_tag="${RELEASES_PAGE}/download/${tag}/${asset}"

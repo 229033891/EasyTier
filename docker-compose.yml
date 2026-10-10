@@ -1,7 +1,7 @@
 # ET Docker Compose（单镜像 ET-core / ET-cli / ET-web-embed）
 #
-# 默认镜像：直连 GHCR（与最新 Release tag 对齐，当前 v2.7.49）
-#   ghcr.io/229033891/et:v2.7.49
+# 默认镜像：直连 GHCR（与最新 Release tag 对齐，当前 v2.7.5）
+#   ghcr.io/229033891/et:v2.7.5
 # 其它 tag：
 #   ghcr.io/229033891/et:dev            # 开发验证（ET Docker 手动打）
 #   ghcr.io/229033891/et:latest         # 仅 main 流水线 mark_latest 时
@@ -23,7 +23,7 @@
 services:
   # 飞牛 / NAS 默认：只跑节点
   node:
-    image: ghcr.io/229033891/et:v2.7.49
+    image: ghcr.io/229033891/et:v2.7.5
     container_name: et-node
     restart: unless-stopped
     hostname: FNNAS
@@ -53,7 +53,7 @@ services:
 
   # 可选：本机自托管控制台（默认不启动）
   console:
-    image: ghcr.io/229033891/et:v2.7.49
+    image: ghcr.io/229033891/et:v2.7.5
     container_name: et-console
     profiles: ["console"]
     restart: unless-stopped
