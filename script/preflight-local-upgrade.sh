@@ -383,7 +383,7 @@ cat <<EOF
 EOF
 
 if [[ -n "${PUBLIC_HOST_OPT}" ]]; then
-  info "控制台域名: https://${PUBLIC_HOST_OPT}  (API_PORT=${API_PORT_OPT:-?} CONFIG=${CONFIG_PROTOCOL_OPT:-udp}://${CONFIG_PORT_OPT:-?})"
+  info "控制台域名: https://${PUBLIC_HOST_OPT}  (API_PORT=${API_PORT_OPT:-?} CONFIG=${CONFIG_PROTOCOL_OPT:-udp,tcp} :${CONFIG_PORT_OPT:-?})"
 fi
 
 echo

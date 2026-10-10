@@ -74,7 +74,9 @@ secure-tunnel behavior; Go owns the resulting process-level instances:
 
 ```go
 webClient, err := host.ConnectWebClient(ctx, corehost.WebClientOptions{
+    // Pick one scheme (console defaults to listening on both UDP and TCP):
     Endpoint:   "udp://config.example.com:22020/team-token",
+    // Endpoint: "tcp://config.example.com:22020/team-token",
     MachineID:  "11111111-2222-4333-8444-555555555555",
     Hostname:   "edge-gateway",
     SecureMode: true,
@@ -91,7 +93,8 @@ for _, instance := range host.Instances() {
 
 `MachineID` must be a stable UUID persisted by the application. `Endpoint`
 accepts `tcp://`, `udp://`, or the same shorthand token understood by native
-EasyTier. WebSocket transports are not part of this initial host integration.
+EasyTier (one scheme per URL; the console may listen on both). WebSocket
+transports are not part of this initial host integration.
 One WebClient may run per `Host`.
 
 Web-created instances support the complete `WebClientService` lifecycle and

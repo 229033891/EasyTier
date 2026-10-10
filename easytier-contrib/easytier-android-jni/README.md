@@ -198,8 +198,10 @@ String response = EasyTierJNI.callJsonRpc(
 `RuntimeException`。
 
 ```java
+// 任选 udp:// 或 tcp://（控制台默认同时监听两者；客户端 URL 只能写一种协议）
 EasyTierJNI.startConfigServerClient(
     "udp://user:token@console.example:22020",
+    // 或 "tcp://user:token@console.example:22020"
     "android-host",
     machineId,
     true,

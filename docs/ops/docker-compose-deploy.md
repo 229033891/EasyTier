@@ -35,11 +35,11 @@ curl -fsSL -o docker-compose.yml \
 
 **节点**启动前请确认：
 
-1. `docker-compose.yml` 里 `--config-server` / `ET_CONFIG_SERVER` 指向你的控制台（如 `udp://et.example.com:22020/admin`）
+1. `docker-compose.yml` 里 `--config-server` / `ET_CONFIG_SERVER` 指向你的控制台（任选其一：`udp://et.example.com:22020/admin` 或 `tcp://et.example.com:22020/admin`；控制台默认 `--config-server-protocol=udp,tcp`）
 2. 节点 config 挂载路径与 compose 一致（默认 `/vol1/1000/docker/easytier/config`，按 NAS UID 修改）；`script/docker-up.sh` 会在启动前 `mkdir -p`
 3. 节点需要 **host 网络、特权、`/dev/net/tun`**（compose 已配置）
 
-**控制台**首次启动后浏览器访问：`http://<主机IP>:8080`；配置下发端口 **UDP/TCP 22020** 须可达。
+**控制台**首次启动后浏览器访问：`http://<主机IP>:8080`；配置下发端口 **UDP 22020 与 TCP 22020** 均须可达（客户端 URL 任选一种协议）。
 
 ---
 
@@ -106,6 +106,7 @@ sudo docker compose --profile console up -d
 
 ```text
 udp://127.0.0.1:22020/admin
+# 或 tcp://127.0.0.1:22020/admin（控制台默认同时监听 UDP+TCP）
 ```
 
 （`host` 网络下本机回环即可；跨容器不要用容器名，节点不在 bridge 网络里。）

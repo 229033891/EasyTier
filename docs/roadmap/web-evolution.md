@@ -65,7 +65,7 @@ easytier-core 节点 --(udp/tcp/ws)--->  easytier-web :22020 (默认配置服务
 
 ### 3.1 配置服务器（节点侧）
 
-- 默认监听与协议：`config_server_port`（默认 `22020`）、`config_server_protocol`（默认 `udp`，以及现有 tcp/ws 能力）
+- 默认监听与协议：`config_server_port`（默认 `22020`）、`config_server_protocol`（默认 `udp,tcp` 同端口双听；亦可 `ws` 等，注意 tcp 与 ws 不能共用同一端口）
 - 心跳：`HeartbeatRequest` / `HeartbeatResponse` 字段语义与节奏约定
 - Web / 管理相关 RPC：`WebClientService` 等现有调用语义
 - 隧道与安全相关行为：现有 listener / tunnel / web_security 约定

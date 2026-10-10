@@ -112,6 +112,10 @@ grep -q 'parse_config_protocol_needs' "$TARGET" || {
   echo "[fail] 缺少 parse_config_protocol_needs" >&2
   fail=1
 }
+grep -q 'format_config_firewall_ports' "$TARGET" || {
+  echo "[fail] 缺少 format_config_firewall_ports（udp,tcp 防火墙提示）" >&2
+  fail=1
+}
 
 HELPERS_FW="$(awk '
   /^parse_config_protocol_needs\(\)/ {keep=1}
@@ -119,14 +123,17 @@ HELPERS_FW="$(awk '
   keep {print}
 ' "$TARGET")"
 eval "$HELPERS_FW"
+CONFIG_PORT=22020
 CONFIG_PROTOCOL='udp,tcp'
 parse_config_protocol_needs
 assert_eq "$NEED_CONFIG_UDP" "1" "udp,tcp needs udp"
 assert_eq "$NEED_CONFIG_TCP" "1" "udp,tcp needs tcp"
+assert_eq "$(format_config_firewall_ports)" "UDP 22020、TCP 22020" "udp,tcp firewall hint"
 CONFIG_PROTOCOL='udp'
 parse_config_protocol_needs
 assert_eq "$NEED_CONFIG_UDP" "1" "udp-only needs udp"
 assert_eq "$NEED_CONFIG_TCP" "0" "udp-only no tcp"
+assert_eq "$(format_config_firewall_ports)" "UDP 22020" "udp-only firewall hint"
 
 # log/warn 必须走 stderr，避免 $(get_latest_release_tag) 等命令替换污染 stdout
 echo "[check] log/warn stderr"

@@ -106,7 +106,7 @@ server {
 ```
 
 宝塔可将上述内容放到 `/www/server/panel/vhost/nginx/<域名>.conf`。
-配置下发端口 **UDP 22020** 仍须直连，不能只靠 HTTPS 反代。
+配置下发端口 **UDP 22020 与 TCP 22020** 仍须直连（默认双协议），不能只靠 HTTPS 反代。
 
 ```bash
 # 自动化示例（Nginx 仍须手动部署）
@@ -128,6 +128,7 @@ sudo bash script/install.sh install --mode client --auto \
 ```bash
 sudo bash script/install.sh install --mode client --auto \
   --server-host 'udp://et.example.com:22020/admin'
+# 或 tcp://et.example.com:22020/admin（服务端默认同时监听两者）
 ```
 
 ## 常用操作

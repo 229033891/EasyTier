@@ -650,6 +650,21 @@ parse_config_protocol_needs() {
   done
 }
 
+# Human-readable listen/firewall ports for config-server, e.g. "UDP 22020、TCP 22020".
+# Default CONFIG_PROTOCOL is udp,tcp — both must be opened for Client tcp:// and udp:// URLs.
+format_config_firewall_ports() {
+  parse_config_protocol_needs
+  local -a parts=()
+  (( NEED_CONFIG_UDP )) && parts+=("UDP ${CONFIG_PORT}")
+  (( NEED_CONFIG_TCP )) && parts+=("TCP ${CONFIG_PORT}")
+  if ((${#parts[@]} == 0)); then
+    echo "${CONFIG_PROTOCOL} ${CONFIG_PORT}"
+    return 0
+  fi
+  local IFS='、'
+  echo "${parts[*]}"
+}
+
 # 本机节点 / core 时额外放行默认 listeners（wg/ws/wss）
 should_open_extra_core_listeners() {
   [[ "$MODE" == "core" ]] && return 0
@@ -668,10 +683,10 @@ print_firewall_port_hint() {
     echo "  TCP ${API_PORT}     Web / API"
   fi
   if (( NEED_CONFIG_UDP )); then
-    echo "  UDP ${CONFIG_PORT}     配置下发（Client 直连，必须）"
+    echo "  UDP ${CONFIG_PORT}     配置下发（Client udp://，默认开启）"
   fi
   if (( NEED_CONFIG_TCP )); then
-    echo "  TCP ${CONFIG_PORT}     配置下发（tcp/ws/wss）"
+    echo "  TCP ${CONFIG_PORT}     配置下发（Client tcp://，与 UDP 同端口；默认与 UDP 同时开启）"
   fi
   if (( !NEED_CONFIG_UDP && !NEED_CONFIG_TCP )); then
     echo "  ${CONFIG_PROTOCOL} ${CONFIG_PORT}  配置下发（未知协议，请手动放行）"
@@ -2318,7 +2333,7 @@ verify_nginx_https_proxy() {
     fi
   fi
 
-  health_print ok "配置下发" "UDP ${CONFIG_PORT} 仍需对外放行（不经 Nginx）"
+  health_print ok "配置下发" "$(format_config_firewall_ports) 仍需对外放行（不经 Nginx）"
 
   if [[ "$strict" == "yes" && "$fails" -gt 0 ]]; then
     return 1
@@ -2453,8 +2468,9 @@ install_server() {
 EasyTier Server 安装完成
 ========================
 Web 控制台: ${api_url}
-配置下发监听: ${CONFIG_PROTOCOL} :${CONFIG_PORT}
+配置下发监听: ${CONFIG_PROTOCOL} :${CONFIG_PORT}（默认 udp,tcp 双协议同端口）
 客户端连接示例: ${cs_url}
+  （也可按网络改用另一协议，如 tcp:// 或 udp://，主机/端口/token 相同）
 接入 Token: ${CONFIG_TOKEN}
 ${reg_note}
 ${pass_note}
@@ -2478,12 +2494,12 @@ Nginx HTTPS: 是（对外 https://${host_clean}，本机反代 127.0.0.1:${API_P
 重要: 须手动部署 Nginx 并 reload，外网 https://${host_clean} 才可访问
 Nginx 示例见 docs/easytier-deploy.md（server_name 改为 ${host_clean}）
 宝塔目标: /www/server/panel/vhost/nginx/${host_clean}.conf
-防火墙: TCP ${NGINX_SSL_PORT}（Web）、UDP ${CONFIG_PORT}（配置）、节点 ${CORE_PORT}
-USG: 放行 TCP ${NGINX_SSL_PORT} + UDP ${CONFIG_PORT}，无需对外 TCP ${API_PORT}
+防火墙: TCP ${NGINX_SSL_PORT}（Web）、$(format_config_firewall_ports)（配置）、节点 ${CORE_PORT}
+USG: 放行 TCP ${NGINX_SSL_PORT} + $(format_config_firewall_ports)，无需对外 TCP ${API_PORT}
 EOF
   else
     cat >>"${INSTALL_PATH}/INSTALL_INFO.txt" <<EOF
-防火墙: TCP ${API_PORT}、${CONFIG_PROTOCOL} ${CONFIG_PORT}、节点 ${CORE_PORT}
+防火墙: TCP ${API_PORT}、$(format_config_firewall_ports)、节点 ${CORE_PORT}
 EOF
   fi
 
@@ -2734,7 +2750,7 @@ prompt_interactive() {
       NGINX_HTTPS_PROXY=yes
       read -rp "HTTPS 端口 [${NGINX_SSL_PORT}]: " p
       [[ -n "$p" ]] && NGINX_SSL_PORT="$p"
-      log "将使用 https://域名 对外访问，无需对外放行 Web TCP ${API_PORT}；UDP ${CONFIG_PORT} 配置下发仍须放行"
+      log "将使用 https://域名 对外访问，无需对外放行 Web TCP ${API_PORT}；配置下发 $(format_config_firewall_ports) 仍须放行"
       log "Nginx 须手动部署并反代到 http://127.0.0.1:${API_PORT}，示例见 docs/ops/deploy-install.md"
     else
       NGINX_HTTPS_PROXY=no
