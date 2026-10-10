@@ -168,6 +168,50 @@ function Set-EasytierWritableTemp {
     $env:TMP = $etTemp
 }
 
+function Initialize-EasytierWindowsCargoEnv {
+    <#
+      Align local cargo with CI test.yml (check-hack) and avoid common Windows failures:
+        - MSVC D8050 from -Z7 + long paths (CARGO_PROFILE_DEV_DEBUG=0, short target dir)
+        - openssl-sys vendored build needs perl (Git for Windows usr\bin)
+    #>
+    $env:CARGO_PROFILE_DEV_DEBUG = '0'
+    $env:CARGO_INCREMENTAL = '0'
+    Write-Log 'Env: CARGO_PROFILE_DEV_DEBUG=0 CARGO_INCREMENTAL=0' -Level Info
+
+    if (-not $env:CARGO_TARGET_DIR) {
+        $shortTarget = Join-Path $RepoRoot '.workbuddy-ai\tmp\cargo-target'
+        New-Item -ItemType Directory -Force -Path $shortTarget | Out-Null
+        $env:CARGO_TARGET_DIR = $shortTarget
+        Write-Log "CARGO_TARGET_DIR=$shortTarget" -Level Info
+    }
+
+    if (-not (Get-Command perl -ErrorAction SilentlyContinue)) {
+        $perlDirs = @(
+            (Join-Path ${env:ProgramFiles} 'Git\usr\bin'),
+            (Join-Path ${env:ProgramFiles(x86)} 'Git\usr\bin')
+        )
+        foreach ($dir in $perlDirs) {
+            $perlExe = Join-Path $dir 'perl.exe'
+            if (Test-Path $perlExe) {
+                $env:Path = "$dir;" + $env:Path
+                Write-Log "Perl via Git: $dir" -Level Ok
+                break
+            }
+        }
+    }
+    else {
+        Write-Log "Perl OK: $((Get-Command perl).Source)" -Level Ok
+    }
+
+    if (-not (Get-Command perl -ErrorAction SilentlyContinue)) {
+        Write-Log 'perl not on PATH — only needed for --features full / openssl-crypto (optional on Windows; ET Test script skips that combo).' -Level Warn
+    }
+
+    if (-not (Get-Command cl -ErrorAction SilentlyContinue)) {
+        Write-Log 'cl.exe not on PATH — load vcvars64 / Developer shell before clippy or nextest. See docs/ops/windows-msvc-local-build.md' -Level Warn
+    }
+}
+
 function Ensure-WindowsBuildPrereqs {
     <#
       thunk-rs needs `7z` on PATH. Cached VC-LTL / YY-Thunks / protoc avoid re-download.

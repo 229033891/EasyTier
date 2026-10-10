@@ -239,6 +239,7 @@ mod portable_runtime {
     };
 
     use tokio::sync::Notify;
+    #[cfg(unix)]
     use tokio_util::task::AbortOnDropHandle;
 
     #[cfg(feature = "proxy-packet")]

@@ -152,11 +152,25 @@ jobs:
           mkdir -p ./artifacts/objects/
           mv easytier-gui/src-tauri/gen/android/app/build/outputs/apk/*/release/*.apk ./artifacts/objects/
           
-          if [[ $GITHUB_REF_TYPE =~ ^tag$ ]]; then
-            TAG=$GITHUB_REF_NAME
-          else
-            TAG=$GITHUB_SHA
+          # 版本号：优先取分支名 releases/vX.Y.Z（与 release tag 一致），
+          # 回退到 tauri.conf.json 的 version；两者都拿不到就不加版本号。
+          VERSION=""
+          if [[ "$GITHUB_REF_NAME" == releases/v* ]]; then
+            VERSION="${GITHUB_REF_NAME#releases/}"
+          elif [[ -f easytier-gui/src-tauri/tauri.conf.json ]]; then
+            VERSION="$(sed -n 's/.*"version" *: *"\([^"]*\)".*/\1/p' easytier-gui/src-tauri/tauri.conf.json | head -1 || true)"
+            if [[ -n "$VERSION" ]]; then
+              VERSION="v${VERSION}"
+            fi
           fi
+
+          SUFFIX=""
+          if [[ -n "$VERSION" ]]; then
+            SUFFIX="-${VERSION}"
+          else
+            echo "::warning::could not resolve version; APK name will omit it"
+          fi
+          echo "APK name suffix: '${SUFFIX}'"
 
           for apk in ./artifacts/objects/*.apk; do
             [[ -f "$apk" ]] || continue
@@ -164,7 +178,7 @@ jobs:
             if [[ "$abi" == "$(basename "$apk")" ]]; then
               abi="universal"
             fi
-            mv "$apk" "./artifacts/objects/ET-android-${abi}.apk"
+            mv "$apk" "./artifacts/objects/ET-android${SUFFIX}-${abi}.apk"
           done
 
           mv ./artifacts/objects/* ./artifacts/

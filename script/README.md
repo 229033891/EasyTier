@@ -59,6 +59,40 @@
 - MSVC 未进 PATH 时，先按 [`docs/ops/windows-msvc-local-build.md`](../docs/ops/windows-msvc-local-build.md) 加载 vcvars。
 - 依赖备齐说明见 [`docs/ops/windows-build-pack.md`](../docs/ops/windows-build-pack.md)。
 
+### 3. 本地 ET Test（push 前自检）
+
+对齐 CI [`.github/workflows/test.yml`](../.github/workflows/test.yml)。日志同样写入 `artifacts\logs\`。
+
+| 脚本 | 作用 | 覆盖 |
+|------|------|------|
+| `easytier-test-fast.cmd` | 日常 push 前 | `fmt` + `Cargo.lock` + `clippy -D warnings` + `cargo hack` features |
+| `easytier-test-full.cmd` | 更完整 | Fast + WASI（若已 `rustup target add wasm32-wasip1`）+ `nextest`（**不含** three_node） |
+
+等价 PowerShell：
+
+```powershell
+.\script\test-easytier.ps1 -Profile Fast -InstallTools
+.\script\test-easytier.ps1 -Profile Full -InstallTools
+.\script\test-easytier.ps1 -Interactive
+```
+
+Linux / WSL（含可选 three_node）：
+
+```bash
+./script/test-easytier.sh --install-tools
+./script/test-easytier.sh --full
+./script/test-easytier.sh --full --three-node
+```
+
+说明：
+
+- **Fast** 能拦住本次 `releases/v2.7.5` 上失败的 fmt / clippy / features。
+- **three_node**（含 FakeTCP）需要 Linux 的 tun/bridge/`sudo`；Windows 上 Full 会跳过，请用 WSL 或等 CI。
+- 缺 `cargo-hack` / `cargo-nextest` 时加 `-InstallTools` / `--install-tools`。
+- Windows 与 CI 的差异（有意为之）：**不用 `--features full`**（会编 `openssl-crypto`）；clippy **不含 `--all-targets`/`--tests`**；`--no-default-features` 用 **`cargo check`**（与 CI cargo-hack 一致，避免 Windows 平台模块 dead_code 误报）。完整矩阵仍靠 Linux CI。
+- 脚本会自动设 `CARGO_PROFILE_DEV_DEBUG=0`、短 `CARGO_TARGET_DIR`。
+- 若 clippy/hack 仍失败：用「x64 本机工具」终端（需 `cl.exe`），见 [`docs/ops/windows-msvc-local-build.md`](../docs/ops/windows-msvc-local-build.md)。
+
 ---
 
 ## 二、从 Release 安装（下载成品，不是本地编译）
@@ -72,6 +106,28 @@
 | `preflight-local-upgrade.sh` | Linux | 本地升级预检（已装目录 vs 新包） |
 
 `et-ops-common.sh` 为 `install.sh` / `update.sh` 共用库，**不要直接执行**。
+
+远程一键安装（从 GitHub 拉最新 `install.sh`；无 TTY 时默认 core 轻量）：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/229033891/EasyTier/main/script/install.sh \
+  | sudo bash -s install
+```
+
+或 clone 后交互安装（推荐 Server / Client）：
+
+```bash
+git clone https://github.com/229033891/EasyTier.git
+cd EasyTier
+sudo bash script/install.sh
+```
+
+远程一键升级（从 GitHub 拉最新 `update.sh` 并执行）：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/229033891/EasyTier/main/script/update.sh \
+  -o /tmp/et-update.sh && sudo bash /tmp/et-update.sh --auto
+```
 
 文档：[`docs/ops/deploy-install.md`](../docs/ops/deploy-install.md)
 
@@ -96,5 +152,7 @@
 ```text
 只要改 Web 控制台、打 embed exe     →  easytier-web-*.cmd
 要 GUI 安装包 + ET-core/cli/web zip →  easytier-windows-*.cmd
+push 前对齐 lint / feature 门控       →  easytier-test-fast.cmd
+本地尽量对齐 CI 测试                 →  easytier-test-full.cmd / test-easytier.sh
 只要现成发布包装到机器上           →  install.cmd / install.sh
 ```

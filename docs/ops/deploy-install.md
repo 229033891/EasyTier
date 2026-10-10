@@ -133,7 +133,7 @@ sudo bash script/install.sh install --mode client --auto \
 ## 常用操作
 
 ```bash
-# 升级（推荐独立入口；与 install.sh update 等价，均读 Release）
+# 升级 —— 远程一键见下文「远程一键升级」；本地仓库：
 sudo bash script/update.sh
 # 或
 sudo bash script/install.sh update
@@ -152,6 +152,41 @@ sudo bash script/install.sh uninstall
 `script/update.sh` 与 `install.sh` **互不调用**；二者各自 `source et-ops-common.sh`，
 固定从 [Releases](https://github.com/229033891/EasyTier/releases) 拉最新包。
 （`install.sh update` 仅调用库内函数，不会 exec `update.sh`。）
+
+### 远程一键升级（推荐，无需先 clone）
+
+从 GitHub `main` 拉取最新 `update.sh`（缺失时会再拉 `et-ops-common.sh`），再升级本机 `/opt/easytier` 二进制：
+
+```bash
+# 非交互（已装机器常用）
+curl -fsSL https://raw.githubusercontent.com/229033891/EasyTier/main/script/update.sh \
+  -o /tmp/et-update.sh && sudo bash /tmp/et-update.sh --auto
+
+# 交互确认 / 选下载源
+curl -fsSL https://raw.githubusercontent.com/229033891/EasyTier/main/script/update.sh \
+  -o /tmp/et-update.sh && sudo bash /tmp/et-update.sh
+```
+
+国内拉 raw 较慢时，可用镜像拉取脚本（二进制下载仍可在脚本内选「自动」）：
+
+```bash
+curl -fsSL https://ghfast.top/https://raw.githubusercontent.com/229033891/EasyTier/main/script/update.sh \
+  -o /tmp/et-update.sh && \
+  sudo ET_COMMON_URL="https://ghfast.top/https://raw.githubusercontent.com/229033891/EasyTier/main/script/et-ops-common.sh" \
+    bash /tmp/et-update.sh --auto
+```
+
+说明：
+
+- 写入 `/tmp` 再执行，避免在 `~/EasyTier` 目录下误用**旧版**本地 `et-ops-common.sh`。
+- 管道 `curl ... | sudo bash` 也可以；脚本在无真实路径时同样会从 GitHub 拉 common。
+- 强制始终用远端 common：`ET_FORCE_REMOTE_COMMON=1`。
+
+### 本地仓库升级
+
+```bash
+cd ~/EasyTier && git pull && sudo bash script/update.sh --auto
+```
 
 会做：
 

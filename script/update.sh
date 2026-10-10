@@ -14,12 +14,19 @@
 #
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd || true)"
+# When piped (`curl ... | bash`), BASH_SOURCE[0] is empty/"-" — do not treat cwd as SCRIPT_DIR
+# (that would pick up a stale ~/EasyTier/et-ops-common.sh). Always fetch common from GitHub then.
+_SRC="${BASH_SOURCE[0]:-}"
+SCRIPT_DIR=""
+if [[ -n "$_SRC" && "$_SRC" != "-" && -f "$_SRC" ]]; then
+  SCRIPT_DIR="$(cd "$(dirname "$_SRC")" 2>/dev/null && pwd || true)"
+fi
 ET_COMMON_URL="${ET_COMMON_URL:-https://raw.githubusercontent.com/229033891/EasyTier/main/script/et-ops-common.sh}"
 
 load_et_ops_common() {
   local common="" tmp=""
-  if [[ -n "${SCRIPT_DIR:-}" && -f "${SCRIPT_DIR}/et-ops-common.sh" ]]; then
+  # ET_FORCE_REMOTE_COMMON=1 → always download common from GitHub (ignore sibling file)
+  if [[ "${ET_FORCE_REMOTE_COMMON:-}" != "1" && -n "${SCRIPT_DIR:-}" && -f "${SCRIPT_DIR}/et-ops-common.sh" ]]; then
     common="${SCRIPT_DIR}/et-ops-common.sh"
     # shellcheck source=et-ops-common.sh
     source "$common"
@@ -29,10 +36,12 @@ load_et_ops_common() {
     echo "[ERROR] 缺少 et-ops-common.sh 且无 curl，无法继续" >&2
     exit 1
   }
+  echo "[INFO] 从 GitHub 拉取 et-ops-common.sh ..." >&2
   tmp="$(mktemp)"
   if ! curl -fsSL --connect-timeout 20 --max-time 120 "$ET_COMMON_URL" -o "$tmp"; then
     rm -f "$tmp"
     echo "[ERROR] 无法下载 et-ops-common.sh: ${ET_COMMON_URL}" >&2
+    echo "提示: 国内可设 ET_COMMON_URL=https://ghfast.top/https://raw.githubusercontent.com/229033891/EasyTier/main/script/et-ops-common.sh" >&2
     exit 1
   fi
   # shellcheck disable=SC1090

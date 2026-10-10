@@ -2989,13 +2989,28 @@ cmd_update() {
     had_node0=yes
     WITH_NODE="yes"
   fi
-  if unit_present ET-core@default.service || unit_present easytier-core@default.service || \
-     [[ -f /etc/systemd/system/ET-core@.service ]]; then
-    # template-only core 也可能仅有 ET-core@.service + enabled instance
-    if systemctl is-enabled ET-core@default.service &>/dev/null || \
-       unit_present ET-core@default.service || unit_present easytier-core@default.service; then
-      had_default=yes
-    fi
+  # Only treat default as installed if the instance is actually enabled.
+  # `systemctl cat ET-core@default` succeeds whenever the ET-core@.service
+  # template exists, so unit_present alone must NOT set had_default (that
+  # wrongly re-enabled default on server+node0 upgrades → dual instance /
+  # peer id conflict).
+  if systemctl is-enabled ET-core@default.service &>/dev/null || \
+     systemctl is-enabled easytier-core@default.service &>/dev/null; then
+    had_default=yes
+  elif [[ -f /etc/systemd/system/ET-core@default.service ]] || \
+       [[ -f /etc/systemd/system/easytier-core@default.service ]]; then
+    # Explicit per-instance unit file (not just the template): keep if enabled
+    # was already handled above; disabled leftover → leave had_default=no.
+    :
+  fi
+  # Server 本机节点用 node0；与 default 同时启用会互相连自己 → peer id conflict
+  if [[ "$had_node0" == "yes" && "$had_default" == "yes" ]]; then
+    warn "同时存在 ET-core@node0 与已启用的 ET-core@default；升级只保留 node0（Server 本机节点）"
+    had_default=no
+    systemctl disable --now ET-core@default.service 2>/dev/null || true
+    systemctl disable --now easytier-core@default.service 2>/dev/null || true
+    rm -f /etc/systemd/system/ET-core@default.service \
+          /etc/systemd/system/easytier-core@default.service
   fi
   if unit_present ET-backup.timer || unit_present easytier-backup.timer; then
     had_backup=yes

@@ -264,6 +264,7 @@ mod tests {
     /// 与 60s 边界对齐，桶边界才会是 T0 / T0+60 / ...
     const T0: i64 = 1_700_000_040;
 
+    #[allow(clippy::too_many_arguments)]
     fn row(
         peer_id: i64,
         remote_addr: &str,
