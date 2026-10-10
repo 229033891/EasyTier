@@ -2,7 +2,10 @@ use std::{io::Write as _, path::Path};
 
 use atomic_write_file::{AtomicWriteFile, OpenOptions};
 
-use easytier_core::management::{ConfigFileControl, ConfigFilePermission, ConfigFileStorage};
+use easytier_core::{
+    instance::manager::UserDisabledWebInstanceStore,
+    management::{ConfigFileControl, ConfigFilePermission, ConfigFileStorage},
+};
 
 #[derive(Default)]
 pub(crate) struct NativeConfigFileStorage;
@@ -54,6 +57,33 @@ impl ConfigFileStorage for NativeConfigFileStorage {
     async fn remove(&self, path: &Path) -> anyhow::Result<()> {
         tokio::fs::remove_file(path).await?;
         Ok(())
+    }
+}
+
+/// Host Adapter for the user-disabled web-instance set.
+///
+/// Core owns *which* instances are disabled; the durable document is a Host effect, so
+/// the actual file access (and its atomic-replace semantics) is delegated to the same
+/// [`ConfigFileStorage`] the instance TOML files already use.
+pub(crate) struct NativeUserDisabledWebInstanceStore;
+
+#[async_trait::async_trait]
+impl UserDisabledWebInstanceStore for NativeUserDisabledWebInstanceStore {
+    async fn load(&self, path: &Path) -> anyhow::Result<Option<String>> {
+        NativeConfigFileStorage
+            .read(path)
+            .await?
+            .map(|bytes| String::from_utf8(bytes))
+            .transpose()
+            .map_err(|error| {
+                anyhow::anyhow!("user-disabled web instances are not valid UTF-8: {error}")
+            })
+    }
+
+    async fn store(&self, path: &Path, contents: &str) -> anyhow::Result<()> {
+        NativeConfigFileStorage
+            .write(path, contents.as_bytes())
+            .await
     }
 }
 

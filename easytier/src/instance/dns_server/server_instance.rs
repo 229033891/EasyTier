@@ -312,17 +312,14 @@ impl MagicDnsServerInstanceData {
                         );
                         continue;
                     }
-                    zones
-                        .entry(target.zone)
-                        .or_default()
-                        .insert(
-                            target.rr_name.clone(),
-                            StaticHostRr {
-                                rr_name: target.rr_name,
-                                ips: entry.ips.clone(),
-                                ttl_secs: entry.ttl_secs,
-                            },
-                        );
+                    zones.entry(target.zone).or_default().insert(
+                        target.rr_name.clone(),
+                        StaticHostRr {
+                            rr_name: target.rr_name,
+                            ips: entry.ips.clone(),
+                            ttl_secs: entry.ttl_secs,
+                        },
+                    );
                 }
             }
         }

@@ -7,6 +7,11 @@
 - Index: [`../README.md`](../README.md)
 - System map (agent entry): [`system-overview.md`](./system-overview.md)
 - Desktop process / config-server sync: [`desktop-gui-and-config-server.md`](./desktop-gui-and-config-server.md)
+- 中文总览与稳定性评估（非权威）：[`architecture-overview.md`](./architecture-overview.md)
+
+> This document remains the source of truth for ownership, dependency direction, and
+> invariants. `architecture-overview.md` adds a Chinese consolidated view plus a
+> stability assessment; where the two disagree, this document wins.
 
 ## Scope
 
@@ -158,6 +163,14 @@ broker owns asynchronous operation lifecycle and completion storage while the
 calling domain owns operation kinds, outcomes, resources, and errors.
 Foundation must not depend on a domain layer.
 
+Foundation is currently a **core-internal** base layer, not a cross-crate public
+infrastructure package. It is heavily reused inside `easytier-core` across every
+domain, but outside core it has a single production consumer today
+(`ExpiringSet` in the native QUIC proxy). Presentation crates and integrations do
+not import it. Treat a new cross-crate use of a foundation item as a deliberate
+decision to make it public API: prefer duplicating a small helper over widening
+the published surface without a second consumer.
+
 ### Configuration and packets
 
 `config/` owns:
@@ -194,6 +207,22 @@ wire codecs. It does not own socket I/O or connection policy.
 - packet ingress and egress;
 - Host socket operation bridges and handle-based TCP/UDP/listener adapters;
 - host-owned, message-preserving tunnel endpoints.
+
+Two socket seam families coexist, and which one a Host implements depends on the
+Host, not on preference:
+
+- `socket/` exposes the transport-neutral `VirtualTcpSocketFactory`,
+  `VirtualTcpListenerFactory`, and `VirtualUdpSocketFactory` traits plus the Ring
+  transport. **The native composition root implements this family**
+  (`easytier/src/host_runtime.rs`); it also supplies `DnsResolver`.
+- `host/socket/` wraps those capabilities in handle-based, waker-driven
+  `HostSocketIo` / `HostTcpIo` / `HostUdpIo` / `HostSocketFactoryIo` /
+  `HostTunnelIo` seams. Today these have production consumers only under
+  `src/wasi/adapter/`; the WASI guest is the sole current production user.
+
+When adding a socket capability, decide deliberately which family the target Host
+needs. Do not assume `host/socket/` is the general entry point — on native it is
+not implemented, and reaching for it there yields a seam with no provider.
 
 Core owns scheduling, backpressure, cancellation, UDP session state, and
 protocol state even when each actual operation crosses a Host Adapter. A Host

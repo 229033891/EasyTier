@@ -1,2 +1,0 @@
-﻿cargo pid=10076 CPU=3.8s WS=213MB start=2026/9/29 20:52:35
-cl pid=13932 CPU=0s WS=8MB start=2026/9/29 21:00:11

@@ -167,6 +167,23 @@ pub fn clear() {
     *STATUS.write() = Status::default();
 }
 
+/// Extend `ips` with the last usable underlay destinations, preferring the DNS cache
+/// and falling back to the previous host's excludes only when the cache yields nothing.
+#[cfg(not(any(target_os = "wasi", target_arch = "wasm32")))]
+fn extend_from_dns_fallback(ips: &mut BTreeSet<IpAddr>) {
+    let (dns_stale, url_stale) = {
+        let status = STATUS.read();
+        (
+            status.dns_cache.ips.clone(),
+            status.stale_exclude_ips.clone(),
+        )
+    };
+    ips.extend(dns_stale);
+    if ips.is_empty() {
+        ips.extend(url_stale);
+    }
+}
+
 /// Candidate underlay IPs for the active config-server endpoint (cached + DNS).
 pub async fn underlay_exclude_candidate_ips() -> BTreeSet<IpAddr> {
     let (host, mut ips, cached_dns, stale) = {
@@ -202,65 +219,51 @@ pub async fn underlay_exclude_candidate_ips() -> BTreeSet<IpAddr> {
     }
 
     #[cfg(not(any(target_os = "wasi", target_arch = "wasm32")))]
-    {
-        let lookup = tokio::time::timeout(DNS_LOOKUP_TIMEOUT, async {
-            if let Some(host_lookup) = host_dns_lookup() {
+    match host_dns_lookup() {
+        // Core never resolves names itself. A Host that installed no resolver cannot
+        // answer here, so degrade exactly like a failed lookup instead of reaching for
+        // a system resolver behind the Host capability seam.
+        None => {
+            tracing::warn!(
+                %host,
+                "no host DNS resolver installed; underlay exclude falls back to cached IPs"
+            );
+            extend_from_dns_fallback(&mut ips);
+        }
+        Some(host_lookup) => {
+            let lookup = tokio::time::timeout(DNS_LOOKUP_TIMEOUT, async {
                 host_lookup(host.clone())
                     .await
-                    .map(|ips| ips.into_iter().collect::<BTreeSet<_>>())
-                    .map_err(std::io::Error::other)
-            } else {
-                let addrs = tokio::net::lookup_host((host.as_str(), 0)).await?;
-                Ok(addrs.map(|addr| addr.ip()).collect::<BTreeSet<_>>())
-            }
-        })
-        .await;
-        match lookup {
-            Ok(Ok(resolved)) => {
-                if !resolved.is_empty() {
-                    let mut status = STATUS.write();
-                    if status.snapshot.endpoint_host.as_deref() == Some(host.as_str()) {
-                        status.dns_cache = DnsCache {
-                            ips: resolved.clone(),
-                            fetched_at: Some(Instant::now()),
-                        };
-                        // Retire stale fallback once the new host has concrete
-                        // destinations.
-                        status.stale_exclude_ips.clear();
+                    .map(|resolved| resolved.into_iter().collect::<BTreeSet<_>>())
+            })
+            .await;
+            match lookup {
+                Ok(Ok(resolved)) => {
+                    if !resolved.is_empty() {
+                        let mut status = STATUS.write();
+                        if status.snapshot.endpoint_host.as_deref() == Some(host.as_str()) {
+                            status.dns_cache = DnsCache {
+                                ips: resolved.clone(),
+                                fetched_at: Some(Instant::now()),
+                            };
+                            // Retire stale fallback once the new host has concrete
+                            // destinations.
+                            status.stale_exclude_ips.clear();
+                        }
                     }
+                    ips.extend(resolved);
                 }
-                ips.extend(resolved);
-            }
-            Ok(Err(err)) => {
-                tracing::warn!(%host, %err, "config-server DNS lookup failed for underlay exclude");
-                let (dns_stale, url_stale) = {
-                    let status = STATUS.read();
-                    (
-                        status.dns_cache.ips.clone(),
-                        status.stale_exclude_ips.clone(),
-                    )
-                };
-                ips.extend(dns_stale);
-                if ips.is_empty() {
-                    ips.extend(url_stale);
+                Ok(Err(err)) => {
+                    tracing::warn!(%host, %err, "config-server DNS lookup failed for underlay exclude");
+                    extend_from_dns_fallback(&mut ips);
                 }
-            }
-            Err(_) => {
-                tracing::warn!(
-                    %host,
-                    timeout_ms = DNS_LOOKUP_TIMEOUT.as_millis(),
-                    "config-server DNS lookup timed out for underlay exclude"
-                );
-                let (dns_stale, url_stale) = {
-                    let status = STATUS.read();
-                    (
-                        status.dns_cache.ips.clone(),
-                        status.stale_exclude_ips.clone(),
-                    )
-                };
-                ips.extend(dns_stale);
-                if ips.is_empty() {
-                    ips.extend(url_stale);
+                Err(_) => {
+                    tracing::warn!(
+                        %host,
+                        timeout_ms = DNS_LOOKUP_TIMEOUT.as_millis(),
+                        "config-server DNS lookup timed out for underlay exclude"
+                    );
+                    extend_from_dns_fallback(&mut ips);
                 }
             }
         }

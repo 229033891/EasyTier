@@ -3,8 +3,9 @@
 ## Status
 
 - Status: **Current**
-- Last reviewed: 2026-10-04
+- Last reviewed: 2026-10-10
 - Index: [`../README.md`](../README.md)
+- Desktop underlay DNS binding (physical-default-interface rule, exit-node `/0` interaction): [`underlay.md`](./underlay.md) §2
 
 VPN bypass is a socket-creation requirement, not an operation on a socket that
 core has already connected. Core and WASI guests never need an OS file descriptor.

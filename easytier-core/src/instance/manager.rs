@@ -4,7 +4,7 @@ use std::{
     collections::{HashMap, HashSet, hash_map::Entry},
     error::Error,
     fmt,
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::{
         Arc, Mutex,
         atomic::{AtomicUsize, Ordering},
@@ -248,6 +248,24 @@ impl Drop for ActiveStopGuard {
     }
 }
 
+/// Host seam for the user-disabled web-instance set that survives restarts.
+///
+/// Core does not touch the host filesystem, so the backing store is supplied by the
+/// Host composition. Without a store the set stays in memory for the lifetime of the
+/// process, which is the correct default for compact and embedded Hosts.
+///
+/// This seam lives in `instance` rather than reusing `management::ConfigFileStorage`
+/// because `management` is a higher layer than `instance` and must not be depended on
+/// from below.
+#[async_trait::async_trait]
+pub trait UserDisabledWebInstanceStore: Send + Sync + 'static {
+    /// Returns the stored document, or `None` when nothing has been stored yet.
+    async fn load(&self, path: &Path) -> anyhow::Result<Option<String>>;
+
+    /// Atomically replaces the stored document.
+    async fn store(&self, path: &Path, contents: &str) -> anyhow::Result<()>;
+}
+
 /// Owns all process-level Instance state and operations.
 pub struct InstanceManager<F: InstanceFactory> {
     factory: F,
@@ -255,6 +273,7 @@ pub struct InstanceManager<F: InstanceFactory> {
     config_controls: DashMap<Uuid, ConfigFileControl>,
     notifier: Arc<tokio::sync::Notify>,
     config_dir: Option<PathBuf>,
+    user_disabled_web_instance_store: Option<Arc<dyn UserDisabledWebInstanceStore>>,
     daemon_guard: Arc<()>,
     mutation_lock: Arc<tokio::sync::Mutex<()>>,
     runtime_handle: Option<tokio::runtime::Handle>,
@@ -296,6 +315,7 @@ impl<F: InstanceFactory> InstanceManager<F> {
             config_controls: DashMap::new(),
             notifier: Arc::new(tokio::sync::Notify::new()),
             config_dir: None,
+            user_disabled_web_instance_store: None,
             daemon_guard: Arc::new(()),
             mutation_lock: Arc::new(tokio::sync::Mutex::new(())),
             runtime_handle,
@@ -307,7 +327,16 @@ impl<F: InstanceFactory> InstanceManager<F> {
 
     pub fn with_config_path(mut self, config_dir: Option<PathBuf>) -> Self {
         self.config_dir = config_dir;
-        self.reload_user_disabled_web_instances();
+        self
+    }
+
+    /// Supplies the Host store backing [`Self::load_user_disabled_web_instances`]
+    /// and every later mutation. Without one the set is memory-only.
+    pub fn with_user_disabled_web_instance_store(
+        mut self,
+        store: Arc<dyn UserDisabledWebInstanceStore>,
+    ) -> Self {
+        self.user_disabled_web_instance_store = Some(store);
         self
     }
 
@@ -319,12 +348,28 @@ impl<F: InstanceFactory> InstanceManager<F> {
         )
     }
 
-    fn reload_user_disabled_web_instances(&self) {
-        let Some(path) = self.user_disabled_web_instances_path() else {
+    /// Loads the persisted user-disabled set through the Host store.
+    ///
+    /// Call once after construction; without a store (or without a config directory)
+    /// this is a no-op and the set stays empty.
+    pub async fn load_user_disabled_web_instances(&self) {
+        let (Some(store), Some(path)) = (
+            self.user_disabled_web_instance_store.as_deref(),
+            self.user_disabled_web_instances_path(),
+        ) else {
             return;
         };
-        let Ok(contents) = std::fs::read_to_string(&path) else {
-            return;
+        let contents = match store.load(&path).await {
+            Ok(Some(contents)) => contents,
+            Ok(None) => return,
+            Err(error) => {
+                tracing::warn!(
+                    %error,
+                    path = %path.display(),
+                    "failed to load user-disabled web instances"
+                );
+                return;
+            }
         };
         let loaded = parse_user_disabled_web_instances(&contents);
         if let Ok(mut guard) = self.user_disabled_web_instances.lock() {
@@ -332,15 +377,23 @@ impl<F: InstanceFactory> InstanceManager<F> {
         }
     }
 
-    fn persist_user_disabled_web_instances(&self) {
-        let Some(path) = self.user_disabled_web_instances_path() else {
+    async fn persist_user_disabled_web_instances(&self) {
+        let (Some(store), Some(path)) = (
+            self.user_disabled_web_instance_store.as_deref(),
+            self.user_disabled_web_instances_path(),
+        ) else {
             return;
         };
-        let Ok(guard) = self.user_disabled_web_instances.lock() else {
+        // Scope the guard inside the closure: a std Mutex guard is not Send and must
+        // not live across the await below.
+        let Ok(rendered) = self
+            .user_disabled_web_instances
+            .lock()
+            .map(|guard| render_user_disabled_web_instances(&guard))
+        else {
             return;
         };
-        let rendered = render_user_disabled_web_instances(&guard);
-        if let Err(error) = std::fs::write(&path, rendered) {
+        if let Err(error) = store.store(&path, &rendered).await {
             tracing::warn!(
                 %error,
                 path = %path.display(),
@@ -363,23 +416,25 @@ impl<F: InstanceFactory> InstanceManager<F> {
             .unwrap_or(false)
     }
 
-    pub fn mark_user_disabled_web_instance(&self, instance_id: Uuid) {
-        let Ok(mut guard) = self.user_disabled_web_instances.lock() else {
-            return;
-        };
-        if guard.insert(instance_id) {
-            drop(guard);
-            self.persist_user_disabled_web_instances();
+    pub async fn mark_user_disabled_web_instance(&self, instance_id: Uuid) {
+        // Scope the guard inside the closure so it is provably not held across the
+        // await below (a std Mutex guard is not Send).
+        let changed = self
+            .user_disabled_web_instances
+            .lock()
+            .is_ok_and(|mut guard| guard.insert(instance_id));
+        if changed {
+            self.persist_user_disabled_web_instances().await;
         }
     }
 
-    pub fn clear_user_disabled_web_instance(&self, instance_id: Uuid) {
-        let Ok(mut guard) = self.user_disabled_web_instances.lock() else {
-            return;
-        };
-        if guard.remove(&instance_id) {
-            drop(guard);
-            self.persist_user_disabled_web_instances();
+    pub async fn clear_user_disabled_web_instance(&self, instance_id: Uuid) {
+        let changed = self
+            .user_disabled_web_instances
+            .lock()
+            .is_ok_and(|mut guard| guard.remove(&instance_id));
+        if changed {
+            self.persist_user_disabled_web_instances().await;
         }
     }
 

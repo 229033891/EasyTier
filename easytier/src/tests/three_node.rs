@@ -151,13 +151,19 @@ pub fn get_inst_config(
     config.set_netns(ns.map(|s| s.to_owned()));
     config.set_ipv4(Some(ipv4.parse().unwrap()));
     config.set_ipv6(Some(ipv6.parse().unwrap()));
-    config.set_listeners(vec![
+    let mut listeners = vec![
         "tcp://0.0.0.0:11010".parse().unwrap(),
         "udp://0.0.0.0:11010".parse().unwrap(),
         "wg://0.0.0.0:11011".parse().unwrap(),
         "ws://0.0.0.0:11011".parse().unwrap(),
         "wss://0.0.0.0:11012".parse().unwrap(),
-    ]);
+    ];
+    // Protocol port offsets: tcp/udp 0, wg/ws 1, quic/wss 2, faketcp 3.
+    #[cfg(feature = "quic")]
+    listeners.push("quic://0.0.0.0:11012".parse().unwrap());
+    #[cfg(feature = "faketcp")]
+    listeners.push("faketcp://0.0.0.0:11013".parse().unwrap());
+    config.set_listeners(listeners);
     config.set_socks5_portal(Some("socks5://0.0.0.0:12345".parse().unwrap()));
     config
 }
@@ -238,6 +244,12 @@ async fn init_three_node_ex_with_inst3<F: Fn(TomlConfigLoader) -> TomlConfigLoad
     } else if proto == "wss" {
         #[cfg(feature = "websocket")]
         inst1.add_connector_url("wss://10.1.1.2:11012".parse().unwrap());
+    } else if proto == "quic" {
+        #[cfg(feature = "quic")]
+        inst1.add_connector_url("quic://10.1.1.2:11012".parse().unwrap());
+    } else if proto == "faketcp" {
+        #[cfg(feature = "faketcp")]
+        inst1.add_connector_url("faketcp://10.1.1.2:11013".parse().unwrap());
     }
 
     inst3.add_connector_url(inst2.ring_listener_url());
@@ -1676,6 +1688,56 @@ pub async fn proxy_three_node_disconnect_test(#[values("tcp", "wg")] proto: &str
 
     let (ret,) = tokio::join!(task);
     assert!(ret.is_ok());
+}
+
+/// Transport-matrix coverage for `quic`. Previously this scheme had only a unit-level
+/// capability test, so a regression in the classified-UDP session path would not
+/// surface in the end-to-end suite.
+#[cfg(feature = "quic")]
+#[tokio::test]
+#[serial_test::serial]
+pub async fn quic_transport_end_to_end() {
+    let insts = init_three_node("quic").await;
+
+    // inst1 dials inst2 over `quic://`, so reaching inst3 proves the tunnel carried
+    // real traffic rather than merely completing a handshake.
+    wait_for_condition(
+        || async { ping_test("net_b", "10.144.144.3", None).await },
+        Duration::from_secs(10),
+    )
+    .await;
+
+    wait_for_condition(
+        || async { ping6_test("net_b", "fd00::3", None).await },
+        Duration::from_secs(10),
+    )
+    .await;
+
+    drop_insts(insts).await;
+}
+
+/// Transport-matrix coverage for `faketcp`. FakeTCP rides a raw socket and has no
+/// listener-plan coverage of its own, so an end-to-end run is the only thing proving
+/// the scheme survives a real peer handshake.
+#[cfg(feature = "faketcp")]
+#[tokio::test]
+#[serial_test::serial]
+pub async fn faketcp_transport_end_to_end() {
+    let insts = init_three_node("faketcp").await;
+
+    wait_for_condition(
+        || async { ping_test("net_b", "10.144.144.3", None).await },
+        Duration::from_secs(10),
+    )
+    .await;
+
+    wait_for_condition(
+        || async { ping6_test("net_b", "fd00::3", None).await },
+        Duration::from_secs(10),
+    )
+    .await;
+
+    drop_insts(insts).await;
 }
 
 #[tokio::test]

@@ -52,6 +52,10 @@
 
 ### 2.0 Windows 一键脚本（推荐本地打包）
 
+> 若还要 **GUI NSIS + 无头 `ET-windows-*` zip**（对齐 CI `windows.yml`），用同风格入口  
+> `script\easytier-windows-{debug,fast,release}.cmd`，见 [`windows-build-pack.md`](./windows-build-pack.md)。  
+> 下方三个入口只打 **Web embed** 单二进制。
+
 仓库提供三个固定入口（**前台运行**，日志打在控制台）：
 
 ```bat

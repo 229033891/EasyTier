@@ -8,7 +8,6 @@
 - 多链路聚合（异质优先）：默认关闭；见 §2 与 [`../roadmap/multi-link-bonding.md`](../roadmap/multi-link-bonding.md)
 - 连接稳定性（质量选路 / 保底）见：[`../roadmap/connection-stability-todo.md`](../roadmap/connection-stability-todo.md)
 - 隧道 scheme 与伪装差距见：[`tunnels-and-transport.md`](./tunnels-and-transport.md)
-- 落地记录：[`../archive/web-status-history-config-2026-10-09.md`](../archive/web-status-history-config-2026-10-09.md)
 - 索引：[`../README.md`](../README.md)
 
 本文只描述 **代码今天做什么**。

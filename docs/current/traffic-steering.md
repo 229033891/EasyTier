@@ -3,10 +3,11 @@
 ## Status
 
 - Status: **Current**
-- 最近审阅：2026-10-08（补：状态页 `proxy_cidr_route_sync` 展示规则与各平台摘要来源）
+- 最近审阅：2026-10-10（underlay 排除路由与 DNS 绑定的细节已收敛到 [`underlay.md`](./underlay.md)，本文保留 L2 路由全貌）
 - 范围：`exit_nodes` / `enable_exit_node` / `proxy_cidrs` / `manual_routes` / TUN 系统路由同步 / `allow_peer_default_without_exit`
 - 规划中的改动见：[`../roadmap/traffic-steering-vNext.md`](../roadmap/traffic-steering-vNext.md)、[`../roadmap/domain-proxy.md`](../roadmap/domain-proxy.md)；默认路由 Phase 2：[`../roadmap/default-route-and-underlay-excludes.md`](../roadmap/default-route-and-underlay-excludes.md)（论证全文 [`../archive/default-route-and-underlay-excludes-2026-10.md`](../archive/default-route-and-underlay-excludes-2026-10.md)）
 - DNS：[`magic-dns.md`](./magic-dns.md)
+- **underlay / 黑洞防护**：[`underlay.md`](./underlay.md)（主题 SoT）
 
 本文只描述 **代码今天做什么**。产品帮助文案应以本文为准。
 
@@ -91,6 +92,21 @@ IPv6：VIP / 非 `/0` 的 proxy LPM → `exit_nodes`（同样要求下一跳）�
 | iOS / macOS NE | 宿主 App / NE `includedRoutes` | 本仓库无法约束 |
 
 补充：对端宣告的 **IPv6 proxy CIDR 目前不写入任何 OS 路由**（`::/0` 只在本机出口时装）。
+
+### 权限前提（UI 与文档都必须写）
+
+安装 TUN 默认路由 `/0` 需要**管理员 / root 权限**：
+
+| 平台 | 提权方式 |
+|------|---------|
+| Windows | 进程以管理员运行（GUI 提权链路见 `easytier-gui/src-tauri/src/elevate`） |
+| Linux | `root`，或 `CAP_NET_ADMIN` |
+| macOS | `root`（Network Extension 由宿主 App 授予） |
+| Android | 由 `VpnService` 框架授予，无需应用自身提权 |
+| OHOS / iOS | 由宿主框架授予 |
+
+权限不足时的表现是**安装失败并保留原路由**，不是静默降级为部分路由。
+用户报「出口节点配了但没生效」时，先确认权限，再查路由表。
 
 ---
 

@@ -6,7 +6,7 @@
 - 最近审阅：2026-10-08
 - 适用范围：本机用 `x86_64-pc-windows-msvc` 编 `easytier` / `easytier-core` 及依赖 `ring`、aws-lc 等需 `cl.exe` 的 crate
 - 索引：[`../README.md`](../README.md)
-- 相关：[`web-build-deploy.md`](./web-build-deploy.md)
+- 相关：[`web-build-deploy.md`](./web-build-deploy.md)、[`windows-build-pack.md`](./windows-build-pack.md)
 
 ---
 

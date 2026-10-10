@@ -11,7 +11,9 @@ use crate::{
         constants::EASYTIER_VERSION,
         log,
     },
-    instance::factory::native_cli_instance_manager,
+    instance::{
+        config_storage::NativeUserDisabledWebInstanceStore, factory::native_cli_instance_manager,
+    },
     proto::common::{CompressionAlgoPb, SecureModeConfig},
     rpc_service::ApiRpcServer,
     utils::panic::setup_panic_handler,
@@ -1612,7 +1614,12 @@ async fn run_main(cli: Cli) -> anyhow::Result<()> {
     defer!(dump_profile(0););
     log::init(&cli.logging_options, true)?;
 
-    let manager = Arc::new(native_cli_instance_manager().with_config_path(cli.config_dir.clone()));
+    let manager = Arc::new(
+        native_cli_instance_manager()
+            .with_config_path(cli.config_dir.clone())
+            .with_user_disabled_web_instance_store(Arc::new(NativeUserDisabledWebInstanceStore)),
+    );
+    manager.load_user_disabled_web_instances().await;
 
     let _rpc_server = ApiRpcServer::new(
         cli.rpc_portal_options.rpc_portal,

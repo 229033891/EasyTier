@@ -41,7 +41,7 @@ pub(crate) fn stop_kernel(
     // Intentional local stop of a web-managed instance: mark before delete so
     // the config-server heartbeat can sync `disabled` and skip auto-run.
     if INSTANCE_MANAGER.config_source(instance_id) == Some(ConfigSource::Web) {
-        INSTANCE_MANAGER.mark_user_disabled_web_instance(instance_id);
+        ASYNC_RUNTIME.block_on(INSTANCE_MANAGER.mark_user_disabled_web_instance(instance_id));
     }
 
     let ret = ASYNC_RUNTIME

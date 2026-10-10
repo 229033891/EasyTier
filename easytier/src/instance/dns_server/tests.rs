@@ -558,7 +558,11 @@ async fn test_static_host_exact_zone_cannot_steal_route_zone() {
 
     // Re-applying the static hosts (any dns_config edit does this) must not take
     // the route-owned zone back — otherwise the two owners would flap.
-    dns_server_inst.data.apply_static_hosts(&hosts).await.unwrap();
+    dns_server_inst
+        .data
+        .apply_static_hosts(&hosts)
+        .await
+        .unwrap();
 
     check_dns_record(&fake_ip, "peer1.custom.local", "10.144.144.43").await;
 

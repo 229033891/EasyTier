@@ -4,6 +4,9 @@ on:
   push:
     # 仅 releases/** 自动测试；main/dev 推送不触发
     branches: [ "releases/**" ]
+  # PR 必须跑：传输矩阵与 feature 门控的回归正是靠这里暴露的，
+  # 只在 releases/** 跑会让它们一直积累到发版才被发现。
+  pull_request:
   workflow_dispatch:
 
 concurrency:

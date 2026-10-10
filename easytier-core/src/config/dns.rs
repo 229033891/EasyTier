@@ -86,9 +86,7 @@ pub fn classify_host_name(name: &str) -> Result<HostZoneTarget, String> {
         });
     }
     if lower.contains('*') {
-        return Err(
-            "invalid '*': use *.suffix for wildcards, or an exact hostname".to_string(),
-        );
+        return Err("invalid '*': use *.suffix for wildcards, or an exact hostname".to_string());
     }
     let zone = format!("{lower}.");
     Ok(HostZoneTarget {
@@ -136,9 +134,22 @@ mod tests {
         );
 
         // Two labels are enough, wildcard or exact; deeper zones count all labels.
-        assert_eq!(classify_host_name("*.corp.example").unwrap().reject_reason(), None);
-        assert_eq!(classify_host_name("corp.example").unwrap().reject_reason(), None);
-        assert_eq!(classify_host_name("app.internal.").unwrap().zone_label_count(), 2);
+        assert_eq!(
+            classify_host_name("*.corp.example")
+                .unwrap()
+                .reject_reason(),
+            None
+        );
+        assert_eq!(
+            classify_host_name("corp.example").unwrap().reject_reason(),
+            None
+        );
+        assert_eq!(
+            classify_host_name("app.internal.")
+                .unwrap()
+                .zone_label_count(),
+            2
+        );
         assert_eq!(classify_host_name("a.b.c.d").unwrap().zone_label_count(), 4);
     }
 

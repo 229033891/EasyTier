@@ -5,7 +5,7 @@
 - Status: **Roadmap**（主体已落地；仅剩可选「保存并运行」次要入口）
 - 最近审阅：2026-10-09
 - **现状 SoT**：[`../current/desktop-gui-and-config-server.md`](../current/desktop-gui-and-config-server.md) §6
-- 前置（已落地）：[`../archive/config-edit-unified-actions-2026-10-08.md`](../archive/config-edit-unified-actions-2026-10-08.md)
+- 前置（已落地）：配置编辑统一操作栏（2026-10-08；原文已归档，相关人工回归项见 [`../current/system-overview.md`](../current/system-overview.md) §7）
 - 相关代码：`easytier-web/frontend-lib/src/components/RemoteManagement.vue`；Web `DeviceManagement.vue`（`?mode=status|config`）；GUI `easytier-gui` combined
 - 索引：[`../README.md`](../README.md)
 

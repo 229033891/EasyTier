@@ -3,11 +3,11 @@
 ## Status
 
 - Status: **Current**
-- 最近审阅：2026-10-09（补 §2.5：读配置权威；GUI RPC 优先 vs Web 存储优先；补 §6：配置页 / 运行页职责）
+- 最近审阅：2026-10-10（修 §2.3 第 0 步：上报门控改为先问权威 `ConfigSource`，修 Service / Remote 模式静默丢弃 web-owned 编辑；复查清单补 2 条）
+- 上次审阅：2026-10-09（补 §2.5：读配置权威；GUI RPC 优先 vs Web 存储优先；补 §6：配置页 / 运行页职责）
 - 范围：Windows/Linux/macOS 桌面 `easytier-gui`、可选后台服务 `ET-Gui`、config-server 会话与 web-owned 配置回写
 - 索引：[`../README.md`](../README.md)
-- 深度复查记录（含 UI 下拉）：[`../archive/service-mode-web-config-sync-and-select-ui-2026-10-04.md`](../archive/service-mode-web-config-sync-and-select-ui-2026-10-04.md)
-- 状态面 / 历史 / 配置加载落地：[`../archive/web-status-history-config-2026-10-09.md`](../archive/web-status-history-config-2026-10-09.md)
+- 发布前人工回归清单：[`system-overview.md`](./system-overview.md) §7
 - Console Patch 接收端：[`web-managed-config.md`](./web-managed-config.md)
 - Core 边界：[`architecture.md`](./architecture.md)
 
@@ -41,6 +41,19 @@
 
 - **Normal 模式**：GUI 进程内跑实例与（可选）`WebClient`；无 `ET-Gui` 服务亦可。
 - **Service 模式**：GUI 切到服务后会清空本进程 `WEB_CLIENT`；状态与同步必须以**服务进程**为准。
+- **Remote 模式**：GUI 连的是**另一台机器**的节点进程（本机不跑实例、不装服务）。
+  `WebClient` 在**远端**节点进程内，GUI 同样只走 RPC——**语义与 Service 一致**，
+  所以 §2.3 的上报门控、§2.5 的读权威顺序对两者都适用。
+  限制：`set_tun_fd` 在此模式下不支持。
+
+| 模式 | 实例在哪 | `WebClient` 在哪 | GUI 本地存储的角色 |
+|------|---------|-----------------|-------------------|
+| Normal | GUI 进程 | GUI 进程 | 权威副本 |
+| Service | ET-Gui 服务进程 | ET-Gui 服务进程 | 仅界面缓存，可能过期 |
+| Remote | 远端节点进程 | 远端节点进程 | 仅界面缓存，可能过期 |
+
+**Service 与 Remote 下 GUI 本地 `source` 缓存可能缺失或过期**（`GuiHooks` 只在持有
+`WebClient` 的进程安装）。判断 web-owned 一律以权威侧为准，见 §2.3 第 0 步。
 
 ---
 
@@ -67,10 +80,22 @@
 
 实现：`easytier-gui/src-tauri/src/lib.rs`（`save_network_config` 同步段）
 
+0. **判定是否 web-owned**：`resolve_is_web_owned` 先按 §2.5 的 RPC 优先读序向**持有该实例的进程**
+   取权威 `ConfigSource`，GUI 本地 `storage.persisted_source` 只作兜底。
+   判定是**权威优先**而非任一侧 `Web` 即上报（纯函数 `should_report_to_config_server`）：
+   owner 明确 `Web` → 上报；明确 `User` → 不上报（即使本地仍是 `Web`）；
+   owner 答不上来 → 才看本地缓存。
+   不可达时跳过上报，**不**让已成功的本地保存变成失败。
 1. 本地持久化成功后；
 2. 先 `report_via_process_client`（normal 同进程命中 registry）；
 3. 仅当错误为 `NotEnabled` 时，再 RPC `WebClientService.ReportManagedNetworkConfig` 到服务进程；
 4. 文案用 `gui_sync_message` / `gui_sync_message_for_error_code`，不暴露裸 Debug。
+
+> **为什么第 0 步要问权威侧**：GUI 本地 `source` 缓存只由 `GuiHooks::pre_run_network_instance` 写入，
+> 而该 hook 只在**持有 config-server `WebClient` 的那个进程**里安装。Service / Remote 模式下
+> 那是 ET-Gui 或远端节点，GUI 进程永远学不到 `source = Web`；若只看本地缓存，
+> Console 建的网络在 GUI 里编辑保存会被**静默丢弃**（编辑只落 localStorage）。
+> 不要改成给服务进程补 hooks——它拿不到 GUI 的 `AppHandle`，发不出事件，只会掩盖问题。
 
 服务端 RPC：`easytier-core/.../process_rpc.rs` → 再次 `report_via_process_client`（读**服务进程** registry）。
 
@@ -120,10 +145,14 @@ OHOS nearby：`easytier-contrib/.../nearby_management.rs` 对相关方法返回 
 ## 5. Agent 复查清单（最短）
 
 1. 服务模式：Connected 时保存 web-owned → 应同步成功，不得再报 client 未运行。
-2. Normal + config-server：本进程 `report_via_process_client` 成功路径。
-3. 服务未启 config-server：`not_enabled` 文案。
-4. Drop/替换 `WebClient`：旧实例 Drop 不清除新 registry（`ptr_eq`）。
-5. 流量导流 L2/L3 另见 [`traffic-steering.md`](./traffic-steering.md)，勿与本文混审。
+2. **Service / Remote 模式：Console 建网络 → ET-Gui 自动运行 → 不在 GUI 启停、直接编辑保存
+   → Console 必须收到**。这是 §2.3 第 0 步修掉的回归；GUI 本地没有 `source = Web` 是**正常**的。
+3. Normal + config-server：本进程 `report_via_process_client` 成功路径。
+4. 服务未启 config-server：`not_enabled` 文案。
+5. 判定表单测：`lib.rs` 的 `web_owned_report_tests`（权威 Web 覆盖本地缺失 / 陈旧 User；
+   User 与 Legacy 不上报）。
+6. Drop/替换 `WebClient`：旧实例 Drop 不清除新 registry（`ptr_eq`）。
+7. 流量导流 L2/L3 另见 [`traffic-steering.md`](./traffic-steering.md)，勿与本文混审。
 
 ---
 

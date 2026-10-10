@@ -27,8 +27,10 @@ crate 内设计稿（非本索引）：`easytier/docs/`（凭据计划已标 Arc
 |------|------|
 | [system-overview.md](./current/system-overview.md) | **Agent 入口**：系统如何串起来、阅读顺序与代码锚点 |
 | [architecture.md](./current/architecture.md) | 可移植 core / host / proto 边界（架构 SoT） |
+| [architecture-overview.md](./current/architecture-overview.md) | **中文架构总览与稳定性评估**（分层/交付/配置权威/流量模型 + 压力点兜底评级 + 已核实偏差与缺陷） |
 | [product-map.md](./current/product-map.md) | 产品与 crate / 二进制命名地图 |
 | [traffic-steering.md](./current/traffic-steering.md) | 出口节点、子网代理、系统路由：**真实行为与缺口** |
+| [underlay.md](./current/underlay.md) | **物理链路保活与黑洞防护**（排除路由 / DNS 绑定 / Android 网络变化；四种 underlay 消歧） |
 | [data-plane.md](./current/data-plane.md) | DataPlaneRuntime / FFI / Go / WASI（现状摘要；长文在 Archive） |
 | [web-managed-config.md](./current/web-managed-config.md) | Web managed config Full/PATCH 接收与 Session 收敛 |
 | [desktop-gui-and-config-server.md](./current/desktop-gui-and-config-server.md) | 桌面 GUI / `ET-Gui` 进程模型与 config-server 回写路径 |
@@ -61,6 +63,7 @@ crate 内设计稿（非本索引）：`easytier/docs/`（凭据计划已标 Arc
 | 文档 | 说明 |
 |------|------|
 | [web-build-deploy.md](./ops/web-build-deploy.md) | Web 打包与 Win/Linux 部署 |
+| [windows-build-pack.md](./ops/windows-build-pack.md) | Windows 一键打包：GUI NSIS + 无头 `ET-windows-*`（对齐 CI） |
 | [windows-msvc-local-build.md](./ops/windows-msvc-local-build.md) | Windows 本机 MSVC：已装 Build Tools 仍编不过时，先 vcvars 再 cargo |
 | [web-upgrade.md](./ops/web-upgrade.md) | Web 现网升级与保库 |
 | [deploy-install.md](./ops/deploy-install.md) | 安装脚本用法 |
@@ -77,15 +80,12 @@ crate 内设计稿（非本索引）：`easytier/docs/`（凭据计划已标 Arc
 |------|------|
 | [data-plane-runtime-plan.md](./archive/data-plane-runtime-plan.md) | DataPlane 原实现计划全文（已由 Current 摘要替代日常阅读） |
 | [default-route-and-underlay-excludes-2026-10.md](./archive/default-route-and-underlay-excludes-2026-10.md) | 默认路由 / underlay 方案 D+ 全文（已由 Current + Phase 2 薄页替代日常阅读） |
-| [service-mode-web-config-sync-and-select-ui-2026-10-04.md](./archive/service-mode-web-config-sync-and-select-ui-2026-10-04.md) | 服务模式 web-owned 同步修复 + 配置页协议下拉复查 |
 | [kcp-control-reliability-design-2026-09-14.md](./archive/kcp-control-reliability-design-2026-09-14.md) | KCP 控制报文可靠性设计 |
 | [kcp-control-reliability-validation-2026-09-14.md](./archive/kcp-control-reliability-validation-2026-09-14.md) | KCP 控制报文可靠性验证 |
 | [tcp-proxy-flow-key-validation-2026-09-13.md](./archive/tcp-proxy-flow-key-validation-2026-09-13.md) | TCP proxy flow-key 验证 |
 | [tcp-proxy-half-close-validation-2026-09-14.md](./archive/tcp-proxy-half-close-validation-2026-09-14.md) | TCP proxy 半关闭验证 |
 | [quic-proxy-memory-benchmark-2026-07-27.md](./archive/quic-proxy-memory-benchmark-2026-07-27.md) | QUIC proxy 内存 benchmark |
 | [upstream-port-todo.md](./archive/upstream-port-todo.md) | `main` → `dev` cherry-pick 历史跟踪（P0–P2 已落袋；非日常规划） |
-| [config-edit-unified-actions-2026-10-08.md](./archive/config-edit-unified-actions-2026-10-08.md) | 配置编辑统一操作栏（2026-10-08 已落地） |
-| [web-status-history-config-2026-10-09.md](./archive/web-status-history-config-2026-10-09.md) | Web 一链路一行 / 历史丢包+抖动 / 配置读存储优先（2026-10-09） |
 | [android-vpn-connection-audit-2026-10-07.md](./archive/android-vpn-connection-audit-2026-10-07.md) | 安卓 App 连接/卡断审查（A1–A14；代码侧已修） |
 | [magic-dns-static-host-wildcard-audit-2026-10-09.md](./archive/magic-dns-static-host-wildcard-audit-2026-10-09.md) | MagicDNS 静态主机通配审查（D1–D8；第三轮已修 D2/D3/D4/D6-2，D5 有意保留） |
 

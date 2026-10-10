@@ -48,6 +48,13 @@ check_core.log
 .tmp/
 .tmp-build/
 
+# local packaging output (script/build-easytier-windows.ps1 → OutDir)
+/artifacts/
+
+# build TEMP only (script/build-common.ps1 sets TEMP here for esbuild).
+# Keep .workbuddy-ai/memory/ tracked for local notes sync.
+.workbuddy-ai/tmp/
+
 # web
 node_modules
 easytier-web/frontend-lib/src/generated/

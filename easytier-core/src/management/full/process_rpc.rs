@@ -150,10 +150,12 @@ where
         }
     }
 
-    fn mark_user_disabled_web_instances(&self, instance_ids: &[uuid::Uuid]) {
+    async fn mark_user_disabled_web_instances(&self, instance_ids: &[uuid::Uuid]) {
         for instance_id in instance_ids {
             if self.instances.config_source(*instance_id) == Some(ConfigSource::Web) {
-                self.instances.mark_user_disabled_web_instance(*instance_id);
+                self.instances
+                    .mark_user_disabled_web_instance(*instance_id)
+                    .await;
             }
         }
     }
@@ -239,7 +241,9 @@ where
         }
         let _mutation = self.mutation_lock.lock().await;
         if overwrite {
-            self.instances.clear_user_disabled_web_instance(instance_id);
+            self.instances
+                .clear_user_disabled_web_instance(instance_id)
+                .await;
         } else if self.instances.is_user_disabled_web_instance(instance_id) {
             tracing::info!(
                 %instance_id,
@@ -371,7 +375,7 @@ where
                 .copied()
                 .filter(|id| !retained.contains(id))
                 .collect::<Vec<_>>();
-            self.mark_user_disabled_web_instances(&removed);
+            self.mark_user_disabled_web_instances(&removed).await;
             let remaining = self.instances.retain_network_instances(&retained).await?;
             let remaining_set = remaining.iter().copied().collect::<HashSet<_>>();
             let removed = before
@@ -401,7 +405,7 @@ where
                 retained.insert(instance_id);
             }
         }
-        self.mark_user_disabled_web_instances(&removed);
+        self.mark_user_disabled_web_instances(&removed).await;
         let remaining = self
             .instances
             .retain_network_instances(&retained.into_iter().collect::<Vec<_>>())
@@ -440,7 +444,7 @@ where
                 files.extend(control.path);
             }
         }
-        self.mark_user_disabled_web_instances(&removed);
+        self.mark_user_disabled_web_instances(&removed).await;
         let remaining = self
             .instances
             .delete_network_instances(removed.clone())
@@ -479,7 +483,9 @@ where
         }
         // Local intentional start clears any prior intentional-stop mark so an
         // unexpected later exit can be auto-recovered by the config server.
-        self.instances.clear_user_disabled_web_instance(instance_id);
+        self.instances
+            .clear_user_disabled_web_instance(instance_id)
+            .await;
         self.instances.run_network_instance(config, control)
     }
 
@@ -519,7 +525,7 @@ where
         let before = self.instances.instance_ids();
         // Intentional local stop (FFI/Android/iOS): mark web-managed instances
         // before delete so heartbeat can sync `disabled` and skip auto-run.
-        self.mark_user_disabled_web_instances(&requested);
+        self.mark_user_disabled_web_instances(&requested).await;
         let remaining = self.instances.delete_network_instances(requested).await?;
         let remaining_set = remaining.iter().copied().collect::<HashSet<_>>();
         let removed = before

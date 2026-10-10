@@ -27,7 +27,7 @@ use easytier::proto::api::manage::{
 use easytier::proto::rpc_types::controller::BaseController;
 use easytier::web_client::{self, WebClient};
 use easytier::{
-    common::config::{NetworkConfig, NetworkConfigExt},
+    common::config::{ConfigSource, NetworkConfig, NetworkConfigExt},
     common::{
         config::{ConfigLoader, FileLoggerConfig, LoggingConfig, TomlConfigLoader},
         log,
@@ -379,6 +379,57 @@ async fn update_network_config_state(
     Ok(())
 }
 
+/// Whether a local save must also be reported to the config server.
+///
+/// The owning process's runtime source is the single-writer truth and wins outright:
+/// an explicit `User` answer suppresses the report even when the GUI-local cache
+/// still says `Web` (see `merge_persisted`: the local marker ratchets toward `Web`
+/// and can never come back, so without this arm a de-webbed config would report —
+/// and eat an `OwnershipConflict` dialog — on every save). The local cache is only
+/// consulted when the owner could not answer at all.
+///
+/// A missing or `Unspecified` RPC source decodes to `None`, never to `User`
+/// (`config_source_from_rpc`), so old runtimes that omit the field cannot trip the
+/// explicit-`User` arm; they fall through to the local cache as before.
+fn should_report_to_config_server(
+    authoritative: Option<ConfigSource>,
+    local: Option<manager::PersistedConfigSource>,
+) -> bool {
+    match authoritative {
+        Some(ConfigSource::Web) => true,
+        Some(ConfigSource::User) => false,
+        None => matches!(local, Some(manager::PersistedConfigSource::Web)),
+    }
+}
+
+/// Resolve web ownership from the process that owns the instance.
+///
+/// The GUI-local `source` cache is only written by `GuiHooks::pre_run_network_instance`,
+/// which runs inside whichever process owns the config-server `WebClient`. In service
+/// and remote mode that owner is `ET-Gui` (or the remote node), so this process never
+/// learns `source = Web` for console-created networks and would silently drop the
+/// report. Ask the owner first, then fall back to the local cache when it cannot
+/// answer.
+async fn resolve_is_web_owned(
+    client_manager: &manager::GUIClientManager,
+    app: &AppHandle,
+    instance_id: uuid::Uuid,
+) -> bool {
+    // The local save has already succeeded by the time this runs, so an unreachable
+    // owner must not turn into a save failure: fall back to the local cache, and
+    // only skip the report when it does not claim web ownership either.
+    let authoritative = client_manager
+        .handle_get_network_config_with_source(app.clone(), instance_id)
+        .await
+        .ok()
+        .map(|(_, source)| source);
+
+    should_report_to_config_server(
+        authoritative,
+        client_manager.storage.persisted_source(instance_id),
+    )
+}
+
 #[tauri::command]
 async fn save_network_config(app: AppHandle, cfg: NetworkConfig) -> Result<(), String> {
     let instance_id = cfg
@@ -391,11 +442,7 @@ async fn save_network_config(app: AppHandle, cfg: NetworkConfig) -> Result<(), S
         .await
         .map_err(|e| e.to_string())?;
 
-    let is_web = client_manager
-        .storage
-        .persisted_source(instance_id)
-        .is_some_and(|source| matches!(source, manager::PersistedConfigSource::Web));
-    if !is_web {
+    if !resolve_is_web_owned(&client_manager, &app, instance_id).await {
         return Ok(());
     }
 
@@ -581,6 +628,80 @@ fn rpc_target_label(rpc_url: Option<&url::Url>) -> String {
     match rpc_url {
         Some(url) => url.to_string(),
         None => format!("ring://{}", *RPC_RING_UUID.deref()),
+    }
+}
+
+#[cfg(test)]
+mod web_owned_report_tests {
+    use super::{manager::PersistedConfigSource, should_report_to_config_server};
+    use easytier::common::config::ConfigSource;
+
+    /// Regression for the service/remote mode break: the owner process reports `Web`
+    /// while this GUI process only ever learned `User` (or nothing at all), because
+    /// `GuiHooks` never runs outside the process holding the config-server client.
+    #[test]
+    fn authoritative_web_overrides_missing_local_source() {
+        assert!(should_report_to_config_server(
+            Some(ConfigSource::Web),
+            None
+        ));
+    }
+
+    #[test]
+    fn authoritative_web_overrides_stale_local_user() {
+        assert!(should_report_to_config_server(
+            Some(ConfigSource::Web),
+            Some(PersistedConfigSource::User),
+        ));
+    }
+
+    #[test]
+    fn local_web_still_reports_when_owner_cannot_answer() {
+        assert!(should_report_to_config_server(
+            None,
+            Some(PersistedConfigSource::Web),
+        ));
+    }
+
+    #[test]
+    fn authoritative_user_overrides_stale_local_web() {
+        // The owner de-webbed the config (or never ran it as web) while this GUI
+        // process still remembers `Web`: the local marker is sticky by design
+        // (`merge_persisted` never ratchets back), so the explicit answer must win.
+        // Otherwise every save would report and eat an `OwnershipConflict` dialog.
+        assert!(!should_report_to_config_server(
+            Some(ConfigSource::User),
+            Some(PersistedConfigSource::Web),
+        ));
+    }
+
+    #[test]
+    fn authoritative_user_without_local_marker_is_not_reported() {
+        assert!(!should_report_to_config_server(
+            Some(ConfigSource::User),
+            None,
+        ));
+    }
+
+    #[test]
+    fn user_owned_configs_are_not_reported() {
+        assert!(!should_report_to_config_server(
+            Some(ConfigSource::User),
+            Some(PersistedConfigSource::User),
+        ));
+        assert!(!should_report_to_config_server(
+            Some(ConfigSource::User),
+            Some(PersistedConfigSource::Legacy),
+        ));
+    }
+
+    #[test]
+    fn unknown_ownership_is_not_reported() {
+        assert!(!should_report_to_config_server(None, None));
+        assert!(!should_report_to_config_server(
+            None,
+            Some(PersistedConfigSource::Legacy)
+        ));
     }
 }
 
