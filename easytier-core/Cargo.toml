@@ -12,9 +12,12 @@ categories = ["network-programming"]
 license-file = "../LICENSE"
 
 [lib]
-# rlib only: musl defaults to static CRT and cannot emit cdylib (rustc warning).
-# Browser WASM is built via the `easytier-config-wasm` cdylib wrapper.
-crate-type = ["rlib"]
+# cdylib: wasm32-wasip1 guest artifact for easytier-js (`easytier_core.wasm`).
+# rlib: normal native / workspace linking.
+# musl host builds skip cdylib (static CRT) with a rustc warning — keep both
+# types; removing cdylib breaks `easytier-js` build-wasm. Browser config WASM
+# stays on the separate `easytier-config-wasm` crate (wasm32-unknown-unknown).
+crate-type = ["rlib", "cdylib"]
 
 [dependencies]
 anyhow.workspace = true
