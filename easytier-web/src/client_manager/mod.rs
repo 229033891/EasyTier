@@ -487,7 +487,12 @@ impl ClientManager {
             return false;
         }
         for session in &targets {
-            self.client_sessions.remove(session.client_url());
+            // Same pointer guard as `prune_sessions`: a reconnect may have
+            // reused the URL between the scan and this removal.
+            self.client_sessions
+                .remove_if(session.client_url(), |_, current| {
+                    Arc::ptr_eq(current, session)
+                });
         }
         for session in targets {
             session.stop().await;
