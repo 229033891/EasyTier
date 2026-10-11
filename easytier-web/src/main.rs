@@ -351,62 +351,6 @@ impl LoggingConfigLoader for &WebLoggingConfig {
     }
 }
 
-#[cfg(test)]
-mod file_log_resolve_tests {
-    use super::*;
-
-    fn cli_with(dir: Option<&str>, level: Option<&str>) -> Cli {
-        Cli {
-            file_log_dir: dir.map(|s| s.to_string()),
-            file_log_level: level.map(|s| s.to_string()),
-            ..Cli::parse_from(["easytier-web"])
-        }
-    }
-
-    #[test]
-    fn resolve_defaults_to_logs_warn_when_writable() {
-        let tmp = tempfile::tempdir().unwrap();
-        let dir = tmp.path().join("logs");
-        let cli = cli_with(Some(dir.to_str().unwrap()), None);
-        let cfg = resolve_file_logger_config(&cli);
-        assert_eq!(cfg.dir.as_deref(), Some(dir.to_str().unwrap()));
-        assert_eq!(cfg.level.as_deref(), Some("warn"));
-    }
-
-    #[test]
-    fn resolve_off_disables_file_logging() {
-        let cli = cli_with(Some("/tmp/whatever"), Some("off"));
-        let cfg = resolve_file_logger_config(&cli);
-        assert!(cfg.dir.is_none());
-        assert_eq!(cfg.level.as_deref(), Some("off"));
-    }
-
-    #[test]
-    fn resolve_unwritable_dir_falls_back_to_off() {
-        // Use a regular file as the log directory instead of permissions:
-        // `create_dir_all` then fails for every user (including root, which
-        // ignores directory mode bits), making the test deterministic.
-        let tmp = tempfile::tempdir().unwrap();
-        let blocker = tmp.path().join("blocker");
-        std::fs::write(&blocker, b"not a directory").unwrap();
-        let dir = blocker.join("logs");
-
-        let cli = cli_with(Some(dir.to_str().unwrap()), Some("warn"));
-        let cfg = resolve_file_logger_config(&cli);
-        assert!(cfg.dir.is_none());
-        assert_eq!(cfg.level.as_deref(), Some("off"));
-    }
-
-    #[test]
-    fn resolve_probe_tolerates_concurrent_stale_probe_cleanup() {
-        // A pre-existing probe file from another process must not make an
-        // otherwise writable directory look unwritable.
-        let tmp = tempfile::tempdir().unwrap();
-        std::fs::write(tmp.path().join(".easytier-log-probe-999-1"), b"stale").unwrap();
-        assert!(probe_writable(tmp.path()).is_ok());
-    }
-}
-
 pub fn get_listener_by_url(
     scheme: IpScheme,
     l: &url::Url,
@@ -782,4 +726,60 @@ async fn main() {
     };
 
     tokio::signal::ctrl_c().await.unwrap();
+}
+
+#[cfg(test)]
+mod file_log_resolve_tests {
+    use super::*;
+
+    fn cli_with(dir: Option<&str>, level: Option<&str>) -> Cli {
+        Cli {
+            file_log_dir: dir.map(|s| s.to_string()),
+            file_log_level: level.map(|s| s.to_string()),
+            ..Cli::parse_from(["easytier-web"])
+        }
+    }
+
+    #[test]
+    fn resolve_defaults_to_logs_warn_when_writable() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("logs");
+        let cli = cli_with(Some(dir.to_str().unwrap()), None);
+        let cfg = resolve_file_logger_config(&cli);
+        assert_eq!(cfg.dir.as_deref(), Some(dir.to_str().unwrap()));
+        assert_eq!(cfg.level.as_deref(), Some("warn"));
+    }
+
+    #[test]
+    fn resolve_off_disables_file_logging() {
+        let cli = cli_with(Some("/tmp/whatever"), Some("off"));
+        let cfg = resolve_file_logger_config(&cli);
+        assert!(cfg.dir.is_none());
+        assert_eq!(cfg.level.as_deref(), Some("off"));
+    }
+
+    #[test]
+    fn resolve_unwritable_dir_falls_back_to_off() {
+        // Use a regular file as the log directory instead of permissions:
+        // `create_dir_all` then fails for every user (including root, which
+        // ignores directory mode bits), making the test deterministic.
+        let tmp = tempfile::tempdir().unwrap();
+        let blocker = tmp.path().join("blocker");
+        std::fs::write(&blocker, b"not a directory").unwrap();
+        let dir = blocker.join("logs");
+
+        let cli = cli_with(Some(dir.to_str().unwrap()), Some("warn"));
+        let cfg = resolve_file_logger_config(&cli);
+        assert!(cfg.dir.is_none());
+        assert_eq!(cfg.level.as_deref(), Some("off"));
+    }
+
+    #[test]
+    fn resolve_probe_tolerates_concurrent_stale_probe_cleanup() {
+        // A pre-existing probe file from another process must not make an
+        // otherwise writable directory look unwritable.
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join(".easytier-log-probe-999-1"), b"stale").unwrap();
+        assert!(probe_writable(tmp.path()).is_ok());
+    }
 }

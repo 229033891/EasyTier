@@ -279,30 +279,49 @@ function Invoke-EasytierGuiTauriBuild {
 
 function Find-NsisInstallers {
     # GUI always builds with cargo --release (see Invoke-EasytierGuiTauriBuild).
+    # Packaging sets CARGO_TARGET_DIR=.cache\cargo-target — search only that tree so
+    # leftover repo\target\...\ET_<oldver>_*-setup.exe are never collected again.
     $guiProfileDir = 'release'
-    $targetRoots = @()
-    if ($env:CARGO_TARGET_DIR) { $targetRoots += $env:CARGO_TARGET_DIR }
-    $targetRoots += (Join-Path $RepoRoot 'target')
+    $targetRoot = if ($env:CARGO_TARGET_DIR) {
+        $env:CARGO_TARGET_DIR
+    }
+    else {
+        Join-Path $RepoRoot 'target'
+    }
     $candidates = @()
-    foreach ($root in ($targetRoots | Select-Object -Unique)) {
-        if ($Target) {
-            $candidates += Join-Path $root "$Target\$guiProfileDir\bundle\nsis"
-        }
-        $candidates += Join-Path $root "$guiProfileDir\bundle\nsis"
-    }
-    # Legacy / alternate layout mentioned in CONTRIBUTING
-    $candidates += Join-Path $RepoRoot "easytier-gui\src-tauri\target\$guiProfileDir\bundle\nsis"
     if ($Target) {
-        $candidates += Join-Path $RepoRoot "easytier-gui\src-tauri\target\$Target\$guiProfileDir\bundle\nsis"
+        $candidates += Join-Path $targetRoot "$Target\$guiProfileDir\bundle\nsis"
     }
+    $candidates += Join-Path $targetRoot "$guiProfileDir\bundle\nsis"
 
     $found = @()
-    foreach ($dir in $candidates) {
+    foreach ($dir in ($candidates | Select-Object -Unique)) {
         if (Test-Path $dir) {
-            $found += @(Get-ChildItem $dir -Filter '*.exe' -File -ErrorAction SilentlyContinue)
+            $found += @(Get-ChildItem $dir -Filter '*setup.exe' -File -ErrorAction SilentlyContinue)
         }
     }
-    return $found | Sort-Object FullName -Unique
+    if ($found.Count -eq 0) {
+        return @()
+    }
+
+    # Prefer installer matching tauri.conf.json version; else newest by mtime.
+    # Version bumps leave prior ET_<ver>_*-setup.exe beside the new one in the same folder.
+    $ver = $null
+    $tauriConf = Join-Path $GuiSrcTauri 'tauri.conf.json'
+    if (Test-Path $tauriConf) {
+        try {
+            $ver = (Get-Content -LiteralPath $tauriConf -Raw | ConvertFrom-Json).version
+        }
+        catch { }
+    }
+    if ($ver) {
+        $matched = @($found | Where-Object { $_.Name -like "*_${ver}_*" })
+        if ($matched.Count -gt 0) {
+            $found = $matched
+        }
+    }
+    $newest = $found | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+    return ,@($newest)
 }
 
 function Invoke-EasytierHeadlessBuild {
@@ -393,10 +412,18 @@ function Collect-HeadlessArtifacts {
 function Collect-GuiArtifacts {
     $nsis = @(Find-NsisInstallers)
     if ($nsis.Count -eq 0) {
-        throw 'No NSIS installer found under target/**/release/bundle/nsis'
+        throw 'No NSIS installer found under $CARGO_TARGET_DIR/**/release/bundle/nsis'
     }
 
     New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
+    # Drop stale versioned installers left in OutDir from earlier builds.
+    Get-ChildItem -LiteralPath $OutDir -Filter 'ET_*setup.exe' -File -ErrorAction SilentlyContinue |
+        Where-Object { $nsis.Name -notcontains $_.Name } |
+        ForEach-Object {
+            Write-Log "Remove stale GUI installer: $($_.FullName)" -Level Info
+            Remove-Item -LiteralPath $_.FullName -Force
+        }
+
     $copied = @()
     foreach ($exe in $nsis) {
         $dest = Join-Path $OutDir $exe.Name

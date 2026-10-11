@@ -100,6 +100,7 @@ async fn create_tun_off_runtime(
 
 pub(crate) struct FakeTcpSocketListener {
     addr: url::Url,
+    net_ns: NetNS,
     os_listener: Option<tokio::net::TcpListener>,
     // interface_name -> fake tcp stack
     stack_map: DashMap<String, Arc<stack::Stack>>,
@@ -112,15 +113,17 @@ impl std::fmt::Debug for FakeTcpSocketListener {
         formatter
             .debug_struct("FakeTcpSocketListener")
             .field("addr", &self.addr)
+            .field("net_ns", &self.net_ns)
             .field("listening", &self.os_listener.is_some())
             .finish()
     }
 }
 
 impl FakeTcpSocketListener {
-    pub(crate) fn new(addr: url::Url) -> Self {
+    pub(crate) fn new(addr: url::Url, net_ns: NetNS) -> Self {
         FakeTcpSocketListener {
             addr,
+            net_ns,
             os_listener: None,
             stack_map: DashMap::new(),
             ip_to_ifname: IpToIfNameCache::new(),
@@ -135,10 +138,17 @@ impl FakeTcpSocketListener {
                         tracing::warn!("accept fail with local_addr error");
                         continue;
                     };
-                    let Some((interface_name, mac)) =
-                        self.ip_to_ifname.get_ifname(&local_addr.ip())
-                    else {
-                        tracing::warn!("accept fail with interface_name error");
+                    // Interface enumeration must run inside the listener netns;
+                    // otherwise netns-scoped addresses (CI three-node) are invisible.
+                    let ifname = self
+                        .net_ns
+                        .run(|| self.ip_to_ifname.get_ifname(&local_addr.ip()));
+                    let Some((interface_name, mac)) = ifname else {
+                        tracing::warn!(
+                            ?local_addr,
+                            net_ns = ?self.net_ns,
+                            "accept fail with interface_name error"
+                        );
                         continue;
                     };
                     return Ok(AcceptResult {
@@ -192,7 +202,7 @@ impl FakeTcpSocketListener {
             interface_name.to_string(),
             None,
             local_socket_addr,
-            NetNS::new(None),
+            self.net_ns.clone(),
         )
         .await?;
         tracing::info!(
@@ -383,8 +393,15 @@ impl FakeTcpSocketListener {
     async fn listen_socket(&mut self) -> Result<(), TunnelError> {
         let port = self.addr.port().unwrap_or(0);
         let bind_addr = SocketAddr::from_url(self.addr.clone(), IpVersion::Both).await?;
-        let os_listener = tokio::net::TcpListener::bind(bind_addr).await?;
-        tracing::info!(port, "FakeTcpSocketListener listening");
+        // Bind synchronously inside the netns: setns is thread-local, so holding a
+        // NetNSGuard across an async await can resume on another worker without it.
+        let std_listener = self.net_ns.run(|| {
+            let listener = std::net::TcpListener::bind(bind_addr)?;
+            listener.set_nonblocking(true)?;
+            Ok::<_, io::Error>(listener)
+        })?;
+        let os_listener = tokio::net::TcpListener::from_std(std_listener)?;
+        tracing::info!(port, net_ns = ?self.net_ns, "FakeTcpSocketListener listening");
         self.os_listener = Some(os_listener);
         Ok(())
     }
@@ -511,8 +528,10 @@ mod tests {
                 }
             }
 
-            let mut listener =
-                FakeTcpSocketListener::new("faketcp://0.0.0.0:31011".parse().unwrap());
+            let mut listener = FakeTcpSocketListener::new(
+                "faketcp://0.0.0.0:31011".parse().unwrap(),
+                NetNS::new(None),
+            );
             listener.listen().await.unwrap();
             let (server_ready_tx, server_ready_rx) = tokio::sync::oneshot::channel();
 

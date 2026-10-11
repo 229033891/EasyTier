@@ -738,9 +738,7 @@ fn read_file_tail(path: &std::path::Path, max_bytes: u64) -> std::io::Result<(St
     let mut buf = Vec::new();
     file.read_to_end(&mut buf)?;
     let content = String::from_utf8_lossy(&buf);
-    if truncated
-        && let Some(rest) = content.split_once('\n').map(|(_, rest)| rest)
-    {
+    if truncated && let Some(rest) = content.split_once('\n').map(|(_, rest)| rest) {
         return Ok((rest.to_string(), true));
     }
     Ok((content.into_owned(), truncated))
