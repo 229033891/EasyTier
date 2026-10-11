@@ -122,11 +122,10 @@ cd EasyTier
 sudo bash script/install.sh
 ```
 
-远程一键升级（从 GitHub 拉最新 `update.sh` 并执行）：
+远程一键升级（从 GitHub 拉最新 `update.sh` 并执行；`--auto` 非交互）：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/229033891/EasyTier/main/script/update.sh \
-  -o /tmp/et-update.sh && sudo bash /tmp/et-update.sh --auto
+curl -fsSL "https://github.com/229033891/EasyTier/raw/main/script/update.sh" | sudo bash -s -- --auto
 ```
 
 文档：[`docs/ops/deploy-install.md`](../docs/ops/deploy-install.md)

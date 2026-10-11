@@ -67,14 +67,16 @@ Linux one-liner (downloads latest from [Releases](https://github.com/229033891/E
 curl -fsSL "https://github.com/229033891/EasyTier/raw/main/script/install.sh" | sudo bash -s install
 ```
 
-Linux upgrade (standalone `update.sh`, does not call `install.sh`; also uses Releases):
+Linux one-liner upgrade (standalone `update.sh`, does not call `install.sh`; also uses Releases):
 ```bash
-# after cloning the repo
-cd EasyTier
-sudo bash script/update.sh
+curl -fsSL "https://github.com/229033891/EasyTier/raw/main/script/update.sh" | sudo bash -s -- --auto
+```
 
-# non-interactive
-sudo bash script/update.sh --auto
+Or upgrade from a local clone:
+```bash
+cd EasyTier
+sudo bash script/update.sh          # interactive
+sudo bash script/update.sh --auto   # non-interactive
 ```
 
 Note: `install.sh` handles install/backup/restore/uninstall; `update.sh` handles upgrades; both share `script/et-ops-common.sh`. See the [deploy guide](./docs/ops/deploy-install.md).

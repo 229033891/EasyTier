@@ -67,14 +67,16 @@ Linux 一键安装（从 [Releases](https://github.com/229033891/EasyTier/releas
 curl -fsSL "https://github.com/229033891/EasyTier/raw/main/script/install.sh" | sudo bash -s install
 ```
 
-Linux 升级（独立脚本 `update.sh`，与 `install.sh` 互不调用；同样读 Releases）：
+Linux 一键更新（独立脚本 `update.sh`，与 `install.sh` 互不调用；同样读 Releases）：
 ```bash
-# clone 仓库后
-cd EasyTier
-sudo bash script/update.sh
+curl -fsSL "https://github.com/229033891/EasyTier/raw/main/script/update.sh" | sudo bash -s -- --auto
+```
 
-# 非交互
-sudo bash script/update.sh --auto
+或 clone 仓库后本地升级：
+```bash
+cd EasyTier
+sudo bash script/update.sh          # 交互
+sudo bash script/update.sh --auto   # 非交互
 ```
 
 说明：`install.sh` 负责安装/备份/恢复/卸载；`update.sh` 负责升级；二者共用 `script/et-ops-common.sh`。详见 [部署说明](./docs/ops/deploy-install.md)。

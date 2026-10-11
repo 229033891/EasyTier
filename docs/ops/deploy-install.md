@@ -172,22 +172,19 @@ sudo bash script/install.sh uninstall
 从 GitHub `main` 拉取最新 `update.sh`（缺失时会再拉 `et-ops-common.sh`），再升级本机 `/opt/easytier` 二进制：
 
 ```bash
-# 非交互（已装机器常用）
-curl -fsSL https://raw.githubusercontent.com/229033891/EasyTier/main/script/update.sh \
-  -o /tmp/et-update.sh && sudo bash /tmp/et-update.sh --auto
+# 非交互（已装机器常用，与安装同风格管道）
+curl -fsSL "https://github.com/229033891/EasyTier/raw/main/script/update.sh" | sudo bash -s -- --auto
 
 # 交互确认 / 选下载源
-curl -fsSL https://raw.githubusercontent.com/229033891/EasyTier/main/script/update.sh \
-  -o /tmp/et-update.sh && sudo bash /tmp/et-update.sh
+curl -fsSL "https://github.com/229033891/EasyTier/raw/main/script/update.sh" | sudo bash -s --
 ```
 
 国内拉 raw 较慢时，可用镜像拉取脚本（二进制下载仍可在脚本内选「自动」）：
 
 ```bash
-curl -fsSL https://ghfast.top/https://raw.githubusercontent.com/229033891/EasyTier/main/script/update.sh \
-  -o /tmp/et-update.sh && \
-  sudo ET_COMMON_URL="https://ghfast.top/https://raw.githubusercontent.com/229033891/EasyTier/main/script/et-ops-common.sh" \
-    bash /tmp/et-update.sh --auto
+curl -fsSL "https://ghfast.top/https://raw.githubusercontent.com/229033891/EasyTier/main/script/update.sh" \
+  | sudo ET_COMMON_URL="https://ghfast.top/https://raw.githubusercontent.com/229033891/EasyTier/main/script/et-ops-common.sh" \
+    bash -s -- --auto
 ```
 
 说明：
