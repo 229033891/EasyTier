@@ -486,9 +486,12 @@ impl Peer {
     }
 
     pub fn get_default_conn_id(&self) -> PeerConnId {
-        self.default_conn
-            .load()
-            .as_ref()
+        if let Some(conn) = self.default_conn.load().as_ref() {
+            return conn.get_conn_id();
+        }
+        // Bonding send may never cache `default_conn`; select so status / close
+        // helpers still see a real path when any live PeerConn exists.
+        self.select_conn()
             .map(|conn| conn.get_conn_id())
             .unwrap_or_default()
     }

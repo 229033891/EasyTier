@@ -465,7 +465,7 @@ async fn handle_logs(
     require_admin(&auth_session).await?;
     // Cap to ring capacity so callers cannot force oversized clones.
     let (capacity, _) = easytier::common::log::snapshot_memory_logs(0);
-    let max_tail = capacity.max(1).min(1000);
+    let max_tail = capacity.clamp(1, 1000);
     let tail = query.tail.clamp(1, max_tail);
     let (capacity, lines) = easytier::common::log::snapshot_memory_logs(tail);
     Ok(Json(LogsResponse {
@@ -635,14 +635,14 @@ fn line_passes_filters(
     until: Option<chrono::DateTime<Utc>>,
     grep: Option<&str>,
 ) -> bool {
-    if line.level != "UNKNOWN" {
-        if let Some(min) = min_level {
-            let Some(rank) = level_rank_name(&line.level) else {
-                return false;
-            };
-            if rank < min {
-                return false;
-            }
+    if line.level != "UNKNOWN"
+        && let Some(min) = min_level
+    {
+        let Some(rank) = level_rank_name(&line.level) else {
+            return false;
+        };
+        if rank < min {
+            return false;
         }
     }
     if since.is_some() || until.is_some() {
@@ -738,10 +738,10 @@ fn read_file_tail(path: &std::path::Path, max_bytes: u64) -> std::io::Result<(St
     let mut buf = Vec::new();
     file.read_to_end(&mut buf)?;
     let content = String::from_utf8_lossy(&buf);
-    if truncated {
-        if let Some(rest) = content.split_once('\n').map(|(_, rest)| rest) {
-            return Ok((rest.to_string(), true));
-        }
+    if truncated
+        && let Some(rest) = content.split_once('\n').map(|(_, rest)| rest)
+    {
+        return Ok((rest.to_string(), true));
     }
     Ok((content.into_owned(), truncated))
 }

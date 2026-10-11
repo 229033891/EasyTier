@@ -453,13 +453,10 @@ impl ClientManager {
             // Never kill a session bound to a different machine that merely
             // happens to sit at a candidate URL; unauthenticated sessions
             // (no bind yet) at a machine-owned URL are still ours to drop.
-            match session.bound_machine() {
-                Some((bound_user, bound_machine)) => {
-                    if bound_user != user_id || bound_machine != *machine_id {
-                        return;
-                    }
-                }
-                None => {}
+            if let Some((bound_user, bound_machine)) = session.bound_machine()
+                && (bound_user != user_id || bound_machine != *machine_id)
+            {
+                return;
             }
             if seen.insert(session.client_url().clone()) {
                 targets.push(session);
@@ -1409,7 +1406,8 @@ mod tests {
         old_session.serve(server).await;
         old_session.mark_route_ready();
         {
-            let data = old_session.data().read().await;
+            let data = old_session.data();
+            let data = data.read().await;
             data.set_route_bind(user_id, machine_id, 1);
         }
         let old_session = Arc::new(old_session);
@@ -1482,7 +1480,8 @@ mod tests {
         );
         old_session.serve(old_server).await;
         {
-            let data = old_session.data().read().await;
+            let data = old_session.data();
+            let data = data.read().await;
             data.set_route_bind(user_id, machine_id, 1);
         }
         let old_session = Arc::new(old_session);
@@ -1501,7 +1500,8 @@ mod tests {
         );
         new_session.serve(new_server).await;
         {
-            let data = new_session.data().read().await;
+            let data = new_session.data();
+            let data = data.read().await;
             data.set_route_bind(user_id, machine_id, 2);
         }
         let new_session = Arc::new(new_session);

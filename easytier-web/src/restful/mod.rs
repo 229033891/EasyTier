@@ -178,6 +178,7 @@ pub fn convert_rpc_error(e: RpcError) -> HttpHandleError {
 }
 
 impl RestfulServer {
+    #[allow(clippy::too_many_arguments)]
     pub async fn new(
         bind_addr: SocketAddr,
         client_mgr: Arc<ClientManager>,
