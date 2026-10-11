@@ -168,10 +168,7 @@ pub fn enable_memory_buffer(capacity: usize) -> anyhow::Result<()> {
 }
 
 /// 同 [`enable_memory_buffer`]，但显式指定缓冲的级别阈值。
-pub fn enable_memory_buffer_with_level(
-    capacity: usize,
-    level: LevelFilter,
-) -> anyhow::Result<()> {
+pub fn enable_memory_buffer_with_level(capacity: usize, level: LevelFilter) -> anyhow::Result<()> {
     if MEMORY_BUFFER.get().is_some() {
         return Ok(()); // already enabled (first wins)
     }
@@ -424,8 +421,7 @@ impl Logger {
         // `set_level` 的第二参是与 file 合并进 active max 的「另一侧」；
         // 必须把 memory buffer 级别算进去，否则 reload 文件级别会把全局 max 压回去。
         let other = self.console.max_level().max(memory_buffer_level());
-        self.file
-            .set_level(level, other, &self.active_max_level)
+        self.file.set_level(level, other, &self.active_max_level)
     }
 
     fn file_level(&self) -> LevelFilter {

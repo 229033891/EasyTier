@@ -5,9 +5,7 @@ use async_trait::async_trait;
 use easytier_core::{
     config::toml::ConfigLoader as _,
     connectivity::{manual::ManualTunnelConnector, protocol::raw::TunnelDialer},
-    management::{
-        ConfigServerEndpoint, WebClientConfig, dial_config_server_with_scheme_fallback,
-    },
+    management::{ConfigServerEndpoint, WebClientConfig, dial_config_server_with_scheme_fallback},
     socket::IpVersion,
     tunnel::Tunnel,
 };
@@ -130,12 +128,11 @@ impl TunnelDialer for ConfigServerConnector {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .clone();
-        let outcome = dial_config_server_with_scheme_fallback(
-            &self.url,
-            preferred.as_deref(),
-            |url| self.connector.connect(url, IpVersion::Both),
-        )
-        .await?;
+        let outcome =
+            dial_config_server_with_scheme_fallback(&self.url, preferred.as_deref(), |url| {
+                self.connector.connect(url, IpVersion::Both)
+            })
+            .await?;
         *self
             .preferred_scheme
             .lock()

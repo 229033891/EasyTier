@@ -6,13 +6,13 @@ mod runtime_reconcile;
 pub mod session;
 pub mod storage;
 
-pub(crate) use rpc_timeout::{
-    MANAGED_RPC_FAST_TIMEOUT_MS, proxy_rpc_timeout_ms, rpc_controller, slow_rpc_controller,
-};
 /// Test-only re-export (assertions on graded timeouts); kept out of normal
 /// builds so `unused_imports` stays clean.
 #[cfg(test)]
 pub(crate) use rpc_timeout::MANAGED_RPC_SLOW_TIMEOUT_MS;
+pub(crate) use rpc_timeout::{
+    MANAGED_RPC_FAST_TIMEOUT_MS, proxy_rpc_timeout_ms, rpc_controller, slow_rpc_controller,
+};
 
 use std::time::Duration;
 use std::{
@@ -227,7 +227,10 @@ impl ClientManager {
         let port = local_url
             .port()
             .or_else(|| local_url.port_or_known_default());
-        *self.config_listener_schemes.entry(scheme.clone()).or_insert(0) += 1;
+        *self
+            .config_listener_schemes
+            .entry(scheme.clone())
+            .or_insert(0) += 1;
         if let Some(p) = port {
             *self.config_listener_ports.entry(p).or_insert(0) += 1;
         }
@@ -374,50 +377,51 @@ impl ClientManager {
         user_id: UserIdInDb,
         machine_id: &uuid::Uuid,
     ) -> Option<Arc<Session>> {
-        // Prefer authorized primary, then any retained / unauthorized URL, then
-        // a live-session scan (covers the NAT port-change window).
+        // Prefer the highest session_epoch among live matches so a superseded
+        // previous-URL tunnel is not chosen when a newer session is also up.
+        // When only the previous URL is still running (NAT map already advanced),
+        // that older session remains a valid fallback.
+        let mut best: Option<(u64, Arc<Session>)> = None;
+        let mut consider = |session: Arc<Session>| {
+            if !session.is_running() {
+                return;
+            }
+            let epoch = session.route_epoch();
+            if best
+                .as_ref()
+                .is_none_or(|(best_epoch, _)| epoch > *best_epoch)
+            {
+                best = Some((epoch, session));
+            }
+        };
+
         let mut candidates = self
             .storage
             .route_client_urls_by_machine_id(user_id, machine_id);
-        if let Some(authorized) = self.storage.get_client_url_by_machine_id(user_id, machine_id) {
+        if let Some(authorized) = self
+            .storage
+            .get_client_url_by_machine_id(user_id, machine_id)
+        {
             candidates.retain(|url| url != &authorized);
             candidates.insert(0, authorized);
         }
         for url in candidates {
-            if let Some(session) = self.running_session_at(&url) {
-                return Some(session);
+            if let Some(entry) = self.client_sessions.get(&url) {
+                consider(entry.value().clone());
             }
         }
-        self.find_running_session_for_machine(user_id, machine_id)
-    }
-
-    fn running_session_at(&self, client_url: &url::Url) -> Option<Arc<Session>> {
-        self.client_sessions
-            .get(client_url)
-            .and_then(|item| item.is_running().then(|| item.value().clone()))
-    }
-
-    /// Fallback when `user_clients_map` still points at a dead URL during reconnect.
-    fn find_running_session_for_machine(
-        &self,
-        user_id: UserIdInDb,
-        machine_id: &uuid::Uuid,
-    ) -> Option<Arc<Session>> {
         for entry in self.client_sessions.iter() {
             let session = entry.value();
-            if !session.is_running() {
-                continue;
-            }
             if session
                 .bound_machine()
                 .is_some_and(|(bound_user, bound_machine)| {
                     bound_user == user_id && bound_machine == *machine_id
                 })
             {
-                return Some(session.clone());
+                consider(session.clone());
             }
         }
-        None
+        best.map(|(_, session)| session)
     }
 
     pub async fn disconnect_session_by_machine_id(
@@ -425,15 +429,12 @@ impl ClientManager {
         user_id: UserIdInDb,
         machine_id: &uuid::Uuid,
     ) -> bool {
-        let Some(client_url) = self
-            .storage
-            .get_client_url_by_machine_id_with_auth(user_id, machine_id, false)
-        else {
+        // Same NAT-aware resolution as management RPC routing.
+        let Some(session) = self.get_session_by_machine_id(user_id, machine_id) else {
             return false;
         };
-        let Some((_, session)) = self.client_sessions.remove(&client_url) else {
-            return false;
-        };
+        let client_url = session.client_url().clone();
+        self.client_sessions.remove(&client_url);
         session.stop().await;
         true
     }
@@ -960,9 +961,7 @@ impl ClientManager {
             .info
             .as_ref()
             .and_then(|m| m.map.get(&inst_id.to_string()))
-            .is_some_and(|info| {
-                info.running && info.error_msg.as_deref().unwrap_or("").is_empty()
-            });
+            .is_some_and(|info| info.running && info.error_msg.as_deref().unwrap_or("").is_empty());
         if !healthy {
             return Ok(false);
         }
@@ -972,11 +971,9 @@ impl ClientManager {
             .get_managed_config_revision(identify)
             .await
             .map_err(RemoteClientError::PersistentError)?;
-        Ok(self.storage.revision_allows_soft_start(
-            identify.0,
-            identify.1,
-            persisted.as_deref(),
-        ))
+        Ok(self
+            .storage
+            .revision_allows_soft_start(identify.0, identify.1, persisted.as_deref()))
     }
 }
 
@@ -1350,10 +1347,15 @@ mod tests {
         );
         old_session.serve(server).await;
         old_session.mark_route_ready();
+        {
+            let data = old_session.data().read().await;
+            data.set_route_bind(user_id, machine_id, 1);
+        }
         let old_session = Arc::new(old_session);
         // Previous-URL fallback only needs the session keyed & running; identity
         // scan is a secondary path covered by lifecycle/prune tests.
-        mgr.client_sessions.insert(old_url.clone(), old_session.clone());
+        mgr.client_sessions
+            .insert(old_url.clone(), old_session.clone());
 
         let resolved = mgr
             .get_session_by_machine_id(user_id, &machine_id)
@@ -1363,6 +1365,102 @@ mod tests {
 
         let listed = mgr.list_machine_by_user_id(user_id).await;
         assert_eq!(listed, vec![old_url]);
+    }
+
+    #[tokio::test]
+    async fn machine_id_routing_prefers_newer_epoch_when_both_sessions_live() {
+        let db = Db::memory_db().await;
+        let mgr = ClientManager::new(
+            db.clone(),
+            None,
+            HeartbeatPolicy::default(),
+            Arc::new(FeatureFlags::default()),
+            Arc::new(crate::webhook::WebhookConfig::new(
+                None, None, None, None, None,
+            )),
+        );
+        let user_id = db.auto_create_user("token").await.unwrap().id;
+        let machine_id = uuid::Uuid::new_v4();
+        let old_url = url::Url::parse("tcp://10.0.0.1:1001").unwrap();
+        let new_url = url::Url::parse("tcp://10.0.0.1:2002").unwrap();
+
+        mgr.storage.update_session_client(
+            StorageToken {
+                token: "token".to_string(),
+                client_url: old_url.clone(),
+                machine_id,
+                user_id,
+            },
+            1,
+            true,
+            1,
+        );
+        mgr.storage.update_session_client(
+            StorageToken {
+                token: "token".to_string(),
+                client_url: new_url.clone(),
+                machine_id,
+                user_id,
+            },
+            2,
+            true,
+            2,
+        );
+
+        let (old_server, _old_peer) = easytier_core::tunnel::ring::create_ring_tunnel_pair();
+        let mut old_session = Session::new(
+            mgr.storage.weak_ref(),
+            old_url.clone(),
+            None,
+            HeartbeatPolicy::default(),
+            Arc::new(FeatureFlags::default()),
+            Arc::new(crate::webhook::WebhookConfig::new(
+                None, None, None, None, None,
+            )),
+            1,
+        );
+        old_session.serve(old_server).await;
+        {
+            let data = old_session.data().read().await;
+            data.set_route_bind(user_id, machine_id, 1);
+        }
+        let old_session = Arc::new(old_session);
+
+        let (new_server, _new_peer) = easytier_core::tunnel::ring::create_ring_tunnel_pair();
+        let mut new_session = Session::new(
+            mgr.storage.weak_ref(),
+            new_url.clone(),
+            None,
+            HeartbeatPolicy::default(),
+            Arc::new(FeatureFlags::default()),
+            Arc::new(crate::webhook::WebhookConfig::new(
+                None, None, None, None, None,
+            )),
+            2,
+        );
+        new_session.serve(new_server).await;
+        {
+            let data = new_session.data().read().await;
+            data.set_route_bind(user_id, machine_id, 2);
+        }
+        let new_session = Arc::new(new_session);
+
+        mgr.client_sessions
+            .insert(old_url.clone(), old_session.clone());
+        mgr.client_sessions
+            .insert(new_url.clone(), new_session.clone());
+
+        let resolved = mgr
+            .get_session_by_machine_id(user_id, &machine_id)
+            .expect("should prefer newer epoch");
+        assert!(Arc::ptr_eq(&resolved, &new_session));
+
+        assert!(
+            mgr.disconnect_session_by_machine_id(user_id, &machine_id)
+                .await
+        );
+        assert!(!mgr.client_sessions.contains_key(&new_url));
+        assert!(mgr.client_sessions.contains_key(&old_url));
     }
 
     async fn wait_for_validated_user(mgr: &ClientManager, machine_id: uuid::Uuid) -> i32 {

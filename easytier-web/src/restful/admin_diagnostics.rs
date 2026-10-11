@@ -2,21 +2,16 @@
 
 use std::sync::Arc;
 
-use axum::{
-    Extension, Json, Router,
-    extract::Query,
-    http::StatusCode,
-    routing::get,
-};
-use axum_login::login_required;
-use chrono::Utc;
-use serde::{Deserialize, Serialize};
 use super::{
     AppStateInner, HttpHandleError, other_error,
     users::{AuthSession, Backend},
 };
 use crate::client_manager::{ClientManager, HeartbeatPolicy};
 use crate::db::Db;
+use axum::{Extension, Json, Router, extract::Query, http::StatusCode, routing::get};
+use axum_login::login_required;
+use chrono::Utc;
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RuntimeIntentSnapshot {
@@ -191,12 +186,7 @@ fn check_pass(id: &str, expected: &str, actual: &str) -> DiagnosticCheck {
     }
 }
 
-fn check_fail(
-    id: &str,
-    expected: &str,
-    actual: &str,
-    detail: DiagnosticDetail,
-) -> DiagnosticCheck {
+fn check_fail(id: &str, expected: &str, actual: &str, detail: DiagnosticDetail) -> DiagnosticCheck {
     DiagnosticCheck {
         id: id.to_string(),
         status: "fail".to_string(),
@@ -238,7 +228,11 @@ fn compute_overall(checks: &[DiagnosticCheck]) -> (&'static str, OverallSummary)
         );
     }
 
-    let code = if critical_fail { "unhealthy" } else { "degraded" };
+    let code = if critical_fail {
+        "unhealthy"
+    } else {
+        "degraded"
+    };
     (
         code,
         OverallSummary {
@@ -395,7 +389,9 @@ fn redact_log_message(message: &str) -> String {
             };
             let token_start = after_scheme + slash + 1;
             let token_end = out[token_start..]
-                .find(|c: char| c.is_whitespace() || matches!(c, '?' | '#' | '"' | '\'' | ',' | '}'))
+                .find(|c: char| {
+                    c.is_whitespace() || matches!(c, '?' | '#' | '"' | '\'' | ',' | '}')
+                })
                 .map(|i| token_start + i)
                 .unwrap_or(out.len());
             if token_end > token_start {
@@ -406,7 +402,7 @@ fn redact_log_message(message: &str) -> String {
             }
         }
     }
-    // JSON-ish `"user_token":"..."` 
+    // JSON-ish `"user_token":"..."`
     let key = "\"user_token\"";
     let mut search_from = 0;
     while let Some(rel) = out[search_from..].to_ascii_lowercase().find(key) {

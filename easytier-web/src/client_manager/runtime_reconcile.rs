@@ -26,6 +26,7 @@ use easytier::{
 };
 
 use super::session::{SessionConfigClient, SessionRpcClient};
+use super::slow_rpc_controller;
 
 /// First EasyTier release that applies `DnsConfig` / `InstanceConfigPatch.dns_config`.
 /// Released 2.7.0–2.7.3 ignore unknown fields; patching them never converges (B1).
@@ -485,7 +486,7 @@ async fn run_web_source_instance(
 ) -> anyhow::Result<()> {
     rpc_client
         .run_network_instance(
-            BaseController::default(),
+            slow_rpc_controller(),
             RunNetworkInstanceRequest {
                 inst_id: Some(inst_id.to_string().into()),
                 config: Some(config),
@@ -588,7 +589,7 @@ pub(super) async fn apply_web_source_runtime_reconcile(
             let hostname_applied = patch.hostname.is_some();
             config_client
                 .patch_config(
-                    BaseController::default(),
+                    slow_rpc_controller(),
                     PatchConfigRequest {
                         instance: Some(instance_identifier(inst_id)?),
                         patch: Some(*patch),

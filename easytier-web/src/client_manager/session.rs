@@ -165,6 +165,9 @@ pub struct SessionData {
     webhook_validation_change_epoch: u64,
     webhook_validation_notify: Arc<Notify>,
     session_epoch: u64,
+    /// Sync-readable bind for routing; updated when identity is established.
+    /// Readable without the async `RwLock` (see `Session::bound_machine`).
+    route_bind: Arc<std::sync::Mutex<Option<(crate::db::UserIdInDb, uuid::Uuid, u64)>>>,
 }
 
 impl SessionData {
@@ -197,7 +200,21 @@ impl SessionData {
             webhook_validation_change_epoch: 0,
             webhook_validation_notify: Arc::new(Notify::new()),
             session_epoch: 0,
+            route_bind: Arc::new(std::sync::Mutex::new(None)),
         }
+    }
+
+    pub(super) fn set_route_bind(
+        &self,
+        user_id: crate::db::UserIdInDb,
+        machine_id: uuid::Uuid,
+        session_epoch: u64,
+    ) {
+        *self
+            .route_bind
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) =
+            Some((user_id, machine_id, session_epoch));
     }
 
     pub fn req(&self) -> Option<HeartbeatRequest> {
@@ -1129,6 +1146,7 @@ impl SessionRpcService {
                     machine_id,
                     user_id,
                 });
+                data.set_route_bind(user_id, machine_id, data.session_epoch);
                 tracing::info!(
                     %machine_id,
                     user_id,
@@ -1238,6 +1256,8 @@ pub struct Session {
     data: SharedSessionData,
     /// Stable for the life of this TCP/UDP accept; also the `client_sessions` map key.
     client_url: url::Url,
+    /// Same `Arc` as `SessionData::route_bind` for lock-free sync routing peeks.
+    route_bind: Arc<std::sync::Mutex<Option<(crate::db::UserIdInDb, uuid::Uuid, u64)>>>,
 
     webhook_validation_task: Option<AbortOnDropHandle<()>>,
     config_reconcile_task: Option<AbortOnDropHandle<()>>,
@@ -1271,6 +1291,7 @@ impl Session {
             webhook_config,
         );
         session_data.session_epoch = session_epoch;
+        let route_bind = session_data.route_bind.clone();
         let data = Arc::new(RwLock::new(session_data));
 
         let rpc_mgr =
@@ -1288,6 +1309,7 @@ impl Session {
             rpc_mgr,
             data,
             client_url,
+            route_bind,
             webhook_validation_task: None,
             config_reconcile_task: None,
             route_ready: Arc::new(Notify::new()),
@@ -1299,13 +1321,21 @@ impl Session {
     }
 
     /// Sync peek of bound `(user_id, machine_id)` for routing fallbacks.
+    /// Uses a dedicated mutex so heartbeat's async write lock cannot hide the bind.
     pub(super) fn bound_machine(&self) -> Option<(crate::db::UserIdInDb, uuid::Uuid)> {
-        let Ok(data) = self.data.try_read() else {
-            return None;
-        };
-        data.storage_token
-            .as_ref()
-            .map(|token| (token.user_id, token.machine_id))
+        self.route_bind
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .map(|(user_id, machine_id, _)| (user_id, machine_id))
+    }
+
+    /// Session epoch from the sync route bind (0 if not yet authenticated).
+    pub(super) fn route_epoch(&self) -> u64 {
+        self.route_bind
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .map(|(_, _, epoch)| epoch)
+            .unwrap_or(0)
     }
 
     pub async fn serve(&mut self, tunnel: Box<dyn Tunnel>) {

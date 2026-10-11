@@ -75,10 +75,15 @@ fn next_backoff(current: std::time::Duration) -> std::time::Duration {
         .min(MAX_RETRY_INTERVAL)
 }
 
-/// Brief delay after a healthy session ends, with mild escalation + jitter.
+/// Uptime after which a session is treated as stable: the next session-end
+/// streak resets so brief flapping still escalates, but a healthy stretch does
+/// not leave the client stuck at 8s forever.
+const STABLE_SESSION_UPTIME: std::time::Duration = std::time::Duration::from_secs(15);
+
+/// Brief delay after a session ends, with mild escalation + jitter.
 ///
-/// `streak` counts consecutive session-end reconnects since the last fully
-/// established session; capped so flapping servers do not wait forever.
+/// `streak` counts consecutive short-lived session-end reconnects since the
+/// last stable session; capped so flapping servers do not wait forever.
 fn session_end_reconnect_delay(streak: u32) -> std::time::Duration {
     let steps = streak.saturating_sub(1).min(3); // 1s, 2s, 4s, 8s
     let mut base = RETRY_INTERVAL;
@@ -87,6 +92,16 @@ fn session_end_reconnect_delay(streak: u32) -> std::time::Duration {
     }
     let jitter_ms = u64::from(rand::random::<u16>() % 1_001); // 0..=1000ms
     base + std::time::Duration::from_millis(jitter_ms)
+}
+
+/// Bump the session-end streak, resetting first when the just-ended session was
+/// stable long enough to count as a healthy stretch.
+fn note_session_end(streak: &mut u32, session_uptime: std::time::Duration) -> std::time::Duration {
+    if session_uptime >= STABLE_SESSION_UPTIME {
+        *streak = 0;
+    }
+    *streak = streak.saturating_add(1);
+    session_end_reconnect_delay(*streak)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -200,16 +215,16 @@ impl ConfigServerEndpoint {
 /// `ws` / `wss` / `ring` and other schemes are left unchanged (no automatic rewrite).
 pub fn config_server_dial_candidates(primary: &Url, preferred_scheme: Option<&str>) -> Vec<Url> {
     let mut urls = vec![primary.clone()];
-    if let Some(alternate) = config_server_scheme_alternate(primary) {
-        if !urls.iter().any(|url| url == &alternate) {
-            urls.push(alternate);
-        }
+    if let Some(alternate) = config_server_scheme_alternate(primary)
+        && !urls.iter().any(|url| url == &alternate)
+    {
+        urls.push(alternate);
     }
-    if let Some(preferred) = preferred_scheme {
-        if let Some(index) = urls.iter().position(|url| url.scheme() == preferred) {
-            let chosen = urls.remove(index);
-            urls.insert(0, chosen);
-        }
+    if let Some(preferred) = preferred_scheme
+        && let Some(index) = urls.iter().position(|url| url.scheme() == preferred)
+    {
+        let chosen = urls.remove(index);
+        urls.insert(0, chosen);
     }
     urls
 }
@@ -226,6 +241,7 @@ fn config_server_scheme_alternate(url: &Url) -> Option<Url> {
 }
 
 /// Dial result: tunnel plus the URL scheme that actually connected (for sticky preference).
+#[derive(Debug)]
 pub struct ConfigServerDialOutcome {
     pub tunnel: Box<dyn Tunnel>,
     pub connected_url: Url,
@@ -699,8 +715,8 @@ async fn web_client_routine(
     connector: Box<dyn TunnelDialer>,
 ) {
     let mut backoff = RETRY_INTERVAL;
-    // Assigned on every successful session start before any session-end read.
-    let mut session_end_streak: u32;
+    // Escalates across short-lived sessions; cleared only after a stable uptime.
+    let mut session_end_streak: u32 = 0;
     loop {
         let connection = match connect_config_server(connector.as_ref(), CONNECT_TIMEOUT).await {
             // Do NOT reset `backoff` here. A plain dial can keep succeeding while
@@ -793,16 +809,15 @@ async fn web_client_routine(
             let mut session = WebClientSession::new(connection, controller.clone());
             connected.store(true, Ordering::Release);
             config_server_status::mark_connected();
-            session_end_streak = 0;
             tracing::info!("connected to config server (secure tunnel)");
+            let session_started = time::Instant::now();
             session.start_heartbeat().await;
             session.wait().await;
             connected.store(false, Ordering::Release);
             config_server_status::mark_disconnected();
             // Successful session ended (server close / network drop). Back off
             // with mild escalation + jitter before hot-reconnecting.
-            session_end_streak = session_end_streak.saturating_add(1);
-            let delay = session_end_reconnect_delay(session_end_streak);
+            let delay = note_session_end(&mut session_end_streak, session_started.elapsed());
             tracing::info!(
                 retry_in_ms = delay.as_millis(),
                 session_end_streak,
@@ -840,16 +855,15 @@ async fn web_client_routine(
 
         connected.store(true, Ordering::Release);
         config_server_status::mark_connected();
-        // Session is up: this is the point where exponential backoff resets.
+        // Session is up: this is the point where dial-failure exponential backoff resets.
         backoff = RETRY_INTERVAL;
-        session_end_streak = 0;
         tracing::info!("connected to config server");
+        let session_started = time::Instant::now();
         session.start_heartbeat().await;
         session.wait().await;
         connected.store(false, Ordering::Release);
         config_server_status::mark_disconnected();
-        session_end_streak = session_end_streak.saturating_add(1);
-        let delay = session_end_reconnect_delay(session_end_streak);
+        let delay = note_session_end(&mut session_end_streak, session_started.elapsed());
         tracing::info!(
             retry_in_ms = delay.as_millis(),
             session_end_streak,
@@ -1225,6 +1239,17 @@ mod tests {
         // streak 4 → 3 doublings → 8s base + jitter
         assert!(fourth >= std::time::Duration::from_secs(8));
         assert!(fourth <= std::time::Duration::from_secs(9));
+    }
+
+    #[test]
+    fn note_session_end_escalates_on_flap_and_resets_after_stable() {
+        let mut streak = 0;
+        let _ = note_session_end(&mut streak, std::time::Duration::from_millis(10));
+        assert_eq!(streak, 1);
+        let _ = note_session_end(&mut streak, std::time::Duration::from_millis(10));
+        assert_eq!(streak, 2);
+        let _ = note_session_end(&mut streak, STABLE_SESSION_UPTIME);
+        assert_eq!(streak, 1);
     }
 
     #[test]

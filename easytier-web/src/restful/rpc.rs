@@ -102,9 +102,7 @@ async fn handle_proxy_rpc_by_session(
                     easytier::proto::api::instance::TcpProxyRpcClientFactory<BaseController>,
                 >()
             };
-            client
-                .json_call_method(ctrl, &method_name, payload)
-                .await
+            client.json_call_method(ctrl, &method_name, payload).await
         }
         "api.instance.AclManageRpcService" => match_service!(
             easytier::proto::api::instance::AclManageRpcClientFactory<BaseController>,

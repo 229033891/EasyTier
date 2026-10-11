@@ -106,6 +106,7 @@ async fn bind_session(
     data.managed_runtime =
         storage.bind_managed_runtime_state(user_id, machine_id, None, data.session_epoch);
     data.storage_token = Some(token.clone());
+    data.set_route_bind(user_id, machine_id, data.session_epoch);
     data.auth_state = SessionAuthState::Authorized;
     storage.update_session_client(token.clone(), 1, true, data.session_epoch);
     token

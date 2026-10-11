@@ -18,7 +18,7 @@ use super::{
 };
 use crate::client_manager::{
     managed_config::{self, PersistedConfigSource},
-    runtime_reconcile,
+    runtime_reconcile, slow_rpc_controller,
     storage::{StorageInner, WeakRefStorage},
 };
 
@@ -742,7 +742,7 @@ async fn cleanup_stale_web_source_instances(
         let operation_started_at = std::time::Instant::now();
         let ret = rpc_client
             .delete_network_instance(
-                BaseController::default(),
+                slow_rpc_controller(),
                 DeleteNetworkInstanceRequest {
                     inst_ids: should_delete_ids,
                 },
@@ -824,7 +824,7 @@ async fn cleanup_patch_deleted_instances(
     let operation_started_at = std::time::Instant::now();
     let ret = rpc_client
         .delete_network_instance(
-            BaseController::default(),
+            slow_rpc_controller(),
             DeleteNetworkInstanceRequest {
                 inst_ids: managed_config::parse_instance_ids(
                     running_web_instance_ids.iter().cloned(),
@@ -1150,7 +1150,7 @@ async fn run_missing_network_config(
     let operation_started_at = std::time::Instant::now();
     let ret = rpc_client
         .run_network_instance(
-            BaseController::default(),
+            slow_rpc_controller(),
             RunNetworkInstanceRequest {
                 inst_id: Some(config.network_instance_id.clone().into()),
                 config: Some(desired_config),
