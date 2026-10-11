@@ -40,7 +40,7 @@ EasyTier 当前更接近 **Tailscale / ZeroTier 一类软件 Mesh**，而非华�
 | **域名驱动导流** | ●（App Connector：域名→解析→通告路由 + split DNS） | ○ | ◐（偏应用/加速与策略，非开源同构） | ●（应用识别选路） | ●（应用策略） | ○ | ★ domain-proxy |
 | **P2P 失败必有中继** | ●（Peer Relay → DERP/HTTPS） | ●（根服务器/叶） | ●（P2P→转发→强制转发） | ●（Hub/Gateway） | ●（VCG） | ◐（有中继/共享节点，缺「HTTPS 保底」产品档） | ★ camouflage W0/B |
 | **传输伪装 / 抗识别** | ◐（DERP 走 HTTPS，主目标是连通非隐身） | ○ | ◐（自研协议+节点，非公开伪装栈） | ○ | ○ | ○（有 wss/faketcp，无产品档） | ★ 伪装；深度指纹 Backlog |
-| **多链路加带宽** | ○（Issue 诉求；现单路径） | ●（Multipath：flow hash / stripe 等） | ●（多 WAN 负载/选路，偏站点） | ●（多链路负载均衡） | ●（DMPO 带宽聚合） | ◐（默认单路径；`bond_count>1` 按流分摊） | ★ Phase 3 出口多样 |
+| **多链路加带宽** | ○（Issue 诉求；现单路径） | ●（Multipath：flow hash / stripe 等） | ●（多 WAN 负载/选路，偏站点） | ●（多链路负载均衡） | ●（DMPO 带宽聚合） | ◐（出厂默认 `bond_count=2` 按流分摊） | ★ Phase 3 出口多样 |
 | 链路质量选路（时延/丢包） | ◐（选 exit/路径偏好） | ◐（multipath quality） | ●（智能选路卖点） | ● | ●（DMPO） | ◐（latency_first 等） | 增强期 |
 | 云端零配置 / 硬件 | ◐（SaaS 控制面） | ◐ | ●（软硬+云） | ● | ● | ◐（easytier-web） | web-evolution |
 | 开源 / 自托管控制面 | ●（Headscale 生态） | ◐ | ○ | ○ | ○ | ● | 保持差异化 |
@@ -160,7 +160,7 @@ EasyTier 当前更接近 **Tailscale / ZeroTier 一类软件 Mesh**，而非华�
 1. **导流**：学 Tailscale — exit 必须装默认路由；子网 LPM 优先；文案诚实。  
 2. **域名**：学 App Connector — 代理侧权威 DNS + 路由通告成对；接在 W1 后。  
 3. **连通**：学 Tailscale DERP / 蒲公英转发分层 — 先产品化中继保底，伪装指纹后置。  
-4. **带宽**：学 ZeroTier Multipath — 按流哈希；默认关闭；不对标 VeloCloud DMPO。  
+4. **带宽**：学 ZeroTier Multipath — 按流哈希；出厂默认 `bond_count=2`；不对标 VeloCloud DMPO。  
 5. **不做**：企业 SD-WAN 应用级智能选路全家桶（华为/VeloCloud 主场）。
 
 ---

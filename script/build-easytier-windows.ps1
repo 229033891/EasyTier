@@ -241,6 +241,8 @@ function Invoke-EasytierGuiFrontendBuild {
 function Invoke-EasytierGuiTauriBuild {
     Assert-Command pnpm
     Ensure-WindowsBuildPrereqs
+    # Re-assert TEMP: long GUI builds can outlive a manual delete of old cache dirs.
+    Set-EasytierWritableTemp
 
     # Skip Tauri beforeBuildCommand — frontend already built (same as CI tauri.ci.conf.json).
     # Written only for this step; gitignored + eslint-ignored.
@@ -423,6 +425,10 @@ Write-Log "  Target:   $(if ($Target) { $Target } else { '(host)' })"
 Write-Log "  GUI:      $(-not $SkipGui)"
 Write-Log "  Headless: $(-not $SkipHeadless)"
 Write-Log "  OutDir:   $OutDir"
+
+# Short cargo target + writable TEMP under .cache\ (link.exe needs TEMP for .tmp).
+Initialize-EasytierWindowsCargoEnv
+Set-EasytierWritableTemp
 
 # Fail fast: NSIS embedBootstrapper needs a local WebView2 setup exe.
 # Without it Tauri downloads from Microsoft at the very end (often EOF behind proxies).

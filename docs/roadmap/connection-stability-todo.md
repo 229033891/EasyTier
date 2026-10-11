@@ -172,7 +172,7 @@ score = w_lat * norm(rtt)
   - Connector 存活仍走既有 `ListConnector`（CLI）；Web Status 本项未嵌入 connector 列表
 - [x] **P2.2** 文档/UI：多连接 ≠ 已聚合带宽（对齐 Current `peer-connections.md`）
   - **文档（2026-10-07）**：Current §2/§4「热备 ≠ 聚合」；[`multi-link-bonding.md`](./multi-link-bonding.md) Phase 1 文案与异质优先语义
-  - **UI（2026-10-07）**：Status「质量分」列头 `path_quality_help`；Config `peer_link_bond_count_help` 明确默认 1 = 热备非叠带宽（只描述 Current）
+  - **UI（2026-10-07）**：Status「质量分」列头 `path_quality_help`；Config `peer_link_bond_count_help` 说明出厂默认 2 / 设为 1 = 热备非叠带宽（只描述 Current）
 - [x] **P2.3** 将丢包/抖动（综合分）纳入 OSPF / `latency_first` 边代价；带防震荡与可观测
   - 发布端 `direct_peer_info`：`quality_score`→`DirectConnectedPeerInfo.latency_ms`（`score*1000` + 熔断加成）；发布 hysteresis `min_delta=20`
   - Dijkstra / peer-center `RouteCostCalculator` 不变（仍读 `latency_ms`）；零 loss/jitter 时量级≈原 RTT ms

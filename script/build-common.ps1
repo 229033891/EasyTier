@@ -172,11 +172,15 @@ function Set-EasytierWritableTemp {
     <#
       Some environments set TEMP to a restricted folder (e.g. ...\Temp\2).
       esbuild then fails with "Access is denied" when deleting its work dir.
+      MSVC link.exe also writes lnk{GUID}.tmp under TEMP — keep this dir alive
+      for the whole packaging run (do not delete .cache while building).
     #>
     $etTemp = Join-Path (Get-EasytierLocalCacheRoot) 'tmp'
     New-Item -ItemType Directory -Force -Path $etTemp | Out-Null
     $env:TEMP = $etTemp
     $env:TMP = $etTemp
+    $env:TMPDIR = $etTemp
+    Write-Log "TEMP/TMP/TMPDIR=$etTemp" -Level Info
 }
 
 function Initialize-EasytierWindowsCargoEnv {

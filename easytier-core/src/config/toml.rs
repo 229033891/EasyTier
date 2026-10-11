@@ -166,9 +166,9 @@ pub fn gen_default_flags() -> Flags {
         conn_select_switch_margin_pct: 10,
         conn_select_switch_abs_margin_milli: 5,
         conn_select_switch_windows: 2,
-        // Bonding Phase 2a: 1 = today's single default_conn path.
-        peer_link_bond_count: 1,
-        peer_link_replica_fill_max: 5,
+        // Bonding: factory default enables a small multi-path set (cap 5).
+        peer_link_bond_count: 2,
+        peer_link_replica_fill_max: 2,
     }
 }
 

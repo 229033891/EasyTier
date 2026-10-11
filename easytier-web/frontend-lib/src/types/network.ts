@@ -68,11 +68,11 @@ export type NetworkConfig = Omit<
   /** D+: opt-in peer `/0` without local exit_nodes. */
   allow_peer_default_without_exit?: boolean | null
   /**
-   * 多链路聚合目标并行数。null = 未设置（后端按默认 1 处理，走单 default_conn）。
-   * 前端输入框留空即为 null。
+   * 多链路聚合目标并行数。null = 未设置（后端按出厂默认 2 处理）。
+   * 前端输入框留空即为 null。设为 1 时走单 default_conn。
    */
   peer_link_bond_count: number | null
-  /** bond 补齐时同多样性类别成员上限。null = 未设置（后端按默认 5 处理）。 */
+  /** bond 补齐时同多样性类别成员上限。null = 未设置（后端按出厂默认 2 处理）。 */
   peer_link_replica_fill_max: number | null
 }
 
@@ -178,8 +178,8 @@ export function DEFAULT_NETWORK_CONFIG(): NetworkConfig {
     socks5_port: 1080,
     mtu: null,
     instance_recv_bps_limit: null,
-    peer_link_bond_count: null,
-    peer_link_replica_fill_max: null,
+    peer_link_bond_count: 2,
+    peer_link_replica_fill_max: 2,
     mapped_listeners: [],
     enable_magic_dns: false,
     enable_private_mode: false,

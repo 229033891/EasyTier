@@ -618,15 +618,14 @@ instance_recv_bps_limit_placeholder: Leave blank for no limit
 
 peer_link_bond_count: Bonded Link Count
 peer_link_bond_count_help: |-
-  Target number of PeerConns sending in parallel between a peer pair. 1 (default) uses a single default_conn: extra live tunnels are hot standbys for failover, not stacked bandwidth.
-  2–5 spreads different flows (inner IP 5-tuple) across tunnels to beat per-connection caps (best for multi-user / multi-flow; a single RDP flow still capped by one tunnel).
-  Only effective with multiple live tunnels; max 5.
-peer_link_bond_count_placeholder: Leave blank as default 1
+  Target number of PeerConns sending in parallel between a peer pair. Default 2 spreads different flows (inner IP 5-tuple) across tunnels when multiple are live.
+  Set to 1 for a single default_conn (extra tunnels are hot standbys only). Max 5; a single RDP flow is still capped by one tunnel.
+peer_link_bond_count_placeholder: Leave blank as default 2
 peer_link_replica_fill_max: Same-Class Fill Limit
 peer_link_replica_fill_max_help: |-
-  Max bond members sharing one diversity class (protocol + remote) when filling. Default 5. Egress / NIC diversity is a later phase.
+  Max bond members sharing one diversity class (protocol + remote) when filling. Default 2. Egress / NIC diversity is a later phase.
   Leave blank for default.
-peer_link_replica_fill_max_placeholder: Leave blank as default 5
+peer_link_replica_fill_max_placeholder: Leave blank as default 2
 
 mapped_listeners: Public Advertise Addresses
 mapped_listeners_help: |-

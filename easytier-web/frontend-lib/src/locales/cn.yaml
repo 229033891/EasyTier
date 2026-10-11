@@ -617,15 +617,14 @@ instance_recv_bps_limit_placeholder: 留空表示不限速
 
 peer_link_bond_count: 多链路聚合数
 peer_link_bond_count_help: |-
-  一对 peer 之间并行发送的目标 PeerConn 条数。1（默认）只走单条 default_conn：多条存活隧道仍是热备切换，不会叠带宽。
-  2–5 按内层 IP 五元组把不同流分摊到多条隧道，可突破单连接限速（多用户/多流场景最有效；单个 RDP 等单流仍受单条上限）。
-  需要有多条存活隧道才有效；上限 5。
-peer_link_bond_count_placeholder: 留空为默认值1
+  一对 peer 之间并行发送的目标 PeerConn 条数。默认 2：按内层 IP 五元组把不同流分摊到多条隧道（需有多条存活隧道）。
+  设为 1 只走单条 default_conn（多条隧道仅为热备，不叠带宽）。上限 5；单个 RDP 等单流仍受单条隧道上限。
+peer_link_bond_count_placeholder: 留空为默认值2
 peer_link_replica_fill_max: 同类补齐上限
 peer_link_replica_fill_max_help: |-
-  补齐 bond 集合时，同一多样性类别（协议 + 对端地址）的成员数量上限，默认 5。出口/网卡多样性属后续阶段。
+  补齐 bond 集合时，同一多样性类别（协议 + 对端地址）的成员数量上限，默认 2。出口/网卡多样性属后续阶段。
   留空为默认值。
-peer_link_replica_fill_max_placeholder: 留空为默认值5
+peer_link_replica_fill_max_placeholder: 留空为默认值2
 
 mapped_listeners: 公网宣告地址
 mapped_listeners_help: |-

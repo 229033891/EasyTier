@@ -2,13 +2,13 @@
 
 ## Status
 
-- Status: **Roadmap**（Phase **2a/2b 已合入**；**剩余：Phase 3** 出口/`bind_device` 多样性；默认 `bond_count=1`）
+- Status: **Roadmap**（Phase **2a/2b 已合入**；**剩余：Phase 3** 出口/`bind_device` 多样性；出厂默认 `bond_count=2`）
 - 日期：2026-10-07
 - 最近审阅：2026-10-09（Phase 2 已落地；日常行为见 Current `peer-connections.md`）
 - 索引：[`../README.md`](../README.md)
 - **现状行为**：[`../current/peer-connections.md`](../current/peer-connections.md)（默认单 `default_conn`；可选 bonding）
 - **代码锚点**：`easytier-core/src/peers/conn/conn_bond.rs`、`peer.rs`（`select_bond_conns` / `send_msg`）
-- **连接稳定性 / 质量门**：[`connection-stability-todo.md`](./connection-stability-todo.md)（综合分、熔断；与 bonding **正交**，默认 `bond_count=1`）
+- **连接稳定性 / 质量门**：[`connection-stability-todo.md`](./connection-stability-todo.md)（综合分、熔断；与 bonding **正交**；单路径行为见 `bond_count=1`）
 - **市场对比**：[`market-comparison-2026-10.md`](./market-comparison-2026-10.md)（ZeroTier Multipath；Tailscale 仍单路径；VeloCloud DMPO 为站间 SD-WAN）
 
 发送面 MVP 对齐 **ZeroTier Multipath 的 balance-xor（按流哈希）**。  
@@ -31,7 +31,7 @@
 
 ## 2. 目标
 
-1. 可配置：全局（或指定 peer）`peer_link_bond_count` / 等价 flags，目标并行数 `N`（**默认 1** = 今日行为；建议硬顶 **5**）。  
+1. 可配置：全局（或指定 peer）`peer_link_bond_count` / 等价 flags，目标并行数 `N`（**出厂默认 2**；`1` = 单路径；硬顶 **5**）。  
 2. 维护最多 `N` 条参与发送的 PeerConn（主动维持见 Phase 2b；Phase 2a 先用已存活连接）；成员选择见 §3（**diversity-first, replica-fill**；同质每类最多约 **3–5**）。  
 3. 数据面按流哈希分摊（§4），使 **多并行流** 总吞吐有机会超过单连接上限。  
 4. 链路增减时不破坏现有加密 / anti-replay（沿用 Peer 级 `PeerSession` JOIN；见 `easytier/docs/peer_conn_secure_mode_v3.md`）。  
@@ -101,7 +101,7 @@ candidates → quality_gate(RTT/loss/jitter) → diversity_pick → replica_fill
 - 同质复制仍可能帮助「单连接限速」场景（多五元组绕过 per-flow 限速）。  
 - **约束次序**：先满足全局 `|bond_set| ≤ N`（`bond_count`，硬顶建议 **5**），再满足每类同质上限；成员挑选时 **先占异质槽，再同质补齐**。  
   例：`N=5` 且已有 udp+tcp 两条异质成员时，同质最多再补 3 条，不会每类各开到 5。  
-- **同质每类上限**：建议配置范围 **3–5**，默认 **`replica_fill_max=5`**；允许更小（如 1–2）做保守灰度。计入同一 diversity 键组合（同 scheme + 同出口 + 同 remote 类）的副本数，达到上限后不再为该类加开。  
+- **同质每类上限**：建议配置范围 **1–5**，出厂默认 **`replica_fill_max=2`**。计入同一 diversity 键组合（同 scheme + 同出口 + 同 remote 类）的副本数，达到上限后不再为该类加开。  
 - 另受拨号退避、`alive_client_urls` / 去重约束，避免连接风暴。  
 - 仅有一条可用 underlay 时，**允许** bond 集在 `min(N, replica_fill_max)` 内全为同质成员（验收须覆盖，不得视为失败）。
 
@@ -113,7 +113,7 @@ candidates → quality_gate(RTT/loss/jitter) → diversity_pick → replica_fill
 | 指标相当 → 异质优先 | 同质量档内先 diversity，再比细微分差 |
 | 协议 / remote 异质 | **Phase 2a MVP** 可做 |
 | 出口 / 多宽带异质 | **Phase 3**；落地前文档与 UI 不宣称已支持 |
-| 同路径复制 | 允许作 fill；每类 **3–5**（默认 5）；须防风暴 |
+| 同路径复制 | 允许作 fill；每类上限可配（出厂默认 **2**）；须防风暴 |
 | 稳定性 | 异质降共模；MVP **禁止**同流跨 conn；默认 `N=1` 可回退 |
 
 ---
@@ -141,7 +141,7 @@ MVP：**按流哈希 + diversity-first 成员集（不足 replica-fill）**；`b
 
 ### Phase 2a — 发送 MVP（第一刀）✅
 
-1. 配置：`peer_link_bond_count`（默认 **1**，硬顶 **5**）；`peer_link_replica_fill_max`（默认 **5**）。  
+1. 配置：`peer_link_bond_count`（出厂默认 **2**，硬顶 **5**）；`peer_link_replica_fill_max`（出厂默认 **2**）。  
 2. `send_msg`：`N==1` → 今日 `default_conn`；`N>1` → 对已有多 conn **按流**选 bond 成员。  
 3. 成员集：质量门 → **同质量档内**协议 / remote 多样性优先 → 不足则同质补齐（每类 ≤ `replica_fill_max`）。  
 4. 尚不强制「主动狂开」新隧道；优先用已存活的异质连接。
@@ -191,6 +191,6 @@ MVP：**按流哈希 + diversity-first 成员集（不足 replica-fill）**；`b
 ## 8. 结论
 
 - **需求成立**：现状多连接不能解决单连接限速；纯同质复制也不足以最大化稳定性。  
-- **成员语义已拍板**：指标大致相当时 **异质优先**；不足则 **同质补齐**（每类一般 **3–5**，默认 5）。  
-- **当前状态**：Phase **2a**（按流发送 + diversity 成员集）与 Phase **2b**（主动补链 + 状态标注）已合入；默认 `bond_count=1`。出口/`bind_device` 多样性仍属 Phase 3。  
+- **成员语义已拍板**：指标大致相当时 **异质优先**；不足则 **同质补齐**（每类上限可配，出厂默认 **2**）。  
+- **当前状态**：Phase **2a**（按流发送 + diversity 成员集）与 Phase **2b**（主动补链 + 状态标注）已合入；出厂默认 `bond_count=2` / `replica_fill_max=2`。出口/`bind_device` 多样性仍属 Phase 3。  
 - sticky key 须在压缩/加密前计算（`ZCPacket.bond_flow_key`），避免经典 AEAD 路径按包喷洒。

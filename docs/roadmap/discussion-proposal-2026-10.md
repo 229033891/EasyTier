@@ -35,7 +35,7 @@
 | P1 | 配了出口节点，本机却像没走 VPN | ~~`exit_nodes` 只做 L3 选路~~ → **已落地**：可解析 exit 时本机装 `/0`（D+） | [Current](../current/traffic-steering.md) / [vNext Phase B/C](./traffic-steering-vNext.md) |
 | P2 | 路由加不上 / 删不掉 | L2 `apply_route_changes` 失败仍记账 | 同上 |
 | P3 | 想用域名做子网代理，IP 对不上 | 无域名权威；B 侧 DNS 可能与 A 不一致 | [domain-proxy](./domain-proxy.md) |
-| P4 | 单条连接被运营商限速，多连接也不快 | 默认 `bond_count=1` 仍单路径；`bond_count>1` 已按流分摊（Phase 2a/2b） | [multi-link-bonding](./multi-link-bonding.md) / [Current](../current/peer-connections.md) |
+| P4 | 单条连接被运营商限速，多连接也不快 | 出厂默认 `bond_count=2` 已按流分摊；设为 1 仍单路径（Phase 2a/2b） | [multi-link-bonding](./multi-link-bonding.md) / [Current](../current/peer-connections.md) |
 | P5 | P2P / 打洞易被限 | 缺「直连失败必有可用中继」的产品档；伪装/指纹为次要 | [traffic-camouflage](./traffic-camouflage.md) / [Current](../current/tunnels-and-transport.md) / [市场对比](./market-comparison-2026-10.md) |
 | P6 | 控制台继续演进、只升 web | 节点协议短期冻结 | [web-evolution](./web-evolution.md) |
 | P7 | 安装升级统一走 GitHub | 方案已有，增强项未做 | [github-release-install](./github-release-install.md) |
@@ -155,7 +155,7 @@ W0 ──┬──► W1 ──► W2 ──► W4（域名动态等）
 
 ### 6.3 连接
 
-- [ ] bonding 默认 `N`（建议默认 1，高级选项 2–4）？是否接受「Tailscale 未做、我们做成差异化」？  
+- [x] bonding 默认 `N`：出厂默认改为 **2**（同类补齐上限同步默认 **2**）；设为 1 可回退单路径  
 - [x] 中继档是否做成「直连优先 | 偏好中继 | 仅中继」？→ 已决议：**不做**（2026-10-06）。用户要的是两设备间低延迟/低抖动/低丢包，不分直连中转；拨号恒全量、选路看质量分。`ConnectionPathTier` 已删除，见 `connection-stability-todo.md` §2.2。  
 - [ ] Phase C TLS 指纹：默认 Backlog，还是有强制合规场景必须立项？  
 - [ ] 对外是否明确「不做完整 SD-WAN（华为/VeloCloud/蒲公英硬件清单）」？
@@ -208,7 +208,7 @@ W0 ──┬──► W1 ──► W2 ──► W4（域名动态等）
 | 日期 | 决议 | 备注 |
 |------|------|------|
 | 2026-10 | **W1 / Phase A 已落地**：出口可解析时本机装默认路由（D+）；现状见 Current `traffic-steering.md` | P1 关闭 |
-| 2026-10 | **Bonding Phase 2a/2b 已合入**；默认 `bond_count=1` | P4 部分关闭；Phase 3 仍开放 |
+| 2026-10 | **Bonding Phase 2a/2b 已合入**；出厂默认后改为 `bond_count=2` | P4 部分关闭；Phase 3 仍开放 |
 | 2026-10 | **配置页/运行页主体已落地**（GUI + Web `mode`） | 见 [`config-vs-run-pages.md`](./config-vs-run-pages.md) |
 | — | W2 域名代理、W0/W3a 伪装、W3b Phase 3 仍待拍板/实现 | 见各专题 Roadmap |
 

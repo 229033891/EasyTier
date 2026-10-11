@@ -467,8 +467,8 @@ native 路径**不实现** `HostSocketIo` / `HostTcpIo` / `HostUdpIo` / `HostSoc
 #### B3.（**图侧已修**）Bonding 在功能树里像常规功能
 
 `functional-structure.mmd` 把"多链路 Bonding"与"集中管理"并列在功能顶层，
-易被读成默认开启。实际默认 `bond_count=1`（`peer-connections.md:35`），
-且 `peer-connections.md:114` 明确"勿写默认已聚合"。
+易被读成「任意叠带宽」。实际出厂默认 `bond_count=2`（按流分摊；见 `peer-connections.md`），
+且文档明确勿写「双宽带自动拆流」或「单流必翻倍」。
 
 本文不含功能树图，引用该结论时以 `peer-connections.md` 为准。
 原始 `.mmd` 仍需同步，见 §7。

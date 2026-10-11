@@ -262,11 +262,11 @@ core_clap:
     en: "the maximum total receive bps limit for this instance, default is no limit. unit: BPS (bytes per second)"
     zh-CN: "限制当前网络实例整体入站流量的总接收速率，默认无限制，单位 BPS （字节每秒）"
   peer_link_bond_count:
-    en: "target number of parallel PeerConns used for sending between a peer pair (multi-link bonding). 1 (default) keeps today's single default_conn path; max 5. only useful with multiple live tunnels."
-    zh-CN: "一对 peer 之间并行发送的目标 PeerConn 条数（多链路聚合）。1（默认）保持现有的单 default_conn 路径；最大 5。需要有多条存活隧道才有效果。"
+    en: "target number of parallel PeerConns used for sending between a peer pair (multi-link bonding). factory default 2; set to 1 for a single default_conn path; max 5. only useful with multiple live tunnels."
+    zh-CN: "一对 peer 之间并行发送的目标 PeerConn 条数（多链路聚合）。出厂默认 2；设为 1 为单 default_conn 路径；最大 5。需要有多条存活隧道才有效果。"
   peer_link_replica_fill_max:
-    en: "max bond members sharing the same diversity class (scheme + remote) when filling. default 5. egress diversity is a later phase."
-    zh-CN: "补齐 bond 集合时，同一多样性类别（协议 + 对端）的成员上限，默认 5。出口多样性属后续阶段。"
+    en: "max bond members sharing the same diversity class (scheme + remote) when filling. factory default 2. egress diversity is a later phase."
+    zh-CN: "补齐 bond 集合时，同一多样性类别（协议 + 对端）的成员上限，出厂默认 2。出口多样性属后续阶段。"
   tcp_whitelist:
     en: "tcp port whitelist. Supports single ports (80) and ranges (8000-9000)"
     zh-CN: "TCP 端口白名单。支持单个端口（80）和范围（8000-9000）"

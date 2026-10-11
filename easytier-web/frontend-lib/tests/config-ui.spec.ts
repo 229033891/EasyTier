@@ -657,16 +657,18 @@ describe('Config.vue network config projection', () => {
     expect(curNetwork.default_protocol).toBe('udp,tcp')
   })
 
-  it('projects bond count controls and omits them from backend JSON when blank', async () => {
+  it('projects bond count controls with factory defaults and round-trips overrides', async () => {
     const { curNetwork, wrapper } = mountConfig()
     await nextTick()
 
-    // Blank (null) means unset: backend falls back to bond_count=1 / replica_fill_max=5.
-    expect(input(wrapper, '#peer_link_bond_count').value).toBe('')
-    expect(input(wrapper, '#peer_link_replica_fill_max').value).toBe('')
-    const blankBackend = toBackendNetworkConfig(curNetwork) as Record<string, unknown>
-    expect('peer_link_bond_count' in blankBackend).toBe(false)
-    expect('peer_link_replica_fill_max' in blankBackend).toBe(false)
+    // New configs start at factory defaults (bond_count=2 / replica_fill_max=2).
+    expect(curNetwork.peer_link_bond_count).toBe(2)
+    expect(curNetwork.peer_link_replica_fill_max).toBe(2)
+    expect(input(wrapper, '#peer_link_bond_count').value).toBe('2')
+    expect(input(wrapper, '#peer_link_replica_fill_max').value).toBe('2')
+    const defaultBackend = toBackendNetworkConfig(curNetwork) as Record<string, unknown>
+    expect(defaultBackend.peer_link_bond_count).toBe(2)
+    expect(defaultBackend.peer_link_replica_fill_max).toBe(2)
 
     await setInput(wrapper, '#peer_link_bond_count', '3')
     await setInput(wrapper, '#peer_link_replica_fill_max', '4')

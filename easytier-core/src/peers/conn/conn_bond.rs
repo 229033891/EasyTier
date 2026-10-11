@@ -1,7 +1,7 @@
 //! PeerConn bonding Phase 2a: diversity-first member set + per-flow hash send.
 //!
-//! See `docs/roadmap/multi-link-bonding.md`. Default `bond_count=1` keeps today's
-//! single `default_conn` path.
+//! See `docs/roadmap/multi-link-bonding.md`. Factory default `bond_count=2`
+//! enables a small multi-path set; `1` keeps the single `default_conn` path.
 
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
@@ -25,8 +25,8 @@ pub struct BondConfig {
 impl Default for BondConfig {
     fn default() -> Self {
         Self {
-            bond_count: 1,
-            replica_fill_max: 5,
+            bond_count: 2,
+            replica_fill_max: 2,
         }
     }
 }
@@ -35,14 +35,14 @@ impl BondConfig {
     /// Resolve from flags. `0` on either field means built-in default.
     pub fn from_flags(flags: &FlagsInConfig) -> Self {
         let mut bond_count = if flags.peer_link_bond_count == 0 {
-            1
+            2
         } else {
             flags.peer_link_bond_count
         };
         bond_count = bond_count.clamp(1, BOND_COUNT_HARD_CAP);
 
         let replica_fill_max = if flags.peer_link_replica_fill_max == 0 {
-            5
+            2
         } else {
             flags.peer_link_replica_fill_max.max(1)
         };
@@ -391,9 +391,10 @@ mod tests {
     fn bond_config_defaults_and_cap() {
         let mut flags = FlagsInConfig::default();
         let d = BondConfig::from_flags(&flags);
-        assert_eq!(d.bond_count, 1);
-        assert_eq!(d.replica_fill_max, 5);
-        assert!(!d.enabled());
+        assert_eq!(d.bond_count, 2);
+        assert_eq!(d.replica_fill_max, 2);
+        assert!(d.enabled());
+        assert_eq!(BondConfig::default(), d);
 
         flags.peer_link_bond_count = 9;
         flags.peer_link_replica_fill_max = 3;
@@ -401,6 +402,12 @@ mod tests {
         assert_eq!(c.bond_count, BOND_COUNT_HARD_CAP);
         assert_eq!(c.replica_fill_max, 3);
         assert!(c.enabled());
+
+        flags.peer_link_bond_count = 1;
+        flags.peer_link_replica_fill_max = 1;
+        let single = BondConfig::from_flags(&flags);
+        assert_eq!(single.bond_count, 1);
+        assert!(!single.enabled());
     }
 
     #[test]
@@ -517,7 +524,17 @@ mod tests {
         assert!(!bond_fill_needed(&bond, 3));
         assert!(!bond_fill_needed(&bond, 9));
         // Disabled (bond_count=1) never needs fill, even with zero conns.
-        assert!(!bond_fill_needed(&BondConfig::default(), 0));
+        assert!(!bond_fill_needed(
+            &BondConfig {
+                bond_count: 1,
+                replica_fill_max: 2,
+            },
+            0
+        ));
+        // Factory default bond_count=2 still requests fill until target is met.
+        assert!(bond_fill_needed(&BondConfig::default(), 0));
+        assert!(bond_fill_needed(&BondConfig::default(), 1));
+        assert!(!bond_fill_needed(&BondConfig::default(), 2));
     }
 
     #[test]
