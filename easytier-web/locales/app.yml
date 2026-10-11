@@ -8,11 +8,11 @@ cli:
     en: "The log level for the console logger. Possible values: trace, debug, info, warn, error"
     zh-CN: "控制台日志级别。可能的值：trace, debug, info, warn, error"
   file_log_level:
-    en: "The log level for the file logger. Possible values: trace, debug, info, warn, error"
-    zh-CN: "文件日志级别。可能的值：trace, debug, info, warn, error"
+    en: "File log level (default: warn). Possible values: trace, debug, info, warn, error, off. Use off to disable file logging."
+    zh-CN: "文件日志级别（默认 warn）。可选：trace, debug, info, warn, error, off。设为 off 可关闭文件日志。"
   file_log_dir:
-    en: "The directory to save the log files, default is the current directory"
-    zh-CN: "保存日志文件的目录，默认为当前目录"
+    en: "Directory for rolling log files (default: logs). Relative paths resolve against the process working directory; mount a volume in containers."
+    zh-CN: "滚动日志目录（默认 logs）。相对路径相对进程工作目录；容器内请挂载卷。"
   config_server_port:
     en: "The port to listen for the config server, used by the easytier-core to connect to"
     zh-CN: "配置服务器的监听端口，用于被 easytier-core 连接"

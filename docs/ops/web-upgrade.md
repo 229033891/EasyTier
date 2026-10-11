@@ -21,7 +21,7 @@
 |------|----------|----------|
 | 业务数据库（用户、组、网络配置、managed revision、会话等） | 工作目录下的 `et.db` | `--db` 或环境变量 `ET_WEB_DB` |
 | GeoIP（可选，非业务主数据） | 内嵌或外部 mmdb | `--geoip-db` / `ET_GEOIP_DB` |
-| 日志文件（若开启） | `--file-log-dir` 指定目录 | `ET_WEB_FILE_LOG_DIR` |
+| 日志文件（默认开启） | 工作目录下 `logs/`（级别 warn，约最多 4×100MB）；目录不可写则降级为仅内存环 | `--file-log-dir` / `ET_WEB_FILE_LOG_DIR`；关闭：`--file-log-level off` |
 
 要点：
 

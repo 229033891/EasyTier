@@ -120,6 +120,8 @@ sudo docker compose logs -f node
 sudo docker compose --profile console logs -f console
 ```
 
+控制台进程内 warn+ 滚动文件默认写到数据卷 `et-console-data/logs/`（compose 传入 `--file-log-dir=/app/data/logs`）。也可在控制台「运行日志」页切换「文件」来源查看；关闭文件日志用 `--file-log-level off`。
+
 ### 2.5 停止
 
 ```bash

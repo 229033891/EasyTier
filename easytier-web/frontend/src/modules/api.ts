@@ -123,6 +123,39 @@ export interface RuntimeLogsResponse {
     lines: RuntimeLogLine[];
 }
 
+export interface LogFileInfo {
+    file_name: string;
+    size_bytes: number;
+    modified_ms: number;
+    active: boolean;
+}
+
+export interface LogFilesResponse {
+    enabled: boolean;
+    dir: string;
+    level: string;
+    files: LogFileInfo[];
+}
+
+export interface LogFileQueryParams {
+    file: string;
+    tail?: number;
+    min_level?: string;
+    since?: string;
+    until?: string;
+    grep?: string;
+}
+
+export interface LogFileLinesResponse {
+    file: string;
+    dir: string;
+    level: string;
+    total_scanned: number;
+    matched: number;
+    truncated_bytes: boolean;
+    lines: RuntimeLogLine[];
+}
+
 export interface ListNetworkInstanceIdResponse {
     running_inst_ids: Array<Utils.UUID>,
     disabled_inst_ids: Array<Utils.UUID>,
@@ -224,6 +257,16 @@ export class ApiClient {
     public async get_runtime_logs(tail: number = 500): Promise<RuntimeLogsResponse> {
         return await this.client.get<any, RuntimeLogsResponse>('/admin/logs', {
             params: { tail },
+        });
+    }
+
+    public async list_log_files(): Promise<LogFilesResponse> {
+        return await this.client.get<any, LogFilesResponse>('/admin/logs/files');
+    }
+
+    public async read_log_file(params: LogFileQueryParams): Promise<LogFileLinesResponse> {
+        return await this.client.get<any, LogFileLinesResponse>('/admin/logs/file', {
+            params,
         });
     }
 

@@ -219,6 +219,19 @@ pub fn flush() {
     }
 }
 
+/// `(dir, level)` of the installed file sink; `None` when file logging is off.
+#[cfg(feature = "management")]
+pub fn file_log_config() -> Option<(std::path::PathBuf, LevelFilter)> {
+    LOGGER
+        .get()
+        .and_then(|logger| logger.file.config_snapshot())
+}
+
+#[cfg(not(feature = "management"))]
+pub fn file_log_config() -> Option<(std::path::PathBuf, LevelFilter)> {
+    None
+}
+
 fn install(logger: Logger) -> anyhow::Result<()> {
     LOGGER
         .set(logger)
@@ -639,6 +652,35 @@ mod tests {
         }
     }
 
+    /// Switches the process cwd into a fresh temp dir for the guard's lifetime so
+    /// tests exercising the cwd fallback never drop `easytier.log` into the repo.
+    /// Requires `#[serial_test::serial]` (cwd is process-global).
+    #[cfg(feature = "management")]
+    struct CwdGuard {
+        previous: std::path::PathBuf,
+        _dir: tempfile::TempDir,
+    }
+
+    #[cfg(feature = "management")]
+    impl CwdGuard {
+        fn acquire() -> Self {
+            let previous = std::env::current_dir().expect("current dir");
+            let dir = tempfile::tempdir().expect("temp dir");
+            std::env::set_current_dir(dir.path()).expect("chdir");
+            Self {
+                previous,
+                _dir: dir,
+            }
+        }
+    }
+
+    #[cfg(feature = "management")]
+    impl Drop for CwdGuard {
+        fn drop(&mut self) {
+            let _ = std::env::set_current_dir(&self.previous);
+        }
+    }
+
     #[test]
     #[serial_test::serial]
     fn default_console_only_enables_core_info() {
@@ -757,6 +799,30 @@ mod tests {
     fn default_file_logger_is_not_opened_without_reload() {
         let file = FileSink::from_config(FileLoggerConfig::default(), false).unwrap();
         assert!(!file.is_open());
+    }
+
+    #[test]
+    #[cfg(feature = "management")]
+    #[serial_test::serial]
+    fn file_logger_with_level_but_no_dir_keeps_legacy_cwd_fallback() {
+        // Documented behavior (unchanged since before the web console gained a
+        // default log dir): an explicit level without `dir` falls back to cwd.
+        // Callers that must not write to cwd (web console writable-probe
+        // fallback) disable the sink by passing `level: off` instead.
+        let _guard = CwdGuard::acquire();
+        let file = FileSink::from_config(
+            FileLoggerConfig {
+                level: Some("warn".to_owned()),
+                dir: None,
+                ..Default::default()
+            },
+            false,
+        )
+        .unwrap();
+        assert!(file.is_open());
+        let (dir, level) = file.config_snapshot().expect("open sink reports its dir");
+        assert_eq!(dir, std::path::PathBuf::from("."));
+        assert_eq!(level, LevelFilter::Warn);
     }
 
     #[test]

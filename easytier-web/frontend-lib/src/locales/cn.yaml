@@ -816,13 +816,30 @@ web:
       unhealthy: 关键项异常
 
   runtime_logs:
-    hint: 进程内最近日志（有界缓冲，非完整 journal）。可能含敏感信息，请勿外传。
+    hint: 可查看进程内实时缓冲，或本地滚动文件中的历史 warn/error。可能含敏感信息，请勿外传。
     refresh: 刷新
     auto_refresh: 自动刷新
     tail: 行数
     load_failed: 加载日志失败
     empty: 暂无日志
     capacity: 缓冲容量 {capacity}，当前显示 {count} 行
+    source: 来源
+    source_realtime: 实时内存
+    source_file: 文件
+    file: 文件
+    level: 最低级别
+    level_any: 全部
+    time_from: 起始
+    time_to: 结束
+    keyword: 关键字
+    apply_filters: 应用筛选
+    files_not_enabled: 文件日志未开启
+    files_not_enabled_hint: 默认写入 ./logs（级别 warn）。若目录不可写会自动降级为仅内存环；也可使用 --file-log-dir / --file-log-level（off 可关闭）。
+    files_list_failed: 无法获取日志文件列表
+    no_match: 无匹配日志
+    matched_summary: 匹配 {matched} / 已检查尾部 {scanned} 行（有效级别 {level}，目录 {dir}）
+    truncated_bytes: 已截断读取前部字节
+    invalid_datetime: 起止时间无效，请检查后重试
 
   config_tokens:
     create_title: 新建接入密钥

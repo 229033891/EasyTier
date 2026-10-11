@@ -817,13 +817,30 @@ web:
       unhealthy: Critical check failed
 
   runtime_logs:
-    hint: Recent in-process logs (bounded buffer, not full journal). May contain secrets — do not share externally.
+    hint: View the in-process ring buffer or historical warn/error lines from local rolling files. May contain secrets — do not share externally.
     refresh: Refresh
     auto_refresh: Auto-refresh
     tail: Lines
     load_failed: Failed to load logs
     empty: No logs yet
     capacity: Buffer capacity {capacity}, showing {count} lines
+    source: Source
+    source_realtime: Live memory
+    source_file: File
+    file: File
+    level: Min level
+    level_any: Any
+    time_from: From
+    time_to: To
+    keyword: Keyword
+    apply_filters: Apply filters
+    files_not_enabled: File logging is not enabled
+    files_not_enabled_hint: Defaults to ./logs at warn. Unwritable dirs fall back to the memory ring only; use --file-log-dir / --file-log-level (off disables files).
+    files_list_failed: Failed to list log files
+    no_match: No matching lines
+    matched_summary: Matched {matched} / checked {scanned} trailing lines (effective level {level}, dir {dir})
+    truncated_bytes: Read was truncated from the start of the file
+    invalid_datetime: Invalid from/to time — please correct and retry
 
   config_tokens:
     create_title: Create Access Key

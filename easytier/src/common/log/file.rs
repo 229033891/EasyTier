@@ -20,6 +20,8 @@ use super::{TargetFilter, format_line, level_is_enabled, parse_level};
 pub(super) struct FileSink {
     output: Option<FileOutput>,
     reload: bool,
+    /// Directory used when the sink is open (for `file_log_config()`).
+    dir: Option<std::path::PathBuf>,
 }
 
 #[cfg(not(feature = "management"))]
@@ -44,6 +46,7 @@ impl FileSink {
         Self {
             output: None,
             reload: false,
+            dir: None,
         }
     }
 
@@ -88,7 +91,18 @@ impl FileSink {
                 state: parking_lot::RwLock::new(FileState { level, filter }),
             }),
             reload,
+            dir: Some(std::path::PathBuf::from(dir)),
         })
+    }
+
+    /// `(dir, effective max level)` when the file sink is open.
+    ///
+    /// Level includes `RUST_LOG` / env filter elevation, not only the CLI
+    /// configured floor — matches what can actually appear on disk.
+    pub(super) fn config_snapshot(&self) -> Option<(std::path::PathBuf, LevelFilter)> {
+        let dir = self.dir.clone()?;
+        let level = self.output.as_ref()?.state.read().filter.max_level();
+        Some((dir, level))
     }
 
     pub(super) fn enabled(&self, target: &str, level: Level) -> bool {

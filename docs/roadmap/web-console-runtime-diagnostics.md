@@ -206,6 +206,10 @@ GET /api/v1/admin/logs?tail=500
 2. 挂在现有日志初始化路径上（`easytier-web/src/main.rs` 启动时调用的
    `log::init_with_default_console_targets` + `log::enable_memory_buffer`，实现在 `easytier/src/common/log/mod.rs`），**不替代** stdout/文件。
 3. 一期轮询即可；二期可加 SSE。
+4. **缺口**：内存环仅 1000 条且重启即失、文件日志默认关闭，历史 warn/error 无法回看 —— 方案见
+   [`web-console-log-persistence.md`](./web-console-log-persistence.md)（默认 `./logs`+warn 滚动、
+   页面改读文件并按时间/级别/关键字筛选；内存环保留作实时视图）。本文件 §4.2 描述的是**实时来源**，
+   落地后文件来源作为同页第二来源，不改本 API。
 
 ---
 

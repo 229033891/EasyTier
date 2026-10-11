@@ -62,6 +62,8 @@ services:
     command:
       - ET-web-embed
       - --db=/app/data/et.db
+      # Persist rolling warn+ logs with the data volume (default would be ./logs in cwd)
+      - --file-log-dir=/app/data/logs
       - --config-server-port=22020
       - --config-server-protocol=udp,tcp
       # embed 模式下 API + 静态页同端口（勿写 easytier-web-embed，Linux 下大小写敏感）

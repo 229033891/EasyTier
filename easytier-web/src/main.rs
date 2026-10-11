@@ -256,24 +256,154 @@ pub struct FeatureFlags {
     pub allow_auto_create_user: bool,
 }
 
-impl LoggingConfigLoader for &Cli {
+/// Default file-log directory when `--file-log-dir` is omitted.
+const DEFAULT_FILE_LOG_DIR: &str = "logs";
+/// Default file-log level when file logging is enabled.
+const DEFAULT_FILE_LOG_LEVEL: &str = "warn";
+
+/// Probe that the process can create/write/delete under `dir`.
+///
+/// The probe file name is per-process (pid + nanos): several `easytier-web`
+/// instances may share one log volume, and a fixed name lets one process delete
+/// the probe file another is still writing, which would be misread as
+/// "directory not writable" and silently drop file logging.
+fn probe_writable(dir: &std::path::Path) -> std::io::Result<()> {
+    use std::io::Write as _;
+    let unique = format!(
+        ".easytier-log-probe-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or_default()
+    );
+    let probe = dir.join(unique);
+    let written = (|| {
+        let mut f = std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(&probe)?;
+        f.write_all(b"probe")?;
+        drop(f);
+        Ok::<(), std::io::Error>(())
+    })();
+    // A concurrent clean-up of a stale probe is not a writability failure.
+    match std::fs::remove_file(&probe) {
+        Ok(()) => written,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => written,
+        Err(e) if written.is_ok() => Err(e),
+        Err(_) => written,
+    }
+}
+
+/// Resolve file logger config: default `./logs` + `warn`, with writable probe.
+/// Unwritable dir → `level=off`, so `FileSink::from_config` keeps the sink
+/// closed instead of falling back to the cwd `easytier.log` default.
+fn resolve_file_logger_config(cli: &Cli) -> FileLoggerConfig {
+    let level = cli
+        .file_log_level
+        .clone()
+        .unwrap_or_else(|| DEFAULT_FILE_LOG_LEVEL.to_string());
+    if level.eq_ignore_ascii_case("off") {
+        return FileLoggerConfig {
+            dir: None,
+            level: Some(level),
+            ..Default::default()
+        };
+    }
+    let dir = cli
+        .file_log_dir
+        .clone()
+        .unwrap_or_else(|| DEFAULT_FILE_LOG_DIR.to_string());
+    let writable = std::fs::create_dir_all(&dir)
+        .and_then(|_| probe_writable(std::path::Path::new(&dir)))
+        .is_ok();
+    if !writable {
+        eprintln!(
+            "easytier-web: file log dir '{dir}' not writable, falling back to in-memory ring only"
+        );
+        return FileLoggerConfig {
+            dir: None,
+            level: Some("off".to_string()),
+            ..Default::default()
+        };
+    }
+    FileLoggerConfig {
+        dir: Some(dir),
+        level: Some(level),
+        ..Default::default()
+    }
+}
+
+struct WebLoggingConfig {
+    console: ConsoleLoggerConfig,
+    file: FileLoggerConfig,
+}
+
+impl LoggingConfigLoader for &WebLoggingConfig {
     fn get_console_logger_config(&self) -> ConsoleLoggerConfig {
-        ConsoleLoggerConfig {
-            level: self.console_log_level.clone(),
-        }
+        self.console.clone()
     }
 
     fn get_file_logger_config(&self) -> FileLoggerConfig {
-        FileLoggerConfig {
-            dir: self.file_log_dir.clone(),
-            level: self
-                .file_log_level
-                .clone()
-                .or_else(|| self.file_log_dir.as_ref().map(|_| "warn".to_string())),
-            file: None,
-            size_mb: None,
-            count: None,
+        self.file.clone()
+    }
+}
+
+#[cfg(test)]
+mod file_log_resolve_tests {
+    use super::*;
+
+    fn cli_with(dir: Option<&str>, level: Option<&str>) -> Cli {
+        Cli {
+            file_log_dir: dir.map(|s| s.to_string()),
+            file_log_level: level.map(|s| s.to_string()),
+            ..Cli::parse_from(["easytier-web"])
         }
+    }
+
+    #[test]
+    fn resolve_defaults_to_logs_warn_when_writable() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("logs");
+        let cli = cli_with(Some(dir.to_str().unwrap()), None);
+        let cfg = resolve_file_logger_config(&cli);
+        assert_eq!(cfg.dir.as_deref(), Some(dir.to_str().unwrap()));
+        assert_eq!(cfg.level.as_deref(), Some("warn"));
+    }
+
+    #[test]
+    fn resolve_off_disables_file_logging() {
+        let cli = cli_with(Some("/tmp/whatever"), Some("off"));
+        let cfg = resolve_file_logger_config(&cli);
+        assert!(cfg.dir.is_none());
+        assert_eq!(cfg.level.as_deref(), Some("off"));
+    }
+
+    #[test]
+    fn resolve_unwritable_dir_falls_back_to_off() {
+        // Use a regular file as the log directory instead of permissions:
+        // `create_dir_all` then fails for every user (including root, which
+        // ignores directory mode bits), making the test deterministic.
+        let tmp = tempfile::tempdir().unwrap();
+        let blocker = tmp.path().join("blocker");
+        std::fs::write(&blocker, b"not a directory").unwrap();
+        let dir = blocker.join("logs");
+
+        let cli = cli_with(Some(dir.to_str().unwrap()), Some("warn"));
+        let cfg = resolve_file_logger_config(&cli);
+        assert!(cfg.dir.is_none());
+        assert_eq!(cfg.level.as_deref(), Some("off"));
+    }
+
+    #[test]
+    fn resolve_probe_tolerates_concurrent_stale_probe_cleanup() {
+        // A pre-existing probe file from another process must not make an
+        // otherwise writable directory look unwritable.
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join(".easytier-log-probe-999-1"), b"stale").unwrap();
+        assert!(probe_writable(tmp.path()).is_ok());
     }
 }
 
@@ -415,8 +545,50 @@ async fn main() {
     setup_panic_handler();
 
     let cli = Cli::parse();
-    log::init_with_default_console_targets(&cli, false, &["CORE", "easytier_web"]).unwrap();
+    let file_logger = resolve_file_logger_config(&cli);
+    let logging = WebLoggingConfig {
+        console: ConsoleLoggerConfig {
+            level: cli.console_log_level.clone(),
+        },
+        file: file_logger.clone(),
+    };
+    // A probe that passes can still race the real open (disk full, `easytier.log`
+    // created as a directory, permission change). Never abort startup for logs:
+    // retry once with file logging disabled, keeping console + memory ring.
+    let file_logging_active = match log::init_with_default_console_targets(
+        &logging,
+        false,
+        &["CORE", "easytier_web"],
+    ) {
+        Ok(()) => file_logger.dir.is_some(),
+        Err(error) => {
+            eprintln!(
+                "easytier-web: file logging init failed ({error:#}); retrying with console + in-memory ring only"
+            );
+            let fallback = WebLoggingConfig {
+                console: logging.console.clone(),
+                file: FileLoggerConfig {
+                    dir: None,
+                    level: Some("off".to_string()),
+                    ..Default::default()
+                },
+            };
+            log::init_with_default_console_targets(&fallback, false, &["CORE", "easytier_web"])
+                .expect("console-only logging must be initializable");
+            false
+        }
+    };
     let _ = log::enable_memory_buffer(1000);
+    if !file_logging_active
+        && !cli
+            .file_log_level
+            .as_deref()
+            .is_some_and(|l| l.eq_ignore_ascii_case("off"))
+    {
+        tracing::warn!(
+            "file logging disabled (directory not writable or unavailable); using in-memory ring only"
+        );
+    }
     tracing::info!(
         version = EASYTIER_VERSION,
         web_instance_id = ?cli.webhook.web_instance_id,
@@ -429,6 +601,8 @@ async fn main() {
         webhook_enabled = cli.webhook.webhook_url.as_deref().is_some_and(|url| !url.trim().is_empty()),
         rust_log_override = std::env::var_os("RUST_LOG").is_some(),
         console_log_override = cli.console_log_level.is_some(),
+        file_log_dir = ?file_logger.dir,
+        file_log_level = ?file_logger.level,
         "easytier-web starting"
     );
 
@@ -562,7 +736,8 @@ async fn main() {
             heartbeat_timeout_ms: cli.heartbeat_timeout_ms,
             db_path: cli.db.clone(),
             console_log_level: cli.console_log_level.clone(),
-            file_log_dir: cli.file_log_dir.clone(),
+            // Live sink only — not the pre-init probe result (init may have fallen back).
+            file_log_dir: log::file_log_config().map(|(dir, _)| dir.display().to_string()),
             webhook_configured: webhook_config
                 .webhook_url
                 .as_deref()

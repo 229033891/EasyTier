@@ -75,10 +75,16 @@ subtle = "2.6"
 
 mimalloc.workspace = true
 
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [build-dependencies]
 thunk-rs = { workspace = true, features = [
     "win7",
 ] }
+
+[dev-dependencies]
+tempfile.workspace = true
 
 [features]
 default = []

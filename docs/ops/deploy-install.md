@@ -3,7 +3,7 @@
 ## Status
 
 - Status: **Ops**
-- 最近审阅：2026-10-09（修复 update 在 set -e 下因 `[[ ]] &&` 静默退出）
+- 最近审阅：2026-10-11（补充控制台默认文件日志 `./logs` + warn / 关闭方式）
 - 索引：[`../README.md`](../README.md)
 
 一键安装 / 更新 / 备份 / 恢复自托管控制台与节点。**默认全程交互式**，无需记忆命令行参数。
@@ -80,6 +80,19 @@ sudo bash script/install.sh install --mode core --auto --enable-nat --nat-wan et
 | 11012 | TCP | WebSocket Secure（本机节点或 core 默认 listeners） |
 
 防火墙放行会按 `CONFIG_PROTOCOL`（支持 `udp,tcp` 等多协议）分别开放配置下发端口；本机节点 / core 时额外放行 11011、11012。
+
+### 控制台文件日志（server 模式）
+
+`easytier-web` **默认**把 warn+ 滚动日志写到进程工作目录下的 `logs/`（约最多 4×100MB）。控制台「运行日志」页可切换「文件」来源按时间/级别/关键字查看。
+
+| 项 | 默认 | 覆盖 |
+|----|------|------|
+| 目录 | `./logs`（相对**启动时 cwd**） | `--file-log-dir` / `ET_WEB_FILE_LOG_DIR`（生产建议绝对路径） |
+| 级别 | `warn` | `--file-log-level` / `ET_WEB_FILE_LOG_LEVEL` |
+| 关闭 | — | `--file-log-level off` |
+| 目录不可写 | 自动降级为仅内存环，**不**阻断启动 | 修权限或改目录 |
+
+systemd / 脚本安装时请确认 unit 的 `WorkingDirectory`（或显式传绝对 `--file-log-dir`），否则相对 `logs/` 可能落在意外路径。Docker Compose 见 [`docker-compose-deploy.md`](./docker-compose-deploy.md)（已挂 `/app/data/logs`）。设计细节：[`../roadmap/web-console-log-persistence.md`](../roadmap/web-console-log-persistence.md)。
 
 服务端默认 `--config-server-protocol udp,tcp`（双协议监听）。Client 连接时**任选其一**写入 URL，例如 `udp://host:22020/<token>` 或 `tcp://host:22020/<token>`（按网络环境选择，客户端不会自动切换）。
 
