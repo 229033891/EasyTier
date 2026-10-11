@@ -463,6 +463,21 @@ impl Peer {
             .count()
     }
 
+    /// Current bond send-set size (see `pick_bond_set`), building the cached set
+    /// if it is absent. `0` when bonding is off or no candidate qualifies.
+    ///
+    /// Used by bond fill: a live out-of-band standby path is not a member, so
+    /// fill must key off the send set, not the live conn count.
+    pub fn bond_set_size(&self) -> usize {
+        let bond = BondConfig::from_flags(&self.context.flags());
+        if !bond.enabled() {
+            return 0;
+        }
+        self.select_bond_conns(bond)
+            .map(|members| members.len())
+            .unwrap_or(0)
+    }
+
     pub fn has_directly_connected_conn(&self) -> bool {
         self.conns
             .iter()

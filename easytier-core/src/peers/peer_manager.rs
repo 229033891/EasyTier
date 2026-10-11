@@ -53,7 +53,10 @@ use super::{
     PeerPacketFilter,
     acl::AclFilter,
     conn::{
-        conn_bond::{BondConfig, bond_fill_needed, flow_key_from_payload},
+        conn_bond::{
+            BondConfig, bond_fill_live_ceiling, bond_fill_needed, bond_fill_needed_with_standby,
+            flow_key_from_payload,
+        },
         peer_conn::{PeerConn, PeerConnId},
         peer_map::{PeerMap, direct_peer_info},
         peer_session::PeerSessionStore,
@@ -1572,19 +1575,33 @@ impl PeerManagerCore {
     }
 
     /// Whether this peer still needs more tunnels for bonding
-    /// (`peer_link_bond_count` target not yet reached with live conns).
-    /// `false` unless bonding is enabled — callers keep today's behavior then.
+    /// (`peer_link_bond_count` target not yet reached).
+    ///
+    /// Keys off the **bond send-set size**, not the live conn count: out-of-band
+    /// live paths are hot standby and must not count as fill progress. A bounded
+    /// standby ceiling keeps dial attempts from spinning when every dialed path
+    /// stays out-of-band. `false` unless bonding is enabled — callers keep
+    /// today's behavior then.
     pub fn peer_needs_bond_fill(&self, peer_id: PeerId) -> bool {
         let bond = BondConfig::from_flags(&self.context.flags());
         if !bond.enabled() {
             return false;
         }
-        let live = self
-            .peers
-            .get_peer_by_id(peer_id)
-            .map(|peer| peer.live_conn_count())
-            .unwrap_or(0);
-        bond_fill_needed(&bond, live)
+        let Some(peer) = self.peers.get_peer_by_id(peer_id) else {
+            return false;
+        };
+        let live = peer.live_conn_count();
+        // Cheap exits before touching the bond cache: below target → must fill;
+        // at the standby ceiling → stop (everything dialed so far is out-of-band).
+        if bond_fill_needed(&bond, live) {
+            return true;
+        }
+        if live >= bond_fill_live_ceiling(&bond) {
+            return false;
+        }
+        // Live conns reach the target, but some may be out-of-band standby and
+        // thus not in the send set — keep filling until the set is full.
+        bond_fill_needed_with_standby(&bond, live, peer.bond_set_size())
     }
 
     pub async fn add_client_tunnel(

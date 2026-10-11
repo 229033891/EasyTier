@@ -14,6 +14,22 @@ use super::peer_conn::{PeerConn, PeerConnId};
 /// Runtime hard cap for `peer_link_bond_count` (roadmap suggested max 5).
 pub const BOND_COUNT_HARD_CAP: u32 = 5;
 
+/// Extra live tunnels (out-of-band hot standby) tolerated beyond `bond_count`
+/// while filling the bond set.
+///
+/// Out-of-band paths never join the send set, so counting them as "fill
+/// progress" would let a permanently worse path occupy a live slot and stop
+/// fill forever. This slack lets fill keep dialing past `bond_count`; it is
+/// bounded so a thin quality band cannot spin dialing indefinitely.
+pub const BOND_STANDBY_SLACK: u32 = 2;
+
+/// Live PeerConn ceiling while filling (`bond_count` + standby slack).
+///
+/// Distinct from [`BOND_COUNT_HARD_CAP`]: the send set stays ≤ 5, but fill may
+/// hold a few out-of-band standbys on top so `N=5` still has room to keep
+/// dialing for another in-band member.
+pub const BOND_LIVE_HARD_CAP: u32 = BOND_COUNT_HARD_CAP + BOND_STANDBY_SLACK;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BondConfig {
     /// Target bond set size. 1 = disabled (single default_conn).
@@ -115,9 +131,46 @@ pub(crate) fn conn_diversity_class(conn: &PeerConn) -> DiversityClass {
 }
 
 /// Whether this peer still needs more tunnels for bonding
-/// (`bond_count` target not yet reached).
+/// (`bond_count` target not yet reached by live conn count).
+///
+/// Counts every live PeerConn, including out-of-band hot standby. Prefer
+/// [`bond_fill_needed_with_standby`] when the bond send-set size is known —
+/// a standby path must not be mistaken for fill progress.
 pub fn bond_fill_needed(bond: &BondConfig, live_conns: usize) -> bool {
     bond.enabled() && (live_conns as u32) < bond.bond_count
+}
+
+/// Live-conn ceiling while filling the bond set: `bond_count` plus standby
+/// slack, capped at [`BOND_LIVE_HARD_CAP`] (not the send-set hard cap).
+pub fn bond_fill_live_ceiling(bond: &BondConfig) -> usize {
+    bond.bond_count
+        .saturating_add(BOND_STANDBY_SLACK)
+        .min(BOND_LIVE_HARD_CAP) as usize
+}
+
+/// Whether another tunnel should be dialed to fill the bond set.
+///
+/// `live_conns` counts all live PeerConns (in-band members + out-of-band
+/// standby); `bond_set_len` is the current send-set size (see `pick_bond_set`).
+///
+/// - Fewer live conns than `bond_count` → the send set cannot be full yet: fill.
+/// - Live conns reach `bond_count` but the send set is smaller (some live paths
+///   are out-of-band standby) → keep filling while under
+///   [`bond_fill_live_ceiling`], so a worse path cannot block fill forever.
+/// - At the ceiling, stop: everything dialed so far is out-of-band, and further
+///   attempts would only add standby tunnels.
+pub fn bond_fill_needed_with_standby(
+    bond: &BondConfig,
+    live_conns: usize,
+    bond_set_len: usize,
+) -> bool {
+    if bond_fill_needed(bond, live_conns) {
+        return true;
+    }
+    if !bond.enabled() {
+        return false;
+    }
+    live_conns < bond_fill_live_ceiling(bond) && bond_set_len < bond.bond_count as usize
 }
 
 /// Whether `score` is in the same quality band as `best` (lower is better).
@@ -169,6 +222,11 @@ fn cmp_candidate_score_then_id(a: &BondCandidate, b: &BondCandidate) -> std::cmp
 }
 
 /// Pick up to `bond.bond_count` member ids: quality band → diversity → replica fill.
+///
+/// **Quality-first:** only peers in the same quality band as the best eligible
+/// candidate may join the bond send set. Paths outside the band stay alive as
+/// hot standby (failover / probe) but must not share payload with better paths.
+/// Replica-fill never pulls out-of-band candidates just to reach `N`.
 ///
 /// Returns ordered member ids (best-first among early diversity picks). Empty if no candidates.
 pub fn pick_bond_set(
@@ -249,19 +307,9 @@ pub fn pick_bond_set(
         covered_remotes.insert(pick.class.remote.clone());
     }
 
-    // Pass 2: replica-fill (same class allowed) from band, then remaining eligible.
-    let mut fill_pool: Vec<&BondCandidate> = band.clone();
-    for c in &eligible {
-        if !fill_pool
-            .iter()
-            .any(|x| x.scored.conn_id == c.scored.conn_id)
-        {
-            fill_pool.push(*c);
-        }
-    }
-    fill_pool.sort_by(|a, b| cmp_candidate_score_then_id(a, b));
-
-    for c in fill_pool {
+    // Pass 2: replica-fill within the quality band only (never out-of-band).
+    // Out-of-band live PeerConns remain as hot standby outside the bond set.
+    for c in &band {
         if selected.len() >= n {
             break;
         }
@@ -538,6 +586,63 @@ mod tests {
     }
 
     #[test]
+    fn standby_ceiling_is_bond_count_plus_slack_capped() {
+        // Factory default: 2 + 2 = 4.
+        assert_eq!(bond_fill_live_ceiling(&BondConfig::default()), 4);
+        // Send-set hard cap is 5; live fill ceiling keeps slack on top (5+2=7)
+        // so N=5 is not starved of further in-band dial attempts.
+        let wide = BondConfig {
+            bond_count: 5,
+            replica_fill_max: 5,
+        };
+        assert_eq!(bond_fill_live_ceiling(&wide), BOND_LIVE_HARD_CAP as usize);
+        assert_eq!(BOND_LIVE_HARD_CAP, BOND_COUNT_HARD_CAP + BOND_STANDBY_SLACK);
+    }
+
+    #[test]
+    fn out_of_band_standby_does_not_block_fill() {
+        let bond = BondConfig {
+            bond_count: 2,
+            replica_fill_max: 2,
+        };
+        // Below target: fill regardless of the (stale/empty) send set.
+        assert!(bond_fill_needed_with_standby(&bond, 1, 0));
+        // Live reaches 2, but one is out-of-band standby (set len 1) → keep
+        // filling while under the ceiling.
+        assert!(bond_fill_needed_with_standby(&bond, 2, 1));
+        assert!(bond_fill_needed_with_standby(&bond, 3, 1));
+        // Send set full → stop even though live is under the ceiling.
+        assert!(!bond_fill_needed_with_standby(&bond, 2, 2));
+        assert!(!bond_fill_needed_with_standby(&bond, 3, 2));
+        // Ceiling reached with a still-thin set → stop (no unbounded dial loop).
+        assert!(!bond_fill_needed_with_standby(&bond, 4, 1));
+        // Bonding off (bond_count=1) never fills.
+        let off = BondConfig {
+            bond_count: 1,
+            replica_fill_max: 2,
+        };
+        assert!(!bond_fill_needed_with_standby(&off, 0, 0));
+    }
+
+    #[test]
+    fn max_bond_count_keeps_standby_slack_for_fill() {
+        // Regression: live ceiling must not collapse onto the send-set cap at
+        // N=5, or out-of-band standbys freeze fill with set_len < N.
+        let bond = BondConfig {
+            bond_count: 5,
+            replica_fill_max: 5,
+        };
+        assert_eq!(bond_fill_live_ceiling(&bond), 7);
+        // Five live, one in-band → still fill (two standby slots left).
+        assert!(bond_fill_needed_with_standby(&bond, 5, 1));
+        assert!(bond_fill_needed_with_standby(&bond, 6, 1));
+        // Live ceiling → stop even if the send set is still thin.
+        assert!(!bond_fill_needed_with_standby(&bond, 7, 1));
+        // Send set full → stop under the ceiling.
+        assert!(!bond_fill_needed_with_standby(&bond, 5, 5));
+    }
+
+    #[test]
     fn quality_band_excludes_much_worse() {
         let cfg = ConnSelectConfig::default();
         let best = conn_quality_score(10_000, 0.0, 0, cfg);
@@ -545,6 +650,56 @@ mod tests {
         let far = conn_quality_score(50_000, 0.0, 0, cfg);
         assert!(in_quality_band(close, best, cfg));
         assert!(!in_quality_band(far, best, cfg));
+    }
+
+    #[test]
+    fn out_of_band_not_pulled_to_fill_bond_count() {
+        // Quality-first: a much worse TCP must not join the bond send set just
+        // because bond_count=2 and diversity would like a second scheme.
+        // It stays as hot standby outside the set (failover when UDP dies).
+        let cfg = ConnSelectConfig::default();
+        let bond = BondConfig {
+            bond_count: 2,
+            replica_fill_max: 5,
+        };
+        let set = pick_bond_set(
+            &[
+                cand(1, 64_000, 0.0, "udp", "et.example:11010", false), // ~64ms
+                cand(2, 782_000, 0.1, "tcp", "et.example:11010", false), // ~782ms + loss
+            ],
+            bond,
+            cfg,
+        );
+        assert_eq!(
+            set,
+            vec![id(1)],
+            "only in-band UDP should bond; TCP stays standby, got {set:?}"
+        );
+    }
+
+    #[test]
+    fn only_worse_paths_still_bond_among_themselves() {
+        // When no better path exists, the remaining (worse) paths form the
+        // bond set among their own quality band — standby becomes usable.
+        let cfg = ConnSelectConfig::default();
+        let bond = BondConfig {
+            bond_count: 2,
+            replica_fill_max: 5,
+        };
+        let set = pick_bond_set(
+            &[
+                cand(1, 400_000, 0.05, "udp", "et.example:11010", false),
+                cand(2, 420_000, 0.05, "tcp", "et.example:11010", false),
+            ],
+            bond,
+            cfg,
+        );
+        assert_eq!(
+            set.len(),
+            2,
+            "same-band worse paths still bond together: {set:?}"
+        );
+        assert!(set.contains(&id(1)) && set.contains(&id(2)));
     }
 
     #[test]

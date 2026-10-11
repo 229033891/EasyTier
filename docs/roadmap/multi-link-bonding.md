@@ -97,13 +97,15 @@ candidates → quality_gate(RTT/loss/jitter) → diversity_pick → replica_fill
 
 当异质候选不足以填满 `N` 时：
 
-- **允许**同协议、同出口、甚至相近 remote 再开/再纳入并行隧道补齐。  
+- **仅在同质量档内**允许同协议、同出口、甚至相近 remote 再开/再纳入并行隧道补齐。  
+- **禁止**为凑满 `N` 而把档外（明显更差）路径拉进 bond 发送集；档外存活 PeerConn 仍作 **热备**（探测 / 好路径全挂时由 `select_conn` / 重建 bond 接管），不与好路径一起按流分摊。  
 - 同质复制仍可能帮助「单连接限速」场景（多五元组绕过 per-flow 限速）。  
-- **约束次序**：先满足全局 `|bond_set| ≤ N`（`bond_count`，硬顶建议 **5**），再满足每类同质上限；成员挑选时 **先占异质槽，再同质补齐**。  
-  例：`N=5` 且已有 udp+tcp 两条异质成员时，同质最多再补 3 条，不会每类各开到 5。  
+- **约束次序**：先满足全局 `|bond_set| ≤ N`（`bond_count`，硬顶建议 **5**），再满足每类同质上限；成员挑选时 **先占异质槽，再同质补齐**（均不出质量档）。  
+  例：`N=5` 且已有 udp+tcp 两条同档异质成员时，同质最多再补 3 条，不会每类各开到 5。  
 - **同质每类上限**：建议配置范围 **1–5**，出厂默认 **`replica_fill_max=2`**。计入同一 diversity 键组合（同 scheme + 同出口 + 同 remote 类）的副本数，达到上限后不再为该类加开。  
 - 另受拨号退避、`alive_client_urls` / 去重约束，避免连接风暴。  
-- 仅有一条可用 underlay 时，**允许** bond 集在 `min(N, replica_fill_max)` 内全为同质成员（验收须覆盖，不得视为失败）。
+- **补链判据（档外热备不卡死补链）**：是否继续拨号看 **发送集缺口**（`bond_set_size < N`，见 `peer_needs_bond_fill` / `bond_fill_needed_with_standby`）而非存活条数；存活条数达 `N` 但发送集不足（差额被档外热备占位）时仍继续拨，直到发送集满、或存活条数达热备上限（`N + BOND_STANDBY_SLACK(2)`，封顶 `BOND_LIVE_HARD_CAP = BOND_COUNT_HARD_CAP + SLACK = 7`）。发送集硬顶仍为 5；live 上限与之分开，保证 `N=5` 时仍有档外余量可继续找同档成员。到上限即停，避免为凑数无限拨号。  
+- 仅有一条可用 underlay、或同档候选不足 `N` 时，**允许** `|bond_set| < N`（质量优先于凑满 N）；不得因此把档外路径塞进发送集。
 
 ### 3.5 可行性小结
 
@@ -180,11 +182,13 @@ MVP：**按流哈希 + diversity-first 成员集（不足 replica-fill）**；`b
 1. `bond_count=1`：行为与 [`../current/peer-connections.md`](../current/peer-connections.md) 一致（零回归）。  
 2. `bond_count=N>1`：状态可见至多 N 条参与发送；多并行流总吞吐可高于单连接人为限速。  
 3. **异质场景（指标相当）**：多种 scheme/remote 均在同质量档（§3.2 锚点）时，bond 集 **不应** 被单一同质路径占满而挤掉其它达标异质路径（除非异质候选本就不足）。  
-4. **单 underlay / 同质补齐**：仅一条可用线路时，允许在 `min(N, replica_fill_max)` 内同质填满；不得因此判失败。  
-5. 同一 diversity 键组合的副本数不得超过 `replica_fill_max`；且始终 `|bond_set| ≤ N`（先异质后同质）。  
-6. 断开其中一条：进行中流重哈希或回退后仍可达，无长时间黑洞。  
-7. 关闭 bonding / `N=1`：回到单 `default_conn`。  
-8. 熔断高丢包路径不进入（或尽快退出）bond 集（有替代时）。
+4. **单 underlay / 同质补齐**：仅一条可用线路时，允许在 `min(N, replica_fill_max)` 内同质填满；不得因此判失败。同档不足 `N` 时允许 `|bond_set| < N`，**不得**用档外路径凑满。
+5. 同一 diversity 键组合的副本数不得超过 `replica_fill_max`；且始终 `|bond_set| ≤ N`（先异质后同质，均不出质量档）。
+6. **档外热备**：明显更差的存活 PeerConn 可保留连接与探测，但不进 bond 发送集；好路径全不可用后，由重建 `pick_bond_set` / `select_conn` 接管。
+7. **档外热备不阻塞补链**：是否继续拨号看 **发送集缺口**（`bond_set_size < N`）而非存活条数；存活条数已达 `N` 但发送集不足时仍继续拨，直到发送集满、或存活条数达热备上限（`N + 2`，封顶 `BOND_LIVE_HARD_CAP=7`；发送集硬顶仍为 5）。到上限即停，避免为凑数无限拨号。
+8. 断开其中一条：进行中流重哈希或回退后仍可达，无长时间黑洞。  
+9. 关闭 bonding / `N=1`：回到单 `default_conn`。  
+10. 熔断高丢包路径不进入（或尽快退出）bond 集（有替代时）。
 
 ---
 

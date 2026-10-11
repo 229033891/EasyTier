@@ -39,15 +39,16 @@
 
 **出厂默认 / 新建配置**（`peer_link_bond_count` 默认 **2**，`peer_link_replica_fill_max` 默认 **2**；可调 1–5）：
 
-1. 在已存活 PeerConn 上按质量门 + **同质量档内异质优先**（协议 / remote）+ 同质补齐选出至多 N 条 bond 成员（见 Roadmap）。  
-2. `send_msg` **按内层 IP 五元组哈希**到成员之一（sticky key 在压缩/加密前计算，避免密文按包喷洒）；同流不跨 conn。  
-3. Phase 2b：直连 peer 在 bond 未满时继续参与 direct 拨号（沿用既有退避与周期）；**不**按包喷洒；单流仍受单条隧道上限。  
-4. 出口/`bind_device` 多样性属 Phase 3，今日不宣称双宽带自动拆流。
+1. 在已存活 PeerConn 上按质量门 + **同质量档内异质优先**（协议 / remote）+ **同档**同质补齐选出至多 N 条 bond 成员（见 Roadmap）。  
+2. **质量优先于凑满 N**：档外（明显更差，含高丢包/抖动拉高质量分）路径**不进** bond 发送集；连接仍可保留为热备，好路径不可用时再接管。补链判据看**发送集缺口**（`bond_set_size < N`）而非存活条数——档外热备不阻塞补链；存活上限为 `N + 2`（至多 7，与发送集硬顶 5 分开），避免为凑数无限拨号，且 `N=5` 时仍保留档外余量。  
+3. `send_msg` **按内层 IP 五元组哈希**到成员之一（sticky key 在压缩/加密前计算，避免密文按包喷洒）；同流不跨 conn。  
+4. Phase 2b：直连 peer 在 bond 未满时继续参与 direct 拨号（沿用既有退避与周期）；**不**按包喷洒；单流仍受单条隧道上限。  
+5. 出口/`bind_device` 多样性属 Phase 3，今日不宣称双宽带自动拆流。
 
 因此：
 
-- CLI / 状态里可能看到 `peer_conn_count > 1`。  
-- 出厂默认 `bond_count=2` 时，**多并行流**可按流分摊；设为 1 时有效吞吐仍受单条 `default_conn` 限制。  
+- CLI / 状态里可能看到 `peer_conn_count > 1`（含未进 bond 的热备）；热备仍有 ping/保活流量。  
+- 出厂默认 `bond_count=2` 时，**同档**多并行流可按流分摊；档外不参与分摊；设为 1 时有效吞吐仍受单条 `default_conn` 限制。  
 - 多连接仍承担 **路径冗余、选优、故障切换**；单流（如单个 RDP）仍粘在一条 conn 上。
 
 ### 2.1 链路度量（今日）
@@ -59,7 +60,7 @@
 | **抖动**（`jitter_us`） | 同 RTT 窗口的连续样本绝对差均值 | **是**（质量分一项） | `PeerConnStats.jitter_us` |
 | **质量分**（`quality_score`） | `select_conn` 综合分（越低越好） | 状态面「质量分」列 + tooltip 分项 | `PeerConnInfo.quality_score` / `quality_fused`；★=`default_conn_id` |
 
-同 peer 多 PeerConn 的 `select_conn`（`peers/conn/conn_select.rs`）使用综合质量分（默认 `w_lat=1` / `w_loss=4` / `w_jitter=1`），丢包超过熔断阈值（默认 20%）时在有替代路径时禁止成为 `default_conn`；切换需相对边际（默认 10%）**且**绝对分差（默认 0.005）连续窗口（默认 2，配合 5s 缓存清空）。已关闭的 PeerConn 不参与选路。权重/阈值可通过 `flags.conn_select_*` 覆盖（百分制权重；0 = 默认）。
+同 peer 多 PeerConn 的 `select_conn`（`peers/conn/conn_select.rs`）使用综合质量分（默认 `w_lat=1` / `w_loss=4` / `w_jitter=1`），丢包超过熔断阈值（默认 20%）时在有替代路径时禁止成为 `default_conn`；切换需相对边际（默认 10%）**且**绝对分差（默认 0.005）连续窗口（默认 3，配合 5s 缓存清空，约 15s）。已关闭的 PeerConn 不参与选路。权重/阈值可通过 `flags.conn_select_*` 覆盖（百分制权重；0 = 默认）。
 
 ### 2.1.1 Web / GUI 状态表（今日）
 
@@ -119,7 +120,7 @@ uri = "wss://relay.example.com/et"   # 隐式 443；仅当网络放行 443 时�
 |------|----------------|
 | 两节点仅一条存活隧道 | 全部流量走该隧道 |
 | `bond_count=1`，多条存活隧道 | 发送仍只走 `default_conn`；热备 ≠ 聚合 |
-| `bond_count=N>1`，已有异质存活隧道 | 按流哈希分摊到至多 N 条；同质量档优先协议/remote 多样 |
+| `bond_count=N>1`，已有异质存活隧道 | 仅同质量档进发送集并按流哈希分摊（至多 N）；档外热备不参与分摊；同档内优先协议/remote 多样 |
 | 默认隧道断开（`bond_count=1`） | 重新 `select_conn`，切到另一条存活连接（若有） |
 | `bond_count=N>1`，直连未满 N | direct 继续拨号补齐；无进展则下轮再试 |
 | 双宽带 / `bind_device` 异质 | **未实现**（Phase 3） |

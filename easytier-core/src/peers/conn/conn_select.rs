@@ -35,7 +35,8 @@ impl Default for ConnSelectConfig {
             switch_margin: 0.10,
             // ~5ms RTT-equivalent on the default w_lat scale.
             switch_abs_margin: 0.005,
-            switch_windows: 2,
+            // 3 × 5s default_conn clear ≈ 15s before quality-based switch.
+            switch_windows: 3,
         }
     }
 }

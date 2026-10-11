@@ -213,7 +213,7 @@ path_quality_help: |-
   每行一条隧道的质量分（越低越好：延迟 + 丢包 + 抖动）。
   ★ 为当前发送路径（default_conn）；· 为热备，用于选优与故障切换——不是带宽聚合。
   主机名旁「主/备」标记同一对端的多条链路。
-  仅当「多链路聚合数」>1 且单元格出现 bond 时，不同流才会分摊到多条隧道。
+  仅当「多链路聚合数」>1 且单元格出现 bond 时，不同流才会分摊到同质量档的多条隧道；明显更差的路径不进发送集，仅作热备。
   `!` 表示丢包超过熔断阈值。
 upload_bytes: 上传
 download_bytes: 下载
@@ -617,12 +617,12 @@ instance_recv_bps_limit_placeholder: 留空表示不限速
 
 peer_link_bond_count: 多链路聚合数
 peer_link_bond_count_help: |-
-  一对 peer 之间并行发送的目标 PeerConn 条数。默认 2：按内层 IP 五元组把不同流分摊到多条隧道（需有多条存活隧道）。
-  设为 1 只走单条 default_conn（多条隧道仅为热备，不叠带宽）。上限 5；单个 RDP 等单流仍受单条隧道上限。
+  一对 peer 之间并行发送的目标 PeerConn 条数。默认 2：按内层 IP 五元组把不同流分摊到多条隧道（需有多条同质量档存活隧道）。
+  质量优先：明显更差的路径不进发送集（仅热备）；同档不足时允许实际条数小于该值。设为 1 只走单条 default_conn（多条隧道仅为热备，不叠带宽）。上限 5；单个 RDP 等单流仍受单条隧道上限。
 peer_link_bond_count_placeholder: 留空为默认值2
 peer_link_replica_fill_max: 同类补齐上限
 peer_link_replica_fill_max_help: |-
-  补齐 bond 集合时，同一多样性类别（协议 + 对端地址）的成员数量上限，默认 2。出口/网卡多样性属后续阶段。
+  在同质量档内补齐 bond 集合时，同一多样性类别（协议 + 对端地址）的成员数量上限，默认 2。不会为凑满条数把档外差路径拉进发送集。出口/网卡多样性属后续阶段。
   留空为默认值。
 peer_link_replica_fill_max_placeholder: 留空为默认值2
 

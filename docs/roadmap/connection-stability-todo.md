@@ -156,7 +156,7 @@ score = w_lat * norm(rtt)
 - [ ] **P1.5** 可选：短时抖动宽限（如短暂丢包不立即拆 conn），避免比 OpenVPN 更「神经质」的闪断
 - [x] **P1.6** 度量：在现有 RTT 窗口上增加 **jitter** 统计，并与已有 `loss_rate` 一并暴露到 `PeerConnStats` / 状态面（`WindowLatency::get_jitter_us`；proto `jitter_us=6`；Status 表展示）
 - [x] **P1.7** `select_conn` 改为 **综合质量分**（延迟 + 丢包 + 抖动），含丢包熔断阈值与切换 hysteresis；默认丢包权重大于纯 RTT（`peers/conn/conn_select.rs`）
-  - 默认：`w_lat=1` / `w_loss=4` / `w_jitter=1`；loss fuse 20%；switch margin 10% + abs 0.005 × 2 窗口
+  - 默认：`w_lat=1` / `w_loss=4` / `w_jitter=1`；loss fuse 20%；switch margin 10% + abs 0.005 × 3 窗口（约 15s）
   - Flags 透参：`conn_select_w_*`（百分制权重）、`conn_select_loss_fuse_pct`、`conn_select_switch_*`（全 0 = 内置默认，否则按字面值，允许权重为 0）；TOML / NetworkConfig / `ConnSelectConfig::from_flags`
   - 非目标（P1.7 当时）：未改 OSPF 代价（后由 P2.3 落地）；未做 GUI 调权
 - [x] **P1.8** 单元验收（代码级）：「低 RTT + 高丢包」选后者；hysteresis 单窗口不切（`conn_select` 单测）
@@ -177,7 +177,7 @@ score = w_lat * norm(rtt)
   - 发布端 `direct_peer_info`：`quality_score`→`DirectConnectedPeerInfo.latency_ms`（`score*1000` + 熔断加成）；发布 hysteresis `min_delta=20`
   - Dijkstra / peer-center `RouteCostCalculator` 不变（仍读 `latency_ms`）；零 loss/jitter 时量级≈原 RTT ms
   - 可观测：Status `path_latency*` 在 LeastCost 下反映质量代价；PeerConn 质量分列（P2.1）
-- [x] **P2.4** [`multi-link-bonding.md`](./multi-link-bonding.md) Phase 2a/2b（按流哈希；异质优先 / 同质补齐；默认 N=1）**已合入**；Phase 3（出口/`bind_device` 多样性）仍见该文
+- [x] **P2.4** [`multi-link-bonding.md`](./multi-link-bonding.md) Phase 2a/2b（按流哈希；同质量档内异质优先 / 同档同质补齐；出厂默认 `bond_count=2`，档内不足时允许 `|bond_set| < N`；补链看发送集缺口，档外热备不阻塞）**已合入**；Phase 3（出口/`bind_device` 多样性）仍见该文
 - [ ] **P2.5** 丢包场景下 KCP/QUIC proxy 的启用策略产品化（可配置，非隐性默认）
 
 ### P-UX — 配置面正确性与密度（对应 S7；纯前端，低风险）
