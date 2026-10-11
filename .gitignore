@@ -41,7 +41,16 @@ check_core.log
 /et-dev.db-*
 /et.db.bak-*
 
-# optional local build caches (VC-LTL / YY-Thunks / protoc); see script/build-easytier-web.ps1
+# Unified local build cache (script/build-common.ps1):
+#   .cache/cargo-target  short CARGO_TARGET_DIR
+#   .cache/tmp           esbuild TEMP
+#   .cache/thunk         optional VC-LTL / YY-Thunks
+#   .cache/protoc        optional protoc
+.cache/
+
+# Obsolete local dirs (scripts no longer use them; keep ignored so leftovers
+# do not show up as untracked). Safe to delete on disk.
+.workbuddy-ai/
 .deps-cache/
 
 # local CI log / artifact downloads
@@ -50,10 +59,6 @@ check_core.log
 
 # local packaging output (script/build-easytier-windows.ps1 → OutDir)
 /artifacts/
-
-# build TEMP only (script/build-common.ps1 sets TEMP here for esbuild).
-# AI tool scratch / memory notes must not be committed.
-.workbuddy-ai/
 
 # web
 node_modules

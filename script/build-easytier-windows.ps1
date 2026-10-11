@@ -278,11 +278,16 @@ function Invoke-EasytierGuiTauriBuild {
 function Find-NsisInstallers {
     # GUI always builds with cargo --release (see Invoke-EasytierGuiTauriBuild).
     $guiProfileDir = 'release'
+    $targetRoots = @()
+    if ($env:CARGO_TARGET_DIR) { $targetRoots += $env:CARGO_TARGET_DIR }
+    $targetRoots += (Join-Path $RepoRoot 'target')
     $candidates = @()
-    if ($Target) {
-        $candidates += Join-Path $RepoRoot "target\$Target\$guiProfileDir\bundle\nsis"
+    foreach ($root in ($targetRoots | Select-Object -Unique)) {
+        if ($Target) {
+            $candidates += Join-Path $root "$Target\$guiProfileDir\bundle\nsis"
+        }
+        $candidates += Join-Path $root "$guiProfileDir\bundle\nsis"
     }
-    $candidates += Join-Path $RepoRoot "target\$guiProfileDir\bundle\nsis"
     # Legacy / alternate layout mentioned in CONTRIBUTING
     $candidates += Join-Path $RepoRoot "easytier-gui\src-tauri\target\$guiProfileDir\bundle\nsis"
     if ($Target) {

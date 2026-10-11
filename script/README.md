@@ -90,7 +90,7 @@ Linux / WSL（含可选 three_node）：
 - **three_node**（含 FakeTCP）需要 Linux 的 tun/bridge/`sudo`；Windows 上 Full 会跳过，请用 WSL 或等 CI。
 - 缺 `cargo-hack` / `cargo-nextest` 时加 `-InstallTools` / `--install-tools`。
 - Windows 与 CI 的差异（有意为之）：**不用 `--features full`**（会编 `openssl-crypto`）；clippy **不含 `--all-targets`/`--tests`**；`--no-default-features` 用 **`cargo check`**（与 CI cargo-hack 一致，避免 Windows 平台模块 dead_code 误报）。完整矩阵仍靠 Linux CI。
-- 脚本会自动设 `CARGO_PROFILE_DEV_DEBUG=0`、短 `CARGO_TARGET_DIR`。
+- 脚本会自动设 `CARGO_PROFILE_DEV_DEBUG=0`、短 `CARGO_TARGET_DIR`（默认仓库 `.cache\cargo-target`；TEMP 用 `.cache\tmp`）。
 - 若 clippy/hack 仍失败：用「x64 本机工具」终端（需 `cl.exe`），见 [`docs/ops/windows-msvc-local-build.md`](../docs/ops/windows-msvc-local-build.md)。
 
 ---

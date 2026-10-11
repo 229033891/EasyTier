@@ -95,7 +95,7 @@ script\easytier-web-release.cmd    REM 正式包：--release + embed
 | **wasm-bindgen CLI** | wasm-pack 胶水 | 版本需与 `Cargo.lock` 一致（当前多为 `0.2.128`）；放到 `%USERPROFILE%\.cargo\bin\` 或 `script\tools\wasm-bindgen-<ver>\` |
 | **Binaryen / wasm-opt** | WASM 优化 | `wasm-pack` 固定 **Binaryen `version_117`**。下载 [binaryen-version_117-x86_64-windows.tar.gz](https://github.com/WebAssembly/binaryen/releases/download/version_117/binaryen-version_117-x86_64-windows.tar.gz)，放到 `script\tools\`（脚本会自动解压），或保证存在 `script\tools\binaryen-version_117\bin\wasm-opt.exe` |
 | **7-Zip（`7z`）** | Windows 上 `thunk-rs` 解包 VC-LTL / YY-Thunks | 安装后保证 `7z.exe` 在 PATH，或装在 `C:\Program Files\7-Zip\`（脚本会自动加入 PATH） |
-| **VC-LTL / YY-Thunks / protoc（可选缓存）** | 避免 thunk / protobuf 构建时再联网 | 可通过环境变量指向本地缓存：`VC_LTL`、`YY_THUNKS`、`PROTOC`；脚本也会尝试 `%USERPROFILE%\.cache\...` 与仓库 `.deps-cache\` |
+| **VC-LTL / YY-Thunks / protoc（可选缓存）** | 避免 thunk / protobuf 构建时再联网 | 可通过环境变量指向本地缓存：`VC_LTL`、`YY_THUNKS`、`PROTOC`；脚本也会尝试 `%USERPROFILE%\.cache\...` 与仓库统一缓存 `.cache\` |
 
 > 构建中途若出现「Installing wasm-bindgen / downloading binaryen / 7z not found」一类错误，应停下来把对应依赖补到上表路径，**不要反复空转重试下载**。
 

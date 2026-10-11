@@ -83,7 +83,7 @@ cmd /c 'call "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\
 处理（任选）：
 
 1. 缩短 `PATH` / `INCLUDE` / `LIB`，只保留 MSVC + UCRT + `cargo`/`rustc` + `system32`；
-2. 使用短 `CARGO_TARGET_DIR`（如 `C:\et`），避免 `D:\…\target\debug\build\ring-…\out\…` 把命令行顶满；
+2. 使用短 `CARGO_TARGET_DIR`（本地打包脚本默认仓库 `.cache\cargo-target`；也可自设如 `C:\et`），避免 `D:\…\target\debug\build\ring-…\out\…` 把命令行顶满；
 3. 清掉不必需的 vcvars 派生变量（保留 `VCINSTALLDIR`、`VSCMD_ARG_TGT_ARCH`，`ring` build.rs 会读）；
 4. 确保 `PROTOC` 指向本机 `protoc.exe`（否则后续 `prost-wkt-types` 会另报错）。
 

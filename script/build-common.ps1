@@ -157,12 +157,23 @@ function Assert-Command([string]$Name) {
     }
 }
 
+function Get-EasytierLocalCacheRoot {
+    <#
+      Unified repo-local cache root for Windows packaging / test scripts:
+        .cache\cargo-target   short CARGO_TARGET_DIR (MSVC D8050 / path length)
+        .cache\tmp            writable TEMP for esbuild (restricted %TEMP%\2)
+        .cache\thunk          optional VC-LTL / YY-Thunks
+        .cache\protoc         optional protoc
+    #>
+    return (Join-Path $RepoRoot '.cache')
+}
+
 function Set-EasytierWritableTemp {
     <#
       Some environments set TEMP to a restricted folder (e.g. ...\Temp\2).
       esbuild then fails with "Access is denied" when deleting its work dir.
     #>
-    $etTemp = Join-Path $RepoRoot '.workbuddy-ai\tmp\esbuild-temp'
+    $etTemp = Join-Path (Get-EasytierLocalCacheRoot) 'tmp'
     New-Item -ItemType Directory -Force -Path $etTemp | Out-Null
     $env:TEMP = $etTemp
     $env:TMP = $etTemp
@@ -179,7 +190,7 @@ function Initialize-EasytierWindowsCargoEnv {
     Write-Log 'Env: CARGO_PROFILE_DEV_DEBUG=0 CARGO_INCREMENTAL=0' -Level Info
 
     if (-not $env:CARGO_TARGET_DIR) {
-        $shortTarget = Join-Path $RepoRoot '.workbuddy-ai\tmp\cargo-target'
+        $shortTarget = Join-Path (Get-EasytierLocalCacheRoot) 'cargo-target'
         New-Item -ItemType Directory -Force -Path $shortTarget | Out-Null
         $env:CARGO_TARGET_DIR = $shortTarget
         Write-Log "CARGO_TARGET_DIR=$shortTarget" -Level Info
@@ -242,7 +253,7 @@ Download: https://www.7-zip.org/
     Write-Log "7z OK: $($sevenZip.Source)" -Level Ok
 
     $thunkCache = Join-Path $env:USERPROFILE '.cache\thunk-deps'
-    $repoThunkCache = Join-Path $RepoRoot '.deps-cache\thunk'
+    $repoThunkCache = Join-Path (Get-EasytierLocalCacheRoot) 'thunk'
     $vcCandidates = @(
         $env:VC_LTL,
         (Join-Path $thunkCache 'VC-LTL-5.2.2'),
@@ -272,7 +283,7 @@ Download: https://www.7-zip.org/
     $protocCandidates = @(
         $env:PROTOC,
         (Join-Path $env:USERPROFILE '.cache\protoc\bin\protoc.exe'),
-        (Join-Path $RepoRoot '.deps-cache\protoc\bin\protoc.exe')
+        (Join-Path (Get-EasytierLocalCacheRoot) 'protoc\bin\protoc.exe')
     ) | Where-Object { $_ }
     foreach ($p in $protocCandidates) {
         if (Test-Path $p) {
@@ -643,10 +654,11 @@ function Get-CargoArtifactDir {
         [string]$Target = ''
     )
     $profileDir = if ($Profile -eq 'Release') { 'release' } else { 'release-fast' }
+    $targetRoot = if ($env:CARGO_TARGET_DIR) { $env:CARGO_TARGET_DIR } else { Join-Path $RepoRoot 'target' }
     if ($Target) {
-        return (Join-Path $RepoRoot "target\$Target\$profileDir")
+        return (Join-Path $targetRoot "$Target\$profileDir")
     }
-    return (Join-Path $RepoRoot "target\$profileDir")
+    return (Join-Path $targetRoot $profileDir)
 }
 
 function Invoke-EasytierPnpmInstall {
