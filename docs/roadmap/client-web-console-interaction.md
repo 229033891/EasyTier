@@ -41,12 +41,14 @@ Client (--config-server udp|tcp|ws://host:22020/<token>)
 |------|----------|-------------------|
 | 拨号 | 配置 scheme 优先；失败后 `udp↔tcp` 降级（每候选约 9s） | `config_server_dial_candidates` / `dial_config_server_with_scheme_fallback`；`ConfigServerConnector`（native + WASI） |
 | 服务端监听 | 默认 `udp,tcp` 同端口 | `easytier-web/src/main.rs` `--config-server-protocol` |
+| 重试退避 | 拨号失败指数退避；会话结束轻度升级（1→2→4→8s）+ 抖动，会话稳定运行 ≥15s 后计数清零 | `web_client_routine`：`next_backoff` / `session_end_reconnect_delay` / `note_session_end`（`STABLE_SESSION_UPTIME`） |
 | 会话索引 | **机器维度已是主索引**（`user_clients_map`）；`ClientInfo.previous_client_urls` 保留换端口旧 URL；`client_sessions` 仍按 `client_url` 键 | `storage.rs`；`ClientManager::get_session_by_machine_id` / `list_machine_by_user_id` |
 | 会话接管 | 按 `session_epoch` 单调接管，旧 epoch 不覆盖新 epoch | `storage.rs` `bind_managed_runtime_state` / `update_session_client` / `is_session_superseded` |
 | 心跳 | 间隔/超时可由服务端策略下发；客户端有钳制 | `HeartbeatPolicy`；`web_client` heartbeat 任务 |
 | 控制台启动网络 | `overwrite: true`，配置来自 **SQLite** | `RemoteClientManager` 默认实现：`handle_update_network_state` / `handle_run_network_instance_with_source`；节点侧 `process_rpc::run_network_instance` |
 | 心跳自动补跑 | `overwrite: false`（已健康可跳过） | `runtime_revision` / reconcile |
-| 管理 RPC 超时 | 默认 **5000ms** | `BaseController::default`；`restful/rpc.rs` proxy-rpc；`RemoteClientManager` 各 `handle_*` 亦用默认 5s |
+| 管理 RPC 超时 | 轻量查询 5000ms；写操作/大 payload 60000ms | 读路径仍用 `BaseController::default`（5s）；`client_manager/rpc_timeout.rs` 的 `slow_rpc_controller()`（60s）覆盖 `ClientManager` 慢 `handle_*`、reconcile 的 `run_network_instance` / `patch_config` / `delete_network_instance`、proxy-rpc（`restful/rpc.rs`） |
+| 断开会话 | 断开即停掉该机器**全部**存活会话（含 NAT 换端口后残留的旧 URL 隧道） | `ClientManager::disconnect_session_by_machine_id`；REST `DELETE /api/.../session/{user}/{machine}` |
 
 说明：服务端默认双听已缓解**新装** scheme 不匹配；客户端另有 `udp↔tcp` 运行时降级。`ws`/`wss` 写错或双向都不通时仍会失败。
 
@@ -102,7 +104,7 @@ Client (--config-server udp|tcp|ws://host:22020/<token>)
 | P1-1 | 脏编辑 vs 服务端推送 | 脏草稿不静默覆盖；`GET managed-config-revision` 轻量探针；确认框一键重载 / 继续编辑 |
 | P1-2 | CAS / revision 冲突 | 回传并展示 `current_config_revision`；保存/启停冲突一键重载 |
 | P1-3 | Secure-mode 双拨 | `phase:*` 稳定码 + GUI i18n；secure 重拨 20s（覆盖 scheme fallback）；失败前缀 |
-| P1-4 | 重连退避 | 会话结束轻度升级（1→2→4→8s）+ 抖动；拨号失败路径仍用指数退避 |
+| P1-4 | 重连退避 | 会话结束轻度升级（1→2→4→8s，带抖动）+ 15s 稳定运行后计数清零 | `web_client.rs` `note_session_end` / `STABLE_SESSION_UPTIME` |
 | P1-5 | 错误码收敛 | `managed_config_invalid`→`validation`（保留服务端文案）；兜底 `internal_error` |
 
 ---
@@ -199,6 +201,7 @@ Client (--config-server udp|tcp|ws://host:22020/<token>)
 | 2026-10-10 | P1 加固：revision 轻量探针、冲突展示 revision、scheme 粘滞、会话结束退避升级、validation 错误 kind、load generation 竞态修复 |
 | 2026-10-10 | 审阅修复：unauthorized 映射；诊断/日志错误态；revision 探针 generation+unmount；connecting_detail 独立字段；admin logs token 脱敏；DeviceManagement `:key` |
 | 2026-10-10 | 复核修正（§5 精确化）：Start 确认经 footer 可达、`confirmRunNetwork` 死代码待决；P1-2 对话框就绪但控制台路由无冲突产生源；P1-1 补 null 基线跃迁剩余项；`connecting_detail` 为 proto 新增可选字段（`GetConfigServerStatusResponse` #4，前后兼容，不属必选协议变更） |
+| 2026-10-11 | 修复复核发现的三处问题：① webhook 建联漏写 `route_bind`，NAT 换端口后旧隧道被路由选中（补 `set_route_bind` + 回归测试）；② `disconnect_session_by_machine_id` 只停最高 epoch 会话，导致 `DELETE` 返回 204 但旧 URL 隧道残留、下次 RPC 回落旧隧道（改为停该机器全部存活会话，候选 URL 上绑定到其他机器的会话跳过）；③ reconcile 慢 RPC 改用 60s 慢控制器（`slow_rpc_controller`），文档 §2「管理 RPC 超时」行与 P1-4 退避描述同步（15s 稳定后计数清零） |
 
 ---
 

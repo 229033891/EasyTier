@@ -429,13 +429,69 @@ impl ClientManager {
         user_id: UserIdInDb,
         machine_id: &uuid::Uuid,
     ) -> bool {
-        // Same NAT-aware resolution as management RPC routing.
-        let Some(session) = self.get_session_by_machine_id(user_id, machine_id) else {
-            return false;
+        // Disconnect every live session for this machine, not just the
+        // best-epoch routing target: a NAT port change can leave a superseded
+        // previous-URL tunnel running alongside the new one, and leaving it
+        // alive would make the next management RPC silently fall back to it.
+        let mut candidates = self
+            .storage
+            .route_client_urls_by_machine_id(user_id, machine_id);
+        if let Some(authorized) = self
+            .storage
+            .get_client_url_by_machine_id(user_id, machine_id)
+        {
+            candidates.retain(|url| url != &authorized);
+            candidates.insert(0, authorized);
+        }
+
+        let mut targets: Vec<Arc<Session>> = Vec::new();
+        let mut seen: std::collections::HashSet<url::Url> = std::collections::HashSet::new();
+        let mut push_live = |session: Arc<Session>, targets: &mut Vec<Arc<Session>>| {
+            if !session.is_running() {
+                return;
+            }
+            // Never kill a session bound to a different machine that merely
+            // happens to sit at a candidate URL; unauthenticated sessions
+            // (no bind yet) at a machine-owned URL are still ours to drop.
+            match session.bound_machine() {
+                Some((bound_user, bound_machine)) => {
+                    if bound_user != user_id || bound_machine != *machine_id {
+                        return;
+                    }
+                }
+                None => {}
+            }
+            if seen.insert(session.client_url().clone()) {
+                targets.push(session);
+            }
         };
-        let client_url = session.client_url().clone();
-        self.client_sessions.remove(&client_url);
-        session.stop().await;
+
+        for url in &candidates {
+            if let Some(entry) = self.client_sessions.get(url) {
+                push_live(entry.value().clone(), &mut targets);
+            }
+        }
+        for entry in self.client_sessions.iter() {
+            let session = entry.value();
+            if session
+                .bound_machine()
+                .is_some_and(|(bound_user, bound_machine)| {
+                    bound_user == user_id && bound_machine == *machine_id
+                })
+            {
+                push_live(session.clone(), &mut targets);
+            }
+        }
+
+        if targets.is_empty() {
+            return false;
+        }
+        for session in &targets {
+            self.client_sessions.remove(session.client_url());
+        }
+        for session in targets {
+            session.stop().await;
+        }
         true
     }
 
@@ -1460,7 +1516,10 @@ mod tests {
                 .await
         );
         assert!(!mgr.client_sessions.contains_key(&new_url));
-        assert!(mgr.client_sessions.contains_key(&old_url));
+        // Both tunnels belong to the same machine: disconnect must drop the
+        // superseded previous-URL session too, otherwise the next management
+        // RPC would silently fall back to the stale tunnel.
+        assert!(!mgr.client_sessions.contains_key(&old_url));
     }
 
     async fn wait_for_validated_user(mgr: &ClientManager, machine_id: uuid::Uuid) -> i32 {

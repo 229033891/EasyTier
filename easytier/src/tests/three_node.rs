@@ -3030,10 +3030,11 @@ pub async fn instance_recv_bps_limit_test(#[values(100, 800)] bps_limit: u64) {
 }
 
 fn limited_payload_bps_range(bps_limit: u64) -> (u64, u64) {
-    // TCP application payload vs EasyTier-framed bytes, plus CI runner noise.
-    // Historical flake: 717 KiB/s against a 720 floor for limit 800.
-    let min_bps = bps_limit.saturating_sub((bps_limit * 15 / 100).max(80));
-    let max_bps = bps_limit + 80;
+    // The benchmark measures TCP application payload while the limiter counts
+    // EasyTier data payload, including the inner IP and transport headers.
+    // Allow a bit more slack on the floor for CI timing noise (e.g. 717 vs 720).
+    let min_bps = bps_limit.saturating_sub((bps_limit / 10).max(50) + 20);
+    let max_bps = bps_limit + 50;
     (min_bps, max_bps)
 }
 

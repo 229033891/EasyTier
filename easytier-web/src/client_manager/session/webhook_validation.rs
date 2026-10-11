@@ -458,6 +458,12 @@ pub(super) async fn apply_success(
             machine_id: input.machine_id,
             user_id,
         });
+        if is_new_storage_token {
+            // Keep the sync routing index in sync: heartbeat does the same in
+            // `SessionRpcService`, and `get_session_by_machine_id` only sees
+            // `route_bind` (not `storage_token`).
+            data.set_route_bind(user_id, input.machine_id, data.session_epoch);
+        }
         let storage_token = storage_token.clone();
         data.auth_state = SessionAuthState::Authorized;
         data.binding_version = Some(binding_version);
@@ -643,6 +649,62 @@ mod tests {
         assert!(Arc::ptr_eq(&data.managed_runtime, &shared));
         assert!(data.webhook_validation_dirty);
         assert_eq!(data.webhook_validation_change_epoch, 1);
+    }
+
+    #[tokio::test]
+    async fn webhook_success_establishes_route_bind() {
+        let storage = Storage::new(crate::db::Db::memory_db().await);
+        let user_id = storage.db().auto_create_user("token").await.unwrap().id;
+        let machine_id = uuid::Uuid::new_v4();
+        let request = HeartbeatRequest {
+            user_token: "token".to_string(),
+            machine_id: Some(machine_id.into()),
+            ..Default::default()
+        };
+        let mut data = SessionData::new(
+            storage.weak_ref(),
+            url::Url::parse("http://127.0.0.1").unwrap(),
+            None,
+            Arc::new(crate::FeatureFlags::default()),
+            Arc::new(crate::webhook::WebhookConfig::new(
+                None, None, None, None, None,
+            )),
+        );
+        data.req = Some(request.clone());
+        data.session_identity = Some(SessionRpcService::heartbeat_identity(&request, machine_id));
+        data.session_epoch = 7;
+        let session_data = Arc::new(RwLock::new(data));
+
+        let validation_change_epoch = session_data.read().await.webhook_validation_change_epoch;
+        apply_success(
+            &Arc::downgrade(&session_data),
+            WebhookValidationInput {
+                storage,
+                webhook_config: Arc::new(crate::webhook::WebhookConfig::new(
+                    None, None, None, None, None,
+                )),
+                client_url: url::Url::parse("http://127.0.0.1").unwrap(),
+                applied_config_revision: None,
+                applied_config_revision_known: false,
+                failed_instance_ids: Vec::new(),
+                req: request,
+                machine_id,
+            },
+            WebhookHeartbeatValidation {
+                config_revision: "rev".to_string(),
+                binding_version: 1,
+            },
+            user_id,
+            validation_change_epoch,
+        )
+        .await;
+
+        let data = session_data.read().await;
+        assert!(data.storage_token.is_some());
+        // Routing only sees `route_bind`, so webhook-established identity must
+        // populate it just like the heartbeat path does.
+        let bind = data.route_bind.lock().unwrap();
+        assert_eq!(*bind, Some((user_id, machine_id, 7)));
     }
 
     #[tokio::test]
