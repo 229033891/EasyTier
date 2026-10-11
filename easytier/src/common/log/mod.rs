@@ -380,10 +380,10 @@ impl Logger {
         // ⚠️ 内存缓冲必须在**这里**放行，不能只在 `emit()` 里判断：
         // `log` crate 在 `enabled()` 返回 false 时直接跳过，**根本不会**调用 `log()`/`emit()`。
         // 所以缓冲有自己的级别阈值（默认 INFO），与 console/file 无关。
-        if let Some(buf) = MEMORY_BUFFER.get() {
-            if buf.accepts(level) {
-                return true;
-            }
+        if let Some(buf) = MEMORY_BUFFER.get()
+            && buf.accepts(level)
+        {
+            return true;
         }
         level_is_enabled(self.active_max_level.load(Ordering::Acquire), level)
             && (self.console_enabled(target, level) || self.file.enabled(target, level))
@@ -423,10 +423,10 @@ impl Logger {
             self.file.emit(&timestamp, level, target, message);
         }
 
-        if let Some(buf) = memory {
-            if buf.accepts(level) {
-                buf.push(timestamp, level, target, message);
-            }
+        if let Some(buf) = memory
+            && buf.accepts(level)
+        {
+            buf.push(timestamp, level, target, message);
         }
     }
 
