@@ -2,12 +2,12 @@
 ;
 ; Two independent lock classes, both must be handled before the file copy:
 ;
-; 1. $INSTDIR\easytier-gui.exe - the app hides to tray on close, so it often
-;    stays running and locks the install path:
-;      Error opening file for writing: ...\ET\easytier-gui.exe
+; 1. $INSTDIR\ET.exe (legacy: easytier-gui.exe) - the app hides to tray on
+;    close, so it often stays running and locks the install path:
+;      Error opening file for writing: ...\ET\ET.exe
 ;
 ; 2. $INSTDIR\Packet.dll / wintun.dll / WinDivert*.sys - third-party binaries.
-;    Packet.dll is a **static import** of easytier-gui.exe (pnet_datalink's
+;    Packet.dll is a **static import** of the GUI exe (pnet_datalink's
 ;    `#[link(name = "Packet")]`), so it is mapped for the whole process lifetime;
 ;    wintun.dll is LoadLibrary'd while a TUN exists; WinDivert*.sys is mapped by
 ;    the kernel driver. Any surviving process therefore locks them:
@@ -87,21 +87,21 @@
 
 !macro ET_KillGuiProcesses
   DetailPrint "Stopping running ET GUI processes..."
-  ; Primary binary name (crate / installed exe)
-  nsExec::ExecToLog 'taskkill /F /T /IM easytier-gui.exe'
-  Pop $0
-  ; If a future build renames the main binary
+  ; Current main binary
   nsExec::ExecToLog 'taskkill /F /T /IM ET.exe'
+  Pop $0
+  ; Legacy binary name (pre-rename installs)
+  nsExec::ExecToLog 'taskkill /F /T /IM easytier-gui.exe'
   Pop $0
   Sleep 400
 !macroend
 
 !macro ET_WaitUntilGuiGone
-  ; Retry kill until tasklist shows no easytier-gui.exe (or attempts exhausted).
-  DetailPrint "Waiting for easytier-gui.exe to release install files..."
-  nsExec::ExecToLog 'cmd /c "for /L %i in (1,1,25) do @(tasklist /FI \"IMAGENAME eq easytier-gui.exe\" | find /I \"easytier-gui.exe\" >nul && (taskkill /F /T /IM easytier-gui.exe >nul 2>&1 & ping -n 2 127.0.0.1 >nul) || exit /b 0)"'
+  ; Retry kill until neither current nor legacy main binary remains.
+  DetailPrint "Waiting for ET.exe / easytier-gui.exe to release install files..."
+  nsExec::ExecToLog 'cmd /c "for /L %i in (1,1,25) do @(tasklist /FI \"IMAGENAME eq ET.exe\" | find /I \"ET.exe\" >nul && (taskkill /F /T /IM ET.exe >nul 2>&1 & ping -n 2 127.0.0.1 >nul) || exit /b 0)"'
   Pop $0
-  nsExec::ExecToLog 'cmd /c "for /L %i in (1,1,10) do @(tasklist /FI \"IMAGENAME eq ET.exe\" | find /I \"ET.exe\" >nul && (taskkill /F /T /IM ET.exe >nul 2>&1 & ping -n 2 127.0.0.1 >nul) || exit /b 0)"'
+  nsExec::ExecToLog 'cmd /c "for /L %i in (1,1,25) do @(tasklist /FI \"IMAGENAME eq easytier-gui.exe\" | find /I \"easytier-gui.exe\" >nul && (taskkill /F /T /IM easytier-gui.exe >nul 2>&1 & ping -n 2 127.0.0.1 >nul) || exit /b 0)"'
   Pop $0
   Sleep 800
 !macroend
@@ -114,33 +114,39 @@
   Pop $0
 !macroend
 
-!macro ET_UnlockInstallExe
-  ; Move the main binary aside so Tauri's post-uninstall FileExists check
-  ; cannot false-fail. Prefer Rename (atomic unlock) over Delete /REBOOTOK,
+!macro ET_UnlockOneInstallExe EXEBASE
+  ; Move one main-binary candidate aside so Tauri's post-uninstall FileExists
+  ; check cannot false-fail. Prefer Rename (atomic unlock) over Delete /REBOOTOK,
   ; which leaves the file visible until reboot and still trips FileExists.
   ; Labels use __LINE__ so this macro can be inserted more than once per function.
   !define ET_UNLOCK_ID ${__LINE__}
-  IfFileExists "$INSTDIR\easytier-gui.exe" 0 et_unlock_done_${ET_UNLOCK_ID}
-    DetailPrint "Trying to unlock $INSTDIR\easytier-gui.exe ..."
-    Delete "$INSTDIR\easytier-gui.exe.bak"
+  IfFileExists "$INSTDIR\${EXEBASE}.exe" 0 et_unlock_done_${ET_UNLOCK_ID}
+    DetailPrint "Trying to unlock $INSTDIR\${EXEBASE}.exe ..."
+    Delete "$INSTDIR\${EXEBASE}.exe.bak"
     ClearErrors
-    Rename "$INSTDIR\easytier-gui.exe" "$INSTDIR\easytier-gui.exe.bak"
+    Rename "$INSTDIR\${EXEBASE}.exe" "$INSTDIR\${EXEBASE}.exe.bak"
     IfErrors 0 et_unlock_renamed_${ET_UNLOCK_ID}
       ; Still locked: one more kill+wait then retry rename.
       !insertmacro ET_KillGuiProcesses
       Sleep 500
       ClearErrors
-      Rename "$INSTDIR\easytier-gui.exe" "$INSTDIR\easytier-gui.exe.bak"
+      Rename "$INSTDIR\${EXEBASE}.exe" "$INSTDIR\${EXEBASE}.exe.bak"
       IfErrors 0 et_unlock_renamed_${ET_UNLOCK_ID}
         ; Last resort: cmd move often succeeds when NSIS Rename fails.
-        nsExec::ExecToLog 'cmd /c move /Y "$INSTDIR\easytier-gui.exe" "$INSTDIR\easytier-gui.exe.bak"'
+        nsExec::ExecToLog 'cmd /c move /Y "$INSTDIR\${EXEBASE}.exe" "$INSTDIR\${EXEBASE}.exe.bak"'
         Pop $0
-        IfFileExists "$INSTDIR\easytier-gui.exe" 0 et_unlock_renamed_${ET_UNLOCK_ID}
+        IfFileExists "$INSTDIR\${EXEBASE}.exe" 0 et_unlock_renamed_${ET_UNLOCK_ID}
           Goto et_unlock_done_${ET_UNLOCK_ID}
     et_unlock_renamed_${ET_UNLOCK_ID}:
-    Delete /REBOOTOK "$INSTDIR\easytier-gui.exe.bak"
+    Delete /REBOOTOK "$INSTDIR\${EXEBASE}.exe.bak"
   et_unlock_done_${ET_UNLOCK_ID}:
   !undef ET_UNLOCK_ID
+!macroend
+
+!macro ET_UnlockInstallExe
+  ; Current name first; keep legacy so upgrades from older installs unlock too.
+  !insertmacro ET_UnlockOneInstallExe "ET"
+  !insertmacro ET_UnlockOneInstallExe "easytier-gui"
 !macroend
 
 !macro ET_EnsureGuiStopped
@@ -156,7 +162,7 @@
 !macro ET_UnlockThirdPartyBinaries
   ; Second lock class, separate from the main exe.
   ;
-  ; Packet.dll is a *static import* of easytier-gui.exe (pnet_datalink declares
+  ; Packet.dll is a *static import* of the GUI exe (pnet_datalink declares
   ; `#[link(name = "Packet")]`), so Windows maps it at process start and keeps it
   ; locked for the entire process lifetime. wintun.dll is LoadLibrary'd while a
   ; TUN adapter exists, and WinDivert*.sys is mapped by the kernel driver.
@@ -291,6 +297,15 @@
   !insertmacro ET_UnlockThirdPartyBinaries
 !macroend
 
+!macro ET_MigrateGuiServiceBinPath
+  ; Service binPath embeds the absolute exe path at install time. After renaming
+  ; the main binary to ET.exe, leave PathName pointing at easytier-gui.exe would
+  ; break Service mode once the legacy file is removed.
+  DetailPrint "Migrating ET Gui service PathName easytier-gui.exe -> ET.exe if needed..."
+  nsExec::ExecToLog '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "foreach ($$n in @(''ET-Gui'',''easytier-gui'')) { $$s = Get-CimInstance Win32_Service -Filter (\"Name=''$$n''\") -ErrorAction SilentlyContinue; if (-not $$s -or -not $$s.PathName) { continue }; if ($$s.PathName -notmatch ''(?i)easytier-gui\.exe'') { continue }; $$np = [regex]::Replace($$s.PathName, ''easytier-gui\.exe'', ''ET.exe'', ''IgnoreCase''); if ($$np -eq $$s.PathName) { continue }; & sc.exe config $$n binPath= $$np | Out-Null }"'
+  Pop $0
+!macroend
+
 !macro NSIS_HOOK_POSTINSTALL
   ; We set start= demand while replacing binaries; restore auto-start if the
   ; service still exists (GUI service mode). Ignore missing service.
@@ -299,6 +314,17 @@
   Pop $0
   nsExec::ExecToLog 'sc.exe config easytier-gui start= auto'
   Pop $0
+  !insertmacro ET_MigrateGuiServiceBinPath
+  ; Keep a same-bytes legacy shim: per-user installs often cannot elevate
+  ; `sc config binPath=`, so ET-Gui may still point at easytier-gui.exe.
+  ; Also covers old shortcuts. Safe to remove in a later release once migration
+  ; has baked in.
+  IfFileExists "$INSTDIR\ET.exe" 0 et_postinstall_shim_done
+    DetailPrint "Writing legacy shim $INSTDIR\easytier-gui.exe (= ET.exe)..."
+    nsExec::ExecToLog 'cmd /c copy /Y "$INSTDIR\ET.exe" "$INSTDIR\easytier-gui.exe"'
+    Pop $0
+  et_postinstall_shim_done:
+  Delete /REBOOTOK "$INSTDIR\easytier-gui.exe.bak"
 !macroend
 
 !macro NSIS_HOOK_PREUNINSTALL
@@ -311,6 +337,6 @@
   ; pointing at a removed binary and fail at boot.
   !insertmacro ET_DeleteGuiService
   ; Ensure main exe is gone/renamed so the parent installer does not see
-  ; FileExists("$INSTDIR\easytier-gui.exe") and pop "Unable to uninstall!".
+  ; FileExists("$INSTDIR\${MAINBINARYNAME}.exe") and pop "Unable to uninstall!".
   !insertmacro ET_UnlockInstallExe
 !macroend

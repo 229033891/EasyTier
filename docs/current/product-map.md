@@ -3,7 +3,7 @@
 ## Status
 
 - Status: **Current**
-- 最近审阅：2026-10-06
+- 最近审阅：2026-10-11（桌面 GUI 主程序改为 `ET`/`ET.exe`；Win 安装器保留旧名 shim）
 - 状态说明：帮助理解 monorepo 内各产品/组件职责与关系
 - 范围：仓库内主要 crate、前端包与贡献组件
 - 索引：[`../README.md`](../README.md)
@@ -24,7 +24,8 @@
 | 正式名称 | 指什么 | 不要再用 |
 |----------|--------|----------|
 | **节点 / `easytier-core`（二进制）** | 真正组网的进程 | 含糊的 “easytier code” 等（易与 crate 名混淆时写全） |
-| **`easytier-gui`** | 本机图形客户端 | 仅说 “客户端” 时尽量写全名 |
+| **`easytier-gui`** | 本机图形客户端（仓库 crate / 包名） | 仅说 “客户端” 时尽量写全名 |
+| **`ET` / `ET.exe`** | 桌面 GUI 主程序文件名（Win/macOS/Linux；`mainBinaryName` + cargo `[[bin]]`）。Android APK 不用此名 | 旧桌面文件名 `easytier-gui` / `easytier-gui.exe`（Windows 安装器已做双名兼容） |
 | **`ET` / `ET Gui Service`** | Windows 任务管理器常见显示名：前台窗口 / 后台服务 | 勿与节点二进制 `easytier-core` 混淆 |
 | **`ET-Gui`** | 桌面后台服务的 sc / 内部服务名（`--daemon`） | 旧名 `easytier-gui` 服务 |
 | **`easytier-web`** | 配置服务器 + REST API + 浏览器 UI | **controller**、控制面产品名、其它自造英文名 |

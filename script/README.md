@@ -133,7 +133,20 @@ curl -fsSL https://raw.githubusercontent.com/229033891/EasyTier/main/script/upda
 
 ---
 
-## 三、其它
+## 三、清理 GUI 旧文件名残留（easytier-gui → ET）
+
+桌面主程序改名为 `ET` / `ET.exe` 后，可用下列脚本清理旧进程、旧服务名、旧二进制 shim、快捷方式/desktop 残留。**默认 dry-run**，加 `--apply` / `-Apply` 才真正修改。
+
+| 脚本 | 平台 | 示例 |
+|------|------|------|
+| `cleanup-legacy-gui.cmd` / `cleanup-legacy-gui.ps1` | Windows | `.\script\cleanup-legacy-gui.ps1 -Apply -AlsoRemoveShim` |
+| `cleanup-legacy-gui.sh` | Linux | `sudo bash script/cleanup-legacy-gui.sh --apply --also-remove-shim` |
+
+不会卸载当前 ET，也不会删除用户配置。删 shim 前请确认 Service 的路径已迁到 `ET`（脚本会先尝试迁移）。
+
+---
+
+## 四、其它
 
 | 脚本 | 说明 |
 |------|------|

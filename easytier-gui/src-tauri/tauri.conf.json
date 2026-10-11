@@ -23,6 +23,7 @@
     }
   },
   "productName": "ET",
+  "mainBinaryName": "ET",
   "version": "2.7.5",
   "identifier": "com.kkrainbow.easytier",
   "plugins": {

@@ -5,12 +5,19 @@ description = "EasyTier GUI"
 authors = ["you"]
 edition.workspace = true
 rust-version.workspace = true
+# Installed / cargo binary is ET(.exe); package name stays easytier-gui for workspace/pnpm.
+default-run = "ET"
+autobins = false
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [lib]
 name = "app_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
+
+[[bin]]
+name = "ET"
+path = "src/main.rs"
 
 
 [dependencies]

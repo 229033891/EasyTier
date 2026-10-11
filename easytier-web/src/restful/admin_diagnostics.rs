@@ -691,26 +691,32 @@ fn open_log_file_readonly(path: &std::path::Path) -> std::io::Result<std::fs::Fi
     }
     #[cfg(windows)]
     {
+        // Stable Rust: `MetadataExt::{file_index,volume_serial_number,number_of_links}`
+        // need `#![feature(windows_by_handle)]` and are unavailable on our MSRV.
+        // Refuse symlinks / reparse points up front, then best-effort TOCTOU via a
+        // second `symlink_metadata` (size + attrs) after open.
         use std::io::{Error, ErrorKind};
         use std::os::windows::fs::MetadataExt;
+        const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
+
         let pre = std::fs::symlink_metadata(path)?;
-        if pre.file_type().is_symlink() || !pre.is_file() {
+        if pre.file_type().is_symlink()
+            || !pre.is_file()
+            || (pre.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT) != 0
+        {
             return Err(Error::new(ErrorKind::InvalidInput, "not a regular file"));
         }
         let file = std::fs::File::open(path)?;
-        let post = file.metadata()?;
-        if pre.file_index() != post.file_index()
-            || pre.volume_serial_number() != post.volume_serial_number()
+        let post = std::fs::symlink_metadata(path)?;
+        if post.file_type().is_symlink()
+            || !post.is_file()
+            || (post.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT) != 0
+            || post.len() != pre.len()
+            || post.file_attributes() != pre.file_attributes()
         {
             return Err(Error::new(
                 ErrorKind::InvalidInput,
                 "log path changed during open",
-            ));
-        }
-        if post.number_of_links() > 1 {
-            return Err(Error::new(
-                ErrorKind::InvalidInput,
-                "refusing hard-linked log file",
             ));
         }
         Ok(file)
