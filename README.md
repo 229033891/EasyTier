@@ -49,12 +49,13 @@ Releases, CI artifacts, and Docker images (`ghcr.io/229033891/et`) are published
 
 Choose the installation method that best suits your needs:
 
-Linux (recommended — interactive console / node / core deploy):
+Linux one-liner install / upgrade (**no full repo clone**; only fetches scripts, binaries from [Releases](https://github.com/229033891/EasyTier/releases); non-TTY install defaults to core):
 ```bash
-# clone then run (most reliable)
-git clone https://github.com/229033891/EasyTier.git
-cd EasyTier
-sudo bash script/install.sh
+# install
+curl -fsSL "https://github.com/229033891/EasyTier/raw/main/script/install.sh" | sudo bash -s install
+
+# upgrade (standalone update.sh; does not call install.sh)
+curl -fsSL "https://github.com/229033891/EasyTier/raw/main/script/update.sh" | sudo bash -s -- --auto
 ```
 
 Windows (recommended, run as Administrator):
@@ -62,24 +63,7 @@ Windows (recommended, run as Administrator):
 irm "https://github.com/229033891/EasyTier/blob/main/script/install.ps1?raw=true" | iex
 ```
 
-Linux one-liner (downloads latest from [Releases](https://github.com/229033891/EasyTier/releases); non-TTY defaults to core):
-```bash
-curl -fsSL "https://github.com/229033891/EasyTier/raw/main/script/install.sh" | sudo bash -s install
-```
-
-Linux one-liner upgrade (standalone `update.sh`, does not call `install.sh`; also uses Releases):
-```bash
-curl -fsSL "https://github.com/229033891/EasyTier/raw/main/script/update.sh" | sudo bash -s -- --auto
-```
-
-Or upgrade from a local clone:
-```bash
-cd EasyTier
-sudo bash script/update.sh          # interactive
-sudo bash script/update.sh --auto   # non-interactive
-```
-
-Note: `install.sh` handles install/backup/restore/uninstall; `update.sh` handles upgrades; both share `script/et-ops-common.sh`. See the [deploy guide](./docs/ops/deploy-install.md).
+Optional: if you already have a local clone, run `sudo bash script/install.sh` / `sudo bash script/update.sh`. See the [deploy guide](./docs/ops/deploy-install.md).
 
 Homebrew (MacOS/Linux):
 ```bash

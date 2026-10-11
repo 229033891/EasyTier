@@ -107,26 +107,17 @@ Linux / WSL（含可选 three_node）：
 
 `et-ops-common.sh` 为 `install.sh` / `update.sh` 共用库，**不要直接执行**。
 
-远程一键安装（从 GitHub 拉最新 `install.sh`；无 TTY 时默认 core 轻量）：
+远程一键安装 / 升级（**无需 clone**；仅拉脚本，二进制走 Releases；无 TTY 时安装默认 core）：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/229033891/EasyTier/main/script/install.sh \
-  | sudo bash -s install
-```
+# 安装
+curl -fsSL "https://github.com/229033891/EasyTier/raw/main/script/install.sh" | sudo bash -s install
 
-或 clone 后交互安装（推荐 Server / Client）：
-
-```bash
-git clone https://github.com/229033891/EasyTier.git
-cd EasyTier
-sudo bash script/install.sh
-```
-
-远程一键升级（从 GitHub 拉最新 `update.sh` 并执行；`--auto` 非交互）：
-
-```bash
+# 升级（--auto 非交互）
 curl -fsSL "https://github.com/229033891/EasyTier/raw/main/script/update.sh" | sudo bash -s -- --auto
 ```
+
+可选：已有本地仓库时再执行 `sudo bash script/install.sh` / `sudo bash script/update.sh`。
 
 文档：[`docs/ops/deploy-install.md`](../docs/ops/deploy-install.md)
 

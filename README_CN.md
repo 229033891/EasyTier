@@ -49,12 +49,13 @@ Release、CI 产物与 Docker 镜像（`ghcr.io/229033891/et`）均由**本仓�
 
 选择最适合您需求的安装方式：
 
-Linux（推荐 — 交互式控制台 / 节点 / 轻量 core）：
+Linux 一键安装 / 更新（**无需 clone 仓库**；仅拉脚本，二进制从 [Releases](https://github.com/229033891/EasyTier/releases) 下载；无 TTY 时安装默认 core）：
 ```bash
-# clone 后本地执行（最稳）
-git clone https://github.com/229033891/EasyTier.git
-cd EasyTier
-sudo bash script/install.sh
+# 安装
+curl -fsSL "https://github.com/229033891/EasyTier/raw/main/script/install.sh" | sudo bash -s install
+
+# 更新（独立脚本 update.sh，与 install.sh 互不调用）
+curl -fsSL "https://github.com/229033891/EasyTier/raw/main/script/update.sh" | sudo bash -s -- --auto
 ```
 
 Windows（推荐，请以管理员权限运行）：
@@ -62,24 +63,7 @@ Windows（推荐，请以管理员权限运行）：
 irm "https://github.com/229033891/EasyTier/blob/main/script/install.ps1?raw=true" | iex
 ```
 
-Linux 一键安装（从 [Releases](https://github.com/229033891/EasyTier/releases) 拉最新包；无 TTY 时默认 core）：
-```bash
-curl -fsSL "https://github.com/229033891/EasyTier/raw/main/script/install.sh" | sudo bash -s install
-```
-
-Linux 一键更新（独立脚本 `update.sh`，与 `install.sh` 互不调用；同样读 Releases）：
-```bash
-curl -fsSL "https://github.com/229033891/EasyTier/raw/main/script/update.sh" | sudo bash -s -- --auto
-```
-
-或 clone 仓库后本地升级：
-```bash
-cd EasyTier
-sudo bash script/update.sh          # 交互
-sudo bash script/update.sh --auto   # 非交互
-```
-
-说明：`install.sh` 负责安装/备份/恢复/卸载；`update.sh` 负责升级；二者共用 `script/et-ops-common.sh`。详见 [部署说明](./docs/ops/deploy-install.md)。
+可选：已有本地仓库时再执行 `sudo bash script/install.sh` / `sudo bash script/update.sh`。详见 [部署说明](./docs/ops/deploy-install.md)。
 
 Homebrew（MacOS/Linux）：
 ```bash

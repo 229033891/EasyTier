@@ -20,21 +20,20 @@
 
 **Docker Compose**（NAS / 容器；[`docker-up.sh`](../../script/docker-up.sh) 自动建目录 + 启动）：[`docker-compose-deploy.md`](./docker-compose-deploy.md)。
 
-## 远程一键安装（VPS）
+## 远程一键安装（VPS，推荐，无需 clone）
+
+只需拉 `install.sh`（缺失时会再拉 `et-ops-common.sh`），二进制从 [Releases](https://github.com/229033891/EasyTier/releases) 下载；**不必** `git clone` 完整仓库：
 
 ```bash
-# 推荐：clone 后本地执行（最稳，且不依赖远端 main 是否已含脚本）
-git clone https://github.com/229033891/EasyTier.git
-cd EasyTier
-sudo bash script/install.sh
-
-# 或管道执行（从本仓库最新 Release 安装；无 TTY 时默认 core 轻量模式）
-curl -fsSL https://github.com/229033891/EasyTier/raw/main/script/install.sh | sudo bash -s install
+curl -fsSL "https://github.com/229033891/EasyTier/raw/main/script/install.sh" | sudo bash -s install
 ```
 
-## 主菜单
+无 TTY 时默认 core 轻量模式。可选：已有本地仓库时再执行 `sudo bash script/install.sh`（交互主菜单见下）。
+
+## 主菜单（可选，需本地脚本）
 
 ```bash
+# 仅当你已有仓库或已下载 script/ 时
 sudo bash script/install.sh
 ```
 
@@ -147,7 +146,7 @@ sudo bash script/install.sh install --mode client --auto \
 ## 常用操作
 
 ```bash
-# 升级 —— 远程一键见下文「远程一键升级」；本地仓库：
+# 升级 —— 推荐远程一键（无需 clone），见下文；有本地脚本时也可用：
 sudo bash script/update.sh
 # 或
 sudo bash script/install.sh update
@@ -167,12 +166,12 @@ sudo bash script/install.sh uninstall
 固定从 [Releases](https://github.com/229033891/EasyTier/releases) 拉最新包。
 （`install.sh update` 仅调用库内函数，不会 exec `update.sh`。）
 
-### 远程一键升级（推荐，无需先 clone）
+### 远程一键升级（推荐，无需 clone）
 
-从 GitHub `main` 拉取最新 `update.sh`（缺失时会再拉 `et-ops-common.sh`），再升级本机 `/opt/easytier` 二进制：
+管道执行：只拉 `update.sh`（必要时再拉 `et-ops-common.sh`），再升级本机 `/opt/easytier` 二进制；**不下载、不覆盖本地仓库**：
 
 ```bash
-# 非交互（已装机器常用，与安装同风格管道）
+# 非交互（已装机器常用）
 curl -fsSL "https://github.com/229033891/EasyTier/raw/main/script/update.sh" | sudo bash -s -- --auto
 
 # 交互确认 / 选下载源
@@ -189,17 +188,19 @@ curl -fsSL "https://ghfast.top/https://raw.githubusercontent.com/229033891/EasyT
 
 说明：
 
-- 写入 `/tmp` 再执行，避免在 `~/EasyTier` 目录下误用**旧版**本地 `et-ops-common.sh`。
-- 管道 `curl ... | sudo bash` 也可以；脚本在无真实路径时同样会从 GitHub 拉 common。
+- `curl | bash` 无真实脚本路径时，会从 GitHub 拉 common 到临时文件再 source，用完删除。
+- 若本地已有旧版 `~/EasyTier/script/et-ops-common.sh`，管道方式**不会**误用它。
 - 强制始终用远端 common：`ET_FORCE_REMOTE_COMMON=1`。
 
-### 本地仓库升级
+### 本地仓库升级（可选）
+
+仅当你已经 clone 过仓库、想用磁盘上的脚本时：
 
 ```bash
 cd ~/EasyTier && git pull && sudo bash script/update.sh --auto
 ```
 
-会做：
+远程一键与本地升级都会做：
 
 1. 检测已安装角色（server / client / core）
 2. 备份 `et.db`（若存在）
