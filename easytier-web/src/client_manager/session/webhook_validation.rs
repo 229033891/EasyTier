@@ -452,19 +452,21 @@ pub(super) async fn apply_success(
                 && (!input.applied_config_revision_known
                     || input.applied_config_revision != runtime.applied_config_revision);
         }
-        let storage_token = data.storage_token.get_or_insert_with(|| StorageToken {
-            token: runtime_req.user_token.clone(),
-            client_url,
-            machine_id: input.machine_id,
-            user_id,
-        });
+        let storage_token = data
+            .storage_token
+            .get_or_insert_with(|| StorageToken {
+                token: runtime_req.user_token.clone(),
+                client_url,
+                machine_id: input.machine_id,
+                user_id,
+            })
+            .clone();
         if is_new_storage_token {
             // Keep the sync routing index in sync: heartbeat does the same in
             // `SessionRpcService`, and `get_session_by_machine_id` only sees
             // `route_bind` (not `storage_token`).
             data.set_route_bind(user_id, input.machine_id, data.session_epoch);
         }
-        let storage_token = storage_token.clone();
         data.auth_state = SessionAuthState::Authorized;
         data.binding_version = Some(binding_version);
         if is_new_storage_token {

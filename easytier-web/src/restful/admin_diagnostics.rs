@@ -9,7 +9,7 @@ use super::{
 use crate::client_manager::{ClientManager, HeartbeatPolicy};
 use crate::db::Db;
 use axum::{Extension, Json, Router, extract::Query, http::StatusCode, routing::get};
-use axum_login::login_required;
+use axum_login::{AuthUser, login_required};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
