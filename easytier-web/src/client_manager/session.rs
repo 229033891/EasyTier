@@ -1531,6 +1531,7 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     use axum::{Json, Router, extract::State, http::StatusCode, routing::post};
+    use easytier_core::management::remote_client::Storage as _;
     use serde_json::json;
     use tokio::sync::{Mutex, Notify, oneshot};
 
@@ -1614,7 +1615,6 @@ mod tests {
     #[tokio::test]
     async fn heartbeat_disabled_list_is_authoritative_for_web_source_rows() {
         use easytier::common::config::{ConfigSource, NetworkConfig};
-        use easytier_core::management::remote_client::Storage as _;
 
         let db = crate::db::Db::memory_db().await;
         let user_id = db.auto_create_user("disable-sync-token").await.unwrap().id;

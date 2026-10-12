@@ -1376,6 +1376,7 @@ fn record_applied_config_revision(
 #[cfg(test)]
 mod tests {
     use easytier::proto::api::manage::{NetworkingMethod, PortForwardConfig};
+    use easytier_core::management::remote_client::Storage as _;
 
     use super::*;
 
@@ -1631,8 +1632,6 @@ mod tests {
         // an intentional stop (console Stop or client user-disabled sync, both
         // stored as disabled=true) never reaches run_missing_network_config,
         // while an unexpectedly stopped but enabled config still does.
-        use easytier_core::management::remote_client::Storage as _;
-
         let storage =
             crate::client_manager::storage::Storage::new(crate::db::Db::memory_db().await);
         let db = storage.db();
