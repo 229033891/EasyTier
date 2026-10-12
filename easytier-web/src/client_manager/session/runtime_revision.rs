@@ -745,6 +745,7 @@ async fn cleanup_stale_web_source_instances(
                 slow_rpc_controller(),
                 DeleteNetworkInstanceRequest {
                     inst_ids: should_delete_ids,
+                    keep_local_config: false,
                 },
             )
             .await;
@@ -829,6 +830,7 @@ async fn cleanup_patch_deleted_instances(
                 inst_ids: managed_config::parse_instance_ids(
                     running_web_instance_ids.iter().cloned(),
                 ),
+                keep_local_config: false,
             },
         )
         .await;

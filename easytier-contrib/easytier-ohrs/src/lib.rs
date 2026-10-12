@@ -125,7 +125,18 @@ impl WebClientHooks for TrackedWebClientHooks {
         Ok(())
     }
 
-    async fn post_remove_network_instances(&self, ids: &[Uuid]) -> Result<(), String> {
+    async fn post_remove_network_instances(
+        &self,
+        ids: &[Uuid],
+        keep_local_config: bool,
+    ) -> Result<(), String> {
+        // Runtime tracking always cleared; event name follows keep_local_config
+        // so ArkTS must not treat Stop as Delete (see InstanceMutationHooks).
+        let event = if keep_local_config {
+            "stop_network_instance"
+        } else {
+            "delete_network_instance"
+        };
         let mut guard = self.instance_ids.lock().map_err(|err| err.to_string())?;
         let mut events = self.events.lock().map_err(|err| err.to_string())?;
         let mut network_names_by_instance_id = self
@@ -136,7 +147,7 @@ impl WebClientHooks for TrackedWebClientHooks {
             guard.remove(id);
             let network_name = network_names_by_instance_id.remove(id);
             events.push(serde_json::json!({
-                "event": "delete_network_instance",
+                "event": event,
                 "success": true,
                 "instance_id": id.to_string(),
                 "instance_name": id.to_string(),

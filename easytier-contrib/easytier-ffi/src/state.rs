@@ -13,7 +13,10 @@ impl easytier_core::management::InstanceMutationHooks for FfiOwnedInstanceHooks 
     async fn post_remove_network_instances(
         &self,
         instance_ids: &[uuid::Uuid],
+        _keep_local_config: bool,
     ) -> Result<(), String> {
+        // Owned-instance path: only runtime bookkeeping (no Host event). Config
+        // server managed removals emit stop/delete via ManagedConfigServerClientHooks.
         crate::config_server::remove_config_server_tracked_instance_ids(instance_ids);
         crate::data_plane::remove_data_plane_sessions_by_instance_ids(instance_ids);
         Ok(())

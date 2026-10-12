@@ -48,9 +48,20 @@ pub trait InstanceMutationHooks: Send + Sync + 'static {
         Ok(())
     }
 
+    /// Called after runtime instances are removed.
+    ///
+    /// `keep_local_config` mirrors `DeleteNetworkInstanceRequest.keep_local_config`
+    /// in `api_manage.proto` (canonical Stop vs Delete contract):
+    /// - `true`: console/app Stop — retain local GUI/app config; hosts should
+    ///   emit stop/disable semantics (not purge).
+    /// - `false`: console Delete / reconcile — purge local config.
+    ///
+    /// Breaking for implementors that override this method: the second parameter
+    /// was added so Stop and Delete can diverge in Host adapters (FFI/GUI/ohrs).
     async fn post_remove_network_instances(
         &self,
         _instance_ids: &[uuid::Uuid],
+        _keep_local_config: bool,
     ) -> Result<(), String> {
         Ok(())
     }
@@ -157,6 +168,14 @@ where
                     .mark_user_disabled_web_instance(*instance_id)
                     .await;
             }
+        }
+    }
+
+    async fn clear_user_disabled_web_instances(&self, instance_ids: &[uuid::Uuid]) {
+        for instance_id in instance_ids {
+            self.instances
+                .clear_user_disabled_web_instance(*instance_id)
+                .await;
         }
     }
 
@@ -382,7 +401,7 @@ where
                 .into_iter()
                 .filter(|id| !remaining_set.contains(id))
                 .collect::<Vec<_>>();
-            self.notify_removed_instances(&removed).await?;
+            self.notify_removed_instances(&removed, false).await?;
             return Ok(InstanceMutationResult {
                 removed_instance_ids: removed,
                 remaining_instance_ids: remaining,
@@ -410,7 +429,7 @@ where
             .instances
             .retain_network_instances(&retained.into_iter().collect::<Vec<_>>())
             .await?;
-        self.notify_removed_instances(&removed).await?;
+        self.notify_removed_instances(&removed, false).await?;
         Ok(InstanceMutationResult {
             remaining_instance_ids: remaining,
             removed_instance_ids: removed,
@@ -420,6 +439,7 @@ where
     pub async fn delete_network_instances(
         &self,
         requested: Vec<uuid::Uuid>,
+        keep_local_config: bool,
     ) -> anyhow::Result<InstanceMutationResult> {
         let _mutation = self.mutation_lock.lock().await;
         let requested = requested.into_iter().collect::<HashSet<_>>();
@@ -444,18 +464,31 @@ where
                 files.extend(control.path);
             }
         }
-        self.mark_user_disabled_web_instances(&removed).await;
+        // Stop (keep=true): mark web instances intentionally disabled for heartbeat.
+        // Delete (keep=false): drop disabled marks so the set does not retain purged ids.
+        // Semantics: see `InstanceMutationHooks::post_remove_network_instances` / proto field.
+        if keep_local_config {
+            self.mark_user_disabled_web_instances(&removed).await;
+        } else {
+            self.clear_user_disabled_web_instances(&removed).await;
+        }
         let remaining = self
             .instances
             .delete_network_instances(removed.clone())
             .await?;
-        self.notify_removed_instances(&removed).await?;
-        for path in files {
-            if remote_managed && self.storage.inspect(&path).await.is_read_only() {
-                continue;
-            }
-            if let Err(error) = self.storage.remove(&path).await {
-                tracing::warn!(%error, path = %path.display(), "failed to remove config file");
+        self.notify_removed_instances(&removed, keep_local_config)
+            .await?;
+        // NB: runtime instances are already removed above. If the hook bails
+        // (remote-managed), file purge below is skipped and a later reconcile
+        // retries it; the memory/file divergence is transient, not persisted.
+        if !keep_local_config {
+            for path in files {
+                if remote_managed && self.storage.inspect(&path).await.is_read_only() {
+                    continue;
+                }
+                if let Err(error) = self.storage.remove(&path).await {
+                    tracing::warn!(%error, path = %path.display(), "failed to remove config file");
+                }
             }
         }
         Ok(InstanceMutationResult {
@@ -532,7 +565,8 @@ where
             .into_iter()
             .filter(|id| !remaining_set.contains(id))
             .collect::<Vec<_>>();
-        self.notify_removed_instances(&removed).await?;
+        // Local intentional stop → keep_local_config=true (see trait/proto).
+        self.notify_removed_instances(&removed, true).await?;
         Ok(InstanceMutationResult {
             removed_instance_ids: removed,
             remaining_instance_ids: remaining,
@@ -550,8 +584,16 @@ where
             .collect()
     }
 
-    async fn notify_removed_instances(&self, removed: &[uuid::Uuid]) -> anyhow::Result<()> {
-        if let Err(error) = self.hooks.post_remove_network_instances(removed).await {
+    async fn notify_removed_instances(
+        &self,
+        removed: &[uuid::Uuid],
+        keep_local_config: bool,
+    ) -> anyhow::Result<()> {
+        if let Err(error) = self
+            .hooks
+            .post_remove_network_instances(removed, keep_local_config)
+            .await
+        {
             if self.hooks.manages_remote_config_instances() {
                 anyhow::bail!("post-remove hook failed: {error}");
             }
@@ -723,11 +765,15 @@ where
         request: DeleteNetworkInstanceRequest,
     ) -> rpc_types::error::Result<DeleteNetworkInstanceResponse> {
         let requested = request.inst_ids.into_iter().map(Into::into).collect();
+        let keep_local_config = request.keep_local_config;
         let management = self.management.clone();
-        let result =
-            tokio::spawn(async move { management.delete_network_instances(requested).await })
+        let result = tokio::spawn(async move {
+            management
+                .delete_network_instances(requested, keep_local_config)
                 .await
-                .map_err(|error| anyhow::anyhow!("instance mutation task failed: {error}"))??;
+        })
+        .await
+        .map_err(|error| anyhow::anyhow!("instance mutation task failed: {error}"))??;
         Ok(DeleteNetworkInstanceResponse {
             remain_inst_ids: result
                 .remaining_instance_ids

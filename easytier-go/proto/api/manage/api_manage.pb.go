@@ -1893,10 +1893,11 @@ func (x *ListNetworkInstanceResponse) GetInstIds() []*common.UUID {
 }
 
 type DeleteNetworkInstanceRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	InstIds       []*common.UUID         `protobuf:"bytes,1,rep,name=inst_ids,json=instIds,proto3" json:"inst_ids,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state            protoimpl.MessageState `protogen:"open.v1"`
+	InstIds          []*common.UUID         `protobuf:"bytes,1,rep,name=inst_ids,json=instIds,proto3" json:"inst_ids,omitempty"`
+	KeepLocalConfig  bool                   `protobuf:"varint,2,opt,name=keep_local_config,json=keepLocalConfig,proto3" json:"keep_local_config,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *DeleteNetworkInstanceRequest) Reset() {
@@ -1934,6 +1935,13 @@ func (x *DeleteNetworkInstanceRequest) GetInstIds() []*common.UUID {
 		return x.InstIds
 	}
 	return nil
+}
+
+func (x *DeleteNetworkInstanceRequest) GetKeepLocalConfig() bool {
+	if x != nil {
+		return x.KeepLocalConfig
+	}
+	return false
 }
 
 type DeleteNetworkInstanceResponse struct {
@@ -2399,9 +2407,10 @@ const file_api_manage_proto_rawDesc = "" +
 	"\x04info\x18\x01 \x01(\v2).api.manage.NetworkInstanceRunningInfoMapR\x04info\"\x1c\n" +
 	"\x1aListNetworkInstanceRequest\"F\n" +
 	"\x1bListNetworkInstanceResponse\x12'\n" +
-	"\binst_ids\x18\x01 \x03(\v2\f.common.UUIDR\ainstIds\"G\n" +
+	"\binst_ids\x18\x01 \x03(\v2\f.common.UUIDR\ainstIds\"s\n" +
 	"\x1cDeleteNetworkInstanceRequest\x12'\n" +
-	"\binst_ids\x18\x01 \x03(\v2\f.common.UUIDR\ainstIds\"U\n" +
+	"\binst_ids\x18\x01 \x03(\v2\f.common.UUIDR\ainstIds\x12*\n" +
+	"\x11keep_local_config\x18\x02 \x01(\bR\x0fkeepLocalConfig\"U\n" +
 	"\x1dDeleteNetworkInstanceResponse\x124\n" +
 	"\x0fremain_inst_ids\x18\x01 \x03(\v2\f.common.UUIDR\rremainInstIds\"H\n" +
 	"\x1fGetNetworkInstanceConfigRequest\x12%\n" +

@@ -895,6 +895,7 @@ impl
                 slow_rpc_controller(),
                 DeleteNetworkInstanceRequest {
                     inst_ids: inst_ids.iter().copied().map(|id| id.into()).collect(),
+                    keep_local_config: false,
                 },
             )
             .await?;
@@ -908,7 +909,8 @@ impl
     }
 
     /// Enable: soft-start when already healthy + revision OK (no local overwrite).
-    /// Otherwise full `overwrite: true` run. Disable: delete instance.
+    /// Otherwise full `overwrite: true` run. Disable: stop runtime with
+    /// `keep_local_config: true` (see `DeleteNetworkInstanceRequest` / hooks).
     ///
     /// Callers must not pre-invalidate applied revision before this method —
     /// soft-start depends on it; we invalidate only when runtime is mutated.
@@ -937,6 +939,7 @@ impl
                     slow_rpc_controller(),
                     DeleteNetworkInstanceRequest {
                         inst_ids: vec![inst_id.into()],
+                        keep_local_config: true,
                     },
                 )
                 .await?;

@@ -326,7 +326,10 @@ async fn config_server_hooks_emit_delete_events_for_tracked_instances() {
     events.lock().unwrap().clear();
 
     hooks
-        .post_remove_network_instances(&[instance_id_1, unknown_instance_id, instance_id_2])
+        .post_remove_network_instances(
+            &[instance_id_1, unknown_instance_id, instance_id_2],
+            false,
+        )
         .await
         .unwrap();
 
@@ -364,11 +367,55 @@ async fn config_server_hooks_ignore_untracked_instance_without_event() {
     let local_id = Uuid::new_v4();
 
     hooks
-        .post_remove_network_instances(&[local_id])
+        .post_remove_network_instances(&[local_id], false)
         .await
         .unwrap();
 
     assert!(events.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn config_server_hooks_stop_emits_stop_event_and_clears_runtime_tracking() {
+    let events: Mutex<Vec<String>> = Mutex::new(Vec::new());
+    let hooks = ManagedConfigServerClientHooks::new(
+        Some(record_config_server_event),
+        &events as *const _ as *mut c_void,
+    );
+    let instance_id = Uuid::new_v4();
+    let cfg = TomlConfigLoader::default();
+    cfg.set_id(instance_id);
+    cfg.set_inst_name(format!("stop-{}", instance_id));
+    hooks.pre_run_network_instance(&cfg).await.unwrap();
+    ffi_context()
+        .manager
+        .run_network_instance(cfg, ConfigFileControl::STATIC_CONFIG)
+        .unwrap();
+    hooks
+        .post_run_network_instance(&instance_id)
+        .await
+        .unwrap();
+    events.lock().unwrap().clear();
+
+    hooks
+        .post_remove_network_instances(&[instance_id], true)
+        .await
+        .unwrap();
+
+    assert!(hooks.tracked_instance_ids().is_empty());
+    let events = events.lock().unwrap().clone();
+    assert_eq!(events.len(), 1);
+    let event: Value = serde_json::from_str(&events[0]).unwrap();
+    assert_eq!(event["event"], "stop_network_instance");
+    assert_eq!(event["success"], true);
+    assert_eq!(
+        event["instance_id"].as_str().unwrap(),
+        instance_id.to_string()
+    );
+    ffi_context()
+        .manager
+        .delete_network_instances([instance_id])
+        .await
+        .unwrap();
 }
 
 #[tokio::test]
@@ -429,7 +476,7 @@ async fn config_server_hooks_remove_overwritten_id_before_duplicate_name_error()
         .unwrap();
 
     hooks
-        .post_remove_network_instances(&[overwritten_id])
+        .post_remove_network_instances(&[overwritten_id], false)
         .await
         .unwrap();
 
@@ -473,7 +520,7 @@ async fn config_server_hooks_remove_tracked_state_before_overwrite_retry() {
         .unwrap();
 
     hooks
-        .post_remove_network_instances(&[instance_id])
+        .post_remove_network_instances(&[instance_id], false)
         .await
         .unwrap();
     hooks.pre_run_network_instance(&cfg).await.unwrap();

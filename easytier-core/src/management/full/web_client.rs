@@ -943,6 +943,10 @@ async fn wait_for_next_heartbeat(
 
 impl WebClientSession {
     fn new(tunnel: Box<dyn Tunnel>, controller: Arc<WebClientController>) -> Self {
+        // Do not set BidirectRpcManager rx_timeout here: a short tunnel-wide
+        // idle watchdog races long inbound RPCs (Run/Collect) and server-raised
+        // heartbeat intervals. Session teardown on transport abort is handled
+        // in `wait()` by aborting the in-flight heartbeat task immediately.
         let rpc = Arc::new(BidirectRpcManager::new());
         rpc.run_with_tunnel(tunnel);
         controller.backend.register(rpc.rpc_server().registry());
@@ -1055,16 +1059,34 @@ impl WebClientSession {
         });
     }
 
+    /// Wait until the first spawned task exits (usually heartbeat loop end).
+    /// Full JoinSet teardown is always done by [`Self::shutdown_tasks`].
     async fn wait_routines(&self) {
         self.tasks.lock().await.join_next().await;
-        self.tasks.lock().await.abort_all();
+    }
+
+    /// Abort and drain heartbeat / session tasks.
+    ///
+    /// `JoinSet::join_next` requires `&mut JoinSet`, so the mutex is held across
+    /// those awaits. Safe with a single session spawner; do not add concurrent
+    /// waiters that also need `tasks` without restructuring this.
+    async fn shutdown_tasks(&self) {
+        let mut tasks = self.tasks.lock().await;
+        tasks.abort_all();
+        while tasks.join_next().await.is_some() {}
     }
 
     async fn wait(&mut self) {
+        // Transport abort and heartbeat failure both end the session. Whichever
+        // wins must tear down the other: otherwise a dead underlay leaves the
+        // in-flight heartbeat RPC blocked until heartbeat_timeout_ms (~15s),
+        // delaying Delete→Run and other console RPCs by the same amount.
         tokio::select! {
             _ = self.rpc.wait() => {}
             _ = self.wait_routines() => {}
         }
+        self.shutdown_tasks().await;
+        self.rpc.stop().await;
         self.clear_active_rpc_if_current();
     }
 

@@ -256,12 +256,24 @@ impl WebClientHooks for ManagedConfigServerClientHooks {
         Ok(())
     }
 
-    async fn post_remove_network_instances(&self, ids: &[Uuid]) -> Result<(), String> {
+    async fn post_remove_network_instances(
+        &self,
+        ids: &[Uuid],
+        keep_local_config: bool,
+    ) -> Result<(), String> {
+        // Always clear runtime tracking / sessions. Event name follows
+        // keep_local_config so Host apps do not treat Stop as Delete and
+        // wipe persisted config (see InstanceMutationHooks docs).
         let removed_ids = self.remove_tracked_instance_ids(ids)?;
         remove_data_plane_sessions_by_instance_ids(&removed_ids);
 
+        let event = if keep_local_config {
+            "stop_network_instance"
+        } else {
+            "delete_network_instance"
+        };
         for id in removed_ids {
-            if let Err(err) = self.emit_event("delete_network_instance", id) {
+            if let Err(err) = self.emit_event(event, id) {
                 self.note_callback_error(err);
             }
         }

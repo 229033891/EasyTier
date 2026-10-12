@@ -52,7 +52,8 @@ func TestApplicationInstanceIsReadOnlyToWebManagement(t *testing.T) {
 	response, err := host.manager.deleteNetworkInstances(
 		ctx,
 		&manage.DeleteNetworkInstanceRequest{
-			InstIds: []*common.UUID{entry.id},
+			InstIds:         []*common.UUID{entry.id},
+			KeepLocalConfig: false, // hard Delete
 		},
 	)
 	if err != nil {
@@ -277,7 +278,10 @@ func TestWebManagementRunsCollectsAndDeletesInstance(t *testing.T) {
 		host,
 		ctx,
 		deleteNetworkInstanceMethod,
-		&manage.DeleteNetworkInstanceRequest{InstIds: []*common.UUID{id}},
+		&manage.DeleteNetworkInstanceRequest{
+			InstIds:         []*common.UUID{id},
+			KeepLocalConfig: false, // hard Delete
+		},
 		"",
 		new(manage.DeleteNetworkInstanceResponse),
 	).(*manage.DeleteNetworkInstanceResponse)

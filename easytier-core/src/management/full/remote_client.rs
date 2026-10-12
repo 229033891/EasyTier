@@ -172,6 +172,7 @@ where
                 BaseController::default(),
                 DeleteNetworkInstanceRequest {
                     inst_ids: inst_ids.into_iter().map(|id| id.into()).collect(),
+                    keep_local_config: false,
                 },
             )
             .await?;
@@ -209,6 +210,7 @@ where
                     BaseController::default(),
                     DeleteNetworkInstanceRequest {
                         inst_ids: vec![inst_id.into()],
+                        keep_local_config: true,
                     },
                 )
                 .await?;

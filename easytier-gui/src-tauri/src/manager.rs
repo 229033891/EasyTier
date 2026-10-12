@@ -40,10 +40,14 @@ impl WebClientHooks for GuiHooks {
             .await
     }
 
-    async fn post_remove_network_instances(&self, ids: &[uuid::Uuid]) -> Result<(), String> {
+    async fn post_remove_network_instances(
+        &self,
+        ids: &[uuid::Uuid],
+        keep_local_config: bool,
+    ) -> Result<(), String> {
         let client_manager = get_client_manager!()?;
         client_manager
-            .post_remote_remove_network_instances_hook(&self.app, ids)
+            .post_remote_remove_network_instances_hook(&self.app, ids, keep_local_config)
             .await
     }
 }
@@ -181,6 +185,18 @@ impl GUIStorage {
             .collect();
         app.emit("save_enabled_networks", payload)?;
         Ok(())
+    }
+
+    /// Batch-disable: mutate all ids then a single `save_enabled_networks`.
+    pub(crate) fn disable_network_configs(
+        &self,
+        app: &AppHandle,
+        network_inst_ids: &[Uuid],
+    ) -> anyhow::Result<()> {
+        for network_inst_id in network_inst_ids {
+            self.enabled_networks.remove(network_inst_id);
+        }
+        self.save_enabled_networks(app)
     }
 
     fn save_config(
@@ -588,11 +604,19 @@ impl GUIClientManager {
         &self,
         app: &AppHandle,
         ids: &[uuid::Uuid],
+        keep_local_config: bool,
     ) -> Result<(), String> {
-        self.storage
-            .delete_network_configs(app.clone(), ids)
-            .await
-            .map_err(|e| e.to_string())?;
+        // keep_local_config semantics: InstanceMutationHooks / proto field.
+        if keep_local_config {
+            self.storage
+                .disable_network_configs(app, ids)
+                .map_err(|e| e.to_string())?;
+        } else {
+            self.storage
+                .delete_network_configs(app.clone(), ids)
+                .await
+                .map_err(|e| e.to_string())?;
+        }
         self.notify_vpn_stop_if_no_tun(app)?;
         Ok(())
     }

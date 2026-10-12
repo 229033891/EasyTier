@@ -1616,6 +1616,7 @@ virtual_ip = "10.82.0.2/24"
             async fn post_remove_network_instances(
                 &self,
                 _instance_ids: &[uuid::Uuid],
+                _keep_local_config: bool,
             ) -> Result<(), String> {
                 self.0.store(true, Ordering::Release);
                 Ok(())
@@ -1656,6 +1657,7 @@ virtual_ip = "10.82.0.2/24"
                 BaseController::default(),
                 DeleteNetworkInstanceRequest {
                     inst_ids: vec![instance_id.into()],
+                    keep_local_config: false,
                 },
             )
             .await
@@ -1800,12 +1802,166 @@ virtual_ip = "10.82.0.2/24"
                 BaseController::default(),
                 DeleteNetworkInstanceRequest {
                     inst_ids: vec![created],
+                    keep_local_config: false,
                 },
             )
             .await
             .unwrap();
         assert!(deleted.remain_inst_ids.is_empty());
         assert!(instances.instances().is_empty());
+    }
+
+    #[cfg(feature = "web-client")]
+    #[tokio::test]
+    async fn process_management_delete_keeps_or_purges_local_config_by_flag() {
+        use std::{
+            collections::HashMap,
+            path::{Path, PathBuf},
+            sync::Mutex as StdMutex,
+        };
+
+        use crate::{
+            config::toml::TomlConfig,
+            instance::manager::InstanceFactory,
+            management::{
+                ConfigFileControl, ConfigFilePermission, ConfigFileStorage, InstanceManager,
+                InstanceMutationHooks, ProcessManagementRpc,
+            },
+        };
+        use easytier_proto::{
+            api::manage::{DeleteNetworkInstanceRequest, WebClientService},
+            rpc_types::controller::BaseController,
+        };
+
+        struct ManagementTestFactory(Arc<CoreProcessRuntime>);
+
+        impl InstanceFactory for ManagementTestFactory {
+            type Instance = CoreInstance<TestHost>;
+            type CreateContext = ();
+            type Error = anyhow::Error;
+
+            fn create(
+                &self,
+                config: TomlConfig,
+                (): Self::CreateContext,
+            ) -> Result<Arc<Self::Instance>, Self::Error> {
+                let (packet_sink, _packet_receiver) = tokio::sync::mpsc::channel(16);
+                CoreInstance::from_toml(
+                    config,
+                    adapters_with_process_runtime(None, Arc::new(packet_sink), self.0.clone()),
+                )
+            }
+        }
+
+        impl crate::management::ProcessRuntimeProvider for ManagementTestFactory {
+            fn process_runtime(&self) -> Arc<CoreProcessRuntime> {
+                self.0.clone()
+            }
+        }
+
+        #[derive(Default)]
+        struct MemStorage {
+            files: StdMutex<HashMap<PathBuf, Vec<u8>>>,
+            removed: StdMutex<Vec<PathBuf>>,
+        }
+
+        #[async_trait]
+        impl ConfigFileStorage for MemStorage {
+            async fn inspect(&self, path: &Path) -> ConfigFileControl {
+                ConfigFileControl::new(
+                    Some(path.to_owned()),
+                    ConfigFilePermission::default(),
+                )
+            }
+
+            async fn read(&self, path: &Path) -> anyhow::Result<Option<Vec<u8>>> {
+                Ok(self.files.lock().unwrap().get(path).cloned())
+            }
+
+            async fn write(&self, path: &Path, contents: &[u8]) -> anyhow::Result<()> {
+                self.files
+                    .lock()
+                    .unwrap()
+                    .insert(path.to_owned(), contents.to_vec());
+                Ok(())
+            }
+
+            async fn remove(&self, path: &Path) -> anyhow::Result<()> {
+                self.files.lock().unwrap().remove(path);
+                self.removed.lock().unwrap().push(path.to_owned());
+                Ok(())
+            }
+        }
+
+        #[derive(Default)]
+        struct RecordingHooks {
+            keep_flags: StdMutex<Vec<bool>>,
+        }
+
+        #[async_trait]
+        impl InstanceMutationHooks for RecordingHooks {
+            async fn post_remove_network_instances(
+                &self,
+                _instance_ids: &[uuid::Uuid],
+                keep_local_config: bool,
+            ) -> Result<(), String> {
+                self.keep_flags.lock().unwrap().push(keep_local_config);
+                Ok(())
+            }
+        }
+
+        async fn run_one(
+            keep_local_config: bool,
+        ) -> (bool, Vec<PathBuf>, bool) {
+            let path = PathBuf::from(format!("keep-{keep_local_config}.toml"));
+            let storage = Arc::new(MemStorage::default());
+            storage
+                .write(&path, b"instance_name = \"t\"\n")
+                .await
+                .unwrap();
+            let hooks = Arc::new(RecordingHooks::default());
+            let instances = Arc::new(InstanceManager::new(
+                ManagementTestFactory(CoreProcessRuntime::new()),
+                Some(tokio::runtime::Handle::current()),
+            ));
+            let config = TomlConfig::default();
+            config.set_listeners(Vec::new());
+            let instance_id = config.get_id();
+            instances
+                .run_network_instance(
+                    config,
+                    ConfigFileControl::new(Some(path.clone()), ConfigFilePermission::default()),
+                )
+                .unwrap();
+            let rpc = ProcessManagementRpc::<ManagementTestFactory>::new(
+                instances.clone(),
+                hooks.clone(),
+                storage.clone(),
+            );
+            rpc.delete_network_instance(
+                BaseController::default(),
+                DeleteNetworkInstanceRequest {
+                    inst_ids: vec![instance_id.into()],
+                    keep_local_config,
+                },
+            )
+            .await
+            .unwrap();
+            let file_present = storage.read(&path).await.unwrap().is_some();
+            let removed = storage.removed.lock().unwrap().clone();
+            let keep_flag = hooks.keep_flags.lock().unwrap()[0];
+            (file_present, removed, keep_flag)
+        }
+
+        let (kept_present, kept_removed, kept_flag) = run_one(true).await;
+        assert!(kept_present);
+        assert!(kept_removed.is_empty());
+        assert!(kept_flag);
+
+        let (purged_present, purged_removed, purged_flag) = run_one(false).await;
+        assert!(!purged_present);
+        assert_eq!(purged_removed.len(), 1);
+        assert!(!purged_flag);
     }
 
     #[cfg(feature = "web-client")]
@@ -1994,6 +2150,7 @@ virtual_ip = "10.82.0.2/24"
             async fn post_remove_network_instances(
                 &self,
                 instance_ids: &[uuid::Uuid],
+                _keep_local_config: bool,
             ) -> Result<(), String> {
                 self.removed.lock().unwrap().push(instance_ids.to_vec());
                 self.entered.notify_one();
@@ -2189,6 +2346,70 @@ virtual_ip = "10.82.0.2/24"
         restart.set_network_config_source(Some(ConfigSource::Web));
         management
             .run_owned_network_instance(restart, ConfigFileControl::STATIC_CONFIG)
+            .await
+            .unwrap();
+        assert!(!instances.is_user_disabled_web_instance(web_id));
+    }
+
+    #[cfg(feature = "web-client")]
+    #[tokio::test]
+    async fn process_management_hard_delete_clears_user_disabled_marks() {
+        use crate::{
+            config::toml::{ConfigLoader as _, ConfigSource, TomlConfig},
+            instance::manager::InstanceFactory,
+            management::{
+                ConfigFileControl, InstanceManager, ProcessManagement, UnsupportedConfigFileStorage,
+            },
+        };
+
+        struct ManagementTestFactory(Arc<CoreProcessRuntime>);
+
+        impl InstanceFactory for ManagementTestFactory {
+            type Instance = CoreInstance<TestHost>;
+            type CreateContext = ();
+            type Error = anyhow::Error;
+
+            fn create(
+                &self,
+                config: TomlConfig,
+                (): Self::CreateContext,
+            ) -> Result<Arc<Self::Instance>, Self::Error> {
+                let (packet_sink, _packet_receiver) = tokio::sync::mpsc::channel(16);
+                CoreInstance::from_toml(
+                    config,
+                    adapters_with_process_runtime(None, Arc::new(packet_sink), self.0.clone()),
+                )
+            }
+        }
+
+        impl crate::management::ProcessRuntimeProvider for ManagementTestFactory {
+            fn process_runtime(&self) -> Arc<CoreProcessRuntime> {
+                self.0.clone()
+            }
+        }
+
+        let instances = Arc::new(InstanceManager::new(
+            ManagementTestFactory(CoreProcessRuntime::new()),
+            Some(tokio::runtime::Handle::current()),
+        ));
+        let web_config = TomlConfig::default();
+        web_config.set_listeners(Vec::new());
+        web_config.set_network_config_source(Some(ConfigSource::Web));
+        let web_id = web_config.get_id();
+        instances
+            .run_network_instance(web_config, ConfigFileControl::STATIC_CONFIG)
+            .unwrap();
+        // Simulate a stale disabled mark that must not survive hard Delete.
+        instances.mark_user_disabled_web_instance(web_id).await;
+        assert!(instances.is_user_disabled_web_instance(web_id));
+
+        let management = ProcessManagement::<ManagementTestFactory>::new(
+            instances.clone(),
+            Arc::new(()),
+            Arc::new(UnsupportedConfigFileStorage),
+        );
+        management
+            .delete_network_instances(vec![web_id], false)
             .await
             .unwrap();
         assert!(!instances.is_user_disabled_web_instance(web_id));
