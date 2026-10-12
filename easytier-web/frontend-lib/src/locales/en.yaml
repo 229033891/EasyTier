@@ -186,8 +186,6 @@ show_event_log: Show Event Log
 event_log: Event Log
 peer_info: Peer Info
 peer_info_rows_tip: '{peers} peers · {links} links'
-conn_role_primary: Primary
-conn_role_standby: Standby
 local_addr: Local Address
 peer_conn_history: Peer Connection History
 history_select_peer: Select peer
@@ -210,8 +208,7 @@ latency: Latency
 path_quality: Quality
 path_quality_help: |-
   Per-tunnel path score (lower is better: RTT + loss + jitter).
-  ★ is the active send path (default_conn); · is a hot standby for failover — not bandwidth aggregation.
-  Primary/Standby tags mark multiple links to the same peer.
+  The active send path (default_conn) is a bold row; other links to the same peer are hot standbys for failover — not bandwidth aggregation.
   Flows spread across same-quality-band tunnels only when Bonded Link Count > 1 and the cell shows bond; much worse paths stay standby-only.
   `!` means loss exceeded the fuse.
 upload_bytes: Upload

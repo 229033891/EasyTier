@@ -157,6 +157,12 @@ function rowPathQualityTip(row: PeerConnTableRow) {
   return connPathQualityTip(row.conn, row.isDefault)
 }
 
+/** Peer zebra + bold every default send path (default_conn), including single-link peers. */
+function peerConnRowClass(row: PeerConnTableRow) {
+  const stripe = row.peerStripe === 1 ? 'peer-stripe-odd' : 'peer-stripe-even'
+  return row.isDefault ? `${stripe} peer-row-default` : stripe
+}
+
 function routeCostDisplay(info: PeerRoutePair) {
   const me = props.curNetworkInst?.detail?.my_node_info
   const path = resolveRoutePath(info, {
@@ -678,15 +684,18 @@ const eventLogContent = computed(() => {
             </div>
           </template>
           <div class="peer-table-scroll status-panel-body">
-          <DataTable :value="peerConnRows" data-key="key" column-resize-mode="expand" table-class="peer-route-table">
+          <DataTable
+            :value="peerConnRows"
+            data-key="key"
+            column-resize-mode="expand"
+            table-class="peer-route-table"
+            :rowClass="peerConnRowClass"
+          >
             <Column :field="rowIpFormat" :header="t('virtual_ipv4')" />
             <Column :header="t('hostname')">
               <template #body="slotProps">
                 <div class="space-x-1">
-                  <Tag v-if="slotProps.data.connCount > 1 && slotProps.data.isDefault"
-                    severity="success" :value="t('conn_role_primary')" />
-                  <Tag v-else-if="slotProps.data.connCount > 1"
-                    severity="secondary" :value="t('conn_role_standby')" />
+                  <!-- Default send path: whole-row bold via peer-row-default. -->
                   <span
                     v-if="!slotProps.data.pair.route.cost || !isPublicServerRoute(slotProps.data.pair)"
                     v-tooltip.top="slotProps.data.pair.route.hostname"
@@ -1257,6 +1266,22 @@ const eventLogContent = computed(() => {
   padding: 0.35rem 0.6rem !important;
   font-size: var(--et-fs-body, 0.875rem);
   color: var(--text-color, #1e293b);
+}
+
+/* Peer-grouped zebra: multi-link rows of one peer share the same shade. */
+.peer-table-scroll :deep(.p-datatable-tbody > tr.peer-stripe-even > td) {
+  background: transparent;
+}
+.peer-table-scroll :deep(.p-datatable-tbody > tr.peer-stripe-odd > td) {
+  background: color-mix(in srgb, var(--text-color, #1e293b) 4.5%, var(--surface-ground, #ffffff));
+}
+.peer-table-scroll :deep(.p-datatable-tbody > tr.peer-stripe-even:hover > td),
+.peer-table-scroll :deep(.p-datatable-tbody > tr.peer-stripe-odd:hover > td) {
+  background: color-mix(in srgb, var(--text-color, #1e293b) 8%, var(--surface-ground, #ffffff));
+}
+/* Active send path (default_conn): emphasize the whole row instead of ★. */
+.peer-table-scroll :deep(.p-datatable-tbody > tr.peer-row-default > td) {
+  font-weight: 600;
 }
 
 .peer-addr-cell,

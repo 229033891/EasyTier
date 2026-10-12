@@ -64,7 +64,7 @@
 
 ### 2.1.1 Web / GUI 状态表（今日）
 
-- 节点信息表对 **每条直连 PeerConn 一行**（`flattenPeerConnRows`）：协议、本端/对端地址、RTT、抖动、丢包、质量分、上下行按链路展示；同 peer 多链路标「主/备」，质量分 `★`=`default_conn`。
+- 节点信息表对 **每条直连 PeerConn 一行**（`flattenPeerConnRows`）：协议、本端/对端地址、RTT、抖动、丢包、质量分、上下行按链路展示；`default_conn` 整行加粗；同 peer 多行共用灰白斑马底色分组。
 - 本机行与无直连隧道的中转 peer 仍各占一行。
 - Web「对端连接历史」另有延迟 / **丢包** / **抖动** / 流量趋势（按 peer 聚合采样，非 per-conn）；仅配置服务器形态有库表。详情见 Archive 文。
 - Web 状态页 `CollectNetworkInfo` 约 **2s** 一轮（配置模式跳过 info、列表约 6s）；历史采样优先按 heartbeat 运行中实例定向 collect，减轻与配置/心跳的隧道争用（见 Archive §6）。

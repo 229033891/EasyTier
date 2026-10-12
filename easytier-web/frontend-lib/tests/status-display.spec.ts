@@ -169,8 +169,8 @@ describe('status display helpers', () => {
     ]
     const pair = peerRoutePairWithDefaultConn(conns, defaultConnId)
     expect(pathQualityCell(pair)).toBe('0.042 · +1')
-    expect(pathQualityTip(pair)).toContain('★ udp score=0.042')
-    expect(pathQualityTip(pair)).toContain('· tcp score=0.100')
+    expect(pathQualityTip(pair)).toContain('default udp score=0.042')
+    expect(pathQualityTip(pair)).toContain('standby tcp score=0.100')
   })
 
   it('marks fused default_conn in the quality cell', () => {
@@ -214,8 +214,8 @@ describe('status display helpers', () => {
     ]
     const pair = peerRoutePairWithDefaultConn(conns, defaultConnId)
     expect(pathQualityCell(pair)).toBe('0.042 · +1 · bond×2')
-    expect(pathQualityTip(pair)).toContain('★ udp score=0.042 rtt=9ms jitter=1ms loss=2% bond(udp)')
-    expect(pathQualityTip(pair)).toContain('· tcp score=0.100 rtt=2ms jitter=1ms loss=1% bond(tcp)')
+    expect(pathQualityTip(pair)).toContain('default udp score=0.042 rtt=9ms jitter=1ms loss=2% bond(udp)')
+    expect(pathQualityTip(pair)).toContain('standby tcp score=0.100 rtt=2ms jitter=1ms loss=1% bond(tcp)')
   })
 
   it('omits bond marks when backend does not flag members', () => {
@@ -243,6 +243,19 @@ describe('flattenPeerConnRows', () => {
     expect(rows).toHaveLength(2)
     expect(rows[0].conn).toBeUndefined()
     expect(rows[1].connCount).toBe(0)
+    for (const row of rows) {
+      expect([0, 1]).toContain(row.peerStripe)
+    }
+  })
+
+  it('keys peer stripe by peer id, not by position', () => {
+    const peerA = { ...peerRoutePair([]), peer: { peer_id: 'peer-a', conns: [] } } as any
+    const peerB = { ...peerRoutePair([]), peer: { peer_id: 'peer-b', conns: [] } } as any
+    const forward = flattenPeerConnRows([peerA, peerB])
+    const backward = flattenPeerConnRows([peerB, peerA])
+    // Same peer keeps its stripe after a backend reorder between polls.
+    expect(backward[0].peerStripe).toBe(forward[1].peerStripe)
+    expect(backward[1].peerStripe).toBe(forward[0].peerStripe)
   })
 
   it('expands multi-conn peers to one row per tunnel', () => {
@@ -276,12 +289,14 @@ describe('flattenPeerConnRows', () => {
     expect(rows).toHaveLength(2)
     expect(rows[0].isDefault).toBe(true)
     expect(rows[0].connCount).toBe(2)
+    expect([0, 1]).toContain(rows[0].peerStripe)
+    expect(rows[1].peerStripe).toBe(rows[0].peerStripe)
     expect(connLatencyMs(rows[0].conn)).toBe('9ms')
     expect(connRemoteAddr(rows[0].conn)).toBe('1.2.3.4:11010')
     expect(connLocalAddr(rows[0].conn)).toBe('192.168.1.2:11010')
-    expect(connPathQualityCell(rows[0].conn, true)).toBe('★ 0.042')
+    expect(connPathQualityCell(rows[0].conn, true)).toBe('0.042')
     expect(rows[1].isDefault).toBe(false)
-    expect(connPathQualityCell(rows[1].conn, false)).toBe('· 0.100')
+    expect(connPathQualityCell(rows[1].conn, false)).toBe('0.100')
   })
 
   it('connLossRate treats omitted loss_rate as 0% (protobuf JSON omit-zero)', () => {
@@ -301,7 +316,7 @@ describe('flattenPeerConnRows', () => {
       bond_class: 'udp',
     } as any
     expect(connPathQualityTip(conn, true)).toBe(
-      '★ udp score=0.042 rtt=9ms jitter=1ms loss=2% bond(udp)',
+      'default udp score=0.042 rtt=9ms jitter=1ms loss=2% bond(udp)',
     )
   })
 

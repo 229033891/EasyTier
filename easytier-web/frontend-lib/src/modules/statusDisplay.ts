@@ -480,7 +480,7 @@ export function pathQualityTip(info: PeerRoutePair): string {
     const jit = line.jitterMs === undefined ? '—' : `${line.jitterMs}ms`
     const loss = line.lossPct === undefined ? '—' : `${line.lossPct}%`
     return formatPathQualityTipLine({
-      role: line.isDefault ? '★' : '·',
+      role: line.isDefault ? 'default' : 'standby',
       proto: line.proto,
       score,
       latency: lat,
@@ -500,6 +500,20 @@ export type PeerConnTableRow = {
   isDefault: boolean
   connIndex: number
   connCount: number
+  /** 0/1 zebra by peer (same peer → same stripe; keyed by peer id so poll reorder doesn't flicker). */
+  peerStripe: 0 | 1
+}
+
+/**
+ * Stable 0/1 stripe per peer key (djb2). Keyed by id, not position, so a
+ * backend reorder between polls doesn't flip the zebra.
+ */
+function peerStripeForKey(peerKey: string): 0 | 1 {
+  let hash = 5381
+  for (let i = 0; i < peerKey.length; i++) {
+    hash = ((hash << 5) + hash + peerKey.charCodeAt(i)) | 0
+  }
+  return (Math.abs(hash) % 2) as 0 | 1
 }
 
 /**
@@ -514,6 +528,7 @@ export function flattenPeerConnRows(pairs: PeerRoutePair[]): PeerConnTableRow[] 
     const conns = defaultConnFirst(pair)
     const preferId = defaultConnId(pair)
     const peerKey = pair.peer?.peer_id ?? pair.route?.peer_id ?? `idx-${pi}`
+    const peerStripe = peerStripeForKey(peerKey)
 
     if (!conns.length) {
       rows.push({
@@ -523,6 +538,7 @@ export function flattenPeerConnRows(pairs: PeerRoutePair[]): PeerConnTableRow[] 
         isDefault: false,
         connIndex: 0,
         connCount: 0,
+        peerStripe,
       })
       continue
     }
@@ -538,6 +554,7 @@ export function flattenPeerConnRows(pairs: PeerRoutePair[]): PeerConnTableRow[] 
         isDefault,
         connIndex: i,
         connCount: conns.length,
+        peerStripe,
       })
     })
   }
@@ -571,19 +588,19 @@ export function connLocalAddr(conn?: PeerConnInfo): string {
   return formatTunnelHostPort(conn?.tunnel?.local_addr?.url)
 }
 
-/** Single-conn quality cell for flattened rows (★ / bond / fuse). */
-export function connPathQualityCell(conn?: PeerConnInfo, isDefault = false): string {
+/** Single-conn quality cell for flattened rows (score / bond / fuse).
+ * Default vs standby is shown by whole-row bold (`peer-row-default`), not ★/·. */
+export function connPathQualityCell(conn?: PeerConnInfo, _isDefault = false): string {
   if (!conn)
     return ''
   const score = typeof conn.quality_score === 'number' && Number.isFinite(conn.quality_score)
     ? conn.quality_score.toFixed(3)
     : '—'
   const fused = conn.quality_fused ? '!' : ''
-  const role = isDefault ? '★ ' : '· '
   const bond = conn.in_bond_set
     ? (conn.bond_class?.trim() ? ` · bond(${conn.bond_class.trim()})` : ' · bond')
     : ''
-  return `${role}${score}${fused}${bond}`
+  return `${score}${fused}${bond}`
 }
 
 export function connPathQualityTip(conn?: PeerConnInfo, isDefault = false): string {
@@ -593,7 +610,7 @@ export function connPathQualityTip(conn?: PeerConnInfo, isDefault = false): stri
     ? conn.quality_score.toFixed(3)
     : '—'
   return formatPathQualityTipLine({
-    role: isDefault ? '★' : '·',
+    role: isDefault ? 'default' : 'standby',
     proto: oneConnProto(conn.tunnel),
     score,
     latency: connLatencyMs(conn) || '—',
