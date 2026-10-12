@@ -11,6 +11,13 @@ export interface ValidateConfigResponse {
 export interface ListNetworkInstanceIdResponse {
     running_inst_ids: Array<UUID>,
     disabled_inst_ids: Array<UUID>,
+    /**
+     * All storage-backed ids for this machine (console SQLite / GUIStorage).
+     * Present on servers that support residual detection; omit → leave residual UI off.
+     */
+    db_inst_ids?: Array<UUID>,
+    /** Storage rows with disabled=true (may still be running). */
+    db_disabled_inst_ids?: Array<UUID>,
 }
 
 export interface GenerateConfigResponse {

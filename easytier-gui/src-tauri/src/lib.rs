@@ -1109,6 +1109,11 @@ struct ConfigServerStatusDto {
     connected: bool,
     last_error: String,
     connecting_detail: String,
+    /// True after a heartbeat that carried console Web-owned ids (W).
+    web_owned_instance_ids_valid: bool,
+    /// Console SQLite Web-source instance ids (enabled+disabled). Empty when
+    /// valid and the console has no web rows.
+    web_owned_instance_ids: Vec<String>,
 }
 
 #[tauri::command]
@@ -1128,11 +1133,20 @@ async fn get_config_server_status(app: AppHandle) -> Result<ConfigServerStatusDt
         } else {
             status.connecting_detail.unwrap_or_default()
         };
+        // W is only authoritative while connected *and* a heartbeat filled it.
+        // After disconnect / before first heartbeat, valid=false (do not prune).
+        let web_owned = if connected {
+            client.web_owned_instance_ids()
+        } else {
+            None
+        };
         return Ok(ConfigServerStatusDto {
             enabled: true,
             connected,
             last_error,
             connecting_detail,
+            web_owned_instance_ids_valid: web_owned.is_some(),
+            web_owned_instance_ids: web_owned.unwrap_or_default(),
         });
     }
 
@@ -1158,11 +1172,22 @@ async fn get_config_server_status(app: AppHandle) -> Result<ConfigServerStatusDt
     } else {
         response.connecting_detail
     };
+    // Defense in depth: never expose W as valid while disconnected.
+    let (web_valid, web_ids) = if response.connected {
+        (
+            response.web_owned_instance_ids_valid,
+            response.web_owned_instance_ids,
+        )
+    } else {
+        (false, Vec::new())
+    };
     Ok(ConfigServerStatusDto {
         enabled: response.enabled,
         connected: response.connected,
         last_error,
         connecting_detail,
+        web_owned_instance_ids_valid: web_valid,
+        web_owned_instance_ids: web_ids,
     })
 }
 

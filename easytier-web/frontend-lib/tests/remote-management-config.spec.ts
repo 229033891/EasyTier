@@ -435,6 +435,52 @@ describe('RemoteManagement config vs run pages', () => {
       wrapper.unmount()
     }
   })
+
+  it('P2: Save pending+disabled while running auto-Starts to align', async () => {
+    const config = makeFlagConfig()
+    const api = makeApi({ config, disabled: false, running: true, source: 2 })
+    api.save_config = vi.fn(async () => ({ action: 'pending', reason: 'disabled' }))
+    const wrapper = await mountRemote(api)
+
+    try {
+      await enterCombinedConfig(wrapper)
+      networkConfigRef(wrapper).network_name = 'changed-name'
+      await nextTick()
+      await flushPromises()
+
+      const saveButton = wrapper.find('button[data-label="web.device_management.save_config"]')
+      expect(saveButton.exists()).toBe(true)
+      await saveButton.trigger('click')
+      await settleRemoteManagement()
+
+      expect(api.save_config).toHaveBeenCalledOnce()
+      expect(api.update_network_instance_state).toHaveBeenCalledWith(INSTANCE_ID, false)
+    } finally {
+      wrapper.unmount()
+    }
+  })
+
+  it('P2: Save pending+disabled when stopped does not Start', async () => {
+    const config = makeFlagConfig()
+    const api = makeApi({ config, disabled: true, running: false, source: 2 })
+    api.save_config = vi.fn(async () => ({ action: 'pending', reason: 'disabled' }))
+    const wrapper = await mountRemote(api)
+
+    try {
+      await enterCombinedConfig(wrapper)
+      networkConfigRef(wrapper).network_name = 'changed-name'
+      await nextTick()
+      await flushPromises()
+
+      await wrapper.find('button[data-label="web.device_management.save_config"]').trigger('click')
+      await settleRemoteManagement()
+
+      expect(api.save_config).toHaveBeenCalledOnce()
+      expect(api.update_network_instance_state).not.toHaveBeenCalled()
+    } finally {
+      wrapper.unmount()
+    }
+  })
 })
 
 describe('RemoteManagement delete authority', () => {
@@ -504,6 +550,45 @@ describe('RemoteManagement delete authority', () => {
       expect(confirmRequire).toHaveBeenCalled()
       const arg = confirmRequire.mock.calls[0][0] as { message: string }
       expect(arg.message).toBe('web.device_management.confirm_delete_network')
+    } finally {
+      wrapper.unmount()
+    }
+  })
+
+  it('P0-2: delete rpc_timeout offers retry confirm that re-invokes delete', async () => {
+    confirmRequire.mockClear()
+    const config = makeFlagConfig()
+    const api = makeApi({ config, source: 2 })
+    api.delete_network = vi.fn()
+      .mockRejectedValueOnce({
+        response: { data: { message: 'Timeout(Elapsed(()))', code: 'rpc_timeout' } },
+      })
+      .mockResolvedValueOnce(undefined)
+    const wrapper = await mountRemote(api, { hostSurface: 'web-console' })
+    try {
+      await enterCombinedConfig(wrapper)
+      const btn = wrapper.find('button[data-label="web.device_management.delete_network"]')
+      await btn.trigger('click')
+      await flushPromises()
+
+      // First confirm: delete
+      expect(confirmRequire).toHaveBeenCalled()
+      const first = confirmRequire.mock.calls[0][0] as { accept: () => void, header: string }
+      expect(first.header).toBe('web.device_management.confirm_delete_network_header')
+      first.accept()
+      await settleRemoteManagement()
+
+      expect(api.delete_network).toHaveBeenCalledOnce()
+      // Second confirm: retry after failure
+      expect(confirmRequire.mock.calls.length).toBeGreaterThanOrEqual(2)
+      const retry = confirmRequire.mock.calls[confirmRequire.mock.calls.length - 1][0] as {
+        header: string
+        accept: () => void
+      }
+      expect(retry.header).toBe('web.device_management.confirm_delete_retry_header')
+      retry.accept()
+      await settleRemoteManagement()
+      expect(api.delete_network).toHaveBeenCalledTimes(2)
     } finally {
       wrapper.unmount()
     }

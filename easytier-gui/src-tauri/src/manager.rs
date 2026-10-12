@@ -129,6 +129,8 @@ pub(crate) struct GUIConfig {
     inst_id: String,
     pub(crate) config: NetworkConfig,
     source: PersistedConfigSource,
+    /// Mirrored from `enabled_networks` when listing; not persisted.
+    disabled: bool,
 }
 
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
@@ -144,6 +146,7 @@ impl GUIConfig {
             inst_id,
             config,
             source,
+            disabled: false,
         }
     }
 
@@ -164,6 +167,9 @@ impl PersistentConfig<anyhow::Error> for GUIConfig {
     }
     fn get_network_config_source(&self) -> ConfigSource {
         self.source.to_runtime_source()
+    }
+    fn is_disabled(&self) -> bool {
+        self.disabled
     }
 }
 
@@ -304,18 +310,21 @@ impl Storage<AppHandle, GUIConfig, anyhow::Error> for GUIStorage {
         let mut ret = Vec::new();
         for entry in self.network_configs.iter() {
             let id: Uuid = entry.key().to_owned();
+            let enabled = self.enabled_networks.contains(&id);
+            let mut cfg = entry.value().clone();
+            cfg.disabled = !enabled;
             match props {
                 ListNetworkProps::All => {
-                    ret.push(entry.value().clone());
+                    ret.push(cfg);
                 }
                 ListNetworkProps::EnabledOnly => {
-                    if self.enabled_networks.contains(&id) {
-                        ret.push(entry.value().clone());
+                    if enabled {
+                        ret.push(cfg);
                     }
                 }
                 ListNetworkProps::DisabledOnly => {
-                    if !self.enabled_networks.contains(&id) {
-                        ret.push(entry.value().clone());
+                    if !enabled {
+                        ret.push(cfg);
                     }
                 }
             }

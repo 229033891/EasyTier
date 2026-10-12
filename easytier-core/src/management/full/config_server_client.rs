@@ -163,6 +163,15 @@ pub trait ConfigServerReportClient: Send + Sync {
     /// Persist cached `managed_config_revision` after local configs converged
     /// (boot gate / reconcile apply). Default: no-op.
     fn persist_cached_revision(&self) {}
+
+    /// Console Web-owned instance ids (W) from the last valid heartbeat of the
+    /// *current* session. `None` until a heartbeat with
+    /// `web_owned_instance_ids_valid`, after disconnect, or when this client
+    /// does not track W. Empty `Some(vec![])` means the console has no web
+    /// rows — safe to prune all GUI `web` cache entries.
+    fn web_owned_instance_ids(&self) -> Option<Vec<String>> {
+        None
+    }
 }
 
 static REPORT_CLIENT: RwLock<Option<Arc<dyn ConfigServerReportClient>>> = RwLock::new(None);

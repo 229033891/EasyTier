@@ -420,6 +420,9 @@ struct WebClientController {
     backend: Arc<dyn WebClientBackend>,
     runtime_id: uuid::Uuid,
     managed_config_revision: StdMutex<Option<String>>,
+    /// Console Web-owned ids (W) after a heartbeat with
+    /// `web_owned_instance_ids_valid`; `None` until then.
+    web_owned_instance_ids: StdMutex<Option<Vec<uuid::Uuid>>>,
     active_rpc: StdMutex<Option<Arc<BidirectRpcManager>>>,
     /// Bumped when a local report updates the revision cache so in-flight
     /// heartbeats cannot clobber a fresher CAS result.
@@ -566,6 +569,30 @@ impl WebClientController {
         }
     }
 
+    /// Cache console Web-owned ids when the server marks the list valid.
+    fn store_heartbeat_web_owned_instance_ids(
+        &self,
+        valid: bool,
+        ids: impl IntoIterator<Item = uuid::Uuid>,
+    ) {
+        if !valid {
+            return;
+        }
+        *lock_mutex(&self.web_owned_instance_ids) = Some(ids.into_iter().collect());
+    }
+
+    /// Drop cached W so reconnect cannot prune from a prior session's list
+    /// (config-server / token switch, or deletes while offline).
+    fn clear_web_owned_instance_ids(&self) {
+        *lock_mutex(&self.web_owned_instance_ids) = None;
+    }
+
+    fn cached_web_owned_instance_ids(&self) -> Option<Vec<String>> {
+        lock_mutex(&self.web_owned_instance_ids)
+            .as_ref()
+            .map(|ids| ids.iter().map(ToString::to_string).collect())
+    }
+
     fn persist_cached_revision(&self) {
         let revision = self.cached_revision();
         self.persist_revision_unlocked(revision.as_deref());
@@ -668,6 +695,7 @@ impl<F> WebClient<F> {
             backend,
             runtime_id: uuid::Uuid::new_v4(),
             managed_config_revision: StdMutex::new(None),
+            web_owned_instance_ids: StdMutex::new(None),
             active_rpc: StdMutex::new(None),
             revision_generation: std::sync::atomic::AtomicU64::new(0),
             pending_report: StdMutex::new(std::collections::HashMap::new()),
@@ -765,6 +793,10 @@ impl config_server_client::ConfigServerReportClient for WebClientReportFacade {
 
     fn persist_cached_revision(&self) {
         self.controller.persist_cached_revision();
+    }
+
+    fn web_owned_instance_ids(&self) -> Option<Vec<String>> {
+        self.controller.cached_web_owned_instance_ids()
     }
 
     async fn report_network_config(
@@ -954,6 +986,9 @@ async fn web_client_routine(
             };
             config_server_status::record_tunnel_remote(connection.info().as_ref());
             let mut session = WebClientSession::new(connection, controller.clone());
+            // Invalidate prior-session W before advertising connected — otherwise
+            // GetConfigServerStatus can prune GUI cache from a stale keep-set.
+            controller.clear_web_owned_instance_ids();
             connected.store(true, Ordering::Release);
             config_server_status::mark_connected();
             tracing::info!("connected to config server (secure tunnel)");
@@ -961,6 +996,7 @@ async fn web_client_routine(
             session.start_heartbeat().await;
             session.wait().await;
             connected.store(false, Ordering::Release);
+            controller.clear_web_owned_instance_ids();
             config_server_status::mark_disconnected();
             // Successful session ended (server close / network drop). Back off
             // with mild escalation + jitter before hot-reconnecting.
@@ -1000,6 +1036,9 @@ async fn web_client_routine(
             continue;
         }
 
+        // Invalidate prior-session W before advertising connected — otherwise
+        // GetConfigServerStatus can prune GUI cache from a stale keep-set.
+        controller.clear_web_owned_instance_ids();
         connected.store(true, Ordering::Release);
         config_server_status::mark_connected();
         // Session is up: this is the point where dial-failure exponential backoff resets.
@@ -1009,6 +1048,7 @@ async fn web_client_routine(
         session.start_heartbeat().await;
         session.wait().await;
         connected.store(false, Ordering::Release);
+        controller.clear_web_owned_instance_ids();
         config_server_status::mark_disconnected();
         let delay = note_session_end(&mut session_end_streak, session_started.elapsed());
         tracing::info!(
@@ -1177,6 +1217,14 @@ impl WebClientSession {
                         controller.store_heartbeat_revision(
                             revision_generation,
                             response.managed_config_revision.clone(),
+                        );
+                        controller.store_heartbeat_web_owned_instance_ids(
+                            response.web_owned_instance_ids_valid,
+                            response
+                                .web_owned_instance_ids
+                                .iter()
+                                .copied()
+                                .map(uuid::Uuid::from),
                         );
                         controller.mark_first_heartbeat_seen();
                         let (next_policy, adjusted) = HeartbeatPolicy::from_response(&response);
@@ -1585,6 +1633,7 @@ mod tests {
             heartbeat_interval_ms: Some(1),
             heartbeat_timeout_ms: Some(1),
             managed_config_revision: None,
+            ..Default::default()
         });
         assert!(adjusted);
         assert_eq!(
@@ -1597,6 +1646,7 @@ mod tests {
             heartbeat_interval_ms: Some(u32::MAX),
             heartbeat_timeout_ms: Some(u32::MAX),
             managed_config_revision: None,
+            ..Default::default()
         });
         assert!(adjusted);
         assert_eq!(
@@ -1609,6 +1659,7 @@ mod tests {
             heartbeat_interval_ms: Some(60_000),
             heartbeat_timeout_ms: Some(5_000),
             managed_config_revision: None,
+            ..Default::default()
         });
         assert!(adjusted);
         assert_eq!(margin.timeout_ms, 65_000);
@@ -1628,6 +1679,7 @@ mod tests {
             backend: Arc::new(ImmediateStateChangeBackend),
             runtime_id: uuid::Uuid::new_v4(),
             managed_config_revision: StdMutex::new(None),
+            web_owned_instance_ids: StdMutex::new(None),
             active_rpc: StdMutex::new(None),
             revision_generation: std::sync::atomic::AtomicU64::new(0),
             pending_report: StdMutex::new(std::collections::HashMap::new()),
@@ -1654,6 +1706,28 @@ mod tests {
             controller.cached_revision().as_deref(),
             Some("rev-from-heartbeat")
         );
+    }
+
+    #[test]
+    fn web_owned_instance_ids_clear_on_session_boundary() {
+        let controller = test_controller();
+        let id = uuid::Uuid::new_v4();
+        controller.store_heartbeat_web_owned_instance_ids(true, [id]);
+        assert_eq!(
+            controller.cached_web_owned_instance_ids(),
+            Some(vec![id.to_string()])
+        );
+        // invalid=false must not clobber a prior keep-set mid-session
+        controller.store_heartbeat_web_owned_instance_ids(false, []);
+        assert_eq!(
+            controller.cached_web_owned_instance_ids(),
+            Some(vec![id.to_string()])
+        );
+        controller.clear_web_owned_instance_ids();
+        assert_eq!(controller.cached_web_owned_instance_ids(), None);
+        // empty-but-valid W is authoritative (prune all web cache)
+        controller.store_heartbeat_web_owned_instance_ids(true, []);
+        assert_eq!(controller.cached_web_owned_instance_ids(), Some(vec![]));
     }
 
     #[test]

@@ -957,6 +957,19 @@ web:
     delete_network_tip: Permanently delete this network config from the device
     delete_managed_by_console: Managed by the console — delete it there
     confirm_delete_user_source: This network is a device-local (User) config. Deleting it also removes the local copy on the device. Continue?
+    residual_device_only: Device-only residual
+    residual_db_disabled_running: DB disabled, still running
+    residual_device_only_hint: This instance is on the device but has no console DB row. Clear the device copy, take it over into the console, or ignore for now.
+    residual_db_disabled_running_hint: The console row is disabled but the device is still running it. Stop the device copy, start to realign, or ignore for now.
+    clear_device_copy: Clear device copy
+    clear_device_copy_tip: Clear the device-side copy; hard-delete when missing from DB, or stop only when the DB row is already disabled
+    takeover_to_console: Take over to console
+    takeover_to_console_tip: Save into the console when device-only; Start to realign when DB is disabled but still running
+    ignore_residual: Ignore
+    ignore_residual_tip: Hide this residual tip on this machine (persists until local storage is cleared)
+    confirm_clear_web_residual: Hard-clear this Web-source residual from the device. Continue?
+    confirm_clear_former_web_ghost: The console no longer has this Web config, but the local cache is labeled User/legacy while the device still reports Web source. Clear this local residual copy? (Pure local drafts are never deleted automatically.)
+    clear_former_web_ghost_header: Clear console-deleted local residual
     network: Network
     select_network: Select Network
     create_network: Create Network
@@ -979,6 +992,8 @@ web:
     save_ok_rebuilt: Saved; instance will rebuild (may briefly disconnect)
     save_ok_pending: Saved; syncing
     save_ok_pending_disabled: Saved (still disabled — start to apply)
+    save_ok_pending_disabled_still_running: Saved as disabled but the device is still running; auto-start to align failed
+    save_ok_aligned_start: Saved and auto-started so console enabled state matches the device
     save_ok_pending_offline: Saved (device offline — syncs when online)
     save_ok_pending_prepare_timeout: Saved; syncing (could not confirm hot-update path yet)
     start_failed: Failed to start network
@@ -1024,14 +1039,15 @@ web:
     switch_to_status: Back to Run
     switch_to_status_tip: Return to the run page to view status or start/stop the network
     confirm_rerun_network: This will force-overwrite the device's local config, rebuild the running instance from the current draft, and briefly disconnect. Continue?
-    confirm_start_overwrite: Starting writes the console-saved config to the device (may overwrite local device config). This is not only waking an existing instance. If the instance is already healthy with a matching revision, the server skips the overwrite. Start anyway?
     confirm_discard_on_switch: You have unsaved changes. Switching networks will discard them. Continue?
     confirm_delete_network: Delete this network? This cannot be undone.
     confirm_delete_network_header: Delete Network
+    confirm_delete_retry_header: Delete failed — retry
+    delete_failed_retry_hint: The console row is still present (the device copy may not have been cleared). Retry delete later; do not assume the console is gone while the device still has it.
     disable_network: Disable Network
     disable_network_tip: Stop and disable the currently running network
     start_network: Start Network
-    start_network_tip: Start with the console-saved config; may overwrite local device config (console is authoritative for web-owned)
+    start_network_tip: Start with the console-saved config (not a soft wake); may overwrite local device config (console is authoritative for web-owned)
     toolbar_config_files: Config Files
     toolbar_network: Network
     toolbar_danger: Danger

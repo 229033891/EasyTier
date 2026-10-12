@@ -30,14 +30,13 @@ describe('configDirtySnapshot', () => {
     expect(isConfigSnapshotDirty(config, snapshot)).toBe(true)
   })
 
-  it('ignores dev_name changes', () => {
+  it('flags dev_name (TUN interface name) changes as dirty', () => {
     const { config, snapshot } = captureNormalizedDirtySnapshot(
       baseConfig({ dev_name: '' }),
     )
     config.dev_name = 'et0'
-    expect(CONFIG_DIRTY_IGNORE_FIELDS).toContain('dev_name')
-    expect(isConfigSnapshotDirty(config, snapshot)).toBe(false)
-    expect(configDirtySnapshot(config)).toBe(snapshot)
+    expect(CONFIG_DIRTY_IGNORE_FIELDS).not.toContain('dev_name')
+    expect(isConfigSnapshotDirty(config, snapshot)).toBe(true)
   })
 
   it('fail-dirties when snapshot serialization throws', () => {

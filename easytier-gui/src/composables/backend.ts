@@ -1,7 +1,8 @@
 import type { Api } from 'easytier-frontend-lib'
 import { invoke } from '@tauri-apps/api/core'
 import { NetworkTypes } from 'easytier-frontend-lib'
-import { type ConfigSource, normalizeConfigSource } from './config_source'
+import { normalizeConfigSource } from './config_source'
+import { pruneAbsentWebConfigs, type StoredGuiConfig } from './prune_web_configs'
 
 type NetworkConfig = NetworkTypes.NetworkConfig
 type ValidateConfigResponse = Api.ValidateConfigResponse
@@ -18,12 +19,7 @@ interface ServiceOptions {
 
 export type ServiceStatus = 'Running' | 'Stopped' | 'NotInstalled'
 
-interface StoredGuiConfig {
-  config: NetworkConfig
-  source: ConfigSource
-}
-
-function parseStoredConfigs(raw: string | null): StoredGuiConfig[] {
+export function parseStoredConfigs(raw: string | null): StoredGuiConfig[] {
   let parsed: unknown
   try {
     parsed = JSON.parse(raw || '[]')
@@ -184,8 +180,28 @@ export async function getConfig(instanceId: string) {
   return NetworkTypes.normalizeNetworkConfig(config)
 }
 
-export async function sendConfigs(enabledNetworks: string[]) {
-  const networkList = parseStoredConfigs(localStorage.getItem('networkList'))
+export interface SendConfigsOptions {
+  /**
+   * Console Web-owned instance ids (**W**: all `source==web` rows for this
+   * machine, including disabled). When set, GUI `localStorage` web rows absent
+   * from W are dropped before `load_configs`. Omit when W is unknown (fail-safe:
+   * do not prune). See `docs/roadmap/local-config-residue.md` §4.1.
+   */
+  consoleWebOwnedInstanceIds?: string[]
+}
+
+export async function sendConfigs(
+  enabledNetworks: string[],
+  options?: SendConfigsOptions,
+) {
+  let networkList = parseStoredConfigs(localStorage.getItem('networkList'))
+  if (options?.consoleWebOwnedInstanceIds) {
+    const pruned = pruneAbsentWebConfigs(networkList, options.consoleWebOwnedInstanceIds)
+    if (pruned.length !== networkList.length) {
+      networkList = pruned
+      localStorage.setItem('networkList', JSON.stringify(networkList))
+    }
+  }
   return await invoke('load_configs', {
     configs: networkList.map(({ config, source }) => ({
       config: NetworkTypes.toBackendNetworkConfig(config),
@@ -233,6 +249,10 @@ export interface ConfigServerStatus {
   lastError: string
   /** Non-fatal handshake progress (`phase:*`); not a failure. */
   connectingDetail?: string
+  /** True after a heartbeat that carried console Web-owned ids (W). */
+  webOwnedInstanceIdsValid?: boolean
+  /** Console SQLite Web-source ids (enabled+disabled). Meaningful only when valid. */
+  webOwnedInstanceIds?: string[]
 }
 
 export async function getConfigServerStatus() {

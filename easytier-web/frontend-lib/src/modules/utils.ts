@@ -325,6 +325,24 @@ const API_ERROR_I18N_KEYS: Record<Exclude<ApiErrorKind, 'unknown' | 'validation'
     rpc_error: 'web.device_management.error_rpc',
 }
 
+/**
+ * Delete failures where the console DB row is still present (device-first order)
+ * and the operator should retry — residue doc P0-2.
+ */
+export function isRetryableDeleteApiError(kind: ApiErrorKind): boolean {
+    switch (kind) {
+        case 'timeout':
+        case 'client_not_found':
+        case 'rpc_tunnel':
+        case 'rpc_shutdown':
+        case 'rpc_error':
+        case 'db_error':
+            return true
+        default:
+            return false
+    }
+}
+
 /** Map API/RPC failures to localized, actionable copy for toasts. */
 export function formatApiErrorDetail(
     error: unknown,

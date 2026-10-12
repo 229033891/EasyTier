@@ -8,8 +8,24 @@ import { open } from '@tauri-apps/plugin-shell'
 import { I18nUtils, type LoggingSettingsApi, LoggingSettingsDialog, RemoteManagement, TOAST_LIFE, Utils } from 'easytier-frontend-lib'
 import { useConfirm, useToast } from 'primevue'
 import ModeSwitcher from '~/components/ModeSwitcher.vue'
-import { clearLogFiles, getEasytierVersion, getLoggingLevel, getServiceStatus, listLogFiles, readLogFile, type ServiceStatus, setLoggingLevel } from '~/composables/backend'
-import { loadLastNetworkInstanceId, saveLastNetworkInstanceId } from '~/composables/config'
+import {
+  clearLogFiles,
+  getEasytierVersion,
+  getLoggingLevel,
+  getNetworkMetas,
+  getServiceStatus,
+  listLogFiles,
+  parseStoredConfigs,
+  readLogFile,
+  type ServiceStatus,
+  setLoggingLevel,
+} from '~/composables/backend'
+import { clearLastNetworkInstanceId, loadLastNetworkInstanceId, saveLastNetworkInstanceId } from '~/composables/config'
+import {
+  dropStoredConfigsByIds,
+  filterProvenFormerWebGhosts,
+  findFormerWebGhostCandidates,
+} from '~/composables/former_web_ghosts'
 
 import {
   consumePendingMobileVpnTileAction,
@@ -63,6 +79,10 @@ let lastTrayServiceStatus: ServiceStatus | undefined
 let trayMenuGeneration = 0
 /** Service mode: owner process is stopped / not installed (not a config-server outage). */
 const configServerOwnerDown = ref(false)
+/** Fingerprint of last applied console W prune (sorted ids joined). */
+let lastPrunedConsoleWebOwnedKey: string | undefined
+/** Device-known instance ids after last successful RPC connect (running ∪ disabled). */
+const knownDeviceInstanceIds = ref<string[]>([])
 
 const showAutostartHint = ref(false)
 
@@ -175,6 +195,113 @@ function notifyOperationInProgress() {
 const CONFIG_SERVER_IDLE_PROBE_EVERY_TICKS = 15
 let configServerIdleProbeTick = 0
 
+/** Session: already prompted (accept/ignore) for former-Web ghost clear. */
+const promptedFormerWebGhostIds = new Set<string>()
+
+/**
+ * P1.2: mislabeled user/legacy cache proven Web on device and absent from W →
+ * prompt clear (never silent-delete pure local drafts).
+ */
+async function maybePromptFormerWebGhosts(
+  consoleWebOwnedIds: string[],
+  runningEnabled: string[],
+) {
+  const w = new Set(consoleWebOwnedIds)
+  const networkList = parseStoredConfigs(localStorage.getItem('networkList'))
+  const candidates = findFormerWebGhostCandidates(networkList, w)
+    .filter(e => e.config.instance_id && !promptedFormerWebGhostIds.has(e.config.instance_id))
+  if (!candidates.length)
+    return
+  let metas: Record<string, { source?: number } | undefined> = {}
+  try {
+    const resp = await getNetworkMetas(candidates.map(c => c.config.instance_id!))
+    metas = resp?.metas ?? {}
+  }
+  catch (e) {
+    console.warn('Failed to load metas for former-web ghost check', e)
+    return
+  }
+  const ghostIds = filterProvenFormerWebGhosts(candidates, metas, w)
+  // One dialog at a time is enough; queue the rest only after accept/reject.
+  // Avoid awaiting inside config-server poll/init (see maybePruneWebConfigsFromConsoleW).
+  const showNext = (index: number) => {
+    if (index >= ghostIds.length)
+      return
+    const id = ghostIds[index]!
+    if (promptedFormerWebGhostIds.has(id)) {
+      showNext(index + 1)
+      return
+    }
+    promptedFormerWebGhostIds.add(id)
+    confirm.require({
+      message: t('web.device_management.confirm_clear_former_web_ghost'),
+      header: t('web.device_management.clear_former_web_ghost_header'),
+      icon: 'pi pi-exclamation-triangle',
+      rejectProps: {
+        label: t('web.common.cancel'),
+        severity: 'secondary',
+        outlined: true,
+      },
+      acceptProps: {
+        label: t('web.device_management.clear_device_copy'),
+        severity: 'danger',
+      },
+      accept: () => {
+        try {
+          const next = dropStoredConfigsByIds(
+            parseStoredConfigs(localStorage.getItem('networkList')),
+            new Set([id]),
+          )
+          localStorage.setItem('networkList', JSON.stringify(next))
+          void sendConfigs(runningEnabled)
+        }
+        catch (e) {
+          console.warn('Failed to clear former-web ghost', id, e)
+        }
+        showNext(index + 1)
+      },
+      reject: () => showNext(index + 1),
+    })
+  }
+  showNext(0)
+}
+
+/**
+ * Prune GUI `localStorage` web rows using console W only.
+ * No-op until heartbeat marks W valid (fail-safe). Empty W clears all web cache.
+ */
+async function maybePruneWebConfigsFromConsoleW(status: {
+  connected?: boolean
+  webOwnedInstanceIdsValid?: boolean
+  webOwnedInstanceIds?: string[]
+}) {
+  if (!status.connected || !status.webOwnedInstanceIdsValid)
+    return
+  const w = status.webOwnedInstanceIds ?? []
+  const key = [...w].sort().join(',')
+  if (key === lastPrunedConsoleWebOwnedKey)
+    return
+  lastPrunedConsoleWebOwnedKey = key
+  try {
+    const listed = await remoteClient.value.list_network_instance_ids().catch(() => undefined)
+    const running = (listed?.running_inst_ids ?? []).map(Utils.UuidToStr)
+    if (listed) {
+      knownDeviceInstanceIds.value = [
+        ...running,
+        ...(listed.disabled_inst_ids ?? []).map(Utils.UuidToStr),
+      ]
+    }
+    await sendConfigs(running, { consoleWebOwnedInstanceIds: w })
+    // Do not await prompts: refresh/init/waitForConfigServerOutcome must not
+    // block on ConfirmDialog (and reject may never fire on dismiss).
+    void maybePromptFormerWebGhosts(w, running)
+  }
+  catch (e) {
+    lastPrunedConsoleWebOwnedKey = undefined
+    console.warn('Failed to prune GUI web configs from console W', e)
+  }
+}
+
 async function refreshConfigServerConnection() {
   try {
     const mode = currentMode.value
@@ -216,16 +343,19 @@ async function refreshConfigServerConnection() {
     if (status.connected) {
       configServerLastError.value = ''
       configServerConnectingDetail.value = ''
+      await maybePruneWebConfigsFromConsoleW(status)
     }
     else {
       // Keep empty string when retrying without a recorded failure.
       configServerLastError.value = status.lastError || ''
       configServerConnectingDetail.value = status.connectingDetail || ''
+      lastPrunedConsoleWebOwnedKey = undefined
     }
   }
   catch (e) {
     configServerConnected.value = false
     configServerConnectingDetail.value = ''
+    lastPrunedConsoleWebOwnedKey = undefined
     // Probe/RPC failure is not the config-server dial error.
     // Keep last known `configServerEnabled` across transient RPC blips so the
     // delete button does not unlock/lock every 1s poll (§1 binding, not online).
@@ -807,8 +937,6 @@ async function connectRpcWithRetries(isNormalMode: boolean, url: string | undefi
 }
 
 async function initWithMode(mode: Mode) {
-  const running_inst_ids = (await remoteClient.value.list_network_instance_ids().catch(() => undefined))?.running_inst_ids ?? []
-
   if (currentMode.value.mode === 'service' && mode.mode !== 'service') {
     let serviceStatus = await getServiceStatus()
     if (serviceStatus === 'Running') {
@@ -909,6 +1037,20 @@ async function initWithMode(mode: Mode) {
       })
       throw e
     }
+  }
+  // List AFTER RPC connect. knownIds only when list succeeds — a failed list
+  // must not clear lastInstanceId via [].
+  //
+  // Web-cache prune uses console W (not R∪D); see maybePruneWebConfigsFromConsoleW
+  // after config-server heartbeat (local-config-residue.md §4.1).
+  const listed = await remoteClient.value.list_network_instance_ids().catch(() => undefined)
+  const running_inst_ids = listed?.running_inst_ids ?? []
+  const disabled_inst_ids = listed?.disabled_inst_ids ?? []
+  if (listed) {
+    knownDeviceInstanceIds.value = [
+      ...running_inst_ids.map(Utils.UuidToStr),
+      ...disabled_inst_ids.map(Utils.UuidToStr),
+    ]
   }
   await sendConfigs(running_inst_ids.map(Utils.UuidToStr))
   if (mode.mode === 'normal') {
@@ -1070,8 +1212,13 @@ watch(clientRunning, async (newVal, oldVal) => {
   }
   else if (newVal && !oldVal) {
     const lastInstanceId = loadLastNetworkInstanceId()
-    if (lastInstanceId) {
+    // Do not restore a selection the device no longer has (console delete +
+    // GUI reopen would otherwise reopen a ghost "已停止" editor from cache).
+    if (lastInstanceId && knownDeviceInstanceIds.value.includes(lastInstanceId)) {
       instanceId.value = lastInstanceId
+    }
+    else if (lastInstanceId) {
+      clearLastNetworkInstanceId()
     }
   }
 })

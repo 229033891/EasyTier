@@ -1282,6 +1282,39 @@ mod tests {
         );
     }
 
+    #[test]
+    fn stale_cleanup_keep_set_must_include_disabled_web_rows() {
+        // Console Save takeover INSERTs a disabled web row while the device may
+        // still be running that instance. Cleanup keep-set = all web ids (incl.
+        // disabled); EnabledOnly would falsely delete the runner on heartbeat.
+        let running_id = uuid::Uuid::new_v4().to_string();
+        let enabled_only = HashSet::<String>::new();
+        let all_web_including_disabled = HashSet::from([running_id.clone()]);
+        let running = HashSet::from([running_id.clone()]);
+
+        let running_web = running_web_source_instance_ids(
+            &running,
+            &all_web_including_disabled,
+            None, // meta miss → intersection fallback
+        );
+        assert_eq!(running_web, all_web_including_disabled);
+
+        let wrongly_deleted: HashSet<_> = running_web.difference(&enabled_only).cloned().collect();
+        assert_eq!(
+            wrongly_deleted, all_web_including_disabled,
+            "EnabledOnly keep-set would hard-delete a Save-takeover residual"
+        );
+
+        let correctly_deleted: HashSet<_> = running_web
+            .difference(&all_web_including_disabled)
+            .cloned()
+            .collect();
+        assert!(
+            correctly_deleted.is_empty(),
+            "all-web keep-set must retain disabled-but-still-running ids"
+        );
+    }
+
     #[tokio::test]
     async fn sync_running_config_sources_updates_enabled_config_source_from_runtime() {
         let storage = Storage::new(crate::db::Db::memory_db().await);

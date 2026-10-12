@@ -15,6 +15,7 @@ declare global {
   const annotateNetworkInfoWithMobileVpnRoutes: typeof import('./composables/mobile_vpn')['annotateNetworkInfoWithMobileVpnRoutes']
   const armUnderlayReconnectGrace: typeof import('./composables/backend')['armUnderlayReconnectGrace']
   const buildTrayMenuItems: typeof import('./composables/tray')['buildTrayMenuItems']
+  const clearLastNetworkInstanceId: typeof import('./composables/config')['clearLastNetworkInstanceId']
   const clearLogFiles: typeof import('./composables/backend')['clearLogFiles']
   const clearVpnPortalClients: typeof import('./composables/backend')['clearVpnPortalClients']
   const collectNetworkInfo: typeof import('./composables/backend')['collectNetworkInfo']
@@ -27,8 +28,11 @@ declare global {
   const defineComponent: typeof import('vue')['defineComponent']
   const defineStore: typeof import('pinia')['defineStore']
   const deleteNetworkInstance: typeof import('./composables/backend')['deleteNetworkInstance']
+  const dropStoredConfigsByIds: typeof import('./composables/former_web_ghosts')['dropStoredConfigsByIds']
   const effectScope: typeof import('vue')['effectScope']
   const executeVpnTileAction: typeof import('./composables/mobile_vpn_tile')['executeVpnTileAction']
+  const filterProvenFormerWebGhosts: typeof import('./composables/former_web_ghosts')['filterProvenFormerWebGhosts']
+  const findFormerWebGhostCandidates: typeof import('./composables/former_web_ghosts')['findFormerWebGhostCandidates']
   const formatMobileVpnRouteSync: typeof import('./composables/mobile_vpn')['formatMobileVpnRouteSync']
   const formatVirtualIpv6ForVpn: typeof import('./composables/mobile_vpn')['formatVirtualIpv6ForVpn']
   const generateMenuItem: typeof import('./composables/tray')['generateMenuItem']
@@ -96,8 +100,10 @@ declare global {
   const onWatcherCleanup: typeof import('vue')['onWatcherCleanup']
   const parseFileLogLevel: typeof import('./composables/mode')['parseFileLogLevel']
   const parseNetworkConfig: typeof import('./composables/backend')['parseNetworkConfig']
+  const parseStoredConfigs: typeof import('./composables/backend')['parseStoredConfigs']
   const prepareVpnService: typeof import('./composables/mobile_vpn')['prepareVpnService']
   const provide: typeof import('vue')['provide']
+  const pruneAbsentWebConfigs: typeof import('./composables/prune_web_configs')['pruneAbsentWebConfigs']
   const reactive: typeof import('vue')['reactive']
   const readLogFile: typeof import('./composables/backend')['readLogFile']
   const readonly: typeof import('vue')['readonly']
@@ -173,6 +179,7 @@ declare module 'vue' {
     readonly annotateNetworkInfoWithMobileVpnRoutes: UnwrapRef<typeof import('./composables/mobile_vpn')['annotateNetworkInfoWithMobileVpnRoutes']>
     readonly armUnderlayReconnectGrace: UnwrapRef<typeof import('./composables/backend')['armUnderlayReconnectGrace']>
     readonly buildTrayMenuItems: UnwrapRef<typeof import('./composables/tray')['buildTrayMenuItems']>
+    readonly clearLastNetworkInstanceId: UnwrapRef<typeof import('./composables/config')['clearLastNetworkInstanceId']>
     readonly clearLogFiles: UnwrapRef<typeof import('./composables/backend')['clearLogFiles']>
     readonly clearVpnPortalClients: UnwrapRef<typeof import('./composables/backend')['clearVpnPortalClients']>
     readonly collectNetworkInfo: UnwrapRef<typeof import('./composables/backend')['collectNetworkInfo']>
@@ -185,8 +192,11 @@ declare module 'vue' {
     readonly defineComponent: UnwrapRef<typeof import('vue')['defineComponent']>
     readonly defineStore: UnwrapRef<typeof import('pinia')['defineStore']>
     readonly deleteNetworkInstance: UnwrapRef<typeof import('./composables/backend')['deleteNetworkInstance']>
+    readonly dropStoredConfigsByIds: UnwrapRef<typeof import('./composables/former_web_ghosts')['dropStoredConfigsByIds']>
     readonly effectScope: UnwrapRef<typeof import('vue')['effectScope']>
     readonly executeVpnTileAction: UnwrapRef<typeof import('./composables/mobile_vpn_tile')['executeVpnTileAction']>
+    readonly filterProvenFormerWebGhosts: UnwrapRef<typeof import('./composables/former_web_ghosts')['filterProvenFormerWebGhosts']>
+    readonly findFormerWebGhostCandidates: UnwrapRef<typeof import('./composables/former_web_ghosts')['findFormerWebGhostCandidates']>
     readonly formatMobileVpnRouteSync: UnwrapRef<typeof import('./composables/mobile_vpn')['formatMobileVpnRouteSync']>
     readonly formatVirtualIpv6ForVpn: UnwrapRef<typeof import('./composables/mobile_vpn')['formatVirtualIpv6ForVpn']>
     readonly generateMenuItem: UnwrapRef<typeof import('./composables/tray')['generateMenuItem']>
@@ -254,8 +264,10 @@ declare module 'vue' {
     readonly onWatcherCleanup: UnwrapRef<typeof import('vue')['onWatcherCleanup']>
     readonly parseFileLogLevel: UnwrapRef<typeof import('./composables/mode')['parseFileLogLevel']>
     readonly parseNetworkConfig: UnwrapRef<typeof import('./composables/backend')['parseNetworkConfig']>
+    readonly parseStoredConfigs: UnwrapRef<typeof import('./composables/backend')['parseStoredConfigs']>
     readonly prepareVpnService: UnwrapRef<typeof import('./composables/mobile_vpn')['prepareVpnService']>
     readonly provide: UnwrapRef<typeof import('vue')['provide']>
+    readonly pruneAbsentWebConfigs: UnwrapRef<typeof import('./composables/prune_web_configs')['pruneAbsentWebConfigs']>
     readonly reactive: UnwrapRef<typeof import('vue')['reactive']>
     readonly readLogFile: UnwrapRef<typeof import('./composables/backend')['readLogFile']>
     readonly readonly: UnwrapRef<typeof import('vue')['readonly']>

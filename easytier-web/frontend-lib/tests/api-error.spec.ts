@@ -3,6 +3,7 @@ import {
   classifyApiError,
   extractApiErrorPayload,
   formatApiErrorDetail,
+  isRetryableDeleteApiError,
 } from '../src/modules/utils'
 
 describe('API error formatting', () => {
@@ -163,6 +164,16 @@ describe('API error formatting', () => {
     expect(classifyApiError({ message: 'Tunnel error: connection reset' })).toBe('rpc_tunnel')
     expect(classifyApiError({ message: 'Rust error: bad config' })).toBe('rpc_execution')
     expect(classifyApiError({ message: 'Shutdown' })).toBe('rpc_shutdown')
+  })
+
+  it('marks delete-retryable kinds for P0-2', () => {
+    expect(isRetryableDeleteApiError('timeout')).toBe(true)
+    expect(isRetryableDeleteApiError('client_not_found')).toBe(true)
+    expect(isRetryableDeleteApiError('rpc_tunnel')).toBe(true)
+    expect(isRetryableDeleteApiError('db_error')).toBe(true)
+    expect(isRetryableDeleteApiError('validation')).toBe(false)
+    expect(isRetryableDeleteApiError('delete_managed_by_console')).toBe(false)
+    expect(isRetryableDeleteApiError('ownership_conflict')).toBe(false)
   })
 
   it('maps delete_managed_by_console to localized copy', () => {

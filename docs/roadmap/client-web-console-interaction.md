@@ -64,9 +64,9 @@ Client (--config-server udp|tcp|ws://host:22020/<token>)
 - **对比**：心跳 reconcile 补跑多用 `overwrite: false`。
 - **现状（已落地）**：
   1. `ClientManager::handle_update_network_state`：实例已在跑且无 error、managed revision 允许时 **软启动**（只改 DB disabled，不 `run`/`overwrite`）；否则仍 `overwrite: true` 并作废 applied revision。REST 不再在 update-state 前后无条件 invalidate。
-  2. 前端 Start / 首次 Run：二次确认 `confirm_start_overwrite`；重跑确认文案标明强制覆盖。
+  2. 前端：footer「启动」**已不再**弹 `confirm_start_overwrite`（2026-10-12 按产品要求去掉）；重跑仍确认 `confirm_rerun_network`；User→Web 接管仍确认。详见 [`local-config-residue.md`](./local-config-residue.md) §5 P2。
   3. tip 文案写清：权威在 web-owned 场景是控制台库，Start ≠「仅唤醒」。
-- **剩余**：现网联调；`run_network` 显式重建路径仍为 `overwrite: true`（有确认）。
+- **剩余**：现网联调；`run_network` 显式重建路径仍为 `overwrite: true`（重跑有确认）。
 - **兼容 / 落地路径**：节点侧已支持 `overwrite`；改动仅 web `ClientManager` 覆盖 + 前端（与 [`web-evolution.md`](./web-evolution.md)「只升 web」一致）。
 
 #### P0-2 管理操作共用 5s RPC 超时
@@ -149,8 +149,9 @@ Client (--config-server udp|tcp|ws://host:22020/<token>)
 **阶段 B**
 
 - [x] 设备已用相同 revision 在跑时，控制台「启动」不重写本地 toml（软启动仅改 disabled；待现网联调）。
-- [x] 强制覆盖需确认：footer「启动」经 `startNetwork()` 二次确认（`confirm_start_overwrite`）后才调 `doStartNetwork()`；写盘行为可预期。
-- [ ] （剩余）`confirmRunNetwork`（`Config` 内嵌 Run 按钮的 rerun/首次 Run 确认分支，含 `confirm_rerun_network` 文案）当前不可达——两处 `<Config>` 均传 `hide-run-button="true"`，而 `run-network` 唯一发射点被 `v-if="!hideRunButton"` 关闭；且 `saveAndRunNewNetwork` 唯一调用方即该函数。需决定：删除死代码，或恢复内嵌 Run 入口。
+- [x] ~~强制覆盖需确认（footer `confirm_start_overwrite`）~~ → **2026-10-12 已去掉**；`doStartNetwork()` 直接启。重跑确认与 User 接管确认仍保留。
+- [ ] （剩余）`confirmRunNetwork`（`Config` 内嵌 Run 按钮的 rerun/首次 Run 确认分支，含 `confirm_rerun_network` 文案）当前不可达——两处 `<Config>` 均传 `hide-run-button="true"`，而 `run-network` 唯一发射点被 `v-if="!hideRunButton"` 关闭；且 sticky footer 的 Run 会调到该函数。需决定：清理死分支，或恢复内嵌 Run 入口。
+- [ ] 本地残留收敛：见 [`local-config-residue.md`](./local-config-residue.md)（P0–P2 代码已落地；待人工回归）。
 
 **阶段 C**
 
@@ -195,6 +196,7 @@ Client (--config-server udp|tcp|ws://host:22020/<token>)
 | 2026-10-10 | 复核修正：P0-1/P0-2「只升 web」= `ClientManager` 覆盖 `RemoteClientManager` 默认方法，不默认改 core；P1-4 收窄为会话结束后固定 1s；P0-3/P1-3/P1-4 标明属节点侧 |
 | 2026-10-10 | 阶段 A 落地：proxy-rpc / 慢 `handle_*` 分级超时（5s / 60s，`client_manager/rpc_timeout.rs`） |
 | 2026-10-10 | 阶段 B 落地：Start 软启动（健康+revision）跳过 overwrite；UI `confirm_start_overwrite` |
+| 2026-10-12 | 去掉 footer `confirm_start_overwrite`；残留收敛方案见 `local-config-residue.md` |
 | 2026-10-10 | 阶段 C 落地：`previous_client_urls` + `get_session` 多 URL/扫描兜底；`list_machine` 合并活会话 URL |
 | 2026-10-10 | 阶段 D 落地：config-server 拨号 `udp↔tcp` 自动降级（纯客户端；`ws`/`wss` 不改写；广告字段未做） |
 | 2026-10-10 | 阶段 E 落地：P1-1～P1-5（脏草稿提示、冲突一键重载、Secure 阶段可观测、会话结束抖动退避、managed-config 错误码） |

@@ -159,6 +159,10 @@ export interface LogFileLinesResponse {
 export interface ListNetworkInstanceIdResponse {
     running_inst_ids: Array<Utils.UUID>,
     disabled_inst_ids: Array<Utils.UUID>,
+    /** All storage-backed ids (residual detection). Optional for older servers. */
+    db_inst_ids?: Array<Utils.UUID>,
+    /** Storage disabled=true (may intersect running). */
+    db_disabled_inst_ids?: Array<Utils.UUID>,
 }
 
 export interface GenerateConfigRequest {

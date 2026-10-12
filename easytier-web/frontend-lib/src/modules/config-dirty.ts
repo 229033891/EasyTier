@@ -5,8 +5,15 @@ import {
   type NetworkConfig,
 } from '../types/network'
 
-/** Fields excluded from dirty comparison (volatile / auto-written). */
-export const CONFIG_DIRTY_IGNORE_FIELDS = ['dev_name'] as const
+/**
+ * Fields excluded from dirty comparison.
+ *
+ * Do **not** put `dev_name` here: users edit TUN interface name in the form and
+ * must see Save. Windows auto-assigned wintun names are absorbed by retaking the
+ * clean snapshot after post_run refresh (`applyLoadedNetworkConfig`), not by
+ * ignoring the field.
+ */
+export const CONFIG_DIRTY_IGNORE_FIELDS = [] as const
 
 export type ConfigDirtyIgnoreField = (typeof CONFIG_DIRTY_IGNORE_FIELDS)[number]
 

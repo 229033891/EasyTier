@@ -10,6 +10,7 @@
 - 发布前人工回归清单：[`system-overview.md`](./system-overview.md) §7
 - Console Patch 接收端：[`web-managed-config.md`](./web-managed-config.md)
 - Core 边界：[`architecture.md`](./architecture.md)
+- 控制台删除后 GUI/设备残留（Roadmap）：[`../roadmap/local-config-residue.md`](../roadmap/local-config-residue.md)
 
 本文给实现复查 / 其他 agent 用：说明**进程分工**与**权威同步路径**，避免再把 GUI 进程内的 `WEB_CLIENT` 当成服务模式下的会话所有者。
 

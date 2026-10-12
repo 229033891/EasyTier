@@ -15,6 +15,7 @@ import { EasyTierPreset, ET_PRIMARY, ET_PRIMARY_EMPHASIS } from './modules/theme
 import * as Api from './modules/api';
 import * as Utils from './modules/utils';
 import * as DnsCoverage from './modules/dnsCoverage';
+import * as ConfigResidual from './modules/config-residual';
 import { TOAST_LIFE } from './modules/toast';
 import { normalizeLoggerLevel, loggerLevelToRpc } from './modules/logging';
 
@@ -66,6 +67,7 @@ export {
     Api,
     Utils,
     DnsCoverage,
+    ConfigResidual,
     TOAST_LIFE,
     normalizeLoggerLevel,
     loggerLevelToRpc,

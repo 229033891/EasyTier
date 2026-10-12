@@ -40,6 +40,12 @@ message HeartbeatResponse {
   optional uint32 heartbeat_timeout_ms = 2;
   // Current persisted managed-config revision for this machine, if any.
   optional string managed_config_revision = 3;
+  // When true, web_owned_instance_ids is authoritative for this machine (may be
+  // empty). Older servers leave this false so clients must not treat a missing
+  // list as "no web rows" (would wipe GUI cache). See local-config-residue.md.
+  bool web_owned_instance_ids_valid = 4;
+  // All console SQLite rows with source=Web for this machine (enabled+disabled).
+  repeated common.UUID web_owned_instance_ids = 5;
 }
 
 message GetFeatureRequest {}

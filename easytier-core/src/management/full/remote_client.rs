@@ -132,22 +132,38 @@ where
 
         let running_inst_ids = ret.inst_ids.clone().into_iter().collect();
 
-        // collect networks that are disabled
-        let disabled_inst_ids = self
+        let to_proto_uuid = |id: &str| Into::<easytier_proto::common::Uuid>::into(id.to_string());
+
+        // Single All list: derive db_inst_ids + db_disabled_inst_ids in memory
+        // (avoids a second DisabledOnly round-trip).
+        let all_configs = self
             .get_storage()
             .list_network_configs(identify, ListNetworkProps::All)
             .await
-            .map_err(RemoteClientError::PersistentError)?
+            .map_err(RemoteClientError::PersistentError)?;
+
+        let mut db_inst_ids = Vec::with_capacity(all_configs.len());
+        let mut db_disabled_inst_ids = Vec::new();
+        for cfg in &all_configs {
+            let id = to_proto_uuid(cfg.get_network_inst_id());
+            if cfg.is_disabled() {
+                db_disabled_inst_ids.push(id.clone());
+            }
+            db_inst_ids.push(id);
+        }
+
+        // Stopped-in-list view: storage rows not currently running on the device.
+        let disabled_inst_ids = db_inst_ids
             .iter()
-            .map(|x| {
-                Into::<easytier_proto::common::Uuid>::into(x.get_network_inst_id().to_string())
-            })
             .filter(|id| !ret.inst_ids.contains(id))
+            .cloned()
             .collect::<Vec<_>>();
 
         Ok(ListNetworkInstanceIdsJsonResp {
             running_inst_ids,
             disabled_inst_ids,
+            db_inst_ids,
+            db_disabled_inst_ids,
         })
     }
 
@@ -401,6 +417,13 @@ pub enum ListNetworkProps {
 pub struct ListNetworkInstanceIdsJsonResp {
     running_inst_ids: Vec<easytier_proto::common::Uuid>,
     disabled_inst_ids: Vec<easytier_proto::common::Uuid>,
+    /// All storage-backed instance ids for this machine (console SQLite / GUIStorage).
+    /// Used with `running_inst_ids` to detect device-only residuals (`∈ R ∧ ∉ DB`).
+    #[serde(default)]
+    db_inst_ids: Vec<easytier_proto::common::Uuid>,
+    /// Storage rows with `disabled=true` (may still be running on the device).
+    #[serde(default)]
+    db_disabled_inst_ids: Vec<easytier_proto::common::Uuid>,
 }
 
 #[derive(Debug, serde::Deserialize, serde::Serialize)]
@@ -414,6 +437,11 @@ pub trait PersistentConfig<E> {
     fn get_network_config_source(&self) -> ConfigSource;
     fn get_runtime_network_config_source(&self) -> ConfigSource {
         self.get_network_config_source()
+    }
+    /// Storage `disabled=true` (may still be running on the device).
+    /// Default `false` for storages that track enablement elsewhere (e.g. GUI).
+    fn is_disabled(&self) -> bool {
+        false
     }
 }
 

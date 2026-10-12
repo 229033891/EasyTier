@@ -539,6 +539,34 @@ impl SessionRpcService {
                 );
             }
         }
+        // W = all Web-source rows (enabled+disabled). GUI prune must use this,
+        // not device running ids (local-config-residue.md §4.1).
+        match storage
+            .db()
+            .list_network_configs(
+                (user_id, machine_id),
+                easytier_core::management::remote_client::ListNetworkProps::All,
+            )
+            .await
+        {
+            Ok(configs) => {
+                response.web_owned_instance_ids_valid = true;
+                response.web_owned_instance_ids =
+                    managed_config::desired_web_source_instance_ids(&configs)
+                        .into_iter()
+                        .filter_map(|id| uuid::Uuid::parse_str(&id).ok())
+                        .map(Into::into)
+                        .collect();
+            }
+            Err(error) => {
+                tracing::warn!(
+                    user_id,
+                    %machine_id,
+                    ?error,
+                    "failed to load web-owned instance ids for heartbeat"
+                );
+            }
+        }
         response
     }
 

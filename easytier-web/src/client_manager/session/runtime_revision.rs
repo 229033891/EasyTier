@@ -108,15 +108,19 @@ pub(super) async fn reconcile_network_configs_on_heartbeat(
 
         let mut outcome = match &round.scope {
             ReconcileScope::Full => {
-                let desired_web_inst_ids =
+                // Cache only tracks enabled web rows (reconcile apply set).
+                // Stale cleanup uses *all* web-owned DB ids as the keep set —
+                // disabled rows must not be treated as "deleted" or a Save
+                // takeover (INSERT disabled) will kill a still-running device
+                // instance on the next heartbeat.
+                let enabled_web_inst_ids =
                     managed_config::desired_web_source_instance_ids(&round.local_configs);
-                cache.runtime_configs.retain_desired(&desired_web_inst_ids);
+                cache.runtime_configs.retain_desired(&enabled_web_inst_ids);
                 match cleanup_stale_web_source_instances(
                     &context,
                     &storage,
                     &mut rpc_client,
                     running_metas.as_deref(),
-                    &desired_web_inst_ids,
                     &mut cache,
                     &mut mutation_fence,
                 )
@@ -158,22 +162,18 @@ pub(super) async fn reconcile_network_configs_on_heartbeat(
         );
 
         if !outcome.has_failed {
-            match &round.scope {
-                ReconcileScope::Full => {
-                    cache.last_desired_web_inst_ids = Some(
-                        managed_config::desired_web_source_instance_ids(&round.local_configs),
+            // Full: cleanup_stale already refreshed last_desired to all
+            // web-owned ids (incl. disabled). Patch: merge dirty ids into that
+            // keep-set so a later Full cache-hit does not re-scan needlessly.
+            if let ReconcileScope::Patch { dirty_instance_ids } = &round.scope {
+                if let Some(last) = &mut cache.last_desired_web_inst_ids {
+                    last.retain(|id| !dirty_instance_ids.contains(id));
+                    last.extend(
+                        round
+                            .local_configs
+                            .iter()
+                            .map(|config| config.network_instance_id.clone()),
                     );
-                }
-                ReconcileScope::Patch { dirty_instance_ids } => {
-                    if let Some(last) = &mut cache.last_desired_web_inst_ids {
-                        last.retain(|id| !dirty_instance_ids.contains(id));
-                        last.extend(
-                            round
-                                .local_configs
-                                .iter()
-                                .map(|config| config.network_instance_id.clone()),
-                        );
-                    }
                 }
             }
         }
@@ -749,20 +749,15 @@ async fn cleanup_stale_web_source_instances(
     storage: &StorageInner,
     rpc_client: &mut SessionRpcClient,
     running_metas: Option<&[NetworkMeta]>,
-    desired_web_inst_ids: &HashSet<String>,
     cache: &mut ReconcileCache,
     mutation_fence: &mut RuntimeMutationFence,
 ) -> RoundStatus<ReconcileOutcome> {
     let session_data = context.session_data;
     let round = context.round;
-    let desired_changed = cache
-        .last_desired_web_inst_ids
-        .as_ref()
-        .is_none_or(|last| last != desired_web_inst_ids);
-    if cache.cleaned_web_source_instances && !desired_changed {
-        return RoundStatus::Ready(ReconcileOutcome::default());
-    }
 
+    // Keep set = every web-owned SQLite row (enabled *and* disabled). Console
+    // Save takeover INSERTs disabled; EnabledOnly must not be used here or the
+    // still-running device instance is treated as orphan and hard-deleted.
     let db_web_inst_ids = match storage
         .db
         .list_network_configs((round.user_id, round.machine_id), ListNetworkProps::All)
@@ -775,13 +770,21 @@ async fn cleanup_stale_web_source_instances(
         }
     };
 
+    let desired_changed = cache
+        .last_desired_web_inst_ids
+        .as_ref()
+        .is_none_or(|last| last != &db_web_inst_ids);
+    if cache.cleaned_web_source_instances && !desired_changed {
+        return RoundStatus::Ready(ReconcileOutcome::default());
+    }
+
     let running_web_inst_ids = managed_config::running_web_source_instance_ids(
         &round.running_inst_ids,
         &db_web_inst_ids,
         running_metas,
     );
     let should_delete_inst_ids = running_web_inst_ids
-        .difference(desired_web_inst_ids)
+        .difference(&db_web_inst_ids)
         .cloned()
         .collect::<HashSet<_>>();
     let should_delete_ids =
@@ -835,7 +838,7 @@ async fn cleanup_stale_web_source_instances(
 
     if !outcome.has_failed {
         cache.cleaned_web_source_instances = true;
-        cache.last_desired_web_inst_ids = Some(desired_web_inst_ids.clone());
+        cache.last_desired_web_inst_ids = Some(db_web_inst_ids);
     }
 
     RoundStatus::Ready(outcome)

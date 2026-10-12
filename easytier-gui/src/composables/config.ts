@@ -18,3 +18,10 @@ export function saveLastNetworkInstanceId(instanceId: string) {
 export function loadLastNetworkInstanceId(): string | null {
   return localStorage.getItem('last_network_instance_id')
 }
+
+/**
+ * 清除上次使用的网络实例 ID（设备侧已删除或列表为空时）。
+ */
+export function clearLastNetworkInstanceId() {
+  localStorage.removeItem('last_network_instance_id')
+}

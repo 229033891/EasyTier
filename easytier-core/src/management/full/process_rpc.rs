@@ -1082,11 +1082,22 @@ where
         } else {
             status.connecting_detail.unwrap_or_default()
         };
+        // W is only authoritative while the session is live *and* a heartbeat
+        // has filled the cache. Stale W after disconnect must not prune GUI.
+        let web_owned = if connected {
+            report
+                .as_ref()
+                .and_then(|client| client.web_owned_instance_ids())
+        } else {
+            None
+        };
         Ok(GetConfigServerStatusResponse {
             enabled: report.is_some() || status.enabled,
             connected,
             last_error,
             connecting_detail,
+            web_owned_instance_ids_valid: web_owned.is_some(),
+            web_owned_instance_ids: web_owned.unwrap_or_default(),
         })
     }
 

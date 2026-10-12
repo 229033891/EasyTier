@@ -158,6 +158,8 @@ impl HeartbeatPolicy {
             heartbeat_interval_ms: Some(self.interval.as_millis() as u32),
             heartbeat_timeout_ms: Some(self.timeout.as_millis() as u32),
             managed_config_revision: None,
+            web_owned_instance_ids_valid: false,
+            web_owned_instance_ids: Vec::new(),
         }
     }
 
@@ -1149,6 +1151,14 @@ impl
                 )
                 .await?;
         } else {
+            // Device-only residuals have no SQLite row; UPDATE alone is a no-op.
+            // Upsert *before* run so a successful Start cannot leave "device running,
+            // console missing" if the DB write fails afterward.
+            self.get_storage()
+                .insert_or_update_user_network_config(identify, inst_id, cfg.clone(), source)
+                .await
+                .map_err(RemoteClientError::PersistentError)?;
+
             // Soft-start probe errors (timeout / tunnel blip) fall back to overwrite.
             // Only ClientNotFound stays fatal — there is no device to start on.
             // Do not invalidate before the probe — soft-start reads applied revision.

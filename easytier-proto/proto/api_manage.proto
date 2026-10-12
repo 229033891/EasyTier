@@ -293,6 +293,11 @@ message GetConfigServerStatusResponse {
   // Non-fatal progress while connecting (e.g. phase:*). Empty when idle/connected.
   // Must not be treated as a failure; prefer this over stuffing progress into last_error.
   string connecting_detail = 4;
+  // True after at least one heartbeat that carried console web-owned ids (W).
+  // When false, clients must not prune GUI cache from web_owned_instance_ids.
+  bool web_owned_instance_ids_valid = 5;
+  // Console SQLite Web-source instance ids for this machine (enabled+disabled).
+  repeated string web_owned_instance_ids = 6;
 }
 
 // Push a web-owned NetworkConfig from a GUI/RPC peer to the process that owns

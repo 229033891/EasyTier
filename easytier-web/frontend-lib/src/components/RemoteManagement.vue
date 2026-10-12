@@ -9,6 +9,13 @@ import {
     configDirtySnapshot,
     isConfigSnapshotDirty,
 } from '../modules/config-dirty';
+import {
+    classifyResidual,
+    loadIgnoredResiduals,
+    persistIgnoredResiduals,
+    shouldAutoStartAfterDisabledSave,
+    type ResidualKind,
+} from '../modules/config-residual';
 import * as Utils from '../modules/utils';
 import * as NetworkTypes from '../types/network';
 import LoggingSettingsDialog from './LoggingSettingsDialog.vue';
@@ -54,6 +61,11 @@ const props = defineProps<{
      * - `gui-client`: desktop GUI — never use deleteAuthority alone to mean console.
      */
     hostSurface?: 'web-console' | 'gui-client';
+    /**
+     * Scope key for ignored residual ids (usually machine_id). Required for
+     * console residual ignore persistence; omit → ignore is session-only.
+     */
+    residualIgnoreScope?: string;
 }>();
 
 const isStatusMode = computed(() => props.mode === 'status')
@@ -288,6 +300,116 @@ const disabledInstanceIds = computed(() => new Set(
 ));
 
 const isRunning = (instanceId: string) => runningInstanceIds.value.has(instanceId);
+
+/** Residual badges only on console when list carries DB id sets (P1). */
+const residualDetectReady = computed(() =>
+    props.hostSurface === 'web-console'
+    && Array.isArray(listInstanceIdResponse.value?.db_inst_ids),
+);
+
+const residualListSets = computed(() => ({
+    runningIds: runningInstanceIds.value,
+    dbInstIds: new Set(
+        (listInstanceIdResponse.value?.db_inst_ids ?? []).map(Utils.UuidToStr),
+    ),
+    dbDisabledInstIds: new Set(
+        (listInstanceIdResponse.value?.db_disabled_inst_ids ?? []).map(Utils.UuidToStr),
+    ),
+}));
+
+const ignoredResiduals = ref<Set<string>>(loadIgnoredResiduals(props.residualIgnoreScope));
+
+watch(
+    () => props.residualIgnoreScope,
+    (scope) => {
+        ignoredResiduals.value = loadIgnoredResiduals(scope);
+    },
+);
+
+const residualKindFor = (id: string | undefined): ResidualKind | null => {
+    if (!id || !residualDetectReady.value || ignoredResiduals.value.has(id)) {
+        return null;
+    }
+    return classifyResidual(id, residualListSets.value);
+};
+
+const currentResidualKind = computed(() => residualKindFor(instanceId.value));
+
+const residualBadgeLabel = (kind: ResidualKind) =>
+    kind === 'device_only'
+        ? t('web.device_management.residual_device_only')
+        : t('web.device_management.residual_db_disabled_running');
+
+const ignoreCurrentResidual = () => {
+    const id = instanceId.value;
+    if (!id) {
+        return;
+    }
+    const next = new Set(ignoredResiduals.value);
+    next.add(id);
+    ignoredResiduals.value = next;
+    persistIgnoredResiduals(props.residualIgnoreScope, next);
+};
+
+const clearResidualDeviceCopy = () => {
+    const kind = currentResidualKind.value;
+    const id = instanceId.value;
+    if (!kind || !id) {
+        return;
+    }
+    // DB-disabled-but-running: stop device, keep console row (clear device copy).
+    if (kind === 'db_disabled_running') {
+        void stopNetwork();
+        return;
+    }
+    // Device-only: hard purge (keep=false). Web → light confirm; User → stronger confirm.
+    const isUser =
+        currentNetworkMeta.value?.source === Api.ConfigSource.User
+        || currentNetworkMeta.value?.source === undefined;
+    confirm.require({
+        message: t(
+            isUser
+                ? 'web.device_management.confirm_delete_user_source'
+                : 'web.device_management.confirm_clear_web_residual',
+        ),
+        header: t('web.device_management.clear_device_copy'),
+        icon: 'pi pi-exclamation-triangle',
+        rejectProps: {
+            label: t('web.common.cancel'),
+            severity: 'secondary',
+            outlined: true,
+        },
+        acceptProps: {
+            label: t('web.device_management.clear_device_copy'),
+            severity: 'danger',
+        },
+        accept: () => { void doDeleteNetwork() },
+    });
+};
+
+const takeoverResidualToConsole = () => {
+    const kind = currentResidualKind.value;
+    if (!kind) {
+        return;
+    }
+    // Already in console as disabled → Start aligns run state.
+    if (kind === 'db_disabled_running') {
+        startNetwork();
+        return;
+    }
+    // Device-only → Save upserts into console (User→Web confirm inside saveNetworkConfig).
+    if (!currentNetworkConfig.value || !canSaveConfig.value) {
+        toast.add({
+            severity: 'warn',
+            summary: t('web.common.warning'),
+            detail: saveConfigDisabledReason.value
+                || t('web.device_management.save_config_disabled_meta'),
+            life: TOAST_LIFE.warn,
+        });
+        return;
+    }
+    void saveNetworkConfig();
+};
 
 const networkMetaCache = ref<Record<string, Api.NetworkMeta>>({});
 const networkMetaLoadFailed = ref<Record<string, boolean>>({});
@@ -694,26 +816,9 @@ const stopNetwork = async () => {
 
 /** Start a disabled network: may push console (SQLite) config onto the device. */
 const startNetwork = () => {
-    if (!selectedInstanceId.value) {
-        return;
-    }
     // Start enables the existing DB row (keeps source). User→Web takeover is
     // only via Save / saveAndRun — those paths already confirm §8.1.5.
-    confirm.require({
-        message: t('web.device_management.confirm_start_overwrite'),
-        header: t('web.device_management.start_network'),
-        icon: 'pi pi-exclamation-triangle',
-        rejectProps: {
-            label: t('web.common.cancel'),
-            severity: 'secondary',
-            outlined: true,
-        },
-        acceptProps: {
-            label: t('web.device_management.start_network'),
-            severity: 'success',
-        },
-        accept: () => { void doStartNetwork() },
-    });
+    void doStartNetwork();
 }
 
 const doStartNetwork = async () => {
@@ -802,9 +907,41 @@ watch(
     },
 )
 
-const doDeleteNetwork = async () => {
+/** P0-2: after delete RPC/DB failure, offer Retry while the console row remains. */
+function offerRetryOnDeleteFailure(error: unknown, retryInstId: string): boolean {
+    if (!managementAlive || !retryInstId) {
+        return false;
+    }
+    const kind = Utils.classifyApiError(Utils.extractApiErrorPayload(error));
+    if (!Utils.isRetryableDeleteApiError(kind)) {
+        return false;
+    }
+    confirm.require({
+        message: `${errorDetail(error)} ${t('web.device_management.delete_failed_retry_hint')}`,
+        header: t('web.device_management.confirm_delete_retry_header'),
+        icon: 'pi pi-exclamation-triangle',
+        rejectProps: {
+            label: t('web.common.cancel'),
+            severity: 'secondary',
+            outlined: true,
+        },
+        acceptProps: {
+            label: t('retry'),
+            severity: 'danger',
+        },
+        // Capture id: user may switch the Select before accepting Retry.
+        accept: () => { void doDeleteNetwork(retryInstId) },
+    });
+    return true;
+}
+
+const doDeleteNetwork = async (instId?: string) => {
+    const deletingId = instId ?? instanceId.value;
+    if (!deletingId) {
+        return;
+    }
     try {
-        await props.api.delete_network(instanceId.value!);
+        await props.api.delete_network(deletingId);
         toast.add({
             severity: 'success',
             summary: t('web.device_management.delete_network'),
@@ -817,8 +954,10 @@ const doDeleteNetwork = async () => {
             severity: 'error',
             summary: t('web.device_management.delete_network'),
             detail: errorDetail(e),
-            life: TOAST_LIFE.error,
+            life: TOAST_LIFE.severe,
         });
+        // DB row kept on device-first delete failure — surface an explicit retry entry.
+        offerRetryOnDeleteFailure(e, deletingId);
     }
     emits('update');
 };
@@ -961,26 +1100,29 @@ const confirmRunNetwork = (config?: NetworkTypes.NetworkConfig | Event) => {
         });
         return;
     }
+    // Re-run rebuilds a healthy instance (brief disconnect) — keep confirm.
+    // First start of a stopped/disabled Web row used to warn about console→device
+    // overwrite; that confirm was removed as redundant for day-to-day Start.
     const rerunning = !networkIsDisabled.value && selectedNetworkRunning.value;
-    confirm.require({
-        message: t(
-            rerunning
-                ? 'web.device_management.confirm_rerun_network'
-                : 'web.device_management.confirm_start_overwrite',
-        ),
-        header: t('run_network'),
-        icon: 'pi pi-exclamation-triangle',
-        rejectProps: {
-            label: t('web.common.cancel'),
-            severity: 'secondary',
-            outlined: true,
-        },
-        acceptProps: {
-            label: t('run_network'),
-            severity: 'success',
-        },
-        accept: () => { void saveAndRunNewNetwork(cfg) },
-    });
+    if (rerunning) {
+        confirm.require({
+            message: t('web.device_management.confirm_rerun_network'),
+            header: t('run_network'),
+            icon: 'pi pi-exclamation-triangle',
+            rejectProps: {
+                label: t('web.common.cancel'),
+                severity: 'secondary',
+                outlined: true,
+            },
+            acceptProps: {
+                label: t('run_network'),
+                severity: 'success',
+            },
+            accept: () => { void saveAndRunNewNetwork(cfg) },
+        });
+        return;
+    }
+    void saveAndRunNewNetwork(cfg);
 }
 
 const saveResultToastDetail = (result: Api.SaveNetworkConfigResponse | void) => {
@@ -1022,17 +1164,43 @@ const doSaveNetworkConfig = async () => {
         return;
     }
     savingConfig.value = true;
+    const savedId = currentNetworkConfig.value.instance_id;
+    const wasRunning = !!savedId && isRunning(savedId);
     try {
         const result = await props.api.save_config(currentNetworkConfig.value);
 
-        delete networkMetaCache.value[currentNetworkConfig.value.instance_id];
-        await loadNetworkMetas([currentNetworkConfig.value.instance_id]);
+        delete networkMetaCache.value[savedId];
+        await loadNetworkMetas([savedId]);
+        await loadNetworkInstanceIds();
+
+        let alignedStart = false;
+        if (shouldAutoStartAfterDisabledSave(result, wasRunning)) {
+            try {
+                await props.api.update_network_instance_state(savedId, false);
+                await loadNetworkInstanceIds();
+                await loadCurrentNetworkInfo();
+                alignedStart = true;
+            } catch (alignErr: any) {
+                console.error(alignErr);
+                toast.add({
+                    severity: 'warn',
+                    summary: t('web.common.success'),
+                    detail: t('web.device_management.save_ok_pending_disabled_still_running')
+                        + ': ' + errorDetail(alignErr),
+                    life: TOAST_LIFE.error,
+                });
+                applyLoadedNetworkConfig(currentNetworkConfig.value);
+                return;
+            }
+        }
 
         applyLoadedNetworkConfig(currentNetworkConfig.value);
         toast.add({
             severity: result?.action === 'rebuilt' ? 'warn' : 'success',
             summary: t('web.common.success'),
-            detail: saveResultToastDetail(result),
+            detail: alignedStart
+                ? t('web.device_management.save_ok_aligned_start')
+                : saveResultToastDetail(result),
             life: TOAST_LIFE.success,
         });
     } catch (e: any) {
@@ -1463,6 +1631,9 @@ onUnmounted(() => {
                                     <Tag v-if="isConfigDirty && showConfigPanel" class="network-dirty-tag leading-3 shrink-0"
                                         severity="warn"
                                         :value="t('web.device_management.unsaved_changes')" />
+                                    <Tag v-if="residualKindFor(slotProps.value.uuid)" class="network-residual-tag leading-3 shrink-0"
+                                        severity="warn"
+                                        :value="residualBadgeLabel(residualKindFor(slotProps.value.uuid)!)" />
                                     <Tag class="network-status-tag leading-3 shrink-0"
                                         :severity="isRunning(slotProps.value.uuid) ? 'success' : 'danger'"
                                         :value="t(isRunning(slotProps.value.uuid) ? 'network_running' : 'network_stopped')" />
@@ -1476,6 +1647,9 @@ onUnmounted(() => {
                                             <span class="truncate block">{{ t('network_name') }}: {{
                                                 slotProps.option.meta?.network_name ?? slotProps.option.uuid }}</span>
                                         </div>
+                                        <Tag v-if="residualKindFor(slotProps.option.uuid)" class="network-residual-tag my-auto leading-3 shrink-0 mr-2"
+                                            severity="warn"
+                                            :value="residualBadgeLabel(residualKindFor(slotProps.option.uuid)!)" />
                                         <Tag class="network-status-tag my-auto leading-3 shrink-0"
                                             :severity="isRunning(slotProps.option.uuid) ? 'success' : 'danger'"
                                             :value="t(isRunning(slotProps.option.uuid) ? 'network_running' : 'network_stopped')" />
@@ -1489,6 +1663,43 @@ onUnmounted(() => {
                 </div>
             </div>
         </div>
+
+        <Message v-if="currentResidualKind" severity="warn" class="mb-0 residual-banner shrink-0" :closable="false">
+            <div class="flex flex-wrap items-center gap-2">
+                <span class="flex-1 min-w-0">
+                    {{ currentResidualKind === 'device_only'
+                        ? t('web.device_management.residual_device_only_hint')
+                        : t('web.device_management.residual_db_disabled_running_hint') }}
+                </span>
+                <Button
+                    class="residual-action-btn"
+                    size="small"
+                    severity="danger"
+                    outlined
+                    :label="t('web.device_management.clear_device_copy')"
+                    @click="clearResidualDeviceCopy"
+                    v-tooltip.bottom="t('web.device_management.clear_device_copy_tip')"
+                />
+                <Button
+                    class="residual-action-btn"
+                    size="small"
+                    severity="success"
+                    outlined
+                    :label="t('web.device_management.takeover_to_console')"
+                    @click="takeoverResidualToConsole"
+                    v-tooltip.bottom="t('web.device_management.takeover_to_console_tip')"
+                />
+                <Button
+                    class="residual-action-btn"
+                    size="small"
+                    severity="secondary"
+                    text
+                    :label="t('web.device_management.ignore_residual')"
+                    @click="ignoreCurrentResidual"
+                    v-tooltip.bottom="t('web.device_management.ignore_residual_tip')"
+                />
+            </div>
+        </Message>
 
         <!-- ?????/????? -->
         <div class="network-content">
