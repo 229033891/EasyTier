@@ -416,9 +416,12 @@ function Collect-GuiArtifacts {
     }
 
     New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
+    # Expand names first: under Set-StrictMode, `$nsis.Name` on a 1-element
+    # array can fail / behave oddly; never use member enumeration here.
+    $nsisNames = @($nsis | ForEach-Object { $_.Name })
     # Drop stale versioned installers left in OutDir from earlier builds.
     Get-ChildItem -LiteralPath $OutDir -Filter 'ET_*setup.exe' -File -ErrorAction SilentlyContinue |
-        Where-Object { $nsis.Name -notcontains $_.Name } |
+        Where-Object { $nsisNames -notcontains $_.Name } |
         ForEach-Object {
             Write-Log "Remove stale GUI installer: $($_.FullName)" -Level Info
             Remove-Item -LiteralPath $_.FullName -Force
