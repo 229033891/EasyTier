@@ -503,11 +503,16 @@ impl WebClientService for NearbyWebClientService {
         _controller: BaseController,
         _request: GetConfigServerStatusRequest,
     ) -> Result<GetConfigServerStatusResponse, RpcError> {
+        // Nearby control does not own a config-server client. Keep W invalid
+        // (defaults) so any GUI consumer fail-safe skips prune — see
+        // docs/roadmap/config-sync-per-end.md §3.2 / §5.
         Ok(GetConfigServerStatusResponse {
             enabled: false,
             connected: false,
             last_error: String::new(),
             connecting_detail: String::new(),
+            web_owned_instance_ids_valid: false,
+            web_owned_instance_ids: Vec::new(),
         })
     }
 

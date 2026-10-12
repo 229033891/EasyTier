@@ -2,6 +2,13 @@ import type { Api } from 'easytier-frontend-lib'
 import type { VpnTileAction } from 'tauri-plugin-vpnservice-api'
 import { Utils } from 'easytier-frontend-lib'
 
+/**
+ * VPN tile start/stop helper only.
+ * Console W prune + former-web ghost prompts live in `pages/index.vue`
+ * (`maybePruneWebConfigsFromConsoleW`) — shared by desktop and Android Tauri.
+ * Do not add prune here. See docs/roadmap/config-sync-per-end.md §4.
+ */
+
 export interface VpnTileActionResult {
   action: VpnTileAction
   instanceId?: string

@@ -59,6 +59,7 @@ crate 内设计稿（非本索引）：`easytier/docs/`（凭据计划已标 Arc
 | [client-web-console-interaction.md](./roadmap/client-web-console-interaction.md) | 客户端 ↔ 控制台交互：超时 / Start 覆盖 / 会话抖动 / 协议降级（P0–P2） |
 | [config-delete-authority.md](./roadmap/config-delete-authority.md) | 配置删除权：bound+Web 仅控制台；客户端删门与停用保留 |
 | [local-config-residue.md](./roadmap/local-config-residue.md) | 控制台删除后本地/GUI 残留：分层收敛（P0–P2 代码已落地；待人工回归） |
+| [config-sync-per-end.md](./roadmap/config-sync-per-end.md) | 配置同步**各端一致性核验**：删除权 / W 权威 / 残留 UI 覆盖矩阵（有意不统一；gui 含 Android 已闭环） |
 | [console-save-and-push-semantics.md](./roadmap/console-save-and-push-semantics.md) | 控制台 Save→Push：落库 / 启停 / reconcile 语义 |
 | [github-release-install.md](./roadmap/github-release-install.md) | GitHub/GHCR 安装升级方案 |
 | [config-vs-run-pages.md](./roadmap/config-vs-run-pages.md) | **配置页 / 运行页**（主体已落地；可选「保存并运行」待做） |

@@ -1,3 +1,8 @@
+/**
+ * Android VPN service sync (TUN / routes / tile hooks).
+ * Not the config-server prune path — that lives in `pages/index.vue`
+ * (desktop + Android Tauri). See docs/roadmap/config-sync-per-end.md §4.
+ */
 import type { NetworkTypes } from 'easytier-frontend-lib'
 import { addPluginListener } from '@tauri-apps/api/core'
 import { Utils } from 'easytier-frontend-lib'

@@ -7,7 +7,7 @@
 - 范围：Web 控制台删除 / 停用 / Save 接管之后，Windows（及同语义桌面）设备与 GUI 缓存上仍可见的「幽灵配置」
 - 归属：[`web-evolution.md`](./web-evolution.md) 体验与托管一致性；删除权规则见 [`config-delete-authority.md`](./config-delete-authority.md)
 - 关联 Current：[`../current/desktop-gui-and-config-server.md`](../current/desktop-gui-and-config-server.md)、[`../current/web-managed-config.md`](../current/web-managed-config.md)
-- 关联 Roadmap：[`console-save-and-push-semantics.md`](./console-save-and-push-semantics.md)、[`client-web-console-interaction.md`](./client-web-console-interaction.md)
+- 关联 Roadmap：[`console-save-and-push-semantics.md`](./console-save-and-push-semantics.md)、[`client-web-console-interaction.md`](./client-web-console-interaction.md)、[`config-sync-per-end.md`](./config-sync-per-end.md)（各端覆盖核验；本文方案在非桌面端的落地情况）
 - 索引：[`../README.md`](../README.md)
 
 ---

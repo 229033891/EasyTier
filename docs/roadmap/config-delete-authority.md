@@ -9,6 +9,7 @@
   - [`console-save-and-push-semantics.md`](./console-save-and-push-semantics.md)（单写者裁决 §8.1.3；User 源 Save/Run 接管确认 §8.1.5——**不是**删除权，仅同属归属边界）
   - [`client-web-console-interaction.md`](./client-web-console-interaction.md)
   - [`local-config-residue.md`](./local-config-residue.md)（**删完之后**设备 / GUI 残留如何收敛；与本文「谁可以删」互补）
+  - [`config-sync-per-end.md`](./config-sync-per-end.md)（删除权 / W / 残留 UI 在**各端**的覆盖核验；本文规则的横向落地情况）
 - 关联实现：`keep_local_config`（`easytier-proto/proto/api_manage.proto` `DeleteNetworkInstanceRequest` 字段 2，L266）、disabled 同步、stale 清理
 
 ## 1. 规则（定稿）
