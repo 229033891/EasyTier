@@ -355,9 +355,11 @@ pub(crate) fn set_tracked_override_for_test(ids: Option<HashSet<Uuid>>) {
 ///   path) never enters `instance_ids`, yet is still console-owned;
 /// - after `stop_network_instance` the id leaves `instance_ids`, so a later
 ///   local delete would be waved through even though the row is Web-owned.
-/// The source check is therefore a superset of the tracked set, and the two
-/// are unioned so an instance whose source cannot be read (e.g. mid-replace)
-/// still falls back to the runtime evidence.
+///
+/// The gate is the **union** of both signals: `tracked` keeps the existing
+/// "the WebClient started it, so the console owns it" behaviour even while the
+/// row is mid-replace and its source cannot be read, and `source == Web` closes
+/// the two gaps above.
 ///
 /// Error handling is **fail-closed**, matching the GUI backend
 /// (`easytier-gui/src-tauri/src/lib.rs::local_delete_blocked_by_console`):

@@ -739,8 +739,9 @@ fn delete_rejects_web_source_instance_missing_from_the_tracked_set() {
     }
 
     set_active_for_test(true);
-    // Only the User-source row is tracked; the Web row is deliberately absent.
-    set_tracked_override_for_test(Some(HashSet::from([user_id])));
+    // Nothing is tracked: the Web row must be blocked purely by its own source,
+    // and the User row must stay deletable.
+    set_tracked_override_for_test(Some(HashSet::new()));
 
     let web_cstr = CString::new(web_name.clone()).unwrap();
     let web_names = [web_cstr.as_ptr()];
@@ -756,7 +757,7 @@ fn delete_rejects_web_source_instance_missing_from_the_tracked_set() {
     );
     assert_eq!(find_instance_id_by_name(&web_name), Some(web_id));
 
-    // A tracked but User-source row is still locally deletable while bound.
+    // An untracked User-source row is still locally deletable while bound.
     let user_cstr = CString::new(user_name.clone()).unwrap();
     let user_names = [user_cstr.as_ptr()];
     assert_eq!(
