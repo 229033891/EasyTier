@@ -706,7 +706,7 @@ const eventLogContent = computed(() => {
                   >{{ slotProps.data.pair.route.hostname }}</span>
                   <span
                     v-else
-                    class="inline-flex flex-wrap items-center gap-1"
+                    class="inline-flex flex-nowrap items-center gap-1"
                     v-tooltip.top="slotProps.data.pair.route.hostname"
                   >
                     <Tag v-if="isPublicServerRoute(slotProps.data.pair)" severity="info" value="Info">
@@ -1277,17 +1277,25 @@ const eventLogContent = computed(() => {
   color: var(--text-color, #1e293b);
 }
 
-/* Peer separators: solid between nodes, dashed between tunnels of the same node. */
+/* Peer table: never wrap cells; narrow viewports scroll horizontally instead. */
+.peer-table-scroll :deep(.p-datatable-thead > tr > th),
+.peer-table-scroll :deep(.p-datatable-tbody > tr > td) {
+  white-space: nowrap;
+}
+
+/* Peer separators: solid between nodes, dashed between tunnels of the same node.
+ * Peer boundary uses near-black (like thead underline); intra stays lighter dashed. */
 .peer-table-scroll :deep(.p-datatable-tbody > tr > td) {
   background: transparent;
   border-bottom-width: 1px;
-  border-bottom-color: var(--surface-border, #cbd5e1);
 }
 .peer-table-scroll :deep(.p-datatable-tbody > tr.peer-border-peer > td) {
   border-bottom-style: solid;
+  border-bottom-color: color-mix(in srgb, var(--text-color, #0f172a) 72%, transparent);
 }
 .peer-table-scroll :deep(.p-datatable-tbody > tr.peer-border-intra > td) {
   border-bottom-style: dashed;
+  border-bottom-color: var(--surface-border, #cbd5e1);
 }
 .peer-table-scroll :deep(.p-datatable-tbody > tr:last-child > td) {
   border-bottom: none;
