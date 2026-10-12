@@ -354,10 +354,10 @@ async fn upsert_network_config(
     network_config: &str,
     source: ConfigSource,
     web_only_update: bool,
-    /// Value written on INSERT only (unless `sync_disabled_on_conflict`).
+    // Value written on INSERT only (unless `sync_disabled_on_conflict`).
     disabled_on_insert: bool,
-    /// Managed Exact Set must force-enable desired rows on conflict. Console
-    /// Save must preserve Stop/Start (`false` here).
+    // Managed Exact Set must force-enable desired rows on conflict. Console
+    // Save must preserve Stop/Start (`false` here).
     sync_disabled_on_conflict: bool,
 ) -> Result<bool, DbErr> {
     let now = chrono::Local::now().fixed_offset();
