@@ -87,7 +87,9 @@ const PRO_CONFIG_SERVER_CLIENT_ID: &str = "__easytier_pro_config_server_client__
 fn push_pending_config_server_events(events: impl IntoIterator<Item = serde_json::Value>) {
     if let Ok(mut pending) = PENDING_CONFIG_SERVER_EVENTS.lock() {
         pending.extend(events);
-        let overflow = pending.len().saturating_sub(PENDING_CONFIG_SERVER_EVENTS_MAX);
+        let overflow = pending
+            .len()
+            .saturating_sub(PENDING_CONFIG_SERVER_EVENTS_MAX);
         if overflow > 0 {
             pending.drain(0..overflow);
         }
