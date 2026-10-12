@@ -2,8 +2,8 @@ use std::{ffi::CStr, ptr};
 
 use easytier::proto::api::manage::{NetworkInstanceRunningInfo, NetworkInstanceRunningInfoMap};
 use easytier_ffi::{
-    KeyValuePair, collect_network_infos, delete_network_instance, free_string, list_instance,
-    parse_config, retain_network_instance, run_network_instance, set_tun_fd,
+    KeyValuePair, collect_network_infos, free_string, list_instance, parse_config,
+    retain_network_instance, run_network_instance, set_tun_fd, stop_network_instance,
 };
 use jni::JNIEnv;
 use jni::objects::{JClass, JObjectArray, JString};
@@ -89,8 +89,11 @@ pub(crate) fn delete_network_instance_jni(
         }
     };
     let instance_names = [instance_name.as_ptr()];
+    // JNI "delete" has always meant local stop/disable. Route to
+    // `stop_network_instance` so bound+Web rows stay stoppable (§1 停用保留);
+    // gated FFI `delete_network_instance` is for hosts that want reject-on-managed.
     unsafe {
-        let result = delete_network_instance(instance_names.as_ptr(), instance_names.len());
+        let result = stop_network_instance(instance_names.as_ptr(), instance_names.len());
         if result != 0
             && let Some(error) = get_last_error()
         {

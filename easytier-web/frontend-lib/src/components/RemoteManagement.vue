@@ -41,6 +41,19 @@ const props = defineProps<{
     deviceOsType?: string;
     deviceEasytierVersion?: string;
     deviceMagicDnsOsWired?: boolean | null;
+    /**
+     * Delete authority for Web-source rows (config-delete-authority.md).
+     * - `local` (default): this UI may delete any row (subject to file permission).
+     * - `console`: Web-source rows are console-managed; gray out local delete.
+     * Independent of {@link hostSurface} — do not infer "I am the web console" from this.
+     */
+    deleteAuthority?: 'local' | 'console';
+    /**
+     * Which product surface mounts this component. Independent of deleteAuthority.
+     * - `web-console`: DeviceManagement — User-source delete shows §5 confirm.
+     * - `gui-client`: desktop GUI — never use deleteAuthority alone to mean console.
+     */
+    hostSurface?: 'web-console' | 'gui-client';
 }>();
 
 const isStatusMode = computed(() => props.mode === 'status')
@@ -326,6 +339,28 @@ const currentNetworkControl = {
         return !!meta && Api.ConfigFilePermission.isDeletable(meta.config_permission);
     })
 }
+
+/**
+ * Web-source row locked to console when host injects `deleteAuthority: 'console'`.
+ * Fail-open while meta is missing (`source` undefined) — button stays enabled until
+ * meta loads; GUI backend `remove_network_instance` is the hard gate.
+ */
+const isConsoleManagedDelete = computed(() => {
+    if (props.deleteAuthority !== 'console') {
+        return false;
+    }
+    return currentNetworkMeta.value?.source === Api.ConfigSource.Web;
+});
+
+const canDeleteNetworkLocally = computed(
+    () => currentNetworkControl.deletable.value && !isConsoleManagedDelete.value,
+);
+
+const deleteNetworkTooltip = computed(() =>
+    isConsoleManagedDelete.value
+        ? t('web.device_management.delete_managed_by_console')
+        : t('web.device_management.delete_network_tip'),
+);
 
 /** Save allowed when meta loaded and config is editable (not READ_ONLY). */
 const canSaveConfig = computed(() => {
@@ -767,9 +802,42 @@ watch(
     },
 )
 
+const doDeleteNetwork = async () => {
+    try {
+        await props.api.delete_network(instanceId.value!);
+        toast.add({
+            severity: 'success',
+            summary: t('web.device_management.delete_network'),
+            detail: t('web.common.success'),
+            life: TOAST_LIFE.success,
+        });
+    } catch (e) {
+        console.error(e);
+        toast.add({
+            severity: 'error',
+            summary: t('web.device_management.delete_network'),
+            detail: errorDetail(e),
+            life: TOAST_LIFE.error,
+        });
+    }
+    emits('update');
+};
+
 const confirmDeleteNetwork = () => {
+    if (!canDeleteNetworkLocally.value) {
+        return;
+    }
+    // §5: only the web-console surface warns when deleting a User-source row.
+    // Do not infer this from deleteAuthority (explicit 'local' on console must still confirm).
+    const deletingUserSourceOnConsole =
+        props.hostSurface === 'web-console'
+        && currentNetworkMeta.value?.source === Api.ConfigSource.User;
     confirm.require({
-        message: t('web.device_management.confirm_delete_network'),
+        message: t(
+            deletingUserSourceOnConsole
+                ? 'web.device_management.confirm_delete_user_source'
+                : 'web.device_management.confirm_delete_network',
+        ),
         header: t('web.device_management.confirm_delete_network_header'),
         icon: 'pi pi-exclamation-triangle',
         rejectProps: {
@@ -781,26 +849,7 @@ const confirmDeleteNetwork = () => {
             label: t('web.device_management.delete_network'),
             severity: 'danger'
         },
-        accept: async () => {
-            try {
-                await props.api.delete_network(instanceId.value!);
-                toast.add({
-                    severity: 'success',
-                    summary: t('web.device_management.delete_network'),
-                    detail: t('web.common.success'),
-                    life: TOAST_LIFE.success,
-                });
-            } catch (e) {
-                console.error(e);
-                toast.add({
-                    severity: 'error',
-                    summary: t('web.device_management.delete_network'),
-                    detail: errorDetail(e),
-                    life: TOAST_LIFE.error,
-                });
-            }
-            emits('update');
-        },
+        accept: () => { void doDeleteNetwork() },
         reject: () => {
             return;
         }
@@ -1484,11 +1533,16 @@ onUnmounted(() => {
                                     <Button class="config-toolbar-btn" @click="newNetwork" icon="pi pi-plus"
                                         :label="t('web.device_management.add_network')" iconPos="left" severity="success"
                                         v-tooltip.bottom="t('web.device_management.add_network_tip')" />
-                                    <Button v-if="selectedInstanceId && currentNetworkControl.deletable.value"
-                                        class="config-toolbar-btn" @click="confirmDeleteNetwork" icon="pi pi-trash"
-                                        :label="t('web.device_management.delete_network')" iconPos="left" severity="danger"
-                                        outlined
-                                        v-tooltip.bottom="t('web.device_management.delete_network_tip')" />
+                                    <!-- Tooltip on wrapper: native disabled buttons do not fire mouseenter. -->
+                                    <span
+                                        v-if="selectedInstanceId && currentNetworkControl.deletable.value"
+                                        v-tooltip.bottom="deleteNetworkTooltip"
+                                        class="inline-flex">
+                                        <Button class="config-toolbar-btn" @click="confirmDeleteNetwork" icon="pi pi-trash"
+                                            :label="t('web.device_management.delete_network')" iconPos="left" severity="danger"
+                                            outlined
+                                            :disabled="isConsoleManagedDelete" />
+                                    </span>
                                 </div>
                             </div>
                         </div>

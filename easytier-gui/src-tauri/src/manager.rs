@@ -111,7 +111,7 @@ impl PersistedConfigSource {
         }
     }
 
-    fn to_runtime_source(self) -> ConfigSource {
+    pub(crate) fn to_runtime_source(self) -> ConfigSource {
         match self {
             Self::User | Self::Legacy => ConfigSource::User,
             Self::Web => ConfigSource::Web,

@@ -500,9 +500,31 @@ where
         &self,
         retained_names: Vec<String>,
     ) -> anyhow::Result<InstanceMutationResult> {
+        self.retain_owned_network_instances_by_name_gated(retained_names, |_| Ok::<(), String>(()))
+            .await
+    }
+
+    /// Like [`Self::retain_owned_network_instances_by_name`], but runs `gate` on
+    /// the ids that would be dropped **under** `mutation_lock`.
+    pub async fn retain_owned_network_instances_by_name_gated<E>(
+        &self,
+        retained_names: Vec<String>,
+        gate: impl FnOnce(&[uuid::Uuid]) -> Result<(), E>,
+    ) -> anyhow::Result<InstanceMutationResult>
+    where
+        E: std::fmt::Display,
+    {
         let (result, pending_stops) = {
             let _mutation = self.mutation_lock.lock().await;
             let retained = self.resolve_instance_ids_by_name(&retained_names)?;
+            let retained_set = retained.iter().copied().collect::<HashSet<_>>();
+            let to_drop = self
+                .instances
+                .instance_ids()
+                .into_iter()
+                .filter(|id| !retained_set.contains(id))
+                .collect::<Vec<_>>();
+            gate(&to_drop).map_err(|e| anyhow::anyhow!("{e}"))?;
             self.retain_network_instances_locked(retained).await?
         };
         pending_stops.join().await?;
@@ -696,9 +718,25 @@ where
         &self,
         requested_names: Vec<String>,
     ) -> anyhow::Result<InstanceMutationResult> {
+        self.delete_owned_network_instances_by_name_gated(requested_names, |_| Ok::<(), String>(()))
+            .await
+    }
+
+    /// Like [`Self::delete_owned_network_instances_by_name`], but runs `gate` on
+    /// the resolved ids **under** `mutation_lock` (closes the check-then-act
+    /// window used by FFI managed-delete rejection).
+    pub async fn delete_owned_network_instances_by_name_gated<E>(
+        &self,
+        requested_names: Vec<String>,
+        gate: impl FnOnce(&[uuid::Uuid]) -> Result<(), E>,
+    ) -> anyhow::Result<InstanceMutationResult>
+    where
+        E: std::fmt::Display,
+    {
         let (result, pending_stops) = {
             let _mutation = self.mutation_lock.lock().await;
             let requested = self.resolve_instance_ids_by_name(&requested_names)?;
+            gate(&requested).map_err(|e| anyhow::anyhow!("{e}"))?;
             self.delete_owned_network_instances_locked(requested)
                 .await?
         };

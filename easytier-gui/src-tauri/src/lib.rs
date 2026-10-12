@@ -320,12 +320,62 @@ async fn list_network_instance_ids(
         .map_err(|e| e.to_string())
 }
 
+/// Stable error code for i18n (`web.device_management.delete_managed_by_console`).
+const DELETE_MANAGED_BY_CONSOLE: &str = "delete_managed_by_console";
+
+/// Local delete is blocked when config-server is bound and the row is Web-owned.
+///
+/// `None` source fails open (allow): missing meta must not lock leftover local
+/// copies. Seam: `bound` can be true (status probe ok) while owner source RPC
+/// fails and we fall back to a sticky local `Web` cache — that path blocks
+/// (fail closed on cached Web), which is safer than allowing a managed purge.
+fn local_delete_blocked_by_console(bound: bool, source: Option<ConfigSource>) -> bool {
+    bound && matches!(source, Some(ConfigSource::Web))
+}
+
+/// Resolve row source for delete authority: owner process first, then local cache.
+///
+/// When the status probe says bound but `handle_get_network_config_with_source`
+/// fails, the local cache may still say `Web` (sticky) or be empty — see
+/// [`local_delete_blocked_by_console`] for how each maps.
+async fn resolve_delete_authority_source(
+    client_manager: &manager::GUIClientManager,
+    app: &AppHandle,
+    instance_id: uuid::Uuid,
+) -> Option<ConfigSource> {
+    if let Ok((_, source)) = client_manager
+        .handle_get_network_config_with_source(app.clone(), instance_id)
+        .await
+    {
+        return Some(source);
+    }
+    client_manager
+        .storage
+        .persisted_source(instance_id)
+        .map(|source| source.to_runtime_source())
+}
+
 #[tauri::command]
 async fn remove_network_instance(app: AppHandle, instance_id: String) -> Result<(), String> {
     let instance_id = instance_id
         .parse()
         .map_err(|e: uuid::Error| e.to_string())?;
     let client_manager = get_client_manager!()?;
+
+    // Gate on binding (`enabled`), not online (`connected`).
+    // - `rpc_client_unavailable` → truly no owner process → unbound (allow local delete).
+    // - any other RPC/status Err → treat as bound so we do not hard-delete a Web
+    //   row that would resurrect on reconnect (§1「删了又活」).
+    let bound = match get_config_server_status(app.clone()).await {
+        Ok(status) => status.enabled,
+        Err(error) if error == "rpc_client_unavailable" => false,
+        Err(_) => true,
+    };
+    let source = resolve_delete_authority_source(&client_manager, &app, instance_id).await;
+    if local_delete_blocked_by_console(bound, source) {
+        return Err(DELETE_MANAGED_BY_CONSOLE.into());
+    }
+
     client_manager
         .handle_remove_network_instances(app.clone(), vec![instance_id])
         .await
@@ -632,6 +682,53 @@ fn rpc_target_label(rpc_url: Option<&url::Url>) -> String {
     match rpc_url {
         Some(url) => url.to_string(),
         None => format!("ring://{}", *RPC_RING_UUID.deref()),
+    }
+}
+
+#[cfg(test)]
+mod delete_authority_tests {
+    use super::local_delete_blocked_by_console;
+    use easytier::common::config::ConfigSource;
+
+    #[test]
+    fn bound_web_blocks_local_delete() {
+        assert!(local_delete_blocked_by_console(
+            true,
+            Some(ConfigSource::Web)
+        ));
+    }
+
+    #[test]
+    fn bound_user_allows_local_delete() {
+        assert!(!local_delete_blocked_by_console(
+            true,
+            Some(ConfigSource::User)
+        ));
+    }
+
+    #[test]
+    fn unbound_allows_any_source() {
+        assert!(!local_delete_blocked_by_console(
+            false,
+            Some(ConfigSource::Web)
+        ));
+        assert!(!local_delete_blocked_by_console(
+            false,
+            Some(ConfigSource::User)
+        ));
+        assert!(!local_delete_blocked_by_console(false, None));
+    }
+
+    #[test]
+    fn bound_unknown_source_allows_delete() {
+        // Fail-open on `None`: do not lock leftover local copies when meta/source
+        // is unresolved. Sticky local `Web` after a failed owner query still
+        // blocks via `Some(Web)` — that is the intentional safer seam.
+        assert!(!local_delete_blocked_by_console(true, None));
+        assert!(local_delete_blocked_by_console(
+            true,
+            Some(ConfigSource::Web)
+        ));
     }
 }
 

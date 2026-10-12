@@ -77,7 +77,22 @@ pub(crate) fn feature_log_enabled(level: i32) -> bool {
 
 static WEB_CLIENTS: LazyLock<Mutex<HashMap<String, ManagedWebClient>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
+/// Events emitted while tearing down the web client (hooks leave WEB_CLIENTS).
+static PENDING_CONFIG_SERVER_EVENTS: LazyLock<Mutex<Vec<serde_json::Value>>> =
+    LazyLock::new(|| Mutex::new(Vec::new()));
+/// Cap pending drain buffer so a stalled ArkTS consumer cannot grow without bound.
+const PENDING_CONFIG_SERVER_EVENTS_MAX: usize = 256;
 const PRO_CONFIG_SERVER_CLIENT_ID: &str = "__easytier_pro_config_server_client__";
+
+fn push_pending_config_server_events(events: impl IntoIterator<Item = serde_json::Value>) {
+    if let Ok(mut pending) = PENDING_CONFIG_SERVER_EVENTS.lock() {
+        pending.extend(events);
+        let overflow = pending.len().saturating_sub(PENDING_CONFIG_SERVER_EVENTS_MAX);
+        if overflow > 0 {
+            pending.drain(0..overflow);
+        }
+    }
+}
 
 #[derive(Default)]
 struct TrackedWebClientHooks {
@@ -208,30 +223,80 @@ fn stop_web_client(config_id: &str) -> bool {
         return false;
     };
 
-    let tracked_ids = managed
-        .hooks
+    let hooks = managed.hooks.clone();
+    let tracked_ids = hooks
         .instance_ids
         .lock()
         .map(|guard| guard.iter().copied().collect::<Vec<_>>())
         .unwrap_or_default();
+
+    // Flush any queued hook events; stop events are appended after delete so
+    // `success` matches the detach result (bare INSTANCE_MANAGER bypasses hooks).
+    let mut queued = hooks
+        .events
+        .lock()
+        .map(|mut events| events.drain(..).collect::<Vec<_>>())
+        .unwrap_or_default();
+    let mut names = hooks
+        .network_names_by_instance_id
+        .lock()
+        .map(|mut guard| std::mem::take(&mut *guard))
+        .unwrap_or_default();
+
+    // Drop WebClient before mark/delete so AbortOnDropHandle aborts the
+    // heartbeat/reconcile routine and cannot re-run console rows mid-teardown.
     drop(managed);
 
     if tracked_ids.is_empty() {
+        push_pending_config_server_events(queued);
         maybe_stop_local_socket_server();
         return true;
     }
 
-    let ret = ASYNC_RUNTIME
-        .block_on(INSTANCE_MANAGER.delete_network_instances(tracked_ids))
-        .map(|_| true)
-        .unwrap_or_else(|err| {
+    // Intentional stop while tearing down the web client: mark web-source
+    // before detach so a later rebind does not treat this as a hard purge gap.
+    for id in &tracked_ids {
+        if INSTANCE_MANAGER.config_source(*id) == Some(easytier::common::config::ConfigSource::Web)
+        {
+            ASYNC_RUNTIME.block_on(INSTANCE_MANAGER.mark_user_disabled_web_instance(*id));
+        }
+    }
+
+    // `success` must follow what was actually detached. `delete_network_instances`
+    // returns the **remaining** ids, so removed = tracked - remaining; reporting
+    // the remaining list as success would claim a stop for instances that were
+    // already gone (stale tracked set) and tell ArkTS nothing useful.
+    let remaining: std::collections::HashSet<Uuid> = match ASYNC_RUNTIME
+        .block_on(INSTANCE_MANAGER.delete_network_instances(tracked_ids.iter().copied()))
+    {
+        Ok(remaining) => remaining.into_iter().collect(),
+        Err(err) => {
             ohrs_log_error!(
                 "[Rust] stop config server instances failed {}: {}",
                 config_id,
                 err
             );
-            false
-        });
+            return false;
+        }
+    };
+    let removed: std::collections::HashSet<Uuid> = tracked_ids
+        .iter()
+        .copied()
+        .filter(|id| !remaining.contains(id))
+        .collect();
+    let ret = !removed.is_empty();
+
+    for id in &tracked_ids {
+        let network_name = names.remove(id);
+        queued.push(serde_json::json!({
+            "event": "stop_network_instance",
+            "success": removed.contains(id),
+            "instance_id": id.to_string(),
+            "instance_name": id.to_string(),
+            "network_name": network_name,
+        }));
+    }
+    push_pending_config_server_events(queued);
     maybe_stop_local_socket_server();
     ret
 }
@@ -379,16 +444,17 @@ fn pro_config_server_client_connected() -> bool {
 }
 
 fn drain_config_server_events_inner() -> Vec<serde_json::Value> {
-    let Ok(guard) = WEB_CLIENTS.lock() else {
-        return Vec::new();
-    };
-    let Some(managed) = guard.get(PRO_CONFIG_SERVER_CLIENT_ID) else {
-        return Vec::new();
-    };
-    let Ok(mut events) = managed.hooks.events.lock() else {
-        return Vec::new();
-    };
-    events.drain(..).collect()
+    let mut out = PENDING_CONFIG_SERVER_EVENTS
+        .lock()
+        .map(|mut pending| pending.drain(..).collect::<Vec<_>>())
+        .unwrap_or_default();
+    if let Ok(guard) = WEB_CLIENTS.lock()
+        && let Some(managed) = guard.get(PRO_CONFIG_SERVER_CLIENT_ID)
+        && let Ok(mut events) = managed.hooks.events.lock()
+    {
+        out.extend(events.drain(..));
+    }
+    out
 }
 
 fn stop_runtime_inner() -> bool {

@@ -954,6 +954,8 @@ web:
     export_config_tip: 将当前网络配置导出为本地文件
     delete_network: 删除网络
     delete_network_tip: 从设备上永久删除当前网络配置
+    delete_managed_by_console: 该网络由控制台管理，请在控制台删除
+    confirm_delete_user_source: 该网络当前为设备本地（User）配置。删除后设备上的本地副本也会被清除。确定继续？
     network: 网络
     select_network: 选择网络
     create_network: 创建网络
@@ -1147,6 +1149,8 @@ config-server:
   phase_secure_handshake: 正在完成安全握手…
   reverted: 已恢复为原地址
   update_service_confirm: 将重启服务以应用更改，是否继续？
+  unbind_keep_local_copies: 已同步的配置将保留为本地副本，解绑后可在本机删除。
+  rebind_console_authoritative: 将以控制台为准同步：缺失的配置会被推回；本地曾删除的 Web 配置也会恢复。
   remote_not_supported: 当前为远程模式，不使用配置服务器。请先切换到普通模式或服务模式。
 
 client:

@@ -164,4 +164,29 @@ describe('API error formatting', () => {
     expect(classifyApiError({ message: 'Rust error: bad config' })).toBe('rpc_execution')
     expect(classifyApiError({ message: 'Shutdown' })).toBe('rpc_shutdown')
   })
+
+  it('maps delete_managed_by_console to localized copy', () => {
+    const t = (key: string) => `i18n:${key}`
+    expect(classifyApiError({ message: 'delete_managed_by_console' })).toBe(
+      'delete_managed_by_console',
+    )
+    expect(
+      classifyApiError({
+        message: 'delete_managed_by_console: use stop_network_instance while config-server is active',
+      }),
+    ).toBe('delete_managed_by_console')
+    expect(
+      formatApiErrorDetail({ message: 'delete_managed_by_console' }, t),
+    ).toBe('i18n:web.device_management.delete_managed_by_console')
+    expect(
+      formatApiErrorDetail(
+        { response: { data: { message: 'x', code: 'delete_managed_by_console' } } },
+        t,
+      ),
+    ).toBe('i18n:web.device_management.delete_managed_by_console')
+    // Mid-sentence mention must not classify as the stable code.
+    expect(
+      classifyApiError({ message: 'failed to delete_managed_by_console row' }),
+    ).toBe('unknown')
+  })
 })

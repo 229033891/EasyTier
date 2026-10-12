@@ -11,7 +11,7 @@ use std::{
 use easytier::{
     common::{
         MachineIdOptions,
-        config::{ConfigLoader as _, TomlConfigLoader},
+        config::{ConfigLoader as _, ConfigSource, TomlConfigLoader},
     },
     web_client::{WebClient, WebClientHooks, parse_config_server_endpoint, run_web_client},
 };
@@ -331,9 +331,106 @@ pub(crate) fn is_config_server_active_or_stopping() -> bool {
         || CONFIG_SERVER_CLIENT_STOPPING.load(Ordering::Acquire)
 }
 
+pub(crate) fn is_config_server_active() -> bool {
+    CONFIG_SERVER_CLIENT_ACTIVE.load(Ordering::Acquire)
+}
+
+#[cfg(test)]
+static TEST_TRACKED_OVERRIDE: LazyLock<Mutex<Option<HashSet<Uuid>>>> =
+    LazyLock::new(|| Mutex::new(None));
+
+#[cfg(test)]
+pub(crate) fn set_tracked_override_for_test(ids: Option<HashSet<Uuid>>) {
+    if let Ok(mut guard) = TEST_TRACKED_OVERRIDE.lock() {
+        *guard = ids;
+    }
+}
+
+/// True when any of `ids` is console-managed while config-server is bound.
+///
+/// §1 rule is `bound && source == Web` — **binding** plus the row's own
+/// persisted config source, not "this process happens to have run it". Two
+/// concrete divergences a runtime-tracked set alone has:
+/// - an instance started by another surface (GUI/service mode, a second run
+///   path) never enters `instance_ids`, yet is still console-owned;
+/// - after `stop_network_instance` the id leaves `instance_ids`, so a later
+///   local delete would be waved through even though the row is Web-owned.
+/// The source check is therefore a superset of the tracked set, and the two
+/// are unioned so an instance whose source cannot be read (e.g. mid-replace)
+/// still falls back to the runtime evidence.
+///
+/// Error handling is **fail-closed**, matching the GUI backend
+/// (`easytier-gui/src-tauri/src/lib.rs::local_delete_blocked_by_console`):
+/// once the config-server is known to be active, an unreadable registry must
+/// not silently downgrade to "local may delete".
+pub(crate) fn tracks_any_managed_instance(ids: &[Uuid]) -> bool {
+    if ids.is_empty() || !is_config_server_active() {
+        return false;
+    }
+    #[cfg(test)]
+    if let Ok(override_guard) = TEST_TRACKED_OVERRIDE.lock()
+        && let Some(tracked) = override_guard.as_ref()
+    {
+        return ids
+            .iter()
+            .any(|id| tracked.contains(id) || instance_is_console_owned(*id));
+    }
+    // Read the runtime registry, keeping every guard alive until the end of this
+    // scope (an inner guard must never outlive the outer one it borrows from).
+    // Poisoned locks fail closed; an empty slot means nothing is bound here, so
+    // the row's own source alone decides.
+    let outer = CONFIG_SERVER_CLIENT.lock();
+    let managed = match &outer {
+        Ok(guard) => guard.as_ref(),
+        Err(_) => return true,
+    };
+    let Some(managed) = managed else {
+        return ids.iter().any(|id| instance_is_console_owned(*id));
+    };
+    let tracked = match managed.hooks.instance_ids.lock() {
+        Ok(tracked) => tracked,
+        Err(_) => return true,
+    };
+    ids.iter()
+        .any(|id| tracked.contains(id) || instance_is_console_owned(*id))
+}
+
+/// The instance's own persisted config source (`ConfigSource::Web` ⇒ console-owned).
+fn instance_is_console_owned(instance_id: Uuid) -> bool {
+    ffi_context().manager.config_source(instance_id) == Some(ConfigSource::Web)
+}
+
+/// Stable error code (matches GUI `delete_managed_by_console`). Prefer this
+/// over free-form English so hosts can switch on a fixed prefix.
+pub const DELETE_MANAGED_BY_CONSOLE: &str = "delete_managed_by_console";
+
+/// Reject local delete/retain of console-managed instances while bound.
+/// Callers that only need stop/disable must use [`crate::stop_network_instance`].
+pub(crate) fn reject_managed_delete_or_retain(ids: &[Uuid]) -> Result<(), String> {
+    if tracks_any_managed_instance(ids) {
+        return Err(format!(
+            "{DELETE_MANAGED_BY_CONSOLE}: use stop_network_instance while config-server is active"
+        ));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 pub(crate) fn set_active_for_test(active: bool) {
     CONFIG_SERVER_CLIENT_ACTIVE.store(active, Ordering::Release);
+}
+
+/// Serializes tests that mutate process-global config-server active / tracked
+/// overrides. Without this, parallel tests race on `CONFIG_SERVER_CLIENT_ACTIVE`
+/// and `TEST_TRACKED_OVERRIDE` (flaky gate assertions; retain may wipe siblings).
+#[cfg(test)]
+static TEST_CONFIG_SERVER_GATE_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
+
+#[cfg(test)]
+pub(crate) fn lock_config_server_gate_for_test() -> std::sync::MutexGuard<'static, ()> {
+    TEST_CONFIG_SERVER_GATE_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 /// # Safety

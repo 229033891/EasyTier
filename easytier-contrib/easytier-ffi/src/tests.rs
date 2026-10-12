@@ -1,12 +1,13 @@
 use crate::{
     config_server::{
-        ConfigServerCallbackScope, ManagedConfigServerClientHooks, set_active_for_test,
+        ConfigServerCallbackScope, ManagedConfigServerClientHooks, lock_config_server_gate_for_test,
+        set_active_for_test, set_tracked_override_for_test,
     },
     state::{ffi_context, find_instance_id_by_name},
     *,
 };
 use easytier::{
-    common::config::{ConfigFileControl, ConfigLoader as _, TomlConfigLoader},
+    common::config::{ConfigFileControl, ConfigLoader as _, ConfigSource, TomlConfigLoader},
     web_client::WebClientHooks,
 };
 use serde_json::Value;
@@ -604,6 +605,176 @@ fn delete_network_instance_removes_only_named_instances() {
 }
 
 #[test]
+fn delete_and_retain_reject_managed_instances_while_config_server_active() {
+    // Serialize against other tests that poke CONFIG_SERVER_CLIENT_ACTIVE /
+    // TEST_TRACKED_OVERRIDE (e.g. active_config_server_rejects_data_plane).
+    let _gate_lock = lock_config_server_gate_for_test();
+
+    struct ClearManagedGate;
+    impl Drop for ClearManagedGate {
+        fn drop(&mut self) {
+            set_tracked_override_for_test(None);
+            set_active_for_test(false);
+        }
+    }
+    let _clear = ClearManagedGate;
+
+    let managed_id = Uuid::new_v4();
+    let local_id = Uuid::new_v4();
+    let managed_name = format!("managed-{}", managed_id);
+    let local_name = format!("local-{}", local_id);
+
+    for (id, name) in [
+        (managed_id, managed_name.clone()),
+        (local_id, local_name.clone()),
+    ] {
+        let cfg = TomlConfigLoader::default();
+        cfg.set_id(id);
+        cfg.set_inst_name(name);
+        ffi_context()
+            .manager
+            .run_network_instance(cfg, ConfigFileControl::STATIC_CONFIG)
+            .unwrap();
+    }
+
+    set_active_for_test(true);
+    set_tracked_override_for_test(Some(HashSet::from([managed_id])));
+
+    let managed_cstr = CString::new(managed_name.clone()).unwrap();
+    let managed_names = [managed_cstr.as_ptr()];
+    assert_eq!(
+        unsafe { delete_network_instance(managed_names.as_ptr(), managed_names.len()) },
+        -1
+    );
+    let err = take_last_error().unwrap_or_default();
+    assert!(
+        err.contains("delete_managed_by_console"),
+        "unexpected error: {err}"
+    );
+    assert_eq!(find_instance_id_by_name(&managed_name), Some(managed_id));
+
+    // Explicit stop remains allowed for managed rows while bound (§1 停用保留).
+    assert_eq!(
+        unsafe { stop_network_instance(managed_names.as_ptr(), managed_names.len()) },
+        0
+    );
+    assert!(find_instance_id_by_name(&managed_name).is_none());
+
+    // Re-create managed for the retain gate check below.
+    {
+        let cfg = TomlConfigLoader::default();
+        cfg.set_id(managed_id);
+        cfg.set_inst_name(managed_name.clone());
+        ffi_context()
+            .manager
+            .run_network_instance(cfg, ConfigFileControl::STATIC_CONFIG)
+            .unwrap();
+    }
+    set_tracked_override_for_test(Some(HashSet::from([managed_id])));
+
+    // retain that would drop the managed instance is also rejected.
+    // WARNING: if this gate regresses to Ok, retain would wipe other parallel
+    // tests' instances from the process-global manager.
+    let local_cstr = CString::new(local_name.clone()).unwrap();
+    let retain_names = [local_cstr.as_ptr()];
+    assert_eq!(
+        unsafe { retain_network_instance(retain_names.as_ptr(), retain_names.len()) },
+        -1
+    );
+    assert_eq!(find_instance_id_by_name(&managed_name), Some(managed_id));
+    assert_eq!(find_instance_id_by_name(&local_name), Some(local_id));
+
+    // User/local row still deletable while bound.
+    assert_eq!(
+        unsafe { delete_network_instance(retain_names.as_ptr(), retain_names.len()) },
+        0
+    );
+    assert!(find_instance_id_by_name(&local_name).is_none());
+
+    set_tracked_override_for_test(None);
+    set_active_for_test(false);
+
+    // Unbound: managed row becomes deletable.
+    assert_eq!(
+        unsafe { delete_network_instance(managed_names.as_ptr(), managed_names.len()) },
+        0
+    );
+    assert!(find_instance_id_by_name(&managed_name).is_none());
+}
+
+#[test]
+fn delete_rejects_web_source_instance_missing_from_the_tracked_set() {
+    // §1 rule is `bound && source == Web`. The runtime tracked set is only
+    // "instances this process' WebClient ran": an instance started by another
+    // surface never lands there, so a tracked-only gate would wrongly allow the
+    // local delete (config-delete-authority ①).
+    let _gate_lock = lock_config_server_gate_for_test();
+
+    struct ClearManagedGate;
+    impl Drop for ClearManagedGate {
+        fn drop(&mut self) {
+            set_tracked_override_for_test(None);
+            set_active_for_test(false);
+        }
+    }
+    let _clear = ClearManagedGate;
+
+    let web_id = Uuid::new_v4();
+    let web_name = format!("web-untracked-{}", web_id);
+    let user_id = Uuid::new_v4();
+    let user_name = format!("user-tracked-{}", user_id);
+
+    for (id, name, source) in [
+        (web_id, web_name.clone(), Some(ConfigSource::Web)),
+        (user_id, user_name.clone(), Some(ConfigSource::User)),
+    ] {
+        let cfg = TomlConfigLoader::default();
+        cfg.set_id(id);
+        cfg.set_inst_name(name);
+        cfg.set_network_config_source(source);
+        ffi_context()
+            .manager
+            .run_network_instance(cfg, ConfigFileControl::STATIC_CONFIG)
+            .unwrap();
+    }
+
+    set_active_for_test(true);
+    // Only the User-source row is tracked; the Web row is deliberately absent.
+    set_tracked_override_for_test(Some(HashSet::from([user_id])));
+
+    let web_cstr = CString::new(web_name.clone()).unwrap();
+    let web_names = [web_cstr.as_ptr()];
+    assert_eq!(
+        unsafe { delete_network_instance(web_names.as_ptr(), web_names.len()) },
+        -1,
+        "Web-source instance must stay console-owned even when untracked"
+    );
+    let err = take_last_error().unwrap_or_default();
+    assert!(
+        err.contains("delete_managed_by_console"),
+        "unexpected error: {err}"
+    );
+    assert_eq!(find_instance_id_by_name(&web_name), Some(web_id));
+
+    // A tracked but User-source row is still locally deletable while bound.
+    let user_cstr = CString::new(user_name.clone()).unwrap();
+    let user_names = [user_cstr.as_ptr()];
+    assert_eq!(
+        unsafe { delete_network_instance(user_names.as_ptr(), user_names.len()) },
+        0
+    );
+    assert!(find_instance_id_by_name(&user_name).is_none());
+
+    // Unbound: the Web row becomes deletable again (§1「未绑定 → 本地」).
+    set_active_for_test(false);
+    assert_eq!(
+        unsafe { delete_network_instance(web_names.as_ptr(), web_names.len()) },
+        0
+    );
+    assert!(find_instance_id_by_name(&web_name).is_none());
+}
+
+#[test]
 fn retain_and_delete_network_instance_reject_invalid_name_pointers() {
     assert_eq!(unsafe { retain_network_instance(std::ptr::null(), 1) }, -1);
     assert_eq!(unsafe { delete_network_instance(std::ptr::null(), 1) }, -1);
@@ -766,6 +937,7 @@ fn report_network_config_rejects_null_json_pointer() {
 #[cfg(feature = "ffi-dataplane")]
 #[test]
 fn active_config_server_rejects_data_plane() {
+    let _gate_lock = lock_config_server_gate_for_test();
     set_active_for_test(true);
 
     let name = CString::new("missing").unwrap();

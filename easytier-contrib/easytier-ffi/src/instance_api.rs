@@ -3,7 +3,9 @@ use std::ffi::{CString, c_char, c_int};
 use easytier::common::config::{ConfigFileControl, TomlConfigLoader};
 
 use crate::{
-    config_server::{in_config_server_callback, wait_for_config_server_delivery},
+    config_server::{
+        in_config_server_callback, reject_managed_delete_or_retain, wait_for_config_server_delivery,
+    },
     error::set_error_msg,
     state::{ffi_context, resolve_instance_id_by_name},
     types::KeyValuePair,
@@ -138,10 +140,14 @@ pub(crate) unsafe fn retain_network_instance(
         inst_names
     };
 
+    // Gate under mutation_lock via gated API (closes TOCTOU vs external check).
     if let Err(error) = ffi_context().runtime.block_on(
         ffi_context()
             .process_management
-            .retain_owned_network_instances_by_name(retained_names),
+            .retain_owned_network_instances_by_name_gated(
+                retained_names,
+                reject_managed_delete_or_retain,
+            ),
     ) {
         set_error_msg(&format!("failed to retain instances: {error}"));
         return -1;
@@ -150,8 +156,63 @@ pub(crate) unsafe fn retain_network_instance(
     0
 }
 
+/// Shared body for stop / (gated) delete: `delete_owned_*` = mark disabled + detach.
+unsafe fn stop_owned_by_name(
+    inst_names: *const *const std::ffi::c_char,
+    length: usize,
+    from_callback_msg: &str,
+    fail_msg: &str,
+) -> std::ffi::c_int {
+    if in_config_server_callback() {
+        set_error_msg(from_callback_msg);
+        return -1;
+    }
+
+    wait_for_config_server_delivery();
+    if length == 0 {
+        return 0;
+    }
+
+    let Some(inst_names) = (unsafe { parse_instance_names(inst_names, length) }) else {
+        return -1;
+    };
+
+    if let Err(error) = ffi_context().runtime.block_on(
+        ffi_context()
+            .process_management
+            .delete_owned_network_instances_by_name(inst_names),
+    ) {
+        set_error_msg(&format!("{fail_msg}: {error}"));
+        return -1;
+    }
+
+    0
+}
+
+/// # Safety
+/// Stop named network instances (disable + detach). Always allowed for managed
+/// rows while config-server is active — this is the intentional local stop path
+/// (§1「停用保留」). Prefer this over [`delete_network_instance`] for stop UX.
+pub(crate) unsafe fn stop_network_instance(
+    inst_names: *const *const std::ffi::c_char,
+    length: usize,
+) -> std::ffi::c_int {
+    unsafe {
+        stop_owned_by_name(
+            inst_names,
+            length,
+            "cannot stop network instances from config server callback",
+            "failed to stop instances",
+        )
+    }
+}
+
 /// # Safety
 /// Delete named network instances.
+///
+/// Internally still uses stop semantics (`delete_owned_*`), but **rejects**
+/// console-managed ids while config-server is active. Hosts that only need
+/// disable must call [`stop_network_instance`] instead.
 pub(crate) unsafe fn delete_network_instance(
     inst_names: *const *const std::ffi::c_char,
     length: usize,
@@ -170,10 +231,14 @@ pub(crate) unsafe fn delete_network_instance(
         return -1;
     };
 
+    // Gate under mutation_lock via gated API (closes TOCTOU vs external check).
     if let Err(error) = ffi_context().runtime.block_on(
         ffi_context()
             .process_management
-            .delete_owned_network_instances_by_name(inst_names),
+            .delete_owned_network_instances_by_name_gated(
+                inst_names,
+                reject_managed_delete_or_retain,
+            ),
     ) {
         set_error_msg(&format!("failed to delete instances: {error}"));
         return -1;

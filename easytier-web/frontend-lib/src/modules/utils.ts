@@ -150,6 +150,7 @@ export type ApiErrorKind =
     | 'not_found'
     | 'revision_conflict'
     | 'ownership_conflict'
+    | 'delete_managed_by_console'
     | 'validation'
     | 'unauthorized'
     | 'db_error'
@@ -258,6 +259,8 @@ export function classifyApiError(payload: ApiErrorPayload): ApiErrorKind {
             return 'revision_conflict'
         case 'managed_config_ownership_conflict':
             return 'ownership_conflict'
+        case 'delete_managed_by_console':
+            return 'delete_managed_by_console'
         case 'managed_config_invalid':
             return 'validation'
         // `restful/auth.rs` emits this exact code; without it the message
@@ -299,6 +302,10 @@ export function classifyApiError(payload: ApiErrorPayload): ApiErrorKind {
     if (/ownership conflict/i.test(message)) {
         return 'ownership_conflict'
     }
+    // Exact code or `delete_managed_by_console: …` (FFI). Do not match mid-sentence.
+    if (/^delete_managed_by_console(?:\b|:)/i.test(message.trim())) {
+        return 'delete_managed_by_console'
+    }
     return 'unknown'
 }
 
@@ -308,6 +315,7 @@ const API_ERROR_I18N_KEYS: Record<Exclude<ApiErrorKind, 'unknown' | 'validation'
     not_found: 'web.device_management.error_not_found',
     revision_conflict: 'web.device_management.error_revision_conflict',
     ownership_conflict: 'web.device_management.error_ownership_conflict',
+    delete_managed_by_console: 'web.device_management.delete_managed_by_console',
     unauthorized: 'web.device_management.error_unauthorized',
     db_error: 'web.device_management.error_db',
     internal_error: 'web.device_management.error_internal',

@@ -72,7 +72,12 @@ const configServerStatus = computed<ConfigServerStatus>(() => {
   const mode = currentMode.value
   if (mode.mode === 'remote')
     return 'remote'
-  if (!(mode.mode === 'normal' || mode.mode === 'service') || !mode.config_server_url?.trim())
+  if (!(mode.mode === 'normal' || mode.mode === 'service'))
+    return 'disconnected'
+  // Do not gate the status on the locally stored URL: binding is decided by
+  // `status.enabled`, so a client that is already running must keep reporting
+  // its real state even when the settings field is empty (§1).
+  if (!mode.config_server_url?.trim() && !configServerEnabled.value && !configServerConnected.value)
     return 'disconnected'
   if (configServerOwnerDown.value)
     return 'owner_down'
@@ -160,18 +165,48 @@ function notifyOperationInProgress() {
   })
 }
 
+/**
+ * Probe cadence while nothing hints at a config-server client: the binding
+ * signal is `status.enabled`, never the locally stored URL (§1「绑定 = WebClient
+ * 已创建」). Skipping the probe outright on an empty URL would leave a window
+ * where the WebClient is up but the delete button stays unlocked, so keep a
+ * slow heartbeat probe instead of a hard short-circuit.
+ */
+const CONFIG_SERVER_IDLE_PROBE_EVERY_TICKS = 15
+let configServerIdleProbeTick = 0
+
 async function refreshConfigServerConnection() {
   try {
     const mode = currentMode.value
-    if (!(mode.mode === 'normal' || mode.mode === 'service') || !mode.config_server_url?.trim()) {
+    const hostMode = mode.mode === 'normal' || mode.mode === 'service'
+    // Remote mode owns no local config-server client, and a stopped service
+    // owner cannot hold one: both are genuinely "not bound" → full reset.
+    // An empty URL is **not** — the client may already be running (§1).
+    // Narrow inline: `config_server_url` only exists on normal/service modes.
+    const hasUrl = (mode.mode === 'normal' || mode.mode === 'service')
+      ? !!mode.config_server_url?.trim()
+      : false
+    const idlePoll = hostMode
+      && !hasUrl
+      && !configServerEnabled.value
+      && !configServerOwnerDown.value
+      && ++configServerIdleProbeTick >= CONFIG_SERVER_IDLE_PROBE_EVERY_TICKS
+    const canSkip = !hostMode || (!hasUrl && !configServerEnabled.value && !idlePoll)
+    if (canSkip) {
+      configServerIdleProbeTick = 0
       configServerConnected.value = false
       configServerEnabled.value = false
       configServerLastError.value = ''
       configServerConnectingDetail.value = ''
       configServerProbeError.value = ''
-      configServerOwnerDown.value = false
+      // `configServerOwnerDown` stays sticky here. Reaching this branch with a
+      // URL configured is impossible (URL ⇒ always probe), so "owner down" is
+      // the cheapest proof that no client can be bound; keeping it stops the
+      // idle probe from poking an already-stopped service every 15s. The next
+      // successful probe clears it.
       return
     }
+    configServerIdleProbeTick = 0
 
     const status = await getConfigServerStatus()
     configServerProbeError.value = ''
@@ -190,19 +225,25 @@ async function refreshConfigServerConnection() {
   }
   catch (e) {
     configServerConnected.value = false
-    configServerEnabled.value = false
     configServerConnectingDetail.value = ''
     // Probe/RPC failure is not the config-server dial error.
+    // Keep last known `configServerEnabled` across transient RPC blips so the
+    // delete button does not unlock/lock every 1s poll (§1 binding, not online).
     if (currentMode.value.mode === 'service') {
       const svc = await getServiceStatus().catch(() => null)
       if (svc === 'Stopped' || svc === 'NotInstalled') {
+        configServerEnabled.value = false
         configServerOwnerDown.value = true
         configServerProbeError.value = ''
         return
       }
     }
+    const detail = formatConfigServerProbeError(e)
+    if (detail === 'rpc_client_unavailable' || String(e).includes('rpc_client_unavailable')) {
+      configServerEnabled.value = false
+    }
     configServerOwnerDown.value = false
-    configServerProbeError.value = formatConfigServerProbeError(e)
+    configServerProbeError.value = detail
     console.error('Failed to refresh config server connection', e)
   }
 }
@@ -367,10 +408,18 @@ async function onModeSave() {
     }
   }
 
+  const unbinding = !!prevEndpoint.url && !nextEndpoint.url
+  const rebinding = !!nextEndpoint.url && configServerChanged && !unbinding
+
   // Service reinstall/restart applies config-server changes — confirm when that endpoint changes.
   if (next.mode === 'service' && configServerChanged) {
+    const serviceMsg = unbinding
+      ? `${t('config-server.update_service_confirm')}\n${t('config-server.unbind_keep_local_copies')}`
+      : rebinding
+        ? `${t('config-server.update_service_confirm')}\n${t('config-server.rebind_console_authoritative')}`
+        : t('config-server.update_service_confirm')
     confirm.require({
-      message: t('config-server.update_service_confirm'),
+      message: serviceMsg,
       header: t('config-server.title'),
       icon: 'pi pi-exclamation-triangle',
       rejectProps: {
@@ -381,6 +430,29 @@ async function onModeSave() {
       acceptProps: {
         label: t('web.common.save'),
         severity: 'danger',
+      },
+      accept: () => { void doSave() },
+    })
+    return
+  }
+
+  // Any non-service path that binds/unbinds: confirm copy (config-delete-authority G4).
+  // Service path already included the same copy above.
+  if (unbinding || rebinding) {
+    confirm.require({
+      message: unbinding
+        ? t('config-server.unbind_keep_local_copies')
+        : t('config-server.rebind_console_authoritative'),
+      header: t('config-server.title'),
+      icon: 'pi pi-exclamation-triangle',
+      rejectProps: {
+        label: t('web.common.cancel'),
+        severity: 'secondary',
+        outlined: true,
+      },
+      acceptProps: {
+        label: t('web.common.save'),
+        severity: unbinding ? 'warning' : 'danger',
       },
       accept: () => { void doSave() },
     })
@@ -1198,6 +1270,8 @@ async function connectRpcClient(isNormalMode: boolean, url?: string) {
     <RemoteManagement
       v-if="clientRunning" v-model:instance-id="instanceId" class="flex-1 overflow-y-auto"
       :api="remoteClient" :pause-auto-refresh="isModeSaving"
+      host-surface="gui-client"
+      :delete-authority="configServerEnabled ? 'console' : 'local'"
     >
       <!-- 与共享底部栏同一行：样式与禁用网络完全一致 -->
       <template #footer-extra>

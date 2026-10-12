@@ -8,7 +8,8 @@
 //! - `parse_config`: validate a TOML network config string.
 //! - `run_network_instance`: start one local network instance from TOML.
 //! - `retain_network_instance`: keep named instances and stop all others.
-//! - `delete_network_instance`: stop named local network instances.
+//! - `stop_network_instance`: stop/disable named instances (allowed while managed).
+//! - `delete_network_instance`: same stop path, but rejects console-managed ids while bound.
 //! - `list_instance`: list running instance names and IDs.
 //! - `collect_network_infos`: collect running instance info as key/value pairs.
 //! - `set_tun_fd`: attach a TUN file descriptor to a named instance.
@@ -111,12 +112,41 @@ pub unsafe extern "C" fn retain_network_instance(
     unsafe { instance_api::retain_network_instance(inst_names, length) }
 }
 
-/// Stop the named network instances.
+/// Stop / disable the named network instances.
 ///
 /// Passing `length == 0` is a no-op. When `length > 0`, `inst_names` must point
 /// to an array of `length` non-null C strings. Unknown names are ignored.
 /// Removed instances are also removed from the FFI name cache and any related
 /// data-plane handles are closed.
+///
+/// Unlike [`delete_network_instance`], this stays allowed for console-managed
+/// instances while the config-server client is active (intentional local stop).
+///
+/// This API fails if called from a config-server event callback.
+///
+/// # Safety
+/// If `length > 0`, `inst_names` must be a non-null pointer to an array of
+/// `length` non-null pointers to null-terminated UTF-8 strings.
+///
+/// # Return
+/// Returns `0` on success, or `-1` on failure. On failure, call
+/// `get_error_msg` on the same thread to retrieve details.
+#[cfg_attr(feature = "c-abi", unsafe(no_mangle))]
+pub unsafe extern "C" fn stop_network_instance(
+    inst_names: *const *const c_char,
+    length: usize,
+) -> c_int {
+    unsafe { instance_api::stop_network_instance(inst_names, length) }
+}
+
+/// Delete the named network instances (stop path with managed gate).
+///
+/// Same underlying stop/disable as [`stop_network_instance`], but returns `-1`
+/// with `delete_managed_by_console` when any target is console-managed and the
+/// config-server client is active. Prefer [`stop_network_instance`] for stop UX.
+///
+/// Passing `length == 0` is a no-op. When `length > 0`, `inst_names` must point
+/// to an array of `length` non-null C strings. Unknown names are ignored.
 ///
 /// This API fails if called from a config-server event callback.
 ///

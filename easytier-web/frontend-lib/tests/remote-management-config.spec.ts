@@ -187,8 +187,10 @@ function makeApi(options: {
   disabled?: boolean
   running?: boolean
   secondConfig?: NetworkConfig
+  /** Proto ConfigSource int; default Web (2). */
+  source?: number
 }) {
-  const { config, disabled = true, running = false, secondConfig } = options
+  const { config, disabled = true, running = false, secondConfig, source = 2 } = options
   const configs: Record<string, NetworkConfig> = {
     [config.instance_id]: cloneConfig(config),
   }
@@ -208,7 +210,7 @@ function makeApi(options: {
         inst_id: id === INSTANCE_ID_B ? INSTANCE_UUID_B : INSTANCE_UUID,
         instance_name: 'mesh-save',
         network_name: 'mesh-save',
-        source: 2,
+        source,
       }])),
     })),
     list_network_instance_ids: vi.fn(async () => ({
@@ -429,6 +431,79 @@ describe('RemoteManagement config vs run pages', () => {
       expect(confirmRequire).toHaveBeenCalled()
       const arg = confirmRequire.mock.calls[0][0] as { message: string }
       expect(arg.message).toBe('web.device_management.confirm_discard_on_switch')
+    } finally {
+      wrapper.unmount()
+    }
+  })
+})
+
+describe('RemoteManagement delete authority', () => {
+  it('grays out delete for Web source when deleteAuthority is console', async () => {
+    const config = makeFlagConfig()
+    const api = makeApi({ config, source: 2 })
+    const wrapper = await mountRemote(api, { deleteAuthority: 'console' })
+    try {
+      await enterCombinedConfig(wrapper)
+      const btn = wrapper.find('button[data-label="web.device_management.delete_network"]')
+      expect(btn.exists()).toBe(true)
+      expect(btn.attributes('disabled')).toBeDefined()
+    } finally {
+      wrapper.unmount()
+    }
+  })
+
+  it('keeps delete enabled for User source when deleteAuthority is console', async () => {
+    const config = makeFlagConfig()
+    const api = makeApi({ config, source: 1 })
+    const wrapper = await mountRemote(api, { deleteAuthority: 'console' })
+    try {
+      await enterCombinedConfig(wrapper)
+      const btn = wrapper.find('button[data-label="web.device_management.delete_network"]')
+      expect(btn.exists()).toBe(true)
+      expect(btn.attributes('disabled')).toBeUndefined()
+    } finally {
+      wrapper.unmount()
+    }
+  })
+
+  it('web-console host confirms User-source delete even with deleteAuthority local', async () => {
+    confirmRequire.mockClear()
+    const config = makeFlagConfig()
+    const api = makeApi({ config, source: 1 })
+    const wrapper = await mountRemote(api, {
+      hostSurface: 'web-console',
+      deleteAuthority: 'local',
+    })
+    try {
+      await enterCombinedConfig(wrapper)
+      const btn = wrapper.find('button[data-label="web.device_management.delete_network"]')
+      expect(btn.exists()).toBe(true)
+      await btn.trigger('click')
+      await flushPromises()
+      expect(confirmRequire).toHaveBeenCalled()
+      const arg = confirmRequire.mock.calls[0][0] as { message: string }
+      expect(arg.message).toBe('web.device_management.confirm_delete_user_source')
+    } finally {
+      wrapper.unmount()
+    }
+  })
+
+  it('gui-client host does not use User-source confirm', async () => {
+    confirmRequire.mockClear()
+    const config = makeFlagConfig()
+    const api = makeApi({ config, source: 1 })
+    const wrapper = await mountRemote(api, {
+      hostSurface: 'gui-client',
+      deleteAuthority: 'local',
+    })
+    try {
+      await enterCombinedConfig(wrapper)
+      const btn = wrapper.find('button[data-label="web.device_management.delete_network"]')
+      await btn.trigger('click')
+      await flushPromises()
+      expect(confirmRequire).toHaveBeenCalled()
+      const arg = confirmRequire.mock.calls[0][0] as { message: string }
+      expect(arg.message).toBe('web.device_management.confirm_delete_network')
     } finally {
       wrapper.unmount()
     }

@@ -137,6 +137,7 @@ onUnmounted(() => {
         v-model:instance-id="selectedInstanceId"
         :new-config-generator="newConfigGenerator"
         :full-page="true"
+        host-surface="web-console"
         :device-os-type="deviceInfo?.os_type"
         :device-easytier-version="deviceInfo?.easytier_version"
         :device-magic-dns-os-wired="deviceInfo?.magic_dns_os_wired"

@@ -955,6 +955,8 @@ web:
     export_config_tip: Export the current network config to a local file
     delete_network: Delete Network
     delete_network_tip: Permanently delete this network config from the device
+    delete_managed_by_console: Managed by the console — delete it there
+    confirm_delete_user_source: This network is a device-local (User) config. Deleting it also removes the local copy on the device. Continue?
     network: Network
     select_network: Select Network
     create_network: Create Network
@@ -1148,6 +1150,8 @@ config-server:
   phase_secure_handshake: Completing secure handshake…
   reverted: Restored the previous address
   update_service_confirm: The service will be restarted to apply changes, do you want to continue?
+  unbind_keep_local_copies: Synced configs stay as local copies and can be deleted on this device after unbinding.
+  rebind_console_authoritative: The console will be authoritative on sync — missing configs are pushed back; Web configs deleted locally will reappear.
   remote_not_supported: Remote mode does not use a config server. Switch to Normal or Service mode first.
 
 client:

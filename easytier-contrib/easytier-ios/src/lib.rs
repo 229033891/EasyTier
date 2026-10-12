@@ -398,7 +398,9 @@ pub unsafe extern "C" fn easytier_ios_delete_instance(instance_name: *const c_ch
                 return -1;
             }
             let instance_names = [instance_name];
-            easytier_ffi::delete_network_instance(instance_names.as_ptr(), instance_names.len())
+            // iOS "delete" means local stop/disable — use ungated stop so
+            // bound+Web rows remain stoppable (§1 停用保留).
+            easytier_ffi::stop_network_instance(instance_names.as_ptr(), instance_names.len())
         })
     }
 }
