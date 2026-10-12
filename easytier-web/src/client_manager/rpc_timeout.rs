@@ -98,8 +98,10 @@ mod tests {
 
     #[test]
     fn probe_timeout_is_between_fast_and_slow() {
-        assert!(MANAGED_RPC_FAST_TIMEOUT_MS < MANAGED_RPC_PROBE_TIMEOUT_MS);
-        assert!(MANAGED_RPC_PROBE_TIMEOUT_MS < MANAGED_RPC_SLOW_TIMEOUT_MS);
+        const {
+            assert!(MANAGED_RPC_FAST_TIMEOUT_MS < MANAGED_RPC_PROBE_TIMEOUT_MS);
+            assert!(MANAGED_RPC_PROBE_TIMEOUT_MS < MANAGED_RPC_SLOW_TIMEOUT_MS);
+        }
         assert_eq!(
             rpc_controller(MANAGED_RPC_PROBE_TIMEOUT_MS).timeout_ms(),
             MANAGED_RPC_PROBE_TIMEOUT_MS

@@ -346,6 +346,7 @@ async fn upsert_network_credential_tx(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn upsert_network_config(
     transaction: &mut sqlx::Transaction<'_, Sqlite>,
     user_id: UserIdInDb,
