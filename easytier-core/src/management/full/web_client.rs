@@ -444,11 +444,7 @@ struct PendingReport {
 }
 
 /// Atomic write of `{machine_id}\n{revision}` (or remove). Failures are warn-only.
-fn write_managed_config_revision_file(
-    path: &Path,
-    machine_id: uuid::Uuid,
-    revision: Option<&str>,
-) {
+fn write_managed_config_revision_file(path: &Path, machine_id: uuid::Uuid, revision: Option<&str>) {
     if let Some(parent) = path.parent()
         && let Err(error) = std::fs::create_dir_all(parent)
     {
@@ -526,9 +522,8 @@ impl WebClientController {
         };
         let machine_id = self.config.machine_id;
         let revision = revision.map(str::to_owned);
-        let write = move || {
-            write_managed_config_revision_file(&path, machine_id, revision.as_deref())
-        };
+        let write =
+            move || write_managed_config_revision_file(&path, machine_id, revision.as_deref());
         match tokio::runtime::Handle::try_current() {
             Ok(handle) => {
                 handle.spawn(async move {
@@ -730,27 +725,16 @@ impl<F> WebClient<F> {
     /// Wait until the first successful heartbeat RPC (any revision, including
     /// `None`) or `timeout`. Used by boot auto-start gate (§6.1).
     pub async fn wait_first_heartbeat(&self, timeout: std::time::Duration) -> bool {
-        if self
-            .controller
-            .first_heartbeat_seen
-            .load(Ordering::Acquire)
-        {
+        if self.controller.first_heartbeat_seen.load(Ordering::Acquire) {
             return true;
         }
         let notified = self.controller.first_heartbeat_notify.notified();
-        if self
-            .controller
-            .first_heartbeat_seen
-            .load(Ordering::Acquire)
-        {
+        if self.controller.first_heartbeat_seen.load(Ordering::Acquire) {
             return true;
         }
         match tokio::time::timeout(timeout, notified).await {
             Ok(()) => true,
-            Err(_) => self
-                .controller
-                .first_heartbeat_seen
-                .load(Ordering::Acquire),
+            Err(_) => self.controller.first_heartbeat_seen.load(Ordering::Acquire),
         }
     }
 

@@ -2205,7 +2205,11 @@ mod tests {
 
         // New console row: INSERT disabled in one TX.
         let first = db
-            .insert_or_update_console_save_network_config((user_id, device_id), inst_id, cfg.clone())
+            .insert_or_update_console_save_network_config(
+                (user_id, device_id),
+                inst_id,
+                cfg.clone(),
+            )
             .await
             .unwrap();
         assert!(first.disabled);
@@ -2218,7 +2222,11 @@ mod tests {
 
         // Console save of existing disabled row must not re-enable.
         let second = db
-            .insert_or_update_console_save_network_config((user_id, device_id), inst_id, cfg.clone())
+            .insert_or_update_console_save_network_config(
+                (user_id, device_id),
+                inst_id,
+                cfg.clone(),
+            )
             .await
             .unwrap();
         assert!(second.disabled);

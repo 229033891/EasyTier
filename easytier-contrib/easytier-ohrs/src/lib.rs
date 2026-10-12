@@ -142,12 +142,12 @@ impl WebClientHooks for TrackedWebClientHooks {
                 .insert(*id, network_name.clone());
         }
         events.push(serde_json::json!({
-                "event": "managed_config_synced_overwrite",
-                "success": true,
-                "instance_id": id.to_string(),
-                "instance_name": id.to_string(),
-                "network_name": network_name,
-            }));
+            "event": "managed_config_synced_overwrite",
+            "success": true,
+            "instance_id": id.to_string(),
+            "instance_name": id.to_string(),
+            "network_name": network_name,
+        }));
         Ok(())
     }
 

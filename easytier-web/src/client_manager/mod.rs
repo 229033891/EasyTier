@@ -776,9 +776,9 @@ impl ClientManager {
                 );
                 SaveNetworkConfigResult::pending(SaveNetworkConfigPendingReason::PrepareTimeout)
             }
-            Err(_elapsed) => SaveNetworkConfigResult::pending(
-                SaveNetworkConfigPendingReason::PrepareTimeout,
-            ),
+            Err(_elapsed) => {
+                SaveNetworkConfigResult::pending(SaveNetworkConfigPendingReason::PrepareTimeout)
+            }
         };
 
         // 4) Wake reconcile to apply (independent of prepare prediction).

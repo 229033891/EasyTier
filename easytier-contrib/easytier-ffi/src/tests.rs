@@ -326,10 +326,7 @@ async fn config_server_hooks_emit_delete_events_for_tracked_instances() {
     events.lock().unwrap().clear();
 
     hooks
-        .post_remove_network_instances(
-            &[instance_id_1, unknown_instance_id, instance_id_2],
-            false,
-        )
+        .post_remove_network_instances(&[instance_id_1, unknown_instance_id, instance_id_2], false)
         .await
         .unwrap();
 
@@ -390,10 +387,7 @@ async fn config_server_hooks_stop_emits_stop_event_and_clears_runtime_tracking()
         .manager
         .run_network_instance(cfg, ConfigFileControl::STATIC_CONFIG)
         .unwrap();
-    hooks
-        .post_run_network_instance(&instance_id)
-        .await
-        .unwrap();
+    hooks.post_run_network_instance(&instance_id).await.unwrap();
     events.lock().unwrap().clear();
 
     hooks

@@ -1617,10 +1617,7 @@ fn win_service_main(arg: Vec<std::ffi::OsString>) {
 /// `console == None` means the console has no managed revision (empty / cleared
 /// DB). Deferring in that case bricks the device (nothing to push); start local
 /// web tomls instead so the node stays available and can re-report.
-fn should_defer_web_owned_boot_start(
-    persisted: Option<&str>,
-    console: Option<&str>,
-) -> bool {
+fn should_defer_web_owned_boot_start(persisted: Option<&str>, console: Option<&str>) -> bool {
     match (persisted, console) {
         (Some(persisted), Some(console)) if persisted == console => false,
         (_, None) => false,

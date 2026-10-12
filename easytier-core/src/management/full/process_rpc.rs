@@ -393,10 +393,7 @@ where
         // leaving the concurrent instance running. Re-delete under this lock
         // (await is OK on this rare path) then start ours.
         if self.instances.instance(instance_id).is_some()
-            && let Err(error) = self
-                .instances
-                .delete_network_instances([instance_id])
-                .await
+            && let Err(error) = self.instances.delete_network_instances([instance_id]).await
         {
             self.rollback_started_instance(None, file_cleanup, restore_instance)
                 .await;
@@ -419,6 +416,7 @@ where
 
     /// Start under `mutation_lock`. Hooks / revision persist happen in
     /// [`Self::after_run_network_instance`] after the lock is released.
+    #[allow(clippy::too_many_arguments)]
     async fn start_network_instance_locked(
         &self,
         instance_id: uuid::Uuid,
@@ -468,8 +466,7 @@ where
             tracing::warn!(%error, "post-run hook failed");
         }
         // Tip only: never roll back a successful overwrite for host UI hooks.
-        if overwrite
-            && let Err(error) = self.hooks.on_managed_config_overwrite(&instance_id).await
+        if overwrite && let Err(error) = self.hooks.on_managed_config_overwrite(&instance_id).await
         {
             tracing::info!(
                 %instance_id,
@@ -562,7 +559,8 @@ where
             }
         }
         self.clear_user_disabled_web_instances(&removed).await;
-        let (remaining, pending_stops) = self.instances.detach_network_instances(removed.clone())?;
+        let (remaining, pending_stops) =
+            self.instances.detach_network_instances(removed.clone())?;
         self.notify_removed_instances(&removed, false).await?;
         Ok((
             InstanceMutationResult {
@@ -614,9 +612,8 @@ where
                 self.clear_user_disabled_web_instances(&removed).await;
             }
             // Detach under lock (hooks see removed set); await TUN stop outside lock.
-            let (remaining, pending_stops) = self
-                .instances
-                .detach_network_instances(removed.clone())?;
+            let (remaining, pending_stops) =
+                self.instances.detach_network_instances(removed.clone())?;
             self.notify_removed_instances(&removed, keep_local_config)
                 .await?;
             (removed, remaining, pending_stops, files)

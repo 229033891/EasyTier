@@ -1868,10 +1868,7 @@ virtual_ip = "10.82.0.2/24"
         #[async_trait]
         impl ConfigFileStorage for MemStorage {
             async fn inspect(&self, path: &Path) -> ConfigFileControl {
-                ConfigFileControl::new(
-                    Some(path.to_owned()),
-                    ConfigFilePermission::default(),
-                )
+                ConfigFileControl::new(Some(path.to_owned()), ConfigFilePermission::default())
             }
 
             async fn read(&self, path: &Path) -> anyhow::Result<Option<Vec<u8>>> {
@@ -1910,9 +1907,7 @@ virtual_ip = "10.82.0.2/24"
             }
         }
 
-        async fn run_one(
-            keep_local_config: bool,
-        ) -> (bool, Vec<PathBuf>, bool) {
+        async fn run_one(keep_local_config: bool) -> (bool, Vec<PathBuf>, bool) {
             let path = PathBuf::from(format!("keep-{keep_local_config}.toml"));
             let storage = Arc::new(MemStorage::default());
             storage
@@ -2358,7 +2353,8 @@ virtual_ip = "10.82.0.2/24"
             config::toml::{ConfigLoader as _, ConfigSource, TomlConfig},
             instance::manager::InstanceFactory,
             management::{
-                ConfigFileControl, InstanceManager, ProcessManagement, UnsupportedConfigFileStorage,
+                ConfigFileControl, ConfigFilePermission, InstanceManager, ProcessManagement,
+                UnsupportedConfigFileStorage,
             },
         };
 
@@ -2396,9 +2392,10 @@ virtual_ip = "10.82.0.2/24"
         web_config.set_listeners(Vec::new());
         web_config.set_network_config_source(Some(ConfigSource::Web));
         let web_id = web_config.get_id();
-        instances
-            .run_network_instance(web_config, ConfigFileControl::STATIC_CONFIG)
-            .unwrap();
+        // Must be deletable: `delete_network_instances` skips NO_DELETE controls
+        // when hooks are not remote-managed (unlike `delete_owned_*`).
+        let control = ConfigFileControl::new(None, ConfigFilePermission::default());
+        instances.run_network_instance(web_config, control).unwrap();
         // Simulate a stale disabled mark that must not survive hard Delete.
         instances.mark_user_disabled_web_instance(web_id).await;
         assert!(instances.is_user_disabled_web_instance(web_id));
@@ -2413,6 +2410,7 @@ virtual_ip = "10.82.0.2/24"
             .await
             .unwrap();
         assert!(!instances.is_user_disabled_web_instance(web_id));
+        assert!(instances.instance_ids().is_empty());
     }
 
     #[cfg(feature = "management")]

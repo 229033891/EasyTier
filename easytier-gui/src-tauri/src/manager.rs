@@ -46,10 +46,9 @@ impl WebClientHooks for GuiHooks {
 
     async fn on_managed_config_overwrite(&self, instance_id: &uuid::Uuid) -> Result<(), String> {
         // Tip only (§6.2); overwrite already applied — never fail the run path.
-        let _ = self.app.emit(
-            "managed_config_synced_overwrite",
-            instance_id.to_string(),
-        );
+        let _ = self
+            .app
+            .emit("managed_config_synced_overwrite", instance_id.to_string());
         Ok(())
     }
 
