@@ -6,7 +6,6 @@ use easytier::proto::{
         ListNetworkInstanceMetaRequest, ListNetworkInstanceRequest, NetworkConfig, NetworkMeta,
         RunNetworkInstanceRequest,
     },
-    rpc_types::controller::BaseController,
     web::HeartbeatRequest,
 };
 use easytier_core::management::remote_client::{ListNetworkProps, Storage as _};
@@ -648,7 +647,12 @@ async fn running_instance_ids_for_round(
             .collect::<HashSet<_>>()
     } else {
         match rpc_client
-            .list_network_instance(BaseController::default(), ListNetworkInstanceRequest {})
+            .list_network_instance(
+                crate::client_manager::rpc_controller(
+                    crate::client_manager::MANAGED_RPC_PROBE_TIMEOUT_MS,
+                ),
+                ListNetworkInstanceRequest {},
+            )
             .await
         {
             Ok(resp) => resp.inst_ids.iter().map(|x| x.to_string()).collect(),
@@ -684,7 +688,9 @@ async fn sync_running_sources_for_round(
     } else {
         rpc_client
             .list_network_instance_meta(
-                BaseController::default(),
+                crate::client_manager::rpc_controller(
+                    crate::client_manager::MANAGED_RPC_PROBE_TIMEOUT_MS,
+                ),
                 ListNetworkInstanceMetaRequest {
                     inst_ids: managed_config::parse_instance_ids(
                         round.running_inst_ids.iter().cloned(),
@@ -821,9 +827,16 @@ async fn cleanup_stale_web_source_instances(
             Ok(response) => {
                 let undeleted_instance_ids =
                     retained_requested_instance_ids(response, &should_delete_inst_ids);
-                if undeleted_instance_ids.is_empty() {
-                    cache.runtime_configs.forget_many(&should_delete_inst_ids);
-                } else {
+                let deleted_instance_ids = should_delete_inst_ids
+                    .difference(&undeleted_instance_ids)
+                    .cloned()
+                    .collect::<HashSet<_>>();
+                // Partial success still forgets deleted ids so the next retry
+                // only re-targets undeleted leftovers (S2).
+                if !deleted_instance_ids.is_empty() {
+                    cache.runtime_configs.forget_many(&deleted_instance_ids);
+                }
+                if !undeleted_instance_ids.is_empty() {
                     tracing::warn!(
                         user_id = ?round.user_id,
                         machine_id = ?round.machine_id,
@@ -836,9 +849,11 @@ async fn cleanup_stale_web_source_instances(
         }
     }
 
+    // Remember desired set even on partial failure so desired_changed stays
+    // stable; only the cleaned bit requires a fully successful round.
+    cache.last_desired_web_inst_ids = Some(db_web_inst_ids);
     if !outcome.has_failed {
         cache.cleaned_web_source_instances = true;
-        cache.last_desired_web_inst_ids = Some(db_web_inst_ids);
     }
 
     RoundStatus::Ready(outcome)
@@ -1378,6 +1393,7 @@ mod tests {
     use easytier::proto::api::manage::{NetworkingMethod, PortForwardConfig};
     use easytier_core::management::remote_client::Storage as _;
 
+    use super::super::MachineSessionIndex;
     use super::*;
 
     fn config_with_port_forwards(port_forwards: Vec<PortForwardConfig>) -> NetworkConfig {
@@ -1414,6 +1430,7 @@ mod tests {
             std::sync::Arc::new(crate::webhook::WebhookConfig::new(
                 None, None, None, None, None,
             )),
+            std::sync::Arc::new(MachineSessionIndex::new()),
         );
         let retained = uuid::Uuid::new_v4().to_string();
         let removed_by_full = uuid::Uuid::new_v4().to_string();
@@ -1508,6 +1525,7 @@ mod tests {
             std::sync::Arc::new(crate::webhook::WebhookConfig::new(
                 None, None, None, None, None,
             )),
+            std::sync::Arc::new(MachineSessionIndex::new()),
         );
         data.managed_runtime().pending_managed_config_reconcile =
             Some(ManagedConfigReconcileHint::Dirty {
@@ -1553,6 +1571,7 @@ mod tests {
             std::sync::Arc::new(crate::webhook::WebhookConfig::new(
                 None, None, None, None, None,
             )),
+            std::sync::Arc::new(MachineSessionIndex::new()),
         );
         {
             let mut runtime = data.managed_runtime();
@@ -1585,6 +1604,7 @@ mod tests {
             std::sync::Arc::new(crate::webhook::WebhookConfig::new(
                 None, None, None, None, None,
             )),
+            std::sync::Arc::new(MachineSessionIndex::new()),
         );
         {
             let mut runtime = data.managed_runtime();
@@ -1698,6 +1718,7 @@ mod tests {
             std::sync::Arc::new(crate::webhook::WebhookConfig::new(
                 None, None, None, None, None,
             )),
+            std::sync::Arc::new(MachineSessionIndex::new()),
         );
         let storage_token = crate::client_manager::storage::StorageToken {
             token: req.user_token.clone(),

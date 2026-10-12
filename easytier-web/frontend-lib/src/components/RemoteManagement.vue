@@ -1582,6 +1582,8 @@ onUnmounted(() => {
     managementAlive = false;
     ++configLoadGeneration; // invalidate in-flight load/probe apply
     periodFunc.stop();
+    networkMetaCache.value = {};
+    networkMetaLoadFailed.value = {};
 });
 
 </script>

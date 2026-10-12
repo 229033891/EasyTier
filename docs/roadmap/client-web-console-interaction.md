@@ -3,7 +3,7 @@
 ## Status
 
 - Status: **Roadmap**
-- 最近审阅：2026-10-10（P0 A–D + P1 已落地；P2 / 可选项另议）
+- 最近审阅：2026-10-12（P0 A–D + P1 已落地；§9 S1–S9 代码已落地，待现网观察；功能 P2 / 可选项另议）
 - 归属：[`web-evolution.md`](./web-evolution.md) 阶段 B（控制台体验 / REST）+ 客户端连接可靠性
 - 相关 Current：[`../current/desktop-gui-and-config-server.md`](../current/desktop-gui-and-config-server.md)、[`../current/web-managed-config.md`](../current/web-managed-config.md)
 - 相关运维诊断：[`web-console-runtime-diagnostics.md`](./web-console-runtime-diagnostics.md)（控制台侧预定 vs 实际；**不替代**本文客户端交互项）
@@ -118,6 +118,8 @@ Client (--config-server udp|tcp|ws://host:22020/<token>)
 | P2-3 | Nginx 示例：API 口与 config-server `:22020` 分清（见 [`../ops/deploy-install.md`](../ops/deploy-install.md)） |
 | P2-4 | 系统诊断二期：本机 udp/tcp 自环拨测（见 diagnostics 文档阶段 2） |
 
+> 另有 2026-10-12 交互性能/健壮性审查新增的性能项（S1–S9），单列于 **§9**，避免与本章「功能可靠性」混排。
+
 ---
 
 ## 4. 建议排期
@@ -174,6 +176,18 @@ Client (--config-server udp|tcp|ws://host:22020/<token>)
 - [x] P1-4：会话结束轻度升级退避 + 抖动。
 - [x] P1-5：managed-config / unauthorized 稳定 code。
 
+**阶段 F（§9 交互性能，2026-10-12 审查后新增；顺序 = 建议落地序）**
+
+- [x] S4：`get_session_by_machine_id` 建 `machine_id → Session` 反向索引，去兜底全表扫（web）。
+- [x] S5：Dashboard `/summary` 轮询 2s → 5s（前端）。
+- [x] S1：`handle_get_network_metas` miss 路径一次 `list_network_configs` 批量回填，再 per-id RPC（core）。
+- [x] S2：`cleanup_stale_web_source_instances` 部分成功 `forget_many` + 始终记 `last_desired`（web）。
+- [x] S3：reconcile / prepare 读路径超时提到 `MANAGED_RPC_PROBE=15s`（web）。
+- [x] S6：未绑定 session 120s idle TTL 回收（web）。
+- [x] S7：`notifier.send` 失败补 debug 日志（web）。
+- [x] S8：`networkMetaCache` `onUnmounted` 显式清空（前端）。
+- [x] S9：注释澄清 idle tick 与 wait 路径不并行（GUI；无行为变更）。
+
 ---
 
 ## 6. 非目标
@@ -212,3 +226,95 @@ Client (--config-server udp|tcp|ws://host:22020/<token>)
 1. 实现前以本文优先级为准；具体 API/字段在 PR 中微调。
 2. 落地一项勾选 §5，并视需要把稳定行为写入 `current/`（如 desktop-gui / web-managed-config）。
 3. 若需改节点必选协议，先更新 [`web-evolution.md`](./web-evolution.md) 再开发。
+
+---
+
+## 9. 交互性能 / 健壮性审查（2026-10-12）
+
+对本节所列路径做了一次「控制台 ↔ 客户端」静态走查（不含数据面）。**结论：无正确性 bug（不会掉配置、不会错删）；问题按落地性价比分层，而非一律「功能 P1」。**
+
+**落地序（与 §5 阶段 F 一致）**：先做 **S4 + S5**（只升 web/前端、现网即感）；再排 **S1–S3**（规模上来才痛）；**S6–S9** 为轻量观察。
+
+### 9.1 优先落地（高性价比）
+
+#### S4 `get_session_by_machine_id` 兜底全表扫
+
+- **位置**：`easytier-web/src/client_manager/mod.rs` `get_session_by_machine_id`（约 L466-476 的 `for entry in self.client_sessions.iter()`）；`list_machine_by_user_id`（约 L553）对每台设备调一次。
+- **现象**：路由未命中授权 URL / previous URLs 时退化为全表扫描；单次 `/summary` 为 **O(设备 × 会话)**（非 O(会话²)）。
+- **建议**：建反向索引 `machine_id → Session`，兜底从全表扫降到 O(1)。
+- **改动面**：仅 web。
+
+#### S5 Dashboard `/summary` 前台 2s 轮询
+
+- **位置**：`easytier-web/frontend/src/components/Dashboard.vue`（`PeriodicTask(..., 2000)`，约 L35）。
+- **现象**：前台每 2s 拉一次；`PeriodicTask` 已有 `document.hidden` 跳过（`utils.ts:545`），后台标签页不请求。
+- **建议**：放宽到 5~10s（单行改动）；与 S4 叠加时收益更明显。
+- **改动面**：仅前端。
+
+### 9.2 规模敏感项（次排期）
+
+#### S1 `handle_get_network_metas` 的 N+1 回退
+
+- **位置**：`easytier-core/src/management/full/remote_client.rs` `handle_get_network_metas`（约 L255-301）。
+- **现象**：先批量 `list_network_instance_meta`；**未命中的实例逐个**走 `handle_get_network_config_with_source`（每次 = 1 次设备 RPC + 可能 1 次 storage 查询）。
+- **对比**：`handle_list_network_instance_ids`（同文件约 L122）只做 1 次 RPC + 1 次 storage，**无 N+1** —— 说明该放大是 metas 路径特有。
+- **触发条件**：设备上「实例存在但 meta 未缓存」时，一次控制台调用放大为 N 次 RPC。
+- **建议**：回退改为批量预取（一次 `list_network_config_with_source` 批量接口），或让 meta 列表本身携带 config 摘要。
+- **落地方式（2026-10-12）**：miss 集合先走 **一次** `get_storage().list_network_configs(identify, ListNetworkProps::All)` 批量回填，仍 miss 的才 per-id RPC。⚠️ **语义差异**：旧 `handle_get_network_config_with_source` 是「**RPC 运行时 config 优先**，storage 兜底」，批量回填走的是 **storage**（`network_name` 与 `source` 取 storage 行的 `get_runtime_network_config_source()`）。对「GUI 改了 dev_name 但 storage 未落」或「storage 行 `network_name` 与运行时不一致」的场景，回填结果与旧行为不同——**当前按 storage 语义接受**（该路径本就是 meta 未命中时的兜底，且 storage 对 managed 配置权威）。
+- **改动面**：`easytier-core` 管理侧（节点/GUI，**不在**「只升 web」路径）；若走批量 RPC 需先冻结接口（见 [`web-evolution.md`](./web-evolution.md)）。
+
+#### S2 stale-delete 部分失败 → 本机会话下轮反复跑 Full cleanup
+
+- **位置**：`easytier-web/src/client_manager/session/runtime_revision.rs` `cleanup_stale_web_source_instances` 尾部（约 L839-841）。
+
+  ```rust
+  if !outcome.has_failed {
+      cache.cleaned_web_source_instances = true;
+      cache.last_desired_web_inst_ids = Some(db_web_inst_ids);
+  }
+  ```
+
+- **现象**：删除是**一次**批量 RPC；若 RPC 失败或 `undeleted_instance_ids` 非空则 `record_failure`，缓存位 `cleaned_web_source_instances` 置不上。稳态无 dirty patch 时 scope 本就多为 Full（约 L460），于是**该机器**下一轮心跳会再次跑完整 stale cleanup（不是扫「全部设备」）。
+- **性质**：「部分失败放大为本机会话级反复 Full cleanup」，与失败实例数无关。
+- **建议**：拆细失败粒度 —— 已成功删除的实例照常 `forget_many` + 更新 `last_desired_web_inst_ids`，只对 `undeleted_instance_ids` 保留重试；或将「缓存位」与「本轮是否完全成功」解耦。
+- **改动面**：仅 web（`runtime_revision.rs`），符合「只升 web」。
+
+#### S3 reconcile 读路径超时与写路径不统一（5s vs 60s）
+
+- **位置**：读/探测路径用 `MANAGED_RPC_FAST=5s`（`client_manager/rpc_timeout.rs`；`mod.rs` 约 745/749/1251），写路径用 `MANAGED_RPC_SLOW=60s`（`slow_rpc_controller`）；另有 `MANAGED_RPC_PROBE=15s`。
+- **现象**：同一设备链路上，读侧 5s 就断，跨网/NAT 场景更易超时误判。
+- **与 S2 的关系（勿过度归因）**：meta list 失败时常走 intersection 回退，orphan 集可能为空，反而**仍会置上** cache bit；stale **删除**本身已用 60s。S3 主要伤害是读路径假阴性 / 体验抖动，**不是**「必然触发 S2 全量重扫」。
+- **建议**：读侧区分「本机快路径」与「跨网慢路径」；跨网读至少提到 `MANAGED_RPC_PROBE=15s`，或复用设备侧缓存的 meta 而非实时拉。
+- **改动面**：仅 web。
+
+### 9.3 轻量 / 观察项（不急）
+
+| ID | 位置 | 问题 | 影响 |
+|----|------|------|------|
+| S6 | `easytier-web/src/client_manager/mod.rs` `client_sessions`（约 L212） | `DashMap` **无空闲 TTL**，仅约 L268 `remove_if` 清理非运行/被取代会话 | 旧会话未及时回收时长驻内存 |
+| S7 | `easytier-web/src/client_manager/session.rs`（约 L578/1075/1220/1487/1510 等） | `let _ = notifier.send(...)` 吞掉发送错误 | 通知丢失无日志，排障困难 |
+| S8 | `easytier-web/frontend-lib/src/components/RemoteManagement.vue`（`networkMetaCache`，约 L414） | 运行期靠当前实例列表 prune（约 L554）；**`onUnmounted` 不停清 cache**（只停定时器 / 作废 generation） | 长会话或实例集膨胀时内存缓慢上涨 |
+| S9 | `easytier-gui/src/pages/index.vue`（`configServerIdleProbeTick`，约 L320） | 仅在 **无 URL 且未启用** 的 idle 探测路径自增；`waitForConfigServerOutcome`（有 URL、500ms 等待）**不会**与 idle 路径并行自增同一 counter | 最坏是 idle 探测节流不准，无害 |
+
+**注意（S4/S5 辨正）**：
+
+- `get_heartbeat_requests`（`mod.rs` 约 793）本身是 **O(1)**（按 `client_url` 直接 `client_sessions.get`），**不是**全表扫。`/summary` 的成本在 `list_machine_by_user_id` → **每台设备**调 `get_session_by_machine_id` 时的兜底全表扫描（S4）。
+- `Dashboard.vue` 的 `PeriodicTask` 已带 `document.hidden` 跳过；S5 只是「前台 2s 一轮」。
+
+### 9.4 已确认无问题的点
+
+- **持锁跨 `await`**：未发现（会话数据用 `RwLock` 短临界区）。
+- **丢中间心跳导致丢配置**：否 —— `recv_latest_heartbeat`（`runtime_revision.rs` 约 L25-57）是 `try_recv` **drain 到最新**，语义正确。
+- **重试风暴**：否 —— 拨号有指数退避 + 会话结束轻度升级（见 §2「重试退避」）。
+- **`/summary` 心跳读取**：`get_heartbeat_requests` 为 O(1)，非瓶颈（见上「注意」）。
+
+### 9.5 决策记录（追加）
+
+| 日期 | 决策 |
+|------|------|
+| 2026-10-12 | 交互性能/健壮性静态走查：确认无正确性 bug；记 S1–S9（见上分层） |
+| 2026-10-12 | 辨正：`get_heartbeat_requests` O(1)；`PeriodicTask` 已有 `document.hidden`；S4 为 O(设备 × 会话) |
+| 2026-10-12 | 落地序：先 S4 反向索引 + S5 放宽轮询（只升 web/前端）；再 S1–S3；S6–S9 观察 |
+| 2026-10-12 | 文档纠偏：勿将 S1–S3 标成「功能 P1」而与「先做 S4/S5」矛盾；S3 不必然触发 S2；S2 范围为本机会话而非全部设备；S8 无 onUnmounted 清 cache；S9 idle 与 wait 路径不并行自增 |
+| 2026-10-12 | §9 S1–S9 代码落地（阶段 F 勾选） |
+| 2026-10-12 | 复核（S1–S9 落地后）：修 `runtime_revision.rs` 两处 UTF-8 注释损坏（`§8.1.4`→`?8.1.4`、`—` 破损 + 注释被挤成一行）；`lifecycle_tests.rs` 3 处 rustfmt DIFF 已格式化为 0 diff；S2 的 `should_delete − retained` 逻辑经 `remain_inst_ids` 服务端语义核实无误；S1 记录 storage 回填 vs 旧 RPC 优先的语义差异（按 storage 接受） |

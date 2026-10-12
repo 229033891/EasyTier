@@ -6,6 +6,8 @@ use std::{
     time::{Duration, Instant},
 };
 
+use dashmap::{DashMap, DashSet};
+
 use anyhow::Context;
 use easytier::proto::{
     api::{
@@ -40,6 +42,40 @@ mod lifecycle_tests;
 const WEBHOOK_VALIDATION_HEARTBEAT_INTERVAL: u32 = 10;
 const CONNECTED_WEBHOOK_RETRY_DELAYS: [Duration; 2] =
     [Duration::from_millis(100), Duration::from_millis(500)];
+
+/// Reverse index: bound `(user_id, machine_id)` → session client URLs (S4).
+pub(crate) type MachineSessionIndex =
+    DashMap<(crate::db::UserIdInDb, uuid::Uuid), DashSet<url::Url>>;
+
+pub(crate) fn register_machine_session(
+    index: &MachineSessionIndex,
+    user_id: crate::db::UserIdInDb,
+    machine_id: uuid::Uuid,
+    client_url: &url::Url,
+) {
+    index
+        .entry((user_id, machine_id))
+        .or_default()
+        .insert(client_url.clone());
+}
+
+pub(crate) fn unregister_machine_session(
+    index: &MachineSessionIndex,
+    user_id: crate::db::UserIdInDb,
+    machine_id: uuid::Uuid,
+    client_url: &url::Url,
+) {
+    let key = (user_id, machine_id);
+    if let Some(urls) = index.get(&key) {
+        urls.remove(client_url);
+        if !urls.is_empty() {
+            return;
+        }
+    } else {
+        return;
+    }
+    index.remove_if(&key, |_, urls| urls.is_empty());
+}
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Location {
@@ -179,6 +215,8 @@ pub struct SessionData {
     /// Sync-readable bind for routing; updated when identity is established.
     /// Readable without the async `RwLock` (see `Session::bound_machine`).
     route_bind: Arc<std::sync::Mutex<Option<(crate::db::UserIdInDb, uuid::Uuid, u64)>>>,
+    /// Shared with `ClientManager` for O(1) machine→session lookup (S4).
+    sessions_by_machine: Arc<MachineSessionIndex>,
 }
 
 impl SessionData {
@@ -188,6 +226,7 @@ impl SessionData {
         location: Option<Location>,
         feature_flags: Arc<FeatureFlags>,
         webhook_config: SharedWebhookConfig,
+        sessions_by_machine: Arc<MachineSessionIndex>,
     ) -> Self {
         let (tx, _rx1) = broadcast::channel(2);
 
@@ -212,6 +251,7 @@ impl SessionData {
             webhook_validation_notify: Arc::new(Notify::new()),
             session_epoch: 0,
             route_bind: Arc::new(std::sync::Mutex::new(None)),
+            sessions_by_machine,
         }
     }
 
@@ -221,11 +261,31 @@ impl SessionData {
         machine_id: uuid::Uuid,
         session_epoch: u64,
     ) {
-        *self
-            .route_bind
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner()) =
-            Some((user_id, machine_id, session_epoch));
+        let previous = {
+            let mut bind = self
+                .route_bind
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let previous = *bind;
+            *bind = Some((user_id, machine_id, session_epoch));
+            previous
+        };
+        if let Some((prev_user, prev_machine, _)) = previous
+            && (prev_user != user_id || prev_machine != machine_id)
+        {
+            unregister_machine_session(
+                &self.sessions_by_machine,
+                prev_user,
+                prev_machine,
+                &self.client_url,
+            );
+        }
+        register_machine_session(
+            &self.sessions_by_machine,
+            user_id,
+            machine_id,
+            &self.client_url,
+        );
     }
 
     pub fn req(&self) -> Option<HeartbeatRequest> {
@@ -575,7 +635,9 @@ impl SessionRpcService {
         };
         match notify {
             Some((notifier, req)) => {
-                let _ = notifier.send(req);
+                if let Err(error) = notifier.send(req) {
+                    tracing::debug!(%error, "managed runtime notifier has no subscribers");
+                }
             }
             // Nothing to hand to the runtime yet; convergence then waits for the
             // next heartbeat, which is worth being able to see while debugging.
@@ -1072,7 +1134,9 @@ impl SessionRpcService {
         }
 
         if let Some((notifier, runtime_req)) = runtime_notify {
-            let _ = notifier.send(runtime_req);
+            if let Err(error) = notifier.send(runtime_req) {
+                tracing::debug!(%error, "managed runtime notifier has no subscribers");
+            }
         }
         if let Some(notify) = notify {
             notify.notify_one();
@@ -1217,7 +1281,9 @@ impl SessionRpcService {
         {
             tracing::warn!(?e, "failed to upsert device archive from heartbeat");
         }
-        let _ = notifier.send(runtime_req);
+        if let Err(error) = notifier.send(runtime_req) {
+            tracing::debug!(%error, "managed runtime notifier has no subscribers");
+        }
         if let Some(notify) = validation_notify {
             notify.notify_one();
         }
@@ -1289,6 +1355,8 @@ pub struct Session {
     client_url: url::Url,
     /// Same `Arc` as `SessionData::route_bind` for lock-free sync routing peeks.
     route_bind: Arc<std::sync::Mutex<Option<(crate::db::UserIdInDb, uuid::Uuid, u64)>>>,
+    /// Accept time for unbound idle TTL (S6); sync, no session lock needed.
+    created_at: Instant,
 
     webhook_validation_task: Option<AbortOnDropHandle<()>>,
     config_reconcile_task: Option<AbortOnDropHandle<()>>,
@@ -1313,6 +1381,7 @@ impl Session {
         feature_flags: Arc<FeatureFlags>,
         webhook_config: SharedWebhookConfig,
         session_epoch: u64,
+        sessions_by_machine: Arc<MachineSessionIndex>,
     ) -> Self {
         let mut session_data = SessionData::new(
             storage,
@@ -1320,6 +1389,7 @@ impl Session {
             location,
             feature_flags,
             webhook_config,
+            sessions_by_machine,
         );
         session_data.session_epoch = session_epoch;
         let route_bind = session_data.route_bind.clone();
@@ -1341,6 +1411,7 @@ impl Session {
             data,
             client_url,
             route_bind,
+            created_at: Instant::now(),
             webhook_validation_task: None,
             config_reconcile_task: None,
             route_ready: Arc::new(Notify::new()),
@@ -1400,6 +1471,11 @@ impl Session {
 
     pub fn is_running(&self) -> bool {
         self.rpc_mgr.is_running()
+    }
+
+    /// True when an unbound accept has sat too long without identity (S6).
+    pub(super) fn is_unbound_idle(&self, ttl: Duration) -> bool {
+        self.bound_machine().is_none() && self.created_at.elapsed() > ttl
     }
 
     /// Console Save online gate (§8.1.1): running + not superseded + stored
@@ -1484,7 +1560,9 @@ impl Session {
             data.req.clone().map(|req| (data.notifier.clone(), req))
         };
         if let Some((notifier, req)) = notify {
-            let _ = notifier.send(req);
+            if let Err(error) = notifier.send(req) {
+                tracing::debug!(%error, "managed runtime notifier has no subscribers");
+            }
         }
     }
 
@@ -1507,7 +1585,9 @@ impl Session {
             data.req.clone().map(|req| (data.notifier.clone(), req))
         };
         if let Some((notifier, req)) = notify {
-            let _ = notifier.send(req);
+            if let Err(error) = notifier.send(req) {
+                tracing::debug!(%error, "managed runtime notifier has no subscribers");
+            }
         }
     }
 
@@ -1579,6 +1659,7 @@ mod tests {
                 None,
                 None,
             )),
+            Arc::new(MachineSessionIndex::new()),
         );
 
         assert!(!should_delay_session_heartbeat_response(&data, false));
@@ -1692,6 +1773,7 @@ mod tests {
             Arc::new(crate::webhook::WebhookConfig::new(
                 None, None, None, None, None,
             )),
+            Arc::new(MachineSessionIndex::new()),
         )
     }
 
@@ -1972,6 +2054,7 @@ mod tests {
             None,
             Arc::new(FeatureFlags::default()),
             webhook_config.clone(),
+            Arc::new(MachineSessionIndex::new()),
         );
         session.storage_token = Some(storage_token.clone());
         session.auth_state = SessionAuthState::Authorized;
@@ -2202,6 +2285,7 @@ mod tests {
                 None,
                 None,
             )),
+            Arc::new(MachineSessionIndex::new()),
         )));
         let service = SessionRpcService {
             data: data.clone(),
@@ -2256,6 +2340,7 @@ mod tests {
             None,
             Arc::new(FeatureFlags::default()),
             webhook_config.clone(),
+            Arc::new(MachineSessionIndex::new()),
         );
         session.req = Some(req.clone());
         session.session_identity = Some(SessionRpcService::heartbeat_identity(&req, machine_id));
@@ -2335,6 +2420,7 @@ mod tests {
                 ..Default::default()
             }),
             webhook_config,
+            Arc::new(MachineSessionIndex::new()),
         );
         data.storage_token = Some(StorageToken {
             token: "token".to_string(),
@@ -2405,6 +2491,7 @@ mod tests {
             Arc::new(crate::webhook::WebhookConfig::new(
                 None, None, None, None, None,
             )),
+            Arc::new(MachineSessionIndex::new()),
         );
         data.storage_token = Some(StorageToken {
             token: "token".to_string(),
@@ -2463,6 +2550,7 @@ mod tests {
                 None,
                 None,
             )),
+            Arc::new(MachineSessionIndex::new()),
         );
         data.storage_token = Some(storage_token);
         data.session_identity = Some(SessionRpcService::heartbeat_identity(&req, machine_id));
@@ -2533,6 +2621,7 @@ mod tests {
                 None,
                 None,
             )),
+            Arc::new(MachineSessionIndex::new()),
         );
         data.storage_token = Some(storage_token);
         data.session_identity = Some(SessionRpcService::heartbeat_identity(&req, machine_id));
@@ -2617,6 +2706,7 @@ mod tests {
                 None,
                 None,
             )),
+            Arc::new(MachineSessionIndex::new()),
         );
         data.storage_token = Some(StorageToken {
             token: "token".to_string(),
@@ -2673,6 +2763,7 @@ mod tests {
                 None,
                 None,
             )),
+            Arc::new(MachineSessionIndex::new()),
         );
         data.storage_token = Some(storage_token);
         data.session_identity = Some(SessionRpcService::heartbeat_identity(&req, machine_id));
@@ -2719,6 +2810,7 @@ mod tests {
             Arc::new(crate::webhook::WebhookConfig::new(
                 None, None, None, None, None,
             )),
+            Arc::new(MachineSessionIndex::new()),
         );
         data.storage_token = Some(storage_token);
         data.session_identity = Some(SessionRpcService::heartbeat_identity(&req, machine_id));
@@ -2782,6 +2874,7 @@ mod tests {
                 None,
                 None,
             )),
+            Arc::new(MachineSessionIndex::new()),
         );
         storage.update_session_client(storage_token.clone(), 1, true, 0);
         data.storage_token = Some(storage_token);
@@ -2840,6 +2933,7 @@ mod tests {
             Arc::new(crate::webhook::WebhookConfig::new(
                 None, None, None, None, None,
             )),
+            Arc::new(MachineSessionIndex::new()),
         );
 
         let runtime = data.managed_runtime();

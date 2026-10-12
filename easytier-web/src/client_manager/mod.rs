@@ -46,7 +46,10 @@ use easytier_core::{
     tunnel::{Tunnel, web_security},
 };
 use maxminddb::geoip2;
-use session::{Location, ManagedConfigPersistedChange, Session};
+use session::{
+    Location, MachineSessionIndex, ManagedConfigPersistedChange, Session,
+    unregister_machine_session,
+};
 use storage::{Storage, StorageToken};
 
 use crate::FeatureFlags;
@@ -210,6 +213,8 @@ pub struct ClientManager {
     config_listener_ports: Arc<DashMap<u16, usize>>,
 
     pub(crate) client_sessions: Arc<DashMap<url::Url, Arc<Session>>>,
+    /// Bound machine → client URLs; keeps `get_session_by_machine_id` off full scans (S4).
+    pub(crate) sessions_by_machine: Arc<MachineSessionIndex>,
     storage: Storage,
 
     feature_flags: Arc<FeatureFlags>,
@@ -228,12 +233,14 @@ impl ClientManager {
         webhook_config: SharedWebhookConfig,
     ) -> Self {
         let client_sessions = Arc::new(DashMap::new());
+        let sessions_by_machine = Arc::new(MachineSessionIndex::new());
         let sessions: Arc<DashMap<url::Url, Arc<Session>>> = client_sessions.clone();
+        let by_machine = sessions_by_machine.clone();
         let mut tasks = JoinSet::new();
         tasks.spawn(async move {
             loop {
                 tokio::time::sleep(std::time::Duration::from_secs(15)).await;
-                Self::prune_sessions(&sessions).await;
+                Self::prune_sessions(&sessions, &by_machine).await;
             }
         });
         ClientManager {
@@ -245,6 +252,7 @@ impl ClientManager {
             config_listener_ports: Arc::new(DashMap::new()),
 
             client_sessions,
+            sessions_by_machine,
             storage: Storage::new(db),
             feature_flags,
             webhook_config,
@@ -254,18 +262,31 @@ impl ClientManager {
         }
     }
 
-    pub(crate) async fn prune_sessions(sessions: &DashMap<url::Url, Arc<Session>>) {
+    /// Accepts that never authenticate are retired after this idle window (S6).
+    const UNBOUND_SESSION_TTL: Duration = Duration::from_secs(120);
+
+    pub(crate) async fn prune_sessions(
+        sessions: &DashMap<url::Url, Arc<Session>>,
+        by_machine: &MachineSessionIndex,
+    ) {
         // Release the map guards before reading session state or stopping RPC tasks.
         let snapshot = sessions
             .iter()
             .map(|entry| (entry.key().clone(), entry.value().clone()))
             .collect::<Vec<_>>();
         for (client_url, session) in snapshot {
-            if session.is_running() && !session.is_superseded().await {
+            let unbound_idle = session.is_unbound_idle(Self::UNBOUND_SESSION_TTL);
+            if session.is_running() && !session.is_superseded().await && !unbound_idle {
                 continue;
             }
             // A reconnect may have reused the URL since the snapshot was taken.
-            sessions.remove_if(&client_url, |_, current| Arc::ptr_eq(current, &session));
+            let removed =
+                sessions.remove_if(&client_url, |_, current| Arc::ptr_eq(current, &session));
+            if removed.is_some()
+                && let Some((user_id, machine_id)) = session.bound_machine()
+            {
+                unregister_machine_session(by_machine, user_id, machine_id, &client_url);
+            }
             session.stop().await;
         }
     }
@@ -289,6 +310,7 @@ impl ClientManager {
         }
         self.listeners_cnt.fetch_add(1, Ordering::Relaxed);
         let sessions = self.client_sessions.clone();
+        let sessions_by_machine = self.sessions_by_machine.clone();
         let storage = self.storage.weak_ref();
         let listeners_cnt = self.listeners_cnt.clone();
         let next_session_epoch = self.next_session_epoch.clone();
@@ -344,6 +366,7 @@ impl ClientManager {
                         feature_flags.clone(),
                         webhook_config.clone(),
                         next_session_epoch.fetch_add(1, Ordering::Relaxed) + 1,
+                        sessions_by_machine.clone(),
                     );
                     session.serve(tunnel).await;
                     let session = Arc::new(session);
@@ -463,15 +486,12 @@ impl ClientManager {
                 consider(entry.value().clone());
             }
         }
-        for entry in self.client_sessions.iter() {
-            let session = entry.value();
-            if session
-                .bound_machine()
-                .is_some_and(|(bound_user, bound_machine)| {
-                    bound_user == user_id && bound_machine == *machine_id
-                })
-            {
-                consider(session.clone());
+        // O(bound URLs for this machine), not O(all sessions) (S4).
+        if let Some(urls) = self.sessions_by_machine.get(&(user_id, *machine_id)) {
+            for url in urls.iter() {
+                if let Some(entry) = self.client_sessions.get(&url) {
+                    consider(entry.value().clone());
+                }
             }
         }
         best.map(|(_, session)| session)
@@ -521,15 +541,11 @@ impl ClientManager {
                 push_live(entry.value().clone(), &mut targets);
             }
         }
-        for entry in self.client_sessions.iter() {
-            let session = entry.value();
-            if session
-                .bound_machine()
-                .is_some_and(|(bound_user, bound_machine)| {
-                    bound_user == user_id && bound_machine == *machine_id
-                })
-            {
-                push_live(session.clone(), &mut targets);
+        if let Some(urls) = self.sessions_by_machine.get(&(user_id, *machine_id)) {
+            for url in urls.iter() {
+                if let Some(entry) = self.client_sessions.get(&url) {
+                    push_live(entry.value().clone(), &mut targets);
+                }
             }
         }
 
@@ -539,10 +555,19 @@ impl ClientManager {
         for session in &targets {
             // Same pointer guard as `prune_sessions`: a reconnect may have
             // reused the URL between the scan and this removal.
-            self.client_sessions
+            let removed = self
+                .client_sessions
                 .remove_if(session.client_url(), |_, current| {
                     Arc::ptr_eq(current, session)
                 });
+            if removed.is_some() {
+                unregister_machine_session(
+                    &self.sessions_by_machine,
+                    user_id,
+                    *machine_id,
+                    session.client_url(),
+                );
+            }
         }
         for session in targets {
             session.stop().await;
@@ -742,11 +767,11 @@ impl ClientManager {
             .map(|req| req.easytier_version);
         let mut rpc_client = session.scoped_rpc_client();
         let prepare_result = tokio::time::timeout(
-            Duration::from_millis(MANAGED_RPC_FAST_TIMEOUT_MS as u64),
+            Duration::from_millis(MANAGED_RPC_PROBE_TIMEOUT_MS as u64),
             async {
                 let listed = rpc_client
                     .list_network_instance(
-                        rpc_controller(MANAGED_RPC_FAST_TIMEOUT_MS),
+                        rpc_controller(MANAGED_RPC_PROBE_TIMEOUT_MS),
                         ListNetworkInstanceRequest {},
                     )
                     .await?;
@@ -1583,6 +1608,7 @@ mod tests {
                 None, None, None, None, None,
             )),
             1,
+            mgr.sessions_by_machine.clone(),
         ));
         assert!(!session.is_running());
         mgr.client_sessions.insert(client_url, session);
@@ -1645,6 +1671,7 @@ mod tests {
                 None, None, None, None, None,
             )),
             1,
+            mgr.sessions_by_machine.clone(),
         );
         old_session.serve(server).await;
         old_session.mark_route_ready();
@@ -1720,6 +1747,7 @@ mod tests {
                 None, None, None, None, None,
             )),
             1,
+            mgr.sessions_by_machine.clone(),
         );
         old_session.serve(old_server).await;
         {
@@ -1740,6 +1768,7 @@ mod tests {
                 None, None, None, None, None,
             )),
             2,
+            mgr.sessions_by_machine.clone(),
         );
         new_session.serve(new_server).await;
         {

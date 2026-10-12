@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use dashmap::DashMap;
 use easytier::proto::{
     rpc::standalone::{runtime_udp_tunnel_dialer, runtime_udp_tunnel_listener},
@@ -68,7 +70,12 @@ async fn heartbeat(rpc: &BidirectRpcManager, machine_id: uuid::Uuid) {
         .unwrap();
 }
 
-async fn ring_session(storage: &Storage, port: u16, epoch: u64) -> (Arc<Session>, Box<dyn Tunnel>) {
+async fn ring_session(
+    storage: &Storage,
+    port: u16,
+    epoch: u64,
+    sessions_by_machine: Arc<MachineSessionIndex>,
+) -> (Arc<Session>, Box<dyn Tunnel>) {
     let mut session = Session::new(
         storage.weak_ref(),
         format!("tcp://127.0.0.1:{port}").parse().unwrap(),
@@ -83,6 +90,7 @@ async fn ring_session(storage: &Storage, port: u16, epoch: u64) -> (Arc<Session>
             None,
         )),
         epoch,
+        sessions_by_machine,
     );
     let (server, peer) = create_ring_tunnel_pair();
     session.serve(server).await;
@@ -141,14 +149,14 @@ async fn pruning_retires_live_udp_duplicates_only_after_authentication() {
             newest.data.read().await.client_url
         );
         assert!(newest.get_token().await.is_none());
-        ClientManager::prune_sessions(&manager.client_sessions).await;
+        ClientManager::prune_sessions(&manager.client_sessions, &manager.sessions_by_machine).await;
         assert_eq!(manager.client_sessions.len(), 2);
         assert!(old.is_running());
 
         heartbeat(&new_rpc, machine_id).await;
         heartbeat(&old_rpc, machine_id).await;
         let newest_token = newest.get_token().await.unwrap();
-        ClientManager::prune_sessions(&manager.client_sessions).await;
+        ClientManager::prune_sessions(&manager.client_sessions, &manager.sessions_by_machine).await;
         assert_eq!(manager.client_sessions.len(), 1);
         assert!(!old.is_running());
         assert!(Arc::ptr_eq(
@@ -169,11 +177,12 @@ async fn pruning_retires_live_udp_duplicates_only_after_authentication() {
 #[tokio::test]
 async fn pruning_remembers_disconnected_takeovers_and_isolates_identities() {
     let storage = Storage::new(Db::memory_db().await);
+    let by_machine = Arc::new(MachineSessionIndex::new());
     let machine_id = uuid::Uuid::new_v4();
-    let (old, _old_peer) = ring_session(&storage, 1001, 1).await;
-    let (other_user, _user_peer) = ring_session(&storage, 1002, 2).await;
-    let (other_machine, _machine_peer) = ring_session(&storage, 1003, 3).await;
-    let (newest, _new_peer) = ring_session(&storage, 1004, 4).await;
+    let (old, _old_peer) = ring_session(&storage, 1001, 1, by_machine.clone()).await;
+    let (other_user, _user_peer) = ring_session(&storage, 1002, 2, by_machine.clone()).await;
+    let (other_machine, _machine_peer) = ring_session(&storage, 1003, 3, by_machine.clone()).await;
+    let (newest, _new_peer) = ring_session(&storage, 1004, 4, by_machine.clone()).await;
     bind_session(&storage, &old, 1, machine_id).await;
     bind_session(&storage, &other_user, 2, machine_id).await;
     bind_session(&storage, &other_machine, 1, uuid::Uuid::new_v4()).await;
@@ -192,7 +201,7 @@ async fn pruning_remembers_disconnected_takeovers_and_isolates_identities() {
             .get_client_url_by_machine_id(1, &machine_id)
             .is_none()
     );
-    ClientManager::prune_sessions(&sessions).await;
+    ClientManager::prune_sessions(&sessions, &by_machine).await;
     assert_eq!(sessions.len(), 2);
     assert!(!old.is_running());
     assert!(other_user.is_running());
@@ -204,9 +213,10 @@ async fn pruning_remembers_disconnected_takeovers_and_isolates_identities() {
 #[tokio::test]
 async fn pruning_keeps_same_url_replacement_and_cancels_retained_session_workers() {
     let storage = Storage::new(Db::memory_db().await);
+    let by_machine = Arc::new(MachineSessionIndex::new());
     let machine_id = uuid::Uuid::new_v4();
-    let (old, _old_peer) = ring_session(&storage, 1001, 1).await;
-    let (newest, _new_peer) = ring_session(&storage, 1001, 2).await;
+    let (old, _old_peer) = ring_session(&storage, 1001, 1, by_machine.clone()).await;
+    let (newest, _new_peer) = ring_session(&storage, 1001, 2, by_machine.clone()).await;
     let token = bind_session(&storage, &old, 1, machine_id).await;
     bind_session(&storage, &newest, 1, machine_id).await;
     let sessions = DashMap::new();
@@ -216,7 +226,7 @@ async fn pruning_keeps_same_url_replacement_and_cancels_retained_session_workers
 
     // Poll cleanup until its snapshot is blocked on this session's state lock.
     let state = old.data.write().await;
-    let pruning = ClientManager::prune_sessions(&sessions);
+    let pruning = ClientManager::prune_sessions(&sessions, &by_machine);
     tokio::pin!(pruning);
     tokio::select! {
         biased;

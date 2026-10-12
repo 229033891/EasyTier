@@ -549,7 +549,9 @@ pub(super) async fn apply_success(
         .await;
     }
 
-    let _ = notifier.send(runtime_req);
+    if let Err(error) = notifier.send(runtime_req) {
+        tracing::debug!(%error, "managed runtime notifier has no subscribers");
+    }
 }
 
 async fn wait_webhook_connection_transition(
@@ -569,6 +571,7 @@ async fn wait_webhook_connection_transition(
 
 #[cfg(test)]
 mod tests {
+    use super::super::MachineSessionIndex;
     use super::*;
 
     async fn validation_session(machine_id: uuid::Uuid) -> Arc<RwLock<SessionData>> {
@@ -581,6 +584,7 @@ mod tests {
             Arc::new(crate::webhook::WebhookConfig::new(
                 None, None, None, None, None,
             )),
+            Arc::new(MachineSessionIndex::new()),
         );
         data.req = Some(HeartbeatRequest {
             user_token: "token".to_string(),
@@ -617,6 +621,7 @@ mod tests {
             Arc::new(crate::webhook::WebhookConfig::new(
                 None, None, None, None, None,
             )),
+            Arc::new(MachineSessionIndex::new()),
         );
         data.req = Some(request.clone());
         data.session_identity = Some(SessionRpcService::heartbeat_identity(&request, machine_id));
@@ -671,6 +676,7 @@ mod tests {
             Arc::new(crate::webhook::WebhookConfig::new(
                 None, None, None, None, None,
             )),
+            Arc::new(MachineSessionIndex::new()),
         );
         data.req = Some(request.clone());
         data.session_identity = Some(SessionRpcService::heartbeat_identity(&request, machine_id));

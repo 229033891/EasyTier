@@ -313,6 +313,8 @@ async function refreshConfigServerConnection() {
     const hasUrl = (mode.mode === 'normal' || mode.mode === 'service')
       ? !!mode.config_server_url?.trim()
       : false
+    // Idle tick only: requires !hasUrl. waitForConfigServerOutcome (has URL)
+    // never increments this counter — paths do not race (S9).
     const idlePoll = hostMode
       && !hasUrl
       && !configServerEnabled.value

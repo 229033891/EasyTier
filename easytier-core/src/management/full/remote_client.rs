@@ -277,7 +277,47 @@ where
             }
         }
 
-        for instance_id in inst_ids {
+        let missing: Vec<uuid::Uuid> = inst_ids
+            .iter()
+            .copied()
+            .filter(|id| !metas.contains_key(id))
+            .collect();
+        // One storage list for all misses instead of N get_network_config calls (S1).
+        if !missing.is_empty()
+            && let Ok(configs) = self
+                .get_storage()
+                .list_network_configs(identify.clone(), ListNetworkProps::All)
+                .await
+        {
+            let missing_set: std::collections::HashSet<uuid::Uuid> =
+                missing.iter().copied().collect();
+            for cfg in configs {
+                let Ok(instance_id) = uuid::Uuid::parse_str(cfg.get_network_inst_id()) else {
+                    continue;
+                };
+                if !missing_set.contains(&instance_id) || metas.contains_key(&instance_id) {
+                    continue;
+                }
+                let network_name = cfg
+                    .get_network_config()
+                    .ok()
+                    .and_then(|c| c.network_name)
+                    .unwrap_or_default();
+                let source = cfg.get_runtime_network_config_source();
+                metas.insert(
+                    instance_id,
+                    NetworkMeta {
+                        inst_id: Some(instance_id.into()),
+                        network_name: network_name.clone(),
+                        config_permission: 0,
+                        instance_name: network_name,
+                        source: config_source_to_rpc(source),
+                    },
+                );
+            }
+        }
+
+        for instance_id in missing {
             if metas.contains_key(&instance_id) {
                 continue;
             }
