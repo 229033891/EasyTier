@@ -243,19 +243,9 @@ describe('flattenPeerConnRows', () => {
     expect(rows).toHaveLength(2)
     expect(rows[0].conn).toBeUndefined()
     expect(rows[1].connCount).toBe(0)
-    for (const row of rows) {
-      expect([0, 1]).toContain(row.peerStripe)
-    }
-  })
-
-  it('keys peer stripe by peer id, not by position', () => {
-    const peerA = { ...peerRoutePair([]), peer: { peer_id: 'peer-a', conns: [] } } as any
-    const peerB = { ...peerRoutePair([]), peer: { peer_id: 'peer-b', conns: [] } } as any
-    const forward = flattenPeerConnRows([peerA, peerB])
-    const backward = flattenPeerConnRows([peerB, peerA])
-    // Same peer keeps its stripe after a backend reorder between polls.
-    expect(backward[0].peerStripe).toBe(forward[1].peerStripe)
-    expect(backward[1].peerStripe).toBe(forward[0].peerStripe)
+    // Single-row peers are treated as end-of-group (solid separator).
+    expect(rows[0].connIndex).toBe(0)
+    expect(rows[0].connCount).toBe(0)
   })
 
   it('expands multi-conn peers to one row per tunnel', () => {
@@ -289,8 +279,10 @@ describe('flattenPeerConnRows', () => {
     expect(rows).toHaveLength(2)
     expect(rows[0].isDefault).toBe(true)
     expect(rows[0].connCount).toBe(2)
-    expect([0, 1]).toContain(rows[0].peerStripe)
-    expect(rows[1].peerStripe).toBe(rows[0].peerStripe)
+    // First tunnel of a multi-link peer → intra (dashed); last → peer boundary (solid).
+    expect(rows[0].connIndex).toBe(0)
+    expect(rows[1].connIndex).toBe(1)
+    expect(rows[1].connCount).toBe(2)
     expect(connLatencyMs(rows[0].conn)).toBe('9ms')
     expect(connRemoteAddr(rows[0].conn)).toBe('1.2.3.4:11010')
     expect(connLocalAddr(rows[0].conn)).toBe('192.168.1.2:11010')

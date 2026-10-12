@@ -157,10 +157,14 @@ function rowPathQualityTip(row: PeerConnTableRow) {
   return connPathQualityTip(row.conn, row.isDefault)
 }
 
-/** Peer zebra + bold every default send path (default_conn), including single-link peers. */
+/**
+ * Peer separators + bold default send path (default_conn).
+ * Dashed bottom when more tunnels of the same peer follow; solid when the peer group ends.
+ */
 function peerConnRowClass(row: PeerConnTableRow) {
-  const stripe = row.peerStripe === 1 ? 'peer-stripe-odd' : 'peer-stripe-even'
-  return row.isDefault ? `${stripe} peer-row-default` : stripe
+  const moreOfSamePeer = row.connCount > 1 && row.connIndex < row.connCount - 1
+  const border = moreOfSamePeer ? 'peer-border-intra' : 'peer-border-peer'
+  return row.isDefault ? `${border} peer-row-default` : border
 }
 
 function routeCostDisplay(info: PeerRoutePair) {
@@ -980,7 +984,12 @@ const eventLogContent = computed(() => {
   }
 }
 
-/* 节点详情分组：行高随 chip 内容自适应（1 行或多行） */
+/* 节点详情分组：行高随 chip 内容自适应（1 行或多行）
+ *
+ * 这里是「字段分组」而非 peer 节点：一个 group 是一类字段（虚拟 IP、本机 IP、
+ * 监听器…），组内 chip 是该字段的多个取值。分组卡片样式与 peer 表的
+ * 节点/隧道实线-虚线分隔（.peer-border-peer / .peer-border-intra）无关，
+ * 不要混用同一套「节点」话术。 */
 .node-detail-groups {
   display: flex;
   flex-direction: column;
@@ -1268,16 +1277,23 @@ const eventLogContent = computed(() => {
   color: var(--text-color, #1e293b);
 }
 
-/* Peer-grouped zebra: multi-link rows of one peer share the same shade. */
-.peer-table-scroll :deep(.p-datatable-tbody > tr.peer-stripe-even > td) {
+/* Peer separators: solid between nodes, dashed between tunnels of the same node. */
+.peer-table-scroll :deep(.p-datatable-tbody > tr > td) {
   background: transparent;
+  border-bottom-width: 1px;
+  border-bottom-color: var(--surface-border, #cbd5e1);
 }
-.peer-table-scroll :deep(.p-datatable-tbody > tr.peer-stripe-odd > td) {
-  background: color-mix(in srgb, var(--text-color, #1e293b) 4.5%, var(--surface-ground, #ffffff));
+.peer-table-scroll :deep(.p-datatable-tbody > tr.peer-border-peer > td) {
+  border-bottom-style: solid;
 }
-.peer-table-scroll :deep(.p-datatable-tbody > tr.peer-stripe-even:hover > td),
-.peer-table-scroll :deep(.p-datatable-tbody > tr.peer-stripe-odd:hover > td) {
-  background: color-mix(in srgb, var(--text-color, #1e293b) 8%, var(--surface-ground, #ffffff));
+.peer-table-scroll :deep(.p-datatable-tbody > tr.peer-border-intra > td) {
+  border-bottom-style: dashed;
+}
+.peer-table-scroll :deep(.p-datatable-tbody > tr:last-child > td) {
+  border-bottom: none;
+}
+.peer-table-scroll :deep(.p-datatable-tbody > tr:hover > td) {
+  background: color-mix(in srgb, var(--text-color, #1e293b) 6%, var(--surface-ground, #ffffff));
 }
 /* Active send path (default_conn): emphasize the whole row instead of ★. */
 .peer-table-scroll :deep(.p-datatable-tbody > tr.peer-row-default > td) {

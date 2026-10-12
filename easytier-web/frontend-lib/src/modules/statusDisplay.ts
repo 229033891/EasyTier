@@ -500,25 +500,15 @@ export type PeerConnTableRow = {
   isDefault: boolean
   connIndex: number
   connCount: number
-  /** 0/1 zebra by peer (same peer → same stripe; keyed by peer id so poll reorder doesn't flicker). */
-  peerStripe: 0 | 1
-}
-
-/**
- * Stable 0/1 stripe per peer key (djb2). Keyed by id, not position, so a
- * backend reorder between polls doesn't flip the zebra.
- */
-function peerStripeForKey(peerKey: string): 0 | 1 {
-  let hash = 5381
-  for (let i = 0; i < peerKey.length; i++) {
-    hash = ((hash << 5) + hash + peerKey.charCodeAt(i)) | 0
-  }
-  return (Math.abs(hash) % 2) as 0 | 1
 }
 
 /**
  * Flatten peer_route_pairs so each direct tunnel is its own row.
  * Local / relay-only peers (no conns) stay as a single row with `conn` unset.
+ *
+ * Use `connIndex` / `connCount` for intra-peer separators: when
+ * `connCount > 1 && connIndex < connCount - 1`, more tunnels of the same peer
+ * follow (dashed border); otherwise this row ends the peer group (solid).
  */
 export function flattenPeerConnRows(pairs: PeerRoutePair[]): PeerConnTableRow[] {
   const rows: PeerConnTableRow[] = []
@@ -527,9 +517,8 @@ export function flattenPeerConnRows(pairs: PeerRoutePair[]): PeerConnTableRow[] 
     const pair = pairs[pi]
     const conns = defaultConnFirst(pair)
     const preferId = defaultConnId(pair)
-    // peer_id is numeric in protobuf; stringify so stripe hashing / row keys stay stable.
+    // peer_id is numeric in protobuf; stringify so row keys stay stable.
     const peerKey = String(pair.peer?.peer_id ?? pair.route?.peer_id ?? `idx-${pi}`)
-    const peerStripe = peerStripeForKey(peerKey)
 
     if (!conns.length) {
       rows.push({
@@ -539,7 +528,6 @@ export function flattenPeerConnRows(pairs: PeerRoutePair[]): PeerConnTableRow[] 
         isDefault: false,
         connIndex: 0,
         connCount: 0,
-        peerStripe,
       })
       continue
     }
@@ -555,7 +543,6 @@ export function flattenPeerConnRows(pairs: PeerRoutePair[]): PeerConnTableRow[] 
         isDefault,
         connIndex: i,
         connCount: conns.length,
-        peerStripe,
       })
     })
   }
