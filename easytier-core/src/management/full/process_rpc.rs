@@ -340,14 +340,77 @@ where
             }
         }
 
-        if replacing
-            && let Err(error) = self.instances.delete_network_instances([instance_id]).await
-        {
+        // Overwrite: detach under lock, await TUN stop outside, then re-lock to run.
+        // New starts stay under one lock hold (no stop to await).
+        let pending_replace = if replacing {
+            match self.instances.detach_network_instances([instance_id]) {
+                Ok((_, pending)) => pending,
+                Err(error) => {
+                    self.rollback_started_instance(None, file_cleanup, restore_instance)
+                        .await;
+                    return Err(error);
+                }
+            }
+        } else {
+            crate::instance::manager::PendingInstanceStops::empty()
+        };
+
+        if !replacing {
+            return self
+                .finish_run_network_instance(
+                    instance_id,
+                    config,
+                    control,
+                    file_cleanup,
+                    restore_instance,
+                    remote_managed,
+                )
+                .await;
+        }
+
+        // Drop mutation_lock before awaiting TUN teardown.
+        drop(_mutation);
+        if let Err(error) = pending_replace.join().await {
             self.rollback_started_instance(None, file_cleanup, restore_instance)
                 .await;
             return Err(error);
         }
 
+        let _mutation = self.mutation_lock.lock().await;
+        // Rare race: another mutator may have revived this id after our stop
+        // completed. Do not return Ok — that would claim overwrite success while
+        // leaving the concurrent instance running. Re-delete under this lock
+        // (await is OK on this rare path) then start ours.
+        if self.instances.instance(instance_id).is_some()
+            && let Err(error) = self
+                .instances
+                .delete_network_instances([instance_id])
+                .await
+        {
+            self.rollback_started_instance(None, file_cleanup, restore_instance)
+                .await;
+            return Err(error);
+        }
+        self.finish_run_network_instance(
+            instance_id,
+            config,
+            control,
+            file_cleanup,
+            restore_instance,
+            remote_managed,
+        )
+        .await
+    }
+
+    async fn finish_run_network_instance(
+        &self,
+        instance_id: uuid::Uuid,
+        config: TomlConfig,
+        control: ConfigFileControl,
+        file_cleanup: Option<ConfigFileCleanup>,
+        restore_instance: Option<(TomlConfig, ConfigFileControl)>,
+        remote_managed: bool,
+    ) -> anyhow::Result<uuid::Uuid> {
         if let Err(error) = self.instances.run_network_instance(config, control) {
             self.rollback_started_instance(None, file_cleanup, restore_instance)
                 .await;
@@ -369,8 +432,12 @@ where
         &self,
         retained: Vec<uuid::Uuid>,
     ) -> anyhow::Result<InstanceMutationResult> {
-        let _mutation = self.mutation_lock.lock().await;
-        self.retain_network_instances_locked(retained).await
+        let (result, pending_stops) = {
+            let _mutation = self.mutation_lock.lock().await;
+            self.retain_network_instances_locked(retained).await?
+        };
+        pending_stops.join().await?;
+        Ok(result)
     }
 
     /// Resolves retained names and mutates the collection in one transaction.
@@ -378,15 +445,22 @@ where
         &self,
         retained_names: Vec<String>,
     ) -> anyhow::Result<InstanceMutationResult> {
-        let _mutation = self.mutation_lock.lock().await;
-        let retained = self.resolve_instance_ids_by_name(&retained_names)?;
-        self.retain_network_instances_locked(retained).await
+        let (result, pending_stops) = {
+            let _mutation = self.mutation_lock.lock().await;
+            let retained = self.resolve_instance_ids_by_name(&retained_names)?;
+            self.retain_network_instances_locked(retained).await?
+        };
+        pending_stops.join().await?;
+        Ok(result)
     }
 
     async fn retain_network_instances_locked(
         &self,
         retained: Vec<uuid::Uuid>,
-    ) -> anyhow::Result<InstanceMutationResult> {
+    ) -> anyhow::Result<(
+        InstanceMutationResult,
+        crate::instance::manager::PendingInstanceStops,
+    )> {
         let before = self.instances.instance_ids();
         if !self.hooks.manages_remote_config_instances() {
             let removed = before
@@ -394,18 +468,23 @@ where
                 .copied()
                 .filter(|id| !retained.contains(id))
                 .collect::<Vec<_>>();
-            self.mark_user_disabled_web_instances(&removed).await;
-            let remaining = self.instances.retain_network_instances(&retained).await?;
+            // Retain drops non-kept instances (keep_local_config=false) — clear
+            // disabled marks, same as hard Delete.
+            self.clear_user_disabled_web_instances(&removed).await;
+            let (remaining, pending_stops) = self.instances.detach_network_instances(removed)?;
             let remaining_set = remaining.iter().copied().collect::<HashSet<_>>();
             let removed = before
                 .into_iter()
                 .filter(|id| !remaining_set.contains(id))
                 .collect::<Vec<_>>();
             self.notify_removed_instances(&removed, false).await?;
-            return Ok(InstanceMutationResult {
-                removed_instance_ids: removed,
-                remaining_instance_ids: remaining,
-            });
+            return Ok((
+                InstanceMutationResult {
+                    removed_instance_ids: removed,
+                    remaining_instance_ids: remaining,
+                },
+                pending_stops,
+            ));
         }
 
         let mut retained = retained.into_iter().collect::<HashSet<_>>();
@@ -424,16 +503,16 @@ where
                 retained.insert(instance_id);
             }
         }
-        self.mark_user_disabled_web_instances(&removed).await;
-        let remaining = self
-            .instances
-            .retain_network_instances(&retained.into_iter().collect::<Vec<_>>())
-            .await?;
+        self.clear_user_disabled_web_instances(&removed).await;
+        let (remaining, pending_stops) = self.instances.detach_network_instances(removed.clone())?;
         self.notify_removed_instances(&removed, false).await?;
-        Ok(InstanceMutationResult {
-            remaining_instance_ids: remaining,
-            removed_instance_ids: removed,
-        })
+        Ok((
+            InstanceMutationResult {
+                remaining_instance_ids: remaining,
+                removed_instance_ids: removed,
+            },
+            pending_stops,
+        ))
     }
 
     pub async fn delete_network_instances(
@@ -441,48 +520,59 @@ where
         requested: Vec<uuid::Uuid>,
         keep_local_config: bool,
     ) -> anyhow::Result<InstanceMutationResult> {
-        let _mutation = self.mutation_lock.lock().await;
-        let requested = requested.into_iter().collect::<HashSet<_>>();
         let remote_managed = self.hooks.manages_remote_config_instances();
-        let mut removed = Vec::new();
-        let mut files = Vec::new();
-        for instance in self.instances.instances() {
-            let instance_id = instance.instance_id();
-            if !requested.contains(&instance_id) {
-                continue;
+        let (removed, remaining, pending_stops, files) = {
+            let _mutation = self.mutation_lock.lock().await;
+            let requested = requested.into_iter().collect::<HashSet<_>>();
+            let mut removed = Vec::new();
+            // (instance_id, path) so purge can skip ids revived by a concurrent Run.
+            let mut files = Vec::<(uuid::Uuid, PathBuf)>::new();
+            for instance in self.instances.instances() {
+                let instance_id = instance.instance_id();
+                if !requested.contains(&instance_id) {
+                    continue;
+                }
+                let Some(control) = self.instances.config_control(instance_id) else {
+                    continue;
+                };
+                let removable = if remote_managed {
+                    self.is_remote_removable(&control).await
+                } else {
+                    control.is_deletable()
+                };
+                if removable {
+                    removed.push(instance_id);
+                    if let Some(path) = control.path {
+                        files.push((instance_id, path));
+                    }
+                }
             }
-            let Some(control) = self.instances.config_control(instance_id) else {
-                continue;
-            };
-            let removable = if remote_managed {
-                self.is_remote_removable(&control).await
+            // Stop (keep=true): mark web instances intentionally disabled for heartbeat.
+            // Delete (keep=false): drop disabled marks so the set does not retain purged ids.
+            // Semantics: see `InstanceMutationHooks::post_remove_network_instances` / proto field.
+            if keep_local_config {
+                self.mark_user_disabled_web_instances(&removed).await;
             } else {
-                control.is_deletable()
-            };
-            if removable {
-                removed.push(instance_id);
-                files.extend(control.path);
+                self.clear_user_disabled_web_instances(&removed).await;
             }
-        }
-        // Stop (keep=true): mark web instances intentionally disabled for heartbeat.
-        // Delete (keep=false): drop disabled marks so the set does not retain purged ids.
-        // Semantics: see `InstanceMutationHooks::post_remove_network_instances` / proto field.
-        if keep_local_config {
-            self.mark_user_disabled_web_instances(&removed).await;
-        } else {
-            self.clear_user_disabled_web_instances(&removed).await;
-        }
-        let remaining = self
-            .instances
-            .delete_network_instances(removed.clone())
-            .await?;
-        self.notify_removed_instances(&removed, keep_local_config)
-            .await?;
-        // NB: runtime instances are already removed above. If the hook bails
-        // (remote-managed), file purge below is skipped and a later reconcile
-        // retries it; the memory/file divergence is transient, not persisted.
-        if !keep_local_config {
-            for path in files {
+            // Detach under lock (hooks see removed set); await TUN stop outside lock.
+            let (remaining, pending_stops) = self
+                .instances
+                .detach_network_instances(removed.clone())?;
+            self.notify_removed_instances(&removed, keep_local_config)
+                .await?;
+            (removed, remaining, pending_stops, files)
+        };
+        pending_stops.join().await?;
+        // File purge after TUN stop. Re-take the lock so a concurrent overwrite/run
+        // that revived the same id (and rewrote its toml) cannot have its file
+        // unlinked. Unlink itself is fast; the expensive wait already finished.
+        if !keep_local_config && !files.is_empty() {
+            let _mutation = self.mutation_lock.lock().await;
+            for (instance_id, path) in files {
+                if self.instances.instance(instance_id).is_some() {
+                    continue;
+                }
                 if remote_managed && self.storage.inspect(&path).await.is_read_only() {
                     continue;
                 }
@@ -536,9 +626,14 @@ where
         &self,
         select: impl FnOnce() -> Vec<uuid::Uuid>,
     ) -> anyhow::Result<InstanceMutationResult> {
-        let _mutation = self.mutation_lock.lock().await;
-        let requested = select();
-        self.delete_owned_network_instances_locked(requested).await
+        let (result, pending_stops) = {
+            let _mutation = self.mutation_lock.lock().await;
+            let requested = select();
+            self.delete_owned_network_instances_locked(requested)
+                .await?
+        };
+        pending_stops.join().await?;
+        Ok(result)
     }
 
     /// Resolves requested names and removes them in one transaction.
@@ -546,20 +641,34 @@ where
         &self,
         requested_names: Vec<String>,
     ) -> anyhow::Result<InstanceMutationResult> {
-        let _mutation = self.mutation_lock.lock().await;
-        let requested = self.resolve_instance_ids_by_name(&requested_names)?;
-        self.delete_owned_network_instances_locked(requested).await
+        let (result, pending_stops) = {
+            let _mutation = self.mutation_lock.lock().await;
+            let requested = self.resolve_instance_ids_by_name(&requested_names)?;
+            self.delete_owned_network_instances_locked(requested)
+                .await?
+        };
+        pending_stops.join().await?;
+        Ok(result)
     }
 
     async fn delete_owned_network_instances_locked(
         &self,
         requested: Vec<uuid::Uuid>,
-    ) -> anyhow::Result<InstanceMutationResult> {
+    ) -> anyhow::Result<(
+        InstanceMutationResult,
+        crate::instance::manager::PendingInstanceStops,
+    )> {
         let before = self.instances.instance_ids();
+        let before_set = before.iter().copied().collect::<HashSet<_>>();
+        let to_remove = requested
+            .into_iter()
+            .filter(|id| before_set.contains(id))
+            .collect::<Vec<_>>();
         // Intentional local stop (FFI/Android/iOS): mark web-managed instances
-        // before delete so heartbeat can sync `disabled` and skip auto-run.
-        self.mark_user_disabled_web_instances(&requested).await;
-        let remaining = self.instances.delete_network_instances(requested).await?;
+        // before detach so heartbeat can sync `disabled` and skip auto-run.
+        // Only mark ids that are actually present (config_source still resolvable).
+        self.mark_user_disabled_web_instances(&to_remove).await;
+        let (remaining, pending_stops) = self.instances.detach_network_instances(to_remove)?;
         let remaining_set = remaining.iter().copied().collect::<HashSet<_>>();
         let removed = before
             .into_iter()
@@ -567,10 +676,13 @@ where
             .collect::<Vec<_>>();
         // Local intentional stop → keep_local_config=true (see trait/proto).
         self.notify_removed_instances(&removed, true).await?;
-        Ok(InstanceMutationResult {
-            removed_instance_ids: removed,
-            remaining_instance_ids: remaining,
-        })
+        Ok((
+            InstanceMutationResult {
+                removed_instance_ids: removed,
+                remaining_instance_ids: remaining,
+            },
+            pending_stops,
+        ))
     }
 
     fn resolve_instance_ids_by_name(&self, names: &[String]) -> anyhow::Result<Vec<uuid::Uuid>> {

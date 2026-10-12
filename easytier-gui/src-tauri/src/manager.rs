@@ -7,9 +7,13 @@ use easytier::common::config::{ConfigSource, NetworkConfig, NetworkConfigExt};
 use easytier::proto::api::logger::{
     GetLoggerConfigRequest, LoggerRpc, LoggerRpcClientFactory, SetLoggerConfigRequest,
 };
+#[cfg(target_os = "android")]
+use easytier::proto::api::manage::DeleteNetworkInstanceRequest;
 use easytier::proto::api::manage::RunNetworkInstanceRequest;
 use easytier::proto::rpc::bidirect::BidirectRpcManager;
 use easytier::proto::rpc_types::controller::BaseController;
+#[cfg(target_os = "android")]
+use easytier::proto::rpc_types::controller::Controller as _;
 use easytier::web_client::WebClientHooks;
 use easytier_core::management::remote_client::PersistentConfig;
 
@@ -379,15 +383,41 @@ impl GUIClientManager {
         web_only: bool,
     ) -> Result<(), easytier_core::management::remote_client::RemoteClientError<anyhow::Error>>
     {
+        use easytier_core::management::remote_client::RemoteClientError;
+
         let inst_ids: Vec<uuid::Uuid> = if web_only {
             self.get_enabled_instances_with_web_like_tun_ids().collect()
         } else {
             self.get_enabled_instances_with_tun_ids().collect()
         };
-        for inst_id in inst_ids {
-            self.handle_update_network_state(app.clone(), inst_id, true)
-                .await?;
+        if inst_ids.is_empty() {
+            return Ok(());
         }
+        // One Delete RPC for all ids (keep_local_config=true). Server awaits
+        // every TUN stop before replying, so use the 60s mutator budget — the
+        // default 5s would time out once several instances share one call.
+        // GuiHooks also batch-disables on post_remove; we still disable locally
+        // so storage stays consistent if the hook only warns.
+        const BATCH_DELETE_TIMEOUT_MS: i32 = 60_000;
+        let mut ctrl = BaseController::default();
+        ctrl.set_timeout_ms(BATCH_DELETE_TIMEOUT_MS);
+        let client = self
+            .get_rpc_client(app.clone())
+            .ok_or(RemoteClientError::ClientNotFound)?;
+        client
+            .delete_network_instance(
+                ctrl,
+                DeleteNetworkInstanceRequest {
+                    inst_ids: inst_ids.iter().copied().map(Into::into).collect(),
+                    keep_local_config: true,
+                },
+            )
+            .await?;
+        self.storage
+            .disable_network_configs(app, &inst_ids)
+            .map_err(RemoteClientError::PersistentError)?;
+        self.notify_vpn_stop_if_no_tun(app)
+            .map_err(|e| RemoteClientError::PersistentError(anyhow::anyhow!(e)))?;
         Ok(())
     }
 
@@ -680,41 +710,112 @@ impl GUIClientManager {
         }
 
         self.storage.enabled_networks.clear();
+        let mut to_start = Vec::new();
+        let mut queued = std::collections::HashSet::new();
+        for id in enabled_networks {
+            let Ok(uuid) = id.parse() else {
+                continue;
+            };
+            if !queued.insert(uuid) {
+                continue;
+            }
+            let config = self
+                .storage
+                .network_configs
+                .get(&uuid)
+                .map(|i| (i.value().config.clone(), i.value().source));
+            let Some((config, source)) = config else {
+                continue;
+            };
+            to_start.push((uuid, config, source));
+        }
+
+        // Android one-TUN pre_run must stay serial; desktop can start a few in parallel.
+        #[cfg(target_os = "android")]
+        {
+            for (uuid, config, source) in to_start {
+                self.start_enabled_network(&app, uuid, config, source)
+                    .await?;
+            }
+        }
+        #[cfg(not(target_os = "android"))]
+        {
+            const LOAD_CONFIG_CONCURRENCY: usize = 4;
+            let mut rest = to_start.as_slice();
+            while !rest.is_empty() {
+                let n = rest.len().min(LOAD_CONFIG_CONCURRENCY);
+                let (chunk, next) = rest.split_at(n);
+                rest = next;
+                match chunk {
+                    [(u0, c0, s0)] => {
+                        self.start_enabled_network(&app, *u0, c0.clone(), *s0)
+                            .await?;
+                    }
+                    [(u0, c0, s0), (u1, c1, s1)] => {
+                        let (r0, r1) = tokio::join!(
+                            self.start_enabled_network(&app, *u0, c0.clone(), *s0),
+                            self.start_enabled_network(&app, *u1, c1.clone(), *s1),
+                        );
+                        r0?;
+                        r1?;
+                    }
+                    [(u0, c0, s0), (u1, c1, s1), (u2, c2, s2)] => {
+                        let (r0, r1, r2) = tokio::join!(
+                            self.start_enabled_network(&app, *u0, c0.clone(), *s0),
+                            self.start_enabled_network(&app, *u1, c1.clone(), *s1),
+                            self.start_enabled_network(&app, *u2, c2.clone(), *s2),
+                        );
+                        r0?;
+                        r1?;
+                        r2?;
+                    }
+                    [(u0, c0, s0), (u1, c1, s1), (u2, c2, s2), (u3, c3, s3)] => {
+                        let (r0, r1, r2, r3) = tokio::join!(
+                            self.start_enabled_network(&app, *u0, c0.clone(), *s0),
+                            self.start_enabled_network(&app, *u1, c1.clone(), *s1),
+                            self.start_enabled_network(&app, *u2, c2.clone(), *s2),
+                            self.start_enabled_network(&app, *u3, c3.clone(), *s3),
+                        );
+                        r0?;
+                        r1?;
+                        r2?;
+                        r3?;
+                    }
+                    _ => unreachable!("chunk size capped at LOAD_CONFIG_CONCURRENCY"),
+                }
+            }
+        }
+        Ok(())
+    }
+
+    async fn start_enabled_network(
+        &self,
+        app: &AppHandle,
+        uuid: Uuid,
+        config: NetworkConfig,
+        source: PersistedConfigSource,
+    ) -> anyhow::Result<()> {
         let client = self
             .get_rpc_client(app.clone())
             .ok_or_else(|| anyhow::anyhow!("RPC client not found"))?;
-        for id in enabled_networks {
-            if let Ok(uuid) = id.parse()
-                && !self.storage.enabled_networks.contains(&uuid)
-            {
-                let config = self
-                    .storage
-                    .network_configs
-                    .get(&uuid)
-                    .map(|i| (i.value().config.clone(), i.value().source));
-                let Some((config, source)) = config else {
-                    continue;
-                };
-                let toml_config = config.gen_config()?;
-                self.pre_run_network_instance_hook(&app, &toml_config, source)
-                    .await
-                    .map_err(|e| anyhow::anyhow!(e))?;
-                client
-                    .run_network_instance(
-                        BaseController::default(),
-                        RunNetworkInstanceRequest {
-                            inst_id: None,
-                            config: Some(config),
-                            overwrite: false,
-                            source: config_source_to_rpc(source.to_runtime_source()),
-                        },
-                    )
-                    .await?;
-                self.post_run_network_instance_hook(&app, &uuid)
-                    .await
-                    .map_err(|e| anyhow::anyhow!(e))?;
-            }
-        }
+        let toml_config = config.gen_config()?;
+        self.pre_run_network_instance_hook(app, &toml_config, source)
+            .await
+            .map_err(|e| anyhow::anyhow!(e))?;
+        client
+            .run_network_instance(
+                BaseController::default(),
+                RunNetworkInstanceRequest {
+                    inst_id: None,
+                    config: Some(config),
+                    overwrite: false,
+                    source: config_source_to_rpc(source.to_runtime_source()),
+                },
+            )
+            .await?;
+        self.post_run_network_instance_hook(app, &uuid)
+            .await
+            .map_err(|e| anyhow::anyhow!(e))?;
         Ok(())
     }
 }

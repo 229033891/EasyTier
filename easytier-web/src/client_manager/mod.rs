@@ -11,7 +11,8 @@ pub mod storage;
 #[cfg(test)]
 pub(crate) use rpc_timeout::MANAGED_RPC_SLOW_TIMEOUT_MS;
 pub(crate) use rpc_timeout::{
-    MANAGED_RPC_FAST_TIMEOUT_MS, proxy_rpc_timeout_ms, rpc_controller, slow_rpc_controller,
+    MANAGED_RPC_FAST_TIMEOUT_MS, MANAGED_RPC_PROBE_TIMEOUT_MS, proxy_rpc_timeout_ms,
+    rpc_controller, slow_rpc_controller,
 };
 
 use std::time::Duration;
@@ -945,27 +946,47 @@ impl
                 .await?;
             self.invalidate_applied_config_revision(identify.0, identify.1)
                 .await;
-        } else if self.should_soft_start_network(identify, inst_id).await? {
-            tracing::info!(
-                %inst_id,
-                user_id = identify.0,
-                machine_id = %identify.1,
-                "console Start: instance already healthy with matching revision; skip overwrite"
-            );
         } else {
-            client
-                .run_network_instance(
-                    slow_rpc_controller(),
-                    RunNetworkInstanceRequest {
-                        inst_id: Some(inst_id.into()),
-                        config: Some(cfg),
-                        overwrite: true,
-                        source: config_source_to_rpc(source),
-                    },
-                )
-                .await?;
-            self.invalidate_applied_config_revision(identify.0, identify.1)
-                .await;
+            // Soft-start probe errors (timeout / tunnel blip) fall back to overwrite.
+            // Only ClientNotFound stays fatal — there is no device to start on.
+            let soft_start = match self.should_soft_start_network(identify, inst_id).await {
+                Ok(v) => v,
+                Err(RemoteClientError::ClientNotFound) => {
+                    return Err(RemoteClientError::ClientNotFound);
+                }
+                Err(error) => {
+                    tracing::warn!(
+                        %inst_id,
+                        user_id = identify.0,
+                        machine_id = %identify.1,
+                        %error,
+                        "console Start: soft-start probe failed; falling back to overwrite"
+                    );
+                    false
+                }
+            };
+            if soft_start {
+                tracing::info!(
+                    %inst_id,
+                    user_id = identify.0,
+                    machine_id = %identify.1,
+                    "console Start: instance already healthy with matching revision; skip overwrite"
+                );
+            } else {
+                client
+                    .run_network_instance(
+                        slow_rpc_controller(),
+                        RunNetworkInstanceRequest {
+                            inst_id: Some(inst_id.into()),
+                            config: Some(cfg),
+                            overwrite: true,
+                            source: config_source_to_rpc(source),
+                        },
+                    )
+                    .await?;
+                self.invalidate_applied_config_revision(identify.0, identify.1)
+                    .await;
+            }
         }
 
         self.get_storage()
@@ -983,7 +1004,7 @@ impl ClientManager {
     ///
     /// Liveness (`list`) uses the fast 5s timeout so offline / hung devices fail
     /// the probe quickly instead of waiting a full 60s. Only after the instance
-    /// is listed do we `collect` with the slow timeout (payload can be large).
+    /// is listed do we `collect` with the probe timeout (single-instance health).
     ///
     /// Fetches its own RPC client instead of borrowing the caller's: the client
     /// is `Send` but not `Sync`, so holding `&dyn … + Send` across `.await`
@@ -993,6 +1014,20 @@ impl ClientManager {
         identify: (UserIdInDb, uuid::Uuid),
         inst_id: uuid::Uuid,
     ) -> Result<bool, RemoteClientError<sea_orm::DbErr>> {
+        // Cheap local revision gate first — skip device RPCs when soft-start
+        // is already impossible (pending reconcile / revision mismatch).
+        let persisted = self
+            .db()
+            .get_managed_config_revision(identify)
+            .await
+            .map_err(RemoteClientError::PersistentError)?;
+        if !self
+            .storage
+            .revision_allows_soft_start(identify.0, identify.1, persisted.as_deref())
+        {
+            return Ok(false);
+        }
+
         let client = self
             .get_rpc_client(identify)
             .ok_or(RemoteClientError::ClientNotFound)?;
@@ -1010,9 +1045,10 @@ impl ClientManager {
             return Ok(false);
         }
 
+        // Health probe only (single instance) — use probe timeout, not full 60s mutator.
         let collected = client
             .collect_network_info(
-                slow_rpc_controller(),
+                rpc_controller(MANAGED_RPC_PROBE_TIMEOUT_MS),
                 CollectNetworkInfoRequest {
                     inst_ids: vec![inst_id.into()],
                 },
@@ -1023,18 +1059,7 @@ impl ClientManager {
             .as_ref()
             .and_then(|m| m.map.get(&inst_id.to_string()))
             .is_some_and(|info| info.running && info.error_msg.as_deref().unwrap_or("").is_empty());
-        if !healthy {
-            return Ok(false);
-        }
-
-        let persisted = self
-            .db()
-            .get_managed_config_revision(identify)
-            .await
-            .map_err(RemoteClientError::PersistentError)?;
-        Ok(self
-            .storage
-            .revision_allows_soft_start(identify.0, identify.1, persisted.as_deref()))
+        Ok(healthy)
     }
 }
 

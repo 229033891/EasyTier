@@ -203,6 +203,8 @@ impl Drop for DaemonGuard {
 struct ActiveStopGuard {
     active_stops: Arc<AtomicUsize>,
     notifier: Arc<tokio::sync::Notify>,
+    stopping_ids: Arc<Mutex<HashSet<Uuid>>>,
+    instance_ids: Vec<Uuid>,
 }
 
 #[derive(Default)]
@@ -242,9 +244,34 @@ impl InstanceStateChanges {
 
 impl Drop for ActiveStopGuard {
     fn drop(&mut self) {
+        if let Ok(mut guard) = self.stopping_ids.lock() {
+            for instance_id in &self.instance_ids {
+                guard.remove(instance_id);
+            }
+        }
         let previous = self.active_stops.fetch_sub(1, Ordering::AcqRel);
         debug_assert!(previous > 0);
         self.notifier.notify_one();
+    }
+}
+
+/// Join handle for instance stops started by [`InstanceManager::detach_network_instances`].
+/// Await outside `mutation_lock` so concurrent mutators are not blocked on TUN teardown.
+pub struct PendingInstanceStops {
+    join: Option<tokio::task::JoinHandle<()>>,
+}
+
+impl PendingInstanceStops {
+    pub fn empty() -> Self {
+        Self { join: None }
+    }
+
+    pub async fn join(self) -> anyhow::Result<()> {
+        if let Some(join) = self.join {
+            join.await
+                .map_err(|error| anyhow::anyhow!("instance stop task failed: {error}"))?;
+        }
+        Ok(())
     }
 }
 
@@ -278,6 +305,8 @@ pub struct InstanceManager<F: InstanceFactory> {
     mutation_lock: Arc<tokio::sync::Mutex<()>>,
     runtime_handle: Option<tokio::runtime::Handle>,
     active_stops: Arc<AtomicUsize>,
+    /// Instance ids whose stop is in flight after detach (blocks same-id re-run).
+    stopping_ids: Arc<Mutex<HashSet<Uuid>>>,
     instance_state_changes: Arc<InstanceStateChanges>,
     user_disabled_web_instances: Mutex<HashSet<Uuid>>,
 }
@@ -320,9 +349,17 @@ impl<F: InstanceFactory> InstanceManager<F> {
             mutation_lock: Arc::new(tokio::sync::Mutex::new(())),
             runtime_handle,
             active_stops: Arc::new(AtomicUsize::new(0)),
+            stopping_ids: Arc::new(Mutex::new(HashSet::new())),
             instance_state_changes: Arc::new(InstanceStateChanges::default()),
             user_disabled_web_instances: Mutex::new(HashSet::new()),
         }
+    }
+
+    pub fn is_instance_stopping(&self, instance_id: Uuid) -> bool {
+        self.stopping_ids
+            .lock()
+            .map(|guard| guard.contains(&instance_id))
+            .unwrap_or(false)
     }
 
     pub fn with_config_path(mut self, config_dir: Option<PathBuf>) -> Self {
@@ -545,6 +582,11 @@ where
             .ok_or_else(|| anyhow::anyhow!("tokio runtime not found, cannot start instance"))?;
         let instance = self.create(config, ()).map_err(anyhow::Error::new)?;
         let instance_id = instance.instance_id();
+        if self.is_instance_stopping(instance_id) {
+            anyhow::bail!(
+                "instance {instance_id} is still stopping; retry after the previous stop completes"
+            );
+        }
         self.config_controls.insert(instance_id, control);
         let notifier = self.notifier.clone();
         let instance_state_changes = self.instance_state_changes.clone();
@@ -558,45 +600,72 @@ where
         Ok(instance_id)
     }
 
-    pub async fn delete_network_instances(
+    /// Remove instances from the live map and begin async stop without awaiting.
+    ///
+    /// Prefer awaiting [`PendingInstanceStops`] **outside** `ProcessManagement`'s
+    /// `mutation_lock` so hooks/IO and concurrent mutators are not blocked on TUN teardown.
+    pub fn detach_network_instances(
         &self,
         instance_ids: impl IntoIterator<Item = Uuid>,
-    ) -> anyhow::Result<Vec<Uuid>> {
+    ) -> anyhow::Result<(Vec<Uuid>, PendingInstanceStops)> {
         let runtime = self
             .runtime_handle
             .clone()
             .or_else(|| tokio::runtime::Handle::try_current().ok())
             .ok_or_else(|| anyhow::anyhow!("tokio runtime not found, cannot stop instance"))?;
-        self.active_stops.fetch_add(1, Ordering::AcqRel);
-        let active_stop = ActiveStopGuard {
-            active_stops: self.active_stops.clone(),
-            notifier: self.notifier.clone(),
-        };
         let mut removed = Vec::new();
+        let mut removed_ids = Vec::new();
         for instance_id in instance_ids {
             self.config_controls.remove(&instance_id);
             if let Some(instance) = self.remove(instance_id) {
+                removed_ids.push(instance_id);
                 removed.push(instance);
             }
         }
         if removed.is_empty() {
-            drop(active_stop);
-            return Ok(self.instance_ids());
+            return Ok((self.instance_ids(), PendingInstanceStops::empty()));
         }
+        if let Ok(mut guard) = self.stopping_ids.lock() {
+            for instance_id in &removed_ids {
+                guard.insert(*instance_id);
+            }
+        }
+        self.active_stops.fetch_add(1, Ordering::AcqRel);
+        let active_stop = ActiveStopGuard {
+            active_stops: self.active_stops.clone(),
+            notifier: self.notifier.clone(),
+            stopping_ids: self.stopping_ids.clone(),
+            instance_ids: removed_ids,
+        };
         self.instance_state_changes.mark_changed();
 
-        runtime
-            .spawn(async move {
-                let _active_stop = active_stop;
-                for instance in removed {
-                    instance.stop().await;
-                }
-            })
-            .await
-            .map_err(|error| anyhow::anyhow!("instance stop task failed: {error}"))?;
-        Ok(self.instance_ids())
+        let join = runtime.spawn(async move {
+            let _active_stop = active_stop;
+            for instance in removed {
+                instance.stop().await;
+            }
+        });
+        Ok((
+            self.instance_ids(),
+            PendingInstanceStops { join: Some(join) },
+        ))
     }
 
+    pub async fn delete_network_instances(
+        &self,
+        instance_ids: impl IntoIterator<Item = Uuid>,
+    ) -> anyhow::Result<Vec<Uuid>> {
+        let (remaining, pending) = self.detach_network_instances(instance_ids)?;
+        pending.join().await?;
+        Ok(remaining)
+    }
+
+    /// Convenience: detach non-retained ids and **await** their stops.
+    ///
+    /// Prefer [`Self::detach_network_instances`] when holding
+    /// `ProcessManagement`'s `mutation_lock` — await the returned
+    /// [`PendingInstanceStops`] only after releasing that lock. This helper is
+    /// fine for callers that do not hold the mutation lock (e.g. GUI teardown).
     pub async fn retain_network_instances(&self, retained: &[Uuid]) -> anyhow::Result<Vec<Uuid>> {
         let removed = self
             .list()

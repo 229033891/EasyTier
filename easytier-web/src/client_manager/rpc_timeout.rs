@@ -6,6 +6,8 @@
 use easytier::proto::rpc_types::controller::{BaseController, Controller as _};
 
 pub(crate) const MANAGED_RPC_FAST_TIMEOUT_MS: i32 = 5_000;
+/// Soft-start / health probes: longer than list/status, shorter than full mutators.
+pub(crate) const MANAGED_RPC_PROBE_TIMEOUT_MS: i32 = 15_000;
 pub(crate) const MANAGED_RPC_SLOW_TIMEOUT_MS: i32 = 60_000;
 
 pub(crate) fn rpc_controller(timeout_ms: i32) -> BaseController {
@@ -91,6 +93,16 @@ mod tests {
         assert_eq!(
             proxy_rpc_timeout_ms("api.config.ConfigRpcService", "get_config"),
             MANAGED_RPC_FAST_TIMEOUT_MS
+        );
+    }
+
+    #[test]
+    fn probe_timeout_is_between_fast_and_slow() {
+        assert!(MANAGED_RPC_FAST_TIMEOUT_MS < MANAGED_RPC_PROBE_TIMEOUT_MS);
+        assert!(MANAGED_RPC_PROBE_TIMEOUT_MS < MANAGED_RPC_SLOW_TIMEOUT_MS);
+        assert_eq!(
+            rpc_controller(MANAGED_RPC_PROBE_TIMEOUT_MS).timeout_ms(),
+            MANAGED_RPC_PROBE_TIMEOUT_MS
         );
     }
 }
