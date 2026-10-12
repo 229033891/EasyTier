@@ -527,7 +527,8 @@ export function flattenPeerConnRows(pairs: PeerRoutePair[]): PeerConnTableRow[] 
     const pair = pairs[pi]
     const conns = defaultConnFirst(pair)
     const preferId = defaultConnId(pair)
-    const peerKey = pair.peer?.peer_id ?? pair.route?.peer_id ?? `idx-${pi}`
+    // peer_id is numeric in protobuf; stringify so stripe hashing / row keys stay stable.
+    const peerKey = String(pair.peer?.peer_id ?? pair.route?.peer_id ?? `idx-${pi}`)
     const peerStripe = peerStripeForKey(peerKey)
 
     if (!conns.length) {
