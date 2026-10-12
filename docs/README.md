@@ -52,6 +52,7 @@ crate 内设计稿（非本索引）：`easytier/docs/`（凭据计划已标 Arc
 | [dns-policy.md](./roadmap/dns-policy.md) | DNS 策略**剩余缺口**（现状见 Current `magic-dns.md`） |
 | [multi-link-bonding.md](./roadmap/multi-link-bonding.md) | 多 PeerConn 聚合：Phase 2a/2b **已合入**（出厂默认 `bond_count=2`）；Phase 3 出口/`bind_device` 多样性待做 |
 | [traffic-camouflage.md](./roadmap/traffic-camouflage.md) | 传输伪装 / 抗识别（wss 范式与 TLS 外观，Draft） |
+| [traffic-camouflage-phase-a-todo.md](./roadmap/traffic-camouflage-phase-a-todo.md) | Phase A TODO：中继 + wss:443 Ops/状态（**暂不实现**） |
 | [connection-stability-todo.md](./roadmap/connection-stability-todo.md) | 连接稳定性优化 TODO（相对 OpenVPN/IPsec；**端点可自定义，不假设 443**） |
 | [web-evolution.md](./roadmap/web-evolution.md) | easytier-web 演进约束与阶段 |
 | [web-console-runtime-diagnostics.md](./roadmap/web-console-runtime-diagnostics.md) | 控制台侧栏：**系统诊断** + **运行日志**（预定 vs 实际 / ring buffer；MVP 已实现待验收） |
@@ -78,6 +79,7 @@ crate 内设计稿（非本索引）：`easytier/docs/`（凭据计划已标 Arc
 | [ohos-downstream-builds.md](./ops/ohos-downstream-builds.md) | OHOS 下游构建 |
 | [release-version-bump.md](./ops/release-version-bump.md) | **版本号 bump 必改清单**（10 文件 / 17 处）+ 发布分支惯例 |
 | [android-startup-auto-stop.md](./ops/android-startup-auto-stop.md) | 安卓启动后马上自动停：现象 / 日志定性 / §6 同 netId 去重+宽限期（待新包验收）/ 清数据与重装 |
+| [ci-failure-log.md](./ops/ci-failure-log.md) | **CI/ET Test 失败追加日志** + 提交前自检（clippy / trait 导入等） |
 
 ## Archive — 历史记录
 

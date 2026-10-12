@@ -534,6 +534,15 @@ async fn send_webhook_connection_transition(
     }
 }
 
+pub(super) fn send_runtime_notify(
+    notifier: &broadcast::Sender<HeartbeatRequest>,
+    req: HeartbeatRequest,
+) {
+    if let Err(error) = notifier.send(req) {
+        tracing::debug!(%error, "managed runtime notifier has no subscribers");
+    }
+}
+
 impl Drop for SessionData {
     fn drop(&mut self) {
         if let Ok(storage) = Storage::try_from(self.storage.clone())
@@ -634,11 +643,7 @@ impl SessionRpcService {
             data.req.clone().map(|req| (data.notifier.clone(), req))
         };
         match notify {
-            Some((notifier, req)) => {
-                if let Err(error) = notifier.send(req) {
-                    tracing::debug!(%error, "managed runtime notifier has no subscribers");
-                }
-            }
+            Some((notifier, req)) => send_runtime_notify(&notifier, req),
             // Nothing to hand to the runtime yet; convergence then waits for the
             // next heartbeat, which is worth being able to see while debugging.
             None => tracing::debug!(
@@ -1134,9 +1139,7 @@ impl SessionRpcService {
         }
 
         if let Some((notifier, runtime_req)) = runtime_notify {
-            if let Err(error) = notifier.send(runtime_req) {
-                tracing::debug!(%error, "managed runtime notifier has no subscribers");
-            }
+            send_runtime_notify(&notifier, runtime_req);
         }
         if let Some(notify) = notify {
             notify.notify_one();
@@ -1281,9 +1284,7 @@ impl SessionRpcService {
         {
             tracing::warn!(?e, "failed to upsert device archive from heartbeat");
         }
-        if let Err(error) = notifier.send(runtime_req) {
-            tracing::debug!(%error, "managed runtime notifier has no subscribers");
-        }
+        send_runtime_notify(&notifier, runtime_req);
         if let Some(notify) = validation_notify {
             notify.notify_one();
         }
@@ -1373,6 +1374,9 @@ pub(super) type SessionRpcClient = Box<dyn WebClientService<Controller = BaseCon
 pub(super) type SessionConfigClient = Box<dyn ConfigRpc<Controller = BaseController> + Send>;
 
 impl Session {
+    // MachineSessionIndex (S4 reverse index) is the 8th arg; packing would
+    // obscure the accept-path call sites more than an allow here.
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         storage: WeakRefStorage,
         client_url: url::Url,
@@ -1560,9 +1564,7 @@ impl Session {
             data.req.clone().map(|req| (data.notifier.clone(), req))
         };
         if let Some((notifier, req)) = notify {
-            if let Err(error) = notifier.send(req) {
-                tracing::debug!(%error, "managed runtime notifier has no subscribers");
-            }
+            send_runtime_notify(&notifier, req);
         }
     }
 
@@ -1585,9 +1587,7 @@ impl Session {
             data.req.clone().map(|req| (data.notifier.clone(), req))
         };
         if let Some((notifier, req)) = notify {
-            if let Err(error) = notifier.send(req) {
-                tracing::debug!(%error, "managed runtime notifier has no subscribers");
-            }
+            send_runtime_notify(&notifier, req);
         }
     }
 

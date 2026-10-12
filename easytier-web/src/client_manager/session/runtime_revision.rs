@@ -164,16 +164,16 @@ pub(super) async fn reconcile_network_configs_on_heartbeat(
             // Full: cleanup_stale already refreshed last_desired to all
             // web-owned ids (incl. disabled). Patch: merge dirty ids into that
             // keep-set so a later Full cache-hit does not re-scan needlessly.
-            if let ReconcileScope::Patch { dirty_instance_ids } = &round.scope {
-                if let Some(last) = &mut cache.last_desired_web_inst_ids {
-                    last.retain(|id| !dirty_instance_ids.contains(id));
-                    last.extend(
-                        round
-                            .local_configs
-                            .iter()
-                            .map(|config| config.network_instance_id.clone()),
-                    );
-                }
+            if let ReconcileScope::Patch { dirty_instance_ids } = &round.scope
+                && let Some(last) = &mut cache.last_desired_web_inst_ids
+            {
+                last.retain(|id| !dirty_instance_ids.contains(id));
+                last.extend(
+                    round
+                        .local_configs
+                        .iter()
+                        .map(|config| config.network_instance_id.clone()),
+                );
             }
         }
 

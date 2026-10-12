@@ -1,0 +1,13 @@
+---
+description: Before commit/PR/CI push, check docs/ops/ci-failure-log.md and run matching local clippy/check
+alwaysApply: true
+---
+
+# CI 失败日志 — 提交前必查
+
+在用户要求 **提交、推送、开 PR、触发 ET Test / 打包** 之前：
+
+1. 打开并对照 [`docs/ops/ci-failure-log.md`](docs/ops/ci-failure-log.md) 的 **§1 提交前自检** 与 **§3 仍有效的检查项**。
+2. 按改动面跑文档表格中的最低本地命令（本机须 vcvars + `CARGO_PROFILE_DEV_DEBUG=0` + `.cache\cargo-target`，见 `script/build-common.ps1` / `docs/ops/windows-msvc-local-build.md`）。优先：`.\script\easytier-test-fast.cmd` 或等价 `cargo clippy … -- -D warnings`。
+3. 若刚排查到新的 CI/打包失败：用该文档 **§4 模板** 追加到 **§5**（新条目在上），并更新 §3 防再犯勾选。
+4. **未完成上述检查不要 commit / push**（用户明确只要文档或跳过自检除外）。

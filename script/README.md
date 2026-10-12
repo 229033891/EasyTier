@@ -63,6 +63,8 @@
 
 对齐 CI [`.github/workflows/test.yml`](../.github/workflows/test.yml)。日志同样写入 `artifacts\logs\`。
 
+**提交 / push 前**：对照 [`docs/ops/ci-failure-log.md`](../docs/ops/ci-failure-log.md)（已知失败原因 + 自检清单）；新失败追加进该文档。Cursor 规则：`.cursor/rules/ci-failure-log-presubmit.mdc`。
+
 | 脚本 | 作用 | 覆盖 |
 |------|------|------|
 | `easytier-test-fast.cmd` | 日常 push 前 | `fmt` + `Cargo.lock` + `clippy -D warnings` + `cargo hack` features |

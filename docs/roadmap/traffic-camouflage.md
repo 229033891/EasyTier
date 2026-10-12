@@ -3,8 +3,9 @@
 ## Status
 
 - Status: **Roadmap**（Draft / 仅立项，尚未按本文改代码）
-- 最近审阅：2026-10-03
+- 最近审阅：2026-10-13
 - 索引：[`../README.md`](../README.md)
+- **Phase A 任务清单（暂不实现）**：[`traffic-camouflage-phase-a-todo.md`](./traffic-camouflage-phase-a-todo.md)
 - **现状隧道能力**：[`../current/tunnels-and-transport.md`](../current/tunnels-and-transport.md)
 - 相关：[`../current/peer-connections.md`](../current/peer-connections.md)、[`multi-link-bonding.md`](./multi-link-bonding.md)
 - **市场对比**：[`market-comparison-2026-10.md`](./market-comparison-2026-10.md)（Tailscale DERP / 蒲公英转发分层）

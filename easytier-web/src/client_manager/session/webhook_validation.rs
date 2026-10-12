@@ -549,9 +549,7 @@ pub(super) async fn apply_success(
         .await;
     }
 
-    if let Err(error) = notifier.send(runtime_req) {
-        tracing::debug!(%error, "managed runtime notifier has no subscribers");
-    }
+    super::send_runtime_notify(&notifier, runtime_req);
 }
 
 async fn wait_webhook_connection_transition(
