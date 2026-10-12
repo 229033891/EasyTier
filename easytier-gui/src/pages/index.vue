@@ -897,6 +897,21 @@ onMounted(async () => {
   }
 
   cleanupFns.push(await listenGlobalEvents())
+  const onSyncedOverwrite = (event: Event) => {
+    const detail = (event as CustomEvent<{ instanceId?: string }>).detail
+    toast.add({
+      severity: 'info',
+      summary: t('web.common.success'),
+      detail: t('web.device_management.managed_config_synced_overwrite', {
+        id: detail?.instanceId || '',
+      }),
+      life: TOAST_LIFE.success,
+    })
+  }
+  window.addEventListener('managed_config_synced_overwrite', onSyncedOverwrite)
+  cleanupFns.push(() => {
+    window.removeEventListener('managed_config_synced_overwrite', onSyncedOverwrite)
+  })
   currentMode.value = loadMode()
   await initWithMode(currentMode.value)
 

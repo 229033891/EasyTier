@@ -11,11 +11,13 @@ use crate::{
         api_input::managed_credential_from_proto,
         peers::AclRuleConfig,
         runtime::CoreInstanceRuntimeConfig,
-        toml::{ConfigLoader as _, TomlConfig},
+        toml::{ConfigLoader as _, ConfigSource, TomlConfig},
     },
     instance::{CoreInstance, CoreInstanceConfig, CoreInstanceHost, CoreInstanceState},
     peers::credential_manager::CredentialManager,
 };
+
+use super::config_server_client;
 
 #[async_trait::async_trait]
 pub trait ConfigPatchPersistence: Send + Sync {
@@ -241,6 +243,12 @@ where
     }
     #[cfg(not(feature = "public-ipv6-provider"))]
     let _ = provider_config_changed;
+    // Boot-gate milestone (same class as finish_run web apply): hot patch
+    // converged the running web instance — persist so the next boot does not
+    // falsely defer against a stale disk revision.
+    if config.get_network_config_source() == ConfigSource::Web {
+        config_server_client::persist_active_managed_config_revision();
+    }
     Ok(())
 }
 

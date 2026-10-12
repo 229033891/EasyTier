@@ -125,6 +125,10 @@ pub(super) fn record_managed_config_reconcile_hint(
     }
 }
 
+/// Consecutive failed managed reconcile rounds before auto-apply pauses
+/// (`docs/roadmap/console-save-and-push-semantics.md` §8.1.4).
+pub(super) const MANAGED_RECONCILE_FAIL_LIMIT: u32 = 5;
+
 #[derive(Debug, Default)]
 pub(super) struct ManagedRuntimeState {
     pub(super) applied_config_revision: Option<String>,
@@ -133,6 +137,12 @@ pub(super) struct ManagedRuntimeState {
     pub(super) pending_managed_config_reconcile: Option<ManagedConfigReconcileHint>,
     pub(super) runtime_config_epoch: u64,
     pub(super) runtime_config_cache_epoch: u64,
+    /// Consecutive heartbeat rounds with a managed (Web-source) apply failure
+    /// (`managed_revision_failed`). User-source-only failures neither increment
+    /// nor clear it.
+    pub(super) reconcile_fail_streak: u32,
+    /// When true, skip apply mutations until Save/Start bump clears it.
+    pub(super) reconcile_paused: bool,
 }
 
 pub(super) type SharedManagedRuntimeState = Arc<Mutex<ManagedRuntimeState>>;
@@ -1371,6 +1381,22 @@ impl Session {
         self.rpc_mgr.is_running()
     }
 
+    /// Console Save online gate (§8.1.1): running + not superseded + stored
+    /// heartbeat still owns the authorized session (same predicate as reconcile).
+    pub(super) async fn runtime_is_current(&self) -> bool {
+        if !self.is_running() {
+            return false;
+        }
+        if self.is_superseded().await {
+            return false;
+        }
+        let data = self.data.read().await;
+        let Some(req) = data.req.as_ref() else {
+            return false;
+        };
+        SessionRpcService::runtime_heartbeat_is_current_locked(&data, req)
+    }
+
     pub(super) async fn is_superseded(&self) -> bool {
         let data = self.data.read().await;
         data.storage_token.as_ref().is_some_and(|token| {
@@ -1454,6 +1480,8 @@ impl Session {
             runtime.pending_managed_config_reconcile = Some(ManagedConfigReconcileHint::Full);
             runtime.runtime_config_epoch = runtime.runtime_config_epoch.wrapping_add(1);
             runtime.runtime_config_cache_epoch = runtime.runtime_config_cache_epoch.wrapping_add(1);
+            runtime.reconcile_fail_streak = 0;
+            runtime.reconcile_paused = false;
             drop(runtime);
             data.req.clone().map(|req| (data.notifier.clone(), req))
         };

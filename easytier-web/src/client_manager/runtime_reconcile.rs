@@ -573,6 +573,13 @@ pub(super) async fn apply_web_source_runtime_reconcile(
     match action {
         RuntimeReconcileAction::Unchanged(current_config) => Ok(*current_config),
         RuntimeReconcileAction::Run { config, overwrite } => {
+            if overwrite {
+                tracing::info!(
+                    instance_id = %inst_id,
+                    client_version = client_version.unwrap_or(""),
+                    "web-managed config drift: console desired overwriting device runtime (run overwrite)"
+                );
+            }
             let hostname_applied = config.hostname.is_some();
             run_web_source_instance(rpc_client, inst_id, *config, overwrite).await?;
             let mut current_config = get_runtime_config(rpc_client, inst_id).await?;
@@ -586,6 +593,11 @@ pub(super) async fn apply_web_source_runtime_reconcile(
             Ok(current_config)
         }
         RuntimeReconcileAction::Patch(patch) => {
+            tracing::info!(
+                instance_id = %inst_id,
+                client_version = client_version.unwrap_or(""),
+                "web-managed config drift: console desired overwriting device runtime (patch)"
+            );
             let hostname_applied = patch.hostname.is_some();
             config_client
                 .patch_config(

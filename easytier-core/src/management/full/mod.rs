@@ -42,7 +42,7 @@ pub use compiled::register_instance_management_rpc;
 pub use config_patch::{ConfigPatchPersistence, apply_config_patch};
 pub use config_server_client::{
     ReportNetworkConfigError, config_server_report_client, gui_sync_message_for_error_code,
-    report_via_process_client,
+    persist_active_managed_config_revision, report_via_process_client,
 };
 pub use config_server_status::{
     ConfigServerStatusSnapshot, clear as clear_config_server_status, set_host_dns_lookup,

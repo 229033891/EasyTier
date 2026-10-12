@@ -1,4 +1,6 @@
 use std::collections::HashSet;
+use std::io::Write as _;
+use std::path::{Path, PathBuf};
 use std::sync::{
     Arc, Mutex as StdMutex, MutexGuard, PoisonError, Weak,
     atomic::{AtomicBool, Ordering},
@@ -13,7 +15,10 @@ use easytier_proto::{
         ReportNetworkConfigRequest, WebServerServiceClientFactory,
     },
 };
-use tokio::{sync::Mutex, task::JoinSet};
+use tokio::{
+    sync::{Mutex, Notify},
+    task::JoinSet,
+};
 use tokio_util::task::AbortOnDropHandle;
 use url::Url;
 
@@ -308,6 +313,9 @@ pub struct WebClientConfig {
     pub device_os: DeviceOsInfo,
     pub easytier_version: String,
     pub secure_mode: bool,
+    /// Optional path to persist last `managed_config_revision` across boots
+    /// (console Save→Push §6.1 boot gate).
+    pub revision_persist_path: Option<PathBuf>,
 }
 
 #[async_trait]
@@ -422,6 +430,9 @@ struct WebClientController {
     /// each other's pending revision (which previously caused false
     /// `RevisionConflict`).
     pending_report: StdMutex<std::collections::HashMap<String, PendingReport>>,
+    /// Set after the first successful heartbeat RPC (revision may still be None).
+    first_heartbeat_seen: AtomicBool,
+    first_heartbeat_notify: Notify,
 }
 
 /// A `config_revision` minted for a local report that has no definitive answer yet.
@@ -432,25 +443,137 @@ struct PendingReport {
     config_revision: String,
 }
 
+/// Atomic write of `{machine_id}\n{revision}` (or remove). Failures are warn-only.
+fn write_managed_config_revision_file(
+    path: &Path,
+    machine_id: uuid::Uuid,
+    revision: Option<&str>,
+) {
+    if let Some(parent) = path.parent()
+        && let Err(error) = std::fs::create_dir_all(parent)
+    {
+        tracing::warn!(
+            path = %path.display(),
+            %error,
+            "failed to create managed_config_revision state dir"
+        );
+        return;
+    }
+    match revision {
+        Some(revision) => {
+            // Unique tmp so concurrent persist tasks cannot clobber each other.
+            let tmp = path.with_file_name(format!(
+                "{}.tmp.{}",
+                path.file_name()
+                    .and_then(|name| name.to_str())
+                    .unwrap_or("managed_config_revision"),
+                uuid::Uuid::new_v4()
+            ));
+            let contents = format!("{machine_id}\n{revision}\n");
+            let write_tmp = (|| -> std::io::Result<()> {
+                let mut file = std::fs::File::create(&tmp)?;
+                file.write_all(contents.as_bytes())?;
+                file.sync_all()?;
+                Ok(())
+            })();
+            if let Err(error) = write_tmp {
+                tracing::warn!(
+                    path = %tmp.display(),
+                    %error,
+                    "failed to write managed_config_revision temp file"
+                );
+                let _ = std::fs::remove_file(&tmp);
+                return;
+            }
+            if let Err(error) = std::fs::rename(&tmp, path) {
+                tracing::warn!(
+                    from = %tmp.display(),
+                    to = %path.display(),
+                    %error,
+                    "failed to rename managed_config_revision into place"
+                );
+                let _ = std::fs::remove_file(&tmp);
+            }
+        }
+        None => {
+            if path.exists()
+                && let Err(error) = std::fs::remove_file(path)
+            {
+                tracing::warn!(
+                    path = %path.display(),
+                    %error,
+                    "failed to clear managed_config_revision"
+                );
+            }
+        }
+    }
+}
+
 impl WebClientController {
     fn cached_revision(&self) -> Option<String> {
         lock_mutex(&self.managed_config_revision).clone()
     }
 
+    fn mark_first_heartbeat_seen(&self) {
+        if !self.first_heartbeat_seen.swap(true, Ordering::AcqRel) {
+            self.first_heartbeat_notify.notify_waiters();
+        }
+    }
+
+    fn persist_revision_unlocked(&self, revision: Option<&str>) {
+        let Some(path) = self.config.revision_persist_path.clone() else {
+            return;
+        };
+        let machine_id = self.config.machine_id;
+        let revision = revision.map(str::to_owned);
+        let write = move || {
+            write_managed_config_revision_file(&path, machine_id, revision.as_deref())
+        };
+        match tokio::runtime::Handle::try_current() {
+            Ok(handle) => {
+                handle.spawn(async move {
+                    match tokio::task::spawn_blocking(write).await {
+                        Ok(()) => {}
+                        Err(error) => tracing::warn!(
+                            %error,
+                            "managed_config_revision persist task failed"
+                        ),
+                    }
+                });
+            }
+            Err(_) => write(),
+        }
+    }
+
     /// Cache a revision observed by a local report (applied or conflict) and bump
     /// the generation so an in-flight heartbeat cannot write a staler value.
+    ///
+    /// Memory only — disk persist is reserved for convergence milestones
+    /// (web apply / successful local report / boot gate match).
     fn store_local_revision(&self, revision: Option<String>) {
-        *lock_mutex(&self.managed_config_revision) = revision;
+        {
+            *lock_mutex(&self.managed_config_revision) = revision;
+        }
         self.revision_generation.fetch_add(1, Ordering::AcqRel);
     }
 
     /// Cache the revision carried by a heartbeat, unless a local report landed
     /// after that heartbeat sampled the generation.
+    ///
+    /// Memory only — disk persist is reserved for "local configs match this
+    /// revision" milestones (boot gate start / successful apply / local report).
+    /// Persisting on every heartbeat would mark a deferred boot as up-to-date
+    /// before reconcile actually pushed configs.
     fn store_heartbeat_revision(&self, sampled_generation: u64, revision: Option<String>) {
         let mut guard = lock_mutex(&self.managed_config_revision);
         if self.revision_generation.load(Ordering::Acquire) == sampled_generation {
             *guard = revision;
         }
+    }
+
+    fn persist_cached_revision(&self) {
+        let revision = self.cached_revision();
+        self.persist_revision_unlocked(revision.as_deref());
     }
 
     /// Reuse the revision of an unresolved report for the same instance and
@@ -553,6 +676,8 @@ impl<F> WebClient<F> {
             active_rpc: StdMutex::new(None),
             revision_generation: std::sync::atomic::AtomicU64::new(0),
             pending_report: StdMutex::new(std::collections::HashMap::new()),
+            first_heartbeat_seen: AtomicBool::new(false),
+            first_heartbeat_notify: Notify::new(),
         });
         let connected = Arc::new(AtomicBool::new(false));
         // Install the report client before advertising enabled status so
@@ -602,6 +727,38 @@ impl<F> WebClient<F> {
         self.controller.cached_revision()
     }
 
+    /// Wait until the first successful heartbeat RPC (any revision, including
+    /// `None`) or `timeout`. Used by boot auto-start gate (§6.1).
+    pub async fn wait_first_heartbeat(&self, timeout: std::time::Duration) -> bool {
+        if self
+            .controller
+            .first_heartbeat_seen
+            .load(Ordering::Acquire)
+        {
+            return true;
+        }
+        let notified = self.controller.first_heartbeat_notify.notified();
+        if self
+            .controller
+            .first_heartbeat_seen
+            .load(Ordering::Acquire)
+        {
+            return true;
+        }
+        match tokio::time::timeout(timeout, notified).await {
+            Ok(()) => true,
+            Err(_) => self
+                .controller
+                .first_heartbeat_seen
+                .load(Ordering::Acquire),
+        }
+    }
+
+    /// Persist the in-memory managed revision for the next boot gate compare.
+    pub fn persist_cached_revision(&self) {
+        self.controller.persist_cached_revision();
+    }
+
     /// Push a client-edited web-owned NetworkConfig to the console with CAS.
     pub async fn report_network_config(
         &self,
@@ -620,6 +777,10 @@ struct WebClientReportFacade {
 impl config_server_client::ConfigServerReportClient for WebClientReportFacade {
     fn is_connected(&self) -> bool {
         self.connected.load(Ordering::Acquire)
+    }
+
+    fn persist_cached_revision(&self) {
+        self.controller.persist_cached_revision();
     }
 
     async fn report_network_config(
@@ -658,6 +819,8 @@ impl config_server_client::ConfigServerReportClient for WebClientReportFacade {
             self.controller.store_local_revision(
                 Some(response.applied_config_revision).filter(|value| !value.is_empty()),
             );
+            // Successful report = local configs match this revision (boot gate).
+            self.controller.persist_cached_revision();
             return Ok(());
         }
         let current = (!response.current_config_revision.is_empty())
@@ -1031,6 +1194,7 @@ impl WebClientSession {
                             revision_generation,
                             response.managed_config_revision.clone(),
                         );
+                        controller.mark_first_heartbeat_seen();
                         let (next_policy, adjusted) = HeartbeatPolicy::from_response(&response);
                         if adjusted {
                             tracing::warn!(
@@ -1381,6 +1545,7 @@ mod tests {
                 device_os: DeviceOsInfo::default(),
                 easytier_version: "test-version".to_owned(),
                 secure_mode: false,
+                revision_persist_path: None,
             },
             runtime_id,
             vec![registered],
@@ -1474,6 +1639,7 @@ mod tests {
                 device_os: DeviceOsInfo::default(),
                 easytier_version: "test".to_owned(),
                 secure_mode: false,
+                revision_persist_path: None,
             },
             backend: Arc::new(ImmediateStateChangeBackend),
             runtime_id: uuid::Uuid::new_v4(),
@@ -1481,6 +1647,8 @@ mod tests {
             active_rpc: StdMutex::new(None),
             revision_generation: std::sync::atomic::AtomicU64::new(0),
             pending_report: StdMutex::new(std::collections::HashMap::new()),
+            first_heartbeat_seen: AtomicBool::new(false),
+            first_heartbeat_notify: Notify::new(),
         }
     }
 

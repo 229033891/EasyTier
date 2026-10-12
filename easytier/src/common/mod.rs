@@ -21,7 +21,10 @@ pub mod tracing_rolling_appender;
 #[cfg(feature = "upnp")]
 pub mod upnp;
 
-pub use machine_id::{MachineIdOptions, resolve_machine_id};
+pub use machine_id::{
+    MachineIdOptions, load_persisted_managed_config_revision, resolve_machine_id,
+    resolve_managed_config_revision_state_file,
+};
 
 pub fn shrink_dashmap<K: Eq + std::hash::Hash, V>(
     map: &dashmap::DashMap<K, V>,

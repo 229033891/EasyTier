@@ -124,6 +124,16 @@ pub(crate) struct ManagedConfigUpsert {
     pub network_config: NetworkConfig,
 }
 
+/// Outcome of a console Save upsert (existence / disabled decided inside the TX).
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct ConsoleSaveUpsertOutcome {
+    /// Effective disabled after upsert (new rows INSERT disabled; existing keep theirs).
+    /// Always equals the persisted post-upsert state: this upsert never changes
+    /// `disabled`, so the pre-read value stays valid. Keep it that way — any
+    /// future write to `disabled` here must re-read after the upsert.
+    pub disabled: bool,
+}
+
 #[derive(Debug, Clone)]
 pub(crate) enum ManagedConfigExpectedRevision {
     Any,
@@ -251,6 +261,27 @@ async fn read_config_source(
     .map_err(sqlx_db_error)
 }
 
+async fn read_config_disabled(
+    transaction: &mut sqlx::Transaction<'_, Sqlite>,
+    user_id: UserIdInDb,
+    device_id: Uuid,
+    instance_id: Uuid,
+) -> Result<Option<bool>, DbErr> {
+    sqlx::query_scalar(
+        r#"
+        SELECT disabled
+        FROM user_running_network_configs
+        WHERE user_id = ? AND device_id = ? AND network_instance_id = ?
+        "#,
+    )
+    .bind(user_id)
+    .bind(device_id.to_string())
+    .bind(instance_id.to_string())
+    .fetch_optional(&mut **transaction)
+    .await
+    .map_err(sqlx_db_error)
+}
+
 fn network_secret_digest(network_name: &str, network_secret: &str) -> String {
     let digest = md5::compute(format!("{network_name}\n{network_secret}").as_bytes());
     format!("{:x}", digest)
@@ -323,6 +354,11 @@ async fn upsert_network_config(
     network_config: &str,
     source: ConfigSource,
     web_only_update: bool,
+    /// Value written on INSERT only (unless `sync_disabled_on_conflict`).
+    disabled_on_insert: bool,
+    /// Managed Exact Set must force-enable desired rows on conflict. Console
+    /// Save must preserve Stop/Start (`false` here).
+    sync_disabled_on_conflict: bool,
 ) -> Result<bool, DbErr> {
     let now = chrono::Local::now().fixed_offset();
     let (network_name, network_secret) = extract_network_identity(network_config);
@@ -335,10 +371,13 @@ async fn upsert_network_config(
             network_config = excluded.network_config,
             network_name = excluded.network_name,
             source = excluded.source,
-            disabled = excluded.disabled,
             update_time = excluded.update_time
     "#
     .to_string();
+    if sync_disabled_on_conflict {
+        // Insert `VALUES` bind feeds `excluded.disabled`.
+        query.push_str(",\n            disabled = excluded.disabled");
+    }
     if web_only_update {
         query.push_str(" WHERE user_running_network_configs.source = 'web'");
     }
@@ -349,7 +388,7 @@ async fn upsert_network_config(
         .bind(network_config)
         .bind(&network_name)
         .bind(source.as_str())
-        .bind(false)
+        .bind(disabled_on_insert)
         .bind(now)
         .bind(now)
         .execute(&mut **transaction)
@@ -1113,6 +1152,8 @@ impl Db {
             &network_config,
             ConfigSource::Web,
             true,
+            false,
+            true,
         )
         .await?;
         if !updated {
@@ -1265,6 +1306,8 @@ impl Db {
                 *instance_id,
                 network_config,
                 ConfigSource::Web,
+                true,
+                false,
                 true,
             )
             .await?;
@@ -1786,14 +1829,55 @@ impl Db {
     }
 }
 
-#[async_trait]
-impl Storage<(UserIdInDb, Uuid), user_running_network_configs::Model, DbErr> for Db {
-    async fn insert_or_update_user_network_config(
+impl Db {
+    /// Console Save upsert: preserve `disabled` on conflict; brand-new rows
+    /// INSERT as disabled in the same transaction (existence check is inside
+    /// the TX so heartbeat cannot race-start a just-created row).
+    pub(crate) async fn insert_or_update_console_save_network_config(
+        &self,
+        (user_id, device_id): (UserIdInDb, Uuid),
+        network_inst_id: Uuid,
+        network_config: NetworkConfig,
+    ) -> Result<ConsoleSaveUpsertOutcome, DbErr> {
+        let network_config =
+            serde_json::to_string(&network_config).map_err(|e| DbErr::Json(e.to_string()))?;
+        let mut transaction = self
+            .db
+            .begin_with("BEGIN IMMEDIATE")
+            .await
+            .map_err(sqlx_db_error)?;
+        let previous_disabled =
+            read_config_disabled(&mut transaction, user_id, device_id, network_inst_id).await?;
+        let was_new = previous_disabled.is_none();
+        let was_disabled = previous_disabled.unwrap_or(false);
+        upsert_network_config(
+            &mut transaction,
+            user_id,
+            device_id,
+            network_inst_id,
+            &network_config,
+            ConfigSource::Web,
+            false,
+            was_new, // brand-new → INSERT disabled
+            false,   // preserve disabled on conflict
+        )
+        .await?;
+        // Console Save is always Web-source → clear applied revision fence.
+        clear_managed_config_revision(&mut transaction, user_id, device_id).await?;
+        transaction.commit().await.map_err(sqlx_db_error)?;
+        Ok(ConsoleSaveUpsertOutcome {
+            disabled: was_new || was_disabled,
+        })
+    }
+
+    async fn insert_or_update_user_network_config_inner(
         &self,
         (user_id, device_id): (UserIdInDb, Uuid),
         network_inst_id: Uuid,
         network_config: NetworkConfig,
         source: ConfigSource,
+        disabled_on_insert: bool,
+        sync_disabled_on_conflict: bool,
     ) -> Result<(), DbErr> {
         let network_config =
             serde_json::to_string(&network_config).map_err(|e| DbErr::Json(e.to_string()))?;
@@ -1812,6 +1896,8 @@ impl Storage<(UserIdInDb, Uuid), user_running_network_configs::Model, DbErr> for
             &network_config,
             source,
             false,
+            disabled_on_insert,
+            sync_disabled_on_conflict,
         )
         .await?;
         if source == ConfigSource::Web
@@ -1820,6 +1906,28 @@ impl Storage<(UserIdInDb, Uuid), user_running_network_configs::Model, DbErr> for
             clear_managed_config_revision(&mut transaction, user_id, device_id).await?;
         }
         transaction.commit().await.map_err(sqlx_db_error)
+    }
+}
+
+#[async_trait]
+impl Storage<(UserIdInDb, Uuid), user_running_network_configs::Model, DbErr> for Db {
+    async fn insert_or_update_user_network_config(
+        &self,
+        identify: (UserIdInDb, Uuid),
+        network_inst_id: Uuid,
+        network_config: NetworkConfig,
+        source: ConfigSource,
+    ) -> Result<(), DbErr> {
+        // Console/GUI shared path: INSERT enabled, never flip `disabled` on conflict.
+        self.insert_or_update_user_network_config_inner(
+            identify,
+            network_inst_id,
+            network_config,
+            source,
+            false,
+            false,
+        )
+        .await
     }
 
     async fn delete_network_configs(
@@ -2082,6 +2190,65 @@ mod tests {
             result.get_runtime_network_config_source(),
             ConfigSource::User
         );
+    }
+
+    #[tokio::test]
+    async fn test_console_save_preserves_disabled_managed_upsert_reenables() {
+        let db = Db::memory_db().await;
+        let user_id = db.auto_create_user("save-disabled").await.unwrap().id;
+        let device_id = uuid::Uuid::new_v4();
+        let inst_id = uuid::Uuid::new_v4();
+        let cfg = NetworkConfig {
+            network_name: Some("preserve-disabled".to_string()),
+            ..Default::default()
+        };
+
+        // New console row: INSERT disabled in one TX.
+        let first = db
+            .insert_or_update_console_save_network_config((user_id, device_id), inst_id, cfg.clone())
+            .await
+            .unwrap();
+        assert!(first.disabled);
+        let row = db
+            .get_network_config((user_id, device_id), &inst_id.to_string())
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(row.disabled);
+
+        // Console save of existing disabled row must not re-enable.
+        let second = db
+            .insert_or_update_console_save_network_config((user_id, device_id), inst_id, cfg.clone())
+            .await
+            .unwrap();
+        assert!(second.disabled);
+        let row = db
+            .get_network_config((user_id, device_id), &inst_id.to_string())
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(row.disabled);
+
+        // Managed Exact Set / bootstrap must force-enable desired web rows.
+        let applied = db
+            .bootstrap_single_web_config_revision(
+                (user_id, device_id),
+                inst_id,
+                &cfg,
+                "rev-force-enable",
+            )
+            .await
+            .unwrap();
+        assert!(matches!(
+            applied,
+            super::ManagedConfigApplyResult::Applied { .. }
+        ));
+        let row = db
+            .get_network_config((user_id, device_id), &inst_id.to_string())
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(!row.disabled);
     }
 
     #[tokio::test]

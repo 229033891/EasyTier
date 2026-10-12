@@ -14,6 +14,8 @@ const EVENTS = Object.freeze({
   SAVE_CONFIGS: 'save_configs',
   PRE_RUN_NETWORK_INSTANCE: 'pre_run_network_instance',
   POST_RUN_NETWORK_INSTANCE: 'post_run_network_instance',
+  /** Console overwrite applied over a local/runtime instance (§6.2 tip). */
+  MANAGED_CONFIG_SYNCED_OVERWRITE: 'managed_config_synced_overwrite',
   VPN_SERVICE_STOP: 'vpn_service_stop',
   DHCP_IP_CHANGED: 'dhcp_ip_changed',
   PROXY_CIDRS_UPDATED: 'proxy_cidrs_updated',
@@ -73,6 +75,18 @@ async function onPostRunNetworkInstance(event: Event<unknown>) {
   if (type() === 'android') {
     await onNetworkInstanceChange(instanceId)
   }
+}
+
+function onManagedConfigSyncedOverwrite(event: Event<unknown>) {
+  const instanceId = normalizeInstanceIdPayload(event.payload)
+  console.info(
+    `Received event '${EVENTS.MANAGED_CONFIG_SYNCED_OVERWRITE}': console synced newer config over instance`,
+    instanceId || event.payload,
+  )
+  // Surface to Vue pages that hang a toast listener (optional).
+  window.dispatchEvent(new CustomEvent(EVENTS.MANAGED_CONFIG_SYNCED_OVERWRITE, {
+    detail: { instanceId },
+  }))
 }
 
 async function onVpnServiceStop(event: Event<unknown>) {
@@ -136,6 +150,7 @@ export async function listenGlobalEvents() {
     await listen(EVENTS.SAVE_CONFIGS, onSaveConfigs),
     await listen(EVENTS.PRE_RUN_NETWORK_INSTANCE, onPreRunNetworkInstance),
     await listen(EVENTS.POST_RUN_NETWORK_INSTANCE, onPostRunNetworkInstance),
+    await listen(EVENTS.MANAGED_CONFIG_SYNCED_OVERWRITE, onManagedConfigSyncedOverwrite),
     await listen(EVENTS.VPN_SERVICE_STOP, onVpnServiceStop),
     await listen(EVENTS.DHCP_IP_CHANGED, onDhcpIpChanged),
     await listen(EVENTS.PROXY_CIDRS_UPDATED, onProxyCidrsUpdated),

@@ -57,6 +57,56 @@ use crate::db::{Db, UserIdInDb, entity::user_running_network_configs};
 
 pub(crate) use managed_config::ManagedConfigError;
 
+/// Console Save response (`docs/roadmap/console-save-and-push-semantics.md` §4.3).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct SaveNetworkConfigResult {
+    pub action: SaveNetworkConfigAction,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<SaveNetworkConfigPendingReason>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SaveNetworkConfigAction {
+    Unchanged,
+    Patched,
+    Rebuilt,
+    Pending,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SaveNetworkConfigPendingReason {
+    Disabled,
+    Offline,
+    PrepareTimeout,
+}
+
+impl SaveNetworkConfigResult {
+    fn pending(reason: SaveNetworkConfigPendingReason) -> Self {
+        Self {
+            action: SaveNetworkConfigAction::Pending,
+            reason: Some(reason),
+        }
+    }
+
+    fn from_prepare(action: runtime_reconcile::RuntimeReconcileAction) -> Self {
+        let action = match action {
+            runtime_reconcile::RuntimeReconcileAction::Unchanged(_) => {
+                SaveNetworkConfigAction::Unchanged
+            }
+            runtime_reconcile::RuntimeReconcileAction::Patch(_) => SaveNetworkConfigAction::Patched,
+            runtime_reconcile::RuntimeReconcileAction::Run { .. } => {
+                SaveNetworkConfigAction::Rebuilt
+            }
+        };
+        Self {
+            action,
+            reason: None,
+        }
+    }
+}
+
 const DEFAULT_HEARTBEAT_INTERVAL: Duration = Duration::from_millis(3_500);
 const DEFAULT_HEARTBEAT_TIMEOUT: Duration = Duration::from_secs(15);
 const MIN_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(1);
@@ -620,6 +670,124 @@ impl ClientManager {
         }
     }
 
+    /// Memory fence bump without notify — pair with an explicit notify after
+    /// optional read-only prepare (console Save atomic order).
+    fn bump_applied_config_revision(&self, user_id: UserIdInDb, machine_id: uuid::Uuid) -> bool {
+        self.storage
+            .invalidate_managed_runtime_state(user_id, machine_id)
+    }
+
+    async fn notify_session_runtime_changed(&self, user_id: UserIdInDb, machine_id: uuid::Uuid) {
+        if let Some(session) = self.get_session_by_machine_id(user_id, &machine_id) {
+            session
+                .notify_managed_runtime_state_changed(user_id, machine_id)
+                .await;
+        }
+    }
+
+    /// Console Save: upsert → bump → optional read-only prepare → notify.
+    ///
+    /// Does not change enable state. Apply stays on the heartbeat reconcile
+    /// worker (see roadmap `console-save-and-push-semantics.md`).
+    pub async fn save_web_network_config(
+        &self,
+        identify: (UserIdInDb, uuid::Uuid),
+        inst_id: uuid::Uuid,
+        config: NetworkConfig,
+    ) -> Result<SaveNetworkConfigResult, RemoteClientError<sea_orm::DbErr>> {
+        let (user_id, machine_id) = identify;
+        let inst_id_str = inst_id.to_string();
+
+        // 1) Persist (preserves `disabled` on conflict). Brand-new rows INSERT as
+        // disabled in the same TX (existence check is inside the TX) so heartbeat
+        // reconcile cannot race-start them.
+        let upsert = self
+            .db()
+            .insert_or_update_console_save_network_config(identify, inst_id, config.clone())
+            .await
+            .map_err(RemoteClientError::PersistentError)?;
+
+        let disabled = upsert.disabled;
+
+        // 2) Bump applied fence once (no notify yet). The return only reports
+        // whether a session state existed to clear; branch decisions below do
+        // not depend on it (missing session ⇒ Offline at the session lookup).
+        let _bumped = self.bump_applied_config_revision(user_id, machine_id);
+
+        if disabled {
+            // Stopped / newly created rows: persist only; Start pushes later.
+            return Ok(SaveNetworkConfigResult::pending(
+                SaveNetworkConfigPendingReason::Disabled,
+            ));
+        }
+
+        let Some(session) = self.get_session_by_machine_id(user_id, &machine_id) else {
+            return Ok(SaveNetworkConfigResult::pending(
+                SaveNetworkConfigPendingReason::Offline,
+            ));
+        };
+        // Half-open / superseded / no heartbeat → offline (not prepare_timeout).
+        if !session.runtime_is_current().await {
+            return Ok(SaveNetworkConfigResult::pending(
+                SaveNetworkConfigPendingReason::Offline,
+            ));
+        }
+
+        // 3) Optional read-only prepare (session client_version; no version RPC).
+        let client_version = session
+            .get_heartbeat_req()
+            .await
+            .map(|req| req.easytier_version);
+        let mut rpc_client = session.scoped_rpc_client();
+        let prepare_result = tokio::time::timeout(
+            Duration::from_millis(MANAGED_RPC_FAST_TIMEOUT_MS as u64),
+            async {
+                let listed = rpc_client
+                    .list_network_instance(
+                        rpc_controller(MANAGED_RPC_FAST_TIMEOUT_MS),
+                        ListNetworkInstanceRequest {},
+                    )
+                    .await?;
+                let is_running = listed
+                    .inst_ids
+                    .iter()
+                    .any(|id| uuid::Uuid::from(*id) == inst_id);
+                runtime_reconcile::prepare_web_source_runtime_reconcile(
+                    &mut rpc_client,
+                    &inst_id_str,
+                    config,
+                    is_running,
+                    client_version.as_deref(),
+                )
+                .await
+            },
+        )
+        .await;
+
+        let result = match prepare_result {
+            Ok(Ok(action)) => SaveNetworkConfigResult::from_prepare(action),
+            Ok(Err(error)) => {
+                tracing::warn!(
+                    %inst_id,
+                    user_id,
+                    machine_id = %machine_id,
+                    %error,
+                    "console Save: read-only prepare failed; returning pending"
+                );
+                SaveNetworkConfigResult::pending(SaveNetworkConfigPendingReason::PrepareTimeout)
+            }
+            Err(_elapsed) => SaveNetworkConfigResult::pending(
+                SaveNetworkConfigPendingReason::PrepareTimeout,
+            ),
+        };
+
+        // 4) Wake reconcile to apply (independent of prepare prediction).
+        self.notify_session_runtime_changed(user_id, machine_id)
+            .await;
+
+        Ok(result)
+    }
+
     pub async fn get_heartbeat_requests(&self, client_url: &url::Url) -> Option<HeartbeatRequest> {
         let s = self.client_sessions.get(client_url)?.clone();
         s.data().read().await.req()
@@ -834,17 +1002,47 @@ impl
             .await?;
 
         if save {
+            let saved_id: uuid::Uuid = resp.inst_id.unwrap_or_default().into();
             self.get_storage()
-                .insert_or_update_user_network_config(
-                    identify,
-                    resp.inst_id.unwrap_or_default().into(),
-                    config,
-                    source,
-                )
+                .insert_or_update_user_network_config(identify, saved_id, config, source)
+                .await
+                .map_err(RemoteClientError::PersistentError)?;
+            // Upsert preserves prior `disabled` on conflict; Run+save must enable.
+            self.get_storage()
+                .update_network_config_state(identify, saved_id, false)
                 .await
                 .map_err(RemoteClientError::PersistentError)?;
         }
 
+        Ok(())
+    }
+
+    /// Legacy trait entry. Console Web Save must use [`Self::save_web_network_config`]
+    /// (bump + optional prepare + notify). Forwarding Web here prevents a silent
+    /// non-convergence path if any caller still hits the trait default.
+    async fn handle_save_network_config_with_source(
+        &self,
+        identify: (UserIdInDb, uuid::Uuid),
+        inst_id: uuid::Uuid,
+        config: NetworkConfig,
+        source: ConfigSource,
+    ) -> Result<(), RemoteClientError<sea_orm::DbErr>> {
+        if source == ConfigSource::Web {
+            tracing::warn!(
+                %inst_id,
+                user_id = identify.0,
+                machine_id = %identify.1,
+                "handle_save_network_config_with_source used for Web source; forwarding to save_web_network_config"
+            );
+            self.save_web_network_config(identify, inst_id, config)
+                .await
+                .map(|_| ())?;
+            return Ok(());
+        }
+        self.get_storage()
+            .insert_or_update_user_network_config(identify, inst_id, config, source)
+            .await
+            .map_err(RemoteClientError::PersistentError)?;
         Ok(())
     }
 
@@ -913,8 +1111,10 @@ impl
     /// Otherwise full `overwrite: true` run. Disable: stop runtime with
     /// `keep_local_config: true` (see `DeleteNetworkInstanceRequest` / hooks).
     ///
-    /// Callers must not pre-invalidate applied revision before this method —
-    /// soft-start depends on it; we invalidate only when runtime is mutated.
+    /// Soft-start still reads applied revision (do not pre-invalidate before the
+    /// probe). Overwrite / Stop invalidate **before** the runtime RPC so an
+    /// in-flight Save→reconcile fails `begin_managed_runtime_mutation` (shared
+    /// fence via `runtime_config_epoch`, §8.2.6).
     async fn handle_update_network_state(
         &self,
         identify: (UserIdInDb, uuid::Uuid),
@@ -935,6 +1135,10 @@ impl
                 .await
                 .map_err(RemoteClientError::PersistentError)?;
 
+            // Bump epoch before mutating so an in-flight Save→reconcile fails
+            // begin_managed_runtime_mutation (shared fence via runtime_config_epoch).
+            self.invalidate_applied_config_revision(identify.0, identify.1)
+                .await;
             client
                 .delete_network_instance(
                     slow_rpc_controller(),
@@ -944,11 +1148,10 @@ impl
                     },
                 )
                 .await?;
-            self.invalidate_applied_config_revision(identify.0, identify.1)
-                .await;
         } else {
             // Soft-start probe errors (timeout / tunnel blip) fall back to overwrite.
             // Only ClientNotFound stays fatal — there is no device to start on.
+            // Do not invalidate before the probe — soft-start reads applied revision.
             let soft_start = match self.should_soft_start_network(identify, inst_id).await {
                 Ok(v) => v,
                 Err(RemoteClientError::ClientNotFound) => {
@@ -973,6 +1176,10 @@ impl
                     "console Start: instance already healthy with matching revision; skip overwrite"
                 );
             } else {
+                // Invalidate before overwrite so concurrent reconcile cannot apply
+                // against the same runtime epoch (Save∥Start fence, §8.2.6).
+                self.invalidate_applied_config_revision(identify.0, identify.1)
+                    .await;
                 client
                     .run_network_instance(
                         slow_rpc_controller(),
@@ -984,8 +1191,6 @@ impl
                         },
                     )
                     .await?;
-                self.invalidate_applied_config_revision(identify.0, identify.1)
-                    .await;
             }
         }
 
@@ -1902,6 +2107,7 @@ mod tests {
             "test",
             false,
             Arc::new(native_instance_manager()),
+            None,
             None,
         );
 

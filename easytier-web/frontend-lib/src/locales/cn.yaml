@@ -967,11 +967,20 @@ web:
     edit_as_file: 编辑为文件
     edit_as_file_tip: 以文本方式直接编辑完整配置文件
     save_config: 保存配置
-    save_config_tip: 将当前修改保存到设备（若为控制台托管网络则同步），不会立即启动或重建网络
+    save_config_tip: 保存到控制台；若网络已启用且设备在线，将热更新或按需重建（底座变更会短暂断流）
     save_config_disabled_no_config: 当前没有可保存的配置
     save_config_disabled_meta: 正在加载权限信息，请稍候再保存
     save_config_disabled_readonly: 当前配置为只读，无法保存
+    confirm_save_takeover_user_source: 该网络当前为设备本地（User）配置。保存后将由控制台接管（改为 Web 源），之后设备本地改动可能被控制台覆盖。确定继续？
+    managed_config_synced_overwrite: 控制台已同步更新配置并覆盖本地实例（{id}）
     save_failed: 保存配置失败
+    save_ok_unchanged: 已保存（与设备运行配置一致）
+    save_ok_patched: 已保存，正在热更新到设备
+    save_ok_rebuilt: 已保存，将重建实例（可能短暂断流）
+    save_ok_pending: 已保存，同步中
+    save_ok_pending_disabled: 已保存（网络仍为停用，启动后生效）
+    save_ok_pending_offline: 已保存（设备离线，上线后同步）
+    save_ok_pending_prepare_timeout: 已保存，同步中（未能立即确认热更新方式）
     start_failed: 启动网络失败
     stop_failed: 停用网络失败
     load_config_failed: 加载配置失败

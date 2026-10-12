@@ -48,6 +48,12 @@ pub trait InstanceMutationHooks: Send + Sync + 'static {
         Ok(())
     }
 
+    /// Console/managed overwrite replaced a running (or prior) instance.
+    /// Hosts may show a "synced newer config" tip; failures must not roll back.
+    async fn on_managed_config_overwrite(&self, _instance_id: &uuid::Uuid) -> Result<(), String> {
+        Ok(())
+    }
+
     /// Called after runtime instances are removed.
     ///
     /// `keep_local_config` mirrors `DeleteNetworkInstanceRequest.keep_local_config`
@@ -356,16 +362,21 @@ where
         };
 
         if !replacing {
-            return self
-                .finish_run_network_instance(
+            let started = self
+                .start_network_instance_locked(
                     instance_id,
                     config,
                     control,
                     file_cleanup,
                     restore_instance,
                     remote_managed,
+                    overwrite,
                 )
-                .await;
+                .await?;
+            // Host hooks / revision IO must not hold mutation_lock (same as
+            // detach-join-outside for overwrite stops).
+            drop(_mutation);
+            return self.after_run_network_instance(started).await;
         }
 
         // Drop mutation_lock before awaiting TUN teardown.
@@ -391,18 +402,24 @@ where
                 .await;
             return Err(error);
         }
-        self.finish_run_network_instance(
-            instance_id,
-            config,
-            control,
-            file_cleanup,
-            restore_instance,
-            remote_managed,
-        )
-        .await
+        let started = self
+            .start_network_instance_locked(
+                instance_id,
+                config,
+                control,
+                file_cleanup,
+                restore_instance,
+                remote_managed,
+                overwrite,
+            )
+            .await?;
+        drop(_mutation);
+        self.after_run_network_instance(started).await
     }
 
-    async fn finish_run_network_instance(
+    /// Start under `mutation_lock`. Hooks / revision persist happen in
+    /// [`Self::after_run_network_instance`] after the lock is released.
+    async fn start_network_instance_locked(
         &self,
         instance_id: uuid::Uuid,
         config: TomlConfig,
@@ -410,20 +427,61 @@ where
         file_cleanup: Option<ConfigFileCleanup>,
         restore_instance: Option<(TomlConfig, ConfigFileControl)>,
         remote_managed: bool,
-    ) -> anyhow::Result<uuid::Uuid> {
+        overwrite: bool,
+    ) -> anyhow::Result<StartedNetworkRun> {
+        let is_web_source = config.get_network_config_source() == ConfigSource::Web;
         if let Err(error) = self.instances.run_network_instance(config, control) {
             self.rollback_started_instance(None, file_cleanup, restore_instance)
                 .await;
             return Err(error);
         }
+        Ok(StartedNetworkRun {
+            instance_id,
+            is_web_source,
+            overwrite,
+            remote_managed,
+            file_cleanup,
+            restore_instance,
+        })
+    }
+
+    async fn after_run_network_instance(
+        &self,
+        started: StartedNetworkRun,
+    ) -> anyhow::Result<uuid::Uuid> {
+        let StartedNetworkRun {
+            instance_id,
+            is_web_source,
+            overwrite,
+            remote_managed,
+            file_cleanup,
+            restore_instance,
+        } = started;
 
         if let Err(error) = self.hooks.post_run_network_instance(&instance_id).await {
             if remote_managed {
+                let _mutation = self.mutation_lock.lock().await;
                 self.rollback_started_instance(Some(instance_id), file_cleanup, restore_instance)
                     .await;
                 return Err(anyhow::anyhow!("post-run hook failed: {error}"));
             }
             tracing::warn!(%error, "post-run hook failed");
+        }
+        // Tip only: never roll back a successful overwrite for host UI hooks.
+        if overwrite
+            && let Err(error) = self.hooks.on_managed_config_overwrite(&instance_id).await
+        {
+            tracing::info!(
+                %instance_id,
+                %error,
+                "managed config overwrite tip hook failed"
+            );
+        }
+        // Boot-gate milestone: persist only for Web-source applies. User
+        // overwrite must not advance disk revision (next boot would skip defer
+        // while local web tomls may still be stale).
+        if is_web_source {
+            config_server_client::persist_active_managed_config_revision();
         }
         Ok(instance_id)
     }
@@ -718,6 +776,15 @@ where
 enum ConfigFileCleanup {
     Remove(PathBuf),
     Restore { path: PathBuf, contents: Vec<u8> },
+}
+
+struct StartedNetworkRun {
+    instance_id: uuid::Uuid,
+    is_web_source: bool,
+    overwrite: bool,
+    remote_managed: bool,
+    file_cleanup: Option<ConfigFileCleanup>,
+    restore_instance: Option<(TomlConfig, ConfigFileControl)>,
 }
 
 /// Protobuf projection over transport-independent process management.

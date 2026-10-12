@@ -52,6 +52,13 @@ struct SaveNetworkJsonReq {
     config: NetworkConfig,
 }
 
+#[derive(Debug, serde::Serialize)]
+struct SaveNetworkJsonResp {
+    action: crate::client_manager::SaveNetworkConfigAction,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reason: Option<crate::client_manager::SaveNetworkConfigPendingReason>,
+}
+
 #[derive(Debug, serde::Deserialize, serde::Serialize)]
 struct RunNetworkJsonReq {
     config: NetworkConfig,
@@ -356,7 +363,7 @@ impl NetworkApi {
         State(client_mgr): AppState,
         Path((machine_id, inst_id)): Path<(uuid::Uuid, uuid::Uuid)>,
         Json(payload): Json<SaveNetworkJsonReq>,
-    ) -> Result<(), HttpHandleError> {
+    ) -> Result<Json<SaveNetworkJsonResp>, HttpHandleError> {
         if payload.config.instance_id() != inst_id.to_string() {
             return Err((
                 StatusCode::BAD_REQUEST,
@@ -364,22 +371,16 @@ impl NetworkApi {
             ));
         }
         let user_id = Self::get_user_id(&auth_session)?;
-        client_mgr
-            .invalidate_applied_config_revision(user_id, machine_id)
-            .await;
+        // Single bump + optional prepare + notify live inside save_web_network_config
+        // (no pre/post double invalidate — see console-save-and-push-semantics.md).
         let result = client_mgr
-            .handle_save_network_config_with_source(
-                (user_id, machine_id),
-                inst_id,
-                payload.config,
-                RuntimeConfigSource::Web,
-            )
-            .await;
-        client_mgr
-            .invalidate_applied_config_revision(user_id, machine_id)
-            .await;
-        result.map_err(convert_error)?;
-        Ok(())
+            .save_web_network_config((user_id, machine_id), inst_id, payload.config)
+            .await
+            .map_err(convert_error)?;
+        Ok(Json(SaveNetworkJsonResp {
+            action: result.action,
+            reason: result.reason,
+        }))
     }
 
     async fn handle_get_network_config(

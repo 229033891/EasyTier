@@ -2,11 +2,12 @@ use crate::{
     ShellType,
     common::{
         config::{
-            ConfigFileControl, ConfigLoader, ConsoleLoggerConfig, EncryptionAlgorithm,
-            FileLoggerConfig, LoggingConfigLoader, NetworkIdentity, PeerConfig, PortForwardConfig,
-            TomlConfigLoader, VpnPortalClientConfig, VpnPortalConfig, add_proxy_network_to_config,
-            load_config_from_file, load_toml_config_from_path, parse_dns_forward_flag,
-            parse_dns_host_flag, parse_mapped_listener_urls,
+            ConfigFileControl, ConfigLoader, ConfigSource, ConsoleLoggerConfig,
+            EncryptionAlgorithm, FileLoggerConfig, LoggingConfigLoader, NetworkIdentity,
+            PeerConfig, PortForwardConfig, TomlConfigLoader, VpnPortalClientConfig,
+            VpnPortalConfig, add_proxy_network_to_config, load_config_from_file,
+            load_toml_config_from_path, parse_dns_forward_flag, parse_dns_host_flag,
+            parse_mapped_listener_urls,
         },
         constants::EASYTIER_VERSION,
         log,
@@ -1610,6 +1611,39 @@ fn win_service_main(arg: Vec<std::ffi::OsString>) {
     win_service_event_loop(stop_notify_recv, cli, status_handle);
 }
 
+/// Console Save→Push §6.1: defer local start of web-owned configs when the
+/// console revision differs from (or is newly present vs) the persisted one.
+///
+/// `console == None` means the console has no managed revision (empty / cleared
+/// DB). Deferring in that case bricks the device (nothing to push); start local
+/// web tomls instead so the node stays available and can re-report.
+fn should_defer_web_owned_boot_start(
+    persisted: Option<&str>,
+    console: Option<&str>,
+) -> bool {
+    match (persisted, console) {
+        (Some(persisted), Some(console)) if persisted == console => false,
+        (_, None) => false,
+        (None, Some(_)) => true,
+        (Some(_), Some(_)) => true,
+    }
+}
+
+#[cfg(test)]
+mod boot_gate_tests {
+    use super::should_defer_web_owned_boot_start;
+
+    #[test]
+    fn boot_gate_defers_when_console_ahead_or_unknown() {
+        assert!(!should_defer_web_owned_boot_start(None, None));
+        assert!(!should_defer_web_owned_boot_start(Some("a"), Some("a")));
+        assert!(should_defer_web_owned_boot_start(None, Some("a")));
+        // Empty / cleared console: do not defer (would brick with nothing to push).
+        assert!(!should_defer_web_owned_boot_start(Some("a"), None));
+        assert!(should_defer_web_owned_boot_start(Some("a"), Some("b")));
+    }
+}
+
 async fn run_main(cli: Cli) -> anyhow::Result<()> {
     defer!(dump_profile(0););
     log::init(&cli.logging_options, true)?;
@@ -1629,13 +1663,25 @@ async fn run_main(cli: Cli) -> anyhow::Result<()> {
     .serve()
     .await?;
 
+    // Boot auto-start gate (§6.1): when config-server is set, wait ≤5s for the
+    // first heartbeat revision. If console is ahead of the persisted local
+    // revision, defer starting web-owned tomls and let reconcile push.
+    const BOOT_CONFIG_SERVER_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
+    let machine_id_options = crate::common::MachineIdOptions {
+        explicit_machine_id: cli.machine_id.clone(),
+        state_dir: None,
+    };
+    let mut defer_web_owned_boot_start = false;
     let _web_client = if let Some(config_server_url_s) = cli.config_server.as_ref() {
+        let machine_id = crate::common::resolve_machine_id(&machine_id_options)
+            .context("failed to resolve machine id for config-server boot gate")?;
+        let persisted_revision = crate::common::load_persisted_managed_config_revision(
+            machine_id_options.state_dir.as_deref(),
+            machine_id,
+        );
         let wc = web_client::run_web_client(
             config_server_url_s,
-            crate::common::MachineIdOptions {
-                explicit_machine_id: cli.machine_id.clone(),
-                state_dir: None,
-            },
+            machine_id_options,
             cli.network_options.hostname.clone(),
             cli.network_options.secure_mode.unwrap_or(false),
             manager.clone(),
@@ -1650,6 +1696,34 @@ async fn run_main(cli: Cli) -> anyhow::Result<()> {
 
             log::info!("Official config website: https://easytier.cn/web");
         })?;
+
+        let got_heartbeat = wc.wait_first_heartbeat(BOOT_CONFIG_SERVER_WAIT).await;
+        if got_heartbeat {
+            let console_revision = wc.managed_config_revision();
+            defer_web_owned_boot_start = should_defer_web_owned_boot_start(
+                persisted_revision.as_deref(),
+                console_revision.as_deref(),
+            );
+            // Only persist when we will start local configs that already match
+            // (or console has no revision — clears a stale bound file).
+            // Defer path keeps the old disk revision until web apply/patch
+            // persists (ProcessManagement after_run / apply_config_patch).
+            if !defer_web_owned_boot_start {
+                wc.persist_cached_revision();
+            }
+            log::info!(
+                got_heartbeat,
+                ?persisted_revision,
+                ?console_revision,
+                defer_web_owned_boot_start,
+                "config-server boot gate evaluated"
+            );
+        } else {
+            log::info!(
+                timeout_ms = BOOT_CONFIG_SERVER_WAIT.as_millis(),
+                "config-server boot gate timed out; starting local configs"
+            );
+        }
 
         Some(wc)
     } else {
@@ -1723,6 +1797,14 @@ async fn run_main(cli: Cli) -> anyhow::Result<()> {
             crate_cli_network = false;
             control.set_read_only(true);
             control.set_no_delete(true);
+        }
+
+        if defer_web_owned_boot_start && cfg.get_network_config_source() == ConfigSource::Web {
+            log::info!(
+                path = ?config_file,
+                "deferring boot start of web-managed config; waiting for console reconcile"
+            );
+            continue;
         }
 
         log::info!(

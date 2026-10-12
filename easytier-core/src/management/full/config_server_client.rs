@@ -159,6 +159,10 @@ pub trait ConfigServerReportClient: Send + Sync {
         &self,
         config: NetworkConfig,
     ) -> Result<(), ReportNetworkConfigError>;
+
+    /// Persist cached `managed_config_revision` after local configs converged
+    /// (boot gate / reconcile apply). Default: no-op.
+    fn persist_cached_revision(&self) {}
 }
 
 static REPORT_CLIENT: RwLock<Option<Arc<dyn ConfigServerReportClient>>> = RwLock::new(None);
@@ -193,6 +197,13 @@ pub async fn report_via_process_client(
         return Err(ReportNetworkConfigError::NotEnabled);
     };
     client.report_network_config(config).await
+}
+
+/// Persist the active WebClient's cached managed revision (boot-gate milestone).
+pub fn persist_active_managed_config_revision() {
+    if let Some(client) = config_server_report_client() {
+        client.persist_cached_revision();
+    }
 }
 
 #[cfg(test)]

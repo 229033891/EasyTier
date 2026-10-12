@@ -256,6 +256,14 @@ impl WebClientHooks for ManagedConfigServerClientHooks {
         Ok(())
     }
 
+    async fn on_managed_config_overwrite(&self, id: &Uuid) -> Result<(), String> {
+        // Tip event for Host UI (§6.2); do not fail the overwrite path.
+        if let Err(err) = self.emit_event("managed_config_synced_overwrite", *id) {
+            self.note_callback_error(err);
+        }
+        Ok(())
+    }
+
     async fn post_remove_network_instances(
         &self,
         ids: &[Uuid],

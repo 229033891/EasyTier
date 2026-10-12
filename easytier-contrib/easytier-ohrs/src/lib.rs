@@ -125,6 +125,32 @@ impl WebClientHooks for TrackedWebClientHooks {
         Ok(())
     }
 
+    async fn on_managed_config_overwrite(&self, id: &Uuid) -> Result<(), String> {
+        // Refresh the cached name so later stop/delete events report the new
+        // identity. `network_name` may be null while the instance is mid-replace
+        // (old detached, new not yet up); ArkTS must tolerate null and key on
+        // `instance_id`.
+        // Lock order below matches `post_remove_network_instances` (events
+        // before names) so concurrent hook calls cannot ABBA-deadlock.
+        // Computing `network_name` needs no ohrs lock (live INSTANCE_MANAGER).
+        let network_name = network_name_for_instance(id);
+        let mut events = self.events.lock().map_err(|err| err.to_string())?;
+        if let Some(network_name) = &network_name {
+            self.network_names_by_instance_id
+                .lock()
+                .map_err(|err| err.to_string())?
+                .insert(*id, network_name.clone());
+        }
+        events.push(serde_json::json!({
+                "event": "managed_config_synced_overwrite",
+                "success": true,
+                "instance_id": id.to_string(),
+                "instance_name": id.to_string(),
+                "network_name": network_name,
+            }));
+        Ok(())
+    }
+
     async fn post_remove_network_instances(
         &self,
         ids: &[Uuid],

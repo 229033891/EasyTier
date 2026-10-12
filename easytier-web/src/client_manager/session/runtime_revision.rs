@@ -13,8 +13,8 @@ use easytier_core::management::remote_client::{ListNetworkProps, Storage as _};
 use tokio::sync::{RwLock, broadcast};
 
 use super::{
-    ManagedConfigReconcileHint, SessionConfigClient, SessionData, SessionRpcClient,
-    SessionRpcService,
+    MANAGED_RECONCILE_FAIL_LIMIT, ManagedConfigReconcileHint, SessionConfigClient, SessionData,
+    SessionRpcClient, SessionRpcService,
 };
 use crate::client_manager::{
     managed_config::{self, PersistedConfigSource},
@@ -73,6 +73,15 @@ pub(super) async fn reconcile_network_configs_on_heartbeat(
             return;
         };
 
+        // §8.1.4: check pause before prepare so paused rounds skip its DB/RPC
+        // IO (prepare needs no round state; this only reads the pause flag).
+        if managed_reconcile_is_paused(&session_data).await {
+            tracing::debug!(
+                machine_id = ?req.machine_id,
+                "skip managed reconcile round; paused after consecutive failures"
+            );
+            continue;
+        }
         let mut round =
             match prepare_reconcile_round(&session_data, &storage, &mut rpc_client, req).await {
                 RoundStatus::Ready(round) => round,
@@ -181,6 +190,54 @@ pub(super) async fn reconcile_network_configs_on_heartbeat(
             RoundStatus::Ready(()) | RoundStatus::Skip => {}
             RoundStatus::Stop => return,
         }
+
+        record_reconcile_round_failure_streak(&session_data, &round, &outcome).await;
+    }
+}
+
+async fn managed_reconcile_is_paused(session_data: &std::sync::Weak<RwLock<SessionData>>) -> bool {
+    let Some(data) = session_data.upgrade() else {
+        return true;
+    };
+    let data = data.read().await;
+    data.managed_runtime().reconcile_paused
+}
+
+async fn record_reconcile_round_failure_streak(
+    session_data: &std::sync::Weak<RwLock<SessionData>>,
+    round: &ReconcileRound,
+    outcome: &ReconcileOutcome,
+) {
+    let Some(data) = session_data.upgrade() else {
+        return;
+    };
+    let data = data.read().await;
+    let managed_runtime = data.managed_runtime.clone();
+    let mut runtime = managed_runtime
+        .lock()
+        .expect("managed runtime state lock poisoned");
+    // Only Web / managed-revision failures count toward the pause streak.
+    // User-source-only failures must neither increment nor reset (would dilute
+    // a building Web fail streak). Clean rounds still clear pause.
+    if outcome.managed_revision_failed {
+        runtime.reconcile_fail_streak = runtime.reconcile_fail_streak.saturating_add(1);
+        if runtime.reconcile_fail_streak < MANAGED_RECONCILE_FAIL_LIMIT || runtime.reconcile_paused
+        {
+            return;
+        }
+        runtime.reconcile_paused = true;
+        tracing::warn!(
+            user_id = ?round.user_id,
+            machine_id = ?round.machine_id,
+            fail_streak = runtime.reconcile_fail_streak,
+            limit = MANAGED_RECONCILE_FAIL_LIMIT,
+            "managed reconcile paused after consecutive failures; Save or Start to resume"
+        );
+        return;
+    }
+    if !outcome.has_failed {
+        runtime.reconcile_fail_streak = 0;
+        runtime.reconcile_paused = false;
     }
 }
 

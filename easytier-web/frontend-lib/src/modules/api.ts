@@ -18,6 +18,14 @@ export interface GenerateConfigResponse {
     error?: string;
 }
 
+/** Console Save response (`console-save-and-push-semantics.md` §4.3). */
+export type SaveNetworkConfigAction = 'unchanged' | 'patched' | 'rebuilt' | 'pending';
+export type SaveNetworkConfigPendingReason = 'disabled' | 'offline' | 'prepare_timeout';
+export interface SaveNetworkConfigResponse {
+    action: SaveNetworkConfigAction;
+    reason?: SaveNetworkConfigPendingReason;
+}
+
 export interface ParseConfigResponse {
     config?: NetworkConfig;
     error?: string;
@@ -47,9 +55,19 @@ export namespace ConfigFilePermission {
     }
 }
 
+/** Mirrors `api_manage.proto` ConfigSource (proto enum int). */
+export const ConfigSource = {
+    Unspecified: 0,
+    User: 1,
+    Web: 2,
+} as const;
+export type ConfigSourceValue = (typeof ConfigSource)[keyof typeof ConfigSource];
+
 export interface NetworkMeta {
     network_name: string;
     config_permission: ConfigFilePermission.Flags;
+    /** Device/DB ownership; missing on older servers → treat as unspecified. */
+    source?: ConfigSourceValue | number;
 }
 
 export interface GetNetworkMetasResponse {
@@ -106,7 +124,8 @@ export interface RemoteClient {
     list_network_instance_ids(): Promise<ListNetworkInstanceIdResponse>;
     delete_network(inst_id: string): Promise<undefined>;
     update_network_instance_state(inst_id: string, disabled: boolean): Promise<undefined>;
-    save_config(config: NetworkConfig): Promise<undefined>;
+    /** Web console returns action/reason; GUI may resolve with void. */
+    save_config(config: NetworkConfig): Promise<SaveNetworkConfigResponse | void>;
     get_network_config(inst_id: string): Promise<NetworkConfig>;
     generate_config(config: NetworkConfig): Promise<GenerateConfigResponse>;
     parse_config(toml_config: string): Promise<ParseConfigResponse>;

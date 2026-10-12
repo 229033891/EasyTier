@@ -968,11 +968,20 @@ web:
     edit_as_file: Edit as File
     edit_as_file_tip: Edit the full configuration as plain text
     save_config: Save Config
-    save_config_tip: Save changes to the device (syncs if this network is console-managed). Does not start or rebuild the network.
+    save_config_tip: Save to the console; if the network is enabled and the device is online, hot-patch or rebuild as needed (base changes briefly disconnect).
     save_config_disabled_no_config: No config available to save
     save_config_disabled_meta: Loading permissions — try again in a moment
     save_config_disabled_readonly: This config is read-only and cannot be saved
+    confirm_save_takeover_user_source: This network is currently a device-local (User) config. Saving will let the console take ownership (Web source); later local edits may be overwritten by the console. Continue?
+    managed_config_synced_overwrite: Console synced a newer config over the local instance ({id})
     save_failed: Failed to save config
+    save_ok_unchanged: Saved (already matches device runtime)
+    save_ok_patched: Saved; hot-updating the device
+    save_ok_rebuilt: Saved; instance will rebuild (may briefly disconnect)
+    save_ok_pending: Saved; syncing
+    save_ok_pending_disabled: Saved (still disabled — start to apply)
+    save_ok_pending_offline: Saved (device offline — syncs when online)
+    save_ok_pending_prepare_timeout: Saved; syncing (could not confirm hot-update path yet)
     start_failed: Failed to start network
     stop_failed: Failed to stop network
     load_config_failed: Failed to load network config

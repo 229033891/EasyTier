@@ -51,8 +51,10 @@ export class GUIRemoteClient implements Api.RemoteClient {
     await backend.updateNetworkConfigState(inst_id, disabled)
   }
 
-  async save_config(config: NetworkTypes.NetworkConfig): Promise<undefined> {
+  async save_config(config: NetworkTypes.NetworkConfig): Promise<Api.SaveNetworkConfigResponse> {
     await backend.saveNetworkConfig(config)
+    // GUI local save has no console push — never surface "pending / syncing".
+    return { action: 'unchanged' }
   }
 
   async get_network_config(inst_id: string): Promise<NetworkTypes.NetworkConfig> {

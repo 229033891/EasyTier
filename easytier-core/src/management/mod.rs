@@ -40,8 +40,8 @@ pub use full::{
     WebClientConfig, apply_config_patch, clear_config_server_status, config_server_dial_candidates,
     config_server_report_client, config_server_status, config_server_underlay_ips,
     config_source_from_rpc, config_source_to_rpc, dial_config_server_with_scheme_fallback,
-    gui_sync_message_for_error_code, network_instance_running_info, report_via_process_client,
-    set_host_dns_lookup,
+    gui_sync_message_for_error_code, network_instance_running_info,
+    persist_active_managed_config_revision, report_via_process_client, set_host_dns_lookup,
 };
 #[cfg(feature = "management")]
 pub use full::{

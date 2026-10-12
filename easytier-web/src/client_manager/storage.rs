@@ -224,6 +224,9 @@ impl Storage {
         state.pending_managed_config_reconcile = Some(ManagedConfigReconcileHint::Full);
         state.runtime_config_epoch = state.runtime_config_epoch.wrapping_add(1);
         state.runtime_config_cache_epoch = state.runtime_config_cache_epoch.wrapping_add(1);
+        // New desired / Start: resume auto-apply after §8.1.4 pause.
+        state.reconcile_fail_streak = 0;
+        state.reconcile_paused = false;
         true
     }
 

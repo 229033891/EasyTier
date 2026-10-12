@@ -383,7 +383,7 @@ const updateInstanceList = () => {
     });
 
     const signature = newList
-        .map(({ uuid, meta }) => `${uuid}\u0000${meta?.network_name ?? ''}\u0000${meta?.config_permission ?? ''}`)
+        .map(({ uuid, meta }) => `${uuid}\u0000${meta?.network_name ?? ''}\u0000${meta?.config_permission ?? ''}\u0000${meta?.source ?? ''}`)
         .join('\u0001');
     if (signature !== instanceListSignature) {
         instanceListSignature = signature;
@@ -662,6 +662,8 @@ const startNetwork = () => {
     if (!selectedInstanceId.value) {
         return;
     }
+    // Start enables the existing DB row (keeps source). User→Web takeover is
+    // only via Save / saveAndRun — those paths already confirm §8.1.5.
     confirm.require({
         message: t('web.device_management.confirm_start_overwrite'),
         header: t('web.device_management.start_network'),
@@ -818,8 +820,20 @@ const saveAndRunNewNetwork = async (config?: NetworkTypes.NetworkConfig) => {
 
     try {
         if (networkIsDisabled.value) {
-            await props.api.save_config(cfg);
+            const saveResult = await props.api.save_config(cfg);
             await props.api.update_network_instance_state(cfg.instance_id, false);
+            // Surface prepare prediction after takeover Start, including
+            // pending/unchanged, so offline/timeout never leaves the user
+            // without feedback.
+            const action = saveResult?.action;
+            if (action) {
+                toast.add({
+                    severity: action === 'rebuilt' ? 'warn' : action === 'pending' ? 'info' : 'success',
+                    summary: t('web.common.success'),
+                    detail: saveResultToastDetail(saveResult),
+                    life: TOAST_LIFE.success,
+                });
+            }
         } else {
             await props.api.run_network(cfg, currentNetworkControl.remoteSave.value);
         }
@@ -879,6 +893,25 @@ const confirmRunNetwork = (config?: NetworkTypes.NetworkConfig | Event) => {
     if (!cfg) {
         return;
     }
+    // §8.1.5: User-source Run that Save→Web must confirm takeover (same as Save).
+    if (isUserSourceConfig.value) {
+        confirm.require({
+            message: t('web.device_management.confirm_save_takeover_user_source'),
+            header: t('run_network'),
+            icon: 'pi pi-exclamation-triangle',
+            rejectProps: {
+                label: t('web.common.cancel'),
+                severity: 'secondary',
+                outlined: true,
+            },
+            acceptProps: {
+                label: t('run_network'),
+                severity: 'warning',
+            },
+            accept: () => { void saveAndRunNewNetwork(cfg) },
+        });
+        return;
+    }
     const rerunning = !networkIsDisabled.value && selectedNetworkRunning.value;
     confirm.require({
         message: t(
@@ -901,18 +934,58 @@ const confirmRunNetwork = (config?: NetworkTypes.NetworkConfig | Event) => {
     });
 }
 
-const saveNetworkConfig = async () => {
+const saveResultToastDetail = (result: Api.SaveNetworkConfigResponse | void) => {
+    // GUI / local clients may return void — no console push semantics.
+    if (!result || !result.action) {
+        return t('web.device_management.save_ok_unchanged');
+    }
+    if (result.action === 'pending') {
+        switch (result.reason) {
+            case 'disabled':
+                return t('web.device_management.save_ok_pending_disabled');
+            case 'offline':
+                return t('web.device_management.save_ok_pending_offline');
+            case 'prepare_timeout':
+                return t('web.device_management.save_ok_pending_prepare_timeout');
+            default:
+                return t('web.device_management.save_ok_pending');
+        }
+    }
+    if (result.action === 'patched') {
+        return t('web.device_management.save_ok_patched');
+    }
+    if (result.action === 'rebuilt') {
+        return t('web.device_management.save_ok_rebuilt');
+    }
+    return t('web.device_management.save_ok_unchanged');
+};
+
+const isUserSourceConfig = computed(() => {
+    const source = currentNetworkMeta.value?.source;
+    // Fail closed on missing meta (load failed / not loaded yet): without meta
+    // we cannot prove Web ownership, so keep the takeover confirm. Unspecified
+    // (old servers without source) keeps legacy behavior to avoid confirm spam.
+    return source === undefined || source === Api.ConfigSource.User;
+});
+
+const doSaveNetworkConfig = async () => {
     if (!currentNetworkConfig.value || savingConfig.value || !canSaveConfig.value) {
         return;
     }
     savingConfig.value = true;
     try {
-        await props.api.save_config(currentNetworkConfig.value);
+        const result = await props.api.save_config(currentNetworkConfig.value);
 
         delete networkMetaCache.value[currentNetworkConfig.value.instance_id];
         await loadNetworkMetas([currentNetworkConfig.value.instance_id]);
 
         applyLoadedNetworkConfig(currentNetworkConfig.value);
+        toast.add({
+            severity: result?.action === 'rebuilt' ? 'warn' : 'success',
+            summary: t('web.common.success'),
+            detail: saveResultToastDetail(result),
+            life: TOAST_LIFE.success,
+        });
     } catch (e: any) {
         console.error(e);
         if (!offerReloadOnRevisionConflict(e)) {
@@ -926,7 +999,33 @@ const saveNetworkConfig = async () => {
     } finally {
         savingConfig.value = false;
     }
-}
+};
+
+/** User-source rows: confirm console takeover before Save writes Web ownership. */
+const saveNetworkConfig = async () => {
+    if (!currentNetworkConfig.value || savingConfig.value || !canSaveConfig.value) {
+        return;
+    }
+    if (isUserSourceConfig.value) {
+        confirm.require({
+            message: t('web.device_management.confirm_save_takeover_user_source'),
+            header: t('web.device_management.save_config'),
+            icon: 'pi pi-exclamation-triangle',
+            rejectProps: {
+                label: t('web.common.cancel'),
+                severity: 'secondary',
+                outlined: true,
+            },
+            acceptProps: {
+                label: t('web.device_management.save_config'),
+                severity: 'warning',
+            },
+            accept: () => { void doSaveNetworkConfig() },
+        });
+        return;
+    }
+    await doSaveNetworkConfig();
+};
 const newNetwork = async () => {
     const newNetworkConfig = props.newConfigGenerator?.() ?? NetworkTypes.DEFAULT_NETWORK_CONFIG();
     try {

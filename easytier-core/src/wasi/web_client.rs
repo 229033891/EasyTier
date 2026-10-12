@@ -370,6 +370,7 @@ impl WasiWebClientRuntime {
                     },
                     easytier_version: env!("CARGO_PKG_VERSION").to_owned(),
                     secure_mode: config.secure_mode,
+                    revision_persist_path: None,
                 },
                 backend,
             )

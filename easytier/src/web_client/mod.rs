@@ -44,6 +44,7 @@ impl WebClient {
         secure_mode: bool,
         manager: Arc<NativeInstanceManager>,
         hooks: Option<Arc<dyn WebClientHooks>>,
+        revision_persist_path: Option<std::path::PathBuf>,
     ) -> Self
     where
         T: TunnelDialer + 'static,
@@ -57,6 +58,7 @@ impl WebClient {
             device_os: web_client_device_os_info(),
             easytier_version: EASYTIER_VERSION.to_owned(),
             secure_mode,
+            revision_persist_path,
         };
         #[cfg(feature = "management")]
         let inner = easytier_core::management::WebClient::new(
@@ -84,6 +86,14 @@ impl WebClient {
 
     pub fn managed_config_revision(&self) -> Option<String> {
         self.inner.managed_config_revision()
+    }
+
+    pub async fn wait_first_heartbeat(&self, timeout: std::time::Duration) -> bool {
+        self.inner.wait_first_heartbeat(timeout).await
+    }
+
+    pub fn persist_cached_revision(&self) {
+        self.inner.persist_cached_revision();
     }
 
     pub async fn report_network_config(
@@ -160,6 +170,10 @@ pub async fn run_web_client(
 ) -> Result<WebClient> {
     let machine_id = resolve_machine_id(&machine_id_options)
         .with_context(|| "failed to resolve machine id for web client")?;
+    let revision_persist_path = crate::common::resolve_managed_config_revision_state_file(
+        machine_id_options.state_dir.as_deref(),
+    )
+    .ok();
     let endpoint = parse_config_server_endpoint(config_server_url)?;
 
     let config = TomlConfigLoader::default();
@@ -185,6 +199,7 @@ pub async fn run_web_client(
         secure_mode,
         manager,
         hooks,
+        revision_persist_path,
     ))
 }
 

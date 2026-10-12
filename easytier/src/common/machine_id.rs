@@ -67,6 +67,48 @@ fn resolve_machine_id_state_file(state_dir: Option<&Path>) -> anyhow::Result<Pat
     Ok(state_dir.join("machine_id"))
 }
 
+/// Path for last-seen console `managed_config_revision` (boot auto-start gate).
+pub fn resolve_managed_config_revision_state_file(
+    state_dir: Option<&Path>,
+) -> anyhow::Result<PathBuf> {
+    let machine_id_file = resolve_machine_id_state_file(state_dir)?;
+    let Some(dir) = machine_id_file.parent() else {
+        anyhow::bail!("machine_id state path has no parent directory");
+    };
+    Ok(dir.join("managed_config_revision"))
+}
+
+/// Load persisted revision only when the file is bound to `machine_id`.
+///
+/// On-disk format: `{machine_id}\n{revision}` (written by the web client).
+/// Legacy single-line files and machine-id mismatches are treated as missing
+/// so a `--machine-id` change cannot reuse another identity's revision.
+pub fn load_persisted_managed_config_revision(
+    state_dir: Option<&Path>,
+    machine_id: uuid::Uuid,
+) -> Option<String> {
+    let path = resolve_managed_config_revision_state_file(state_dir).ok()?;
+    let raw = std::fs::read_to_string(path).ok()?;
+    parse_managed_config_revision_file(&raw, machine_id)
+}
+
+pub fn parse_managed_config_revision_file(raw: &str, machine_id: uuid::Uuid) -> Option<String> {
+    let mut lines = raw.lines();
+    let file_mid = lines.next()?.trim();
+    let Ok(parsed) = uuid::Uuid::parse_str(file_mid) else {
+        return None;
+    };
+    if parsed != machine_id {
+        return None;
+    }
+    let revision = lines.next()?.trim();
+    if revision.is_empty() {
+        None
+    } else {
+        Some(revision.to_owned())
+    }
+}
+
 #[cfg(not(target_os = "android"))]
 fn non_empty_os_string(value: Option<OsString>) -> Option<OsString> {
     value.filter(|value| !value.is_empty())
@@ -595,5 +637,19 @@ mod tests {
         assert!(should_attempt_legacy_machine_uid_migration(
             &empty_dir.join("machine_id")
         ));
+    }
+
+    #[test]
+    fn test_managed_config_revision_file_requires_matching_machine_id() {
+        let mid = uuid::Uuid::new_v4();
+        let other = uuid::Uuid::new_v4();
+        let raw = format!("{mid}\nrev-1\n");
+        assert_eq!(
+            parse_managed_config_revision_file(&raw, mid).as_deref(),
+            Some("rev-1")
+        );
+        assert_eq!(parse_managed_config_revision_file(&raw, other), None);
+        // Legacy single-line (no machine binding) must not be reused.
+        assert_eq!(parse_managed_config_revision_file("rev-1\n", mid), None);
     }
 }

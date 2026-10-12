@@ -491,10 +491,13 @@ class WebRemoteClient implements Api.RemoteClient {
             disabled: disabled,
         });
     }
-    async save_config(config: NetworkTypes.NetworkConfig): Promise<undefined> {
-        await this.client.put(`/machines/${this.machine_id}/networks/config/${config.instance_id}`, {
-            config: NetworkTypes.toBackendNetworkConfig(config)
-        });
+    async save_config(config: NetworkTypes.NetworkConfig): Promise<Api.SaveNetworkConfigResponse> {
+        return await this.client.put<any, Api.SaveNetworkConfigResponse>(
+            `/machines/${this.machine_id}/networks/config/${config.instance_id}`,
+            {
+                config: NetworkTypes.toBackendNetworkConfig(config),
+            },
+        );
     }
     async get_network_config(inst_id: string): Promise<NetworkTypes.NetworkConfig> {
         const response = await this.client.get<any, NetworkTypes.NetworkConfig>('/machines/' + this.machine_id + '/networks/config/' + inst_id);
