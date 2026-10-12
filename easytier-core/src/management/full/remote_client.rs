@@ -147,7 +147,7 @@ where
         for cfg in &all_configs {
             let id = to_proto_uuid(cfg.get_network_inst_id());
             if cfg.is_disabled() {
-                db_disabled_inst_ids.push(id.clone());
+                db_disabled_inst_ids.push(id);
             }
             db_inst_ids.push(id);
         }

@@ -19,6 +19,7 @@ use easytier::proto::{
         ReportNetworkConfigResponse, WebServerService, WebServerServiceServer,
     },
 };
+use easytier_core::management::remote_client::{ListNetworkProps, Storage as _};
 use easytier_core::tunnel::Tunnel;
 use tokio::sync::{Notify, RwLock, broadcast};
 use tokio_util::task::AbortOnDropHandle;
@@ -543,10 +544,7 @@ impl SessionRpcService {
         // not device running ids (local-config-residue.md §4.1).
         match storage
             .db()
-            .list_network_configs(
-                (user_id, machine_id),
-                easytier_core::management::remote_client::ListNetworkProps::All,
-            )
+            .list_network_configs((user_id, machine_id), ListNetworkProps::All)
             .await
         {
             Ok(configs) => {
@@ -755,8 +753,6 @@ async fn sync_client_disabled_network_state(
     machine_id: uuid::Uuid,
     req: &HeartbeatRequest,
 ) -> Result<(), sea_orm::DbErr> {
-    use easytier_core::management::remote_client::Storage as _;
-
     let disabled = req
         .disabled_network_instances
         .iter()
@@ -770,10 +766,7 @@ async fn sync_client_disabled_network_state(
         .map(uuid::Uuid::from)
         .collect::<HashSet<_>>();
     let configs = db
-        .list_network_configs(
-            (user_id, machine_id),
-            easytier_core::management::remote_client::ListNetworkProps::All,
-        )
+        .list_network_configs((user_id, machine_id), ListNetworkProps::All)
         .await?;
     for config in configs {
         if super::managed_config::PersistedConfigSource::from_db(&config.source)
