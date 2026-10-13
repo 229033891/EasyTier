@@ -121,7 +121,7 @@ IPv6：VIP / 非 `/0` 的 proxy LPM → `exit_nodes`（同样要求下一跳）�
 ## 5. 域名代理
 
 **未实现。** 现状仅有手工 `proxy_cidrs` + MagicDNS 等基础设施（DNS 侧见 [`magic-dns.md`](./magic-dns.md)）。  
-见 [`../roadmap/domain-proxy.md`](../roadmap/domain-proxy.md)。
+见 [`../roadmap/domain-proxy.md`](../roadmap/domain-proxy.md)（域名 → 子网代理，peer-driven 草案）与 [`../roadmap/unified-routing-design.md`](../roadmap/unified-routing-design.md)（统一路由模型讨论稿：B = 网关 / A = 路由表）。
 
 ---
 
