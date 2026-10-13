@@ -13,6 +13,7 @@ use arc_swap::ArcSwap;
 use dashmap::DashMap;
 use quanta::Instant;
 use serde::{Deserialize, Serialize};
+use smallvec::SmallVec;
 use tokio::sync::{
     Mutex, RwLock,
     mpsc::{self, UnboundedReceiver, UnboundedSender},
@@ -1749,19 +1750,24 @@ impl PeerManagerCore {
     }
 
     pub async fn get_msg_dst_peer(&self, addr: &IpAddr) -> (Vec<PeerId>, bool) {
-        self.outbound_packet_router.get_msg_dst_peer(addr).await
+        let (peers, is_exit_node) = self.outbound_packet_router.get_msg_dst_peer(addr).await;
+        (peers.into_vec(), is_exit_node)
     }
 
     pub async fn get_msg_dst_peer_ipv4(&self, ipv4_addr: &Ipv4Addr) -> (Vec<PeerId>, bool) {
-        self.outbound_packet_router
+        let (peers, is_exit_node) = self
+            .outbound_packet_router
             .get_msg_dst_peer_ipv4(ipv4_addr)
-            .await
+            .await;
+        (peers.into_vec(), is_exit_node)
     }
 
     pub async fn get_msg_dst_peer_ipv6(&self, ipv6_addr: &Ipv6Addr) -> (Vec<PeerId>, bool) {
-        self.outbound_packet_router
+        let (peers, is_exit_node) = self
+            .outbound_packet_router
             .get_msg_dst_peer_ipv6(ipv6_addr)
-            .await
+            .await;
+        (peers.into_vec(), is_exit_node)
     }
 
     pub async fn send_msg_by_ip(
@@ -2781,7 +2787,7 @@ impl PeerOutboundPacketRouter {
         result
     }
 
-    pub async fn get_msg_dst_peer(&self, addr: &IpAddr) -> (Vec<PeerId>, bool) {
+    pub async fn get_msg_dst_peer(&self, addr: &IpAddr) -> (SmallVec<[PeerId; 1]>, bool) {
         match addr {
             IpAddr::V4(ipv4_addr) => self.get_msg_dst_peer_ipv4(ipv4_addr).await,
             IpAddr::V6(ipv6_addr) => self.get_msg_dst_peer_ipv6(ipv6_addr).await,
@@ -2827,9 +2833,13 @@ impl PeerOutboundPacketRouter {
         self.peers.resolve_exit_node_peer(&exit_nodes).await
     }
 
-    pub async fn get_msg_dst_peer_ipv4(&self, ipv4_addr: &Ipv4Addr) -> (Vec<PeerId>, bool) {
+    pub async fn get_msg_dst_peer_ipv4(
+        &self,
+        ipv4_addr: &Ipv4Addr,
+    ) -> (SmallVec<[PeerId; 1]>, bool) {
         let mut is_exit_node = false;
-        let mut dst_peers = vec![];
+        // Single-destination hot path stays stack-allocated; broadcast may spill.
+        let mut dst_peers = SmallVec::<[PeerId; 1]>::new();
         if self.is_all_peers_broadcast_ipv4(ipv4_addr) {
             dst_peers.extend(Self::select_ipv4_broadcast_peers(
                 &self.peers.list_route_infos().await,
@@ -2868,9 +2878,12 @@ impl PeerOutboundPacketRouter {
         (dst_peers, is_exit_node)
     }
 
-    pub async fn get_msg_dst_peer_ipv6(&self, ipv6_addr: &Ipv6Addr) -> (Vec<PeerId>, bool) {
+    pub async fn get_msg_dst_peer_ipv6(
+        &self,
+        ipv6_addr: &Ipv6Addr,
+    ) -> (SmallVec<[PeerId; 1]>, bool) {
         let mut is_exit_node = false;
-        let mut dst_peers = vec![];
+        let mut dst_peers = SmallVec::<[PeerId; 1]>::new();
         if self.is_all_peers_broadcast_ipv6(ipv6_addr) {
             dst_peers.extend(self.peers.list_routes().await.iter().map(|x| *x.key()));
         } else if let Some(peer_id) = self.peers.get_peer_id_by_ipv6(ipv6_addr).await {

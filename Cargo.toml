@@ -71,6 +71,7 @@ sea-orm-migration = "1.1.20"
 serde = "1.0.229"
 serde_json = "1.0"
 sha2 = "0.11.0"
+smallvec = "1.16"
 smoltcp = { version = "0.14.0", default-features = false }
 sqlx = "0.8.6"
 strum = "0.28.0"
@@ -103,6 +104,11 @@ lto = true
 codegen-units = 1
 opt-level = 3
 strip = true
+
+# criterion 基准需要 unwind：libtest / 测试 harness 与 panic=abort 不兼容。
+# 仅影响 bench target；其余档位继承 release，保证基准数据与发版一致。
+[profile.bench]
+panic = "unwind"
 
 # 本地迭代用：链接更快，体�?极致优化略弱�?release；正式发版仍�?--release
 [profile.release-fast]

@@ -34,6 +34,10 @@ path = "src/lib.rs"
 name = "packet_bytes_extraction"
 harness = false
 
+[[bench]]
+name = "routing_lookup"
+harness = false
+
 [dependencies]
 easytier-core.workspace = true
 easytier-proto = { workspace = true, features = ["api", "core"] }
@@ -284,7 +288,7 @@ thunk-rs = { workspace = true, features = [
 
 
 [dev-dependencies]
-criterion = "0.8.2"
+criterion = { version = "0.8.2", features = ["async_tokio"] }
 easytier-core = { workspace = true, features = [
     "test-utils",
 ] }

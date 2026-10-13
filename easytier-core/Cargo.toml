@@ -59,6 +59,7 @@ rustls = { workspace = true, features = ["ring", "std", "tls12"], optional = tru
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 sha2.workspace = true
+smallvec.workspace = true
 smoltcp = { workspace = true, optional = true }
 stun_codec.workspace = true
 thiserror.workspace = true

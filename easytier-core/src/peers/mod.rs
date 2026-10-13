@@ -16,10 +16,15 @@ pub(crate) mod traffic_metrics;
 mod util;
 pub(crate) mod whitelist;
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-utils"))]
+#[allow(dead_code)]
 pub(crate) mod test_support;
 #[cfg(test)]
 mod tests;
+
+/// criterion 基准（`easytier/benches/`）专用构造辅助，仅 `test-utils` feature 下编译。
+#[cfg(feature = "test-utils")]
+pub mod bench_support;
 
 use crate::packet::ZCPacket;
 use tokio::sync::mpsc::error::{SendError, TryRecvError, TrySendError};

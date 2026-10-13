@@ -3,7 +3,7 @@
 ## Status
 
 - Status: **Roadmap**（Tech Debt / 待清理，**可独立于路由功能推进**）
-- 最近审阅：2026-10-13（已对照 `easytier-core` 源码复核）
+- 最近审阅：2026-10-13（源码复核 + 文档锚点修正；同日写入 `routing_lookup` before 基线）
 - 范围：出站选路热路径上的既有性能债
 - **独立性**：**不依赖** [`unified-routing-design.md`](./unified-routing-design.md)；可先做，路由功能延后
 - 索引：[`../README.md`](../README.md)
@@ -24,14 +24,14 @@
   │         peer_manager.send_msg_by_ip(packet, dst, false)
   │         └─ → PeerOutboundPacketRouter::send_msg_by_ip
   │
-  └─ peers/peer_manager.rs:2897  PeerOutboundPacketRouter::send_msg_by_ip
-        ├─ :2910 run_nic_packet_process_pipeline（ACL + pipelines）
-        └─ :2931-2932 get_msg_dst_peer_ipv4(&ipv4).await     // ← 每包
+  └─ peers/peer_manager.rs:2910  PeerOutboundPacketRouter::send_msg_by_ip
+        ├─ :2923 run_nic_packet_process_pipeline（ACL + pipelines）
+        └─ :2944-2947 match ip → get_msg_dst_peer_ipv4 / ipv6   // ← 每包（V4 在 :2945）
               │
-              ├─ :2832
-              │    let mut dst_peers = vec![];                // ← TD-3 每包分配
+              ├─ :2842
+              │    let mut dst_peers = SmallVec::<[PeerId; 1]>::new();  // ← TD-3 已改 SmallVec（单目的地零堆分配）
               │
-              ├─ :2838
+              ├─ :2848
               │    self.peers.get_peer_id_by_ipv4(ipv4)       // → peer_map.rs:265-272
               │         for route in self.routes.read().await.iter() { ... }
               │         ↑ TD-1 tokio 异步锁（routes 列表通常只有 1 个元素）
@@ -44,8 +44,8 @@
               │                             let map = cidr_peer_id_map.load();  // ✅ ArcSwap
               │                             map.get_lpm(...)                     // ✅ 真 LPM
               │
-              └─ :2844
-                   self.resolve_exit_node_peer().await          // → :2825
+              └─ :2854
+                   self.resolve_exit_node_peer().await          // → :2831
                         let exit_nodes = self.exit_nodes.read().await;   // ← TD-4 二次异步锁
                         peers/conn/peer_map.rs:285
                           for exit_node in exit_nodes {
@@ -101,8 +101,8 @@ pub async fn add_route(&self, route: ArcRoute) {
 
 | 位置 | 场景 |
 |---|---|
-| `peer_manager.rs:746` | 初始化挂载 OSPF route，**一次** |
-| `peer_manager.rs:1888` | `run()` 时若存在 ospf_route 再 `add_route` |
+| `peer_manager.rs:747` | 初始化挂载 OSPF route，**一次** |
+| `peer_manager.rs:1894` | `run()` 时若存在 ospf_route 再 `add_route` |
 | `foreign_network/mod.rs:538` | foreign network 自有 `PeerMap` |
 
 **实践中每个 `PeerMap` 只持有 1 个 route**，LIFO 顺序在正常场景下不触发。
@@ -120,9 +120,9 @@ pub async fn add_route(&self, route: ArcRoute) {
 
 | ID | 债务 | 严重度 | 修复难度 | 是否行为变更 |
 |---|---|---|---|---|
-| **TD-6** | 热路径无基准测试 | 🔴 最高 | 低～中（见 §5 P-T1） | ❌ |
+| ~~TD-6~~ | ~~热路径无基准~~ → **harness + before 基线已落地**（§5）；后续阶段继续对比 | 🟢 | ✅ P-T1 完成 | ❌ |
 | **TD-1** | `routes: tokio::RwLock<Vec<ArcRoute>>`，**9 处** `read().await` | 🟠～🔴 中高（单 route 时主要是每包 async 锁开销） | 中 | ❌ |
-| **TD-3** | 每包 `Vec` 分配（`PeerOutboundPacketRouter` `:2832`） | 🟠 中 | **低** | ❌（签名变更见下） |
+| ~~TD-3~~ | ~~每包 `Vec` 分配~~ → **已改内部 `SmallVec`（T1-5，`PeerOutboundPacketRouter` `:2842`）** | 🟢 低 | ✅ 已完成 | ❌（公开签名保持 `Vec`） |
 | **TD-4** | 出口路径二次异步锁（`exit_nodes.read().await`） | 🟠 中 | 低 | ❌ |
 | **TD-5** | 出口 VIP→PeerId 每包重复遍历解析 | 🟠 中 | 低 | ❌ |
 | ~~TD-2~~ | ~~CIDR 无索引线性扫描~~ | — | — | ❌ **已证伪**（§2.1） |
@@ -143,22 +143,22 @@ routes: RwLock<Vec<ArcRoute>>,
 ### TD-3 细节
 
 ```rust
-// peers/peer_manager.rs:2830-2832 — PeerOutboundPacketRouter
-pub async fn get_msg_dst_peer_ipv4(&self, ipv4_addr: &Ipv4Addr) -> (Vec<PeerId>, bool) {
-    let mut dst_peers = vec![];      // ← 空 Vec 后 push(1) 仍可能堆分配
+// peers/peer_manager.rs:2836-2842 — PeerOutboundPacketRouter
+pub async fn get_msg_dst_peer_ipv4(&self, ipv4_addr: &Ipv4Addr) -> (SmallVec<[PeerId; 1]>, bool) {
+    let mut dst_peers = SmallVec::<[PeerId; 1]>::new();   // ← T1-5 已改：单目的地零堆分配
 ```
 
 **影响面（不是「3 个调用点」）**：
 
 | 位置 | 角色 |
 |---|---|
-| `PeerOutboundPacketRouter::get_msg_dst_peer_ipv4` `:2830` | 实现（分配发生处） |
-| 同结构 `get_msg_dst_peer` `:2784`、`send_msg_by_ip` `:2932` | 内部调用 |
-| `PeerManager::{get_msg_dst_peer, get_msg_dst_peer_ipv4, get_msg_dst_peer_ipv6}` `:1751-1765` | 公开 API 薄包装（返回类型会跟着变，或在边界转换） |
+| `PeerOutboundPacketRouter::get_msg_dst_peer_ipv4` `:2836` | 实现（分配发生处） |
+| 同结构 `get_msg_dst_peer` `:2790`、`send_msg_by_ip` `:2945`（V4 分支） | 内部调用 |
+| `PeerManagerCore::{get_msg_dst_peer, get_msg_dst_peer_ipv4, get_msg_dst_peer_ipv6}` `:1752-1770` | 公开 API 薄包装（T1-5 已在边界 `into_vec()` 转换，公开签名保持 `Vec`） |
 | `gateway/dataplane/mod.rs`（`get_msg_dst_peer`） | 下游调用 |
 | `peer_manager_tests.rs` | 测试 |
 
-影响可控，但改签名时需一并处理包装层与 dataplane；`get_msg_dst_peer_ipv6` 若保持对称也应同改。
+T1-5 已完成：内部 `SmallVec`、公开仍 `Vec`；`get_msg_dst_peer_ipv6` 已对称改完。
 
 ---
 
@@ -170,11 +170,11 @@ arc-swap.workspace = true      # :25  ← 已在 peer_ospf_route.rs 中使用
 dashmap.workspace = true       # :36  ← VIP 精确命中已用
 parking_lot.workspace = true    # :48
 
-# easytier/Cargo.toml — 已有 criterion 与 benches/
-criterion = "0.8.2"            # [[bench]] packet_bytes_extraction
+# easytier/Cargo.toml — criterion 与 benches/；P-T1 起含 routing_lookup
+criterion = "0.8.2"            # [[bench]] packet_bytes_extraction / routing_lookup（+ async_tokio）
 
-# 尚未直接依赖 — P-T1 / T1-5 需新增
-smallvec                       # 工作区未声明；仅可能作为传递依赖存在
+# P-T1 / T1-5 已新增（2026-10-13）
+smallvec = "1.16"              # 根 Cargo.toml [workspace.dependencies]；easytier-core/Cargo.toml 引用
 ```
 
 ---
@@ -202,6 +202,11 @@ smallvec                       # 工作区未声明；仅可能作为传递依�
   2. 经公开 `PeerManager::get_msg_dst_peer_ipv4` 测（更重，需搭实例）；或
   3. 抽出可 `pub` 的纯查找辅助供 bench 调用
 - 勿默认「丢一个 `easytier/benches/routing_lookup.rs` 就能直接调用 router」
+
+> **实际落地（2026-10-13）**：**选项 1 不可行** —— bench target 是独立 crate，拿不到 `pub(crate)` 项。
+> 采用「选项 3 的轻量版」：在 `easytier-core` 加 feature-gated 的 `pub mod peers::bench_support`
+> （`feature = "test-utils"`），只暴露 `new_peer_map()` + mock `BenchRoute`（不改生产逻辑）；
+> 基准文件仍放在 `easytier/benches/`（criterion 与 `[[bench]]` 都在该 crate）。
 - T1-2 的「10 / 100 / 1000」指 **VIP/CIDR 条目数**，不是 `PeerMap` 里 1000 个 route 对象（实践通常只有 1 个）
 
 **SmallVec 约束**：优先 **内部 `SmallVec`、公开 API 保持 `Vec`**，避免类型泄漏到 dataplane / 外部调用方。广播路径本身会多 peer，堆分配仍属预期。
@@ -211,6 +216,47 @@ smallvec                       # 工作区未声明；仅可能作为传递依�
 **上线判据**：基准可复现；**单目的地**路径分配计数 = 0；功能回归全绿。
 
 **⭐ 最优先项**：即使后续不做任何清理，**基准 harness 本身长期有效**，且是评估其他性能工作的前提。
+
+**实施进度（2026-10-13）**
+
+- ✅ **T1-1 / T1-2 / T1-3**：新增 `easytier/benches/routing_lookup.rs`（criterion + `async_tokio`）。
+  覆盖四条路径 `vip_hit` / `vip_miss` / `proxy_default_hit` / `exit_node`；规模档位 10 / 100 / 1000（VIP 条目数）。
+- ✅ **T1-5**：`PeerOutboundPacketRouter::get_msg_dst_peer{,_ipv4,_ipv6}` 返回 `SmallVec<[PeerId; 1]>`；
+  公开 `PeerManagerCore` API 仍返回 `Vec`（`into_vec()` 边界转换），未泄漏到 dataplane。
+- 新增 `easytier-core/src/peers/bench_support.rs`（`feature = "test-utils"`）：
+  暴露 `new_peer_map()` 与 mock `BenchRoute`，让基准能构造 `pub(crate)` 的 `PeerMap`。
+- `easytier-core/src/peers/mod.rs`：`test_support` 的 gate 由 `#[cfg(test)]` 放宽为
+  `#[cfg(any(test, feature = "test-utils"))]`（基准与单测共用构造辅助）。
+- ✅ **T1-4**：before 基线已产出（见下表；`--save-baseline before`）。
+- ⏳ **T1-6**：当前 harness **只测延迟、不计分配**；且本基线已在 T1-5（SmallVec）之后采集，
+  无法做 SmallVec 前后 A/B。单目的地零堆分配靠类型不变量保证；若要量化分配，需另加 alloc 计数。
+
+**基线（2026-10-13，`cargo bench -p easytier --bench routing_lookup -- --save-baseline before`）**
+
+| 环境 | 值 |
+|---|---|
+| 主机 | `DEV` / Intel Xeon E5-2680 v4 @ 2.40GHz / ~24 GB RAM |
+| rustc | 1.95.0（`rust-toolchain.toml`） |
+| 耗时 | 约 24 min（含 bench profile 编译；exit 0） |
+| 目标目录 | `.cache\cargo-target` + vcvars |
+
+criterion 报告中位数（ns/iter；`[low mean high]` 取 mean）：
+
+| 规模（VIP 条目） | vip_hit | vip_miss | proxy_default_hit | exit_node |
+|---|---|---|---|---|
+| 10 | 165.00 | 170.73 | 307.96 | 175.75 |
+| 100 | 166.98 | 166.19 | 308.95 | 171.64 |
+| 1000 | 168.16 | 163.33 | 302.94 | 172.18 |
+
+**读数要点**：
+
+- VIP / miss / exit_node 约 **163–176 ns**，规模 10→1000 **几乎不敏感**（符合「测固定成本、非线性扫」预期）
+- `proxy_default_hit` 约 **303–309 ns**（~1.8× VIP），规模同样不敏感
+- 本基线 = **T1-5 之后**（已含内部 SmallVec）；用作 P-T2 / P-T3 对比锚点
+- **解读约束**：mock `BenchRoute`（HashMap），量的是每包 `routes` 锁 + async trait 固定成本；
+  `exit_node` 在 mock 下基本走未命中路径（无真实 gateway）。勿当成真实 OSPF DashMap/LPM 吞吐
+- 复跑：`cargo bench -p easytier --bench routing_lookup -- --save-baseline before`
+  （对比：`--baseline before`）
 
 ---
 
@@ -306,7 +352,7 @@ routes: ArcSwap<Vec<ArcRoute>>,  // load() 同步；查找仍进 ArcRoute 内部
 | P-T2 缓存跳过 gateway 检查 | 保留 `get_gateway_peer_id`；配置/拓扑变更时失效 |
 | `exit_nodes` 与 `routes` 绑同一快照 | 分属 Router / PeerMap，分别 ArcSwap |
 | `SmallVec` 泄漏到公开 API | **内部 SmallVec，公开仍 `Vec`** |
-| 基准无法碰到 `pub(crate)` router | 优先 `easytier-core` 内 bench，或经 `PeerManager` 公开 API |
+| 基准无法碰到 `pub(crate)` router | ✅ 已用 `peers::bench_support`（`feature = "test-utils"`）+ `easytier/benches/routing_lookup.rs`；测 PeerMap 固定成本，非真实 OSPF DashMap/LPM |
 | 基准无法复现 | 记录环境与 `Cargo.lock`；报告附硬件信息 |
 | P-T3 收益不明显 | **由 P-T1 基准决定是否继续**，避免无效投入 |
 | 热路径误用 `block_on` | 设计评审明确禁止；回退保持 async |
@@ -328,11 +374,11 @@ routes: ArcSwap<Vec<ArcRoute>>,  // load() 同步；查找仍进 ArcRoute 内部
 
 ### 8.2 代码重叠点（唯一一处）
 
-两者都会改 `PeerOutboundPacketRouter::get_msg_dst_peer_ipv4`（及 `PeerManager` 包装）：
+两者都会改 `PeerOutboundPacketRouter::get_msg_dst_peer_ipv4`（及 `PeerManagerCore` 包装）：
 
 | |改动 | 类型 |
 |---|---|---|
-| 技术债 T1-5 | 内部 `SmallVec`；公开 `PeerManager` 仍 `Vec` | 分配（签名尽量不变） |
+| 技术债 T1-5 | 内部 `SmallVec`；公开 `PeerManagerCore` 仍 `Vec` | 分配（签名尽量不变） |
 | 路由功能 P1 | 插入「次序 3.5」分支 | 逻辑新增 |
 
 **建议**：先做技术债（T1-5），把签名固定下来；路由功能启动时在新签名上插入分支。**顺序反了也可行**，只是可能需要二次调整。
@@ -350,8 +396,8 @@ routes: ArcSwap<Vec<ArcRoute>>,  // load() 同步；查找仍进 ArcRoute 内部
 
 ```
 近期（现在 ~ 1 个月）
-  └─ P-T1（1 周）           ← 基准 + SmallVec，收益明确、风险极低
-  └─ 视基准数据决定 P-T2     ← 若基准显示出口路径有问题则做
+  └─ P-T1 ✅                 ← harness + SmallVec + before 基线已落地
+  └─ 视基准数据决定 P-T2     ← 出口与 VIP 同量级（~170 ns）；高 PPS 锁竞争再评估
 
 路由功能启动时（明年）
   └─ 复核设计文档的行号锚点与 §1.1 约束
@@ -364,8 +410,8 @@ routes: ArcSwap<Vec<ArcRoute>>,  // load() 同步；查找仍进 ArcRoute 内部
 
 | 阶段 | 建议 | 理由 |
 |---|---|---|
-| **P-T1** | ⭐ **现在做** | 风险极低、基准 harness 长期有效、后续所有性能决策的依据 |
-| **P-T2** | 视 P-T1 数据决定 | 只在出口路径确实慢时才做 |
+| **P-T1** | ✅ **基本完成**（T1-6 分配对比另议） | 基线显示固定成本 ~165–310 ns，规模不敏感 |
+| **P-T2** | 视数据决定（出口 ~172 ns，与 VIP 同量级） | 出口绝对成本不高；若抢锁在高 PPS 下仍痛再做 |
 | **P-T3** | 推迟到路由功能启动时 | 改造面最大（9 处锁），无明确痛点时不值得动 |
 | **P-T4** | 暂不做 | 行为变更，需单独评估 |
 
@@ -375,9 +421,11 @@ routes: ArcSwap<Vec<ArcRoute>>,  // load() 同步；查找仍进 ArcRoute 内部
 
 - ✅ **性能基础比预期好**：VIP 已是 DashMap；CIDR 已是 `ArcSwap` + 真 LPM（§2.1）
 - ✅ **跨 route 的 LIFO 顺序在实践中不触发**，不是活跃 bug（§2.2）
-- ✅ **热路径剩余债**集中在：无基准（TD-6）、每包 `routes` tokio 锁（TD-1）、每包 `Vec`（TD-3）、出口二次锁与重复解析（TD-4/5）
+- ✅ **TD-3 已完成**（内部 `SmallVec`；公开 API 仍 `Vec`）
+- ✅ **TD-6 / T1-4 基线已落地**（§5 表）；规模对固定成本不敏感
+- ✅ **热路径剩余债**集中在：每包 `routes` tokio 锁（TD-1）、出口二次锁与重复解析（TD-4/5）
 - ✅ **P-T1 ~ P-T3 可完全独立于路由功能推进**
-- ⭐ **P-T1（1 周）是最值得现在做的事**：先解决 bench 可达性与 `smallvec` 依赖，再把性能判断从「猜测」变成「有数据」
+- ⭐ **P-T1 基本完成**；T1-6 分配对比非本 harness 范围。下一步视数据决定是否做 **P-T2**（出口路径）
 - **P-T2**：可做，但必须保留 gateway 可达检查与失效策略；`exit_nodes` 与 `routes` 分治
 - **P-T3 建议推迟**；若做则 **只 ArcSwap 列表**，禁止在 PeerMap 抄 VIP 索引（无 OSPF 失效通知会过期）
 - **路由功能延后到明年是合理的** —— 设计文档已完整保存，届时复核锚点即可
