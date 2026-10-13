@@ -2,13 +2,13 @@
 
 ## Status
 
-- Status: **Roadmap**（Tech Debt / 待清理，**可独立于路由功能推进**）
-- 最近审阅：2026-10-13（源码复核 + 文档锚点修正；同日写入 `routing_lookup` before 基线）
+- Status: **Roadmap**（Tech Debt；**P-T1 已完成**；剩余项 **评估后暂不实施**）
+- 最近审阅：2026-10-13（基线后评估：TD-1/4/5/7 与 T1-6 搁置；P-T1 可正常上线）
 - 范围：出站选路热路径上的既有性能债
-- **独立性**：**不依赖** [`unified-routing-design.md`](./unified-routing-design.md)；可先做，路由功能延后
+- **独立性**：**不依赖** [`unified-routing-design.md`](./unified-routing-design.md)
 - 索引：[`../README.md`](../README.md)
 
-> **分阶段实施**：每阶段 **1～2 周**，**独立可测试、可单独上线**（见 §5）。
+> **分阶段实施**：P-T1 已落地可上线；P-T2～T4 **默认不做**，仅在有 profiling 痛点或产品要改语义时重启（见 §10）。
 
 ---
 
@@ -118,15 +118,16 @@ pub async fn add_route(&self, route: ArcRoute) {
 
 ## 3. 债务清单
 
-| ID | 债务 | 严重度 | 修复难度 | 是否行为变更 |
+| ID | 债务 | 严重度 | 处置（2026-10-13 评估） | 是否行为变更 |
 |---|---|---|---|---|
-| ~~TD-6~~ | ~~热路径无基准~~ → **harness + before 基线已落地**（§5）；后续阶段继续对比 | 🟢 | ✅ P-T1 完成 | ❌ |
-| **TD-1** | `routes: tokio::RwLock<Vec<ArcRoute>>`，**9 处** `read().await` | 🟠～🔴 中高（单 route 时主要是每包 async 锁开销） | 中 | ❌ |
-| ~~TD-3~~ | ~~每包 `Vec` 分配~~ → **已改内部 `SmallVec`（T1-5，`PeerOutboundPacketRouter` `:2842`）** | 🟢 低 | ✅ 已完成 | ❌（公开签名保持 `Vec`） |
-| **TD-4** | 出口路径二次异步锁（`exit_nodes.read().await`） | 🟠 中 | 低 | ❌ |
-| **TD-5** | 出口 VIP→PeerId 每包重复遍历解析 | 🟠 中 | 低 | ❌ |
-| ~~TD-2~~ | ~~CIDR 无索引线性扫描~~ | — | — | ❌ **已证伪**（§2.1） |
-| **TD-7** | 跨 route 为 LIFO 而非全局 LPM | 🟢 低 | 低 | ✅ 是（backlog） |
+| ~~TD-6~~ | ~~热路径无基准~~ | — | ✅ **已完成**（harness + before 基线） | ❌ |
+| ~~TD-3~~ | ~~每包 `Vec` 分配~~ | — | ✅ **已完成**（内部 `SmallVec`） | ❌（公开仍 `Vec`） |
+| ~~TD-2~~ | ~~CIDR 无索引线性扫描~~ | — | ❌ **已证伪**（§2.1） | ❌ |
+| **TD-1** | `routes` 每包 tokio `RwLock`（9 处） | 原标中高 | ⏸ **暂不实施**（基线 ~165 ns 且规模不敏感；ROI 差） | ❌ |
+| **TD-4** | 出口 `exit_nodes.read().await` | 原标中 | ⏸ **暂不实施**（出口 ~172 ns，与 VIP 同量级） | ❌ |
+| **TD-5** | 出口 VIP→PeerId 每包重复解析 | 原标中 | ⏸ **暂不实施**（同上；缓存还易误跳过 gateway 检查） | ❌ |
+| **TD-7** | 跨 route LIFO ≠ 全局 LPM | 低 | ⏸ **无限期 backlog**（实践单 route；属行为变更） | ✅ |
+| T1-6 | SmallVec 分配 A/B | — | ❌ **不做**（harness 只测延迟；基线已在 SmallVec 之后） | ❌ |
 
 ### TD-1 细节
 
@@ -228,8 +229,8 @@ smallvec = "1.16"              # 根 Cargo.toml [workspace.dependencies]；easyt
 - `easytier-core/src/peers/mod.rs`：`test_support` 的 gate 由 `#[cfg(test)]` 放宽为
   `#[cfg(any(test, feature = "test-utils"))]`（基准与单测共用构造辅助）。
 - ✅ **T1-4**：before 基线已产出（见下表；`--save-baseline before`）。
-- ⏳ **T1-6**：当前 harness **只测延迟、不计分配**；且本基线已在 T1-5（SmallVec）之后采集，
-  无法做 SmallVec 前后 A/B。单目的地零堆分配靠类型不变量保证；若要量化分配，需另加 alloc 计数。
+- ❌ **T1-6**：不做。harness 只测延迟；基线已在 T1-5 之后，无 SmallVec 前后 A/B；
+  单目的地零堆分配由 `SmallVec<[PeerId; 1]>` 类型不变量保证。
 
 **基线（2026-10-13，`cargo bench -p easytier --bench routing_lookup -- --save-baseline before`）**
 
@@ -331,15 +332,14 @@ routes: ArcSwap<Vec<ArcRoute>>,  // load() 同步；查找仍进 ArcRoute 内部
 
 ## 6. 阶段汇总
 
-| 阶段 | 内容 | 工时 | 上线判据 | 行为变更 |
-|---|---|---|---|---|
-| **P-T1** | 基准 + 内部 `SmallVec` | **1 周** | 单目的地分配=0，回归全绿 | ❌（公开 API 保 `Vec`） |
-| **P-T2** | 出口路径去重（保留 gateway 检查） | **1 周** | 出口 P99 改善，语义一致 | ❌ |
-| **P-T3** | `routes` → ArcSwap（**仅列表**） | **1.5 周** | 四路径行为一致 | ❌ |
-| **P-T4** | LPM 语义对齐（可选） | **1 周** | 需单独评估 | ✅ **是** |
-| | **建议范围 P-T1~T3** | **3.5 周** | | |
+| 阶段 | 内容 | 状态 | 行为变更 |
+|---|---|---|---|
+| **P-T1** | 基准 + 内部 `SmallVec` | ✅ **已完成并可上线** | ❌（公开 API 保 `Vec`） |
+| **P-T2** | 出口路径去重 | ⏸ **暂不实施**（见 §10） | ❌ |
+| **P-T3** | `routes` → ArcSwap（仅列表） | ⏸ **暂不实施**（见 §10） | ❌ |
+| **P-T4** | LPM 语义对齐 | ⏸ **无限期 backlog** | ✅ **是** |
 
-> **P-T4 建议暂不做** —— 待 P-T1 基准数据证明规模确实敏感后再评估。
+> **建议范围已收窄为仅 P-T1。** P-T2～T4 默认不做。
 
 ---
 
@@ -395,25 +395,25 @@ routes: ArcSwap<Vec<ArcRoute>>,  // load() 同步；查找仍进 ArcRoute 内部
 ### 8.4 建议的推进节奏
 
 ```
-近期（现在 ~ 1 个月）
-  └─ P-T1 ✅                 ← harness + SmallVec + before 基线已落地
-  └─ 视基准数据决定 P-T2     ← 出口与 VIP 同量级（~170 ns）；高 PPS 锁竞争再评估
+已完成
+  └─ P-T1 ✅                 ← harness + SmallVec + before 基线
 
-路由功能启动时（明年）
-  └─ 复核设计文档的行号锚点与 §1.1 约束
-  └─ P-T3（1.5 周）        ← 可选：若 P-T1 基线良好，收益有限
-  └─ 统一路由 P1（1.5 周）  ← 从 D1/D2/D3 开始
-  └─ ...
+默认停在这里（不做 P-T2/T3/T4）
+
+路由功能启动时（若需要）
+  └─ 复核设计文档行号锚点与 §1.1
+  └─ 仅当 profiling 证明锁/出口是热点时，再开 P-T2 或 P-T3
+  └─ 统一路由 P1 …
 ```
 
 **优先级建议**
 
 | 阶段 | 建议 | 理由 |
 |---|---|---|
-| **P-T1** | ✅ **基本完成**（T1-6 分配对比另议） | 基线显示固定成本 ~165–310 ns，规模不敏感 |
-| **P-T2** | 视数据决定（出口 ~172 ns，与 VIP 同量级） | 出口绝对成本不高；若抢锁在高 PPS 下仍痛再做 |
-| **P-T3** | 推迟到路由功能启动时 | 改造面最大（9 处锁），无明确痛点时不值得动 |
-| **P-T4** | 暂不做 | 行为变更，需单独评估 |
+| **P-T1** | ✅ **完成** | 基线 ~165–310 ns，规模不敏感；可上线 |
+| **P-T2** | ⏸ **暂不实施** | 出口与 VIP 同量级；无明确痛点 |
+| **P-T3** | ⏸ **暂不实施** | 改造面大，基线未显示收益 |
+| **P-T4** | ⏸ **无限期 backlog** | 行为变更，实践不触发 |
 
 ---
 
@@ -421,11 +421,36 @@ routes: ArcSwap<Vec<ArcRoute>>,  // load() 同步；查找仍进 ArcRoute 内部
 
 - ✅ **性能基础比预期好**：VIP 已是 DashMap；CIDR 已是 `ArcSwap` + 真 LPM（§2.1）
 - ✅ **跨 route 的 LIFO 顺序在实践中不触发**，不是活跃 bug（§2.2）
-- ✅ **TD-3 已完成**（内部 `SmallVec`；公开 API 仍 `Vec`）
-- ✅ **TD-6 / T1-4 基线已落地**（§5 表）；规模对固定成本不敏感
-- ✅ **热路径剩余债**集中在：每包 `routes` tokio 锁（TD-1）、出口二次锁与重复解析（TD-4/5）
-- ✅ **P-T1 ~ P-T3 可完全独立于路由功能推进**
-- ⭐ **P-T1 基本完成**；T1-6 分配对比非本 harness 范围。下一步视数据决定是否做 **P-T2**（出口路径）
-- **P-T2**：可做，但必须保留 gateway 可达检查与失效策略；`exit_nodes` 与 `routes` 分治
-- **P-T3 建议推迟**；若做则 **只 ArcSwap 列表**，禁止在 PeerMap 抄 VIP 索引（无 OSPF 失效通知会过期）
-- **路由功能延后到明年是合理的** —— 设计文档已完整保存，届时复核锚点即可
+- ✅ **P-T1 完成**：TD-3 / TD-6 已关；T1-6 明确不做
+- ⏸ **TD-1 / TD-4 / TD-5 / TD-7 暂不实施**（详 §10）——不是「还欠着必须清」，是「数据证明可以搁置」
+- **路由功能延后不影响**：剩余债不阻塞发版；统一路由启动时再复核锚点即可
+
+---
+
+## 10. 2026-10-13 评估：剩余项是否要做 & 能否上线
+
+### 10.1 剩余项
+
+| 项 | 要不要做 | 依据 |
+|---|---|---|
+| TD-1（routes ArcSwap） | **否（暂）** | `vip_hit` ~165 ns 已含该锁；规模不敏感；9 处改动 ROI 差 |
+| TD-4 / TD-5（出口去重） | **否（暂）** | `exit_node` ~172 ns，与 VIP 同量级；非每包必经；缓存易误改可达性语义 |
+| TD-7（全局 LPM） | **否** | 实践单 route；属行为变更，非性能债 |
+| T1-6（分配 A/B） | **否** | 无前后基线；类型不变量已保证单目的地零堆分配 |
+
+**重启条件**（任一即可重新开 P-T2/T3）：真实高 PPS profiling 显示 `routes` / `exit_nodes` / `resolve_exit_node_peer` 排队；或统一路由大改 `PeerMap` 时顺手做。
+
+### 10.2 当前代码可否正常上线
+
+**可以。** P-T1 生产改动面小、选路语义不变：
+
+| 改动 | 上线影响 |
+|---|---|
+| `PeerOutboundPacketRouter` 内部 `SmallVec` | 查找逻辑未改；仅容器；广播仍可 spill 到堆 |
+| `PeerManagerCore` 公开 API 仍返回 `Vec`（`into_vec()`） | 下游 / dataplane 签名不变 |
+| `bench_support` + `routing_lookup` | 仅 `feature = "test-utils"` / bench；**不进默认发版产物** |
+| `smallvec` 依赖 | 成熟 crate；热路径常用 |
+
+**不阻塞发版的项**：未做的 TD-1/4/5/7 —— 基线表明不是上线前必须清的性能债。
+
+**常规发版门禁仍适用**（与本债无关）：合入前按 [`../ops/ci-failure-log.md`](../ops/ci-failure-log.md) 跑 clippy / 回归；本篇不替代整仓验收。

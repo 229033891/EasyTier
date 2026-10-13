@@ -49,8 +49,8 @@ crate 内设计稿（非本索引）：`easytier/docs/`（凭据计划已标 Arc
 | [traffic-steering-vNext.md](./roadmap/traffic-steering-vNext.md) | 出口默认路由、路由所有权、与域名导流统一设计 |
 | [default-route-and-underlay-excludes.md](./roadmap/default-route-and-underlay-excludes.md) | 默认路由 **Phase 2**（`/1`+`/1`）；Phase 1 论证已归档 |
 | [domain-proxy.md](./roadmap/domain-proxy.md) | 域名驱动子网代理 + DNS 答案同步 |
-| [unified-routing-design.md](./roadmap/unified-routing-design.md) | **统一路由模型**（讨论稿：B = 网关 / A = 路由表；CIDR + 域名 → 节点；选择与切换策略） |
-| [routing-tech-debt.md](./roadmap/routing-tech-debt.md) | **路由热路径技术债**（前置清理项：异步锁 / 每包分配 / 无基准） |
+| [unified-routing-design.md](./roadmap/unified-routing-design.md) | **统一路由模型**（P-T1 已完成；2026-10-13 规格自洽修订；尽力分流非零泄漏） |
+| [routing-tech-debt.md](./roadmap/routing-tech-debt.md) | **路由热路径技术债**（P-T1 已完成可上线；TD-1/4/5/7 评估后暂不实施） |
 | [unified-routing-conflicts.md](./roadmap/unified-routing-conflicts.md) | **统一路由 × 现有功能冲突分析**（已核查：2 处设计缺陷 / 3 处实现约束 / 3 处无冲突） |
 | [dns-policy.md](./roadmap/dns-policy.md) | DNS 策略**剩余缺口**（现状见 Current `magic-dns.md`） |
 | [multi-link-bonding.md](./roadmap/multi-link-bonding.md) | 多 PeerConn 聚合：Phase 2a/2b **已合入**（出厂默认 `bond_count=2`）；Phase 3 出口/`bind_device` 多样性待做 |

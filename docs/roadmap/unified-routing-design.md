@@ -2,18 +2,19 @@
 
 ## Status
 
-- Status: **Roadmap**（Design / 开放问题已拍板，待前置技术债清理）
-- 最近审阅：2026-10-13
+- Status: **Roadmap**（Design / 开放问题已拍板；**前置 P-T1 已完成**；2026-10-13 **规格自洽修订**后可择机启动）
+- 最近审阅：2026-10-13（对照代码复核：热路径/CIDR LPM/P3 计划与合规边界已修正）
 - 范围：把**子网代理**、**出口节点**、**域名路由**统一为一个模型 —— **A 上配置路由，B 做网关**
 - 现状依据：[`../current/traffic-steering.md`](../current/traffic-steering.md)（流量导流 SoT）
 - DNS 现状：[`../current/magic-dns.md`](../current/magic-dns.md)
 - 相关草案：[`domain-proxy.md`](./domain-proxy.md)（peer-driven 方案，见 §12）
 - **冲突分析**：[`unified-routing-conflicts.md`](./unified-routing-conflicts.md)（已核查；**C1/C2 为设计缺陷，§9.8 已修正**）
-- **前置项**：[`routing-tech-debt.md`](./routing-tech-debt.md)（路由热路径技术债，**建议先清理**）
+- **前置项**：[`routing-tech-debt.md`](./routing-tech-debt.md) —— **P-T1 已完成**；TD-1/4/5/7 暂不实施
 - 索引：[`../README.md`](../README.md)
 
-> **§11 的开放问题已全部拍板。** §11.2 记录**前置依赖**：本设计的热路径性能要求无法在存量技术债上达成，建议先做技术债文档的 T0（基准）与 T1（快赢）。
-> ⚠️ **§9.8 已按冲突分析 C1/C2/C5 重写** —— 原「查 hosts 表」的 IP 来源方案是错的。
+> **§11 的开放问题已全部拍板。** 前置 P-T1 已满足。  
+> ⚠️ **§9.8 已按冲突分析 C1/C2/C5 重写**。  
+> ⚠️ **2026-10-13 规格修订**：统一热路径为「快照只读 `active_peer`」；补齐 CIDR LPM；重写 §15.4；合规目标降为「尽力出口 + 已知泄漏面」（见 §1.1 / §12.6）。
 
 ---
 
@@ -47,21 +48,23 @@
 
 **约束**：
 
-| # | 约束 | 性质 |
-|---|---|---|
-| **C1** | 特定域名（Atlassian）**必须**从指定国家出口 | **合规硬要求** |
-| **C2** | 国内流量不能绕远路 | 性能 |
-| **C3** | 海外域名清单与 CDN IP 持续变动 | 运维 |
+| # | 约束 | 性质 | 本设计可达性 |
+|---|---|---|---|
+| **C1** | 特定域名（Atlassian）宜从指定国家出口 | 产品强诉求 | ⚠️ **尽力**：连接可按规则走指定 peer；**DNS 上游与首包窗口仍可能直连**（§9.8.4 / 冲突 C6）。**首期不做零泄漏合规保证** |
+| **C2** | 国内流量不能绕远路 | 性能 | ✅ CIDR/域名分流可满足 |
+| **C3** | 海外域名清单与 CDN IP 持续变动 | 运维 | ✅ 订阅 MagicDNS `resolve()` 跟随 CDN（非手工 CIDR） |
 
 **为什么现有做法不够**：
 
 | 做法 | 失败原因 |
 |---|---|
 | 全部走出口节点 | 违反 **C2**（国内也绕远） |
-| 全部直连 | 违反 **C1**，且海外访问慢 |
+| 全部直连 | 海外慢，且无法声明「这些域名优先走指定出口」 |
 | 手工维护 `manual_routes` CIDR | 违反 **C3**：CDN IP 天天变，改一次错一次 |
 
 **根因**：现有分流粒度只能到「IP/CIDR」或「全局出口列表」，**无法表达「哪些域名走哪个节点」**。
+
+> **合规边界（必须写进产品文档）**：本设计交付的是「**策略分流 / 可运维出口**」，不是「审计级零泄漏专线」。若监管要求 DNS 与首包也不得出本地 ISP，需另立项（DNS-over-exit、未就绪流阻断等）。
 
 ---
 
@@ -72,7 +75,7 @@
 | **G1** | **域名级 / CIDR 级策略路由** —— 每个目标可指定走哪个节点 |
 | **G2** | **B 侧零配置** —— 目标节点只开一个开关，不感知域名、不解析 DNS |
 | **G3** | **策略集中在 A** —— 便于审计与管控 |
-| **G4** | **企业级品质** —— 性能与稳定性均有可验证指标（§12.5） |
+| **G4** | **企业级运维品质** —— 热路径可验证、可观测、可故障转移（§12.5）；**不含**零泄漏合规保证（§12.6） |
 
 ---
 
@@ -108,8 +111,8 @@
 
 | # | 需求 | 指标 | 验证 |
 |---|---|---|---|
-| **NFR-1** | 热路径零锁零分配 | `lookup()` 无锁、alloc = 0 | §16.2 P1、P2 |
-| **NFR-2** | 不劣化现状性能 | 10 万规则下劣化 < 20% | §16.2 P3、P4 |
+| **NFR-1** | 热路径零锁零分配零 async | `lookup_peer()` 无锁、无 `.await`、alloc = 0 | §16.2 P1、P2 |
+| **NFR-2** | 不劣化现状性能 | **10K** 规则相对 1K 劣化 < 20%（100K stretch） | §16.2 P3、P4 |
 | **NFR-3** | 快速故障转移 | 掉线 → 新流切换 **≤ 2 秒** | §16.2 P6 |
 | **NFR-4** | 切换无黑洞 | L2/L3 原子切换 | §16.2 P7 |
 | **NFR-5** | **零回归** | 未配置时行为**完全一致** | 场景 1 |
@@ -178,9 +181,9 @@ enable_exit_node = true
 | 维度 | Before | After |
 |---|---|---|
 | 域名级分流 | ❌ 只能手工维护 IP | ✅ 域名声明 |
-| CDN 换 IP | ❌ 策略失效 | ✅ 自动跟随（TTL） |
+| CDN 换 IP | ❌ 策略失效 | ✅ 跟随 MagicDNS 实际解析（观测 A 记录） |
 | 与内网代理共存 | ❌ `manual_routes` 覆盖掉 | ✅ 累加 |
-| 合规保障 | ⚠️ 靠人工不出错 | ✅ 不通即断（`closed`） |
+| 出口失败策略 | ⚠️ 静默失效 | ✅ `closed` 不通即断（**不**等于零泄漏） |
 | 多出口 | ❌ 只有全局列表 | ✅ per-record 声明 |
 | 出口不可达时 | ⚠️ 静默失效 | ✅ 明确 warn / 阻断 |
 
@@ -345,45 +348,36 @@ pub fn conn_quality_score(
 ### 3.5 L3 选路的实际代码结构
 
 ```rust
-// easytier-core/src/peers/peer_manager.rs:2830-2868（PeerOutboundPacketRouter）
-pub async fn get_msg_dst_peer_ipv4(&self, ipv4_addr: &Ipv4Addr) -> (Vec<PeerId>, bool) {
+// easytier-core/src/peers/peer_manager.rs — PeerOutboundPacketRouter::get_msg_dst_peer_ipv4
+// （2026-10-13：内部已改 SmallVec；公开 PeerManagerCore API 仍返回 Vec）
+pub async fn get_msg_dst_peer_ipv4(&self, ipv4_addr: &Ipv4Addr)
+    -> (SmallVec<[PeerId; 1]>, bool)
+{
     let mut is_exit_node = false;
-    let mut dst_peers = vec![];
+    let mut dst_peers = SmallVec::<[PeerId; 1]>::new();
     if self.is_all_peers_broadcast_ipv4(ipv4_addr) {
-        dst_peers.extend(Self::select_ipv4_broadcast_peers(...));       // 次序 1广播
+        dst_peers.extend(Self::select_ipv4_broadcast_peers(...)); // 次序 1：广播
     } else if let Some(peer_id) = self.peers.get_peer_id_by_ipv4(ipv4_addr).await {
-        dst_peers.push(peer_id);                                        // 次序 2+3：VIP + proxy CIDR LPM
-    } else if !self.context.is_ip_in_same_network(&IpAddr::V4(*ipv4_addr)) {
+        dst_peers.push(peer_id);                                  // 次序 2+3：VIP + proxy CIDR LPM
+    } else if !同网段 {
         if let Some(peer_id) = self.resolve_exit_node_peer().await {
             dst_peers.push(peer_id);
-            is_exit_node = true;                                        // 次序 4：exit_nodes
+            is_exit_node = true;                                  // 次序 4：exit_nodes
         } else if let Some(peer_id) = self.route
-            .get_peer_id_for_default_route_proxy(&IpAddr::V4(*ipv4_addr)).await {
-            dst_peers.push(peer_id);                                    // 次序 5：对端 /0
+            .get_peer_id_for_default_route_proxy(...).await {
+            dst_peers.push(peer_id);                              // 次序 5：对端 /0
         }
     }
-    if self.host_routing.local_exit_node_fallback && dst_peers.is_empty() && !同网段 {
-        dst_peers.push(self.my_peer_id);                                 // 次序 6：本机兜底
-        is_exit_node = true;
-    }
+    // 次序 6：local_exit_node_fallback → my_peer_id
     (dst_peers, is_exit_node)
 }
 ```
 
-**注意：次序 2+3 合并在一个调用里。** `get_peer_id_by_ipv4` 内部遍历路由表做 LPM：
+**注意：次序 2+3 合并在一个调用里。** `PeerMap::get_peer_id_by_ipv4` 遍历 `routes`（tokio `RwLock`）再进 OSPF DashMap / CIDR LPM。
 
-```rust
-// easytier-core/src/peers/conn/peer_map.rs:265
-pub async fn get_peer_id_by_ipv4(&self, ipv4: &Ipv4Addr) -> Option<PeerId> {
-    for route in self.routes.read().await.iter() {
-        let peer_id = route.get_peer_id_by_ipv4(ipv4).await;   // ← proxy CIDR LPM 在这里
-        if peer_id.is_some() { return peer_id; }
-    }
-    ...
-}
-```
+**本设计插入点**：`get_peer_id_by_ipv4` **之后**、`resolve_exit_node_peer` **之前**（次序 **3.5**）。
 
-**这意味着：本地路由表如果要参与 L3，需要插在 `get_peer_id_by_ipv4` 之后、`resolve_exit_node_peer` 之前（或作为后者的替代）。**
+> ⚠️ **优先级含义**：对端已宣告的 VIP / 更具体 proxy CIDR **永远优先于**本地 `routes[]`。域名编译出的 `/32` 若与 peer proxy 重叠，走 peer。文档与 UI 须明示。
 
 ### 3.6 出口节点选择 = 优先级故障转移（**已存在的原语**）
 
@@ -447,18 +441,17 @@ let local_exit_default = !config.services.proxy.no_tun
 
 | 能力 | 位置 | 复用方式 |
 |---|---|---|
-| 域名 → IP 静态映射 | `DnsConfig.hosts`（`DnsHostEntry`） | 作为域名路由的 IP 来源 |
+| **域名 → IP 观测** | `MagicDnsQueryResolver::resolve`（`magic_dns/packet.rs`） | **权威 IP 来源**（§9.8）；**不是**查 `DnsConfig.hosts` |
+| 静态 hosts | `DnsConfig.hosts` | 可选：对齐 DNS/路由时序、缩小首包窗口；**非**域名路由主路径 |
 | 通配符匹配 | `*.suffix`，RFC 4592 多级 | `domains` 字段沿用同一语义 |
-| CLI / GUI 编辑 | `--dns-host` / `DnsHostsEditor` | 编辑入口对齐 |
-| TTL 字段 | `DnsHostEntry.ttl_secs`（默认 300s） | 生命周期语义 |
-| 1 秒对账循环 | `traffic-steering.md:82` | 可达性变化的重装机制 |
-| 可达性安全阀 | `cidr_monitor.rs:181-187` | 不可达不装路由 |
-| 按流哈希原语 | `conn_bond.rs:340` `flow_key_from_payload` | 负载均衡 |
-| 哈希分配原语 | `conn_bond.rs:336` `flow_key % member_count` | 多成员分配 |
-| 优先级故障转移 | `peer_map.rs:285` | `select_by = "priority"` |
-| 质量评分 + 防抖 | `conn_select.rs:97/145` | `select_by = "quality"` |
-| 无锁快照 | `arc-swap`（`easytier-core/Cargo.toml:25`） | 热路径读侧零锁 |
-| 并发 map | `dashmap`（`Cargo.toml:36`） | 需要写时使用 |
+| DNS 响应 TTL | `DnsHostEntry.ttl_secs` | **仅** DNS 应答缓存时长；**不**驱动路由撤销（冲突 C5） |
+| 1 秒对账循环 | `traffic-steering.md` / `cidr_monitor` | 可达性变化 → 重装 L2 |
+| 可达性安全阀 | `cidr_monitor.rs`（exit 可达才装 `/0`） | 不可达不装路由 |
+| 按流哈希原语 | `flow_key_from_payload`（`conn_bond`） | `select_by = balance` |
+| 优先级故障转移 | `PeerMap::resolve_exit_node_peer` | `select_by = priority`（**对账循环内**复用，非热路径） |
+| 质量评分 + 防抖 | `conn_select` / `direct_peer_info` | `select_by = quality`（预计算进快照） |
+| 无锁快照 | `arc-swap` | 热路径读侧零锁 |
+| 单目的地栈分配 | `smallvec`（P-T1 已落地） | 公开 API 边界仍 `Vec` |
 
 ### 3.9 跨 peer 链路质量的读取路径（Q3 结论：**可行**）
 
@@ -516,37 +509,20 @@ score = w_lat×rtt_秒 + w_loss×loss率 + w_jitter×jitter_秒
 
 ### 3.10 ⚠️ 热路径现状（企业级性能的关键约束）
 
-**路由查询是每包一次，且当前实现带异步锁。**
+**路由查询是每包一次。** 现状（P-T1 后，见 [`routing-tech-debt.md`](./routing-tech-debt.md)）：
 
 ```
-每个出站 TCP 包
-  │
-  ├─ gateway/proxy/tcp_proxy_service.rs:319-333
-  │     while let Some(data) = output_rx.recv().await {         // :320 逐包
-  │         peer_manager.send_msg_by_ip(packet, dst, false)     // :330
-  │
-  └─ peers/peer_manager.rs:2897 send_msg_by_ip
-        ├─ :2910 run_nic_packet_process_pipeline（ACL + pipelines）
-        ├─ :2918 if to_peer_id != 0 { 直接发 }   // smoltcp 路径不走此分支
-        └─ :2931-2934
-             let (dst_peers, _) = self.get_msg_dst_peer_ipv4(&ipv4).await;   // ← 每包
-                  │
-                  └─ :2838 → peers/conn/peer_map.rs:265-269
-                       for route in self.routes.read().await.iter() { ... }
-                       ↑ tokio 异步 RwLock 读锁，每包一次 + O(N) 线性扫描
+出站包 → PeerOutboundPacketRouter::send_msg_by_ip
+       → get_msg_dst_peer_ipv4
+            → PeerMap::get_peer_id_by_ipv4
+                 → routes.read().await（tokio RwLock，实践常 1 个 route）
+                 → OSPF：VIP DashMap O(1) / proxy CIDR ArcSwap+LPM
+基线（mock PeerMap 固定成本）：VIP/exit ~165–176 ns，规模不敏感
 ```
 
-**结论：**
+**本设计硬约束（§12.1）：新增 `LocalRouteTable` 路径必须无锁、无分配、无 async。**
 
-| 观察 | 影响 |
-|---|---|
-| `get_msg_dst_peer_ipv4` **每包调用** | 新增查找必须在常数级 |
-| 内部已有 `tokio::RwLock` 读锁 + 线性扫描 | 再加一个 `RwLock` = **每包两次异步锁** |
-| `ArcRoute` 存于 `Vec<ArcRoute>`（`peer_map.rs:49`） | 无索引，线性 |
-
-**本设计的硬约束（见 §12.1）：新增路径必须无锁、无分配。**
-
-> **明确不做**：不顺手重构现有 `routes` 的 `tokio::RwLock`。那是既有技术债，重构会放大风险面。本次只保证**新增路径无锁**，使整体性能净收益为正。
+> **明确不做**：不顺手把存量 `PeerMap.routes` 改成 ArcSwap（TD-1 已评估暂缓）。只保证**新增路径**净收益为正。
 
 ---
 
@@ -696,7 +672,7 @@ RouteRule {
 | 值 | 语义 | 适用 |
 |---|---|---|
 | `open` | 不装 L2 路由 → 流量走物理网关 | 通用出口（**现有 `exit_nodes` 行为**） |
-| `closed` | 阻断（丢包 / 黑洞） | **合规**：「必须走美国」时不能降级本地直连 |
+| `closed` | 阻断（丢包 / 黑洞） | **强策略**：候选全挂时不降级物理直连（**仍不**堵住 DNS/首包泄漏，见 §12.6） |
 
 ### 6.2 为什么需要三个字段而非一个
 
@@ -714,9 +690,9 @@ RouteRule {
 ### 6.3 ⚠️ 质量优选与合规需求冲突
 
 ```
-需求：Atlassian 必须走美国出口
+需求：Atlassian 宜固定走美国出口
 质量优选：B(美国) RTT=180ms 有丢包  vs  C(日本) RTT=45ms 无丢包
-        → loss 权重是 lat 的 4 倍 → 选 C ❌ 合规失效
+        → loss 权重是 lat 的 4 倍 → 选 C ❌ 策略意图失效
 ```
 
 **「延迟最低」与「必须从美国出」互斥。** 因此 `select_by` 必须 per-record 声明，不能全局配置。
@@ -755,14 +731,15 @@ B 挂 → 切到 C ❌ 合规失效（流量跑到日本了）
    *.atlassian.net → [B, C]  select_by=priority, failover_when=unreachable, closed
 
 【运行时 · 每客户端独立】
-  ① A 本机解析 *.atlassian.net → {1.2.3.4, 5.6.7.8}
-  ② 维护 域名 → IP[] 映射（TTL 驱动）
-  ③ L2：把 {1.2.3.4, 5.6.7.8} 装进 OS 路由 → TUN
-  ④ L3：登记「1.2.3.4 → [B, C]」
-  ⑤ 每秒对账：见 §7.2 状态机
-  ⑥ TTL 到期 → 撤销 ③④【回落到普通路由 + 记日志】
+  ① App DNS → MagicDNS → ObservingResolver 订阅应答 A 记录
+  ② 维护 域名 → IP[]（观测写入；**非** TTL 撤销，见 §9.8.5）
+  ③ L2：把观测到的 /32 装进 OS 路由 → TUN（受 ~1s 对账约束）
+  ④ L3：快照 by_ip 登记「1.2.3.4 → active_peer」
+  ⑤ 每秒对账：更新 active_peer / RuleState（§7.2 / §9.7）
+  ⑥ 规则删除或超限 LRU → 撤销对应 /32【记日志】
 
   其余流量 → 物理网关直连（不进 TUN）
+  ⚠️ DNS 上游查询本身仍可能走物理网卡（§12.6）
 ```
 
 **B 侧：只开网关开关，收到包 → NAT 出网。不参与 ①–⑥。**
@@ -889,13 +866,15 @@ pub enum DomainPattern {
     Wildcard(String),     // "*.example.com"（RFC 4592 多级）
 }
 
-/// 规则 → 候选 peer + 当前生效状态
+/// 规则 → 候选 peer + 当前生效状态（**对账循环写入；热路径只读**）
 pub struct ResolvedRule {
     pub rule: RouteRule,
-    pub compiled_cidrs: BTreeSet<Ipv4Cidr>,  // 域名解析产生的 /32
-    pub resolved_peers: Vec<PeerId>,         // VIP 已解析
+    pub compiled_cidrs: BTreeSet<Ipv4Cidr>,  // 显式 cidr ∪ 观测到的域名 /32
+    pub resolved_peers: Vec<PeerId>,         // VIP 已解析（对账用）
     pub state: RuleState,                    // Stable | Failover | Degraded
+    /// 当前选中的出口 peer；热路径直接使用，**禁止**在热路径重算
     pub active_peer: Option<PeerId>,
+    pub is_egress: bool,                     // 是否置 is_exit_node
 }
 
 pub enum RuleState {
@@ -905,55 +884,70 @@ pub enum RuleState {
 }
 ```
 
-### 9.2 索引结构
+### 9.2 索引结构与热路径契约
 
 ```rust
-// ┌──────────────────────────────────────────────────────────┐
-// │ 快照（不可变）—— 读侧完全无锁                              │
-// └──────────────────────────────────────────────────────────┘
 pub struct LocalRouteSnapshot {
-    /// 规则全量（诊断 / CLI 用）
-    rules: Vec<Arc<ResolvedRule>>,
-    /// CIDR 规则，按前缀长度降序**预排序**（LPM 查找无需运行时排序）
+    rules: Vec<ResolvedRule>,                 // 含 active_peer / state（对账写入）
+    /// 显式 CIDR 规则，按前缀长度**降序**预排序（热路径 LPM）
     cidr_sorted: Vec<(Ipv4Cidr, RuleIdx)>,
-    /// IP → 规则索引（域名编译出的 /32 + 显式 cidr 的单点）
+    /// 精确 IP → 规则：域名观测 /32、以及可选展开的短前缀（见下）
     by_ip: HashMap<Ipv4Addr, SmallVec<[RuleIdx; 2]>>,
-    /// 域名 → 规则索引（诊断/展示用，不在热路径）
-    by_domain: HashMap<String, Vec<RuleIdx>>,
-    /// VIP → PeerId 预解析（避免在热路径解析路由）
-    resolved_peers: HashMap<IpAddr, PeerId>,
+    by_domain: HashMap<String, Vec<RuleIdx>>, // 诊断用，非热路径
+    peer_quality: HashMap<PeerId, i32>,       // 对账预计算（quality 策略）
 }
 
-// ┌──────────────────────────────────────────────────────────┐
-// │ 容器 —— 读侧零锁                                          │
-// └──────────────────────────────────────────────────────────┘
 pub struct LocalRouteTable {
-    /// arc-swap 无锁快照（依赖已在 easytier-core/Cargo.toml:25）
     snapshot: ArcSwap<LocalRouteSnapshot>,
 }
 
 impl LocalRouteTable {
-    /// 热路径入口：**一次原子读 + 纯内存查找，无锁无分配**
+    /// 热路径唯一入口：**同步 / 无锁 / 无分配 / 无 async**
+    /// 返回已预选的 (PeerId, is_exit_node)；未命中或 Degraded 返回 None
     #[inline]
-    pub fn lookup(&self, ip: &Ipv4Addr) -> Option<(&[RuleIdx], &LocalRouteSnapshot)> {
-        let snap = self.snapshot.load();               // ← 一次原子读
-        snap.by_ip.get(ip).map(|idx| (idx.as_slice(), &*snap))
+    pub fn lookup_peer(&self, ip: &Ipv4Addr) -> Option<(PeerId, bool)> {
+        let snap = self.snapshot.load(); // Guard；全程持有，禁止返回内部引用
+        let idx = match_rule(&snap, ip)?;
+        let r = &snap.rules[idx];
+        if r.state == RuleState::Degraded {
+            return None;
+        }
+        let peer = r.active_peer?;
+        Some((peer, r.is_egress))
     }
+}
+
+/// ① by_ip 精确命中 → ② cidr_sorted 最长前缀（顺序扫，前缀已降序）
+fn match_rule(snap: &LocalRouteSnapshot, ip: &Ipv4Addr) -> Option<RuleIdx> {
+    if let Some(idxs) = snap.by_ip.get(ip) {
+        return disambiguate_sync(snap, ip, idxs.as_slice());
+    }
+    for (cidr, idx) in &snap.cidr_sorted {
+        if cidr.contains(ip) {
+            return Some(*idx); // 已按 prefixlen 降序 → 首个命中即 LPM
+        }
+    }
+    None
 }
 ```
 
-**⚠️ 热路径约束（企业级要求，见 §12）：**
-- `lookup()` **不得**取任何锁、不得分配
-- `cidr_sorted` 必须**预排序**，LPM 查找时直接顺序扫描前缀
-- `resolved_peers` 预解析 VIP，避免在热路径调 `get_peer_id_by_ipv4`
+**热路径契约（硬，与 §12.1 一致）：**
 
-**三份索引对应三层匹配：**
+| 允许 | 禁止 |
+|---|---|
+| `ArcSwap::load` + 读快照字段 | 任何锁 / `await` / DNS |
+| `by_ip` O(1) + `cidr_sorted` 顺序 LPM | 调用 `get_peer_id_by_ipv4` / `resolve_exit_node_peer` |
+| 直接读 `rules[i].active_peer` | 在热路径 `select_peer` / 算 quality / 分配 `Vec` |
 
-| 索引 | 服务于 | 热路径 |
+**索引职责：**
+
+| 索引 | 用途 | 热路径 |
 |---|---|---|
-| `by_ip` | L3 次序 3.5 快速命中 | ✅ |
-| `cidr_sorted` | L3 次序 3.5 的 CIDR LPM / L2 期望集合 | ✅ |
-| `by_domain` | 诊断/CLI/UI 展示 | ❌ |
+| `by_ip` | 域名观测 `/32`；可选：极短前缀（如 `/32`–`/28`）展开 | ✅ |
+| `cidr_sorted` | **所有显式 CIDR（含 `/0`、`/24`）的 LPM**；**禁止**把大网段整表展开进 `by_ip` | ✅ |
+| `by_domain` | CLI / UI | ❌ |
+
+> **复杂度**：`by_ip` 命中 O(1)；CIDR miss 后扫 `cidr_sorted` 为 **O(R_cidr)**（规则条数，非前缀树）。百～千条规则可接受；若要冲 10 万条 CIDR，需另换真正的 LPM 结构（首期不强制）。
 
 ### 9.3 L2 期望集合改造
 
@@ -1031,39 +1025,34 @@ pub(crate) fn resolve_proxy_cidrs(
 
 ### 9.4 L3 选路改造
 
-**插入点：`peer_manager.rs:2830` 的 `get_msg_dst_peer_ipv4`，在 `resolve_exit_node_peer` 之前。**
+**插入点：`PeerOutboundPacketRouter::get_msg_dst_peer_ipv4`，在 `resolve_exit_node_peer` 之前。**
 
 ```rust
-pub async fn get_msg_dst_peer_ipv4(&self, ipv4_addr: &Ipv4Addr) -> (Vec<PeerId>, bool) {
+pub async fn get_msg_dst_peer_ipv4(&self, ipv4_addr: &Ipv4Addr)
+    -> (SmallVec<[PeerId; 1]>, bool)
+{
     let mut is_exit_node = false;
-    let mut dst_peers = vec![];
+    let mut dst_peers = SmallVec::<[PeerId; 1]>::new();
 
     if self.is_all_peers_broadcast_ipv4(ipv4_addr) {
-        dst_peers.extend(Self::select_ipv4_broadcast_peers(
-            &self.peers.list_route_infos().await, self.my_peer_id,
-        ));
+        dst_peers.extend(...); // 次序 1
     } else if let Some(peer_id) = self.peers.get_peer_id_by_ipv4(ipv4_addr).await {
-        dst_peers.push(peer_id);                              // 次序 2+3：VIP + peer proxy LPM
-    } else if !self.context.is_ip_in_same_network(&IpAddr::V4(*ipv4_addr)) {
-        // ↓↓↓ 新增：次序 3.5 本地路由表 ↓↓↓
-        if let Some((peer_id, rule)) = self.local_route_table.lookup(ipv4_addr).await {
+        dst_peers.push(peer_id); // 次序 2+3：VIP + peer proxy（优先于本地表）
+    } else if !同网段 {
+        // ↓↓↓ 次序 3.5：同步快照查找（无 await）↓↓↓
+        if let Some((peer_id, egress)) = self.local_route_table.lookup_peer(ipv4_addr) {
             dst_peers.push(peer_id);
-            is_exit_node = rule.is_egress_rule();   // 网关类规则置 true
-        }
-        // ↑↑↑ 新增结束 ↑↑↑
-        else if let Some(peer_id) = self.resolve_exit_node_peer().await {
-            dst_peers.push(peer_id);                  // 次序 4
+            is_exit_node = egress;
+        } else if let Some(peer_id) = self.resolve_exit_node_peer().await {
+            dst_peers.push(peer_id); // 次序 4
             is_exit_node = true;
         } else if let Some(peer_id) = self.route
-            .get_peer_id_for_default_route_proxy(&IpAddr::V4(*ipv4_addr)).await {
-            dst_peers.push(peer_id);                  // 次序 5
+            .get_peer_id_for_default_route_proxy(...).await
+        {
+            dst_peers.push(peer_id); // 次序 5
         }
     }
-
-    if self.host_routing.local_exit_node_fallback && dst_peers.is_empty() && !同网段 {
-        dst_peers.push(self.my_peer_id);
-        is_exit_node = true;
-    }
+    // 次序 6：local_exit_node_fallback …
     (dst_peers, is_exit_node)
 }
 ```
@@ -1085,19 +1074,18 @@ else { return false; };
 **修复点**（不改 `Route` trait，避免跨模块耦合）：
 
 ```rust
-// peers/peer_manager.rs:2673（check_allow_wrapped_proxy_to_dst）
-// 该方法挂在 PeerOutboundPacketRouter 上（struct 定义 :2552），
-// 可直接访问 self.local_route_table
-async fn check_allow_wrapped_proxy_to_dst(&self, dst_ip, ...) -> bool {
-    let owner = if let Some(peer_id) = self.local_route_table.lookup(dst_ip).await {
-        Some(peer_id)                          // ① 次序 3.5：本地路由表
-    } else {
-        // ② 原逻辑：VIP / proxy CIDR / 对端 /0
-        self.route.get_peer_id_by_ip_allowing_default_proxy(dst_ip).await
+// PeerOutboundPacketRouter::check_allow_wrapped_proxy_to_dst
+async fn check_allow_wrapped_proxy_to_dst(&self, dst_ip: &IpAddr, ...) -> bool {
+    let owner = match dst_ip {
+        IpAddr::V4(v4) => self.local_route_table.lookup_peer(v4).map(|(p, _)| p),
+        IpAddr::V6(_) => None, // 首期仅 IPv4（N3）
     };
-
+    let owner = match owner {
+        Some(p) => Some(p),
+        None => self.route.get_peer_id_by_ip_allowing_default_proxy(dst_ip).await,
+    };
     let Some(dst_peer_id) = owner else { return false; };
-    // ...原有 feature flag 检查不变
+    // ...原有 feature flag / next-hop 检查不变
 }
 ```
 
@@ -1122,141 +1110,80 @@ async fn check_allow_wrapped_proxy_to_dst(&self, dst_ip, ...) -> bool {
 
 > 第 4 条才是真正的验收 —— 前三条只验证逻辑，第 4 条才验证**性能没退化**。
 
-### 9.5 `LocalRouteTable::lookup`
+### 9.5 热路径 vs 对账：职责分割（**硬**）
+
+| 路径 | 做什么 | 不做什么 |
+|---|---|---|
+| **热路径** `lookup_peer` | `load` 快照 → `by_ip` / `cidr_sorted` → 读 `active_peer` | 选 peer、查 gateway、算 quality、分配 |
+| **对账循环**（~1s） | VIP→PeerId、gateway 可达、`select_by`、写 `active_peer`/`state`、刷新 `peer_quality`、触发 L2 diff | 不在转发热路径上跑 |
+
+**旧版伪代码里的 `async fn lookup` / `select_peer().await` 已废止** —— 违反 §12.1。
+
+消歧（多规则命中同一 IP）在**构建快照 / 观测写入**时完成，结果写入 `by_ip` 的单一胜者（或 `SmallVec` 但热路径只取已消歧的首个）；`closed` 优先于 `open`。
+
+### 9.6 `select_peer` —— 仅在对账循环调用
 
 ```rust
-impl LocalRouteTable {
-    /// 返回 (选中的 PeerId, 命中的规则)
-    pub async fn lookup(&self, ip: &Ipv4Addr) -> Option<(PeerId, Arc<ResolvedRule>)> {
-        // ① 收集候选规则
-        let candidates: Vec<RuleIdx> = self.by_ip.get(ip).cloned().unwrap_or_default();
-        if candidates.is_empty() {
-            return None;
-        }
+/// 在 reconcile 内调用；结果写入 ResolvedRule.active_peer 后 store 快照
+async fn select_peer_for_reconcile(
+    peers: &PeerMap,
+    snap: &LocalRouteSnapshot,
+    r: &RouteRule,
+    resolved: &[PeerId],
+    flow_hint: Option<u64>, // balance 用；无连接五元组时可用 VIP 哈希占位
+) -> Option<PeerId> {
+    let reachable: Vec<(PeerId, i32)> = resolved.iter().copied()
+        .filter(|&p| peers.get_gateway_peer_id(p, LeastHop).await.is_some())
+        .map(|p| (p, snap.peer_quality.get(&p).copied().unwrap_or(i32::MAX)))
+        .collect();
+    if reachable.is_empty() { return None; }
 
-        // ② 消歧：最具体优先
-        let candidates = self.disambiguate(ip, candidates)?;
-
-        // ③ 每条候选规则各自选 peer
-        for idx in candidates {
-            let r = &self.rules[idx];
-            if r.state == RuleState::Degraded {
-                continue;                         // 全部不可用，跳过
-            }
-            if let Some(peer) = self.select_peer(r, ip).await {
-                return Some((peer, r.clone()));
-            }
-        }
-        None
-    }
-
-    /// 最长前缀 / 最长后缀优先；等长时取更严格者
-    fn disambiguate(&self, ip: &Ipv4Addr, mut cands: Vec<RuleIdx>) -> Option<Vec<RuleIdx>> {
-        // CIDR 规则按前缀长度
-        // 域名规则按后缀标签数
-        // 混合：两者都取「特异性」= max(cidr 前缀长度, 域名标签数)
-        cands.sort_by_key(|&i| -self.specificity(i, ip));
-        let top = self.specificity(cands[0], ip);
-        cands.retain(|&i| self.specificity(i, ip) == top);
-
-        // 等特异性：closed 优先于 open（更严格者胜）
-        if cands.len() > 1 {
-            cands.sort_by_key(|&i| match self.rules[i].rule.if_all_unavailable {
-                AllUnavailable::Closed => 0,
-                AllUnavailable::Open   => 1,
-            });
-            cands.truncate(1);
-        }
-        Some(cands)
-    }
-}
-```
-
-### 9.6 `select_peer` —— 三种策略
-
-```rust
-async fn select_peer(&self, r: &ResolvedRule, ip: &Ipv4Addr) -> Option<PeerId> {
-    match r.rule.select_by {
+    match r.select_by {
         SelectBy::Priority => {
-            // 复用现有原语（peer_map.rs:285）
-            if r.rule.failover_when == FailoverWhen::Degraded
-                && self.quality_degraded(r.active_peer).await {
-                // 质量劣化 → 跳过当前，取下一个
-                self.reachable_except(r, r.active_peer).await
-            } else {
-                self.resolve_in_order(r).await            // 列表顺序
-            }
+            // 列表顺序；failover_when=degraded 时跳过 cost 超阈值的当前首选
+            pick_priority(&r, &reachable)
         }
-
         SelectBy::Quality => {
-            // cost 来自 direct_peer_info（见 §3.9），越小越好
-            let reachable = self.reachable_peers(r).await;   // Vec<(PeerId, i32 cost)>
-            reachable.into_iter().min_by_key(|(_, cost)| *cost).map(|(p, _)| p)
+            reachable.into_iter().min_by_key(|(_, c)| *c).map(|(p, _)| p)
         }
-
         SelectBy::Balance => {
-            let reachable = self.reachable_peers(r).await;
-            if reachable.is_empty() { return None; }
-            // 复用 conn_bond.rs:340 的内层 5-tuple 哈希
-            let key = flow_key_from_payload(ip_bytes_with_ports);
-            let idx = (key % reachable.len() as u64) as usize;
-            Some(reachable[idx].0)
+            // 对账无法看到每包五元组：快照可存「候选有序列表」；
+            // 热路径 balance 若需要按流哈希，须在快照中存放 reachable PeerId 列表，
+            // 由 lookup_peer 用 flow_key_from_payload % len —— **仅 balance 规则**允许热路径一次取模（仍无锁无分配）。
+            // 首期也可简化为对账固定一个 peer（行为退化，须文档说明）。
+            pick_balance(flow_hint, &reachable)
         }
     }
 }
 ```
 
-**⚠️ `direct_peer_info` 不能在热路径调用**（它会遍历所有直连 peer 并重算 cost）。应由 §9.7 的对账循环**周期性预计算进快照**，读侧只读快照：
-
-```rust
-pub struct LocalRouteSnapshot {
-    // ...
-    /// VIP → (PeerId, quality cost)，由对账循环刷新
-    peer_quality: HashMap<IpAddr, i32>,
-}
-
-async fn reachable_peers(&self, r: &ResolvedRule) -> Vec<(PeerId, i32)> {
-    let snap = self.snapshot.load();       // ← 一次原子读，无锁
-    let mut out = vec![];
-    for vip in &r.rule.peers {
-        // ① VIP → PeerId（快照预解析）
-        let Some(&peer_id) = snap.resolved_peers.get(vip) else { continue };
-        // ② 质量 cost（latency_ms 字段名是历史遗留，实为复合分编码，见 §3.9）
-        let cost = snap.peer_quality.get(vip).copied().unwrap_or(i32::MAX);
-        // ③ 可达性仍需实时判定（有下一跳），见 §9.7 对账循环已预判则可跳过
-        if self.gateway_reachable(peer_id).await {
-            out.push((peer_id, cost));
-        }
-    }
-    out
-}
-```
+**⚠️ `direct_peer_info` / `get_gateway_peer_id` 禁止出现在热路径**；只在对账预填 `peer_quality` 与 `active_peer`。
 
 ### 9.7 可达性对账循环（每秒）
 
 ```rust
-async fn reconcile(local_routes: &Arc<LocalRouteTable>) {
+async fn reconcile(table: &LocalRouteTable, peers: &PeerMap) {
     loop {
         sleep(Duration::from_secs(1)).await;
+        let old = table.snapshot.load_full();
+        let mut new = (*old).clone();
+        // 刷新 peer_quality（来自 direct_peer_info / LAST_OSPF_EDGE_COST）
+        refresh_peer_quality(&mut new, peers).await;
 
-        for r in local_routes.iter_mut() {
-            let reachable = local_routes.reachable_peers(r).await;
-            let new_state = if reachable.is_empty() {
+        for r in &mut new.rules {
+            let chosen = select_peer_for_reconcile(peers, &new, &r.rule, &r.resolved_peers, None).await;
+            let new_state = if chosen.is_none() {
                 RuleState::Degraded
+            } else if r.active_peer == chosen {
+                RuleState::Stable
             } else {
-                // Failover vs Stable：看 active_peer 是否变了
-                let still_ok = r.active_peer.map_or(false, |p| {
-                    reachable.iter().any(|(rp, _)| *rp == p)
-                });
-                if still_ok { RuleState::Stable } else { RuleState::Failover }
+                RuleState::Failover
             };
-
-            if new_state != r.state {
-                r.state = new_state;
-                emit(LocalRouteEvent::RuleStateChanged { id: r.id, state: new_state });
-                // ← 上层据此重装/撤销 L2 路由（diff_proxy_cidrs 既有机制）
-            }
+            r.active_peer = chosen;
+            r.state = new_state;
         }
+        table.snapshot.store(Arc::new(new));
+        // state/compiled_cidrs 变化 → 触发 L2 diff（既有 cidr_monitor 机制）
     }
 }
 ```
@@ -1350,7 +1277,7 @@ t=0+3ε  App 发起连接  ← 若此时路由未装，首包从物理网关出�
 
 > 域名路由**不保证 DNS 查询本身**走指定出口（冲突 C6），
 > 且**首次访问**的连接包存在最长 1 秒直连窗口。
-> 若合规要求零泄漏，请配合 `DnsConfig.hosts` 静态映射使用。
+> 本设计**不保证**零泄漏。缩小首包窗口可配合 `DnsConfig.hosts`；DNS 上游仍走物理网卡（§12.6）。真正零泄漏需另立项。
 
 #### 9.8.5 TTL 与撤销语义（修正 C5）
 
@@ -1425,7 +1352,7 @@ fn validate(rule: &RouteRule) -> Result<()> {
     if rule.domains.len() > MAX_DOMAINS_PER_RULE { bail!("domains 超出上限") }
     if rule.peers.len() > MAX_PEERS_PER_RULE { bail!("peers 超出上限") }
 
-    // ⑤ ⚠️ 合规硬校验（Q7 决策：加载失败，不只是 warn）
+    // ⑤ ⚠️ require_confirmed 硬校验（Q7：加载失败，不只是 warn）
     if rule.if_all_unavailable == AllUnavailable::Closed && rule.peers.len() > 1 {
         if !rule.require_confirmed {
             bail!(
@@ -1506,45 +1433,51 @@ fn validate(rule: &RouteRule) -> Result<()> {
 
 ### 11.2 前置依赖与排期弹性
 
-**本设计的热路径性能要求（§12）无法在存量技术债上达成。**
+**前置最低限度（技术债 P-T1）已完成（2026-10-13）。** 详见 [`routing-tech-debt.md`](./routing-tech-debt.md) §5 / §10。
 
-热路径现状（每包）：2 次 `tokio::RwLock` 读锁 + ≥1 次堆分配。详见 [`routing-tech-debt.md`](./routing-tech-debt.md)。
-
-#### 技术债可否先做、路由功能延后？
-
-**可以。** 技术债 P-T1 ~ P-T3 与本设计**无依赖关系**：
-
-| 技术债阶段 | 是否依赖本设计 | 说明 |
+| 热路径项 | 当时假设 | 现状（P-T1 后） |
 |---|---|---|
-| P-T1 基准 + `SmallVec` | ❌ 不依赖 | 只碰基准文件 + 返回类型 |
-| P-T2 出口路径去重 | ❌ 不依赖 | 只碰出口路径 |
-| P-T3 `routes` ArcSwap 化 | ❌ 不依赖 | 只碰 `peer_map.rs` 内部结构 |
+| 每包堆分配（单目的地） | ≥1 次 `Vec` | ✅ 内部 `SmallVec<[PeerId; 1]>`；公开 API 仍 `Vec` |
+| 可复现基线 | 无 | ✅ `routing_lookup` before：VIP/exit ~165–176 ns，规模不敏感 |
+| `routes` tokio 锁（TD-1） | 待清 | ⏸ 暂不实施（固定成本已量化；ROI 差） |
+| 出口二次锁 / 重复解析（TD-4/5） | 待清 | ⏸ 暂不实施（与 VIP 同量级） |
 
-#### 若本设计延后，需注意
+> §12「读侧零锁」等仍是**本设计新增路径**的硬约束，不等于要求先做完存量 TD-1。  
+> 存量 `PeerMap.routes` 锁：仅当启动本设计前 profiling 仍痛，或大改 `PeerMap` 时，再开 P-T3。
+
+#### 技术债与本设计的依赖
+
+| 技术债阶段 | 状态 | 是否阻塞本设计 |
+|---|---|---|
+| P-T1 基准 + `SmallVec` | ✅ 已完成 | ❌ 不阻塞（前置已满足） |
+| P-T2 出口路径去重 | ⏸ 暂不实施 | ❌ 不阻塞 |
+| P-T3 `routes` ArcSwap 化 | ⏸ 暂不实施 | ❌ 不阻塞（本设计新增路径自带无锁快照即可） |
+
+#### 若本设计继续延后，需注意
 
 | 项 | 说明 |
 |---|---|
 | **代码行号锚点会漂移** | 本文所有 `:NNNN` 锚点届时需重新定位 |
-| **设计内容需复核** | §1.1 的约束 C1/C2/C3 可能变化；§11的拍板结论可能需重审 |
-| **技术债不会白做** | T1/T2/T3 均为**严格改进**，与本设计是否实现无关 |
+| **设计内容需复核** | §1.1 的约束 C1/C2/C3 可能变化；§11 的拍板结论可能需重审 |
+| **P-T1 不会白做** | 基线 harness + SmallVec 已落地，与本设计是否实现无关 |
 
 #### 唯一代码重叠点
 
 两者都会改 `get_msg_dst_peer_ipv4`：
 
-| | 改动 | 类型 |
-|---|---|---|
-| 技术债 T1-5 | `Vec<PeerId>` → `SmallVec<[PeerId; 1]>` | 签名变更 |
-| 本设计 P1 | 插入「次序 3.5」分支 | 逻辑新增 |
+| | 改动 | 类型 | 状态 |
+|---|---|---|---|
+| 技术债 T1-5 | 内部 `SmallVec`；公开 `PeerManagerCore` 仍 `Vec` | 分配（公开签名不变） | ✅ 已完成 |
+| 本设计 P1 | 插入「次序 3.5」分支 | 逻辑新增 | 待启动 |
 
-**建议顺序**：先做技术债（T1-5）固定签名，本设计启动时在新签名上插入分支。顺序反了也可行，仅需二次调整。
+**建议**：本设计启动时直接在**当前** `get_msg_dst_peer_ipv4`（已 SmallVec）上插入分支即可。
 
-#### 两种排期
+#### 排期（已收敛）
 
 | 方案 | 顺序 | 适用 |
 |---|---|---|
-| **A（文档当前假设）** | 技术债 P-T1~T3 → 本设计 P1~P6 | 追求性能确定性 |
-| **B（推荐给延后场景）** | 技术债 **仅 P-T1** → 本设计启动时再评估 P-T2/T3 → 本设计 P1~P6 | 路由功能延后 |
+| **B（当前推荐）** | ✅ P-T1 已完成 → **可直接评估本设计 P1～P6**；P-T2/T3 仅在有痛点时补 | 默认 |
+| ~~A~~ | ~~P-T1~T3 全部做完再进本设计~~ | ❌ 基线后不再推荐 |
 
 ---
 
@@ -1556,17 +1489,18 @@ fn validate(rule: &RouteRule) -> Result<()> {
 
 | 维度 | 要求 | 方案 | 验证 |
 |---|---|---|---|
-| **锁** | 读侧**零锁** | `ArcSwap` 快照（依赖已在 `Cargo.toml:25`） | 基准测试中无 lock 竞争 |
-| **复杂度** | O(1)（`by_ip` 命中）/ O(log n)（CIDR LPM） | 预排序 `cidr_sorted` + `HashMap<by_ip>` | 1K/10K/100K 规则规模 |
-| **分配** | 热路径**零分配** | 查找返回 `&`/索引，不 clone | 分配计数断言 |
-| **更新** | 写侧不阻塞读 | 后台构建新快照 → `store()` 原子换 | 长读压测下更新延迟 |
-| **无回归** | 不恶化现有路径 | 新增分支在 `routes` 扫描**之后**，仅在需要时进入 | 基准对比 before/after |
+| **锁** | 读侧**零锁** | `ArcSwap` 快照 | 基准无 lock 竞争 |
+| **复杂度** | `by_ip` **O(1)**；CIDR **O(R_cidr)** 顺序 LPM（首期） | `HashMap` + 前缀降序 `cidr_sorted` | 以 **1K / 10K** 规则为主档；10 万 CIDR 需另换 LPM 结构后再承诺 |
+| **分配** | 热路径**零分配** | 只返回 `PeerId` / bool；不 clone 规则 | alloc 计数断言 |
+| **更新** | 写侧不阻塞读 | 对账构建新快照 → `store()` | 长读压测 |
+| **无回归** | 未配置时行为一致 | 次序 3.5 仅在 peer VIP/proxy **未命中**后进入 | 场景 1 + before/after 基线 |
 
-**禁止在 `lookup()` 中：**
-- ❌ 取任何锁（含 `parking_lot`，虽然比 tokio 快但仍是竞争点）
-- ❌ 触发 DNS 解析
-- ❌ 调用 async 函数
-- ❌ 分配（`Vec` / `String` / `clone`）
+**禁止在 `lookup_peer()` 中：**
+- ❌ 任何锁（含 `parking_lot`）
+- ❌ DNS / 配置 IO
+- ❌ **任何 `async` / `.await`**（含 `get_gateway_peer_id`）
+- ❌ 分配（`Vec` / `String` / `clone` / `into_vec`）
+- ❌ 现场 `select_peer` / 重算 quality（必须读快照里的 `active_peer`）
 
 ### 12.2 并发
 
@@ -1615,12 +1549,25 @@ quality_degraded_cost = 500      # cost > 500 视为劣化 → 切下一个
 
 | 指标 | 建议阈值 | 测量方法 |
 |---|---|---|
-| 快照查找 P99 | **< 1 μs** | `criterion` 基准 |
-| 规则规模 | 10万条下 P99 不劣化 > 20% | 1K / 10K / 100K 三档对比 |
-| 零分配 | 热路径 alloc 计数 = 0 | 全局分配计数器断言 |
-| 快照切换 | P99 < 10 ms | 大快照（10万条）下测 `store()` |
-| 切换生效 | ≤ 2 秒 | 拔网线 → 新流走备用节点 |
-| 稳态吞吐 | 不低于改造前 | before/after 基准 |
+| `lookup_peer` P99 | **< 1 μs**（空/`by_ip` 命中） | `criterion`；与 `routing_lookup` 基线同环境对比 |
+| 规则规模（首期） | **1K / 10K** 下 P99 相对 1K 劣化 **< 20%** | 三档对比；**100K 列为 stretch**，需真正 LPM 后再承诺 |
+| 零分配 | 热路径 alloc = 0 | 分配计数断言 |
+| 快照 `store` | P99 < 10 ms（10K 规则） | 对账路径 |
+| 切换生效 | ≤ 2 秒 | 拔网线 → **新流**走备用 |
+| 稳态吞吐 | 不低于改造前（未配 `routes[]`） | before/after |
+
+### 12.6 合规与泄漏边界（**产品必须明示**）
+
+本设计**不**声称满足审计级「流量零出本地 ISP」。已知窗口：
+
+| 面 | 原因 | 首期态度 |
+|---|---|---|
+| DNS 上游查询 | MagicDNS 绑物理网卡防成环（冲突 C6） | 文档明示；DNS-over-exit **另立项** |
+| 域名首访连接 | L2 装路由受 ~1s 对账约束（§9.8.4） | 接受 + 建议静态 hosts 缩小窗口；或后续「未就绪则 drop」 |
+| 无 MagicDNS 平台 | iOS/NE、`no_tun`（冲突 C7） | 功能矩阵标 ❌ |
+| peer proxy 优先 | 次序 2+3 盖过本地表 | 文档/UI 明示 |
+
+`if_all_unavailable=closed` 只保证「候选 peer 全挂时不静默改走物理默认」——**盖不住上表泄漏面**。
 
 ---
 
@@ -1670,9 +1617,10 @@ D6 quality  D7 域名     D8 balance  D9 GUI/Web
 | **R3** | **热路径性能退化** | D2/D4 每包新增查找 | 全网吞吐 | **基准测试 before/after**（§12.5） | ArcSwap 无锁 + 预排序 + 零分配；**不达标则阻断合入** | 🔴 高 |
 | **R4** | L2/L3 非原子更新 | D5 状态切换 | 瞬时打不中 | 压测中持续 ping | 同一快照内切换（§12.3） | 🟠 中 |
 | **R5** | `closed` 阻断跨平台差异 | Q6 未决 | Windows/Linux/macOS/Android 不一致 | 各平台分别验证 | 先只支持 Linux `blackhole`，其余降级为 L3 拒绝 + 文档 | 🟠 中 |
-| **R6** | **合规误配** | `closed` + 多候选 | 流量跑到不合规出口 | 配置校验 | Q7：加 `require_confirmed` 字段，不确认则**加载失败** | 🔴 高 |
+| **R6** | **策略误配** | `closed` + 多候选 | 流量跑到非预期出口 | 配置校验 | Q7：`require_confirmed`，不确认则**加载失败** | 🔴 高 |
 | **R7** | DNS 覆盖失效 | 浏览器 Secure DNS 等 | 域名规则静默失效 | 回落时日志 | 回落必打 warn；UI 显示「当前 DNS 未覆盖」 | 🟠 中 |
-| **R8** | CDN IP 轮换 | 陈旧 `/32` | 流量泄漏到错误节点 | TTL vs 实际解析对账 | TTL 严格生效 + 撤销兜底 + 手动刷新 CLI | 🟠 中 |
+| **R8** | CDN IP 轮换 | 陈旧 `/32` 残留 | 旧 IP 仍进 TUN | 观测对新 A；表大小 | 方案 C：保留 + 上限 LRU；手动刷新 CLI（**非** TTL 撤销） | 🟠 中 |
+| **R13** | 合规期望落差 | 用户以为零泄漏 | DNS/首包仍可能直连 | 文档/UI | §12.6 明示；另立项 DNS-over-exit | 🟠 中 |
 | **R9** | quality 精度受限 | 复合分不可分解 | 无法按维度 `degraded` | — | 降级为绝对阈值（§12.4） | 🟢 低 |
 | **R10** | quality 切换震荡 | 上报延迟 | 频繁切换 | 长时间压测 | 复用既有双重防抖 | 🟢 低 |
 | **R11** | 路由表膨胀 | AWS 类大域名 | 内存/OS 路由表压力 | 监控表大小 | 数量上限 + 防抖合并 + 超限拒绝 | 🟢 低 |
@@ -1721,7 +1669,7 @@ if local_route_snapshot.is_empty() {
 |---|---|---|---|---|
 | **P1** | 路由表骨架 + L3 接线 + `priority` | **1.5 周** | CIDR → 节点（L3 层） | ✅ |
 | **P2** | L2 接线 + 状态机 + 合规阻断 | **1.5 周** | **完整 CIDR 能力** | ✅ |
-| **P3** | 域名编译（TTL + 消歧） | **1.5 周** | **原始需求全部** | ✅ |
+| **P3** | 域名观测（resolve 订阅 + 消歧） | **1.5 周** | **域名分流（尽力）** | ✅ |
 | **P4** | `quality` 策略 | **1 周** | 链路质量优选 | ✅ |
 | **P5** | `balance` 策略 | **1 周** | 带宽分摊 | ✅ |
 | **P6** | GUI/Web + 文档 + CI 门禁 | **1 周** | 生产就绪 | ✅ |
@@ -1734,12 +1682,12 @@ if local_route_snapshot.is_empty() {
 | # | 内容 | 对应 |
 |---|---|---|
 | 1 | `RouteRule` / `SelectBy` / `FailoverWhen` / `AllUnavailable` 结构 + 校验（含 `require_confirmed` 硬失败） | §9.1 §9.10 |
-| 2 | `LocalRouteTable` + `ArcSwap` 快照 + `by_ip` / `cidr_sorted` / `resolved_peers` 索引 | §9.1 §9.2 |
+| 2 | `LocalRouteTable` + `ArcSwap`；热路径仅 `lookup_peer`（`by_ip` + `cidr_sorted` LPM） | §9.1 §9.2 |
 | 3 | `exit_nodes` 兼容转换（内存展开，不回写） | §9.9 |
-| 4 | `get_msg_dst_peer_ipv4` 插入次序 **3.5** | §9.4 |
-| 5 | **传输优化旁路接入**（`check_allow_wrapped_proxy_to_dst` 查本地路由表） | §9.4.1 |
-| 6 | `select_by = "priority"` 接线（复用 `peer_map.rs:285`） | §9.6 |
-| 7 | 单元测试 + 性能基准（断言零分配） | §12.1 |
+| 4 | `get_msg_dst_peer_ipv4` 插入次序 **3.5**（同步 `lookup_peer`，无 await） | §9.4 |
+| 5 | **传输优化旁路接入**（`check_allow_wrapped_proxy_to_dst` 先查本地表） | §9.4.1 |
+| 6 | 对账循环内 `select_by = priority`（复用 `resolve_exit_node_peer` 语义；写 `active_peer`） | §9.6 §9.7 |
+| 7 | 单元测试 + 性能基准（断言零分配、热路径无 async） | §12.1 |
 
 **本阶段能力**：`routes` 表在 **L3 层**生效。CIDR → 节点的选路正确。
 
@@ -1757,7 +1705,7 @@ if local_route_snapshot.is_empty() {
 
 ---
 
-### 15.3 P2 — L2 接线 + 状态机 + 合规阻断（1.5 周）
+### 15.3 P2 — L2 接线 + 状态机 + `closed` 阻断（1.5 周）
 
 | # | 内容 | 对应 |
 |---|---|---|
@@ -1778,23 +1726,27 @@ if local_route_snapshot.is_empty() {
 
 ---
 
-### 15.4 P3 — 域名编译（1.5 周）
+### 15.4 P3 — 域名观测与编译（1.5 周）
+
+> ⚠️ **以 §9.8 为准**；禁止再实现「查 `DnsConfig.hosts` / TTL 驱动撤销」。
 
 | # | 内容 | 对应 |
 |---|---|---|
-| 1 | 订阅 `DnsConfig.hosts` 变更（复用现有 heartbeat 通道） | §9.8 |
-| 2 | 域名 → IP[] 编译（TTL 驱动 + 通配符 RFC 4592） | §9.8 |
-| 3 | **原子更新**：`compiled_cidrs`（L2）与 `by_ip`（L3）同批换入快照 | §12.3 |
-| 4 | 消歧（最长后缀 → 严格性 → 合并候选） | §10.1 |
-| 5 | 回落 + 日志（DNS 覆盖失效时） | R7 |
-| 6 | 验收场景 10–11 | §16.1 |
+| 1 | 包装 `MagicDnsQueryResolver`，订阅 `resolve()` 应答中的 QNAME + A 记录 | §9.8.1 / Q12 |
+| 2 | 规则权威来自本地 `routes[].domains`；IP 集合来自观测（修正 C2） | §9.8.2 |
+| 3 | 扩展 resolver 返回**答案来源**（hosts / route / split / upstream），跳过 MagicDNS 路由 hostname（C4 / Q15） | §9.8.3 |
+| 4 | **原子更新**：`compiled_cidrs`（L2）与 `by_ip`（L3）同批 `store` | §9.8.5 / §12.3 |
+| 5 | TTL：**不**撤销路由；「不再返回的 IP」按方案 C（保留 + 上限 LRU）（C5 / Q13） | §9.8.5 |
+| 6 | 配置预检：与 hosts 守卫 / split 冲突提前报错（C3） | §9.8.5 |
+| 7 | 文档/UI：DNS 泄漏、首包 ≤1s 窗口、平台矩阵（C6/C7/§12.6） | §9.8.4 |
+| 8 | 验收场景 10–11；**不含**「TTL 到期撤销」 | §16.1 |
 
-**本阶段能力**：**原始需求全部达成** —— 不同域名走不同出口。
+**本阶段能力**：不同域名走不同出口（**尽力**；非零泄漏合规）。
 
 **上线判据**
 - 验收场景 10–11 全绿
-- TTL 到期撤销 `/32` 可观测
-- DNS 被绕过时回落并打日志
+- 观测到新 A 记录后 L2/L3 同批可见；删规则立即撤销对应 `/32`
+- 产品文档已写明 §12.6 泄漏面；iOS/NE / `no_tun` 标为不支持
 
 ---
 
@@ -1834,7 +1786,7 @@ if local_route_snapshot.is_empty() {
 | 1 | GUI / Web 配置界面 + i18n |
 | 2 | 校验提示（`require_confirmed` 确认对话框等） |
 | 3 | 同步更新 4 篇文档（§17） |
-| 4 | **性能基准纳入 CI 门禁**：P99 < 1 μs、分配 = 0、10 万规则劣化 < 20% |
+| 4 | **性能基准纳入 CI 门禁**：`lookup_peer` P99 < 1 μs、分配 = 0、**10K** 规则劣化 < 20% |
 | 5 | 跨平台验证（§16.2 P1–P8） |
 
 **上线判据**：**性能门禁通过** → 此时才称「生产就绪」。
@@ -1855,9 +1807,9 @@ if local_route_snapshot.is_empty() {
 ### 15.9 与技术债清理的衔接
 
 ```
-技术债 P-T1（1 周，基准 + 快赢）   ← 最低限度必做
+技术债 P-T1 ✅（基准 + SmallVec）   ← 最低限度已完成（2026-10-13）
         ↓
-本设计 P1（1.5 周）
+本设计 P1（1.5 周）                 ← 可随时启动；不依赖 P-T2/T3
         ↓
 本设计 P2（1.5 周）→ 里程碑 M1
         ↓
@@ -1868,13 +1820,13 @@ P4 / P5 / P6
 
 **每一步都可暂停**，且暂停点都有可用的交付物。
 
-详见 [`routing-tech-debt.md`](./routing-tech-debt.md) §8。
+详见 [`routing-tech-debt.md`](./routing-tech-debt.md) §8 / §10。
 
 | 情况 | 建议 |
 |---|---|
-| 时间紧 | 只做 **技术债 P-T1**，取得基线后直接进本设计 P1 |
-| 稳妥 | 先做技术债 P-T1~P3（3.5 周） |
-| 技术债基准数据好 | **跳过 P-T2/P-T3**，不要为不存在的问题改造 |
+| **当前** | P-T1 已完成 → **可直接进本设计 P1** |
+| 稳妥（旧方案） | ~~先做 P-T1~P3~~ → 基线已证明可跳过 |
+| 基线数据好 | ✅ **跳过 P-T2/P-T3**，不要为不存在的问题改造 |
 
 ---
 
@@ -1893,7 +1845,7 @@ P4 / P5 / P6
 | 7 | `peers=[B,C]` 全部不可达，`closed` | 阻断 + error 日志 | FR-4 |
 | 8 | `quality` 策略 | 选 cost 最优可达节点；`degraded` 时自动切 | FR-5、FR-6 |
 | 9 | `balance` 策略 | 同一条 TCP 流的包恒定走同一节点；不同流分散 | FR-5 |
-| 10 | 域名 TTL 到期 | 撤销对应 `/32`；回落并可观测 | FR-2 |
+| 10 | 观测到新 A 记录 / 删除域名规则 | L2+L3 同批更新；删规则立即撤销 `/32`（**TTL 到期不撤销**） | FR-2 |
 | 11 | 同 IP 属多个域名 | 按 §10 消歧，结果稳定 | FR-2 |
 | 12 | `exit_nodes` 与 `routes` 共存 | 两者行为独立，互不干扰 | FR-8 |
 | 13 | 配置缺 `select_by` | **加载失败并报错**，不静默取默认 | NFR-6 |
@@ -1903,10 +1855,10 @@ P4 / P5 / P6
 
 | # | 场景 | 期望 | 依据 |
 |---|---|---|---|
-| P1 | 快照查找基准（1K/10K/100K 规则） | P99 < 1 μs | §12.5 |
+| P1 | `lookup_peer` 基准（1K/10K；`by_ip` 命中） | P99 < 1 μs；无 `.await` | §12.5 |
 | P2 | 热路径分配计数 | **= 0** | §12.1 |
-| P3 | 规则表为空时吞吐 | 与改造前**持平**（无额外开销） | R2 缓解 |
-| P4 | 规则表 10 万条时吞吐 | 劣化 < 20% | §12.5 |
+| P3 | 规则表为空时吞吐 | 与改造前**持平** | R2 缓解 |
+| P4 | 规则表 **10K** 条时吞吐 | 相对 1K 劣化 < 20%（100K = stretch） | §12.5 |
 | P5 | 长读压测下快照切换 | P99 < 10 ms | §12.5 |
 | P6 | 目标节点掉线 → 新流切换 | **≤ 2 秒** | §12.3 |
 | P7 | 切换期间持续探测 | **无黑洞**（L2/L3 原子切换） | R4 缓解 |
