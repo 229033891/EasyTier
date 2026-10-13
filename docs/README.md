@@ -80,6 +80,7 @@ crate 内设计稿（非本索引）：`easytier/docs/`（凭据计划已标 Arc
 | [release-version-bump.md](./ops/release-version-bump.md) | **版本号 bump 必改清单**（10 文件 / 17 处）+ 发布分支惯例 |
 | [android-startup-auto-stop.md](./ops/android-startup-auto-stop.md) | 安卓启动后马上自动停：现象 / 日志定性 / §6 同 netId 去重+宽限期（待新包验收）/ 清数据与重装 |
 | [ci-failure-log.md](./ops/ci-failure-log.md) | **CI/ET Test 失败追加日志** + 提交前自检（clippy / trait 导入等） |
+| [doc-update-after-task.md](./ops/doc-update-after-task.md) | **任务收尾文档决策表**（Current 严门槛 + 按类型最少更新集） |
 
 ## Archive — 历史记录
 
@@ -103,6 +104,6 @@ crate 内设计稿（非本索引）：`easytier/docs/`（凭据计划已标 Arc
 ## 维护约定
 
 1. Roadmap 文若仍写「不实现 / Draft」，不得当作已交付功能依据。
-2. 从 Roadmap 开工前，先把 Status 改为 Accepted / In progress，并在 Current 中预留或同步缺口说明。
-3. 功能落地后：更新 Current；Roadmap 标记 Superseded 或删减为「剩余缺口」。
+2. 从 Roadmap 开工前，先把 Status 改为 Accepted / In progress；Current 仅预留**已知缺口**（勿把未实现方案写成现状）。
+3. **Current 严门槛**：代码落地但未达「可依赖」（待联调 / 待现网）→ 只更新绑定 Roadmap；行为已可依赖后再改对应 `current/`，Roadmap 标剩余缺口 / Superseded / Archive。细则与决策表见 [`ops/doc-update-after-task.md`](./ops/doc-update-after-task.md)。
 4. 对外与 Current/Ops/Roadmap 文遵守上文「品牌与溯源」硬约束；涉及 `main`/`dev` 分支同步的历史跟踪放 `archive/`。

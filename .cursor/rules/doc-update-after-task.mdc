@@ -1,0 +1,14 @@
+---
+description: After finishing a task (or before commit), update docs per docs/ops/doc-update-after-task.md — strict Current gate
+alwaysApply: true
+---
+
+# 任务收尾 — 文档更新
+
+在用户认为任务 **完成**、或要求 **提交 / 开 PR** 且本次含功能/行为改动时：
+
+1. 打开 [`docs/ops/doc-update-after-task.md`](docs/ops/doc-update-after-task.md)，按 **§2 决策表** 定类型与最少更新集。
+2. **Current 严门槛**（该文档 §1）：未达「可依赖」前，只更新绑定 Roadmap/Ops（勾选 + 待验收），**禁止**把未验收行为写入 `docs/current/`。
+3. 无绑定文档时：先提出 1–2 个候选文档请用户确认（或用户已点名则用之）；不要散改多篇 Current。
+4. 纯错别字/链接、或用户明确跳过文档收尾 → 可免。
+5. 提交前仍须遵守 CI 规则：[`ci-failure-log-presubmit`](ci-failure-log-presubmit.mdc)。
