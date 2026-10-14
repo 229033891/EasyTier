@@ -552,9 +552,8 @@ exit_nodes_help: |-
 
 policy_routes: Policy Routes
 policy_routes_help: |-
-  Unified routing model: send traffic for a target CIDR and/or domain to a chosen gateway peer. Matches take precedence over the exit node list.
+  Send traffic for a target CIDR and/or domain to a chosen gateway peer; matches take precedence over the exit node list.
   Note: the peer you point at must have "Enable Exit Node" turned on, or it drops that traffic. Domain rules rely on this host's MagicDNS (queries that bypass EasyTier DNS are invisible), and the first connection has a direct-egress window of up to 1 second.
-policy_routes_summary: Route a target CIDR / domain to a chosen gateway peer; matches take precedence over the exit node list.
 policy_routes_add: Add route
 policy_routes_remove: Remove this route
 policy_routes_cidr: Target CIDR

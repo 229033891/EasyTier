@@ -994,7 +994,6 @@ function removeVpnPortalClient(index: number) {
                       :aria-label="t('policy_routes_help')"
                       role="img"
                     />
-                    <span class="et-meta">{{ t('policy_routes_summary') }}</span>
                   </div>
                   <PolicyRoutesEditor v-model:routes="curNetwork.policy_routes" />
 
