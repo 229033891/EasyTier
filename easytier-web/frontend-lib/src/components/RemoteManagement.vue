@@ -363,9 +363,10 @@ const clearResidualDeviceCopy = () => {
         return;
     }
     // Device-only: hard purge (keep=false). Web → light confirm; User → stronger confirm.
+    const source = Api.normalizeConfigSource(currentNetworkMeta.value?.source);
     const isUser =
-        currentNetworkMeta.value?.source === Api.ConfigSource.User
-        || currentNetworkMeta.value?.source === undefined;
+        source === Api.ConfigSource.User
+        || source === undefined;
     confirm.require({
         message: t(
             isUser
@@ -421,7 +422,12 @@ const loadNetworkMetas = async (instanceIds: string[]) => {
     try {
         const response = await props.api.get_network_metas(missingIds);
         const metas = response.metas ?? {};
-        Object.assign(networkMetaCache.value, metas);
+        for (const [id, meta] of Object.entries(metas)) {
+            networkMetaCache.value[id] = {
+                ...meta,
+                source: Api.normalizeConfigSource(meta.source),
+            };
+        }
         updateInstanceList();
         missingIds.forEach((id) => {
             if (metas[id]) {
@@ -471,10 +477,11 @@ function configSourceBadgeFor(
     meta: Api.NetworkMeta | undefined,
     opts?: { dirty?: boolean },
 ): ConfigSourceBadge {
-    if (!meta || meta.source === undefined || meta.source === Api.ConfigSource.Unspecified) {
+    const source = Api.normalizeConfigSource(meta?.source);
+    if (!meta || source === undefined || source === Api.ConfigSource.Unspecified) {
         return unknownConfigSourceBadge();
     }
-    if (meta.source === Api.ConfigSource.Web) {
+    if (source === Api.ConfigSource.Web) {
         // Ownership ≠ sync success: dirty Web drafts are still console-owned but pending push.
         if (opts?.dirty) {
             return {
@@ -493,7 +500,7 @@ function configSourceBadgeFor(
             severity: 'info',
         };
     }
-    if (meta.source === Api.ConfigSource.User) {
+    if (source === Api.ConfigSource.User) {
         return {
             kind: 'local',
             label: t('web.device_management.config_source_local'),
@@ -545,7 +552,7 @@ const isConsoleManagedDelete = computed(() => {
     if (props.deleteAuthority !== 'console') {
         return false;
     }
-    return currentNetworkMeta.value?.source === Api.ConfigSource.Web;
+    return Api.normalizeConfigSource(currentNetworkMeta.value?.source) === Api.ConfigSource.Web;
 });
 
 const canDeleteNetworkLocally = computed(
@@ -1051,7 +1058,7 @@ const confirmDeleteNetwork = () => {
     // Do not infer this from deleteAuthority (explicit 'local' on console must still confirm).
     const deletingUserSourceOnConsole =
         props.hostSurface === 'web-console'
-        && currentNetworkMeta.value?.source === Api.ConfigSource.User;
+        && Api.normalizeConfigSource(currentNetworkMeta.value?.source) === Api.ConfigSource.User;
     confirm.require({
         message: t(
             deletingUserSourceOnConsole
@@ -1247,7 +1254,7 @@ const saveResultToastDetail = (
 };
 
 const isUserSourceConfig = computed(() => {
-    const source = currentNetworkMeta.value?.source;
+    const source = Api.normalizeConfigSource(currentNetworkMeta.value?.source);
     // Fail closed on missing meta (load failed / not loaded yet): without meta
     // we cannot prove Web ownership, so keep the takeover confirm. Unspecified
     // (old servers without source) keeps legacy behavior to avoid confirm spam.

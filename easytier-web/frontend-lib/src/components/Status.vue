@@ -897,7 +897,7 @@ const eventLogContent = computed(() => {
   min-height: 0;
 }
 
-/* 面板标题栏：折叠态更矮（覆盖 PrimeVue 默认与全局触摸目标高度） */
+/* 面板标题栏：浅底色区分标题与内容；折叠态更矮（覆盖 PrimeVue 默认与全局触摸目标高度） */
 .status-panels :deep(.p-panel .p-panel-header) {
   padding: 0.35rem 0.75rem !important;
   min-height: 2rem !important;
@@ -905,7 +905,7 @@ const eventLogContent = computed(() => {
   font-weight: 600;
   line-height: 1.2;
   color: var(--text-color, #1e293b);
-  background: transparent;
+  background: var(--surface-50, #f8fafc);
   border: none;
   flex-shrink: 0;
 }
@@ -1260,6 +1260,10 @@ const eventLogContent = computed(() => {
   .status-empty--error,
   .status-meta-error {
     color: var(--et-danger, #f87171);
+  }
+
+  .status-panels :deep(.p-panel .p-panel-header) {
+    background: var(--surface-100, #334155);
   }
 }
 

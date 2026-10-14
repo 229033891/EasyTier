@@ -70,11 +70,61 @@ export const ConfigSource = {
 } as const;
 export type ConfigSourceValue = (typeof ConfigSource)[keyof typeof ConfigSource];
 
+/**
+ * REST/pbjson serializes proto enums as strings (`ConfigSourceWeb`), while some
+ * callers and tests pass the int. Normalize both so UI comparisons stay numeric.
+ */
+export function normalizeConfigSource(source: unknown): ConfigSourceValue | undefined {
+    if (source === undefined || source === null || source === '') {
+        return undefined;
+    }
+    if (typeof source === 'number') {
+        if (
+            source === ConfigSource.Unspecified
+            || source === ConfigSource.User
+            || source === ConfigSource.Web
+        ) {
+            return source;
+        }
+        return undefined;
+    }
+    if (typeof source === 'string') {
+        const trimmed = source.trim();
+        if (/^\d+$/.test(trimmed)) {
+            return normalizeConfigSource(Number(trimmed));
+        }
+        switch (trimmed) {
+            case 'ConfigSourceUnspecified':
+            case 'CONFIG_SOURCE_UNSPECIFIED':
+            case 'Unspecified':
+                return ConfigSource.Unspecified;
+            case 'ConfigSourceUser':
+            case 'CONFIG_SOURCE_USER':
+            case 'User':
+            case 'user':
+                return ConfigSource.User;
+            case 'ConfigSourceWeb':
+            case 'CONFIG_SOURCE_WEB':
+            case 'Web':
+            case 'web':
+            case 'webhook':
+                return ConfigSource.Web;
+            default:
+                return undefined;
+        }
+    }
+    return undefined;
+}
+
 export interface NetworkMeta {
     network_name: string;
     config_permission: ConfigFilePermission.Flags;
-    /** Device/DB ownership; missing on older servers → treat as unspecified. */
-    source?: ConfigSourceValue | number;
+    /**
+     * Device/DB ownership; missing on older servers → treat as unspecified.
+     * Wire format may be proto int or pbjson string (`ConfigSourceWeb`); use
+     * {@link normalizeConfigSource} before comparing.
+     */
+    source?: ConfigSourceValue | number | string;
 }
 
 export interface GetNetworkMetasResponse {
