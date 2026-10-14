@@ -112,6 +112,12 @@ export function collectConfigConflictWarnings(config: NetworkConfig): ConfigConf
  * If the flag is already true (legacy conflict), leave it editable so the user can uncheck.
  */
 export function isAdvancedFlagDisabled(config: NetworkConfig, field: keyof NetworkConfig): boolean {
+  // 正向「允许中转」：p2p_only 下中转无意义——允许取消勾选，禁止重新勾选。
+  // 须写在「field===true 可编辑」之前：底层 disable_relay_data=true 时正好要禁用。
+  if (config.p2p_only && field === 'disable_relay_data' && config.disable_relay_data) {
+    return true
+  }
+
   if (config[field] === true) {
     return false
   }
@@ -154,7 +160,10 @@ export function advancedFlagConflictHelpKey(
     return 'p2p_only_blocks_latency_first_help'
   }
   // prefer_peer_relay：UI 不展示；不抑制打洞；TOML 可选 OSPF 投影。
-  // disable_relay_data 由基础设置正向开关驱动。
+  // 「允许中转」仅在已被禁用（无法再勾回）时改 tip；仍可取消勾选时保留正向说明。
+  if (config.p2p_only && field === 'disable_relay_data' && config.disable_relay_data) {
+    return 'p2p_only_blocks_relay_help'
+  }
   if (config.p2p_only && field === 'enable_relay_network_whitelist') {
     return 'p2p_only_blocks_relay_help'
   }

@@ -142,7 +142,7 @@ score = w_lat * norm(rtt)
   - 用户面：`README.md` / `README_CN.md`、Web `initial_nodes_help`、CLI `peers` 帮助
   - 模板：`script/install.sh`、magisk / android-jni / mini 示例注释
 - [x] **P0.4** GUI / Web：中继地址为自由输入（URL），端口不默认锁死 443；占位符展示多种 scheme（无档位控件）
-  - `Config.vue`：基础设置仅保留「允许作为中转节点」正向开关（`disable_relay_data` 取反）；`disable_p2p` 为硬约束保留在高级设置
+  - `Config.vue`：「允许作为中转节点」正向开关（`disable_relay_data` 取反）与硬约束 `disable_p2p` 同列于高级设置 →「连接」
   - `initial_nodes_help` / placeholder 含 443 与自定义端口示例；全部地址恒维持连接，按质量自动选路
 - [ ] **P0.5** 验收：在 **非 443** 的 `tcp://` / `wss://host:自定义端口/path` 上稳定组网；禁 UDP 环境可用用户指定的 TCP/`wss` 保底
   - 清单：① `wss://host:8443/et` 组网；② 同场景换 `tcp://host:5000`；③ 禁 UDP 主机仅用 TCP/`wss` peer 列表

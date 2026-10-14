@@ -223,10 +223,9 @@ advanced_group_system: System & Network
 advanced_group_security: Security & Privacy
 
 traffic_routing: Traffic & Routing
-traffic_routing_summary: Client egress (exit list / policy routes) and gateway role (allow as exit / subnet proxy) live here; they are usually configured as a pair.
-traffic_routing_client: This node as client (egress)
-traffic_routing_gateway: This node as gateway (serve others)
-traffic_routing_advanced: Advanced
+traffic_routing_summary: Egress (exit list / policy routes / custom routes) and gateway (allow as exit / subnet proxy) live here; they are usually configured as a pair.
+traffic_routing_client: Egress
+traffic_routing_gateway: Gateway
 
 latency_first: Enable Quality-First Routing
 latency_first_help: |-
@@ -357,7 +356,7 @@ disable_relay_data_help: |
 allow_relay_data: Allow as Relay Node
 allow_relay_data_help: |-
   When checked, other nodes may relay data-plane traffic through this node (checked by default).
-  Unchecking equals "Disable Relay Data": route computation avoids this node, but in-flight transit packets are still forwarded, never dropped; good for terminal-only devices.
+  Unchecking equals `disable_relay_data = true` in the backend (written as `disable-relay-data = true` in the config file): route computation avoids this node, but in-flight transit packets are still forwarded, never dropped; good for terminal-only devices.
   Note: with "P2P only" enabled, relaying is meaningless and cannot be re-checked.
 
 need_p2p: Need P2P
@@ -1021,6 +1020,8 @@ web:
     config_source_local_tip: "Device-local (User) config: it is not written to the console database until taken over."
     config_source_pending_sync: Pending sync
     config_source_pending_sync_tip: This console-managed network has unsaved local edits; save to push them to the console.
+    config_source_unknown: Unknown
+    config_source_unknown_tip: Config source is not available yet (older server omitted it, or meta is still loading). Editing still works; once known it becomes Console-managed or Local only.
     more_actions: More Actions
     edit_as_file: Edit as File
     edit_as_file_tip: Edit the full configuration as plain text

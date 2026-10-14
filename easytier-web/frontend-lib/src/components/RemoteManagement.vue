@@ -448,21 +448,31 @@ const currentNetworkMeta = computed(() => {
     return networkMetaCache.value[instanceId.value];
 });
 
-/** Ownership badge: Web = console-managed; User = local-only. Hide while meta unknown. */
+/** Ownership badge: Web = console; User = local; missing/Unspecified = unknown (always shown). */
 type ConfigSourceBadge = {
-    kind: 'console' | 'local' | 'pending';
+    kind: 'console' | 'local' | 'pending' | 'unknown';
     label: string;
     tip: string;
     icon: string;
     severity: 'info' | 'secondary' | 'warn';
 };
 
+function unknownConfigSourceBadge(): ConfigSourceBadge {
+    return {
+        kind: 'unknown',
+        label: t('web.device_management.config_source_unknown'),
+        tip: t('web.device_management.config_source_unknown_tip'),
+        icon: 'pi pi-question-circle',
+        severity: 'secondary',
+    };
+}
+
 function configSourceBadgeFor(
     meta: Api.NetworkMeta | undefined,
     opts?: { dirty?: boolean },
-): ConfigSourceBadge | null {
+): ConfigSourceBadge {
     if (!meta || meta.source === undefined || meta.source === Api.ConfigSource.Unspecified) {
-        return null;
+        return unknownConfigSourceBadge();
     }
     if (meta.source === Api.ConfigSource.Web) {
         // Ownership ≠ sync success: dirty Web drafts are still console-owned but pending push.
@@ -492,7 +502,7 @@ function configSourceBadgeFor(
             severity: 'secondary',
         };
     }
-    return null;
+    return unknownConfigSourceBadge();
 }
 
 const currentConfigSourceBadge = computed(() =>
@@ -504,11 +514,10 @@ const currentConfigSourceBadge = computed(() =>
 /** Per-instance badges for the network Select dropdown (avoids repeated helper calls). */
 const configSourceBadgeById = computed(() => {
     const map: Record<string, ConfigSourceBadge> = {};
-    for (const [id, meta] of Object.entries(networkMetaCache.value)) {
-        const badge = configSourceBadgeFor(meta);
-        if (badge) {
-            map[id] = badge;
-        }
+    for (const inst of instanceList.value) {
+        map[inst.uuid] = configSourceBadgeFor(
+            networkMetaCache.value[inst.uuid] ?? inst.meta,
+        );
     }
     return map;
 });

@@ -801,12 +801,12 @@ describe('Config.vue network config projection', () => {
     expect(wrapper.find('#prefer_peer_relay').exists()).toBe(false)
   })
 
-  it('drives relay permission from the basic allow-relay switch', async () => {
+  it('drives relay permission from the advanced allow-relay switch', async () => {
     const config = makeConfig()
     const { curNetwork, wrapper } = mountConfig(config)
     await nextTick()
 
-    // 默认允许中转（disable_relay_data: false）
+    // 高级→连接：正向「允许作为中转节点」；默认允许（disable_relay_data: false）
     expect(input(wrapper, '#allow_relay').checked).toBe(true)
 
     await wrapper.find('#allow_relay').setValue(false)

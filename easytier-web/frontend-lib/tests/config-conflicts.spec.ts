@@ -68,11 +68,20 @@ describe('configConflicts', () => {
       enable_relay_network_whitelist: false,
     }
     expect(isAdvancedFlagDisabled(config, 'latency_first')).toBe(true)
-    // disable_relay_data 由基础设置正向开关驱动，不再走高级开关禁用分支
+    // 已允许中转（disable_relay_data=false）：p2p_only 下仍可取消勾选
     expect(isAdvancedFlagDisabled(config, 'disable_relay_data')).toBe(false)
     expect(isAdvancedFlagDisabled(config, 'enable_relay_network_whitelist')).toBe(true)
     expect(isAdvancedFlagDisabled(config, 'disable_p2p')).toBe(true)
     expect(advancedFlagConflictHelpKey(config, 'enable_relay_network_whitelist')).toBe(
+      'p2p_only_blocks_relay_help',
+    )
+    // 仍可取消勾选时保留正向说明，不误报「无效」
+    expect(advancedFlagConflictHelpKey(config, 'disable_relay_data')).toBe(null)
+
+    // 已禁止中转：p2p_only 下禁止重新勾选「允许作为中转节点」
+    config.disable_relay_data = true
+    expect(isAdvancedFlagDisabled(config, 'disable_relay_data')).toBe(true)
+    expect(advancedFlagConflictHelpKey(config, 'disable_relay_data')).toBe(
       'p2p_only_blocks_relay_help',
     )
   })

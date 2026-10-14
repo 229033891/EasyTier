@@ -224,10 +224,9 @@ advanced_group_system: 系统与网络
 advanced_group_security: 安全与隐私
 
 traffic_routing: 流量与路由
-traffic_routing_summary: 出网（出口列表 / 策略路由）与网关角色（允许成为出口 / 子网代理）集中在此；两者常成对配置。
-traffic_routing_client: 本机作为客户端（出网）
-traffic_routing_gateway: 本机作为网关（服务他人）
-traffic_routing_advanced: 高级
+traffic_routing_summary: 出网（出口列表 / 策略路由 / 自定义路由）与网关（允许成为出口 / 子网代理）集中在此；两者常成对配置。
+traffic_routing_client: 出网
+traffic_routing_gateway: 网关
 
 latency_first: 开启质量优先选路
 latency_first_help: |-
@@ -358,7 +357,7 @@ disable_relay_data_help: |
 allow_relay_data: 允许作为中转节点
 allow_relay_data_help: |-
   勾选后，其他节点可经由本节点中转业务流量（默认勾选）。
-  取消勾选等价于高级设置里的「禁止中转数据」：算路时会避开本节点，但收敛期间到达的中转包仍会被转发，不会丢包；适合只做终端的设备。
+  取消勾选等价于后端 `disable_relay_data = true`（配置文件中写作 `disable-relay-data = true`）：算路时会避开本节点，但收敛期间到达的中转包仍会被转发，不会丢包；适合只做终端的设备。
   注意：开启「仅 P2P」时中转无意义，不可重新勾选。
 
 need_p2p: 需要 P2P
@@ -1020,6 +1019,8 @@ web:
     config_source_local_tip: 设备本地（User）配置：未接管前不会自动写入控制台数据库。
     config_source_pending_sync: 待同步
     config_source_pending_sync_tip: 控制台托管网络有未保存的本地修改；保存后才会推送到控制台。
+    config_source_unknown: 未知
+    config_source_unknown_tip: 尚未拿到配置来源（旧服务端未上报，或元数据仍在加载）。不影响编辑；来源明确后会显示为控制台托管或仅本地。
     more_actions: 更多操作
     edit_as_file: 编辑为文件
     edit_as_file_tip: 以文本方式直接编辑完整配置文件

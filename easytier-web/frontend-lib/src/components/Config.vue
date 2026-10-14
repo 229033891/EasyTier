@@ -277,7 +277,9 @@ const bool_flags: BoolFlag[] = [
   { field: 'need_p2p', help: 'need_p2p_help', group: 'connectivity' },
   // enable_exit_node / allow_peer_default_without_exit →「流量与路由」面板
   { field: 'relay_all_peer_rpc', help: 'relay_all_peer_rpc_help', group: 'connectivity' },
-  // disable_relay_data 由基础设置的「允许作为中转节点」正向开关驱动，不再列为高级开关
+  // disable_relay_data 正向展示为「允许作为中转节点」（与 allow_p2p 同模式）
+  { field: 'disable_relay_data', help: 'disable_relay_data_help', group: 'connectivity',
+    inverted: { inputId: 'allow_relay', label: 'allow_relay_data', help: 'allow_relay_data_help' } },
   { field: 'enable_kcp_proxy', help: 'enable_kcp_proxy_help', group: 'transport' },
   { field: 'disable_kcp_input', help: 'disable_kcp_input_help', group: 'transport',
     inverted: { inputId: 'allow_kcp_input', label: 'allow_kcp_input', help: 'allow_kcp_input_help' } },
@@ -349,20 +351,6 @@ const advancedFlagGroups = computed(() => {
 const conflictWarnings = computed(() => collectConfigConflictWarnings(curNetwork.value))
 
 const relayControlsDisabled = computed(() => !!curNetwork.value.p2p_only)
-/**
- * 基础设置「允许作为中转节点」正向开关，本质是 `disable_relay_data` 取反。
- * 默认勾选（与后端 `disable_relay_data: false` 一致）；老配置读入原值，仅提示不强改。
- */
-const allowRelay = computed({
-  get: () => !curNetwork.value.disable_relay_data,
-  set: (value: boolean) => {
-    curNetwork.value.disable_relay_data = !value
-  },
-})
-/** p2p_only 下中转无意义：允许取消勾选（不再中转），禁止重新勾选 */
-const allowRelayDisabled = computed(
-  () => !!curNetwork.value.p2p_only && !!curNetwork.value.disable_relay_data,
-)
 const tunControlsDisabled = computed(() => !!curNetwork.value.no_tun)
 const ipv6ControlsHidden = computed(() => !!curNetwork.value.disable_ipv6)
 const encryptionAlgoHidden = computed(() => !!curNetwork.value.disable_encryption)
@@ -627,18 +615,6 @@ function removeVpnPortalClient(index: number) {
                     <UrlListInput id="initial_nodes" v-model="curNetwork.peer_urls" :protos="protos"
                       defaultUrl="tcp://:11010" :add-label="t('add_initial_node')"
                       :placeholder="t('initial_node_placeholder')" />
-                  </div>
-                </div>
-              </div>
-
-              <div class="flex flex-row gap-x-9 flex-wrap">
-                <div class="flex flex-col gap-2 basis-5/12 grow justify-end">
-                  <div class="flex items-center">
-                    <Checkbox v-model="allowRelay" input-id="allow_relay" :binary="true"
-                      :disabled="allowRelayDisabled" />
-                    <label for="allow_relay" class="ml-2">{{ t('allow_relay_data') }}</label>
-                    <i class="pi pi-question-circle config-help-tip ml-2" tabindex="0"
-                      v-tooltip.top="{ value: t(allowRelayDisabled ? 'p2p_only_blocks_relay_help' : 'allow_relay_data_help'), escape: false }" role="img"></i>
                   </div>
                 </div>
               </div>
@@ -969,19 +945,20 @@ function removeVpnPortalClient(index: number) {
             </div>
           </Panel>
 
-          <Panel v-model:collapsed="panelCollapsed.trafficRouting" :header="t('traffic_routing')" toggleable
+          <Panel v-model:collapsed="panelCollapsed.trafficRouting" toggleable
             :pt="panelHeaderPt('trafficRouting')">
-            <div class="flex flex-col gap-y-4">
-              <div class="flex items-center gap-1">
+            <template #header>
+              <div class="flex items-center gap-2 min-w-0">
+                <span>{{ t('traffic_routing') }}</span>
                 <i
                   class="pi pi-question-circle config-help-tip" tabindex="0"
                   v-tooltip.top="{ value: t('traffic_routing_summary'), escape: false }"
                   :aria-label="t('traffic_routing_summary')"
                   role="img"
                 />
-                <span class="et-meta">{{ t('traffic_routing_summary') }}</span>
               </div>
-
+            </template>
+            <div class="flex flex-col gap-y-4">
               <div class="config-section">
                 <div class="config-section__title">
                   <span>{{ t('traffic_routing_client') }}</span>
@@ -1020,51 +997,8 @@ function removeVpnPortalClient(index: number) {
                     <span class="et-meta">{{ t('policy_routes_summary') }}</span>
                   </div>
                   <PolicyRoutesEditor v-model:routes="curNetwork.policy_routes" />
-                </div>
-              </div>
 
-              <div class="config-section">
-                <div class="config-section__title">
-                  <span>{{ t('traffic_routing_gateway') }}</span>
-                </div>
-                <div class="flex flex-col gap-y-2">
-                  <div class="flex items-center gap-2 flex-wrap">
-                    <Checkbox v-model="curNetwork.enable_exit_node" input-id="enable_exit_node" :binary="true" />
-                    <label for="enable_exit_node">{{ t('enable_exit_node') }}</label>
-                    <i class="pi pi-question-circle config-help-tip" tabindex="0"
-                      v-tooltip.top="{ value: t('enable_exit_node_help'), escape: false }"
-                      :aria-label="t('enable_exit_node_help')" role="img"></i>
-                  </div>
-                  <div class="config-compact-field config-compact-field--inline">
-                    <div class="config-compact-label flex items-center gap-1">
-                      <label for="subnet-proxy">{{ t('proxy_cidrs') }}</label>
-                      <i class="pi pi-question-circle config-help-tip" tabindex="0"
-                        v-tooltip.top="{ value: t('proxy_cidrs_help'), escape: false }" role="img"></i>
-                    </div>
-                    <div class="config-compact-control">
-                      <AutoComplete id="subnet-proxy" v-model="curNetwork.proxy_cidrs"
-                        :placeholder="t('chips_placeholder_typeahead', ['10.0.0.0/24'])" multiple fluid
-                        :suggestions="inetSuggestions" @complete="searchInetSuggestions"
-                        @keydown.capture="onChipsKeydown($event, curNetwork.proxy_cidrs ??= [], { typeahead: true })" />
-                    </div>
-                  </div>
-                  <div class="flex items-center gap-2 flex-wrap">
-                    <Checkbox v-model="curNetwork.proxy_forward_by_system"
-                      input-id="proxy_forward_by_system" :binary="true" />
-                    <label for="proxy_forward_by_system">{{ t('proxy_forward_by_system') }}</label>
-                    <i class="pi pi-question-circle config-help-tip" tabindex="0"
-                      v-tooltip.top="{ value: t('proxy_forward_by_system_help'), escape: false }"
-                      :aria-label="t('proxy_forward_by_system_help')" role="img"></i>
-                  </div>
-                </div>
-              </div>
-
-              <div class="config-section">
-                <div class="config-section__title">
-                  <span>{{ t('traffic_routing_advanced') }}</span>
-                </div>
-                <div class="flex flex-col gap-y-2">
-                  <div class="config-inline-field">
+                  <div class="config-inline-field mt-1">
                     <div class="config-inline-label flex items-center gap-1">
                       <label for="routes">{{ t('manual_routes') }}</label>
                       <i class="pi pi-question-circle config-help-tip" tabindex="0"
@@ -1090,6 +1024,42 @@ function removeVpnPortalClient(index: number) {
                       <div class="config-inline-control">
                         <ToggleSwitch v-model="curNetwork.manual_routes_append" input-id="manual_routes_append"
                           :aria-label="t('manual_routes_append')" />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="config-section">
+                <div class="config-section__title">
+                  <span>{{ t('traffic_routing_gateway') }}</span>
+                </div>
+                <div class="flex flex-col gap-y-2">
+                  <div class="flex items-center gap-2 flex-wrap">
+                    <Checkbox v-model="curNetwork.enable_exit_node" input-id="enable_exit_node" :binary="true" />
+                    <label for="enable_exit_node">{{ t('enable_exit_node') }}</label>
+                    <i class="pi pi-question-circle config-help-tip" tabindex="0"
+                      v-tooltip.top="{ value: t('enable_exit_node_help'), escape: false }"
+                      :aria-label="t('enable_exit_node_help')" role="img"></i>
+                  </div>
+                  <div class="config-compact-field config-compact-field--inline config-compact-field--top">
+                    <div class="config-compact-label flex items-center gap-1">
+                      <label for="subnet-proxy">{{ t('proxy_cidrs') }}</label>
+                      <i class="pi pi-question-circle config-help-tip" tabindex="0"
+                        v-tooltip.top="{ value: t('proxy_cidrs_help'), escape: false }" role="img"></i>
+                    </div>
+                    <div class="config-compact-control flex flex-col gap-y-2">
+                      <AutoComplete id="subnet-proxy" v-model="curNetwork.proxy_cidrs"
+                        :placeholder="t('chips_placeholder_typeahead', ['10.0.0.0/24'])" multiple fluid
+                        :suggestions="inetSuggestions" @complete="searchInetSuggestions"
+                        @keydown.capture="onChipsKeydown($event, curNetwork.proxy_cidrs ??= [], { typeahead: true })" />
+                      <div class="config-nested-option flex items-center gap-2 flex-wrap">
+                        <Checkbox v-model="curNetwork.proxy_forward_by_system"
+                          input-id="proxy_forward_by_system" :binary="true" />
+                        <label for="proxy_forward_by_system">{{ t('proxy_forward_by_system') }}</label>
+                        <i class="pi pi-question-circle config-help-tip" tabindex="0"
+                          v-tooltip.top="{ value: t('proxy_forward_by_system_help'), escape: false }"
+                          :aria-label="t('proxy_forward_by_system_help')" role="img"></i>
                       </div>
                     </div>
                   </div>
@@ -1691,6 +1661,12 @@ function removeVpnPortalClient(index: number) {
       background: var(--surface-hover, rgba(255, 255, 255, 0.06));
     }
   }
+}
+
+/* 子网代理等字段下的附属选项（如系统转发） */
+.config-nested-option {
+  padding-left: 0.75rem;
+  border-left: 2px solid var(--et-border-color, #e2e8f0);
 }
 
 /* 问号提示图标：内联对齐 + 固定尺寸，避免撑高所在行 */
