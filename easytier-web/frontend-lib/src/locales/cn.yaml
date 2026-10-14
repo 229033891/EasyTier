@@ -1171,7 +1171,7 @@ mode:
   service: 服务模式
   remote: 远程模式
   normal_description: 在本机随 GUI 一起运行。关闭 GUI 后网络也会停止。
-  service_description: 安装为系统服务，支持开机自启；关闭窗口后仍在后台运行，托盘「退出」会停止服务。
+  service_description: 安装为系统服务（开机自启网络）；同时注册 GUI 登录自启并以托盘运行，关闭窗口后网络仍在；托盘「退出」会停止服务。
   remote_description: 通过 RPC 管理其它机器上已运行的节点。本机不运行核心网络；若要对端接入控制台，请在对端配置。
   service_status: 服务状态
   service_status_running: 运行中
@@ -1195,7 +1195,7 @@ mode:
   service_config_empty: 服务配置不能为空
   rpc_connection_failed: "RPC 连接失败：{error}"
   autostart: 开机自启
-  autostart_hint: 开机自启由服务模式提供。切换为「服务模式」并保存后，EasyTier 将注册为系统服务，开机自动启动并在后台运行。
+  autostart_hint: 服务模式会注册系统服务（开机启动网络），并注册 GUI 登录自启（托盘显示状态）。首次打开 GUI 后生效；托盘「退出」会停止服务。
 
 config-server:
   title: 配置服务器

@@ -1,5 +1,6 @@
 import type { ServiceStatus } from '~/composables/backend'
 import { Menu, MenuItem, PredefinedMenuItem } from '@tauri-apps/api/menu'
+import { resolveResource } from '@tauri-apps/api/path'
 import { TrayIcon } from '@tauri-apps/api/tray'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import pkg from '~/../package.json'
@@ -230,6 +231,17 @@ function resolveTrayRunState(state: TrayRunState | boolean): TrayRunState {
   return state
 }
 
+async function resolveTrayIconPath(state: TrayRunState): Promise<string> {
+  const relative = TRAY_ICONS[state]
+  try {
+    return await resolveResource(relative)
+  }
+  catch {
+    // Dev / unpackaged builds: same relative path the old inactive icon used.
+    return relative
+  }
+}
+
 async function applyTrayIcon(state: TrayRunState) {
   if (appliedTrayState === state)
     return
@@ -237,7 +249,7 @@ async function applyTrayIcon(state: TrayRunState) {
   if (!tray)
     return
   // Only remember state after setIcon succeeds so a failed swap can be retried.
-  await tray.setIcon(TRAY_ICONS[state])
+  await tray.setIcon(await resolveTrayIconPath(state))
   appliedTrayState = state
 }
 

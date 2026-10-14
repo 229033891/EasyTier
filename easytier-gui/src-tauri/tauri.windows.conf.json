@@ -4,7 +4,10 @@
         "resources": [
             "./wintun.dll",
             "./Packet.dll",
-            "./*.sys"
+            "./*.sys",
+            "icons/tray-idle.ico",
+            "icons/tray-connecting.ico",
+            "icons/tray-running.ico"
         ],
         "windows": {
             "webviewInstallMode": {

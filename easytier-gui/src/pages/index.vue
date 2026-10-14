@@ -42,6 +42,7 @@ import {
   saveFileLogLevel,
   saveMode,
 } from '~/composables/mode'
+import { syncGuiAutostart } from '~/composables/gui_autostart'
 import {
   beginTrayConnecting,
   buildTrayMenuItems,
@@ -540,7 +541,14 @@ async function onModeSave() {
     }
     finally {
       isModeSaving.value = false
-      await endTrayConnecting(clientRunning.value)
+      try {
+        await endTrayConnecting(clientRunning.value)
+      }
+      catch (e) {
+        console.warn('Failed to settle tray icon after mode save', e)
+      }
+      // Service owns the network at boot; GUI must also autostart for the tray.
+      await syncGuiAutostart(currentMode.value.mode === 'service')
     }
   }
 
@@ -687,7 +695,12 @@ async function onStartService() {
   }
   finally {
     isModeSaving.value = false
-    await endTrayConnecting(clientRunning.value)
+    try {
+      await endTrayConnecting(clientRunning.value)
+    }
+    catch (e) {
+      console.warn('Failed to settle tray icon after start service', e)
+    }
     await refreshTrayMenu()
   }
 }
@@ -737,7 +750,12 @@ async function onRestartService() {
       }
       finally {
         isModeSaving.value = false
-        await endTrayConnecting(clientRunning.value)
+        try {
+          await endTrayConnecting(clientRunning.value)
+        }
+        catch (e) {
+          console.warn('Failed to settle tray icon after restart service', e)
+        }
         await refreshTrayMenu()
       }
     },
@@ -788,7 +806,13 @@ async function onUninstallService() {
       }
       finally {
         isModeSaving.value = false
-        await endTrayConnecting(clientRunning.value)
+        try {
+          await endTrayConnecting(clientRunning.value)
+        }
+        catch (e) {
+          console.warn('Failed to settle tray icon after uninstall', e)
+        }
+        await syncGuiAutostart(currentMode.value.mode === 'service')
         await refreshTrayMenu()
       }
     },
@@ -1139,12 +1163,19 @@ onMounted(async () => {
     window.removeEventListener('managed_config_synced_overwrite', onSyncedOverwrite)
   })
   currentMode.value = loadMode()
-  await beginTrayConnecting()
   try {
+    await beginTrayConnecting()
     await initWithMode(currentMode.value)
   }
   finally {
-    await endTrayConnecting(clientRunning.value)
+    try {
+      await endTrayConnecting(clientRunning.value)
+    }
+    catch (e) {
+      console.warn('Failed to settle tray icon after startup init', e)
+    }
+    // Re-assert login autostart so an already-installed service also gets a tray after reboot.
+    await syncGuiAutostart(currentMode.value.mode === 'service')
   }
 
   if (type() === 'android') {

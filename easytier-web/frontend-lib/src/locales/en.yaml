@@ -1172,7 +1172,7 @@ mode:
   service: Service
   remote: Remote
   normal_description: Run EasyTier in this app. Closing the GUI also stops the network.
-  service_description: Install as a system service with start-on-boot; it keeps running after you close the window. Tray Exit stops the service.
+  service_description: Install as a system service (network starts at boot). Also registers the GUI to start at login in the tray; closing the window keeps the network. Tray Exit stops the service.
   remote_description: Manage a node that is already running on another machine via RPC. This PC does not run the core network; configure the config server on the remote side if needed.
   service_status: Service Status
   service_status_running: Running
@@ -1196,7 +1196,7 @@ mode:
   service_config_empty: Service Config cannot be empty
   rpc_connection_failed: "RPC connection failed: {error}"
   autostart: Start on Boot
-  autostart_hint: Auto-start on boot is provided by service mode. After switching to Service mode and saving, EasyTier will be registered as a system service that starts automatically at boot and keeps running in the background.
+  autostart_hint: Service mode registers a system service (network at boot) and registers the GUI for login autostart (tray status). Takes effect after you open the GUI once; Tray Exit stops the service.
 
 config-server:
   title: Config Server

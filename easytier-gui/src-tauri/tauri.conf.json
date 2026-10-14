@@ -14,6 +14,11 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
+    "resources": [
+      "icons/tray-idle.ico",
+      "icons/tray-connecting.ico",
+      "icons/tray-running.ico"
+    ],
     "createUpdaterArtifacts": false,
     "windows": {
       "nsis": {

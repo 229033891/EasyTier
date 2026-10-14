@@ -1483,12 +1483,21 @@ fn check_sudo() -> bool {
     let is_elevated = elevate::Command::is_elevated();
     if !is_elevated {
         let exe_path = get_exe_path();
-        let stdcmd = std::process::Command::new(&exe_path);
+        let mut stdcmd = std::process::Command::new(&exe_path);
+        // Keep GUI flags (e.g. --startup) across the UAC relaunch.
+        for arg in std::env::args().skip(1) {
+            stdcmd.arg(arg);
+        }
         elevate::Command::new(stdcmd)
             .output()
             .expect("Failed to run elevated command");
     }
     is_elevated
+}
+
+#[cfg(not(target_os = "android"))]
+fn launched_as_startup() -> bool {
+    std::env::args().any(|a| a == "--startup" || a == "--hidden")
 }
 
 mod manager;
@@ -1511,13 +1520,20 @@ pub fn run_gui() -> std::process::ExitCode {
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
     {
         builder = builder.plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
-            app.webview_windows()
-                .values()
-                .next()
-                .expect("Sorry, no window found")
-                .set_focus()
-                .expect("Can't Bring Window to Focus");
+            // Autostart may leave the window hidden in the tray — second launch must show it.
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.show();
+                let _ = window.unminimize();
+                let _ = window.set_focus();
+                let _ = set_dock_visibility(app.clone(), true);
+            }
         }));
+        // 2.0.0 API: init() (Builder exists on newer crates; keep init for the pinned dep).
+        // Login launch stays in the tray until the user opens the window (--startup).
+        builder = builder.plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            Some(vec!["--startup"]),
+        ));
     }
 
     builder = builder
@@ -1551,24 +1567,36 @@ pub fn run_gui() -> std::process::ExitCode {
 
             // for tray icon, menu need to be built in js
             #[cfg(not(target_os = "android"))]
-            let _tray_menu = TrayIconBuilder::with_id("main")
-                .show_menu_on_left_click(false)
-                .on_tray_icon_event(|tray, event| {
-                    if let TrayIconEvent::Click {
-                        button: MouseButton::Left,
-                        button_state: MouseButtonState::Up,
-                        ..
-                    } = event
-                    {
-                        let app = tray.app_handle();
-                        toggle_window_visibility(app);
+            {
+                // Template icons are a macOS menu-bar concept; on Windows they can
+                // render blank / washed out in the notification area.
+                let _tray_menu = TrayIconBuilder::with_id("main")
+                    .show_menu_on_left_click(false)
+                    .on_tray_icon_event(|tray, event| {
+                        if let TrayIconEvent::Click {
+                            button: MouseButton::Left,
+                            button_state: MouseButtonState::Up,
+                            ..
+                        } = event
+                        {
+                            let app = tray.app_handle();
+                            toggle_window_visibility(app);
+                        }
+                    })
+                    .icon(tauri::image::Image::from_bytes(include_bytes!(
+                        "../icons/icon.png"
+                    ))?)
+                    .icon_as_template(cfg!(target_os = "macos"))
+                    .build(app)?;
+
+                // Default window is created visible; hide immediately on login autostart.
+                if launched_as_startup() {
+                    if let Some(window) = app.get_webview_window("main") {
+                        let _ = window.hide();
                     }
-                })
-                .icon(tauri::image::Image::from_bytes(include_bytes!(
-                    "../icons/icon.png"
-                ))?)
-                .icon_as_template(true)
-                .build(app)?;
+                    let _ = set_dock_visibility(app.handle().clone(), false);
+                }
+            }
 
             #[cfg(target_os = "android")]
             android_vpn_watchdog::start(app.handle().clone());
