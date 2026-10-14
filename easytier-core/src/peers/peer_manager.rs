@@ -356,10 +356,10 @@ fn select_reconciled_peer(
 /// every rule and publish the result. Runs off the packet hot path (~1 s); the
 /// hot path only ever reads the already-selected `active_peer`.
 ///
-/// `select_by = priority` reuses `PeerMap::resolve_exit_node_peers` (list order
-/// + reachability); `select_by = quality` (P4) ranks the same candidates by
-/// their precomputed composite cost. `failover_when = degraded` additionally
-/// drops candidates whose cost exceeds `quality_degraded_cost`.
+/// `select_by = priority` reuses `PeerMap::resolve_exit_node_peers`
+/// (list order + reachability); `select_by = quality` (P4) ranks the same
+/// candidates by their precomputed composite cost. `failover_when = degraded`
+/// additionally drops candidates whose cost exceeds `quality_degraded_cost`.
 ///
 /// The selection awaits, so the pass must **not** publish a snapshot cloned
 /// before those awaits: a concurrent `observe_ips` (P3) would be clobbered and
