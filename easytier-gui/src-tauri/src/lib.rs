@@ -115,7 +115,9 @@ fn set_dock_visibility(app: tauri::AppHandle, visible: bool) -> Result<(), Strin
 
 #[tauri::command]
 fn parse_network_config(cfg: NetworkConfig) -> Result<String, String> {
-    let toml = cfg.gen_config().map_err(|e| e.to_string())?;
+    let toml = cfg
+        .gen_config_validated_for_run()
+        .map_err(|e| e.to_string())?;
     Ok(toml.dump())
 }
 
@@ -133,7 +135,9 @@ async fn run_network_instance(
     save: bool,
 ) -> Result<(), String> {
     let client_manager = get_client_manager!()?;
-    let toml_config = cfg.gen_config().map_err(|e| e.to_string())?;
+    let toml_config = cfg
+        .gen_config_validated_for_run()
+        .map_err(|e| e.to_string())?;
     client_manager
         .pre_run_network_instance_hook(&app, &toml_config, manager::PersistedConfigSource::User)
         .await?;
@@ -402,7 +406,9 @@ async fn update_network_config_state(
             .handle_get_network_config_with_source(app.clone(), instance_id)
             .await
             .map_err(|e| e.to_string())?;
-        let toml_config = cfg.gen_config().map_err(|e| e.to_string())?;
+        let toml_config = cfg
+            .gen_config_validated_for_run()
+            .map_err(|e| e.to_string())?;
         client_manager
             .pre_run_network_instance_hook(
                 &app,
@@ -490,6 +496,7 @@ async fn save_network_config(app: AppHandle, cfg: NetworkConfig) -> Result<(), S
         .instance_id()
         .parse()
         .map_err(|e: uuid::Error| e.to_string())?;
+    cfg.validate_for_persist().map_err(|e| e.to_string())?;
     let client_manager = get_client_manager!()?;
     client_manager
         .handle_save_network_config(app.clone(), instance_id, cfg.clone())

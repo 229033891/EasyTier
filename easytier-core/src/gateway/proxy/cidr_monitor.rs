@@ -277,6 +277,10 @@ impl ProxyCidrMonitor {
             // Cache whether the exit peer was reachable in the previous iteration.
             // Only invalidate the stable-state skip when reachability toggles.
             let mut last_exit_node_reachable = false;
+            // Domain policy routes learn `/32`s via MagicDNS `observe_ips` without
+            // bumping peer-info time. Track LocalRouteTable.revision so L2 install
+            // still runs within the ~1s reconcile window (§7.1 / §9.8.4).
+            let mut last_local_route_revision = None;
 
             loop {
                 crate::foundation::time::sleep(Duration::from_secs(1)).await;
@@ -292,6 +296,9 @@ impl ProxyCidrMonitor {
                     .as_ref()
                     .map(|previous| !Arc::ptr_eq(previous, &runtime_config))
                     .unwrap_or(true);
+                let local_route_revision = peer_manager.local_route_table().revision();
+                let local_routes_changed =
+                    last_local_route_revision != Some(local_route_revision);
 
                 // Check exit-node reachability only when exit nodes are configured,
                 // and only skip the stable-state fast-path when reachability changes.
@@ -310,6 +317,7 @@ impl ProxyCidrMonitor {
                 if last_update == Some(update)
                     && !runtime_config_changed
                     && !exit_reachability_changed
+                    && !local_routes_changed
                 {
                     continue;
                 }
@@ -326,6 +334,7 @@ impl ProxyCidrMonitor {
                 last_update = Some(update);
                 last_runtime_config = Some(runtime_config.clone());
                 last_local_exit_default = diff.local_exit_default;
+                last_local_route_revision = Some(local_route_revision);
                 current = diff.current;
                 if cidrs_changed || local_exit_changed {
                     self.events.emit(CoreEvent::ProxyCidrsUpdated {

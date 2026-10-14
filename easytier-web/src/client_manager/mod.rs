@@ -25,7 +25,7 @@ use std::{
 };
 
 use dashmap::DashMap;
-use easytier::common::config::{ConfigSource, config_source_from_rpc};
+use easytier::common::config::{ConfigSource, NetworkConfigExt, config_source_from_rpc};
 use easytier::proto::{
     api::manage::{
         CollectNetworkInfoRequest, CollectNetworkInfoResponse, DeleteNetworkInstanceRequest,
@@ -724,6 +724,12 @@ impl ClientManager {
     ) -> Result<SaveNetworkConfigResult, RemoteClientError<sea_orm::DbErr>> {
         let (user_id, machine_id) = identify;
         let inst_id_str = inst_id.to_string();
+
+        // Reject invalid `[[policy_routes]]` before SQLite write (NFR-6).
+        // Keep this off bare `gen_config()` so read-only reconcile stays tolerant.
+        config
+            .validate_for_persist()
+            .map_err(|error| RemoteClientError::Other(error.to_string()))?;
 
         // 1) Persist (preserves `disabled` on conflict). Brand-new rows INSERT as
         // disabled in the same TX (existence check is inside the TX) so heartbeat

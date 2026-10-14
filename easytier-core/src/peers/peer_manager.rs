@@ -80,8 +80,8 @@ use super::{
         ArcRoute, DisabledRoute, ForeignNetworkRouteInfoMap, NextHopPolicy, Route, RouteInterface,
         local_route_table::{
             FailoverWhen, LocalRouteTable, PolicyRouteConfig, RouteLookup, RuleState, RuleUpdate,
-            SelectBy, build_rules_from_config, build_snapshot, is_degraded_cost,
-            validate_domain_rules_against_dns, validate_policy_route_configs, within_switch_band,
+            SelectBy, build_snapshot, is_degraded_cost, validate_and_build_policy_rules,
+            within_switch_band,
         },
         peer_ospf_route::PeerRoute,
     },
@@ -281,16 +281,13 @@ fn build_local_route_table(
     dns_config: Option<&crate::config::DnsConfig>,
     tld_dns_zone: &str,
 ) -> anyhow::Result<LocalRouteTable> {
+    // Zero-regression: exit_nodes-only configs keep the empty table and step-4
+    // live list (`update_exit_nodes`). Do **not** bake exit_nodes into sugar
+    // rules here — that would freeze hot-patched exit peers on construct-time A.
     if policy_routes.is_empty() {
         return Ok(LocalRouteTable::empty());
     }
-    let validated = validate_policy_route_configs(policy_routes)
-        .map_err(|error| anyhow::anyhow!("invalid policy_routes: {error}"))?;
-    // P3 (§9.8.5 / C3): reject `domains` that MagicDNS guard rules would
-    // silently drop, instead of building a rule that never learns an IP.
-    validate_domain_rules_against_dns(&validated, dns_config, tld_dns_zone)
-        .map_err(|error| anyhow::anyhow!("invalid policy_routes: {error}"))?;
-    let rules = build_rules_from_config(&validated, exit_nodes)
+    let rules = validate_and_build_policy_rules(policy_routes, exit_nodes, dns_config, tld_dns_zone)
         .map_err(|error| anyhow::anyhow!("invalid policy_routes: {error}"))?;
     let table = LocalRouteTable::empty();
     if !rules.is_empty() {

@@ -880,7 +880,11 @@ where
         request: ValidateConfigRequest,
     ) -> rpc_types::error::Result<ValidateConfigResponse> {
         Ok(ValidateConfigResponse {
-            toml_config: request.config.unwrap_or_default().gen_config()?.dump(),
+            toml_config: request
+                .config
+                .unwrap_or_default()
+                .gen_config_validated_for_run()?
+                .dump(),
         })
     }
 
@@ -892,7 +896,7 @@ where
         let config = request
             .config
             .ok_or_else(|| anyhow::anyhow!("config is required"))?
-            .gen_config()?;
+            .gen_config_validated_for_run()?;
         let requested_id = request.inst_id.map(Into::into);
         let requested_source = config_source_from_rpc(request.source);
         let management = self.management.clone();

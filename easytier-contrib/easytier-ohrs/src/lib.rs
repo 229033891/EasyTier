@@ -770,7 +770,10 @@ fn convert_toml_to_network_config_inner(toml_text: &str) -> Result<String, Strin
 fn parse_network_config_inner(cfg_json: &str) -> bool {
     serde_json::from_str::<NetworkConfig>(cfg_json)
         .ok()
-        .and_then(|cfg| cfg.gen_config().ok())
+        // JS uses this as "can this config actually run?", so it must agree with
+        // `run_network_instance_from_json` — otherwise an invalid `[[policy_routes]]`
+        // probes as `true` and only fails later, with a worse error.
+        .and_then(|cfg| cfg.gen_config_validated_for_run().ok())
         .is_some()
 }
 
@@ -795,7 +798,7 @@ pub(crate) fn run_network_instance_from_json(cfg_json: &str) -> bool {
         return started;
     }
 
-    let cfg = match config.gen_config() {
+    let cfg = match config.gen_config_validated_for_run() {
         Ok(toml) => toml,
         Err(e) => {
             ohrs_log_error!("[Rust] parse config failed {}", e);

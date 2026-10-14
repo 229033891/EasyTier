@@ -3,7 +3,7 @@
 ## Status
 
 - Status: **Roadmap**（Design / 开放问题已拍板；**前置 P-T1 已完成**；**P1 – P5 已落地**；**P6 已落地**（GUI/Web + 文档 + CI 性能门禁；仅剩 §16.2 跨平台验证需真实环境），见 §15.2 – §15.7「实施进度」）
-- 最近审阅：2026-10-14（P6 已落地；审阅修复 + 配置页「流量与路由」同级面板收拢出口/策略/网关；仅剩跨平台验证）
+- 最近审阅：2026-10-14（P0：L2 `revision` 门控；`policy_routes` 持久化/运行门禁已覆盖全入口；**不**把 exit_nodes-only 烘焙进 LocalRouteTable）
 - 范围：把**子网代理**、**出口节点**、**域名路由**统一为一个模型 —— **A 上配置路由，B 做网关**
 - 现状依据：[`../current/traffic-steering.md`](../current/traffic-steering.md)（流量导流 SoT）
 - DNS 现状：[`../current/magic-dns.md`](../current/magic-dns.md)
@@ -1853,9 +1853,11 @@ if local_route_snapshot.is_empty() {
 - **观测点**：`ObservingDnsResolver` 包装上游 resolver，在**返回答案**处订阅（而非查 `DnsConfig.hosts`）—— 天然尊重四级解析优先级（hosts → 路由 zone → split → 上游）。DNS 解析器为手写最小实现（支持压缩指针、循环上限 128），**不给 core 引入 hickory 依赖**。
 - **同步更新**：`resolve()` 内**同步**调用 `PeerManagerCore::observe_dns_answer` → `LocalRouteTable::observe_ips`，L3（`by_ip`）在调用方拿到应答前即就绪；L2 的 OS 路由仍受 1 s 对账约束（§9.8.4）。
 - **C4 过滤**：`qname` 落在 `tld_dns_zone`（默认 `et.net.`）内则跳过观测，避免 `domains = ["*.et.net"]` 劫持 mesh 流量。共用 `local_route_table::name_is_in_zone`。
-- **配置预检**：`build_local_route_table` 在建表前调用 `validate_domain_rules_against_dns`，硬失败（与既有 `invalid policy_routes` 一致）。`DnsConfig` 经 `PortablePeerManagerConfig::dns_config`（`#[serde(default)]`）传入。
-- **零回归**：`policy_routes` 为空 → 直接返回空表；观测器仅在 `[[policy_routes]]` 含 `domains` 时才可能改动快照。
+- **配置预检**：`build_local_route_table` 与持久化入口共用 `validate_and_build_policy_rules`（经 `validate_config_loader_policy_routes` / `NetworkConfigExt::validate_for_persist` / `gen_config_validated_for_run`）。**不**塞进通用 `gen_config()`，以免污染 reconcile/export 读路径。zone 取自 `flags.tld_dns_zone`。
+- ✅ **P0 #2 门禁入口补全（2026-10-14）**：除 easytier-web / GUI 手动路径外，已覆盖 GUI `start_enabled_network`（开机自启）、WASI `ValidateConfig`/`RunNetworkInstance`、OHRS `run_network_instance_from_json` / nearby validate / `validate_config_json` / `parse_network_config`（JS 侧「能否运行」探测，须与 run 判定一致）、browser `generate_config`；`merge_network_config_toml` 在**合并结果确实含 `[[policy_routes]]` 时**才做 `TomlConfigLoader` 往返并 `validate_config_loader_policy_routes`（`has_policy_routes` 缺位保留原表时预合并校验不准；未配该表的用户零开销、也不会因无关遗留键解析失败而新增失败）。读路径（`runtime_reconcile`、ohrs export）仍用裸 `gen_config()`。
+- **零回归**：`policy_routes` 为空 → **空表**（即使有 `exit_nodes`）；exit 仍走次序 4 活列表 + `update_exit_nodes` 热补丁。观测器仅在含 `domains` 时改快照。
 - **修掉一个 P1 遗留竞态**：对账循环原先走 `load → clone →（循环内含 await）→ store`，会**覆盖并发的 `observe_ips`**（P3 落地后才变得可达，表现为「刚学到的 `/32` 偶发消失」）。改用 `LocalRouteTable::apply_peer_updates`（`ArcSwap::rcu`，CAS 重试）只发布 `(idx, active_peer, state)`，落在**最新**快照上，观测结果不再丢失。回归测试：`peer_updates_preserve_observed_ips`。
+- ✅ **P0 修复（2026-10-14）**：`cidr_monitor` 对 `LocalRouteTable.revision` 门控（`observe_ips` / `store` / **仅 `RuleState` 翻转**的 `apply_peer_updates` 自增）。曾误把 exit_nodes-only 烘焙进表导致热补丁失效，已撤回。
 
 **P3 已知偏差 / 限制**
 
@@ -1863,6 +1865,7 @@ if local_route_snapshot.is_empty() {
 2. **route-zone 同名守卫仅运行期可见**：该守卫依赖 peer 通告的 zone（运行期状态），配置期无法判定，故预检只覆盖 route TLD 与 split 父 zone 两类。
 3. **未做「IP 级」兜底**：若某域名解析到 mesh 虚拟 IP 但 qname 不在 TLD zone 内（例如 hosts 显式指向虚拟 IP），仍会被学习为 `/32`。留待后续（与 §10.2 CDN 共享 IP 一并处理）。
 4. 验收场景 10–11（item 8）未做，需真实环境（文档/UI item 7 已随 P6 完成）。
+5. **仍缺**：运行期热替换 `policy_routes`（须重启；exit_nodes 热更新仍走活列表）、FR-9 运行态可观测、`observe_ips` 写路径批合并 / 增量索引、CI 门禁对齐 `MAX_POLICY_ROUTES`。
 
 ---
 

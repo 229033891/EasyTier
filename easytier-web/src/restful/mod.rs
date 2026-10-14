@@ -371,7 +371,7 @@ impl RestfulServer {
     async fn handle_generate_config(
         Json(req): Json<GenerateConfigRequest>,
     ) -> Result<Json<GenerateConfigResponse>, HttpHandleError> {
-        let config = req.config.gen_config();
+        let config = req.config.gen_config_validated_for_run();
         match config {
             Ok(c) => Ok(GenerateConfigResponse {
                 error: None,

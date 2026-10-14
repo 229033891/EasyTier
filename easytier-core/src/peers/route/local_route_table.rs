@@ -12,11 +12,18 @@
 //!
 //! The L2 proxy-CIDR reconciler reads `l2_contributing_cidrs()` from the same
 //! `ArcSwap` snapshot, so both planes derive from one source of truth.
+//!
+//! `revision` bumps whenever the published snapshot changes (including DNS
+//! `observe_ips`). The L2 monitor must watch this — peer-info timestamps alone
+//! do not move when only observed `/32`s change.
 
 use std::{
     collections::{BTreeSet, HashMap, VecDeque},
     net::{IpAddr, Ipv4Addr},
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
 };
 
 use arc_swap::ArcSwap;
@@ -134,6 +141,8 @@ pub struct LocalRouteSnapshot {
 
 pub struct LocalRouteTable {
     snapshot: ArcSwap<LocalRouteSnapshot>,
+    /// Monotonic generation for L2 / observers. Not on the packet hot path.
+    revision: AtomicU64,
 }
 
 /// One rule's reconcile verdict (P4/P5), applied by `apply_peer_updates`.
@@ -174,11 +183,24 @@ impl LocalRouteTable {
     pub fn empty() -> Self {
         Self {
             snapshot: ArcSwap::from_pointee(LocalRouteSnapshot::default()),
+            revision: AtomicU64::new(0),
         }
+    }
+
+    /// Generation counter for L2 reconcile skip gates (`cidr_monitor`).
+    #[inline]
+    pub fn revision(&self) -> u64 {
+        self.revision.load(Ordering::Relaxed)
+    }
+
+    fn bump_revision(&self) {
+        // Inequality-only signal for the 1s L2 poll; Relaxed is enough.
+        self.revision.fetch_add(1, Ordering::Relaxed);
     }
 
     pub fn store(&self, snap: LocalRouteSnapshot) {
         self.snapshot.store(Arc::new(snap));
+        self.bump_revision();
     }
 
     pub fn load_full(&self) -> Arc<LocalRouteSnapshot> {
@@ -325,6 +347,9 @@ impl LocalRouteTable {
             changed = true;
             Arc::new(new)
         });
+        if changed {
+            self.bump_revision();
+        }
         changed
     }
 
@@ -338,7 +363,9 @@ impl LocalRouteTable {
         if updates.is_empty() && peer_quality.is_empty() {
             return;
         }
+        let mut l2_state_changed = false;
         self.snapshot.rcu(|old| {
+            l2_state_changed = false;
             let mut any = old.peer_quality != *peer_quality;
             for update in updates {
                 let Some(r) = old.rules.get(update.idx) else {
@@ -350,7 +377,11 @@ impl LocalRouteTable {
                     || r.resolved_peers != update.resolved_peers
                 {
                     any = true;
-                    break;
+                    if r.state != update.state {
+                        // Only RuleState flips change `l2_contributing_cidrs`.
+                        l2_state_changed = true;
+                    }
+                    // Keep scanning for state flips even after `any` is set.
                 }
             }
             if !any {
@@ -369,6 +400,9 @@ impl LocalRouteTable {
             }
             Arc::new(new)
         });
+        if l2_state_changed {
+            self.bump_revision();
+        }
     }
 }
 
@@ -814,6 +848,42 @@ pub fn validate_policy_route_configs(
     configs.iter().map(PolicyRouteConfig::validate).collect()
 }
 
+/// Validate + compile `[[policy_routes]]` (and optional `exit_nodes` sugar).
+///
+/// Shared by PeerManager construct and persist-only gates. Callers that keep the
+/// empty-table zero-regression path must **not** invoke this when
+/// `policy_routes` is empty solely to bake `exit_nodes` — that belongs on the
+/// live `update_exit_nodes` / step-4 path.
+pub fn validate_and_build_policy_rules(
+    configs: &[PolicyRouteConfig],
+    exit_nodes: &[IpAddr],
+    dns_config: Option<&DnsConfig>,
+    tld_dns_zone: &str,
+) -> Result<Vec<RouteRule>, PolicyRouteError> {
+    let validated = validate_policy_route_configs(configs)?;
+    validate_domain_rules_against_dns(&validated, dns_config, tld_dns_zone)?;
+    build_rules_from_config(&validated, exit_nodes)
+}
+
+/// Persist / run gate: no-op when there are no `[[policy_routes]]`.
+pub fn validate_config_loader_policy_routes(
+    config: &impl crate::config::toml::ConfigLoader,
+) -> Result<(), anyhow::Error> {
+    let policy_routes = config.get_policy_routes();
+    if policy_routes.is_empty() {
+        return Ok(());
+    }
+    let zone = config.get_flags().tld_dns_zone;
+    validate_and_build_policy_rules(
+        &policy_routes,
+        &config.get_exit_nodes(),
+        config.get_dns_config().as_ref(),
+        &zone,
+    )
+    .map_err(|error| anyhow::anyhow!("invalid policy_routes: {error}"))?;
+    Ok(())
+}
+
 /// P3 (§9.8.5 / C3): config-time precheck for `domains` rules.
 ///
 /// MagicDNS guard rules silently drop static-host entries that collide with the
@@ -1002,8 +1072,11 @@ mod tests {
         snap.rules[0].active_peer = Some(1);
         snap.rules[0].state = RuleState::Stable;
         table.store(snap);
+        let rev_after_store = table.revision();
 
         assert!(table.observe_ips("api.example.com", &["203.0.113.7".parse().unwrap()]));
+        // L2 monitor skip gate must see this bump even when peer-info is idle.
+        assert!(table.revision() > rev_after_store);
         // L3: the observed /32 resolves through the rule.
         assert_eq!(
             table.lookup(&"203.0.113.7".parse().unwrap(), None),

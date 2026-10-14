@@ -33,7 +33,7 @@ pub(super) fn validate_config_json(
         .map_err(|e| format!("parse config json failed: {}", e))?;
     let config = normalize_config_id(config, config_id)?;
     config
-        .gen_config()
+        .validate_for_persist()
         .map_err(|e| format!("generate toml failed: {}", e))?;
     Ok(config)
 }

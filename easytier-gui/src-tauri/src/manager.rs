@@ -1018,7 +1018,7 @@ impl GUIClientManager {
         let client = self
             .get_rpc_client(app.clone())
             .ok_or_else(|| anyhow::anyhow!("RPC client not found"))?;
-        let toml_config = config.gen_config()?;
+        let toml_config = config.gen_config_validated_for_run()?;
         self.pre_run_network_instance_hook(app, &toml_config, source)
             .await
             .map_err(|e| anyhow::anyhow!(e))?;

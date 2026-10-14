@@ -357,7 +357,7 @@ impl NearbyWebClientService {
             .config
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("HarmonyOS nearby deployment requires a config"))?;
-        config.gen_config()?;
+        config.gen_config_validated_for_run()?;
         let config_id = config
             .instance_id
             .as_deref()

@@ -12,7 +12,9 @@ use crate::config::{
         TomlConfigLoader, VpnPortalClientConfig, VpnPortalConfig, gen_default_flags,
     },
 };
-use crate::peers::route::local_route_table::PolicyRouteConfig;
+use crate::peers::route::local_route_table::{
+    PolicyRouteConfig, validate_config_loader_policy_routes,
+};
 
 /// Proto → TOML for one `[[policy_routes]]` entry.
 ///
@@ -132,6 +134,23 @@ pub(crate) fn managed_credential_to_proto(
 pub trait NetworkConfigExt {
     fn gen_config(&self) -> Result<TomlConfigLoader, anyhow::Error>;
     fn new_from_config(config: impl ConfigLoader) -> Result<NetworkConfig, anyhow::Error>;
+
+    /// Materialize TOML **and** reject invalid `[[policy_routes]]`.
+    ///
+    /// Use for run / validate / generate-preview / persist. Do **not** use on
+    /// read-only helpers that only need flags or credentials from a possibly
+    /// legacy row (`runtime_reconcile`, ohrs export, …).
+    fn gen_config_validated_for_run(&self) -> Result<TomlConfigLoader, anyhow::Error> {
+        let cfg = self.gen_config()?;
+        validate_config_loader_policy_routes(&cfg)?;
+        Ok(cfg)
+    }
+
+    /// Persist gate without consuming the TOML dump (GUI localStorage save).
+    fn validate_for_persist(&self) -> Result<(), anyhow::Error> {
+        let cfg = self.gen_config()?;
+        validate_config_loader_policy_routes(&cfg)
+    }
 }
 
 #[cfg(all(
@@ -270,7 +289,22 @@ pub(crate) fn merge_network_config_toml(
         generated.insert("flags".to_owned(), toml::Value::Table(merged_flags));
     }
 
-    toml::to_string_pretty(&generated).context("failed to serialize the merged TOML document")
+    let merged = toml::to_string_pretty(&generated)
+        .context("failed to serialize the merged TOML document")?;
+    // Validate the *merged* document, not the form patch alone: when
+    // `has_policy_routes` is absent we may keep the original `[[policy_routes]]`,
+    // so a pre-merge check on `config` would be wrong (false reject / false accept).
+    //
+    // Gated on the merged document actually carrying the table: a browser user who
+    // never configured policy routes must pay nothing and must not newly fail here
+    // because some unrelated *legacy* key happens to be unparseable by
+    // `TomlConfigLoader` (the previous merge had no such round-trip).
+    if generated.contains_key("policy_routes") {
+        let loader = TomlConfigLoader::new_from_str(&merged)
+            .context("failed to parse the merged TOML document")?;
+        validate_config_loader_policy_routes(&loader)?;
+    }
+    Ok(merged)
 }
 
 fn parse_peer(peer: &manage::NetworkPeerConfig) -> Result<Option<PeerConfig>, anyhow::Error> {
@@ -1147,6 +1181,87 @@ mod tests {
         assert!(clear.gen_config().unwrap().get_policy_routes().is_empty());
     }
 
+    #[test]
+    fn gen_config_allows_invalid_policy_routes_for_read_paths() {
+        // Materialize must stay usable for reconcile/export even if a legacy
+        // row has bad policy_routes; persist/run gates use validate_for_persist.
+        let input = NetworkConfig {
+            policy_routes: vec![manage::PolicyRouteConfig {
+                cidr: Some("10.0.0.0/24".to_owned()),
+                domains: vec![],
+                peers: vec!["10.144.0.9".to_owned(), "10.144.0.10".to_owned()],
+                select_by: Some("priority".to_owned()),
+                failover_when: Some("unreachable".to_owned()),
+                if_all_unavailable: Some("closed".to_owned()),
+                require_confirmed: Some(false),
+                quality_degraded_cost: None,
+            }],
+            has_policy_routes: Some(true),
+            ..standalone_config()
+        };
+        assert!(input.gen_config().is_ok());
+        let err = input
+            .validate_for_persist()
+            .expect_err("invalid closed multi-peer");
+        assert!(
+            err.to_string().contains("require_confirmed"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn validate_for_persist_rejects_policy_domain_inside_route_tld() {
+        let input = NetworkConfig {
+            policy_routes: vec![manage::PolicyRouteConfig {
+                cidr: None,
+                domains: vec!["*.et.net".to_owned()],
+                peers: vec!["10.144.0.9".to_owned()],
+                select_by: Some("priority".to_owned()),
+                failover_when: Some("unreachable".to_owned()),
+                if_all_unavailable: Some("open".to_owned()),
+                require_confirmed: Some(false),
+                quality_degraded_cost: None,
+            }],
+            has_policy_routes: Some(true),
+            ..standalone_config()
+        };
+        let err = input.validate_for_persist().expect_err("tld collision");
+        assert!(
+            err.to_string().contains("TLD") || err.to_string().contains("tld"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn validate_for_persist_uses_configured_tld_dns_zone() {
+        // Gate must read flags.tld_dns_zone, not a hardcoded DEFAULT_ET_DNS_ZONE.
+        let input = NetworkConfig {
+            policy_routes: vec![manage::PolicyRouteConfig {
+                cidr: None,
+                domains: vec!["*.corp.example.".to_owned()],
+                peers: vec!["10.144.0.9".to_owned()],
+                select_by: Some("priority".to_owned()),
+                failover_when: Some("unreachable".to_owned()),
+                if_all_unavailable: Some("open".to_owned()),
+                require_confirmed: Some(false),
+                quality_degraded_cost: None,
+            }],
+            has_policy_routes: Some(true),
+            ..standalone_config()
+        };
+        let cfg = input.gen_config().expect("materialize");
+        let mut flags = cfg.get_flags();
+        flags.tld_dns_zone = "corp.example.".to_owned();
+        cfg.set_flags(flags);
+        let err = validate_config_loader_policy_routes(&cfg).expect_err("custom tld");
+        assert!(
+            err.to_string().contains("corp.example")
+                || err.to_string().contains("TLD")
+                || err.to_string().contains("tld"),
+            "unexpected error: {err}"
+        );
+    }
+
     #[cfg(feature = "browser-config")]
     #[test]
     fn browser_merge_clears_policy_routes_only_with_presence() {
@@ -1190,6 +1305,90 @@ network_secret = "secret"
             table.contains_key("policy_routes"),
             "omitted presence must keep [[policy_routes]]: {preserved}"
         );
+    }
+
+    #[cfg(feature = "browser-config")]
+    #[test]
+    fn browser_merge_rejects_invalid_policy_routes_after_merge() {
+        // Invalid form patch with presence must fail on the merged document.
+        let original = r#"
+[network_identity]
+network_name = "net"
+network_secret = "secret"
+"#;
+        let bad = NetworkConfig {
+            policy_routes: vec![manage::PolicyRouteConfig {
+                cidr: Some("10.0.0.0/24".to_owned()),
+                domains: vec![],
+                peers: vec!["10.144.0.9".to_owned(), "10.144.0.10".to_owned()],
+                select_by: Some("priority".to_owned()),
+                failover_when: Some("unreachable".to_owned()),
+                if_all_unavailable: Some("closed".to_owned()),
+                require_confirmed: Some(false),
+                quality_degraded_cost: None,
+            }],
+            has_policy_routes: Some(true),
+            network_name: Some("net".to_owned()),
+            network_secret: Some("secret".to_owned()),
+            ..standalone_config()
+        };
+        let err = merge_network_config_toml(original, &bad).expect_err("invalid closed");
+        assert!(
+            err.to_string().contains("require_confirmed")
+                || err.to_string().contains("policy_routes"),
+            "unexpected error: {err}"
+        );
+
+        // Preserved original [[policy_routes]] must also be gated (omit presence).
+        let original_bad = r#"
+[[policy_routes]]
+cidr = "10.0.0.0/24"
+peers = ["10.144.0.9", "10.144.0.10"]
+select_by = "priority"
+failover_when = "unreachable"
+if_all_unavailable = "closed"
+
+[network_identity]
+network_name = "net"
+network_secret = "secret"
+"#;
+        let omit = NetworkConfig {
+            policy_routes: vec![],
+            has_policy_routes: None,
+            network_name: Some("net".to_owned()),
+            network_secret: Some("secret".to_owned()),
+            ..standalone_config()
+        };
+        let err = merge_network_config_toml(original_bad, &omit)
+            .expect_err("preserved invalid must fail");
+        assert!(
+            err.to_string().contains("require_confirmed")
+                || err.to_string().contains("policy_routes"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[cfg(feature = "browser-config")]
+    #[test]
+    fn browser_merge_without_policy_routes_skips_the_round_trip() {
+        // Zero-regression: a user who never configured policy routes must not pay
+        // the `TomlConfigLoader` round-trip, and must not newly fail merge because
+        // some unrelated legacy key is unparseable (`netns: Option<String>`).
+        let original = r#"
+netns = 12345
+
+[network_identity]
+network_name = "net"
+network_secret = "secret"
+"#;
+        let config = NetworkConfig {
+            network_name: Some("net".to_owned()),
+            network_secret: Some("secret".to_owned()),
+            ..standalone_config()
+        };
+        let merged = merge_network_config_toml(original, &config)
+            .expect("merge must not round-trip when no [[policy_routes]] exists");
+        assert!(!merged.contains("policy_routes"));
     }
 
     #[test]

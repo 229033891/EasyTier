@@ -232,7 +232,8 @@ impl Handler for HostManagementHandler {
             WebClientServiceMethodDescriptor::ValidateConfig => {
                 let request = ValidateConfigRequest::decode(input)?;
                 let network_config = request.config.unwrap_or_default();
-                let config = hosted_network_config(&network_config).gen_config()?;
+                let config = hosted_network_config(&network_config)
+                    .gen_config_validated_for_run()?;
                 Ok(ValidateConfigResponse {
                     toml_config: config.dump(),
                 }
@@ -245,7 +246,8 @@ impl Handler for HostManagementHandler {
                     .config
                     .as_ref()
                     .ok_or_else(|| anyhow::anyhow!("config is required"))?;
-                let config = hosted_network_config(&network_config).gen_config()?;
+                let config = hosted_network_config(&network_config)
+                    .gen_config_validated_for_run()?;
                 let instance_id = request
                     .inst_id
                     .map(Into::into)

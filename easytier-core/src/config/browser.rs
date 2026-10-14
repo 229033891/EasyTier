@@ -15,7 +15,7 @@ fn map_err(error: impl std::fmt::Debug) -> String {
 pub fn generate_config(config_json: &str) -> Result<String, String> {
     let config: NetworkConfig = serde_json::from_str(config_json).map_err(map_err)?;
     config
-        .gen_config()
+        .gen_config_validated_for_run()
         .map(|config| config.dump())
         .map_err(map_err)
 }
