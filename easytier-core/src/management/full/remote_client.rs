@@ -457,19 +457,13 @@ where
 
 /// Fill runtime-assigned fields that storage may still lack (Windows wintun
 /// `dev_name`). Does **not** overwrite user edits already persisted in storage.
-pub fn merge_runtime_only_fields_into_stored(
-    stored: &mut NetworkConfig,
-    runtime: &NetworkConfig,
-) {
+pub fn merge_runtime_only_fields_into_stored(stored: &mut NetworkConfig, runtime: &NetworkConfig) {
     let stored_dev_empty = stored
         .dev_name
         .as_deref()
         .is_none_or(|name| name.is_empty());
     if stored_dev_empty
-        && let Some(name) = runtime
-            .dev_name
-            .as_deref()
-            .filter(|name| !name.is_empty())
+        && let Some(name) = runtime.dev_name.as_deref().filter(|name| !name.is_empty())
     {
         stored.dev_name = Some(name.to_owned());
     }

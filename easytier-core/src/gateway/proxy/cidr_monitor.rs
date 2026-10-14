@@ -297,8 +297,7 @@ impl ProxyCidrMonitor {
                     .map(|previous| !Arc::ptr_eq(previous, &runtime_config))
                     .unwrap_or(true);
                 let local_route_revision = peer_manager.local_route_table().revision();
-                let local_routes_changed =
-                    last_local_route_revision != Some(local_route_revision);
+                let local_routes_changed = last_local_route_revision != Some(local_route_revision);
 
                 // Check exit-node reachability only when exit nodes are configured,
                 // and only skip the stable-state fast-path when reachability changes.

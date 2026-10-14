@@ -3,10 +3,11 @@
 ## Status
 
 - Status: **Ops**（追加式日志；提交前必查）
-- 最近审阅：2026-10-13
+- 最近审阅：2026-10-14
 - 索引：[`../README.md`](../README.md)
 - 本地复现：[`../../script/easytier-test-fast.cmd`](../../script/easytier-test-fast.cmd) / [`../../script/test-easytier.ps1`](../../script/test-easytier.ps1)
 - MSVC 环境：[`windows-msvc-local-build.md`](./windows-msvc-local-build.md)
+- ET Test 前置 job：`.github/workflows/test.yml` → `Check fmt & lockfile` / `Check clippy`
 
 ---
 
@@ -15,18 +16,29 @@
 推送 / 开 PR / 触发 ET Test **之前**，按顺序做：
 
 1. **读本文 §3「仍有效的检查项」**，对照本次改动是否会踩同一类坑。
-2. **按改动面跑本地命令**（在已加载 vcvars + `script/build-common.ps1` 环境变量的终端里）：
+2. **凡改了 Rust（含 `easytier-gui/src-tauri`）先过 fmt + lockfile**（与 CI `check-fmt` 同命令，不依赖 vcvars）：
+
+```bash
+cargo fmt --all -- --check
+cargo metadata --format-version 1 --locked > /dev/null
+```
+
+本地若 `--check` 失败：先 `cargo fmt --all` 再重跑 `--check`，把格式 diff 一并提交。
+
+3. **按改动面跑本地命令**（在已加载 vcvars + `script/build-common.ps1` 环境变量的终端里）：
 
 | 改动面 | 最低命令 |
 |--------|----------|
 | 仅 docs | 跳过 cargo（仍读本文，避免误改代码未查） |
+| 任意 `.rs` | 上表 `cargo fmt --all -- --check` + lockfile（必做） |
 | `easytier-core` / `easytier` | `cargo clippy -p easytier-core -p easytier --bins --tests -- -D warnings` |
 | `easytier-web` | `cargo clippy -p easytier-web --bins --tests -- -D warnings` |
 | `easytier-web` + 多 crate | `.\script\easytier-test-fast.cmd`（或 `test-easytier.ps1 -Profile Fast`） |
 | OpenWrt / Linux / Windows 打包相关 | 至少 `cargo check -p easytier-web`（embed 会编 web） |
+| `frontend-lib` / locales `*.yaml` | 确保纯量值里含 ASCII `: ` 时加引号；本地可 `pnpm --filter easytier-frontend-lib build` |
 
-3. **环境**：`CARGO_PROFILE_DEV_DEBUG=0`、`CARGO_TARGET_DIR=.cache\cargo-target`、vcvars；勿裸跑导致 ring/`-Z7` 误判。
-4. 新失败入库：填 §4 模板，追加到 §5；若已修复，在对应条目标 **已修复** 并移到 §6 或保留并勾选。
+4. **环境**：`CARGO_PROFILE_DEV_DEBUG=0`、`CARGO_TARGET_DIR=.cache\cargo-target`、vcvars；勿裸跑导致 ring/`-Z7` 误判。
+5. 新失败入库：填 §4 模板，追加到 §5；若已修复，在对应条目标 **已修复** 并移到 §6 或保留并勾选。
 
 Agent / 人工均适用：**未完成 §1 不要提交**。
 
@@ -55,6 +67,9 @@ Agent / 人工均适用：**未完成 §1 不要提交**。
 
 改代码时优先自查：
 
+- [ ] **`cargo fmt --all -- --check`**：ET Test 最先跑的 job；手改/合并后的换行、长调用链、`use` 排序都会挂。提交前必过；失败则 `cargo fmt --all`。
+- [ ] **`Cargo.lock` 与元数据一致**：`cargo metadata --format-version 1 --locked`；改过 `Cargo.toml` 依赖后要更新并提交 lock。
+- [ ] **locales YAML 纯量冒号**：`en.yaml` 等纯量值里出现 ASCII `: `（如 `Web source): the …`）必须加双引号；中文全角 `：` 一般没事。否则 `easytier-frontend-lib` / Windows GUI 构建会挂在 `vite:transform-yaml`。
 - [ ] **clippy `clone_on_copy`**：`Uuid` 等 `Copy` 类型不要 `.clone()`，直接传值。
 - [ ] **trait 必须 in scope**：调用 `list_network_configs` 等 `Storage` / `PersistentConfig` 方法时，文件顶部要有 `use …::Storage as _`（测试子模块要自己再 import，`as _` 不会经 `super::*` 继承）。
 - [ ] **clippy `collapsible_if`**：嵌套 `if let` 能合并则合并，或抽 helper（如 `send_runtime_notify`）。
@@ -74,7 +89,7 @@ Agent / 人工均适用：**未完成 §1 不要提交**。
 | 仓库/分支 | |
 | Run | |
 | 失败 job | |
-| 根因一类 | clippy / compile / flaky-test / env |
+| 根因一类 | fmt / lockfile / clippy / compile / flaky-test / env / frontend-yaml |
 | 状态 | 未修复 / 已修复 |
 
 **摘要**：
@@ -87,6 +102,56 @@ Agent / 人工均适用：**未完成 §1 不要提交**。
 ---
 
 ## 5. 失败记录（新 → 旧）
+
+### 2026-10-14 — Check fmt & lockfile：`cargo fmt --check` 未过
+
+| 项 | 内容 |
+|----|------|
+| 仓库/分支 | `229033891/EasyTier` `dev` |
+| Run | ET Test → job **Check fmt & lockfile**（约 2 分钟前失败 / exit 1） |
+| 失败 job | Check fmt & lockfile（`cargo fmt --all -- --check`） |
+| 根因一类 | fmt |
+| 状态 | 已修复（本地已 `cargo fmt --all`，`--check` 通过；待提交推送） |
+
+**摘要**：多处手写/合并后的排版与 rustfmt 不一致，CI 仅做 `--check` 不自动改。涉及文件（本轮 diff）：
+
+| 文件 | 典型差异 |
+|------|----------|
+| `easytier-core/src/config/api_input.rs` | 长 `assert_eq!(…peers…)` 拆行 |
+| `easytier-core/src/gateway/proxy/cidr_monitor.rs` | 布尔赋值并成一行 |
+| `easytier-core/src/management/full/mod.rs` | `register_instance_management_rpc(…)` 并成一行 |
+| `easytier-core/src/management/full/remote_client.rs` | 函数签名 / `let Some` 链格式 |
+| `easytier-core/src/peers/peer_manager.rs` | `validate_and_build_policy_rules`、`.await` 链换行 |
+| `easytier-core/src/wasi/web_client.rs` | `gen_config_validated_for_run` 调用换行 |
+| `easytier-gui/src-tauri/src/manager.rs` | `use` 排序；`GUIConfig::new_with_runtime_fp` / `emit` / `note_observed_runtime_fp` 参数换行 |
+
+本轮日志未见 `Cargo.lock`/`--locked` 失败；lockfile 步骤仍须在改依赖后本地验证。
+
+**防再犯**：
+
+1. 任意 `.rs` 改动提交前：`cargo fmt --all -- --check`（失败则 `cargo fmt --all`）。
+2. 改 `Cargo.toml` 后：`cargo metadata --format-version 1 --locked`。
+3. 不要依赖 IDE「看起来整齐」——以仓库 `rustfmt` / toolchain `1.95` 为准（与 CI `setup-rust-toolchain` 一致）。
+
+**修复说明**：本地已执行 `cargo fmt --all`，随后 `--check` 通过。
+
+---
+
+### 2026-10-14 — Windows GUI / frontend-lib：`en.yaml` 未加引号冒号
+
+| 项 | 内容 |
+|----|------|
+| 仓库/分支 | `229033891/EasyTier` `dev`（本地打包） |
+| Run | `artifacts/logs/easytier-windows-20261014-114636.log` |
+| 失败 job | 本地 `build-easytier-windows.ps1` → `pnpm … easytier-frontend-lib build` |
+| 根因一类 | frontend-yaml |
+| 状态 | 已修复（`en.yaml` 相关 tip 已加双引号；见后续 commit） |
+
+**摘要**：`config_source_console_tip` / `config_source_local_tip` 纯量含 `): the` / `config: it`，js-yaml 报 `bad indentation of a mapping entry`（约 1019:62），vite `transform-yaml` 失败。
+
+**防再犯**：英文 tip 含 ASCII `: ` 一律加引号；改 locales 后跑 `pnpm --filter easytier-frontend-lib build`。
+
+---
 
 ### 2026-10-12 — Check clippy：`collapsible_if` + `too_many_arguments`
 
@@ -150,3 +215,4 @@ Agent / 人工均适用：**未完成 §1 不要提交**。
 |------|------|
 | 2026-10-13 | 建立本文：ET Test / 打包失败追加记录；提交前强制对照 §1 + §3 |
 | 2026-10-13 | Agent 与人工同一套清单；与 Cursor rule「提交前查 CI 失败日志」对齐 |
+| 2026-10-14 | §1 强制增加与 CI 同命令的 `cargo fmt --check` + lockfile；§3 增加 locales YAML 冒号规则 |

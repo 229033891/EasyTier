@@ -287,8 +287,9 @@ fn build_local_route_table(
     if policy_routes.is_empty() {
         return Ok(LocalRouteTable::empty());
     }
-    let rules = validate_and_build_policy_rules(policy_routes, exit_nodes, dns_config, tld_dns_zone)
-        .map_err(|error| anyhow::anyhow!("invalid policy_routes: {error}"))?;
+    let rules =
+        validate_and_build_policy_rules(policy_routes, exit_nodes, dns_config, tld_dns_zone)
+            .map_err(|error| anyhow::anyhow!("invalid policy_routes: {error}"))?;
     let table = LocalRouteTable::empty();
     if !rules.is_empty() {
         table.store(build_snapshot(rules));
@@ -396,7 +397,9 @@ async fn reconcile_local_routes_once(
             let peer_id = match reachable_by_ip.get(ip) {
                 Some(cached) => *cached,
                 None => {
-                    let resolved = peers.resolve_exit_node_peers(std::slice::from_ref(ip)).await;
+                    let resolved = peers
+                        .resolve_exit_node_peers(std::slice::from_ref(ip))
+                        .await;
                     let peer_id = resolved.into_iter().next();
                     reachable_by_ip.insert(*ip, peer_id);
                     peer_id

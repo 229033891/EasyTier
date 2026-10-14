@@ -1156,7 +1156,10 @@ mod tests {
             Some("10.0.0.0/24")
         );
         assert_eq!(routes[0].domains, vec!["*.atlassian.net".to_owned()]);
-        assert_eq!(routes[0].peers, vec!["10.144.0.9".parse::<std::net::IpAddr>().unwrap()]);
+        assert_eq!(
+            routes[0].peers,
+            vec!["10.144.0.9".parse::<std::net::IpAddr>().unwrap()]
+        );
         assert_eq!(routes[0].select_by, "quality");
         assert_eq!(routes[0].failover_when, "degraded");
         assert_eq!(routes[0].if_all_unavailable, "closed");

@@ -95,12 +95,7 @@ pub fn register_management_rpc<F, H>(
     F::Error: std::fmt::Debug + std::fmt::Display + Send + Sync + 'static,
     H: CoreInstanceHost,
 {
-    register_instance_management_rpc(
-        instances.clone(),
-        registry,
-        storage.clone(),
-        hooks.clone(),
-    );
+    register_instance_management_rpc(instances.clone(), registry, storage.clone(), hooks.clone());
     registry.register(LoggerRpcServer::new(LoggerManagementRpc::new(logger)), "");
     registry.register(
         WebClientServiceServer::new(ProcessManagementRpc::<F>::new(instances, hooks, storage)),

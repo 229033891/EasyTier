@@ -9,13 +9,13 @@ use easytier::proto::api::logger::{
 };
 #[cfg(target_os = "android")]
 use easytier::proto::api::manage::DeleteNetworkInstanceRequest;
+use easytier::proto::api::manage::GetNetworkInstanceConfigRequest;
 use easytier::proto::api::manage::RunNetworkInstanceRequest;
 use easytier::proto::rpc::bidirect::BidirectRpcManager;
 use easytier::proto::rpc_types::controller::BaseController;
 #[cfg(target_os = "android")]
 use easytier::proto::rpc_types::controller::Controller as _;
 use easytier::web_client::WebClientHooks;
-use easytier::proto::api::manage::GetNetworkInstanceConfigRequest;
 use easytier_core::management::config_source_from_rpc;
 use easytier_core::management::remote_client::{
     PersistentConfig, RemoteClientError, merge_runtime_only_fields_into_stored,
@@ -360,8 +360,12 @@ impl GUIStorage {
                 )
             })
             .unwrap_or((source, None));
-        let config =
-            GUIConfig::new_with_runtime_fp(inst_id.to_string(), cfg, source, last_observed_runtime_fp);
+        let config = GUIConfig::new_with_runtime_fp(
+            inst_id.to_string(),
+            cfg,
+            source,
+            last_observed_runtime_fp,
+        );
         self.network_configs.insert(inst_id, config);
         self.save_configs(app)
     }
@@ -380,12 +384,8 @@ impl GUIStorage {
             .get(&inst_id)
             .map(|existing| existing.source.merge_persisted(source))
             .unwrap_or(source);
-        let config = GUIConfig::new_with_runtime_fp(
-            inst_id.to_string(),
-            cfg,
-            source,
-            Some(runtime_fp),
-        );
+        let config =
+            GUIConfig::new_with_runtime_fp(inst_id.to_string(), cfg, source, Some(runtime_fp));
         self.network_configs.insert(inst_id, config);
         self.save_configs(app)
     }
@@ -1120,11 +1120,9 @@ impl RemoteClientManager<AppHandle, GUIConfig, anyhow::Error> for GUIClientManag
                         &runtime_fp,
                     ) {
                         WebRuntimeObserveAction::LearnFingerprint => {
-                            let _ = self.storage.note_observed_runtime_fp(
-                                &identify,
-                                inst_id,
-                                runtime_fp,
-                            );
+                            let _ = self
+                                .storage
+                                .note_observed_runtime_fp(&identify, inst_id, runtime_fp);
                         }
                         WebRuntimeObserveAction::AdoptRuntime => {
                             if let Err(error) = self.storage.save_config_observing_runtime(
@@ -1140,10 +1138,8 @@ impl RemoteClientManager<AppHandle, GUIConfig, anyhow::Error> for GUIClientManag
                                     "failed to adopt web runtime config into GUI storage"
                                 );
                             } else {
-                                let _ = identify.emit(
-                                    "managed_config_synced_overwrite",
-                                    inst_id.to_string(),
-                                );
+                                let _ = identify
+                                    .emit("managed_config_synced_overwrite", inst_id.to_string());
                             }
                             return Ok((runtime_config.clone(), ConfigSource::Web));
                         }
