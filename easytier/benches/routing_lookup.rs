@@ -66,7 +66,7 @@ fn bench_routing_lookup(c: &mut Criterion) {
             map
         });
 
-        let mut g = c.benchmark_group(format!("routing_lookup/{scale}"));
+        let mut g = c.benchmark_group(format!("routing_lookup_{scale}"));
 
         g.bench_function("vip_hit", |b| {
             b.to_async(&rt)
