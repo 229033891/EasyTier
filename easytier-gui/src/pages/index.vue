@@ -26,7 +26,7 @@ import {
   filterProvenFormerWebGhosts,
   findFormerWebGhostCandidates,
 } from '~/composables/former_web_ghosts'
-
+import { syncGuiAutostart } from '~/composables/gui_autostart'
 import {
   consumePendingMobileVpnTileAction,
   initMobileVpnService,
@@ -42,7 +42,6 @@ import {
   saveFileLogLevel,
   saveMode,
 } from '~/composables/mode'
-import { syncGuiAutostart } from '~/composables/gui_autostart'
 import {
   beginTrayConnecting,
   buildTrayMenuItems,

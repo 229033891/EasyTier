@@ -14,6 +14,7 @@ declare global {
   const annotateNetworkInfoFromVpnService: typeof import('./composables/mobile_vpn')['annotateNetworkInfoFromVpnService']
   const annotateNetworkInfoWithMobileVpnRoutes: typeof import('./composables/mobile_vpn')['annotateNetworkInfoWithMobileVpnRoutes']
   const armUnderlayReconnectGrace: typeof import('./composables/backend')['armUnderlayReconnectGrace']
+  const beginTrayConnecting: typeof import('./composables/tray')['beginTrayConnecting']
   const buildTrayMenuItems: typeof import('./composables/tray')['buildTrayMenuItems']
   const clearLastNetworkInstanceId: typeof import('./composables/config')['clearLastNetworkInstanceId']
   const clearLogFiles: typeof import('./composables/backend')['clearLogFiles']
@@ -30,6 +31,7 @@ declare global {
   const deleteNetworkInstance: typeof import('./composables/backend')['deleteNetworkInstance']
   const dropStoredConfigsByIds: typeof import('./composables/former_web_ghosts')['dropStoredConfigsByIds']
   const effectScope: typeof import('vue')['effectScope']
+  const endTrayConnecting: typeof import('./composables/tray')['endTrayConnecting']
   const executeVpnTileAction: typeof import('./composables/mobile_vpn_tile')['executeVpnTileAction']
   const filterProvenFormerWebGhosts: typeof import('./composables/former_web_ghosts')['filterProvenFormerWebGhosts']
   const findFormerWebGhostCandidates: typeof import('./composables/former_web_ghosts')['findFormerWebGhostCandidates']
@@ -132,6 +134,7 @@ declare global {
   const showMainWindow: typeof import('./composables/tray')['showMainWindow']
   const stopBackgroundVpnSync: typeof import('./composables/mobile_vpn')['stopBackgroundVpnSync']
   const storeToRefs: typeof import('pinia')['storeToRefs']
+  const syncGuiAutostart: typeof import('./composables/gui_autostart')['syncGuiAutostart']
   const syncMobileVpnService: typeof import('./composables/mobile_vpn')['syncMobileVpnService']
   const toRaw: typeof import('vue')['toRaw']
   const toRef: typeof import('vue')['toRef']
@@ -178,6 +181,7 @@ declare module 'vue' {
     readonly annotateNetworkInfoFromVpnService: UnwrapRef<typeof import('./composables/mobile_vpn')['annotateNetworkInfoFromVpnService']>
     readonly annotateNetworkInfoWithMobileVpnRoutes: UnwrapRef<typeof import('./composables/mobile_vpn')['annotateNetworkInfoWithMobileVpnRoutes']>
     readonly armUnderlayReconnectGrace: UnwrapRef<typeof import('./composables/backend')['armUnderlayReconnectGrace']>
+    readonly beginTrayConnecting: UnwrapRef<typeof import('./composables/tray')['beginTrayConnecting']>
     readonly buildTrayMenuItems: UnwrapRef<typeof import('./composables/tray')['buildTrayMenuItems']>
     readonly clearLastNetworkInstanceId: UnwrapRef<typeof import('./composables/config')['clearLastNetworkInstanceId']>
     readonly clearLogFiles: UnwrapRef<typeof import('./composables/backend')['clearLogFiles']>
@@ -194,6 +198,7 @@ declare module 'vue' {
     readonly deleteNetworkInstance: UnwrapRef<typeof import('./composables/backend')['deleteNetworkInstance']>
     readonly dropStoredConfigsByIds: UnwrapRef<typeof import('./composables/former_web_ghosts')['dropStoredConfigsByIds']>
     readonly effectScope: UnwrapRef<typeof import('vue')['effectScope']>
+    readonly endTrayConnecting: UnwrapRef<typeof import('./composables/tray')['endTrayConnecting']>
     readonly executeVpnTileAction: UnwrapRef<typeof import('./composables/mobile_vpn_tile')['executeVpnTileAction']>
     readonly filterProvenFormerWebGhosts: UnwrapRef<typeof import('./composables/former_web_ghosts')['filterProvenFormerWebGhosts']>
     readonly findFormerWebGhostCandidates: UnwrapRef<typeof import('./composables/former_web_ghosts')['findFormerWebGhostCandidates']>
@@ -296,6 +301,7 @@ declare module 'vue' {
     readonly showMainWindow: UnwrapRef<typeof import('./composables/tray')['showMainWindow']>
     readonly stopBackgroundVpnSync: UnwrapRef<typeof import('./composables/mobile_vpn')['stopBackgroundVpnSync']>
     readonly storeToRefs: UnwrapRef<typeof import('pinia')['storeToRefs']>
+    readonly syncGuiAutostart: UnwrapRef<typeof import('./composables/gui_autostart')['syncGuiAutostart']>
     readonly syncMobileVpnService: UnwrapRef<typeof import('./composables/mobile_vpn')['syncMobileVpnService']>
     readonly toRaw: UnwrapRef<typeof import('vue')['toRaw']>
     readonly toRef: UnwrapRef<typeof import('vue')['toRef']>
