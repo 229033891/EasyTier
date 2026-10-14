@@ -224,7 +224,7 @@ advanced_group_system: 系统与网络
 advanced_group_security: 安全与隐私
 
 traffic_routing: 流量与路由
-traffic_routing_summary: 出网（选路：出口列表 / 策略路由；本机路由表：自定义路由）与网关（允许成为出口 / 子网代理）集中在此；两者常成对配置。
+traffic_routing_summary: 网关（允许成为出口 / 子网代理）与出网（选路：策略路由优先于出口列表；本机路由表：自定义路由）集中在此；两者常成对配置。
 traffic_routing_client: 出网
 traffic_routing_steering: 选路
 traffic_routing_local_routes: 本机路由表
@@ -559,23 +559,40 @@ policy_routes_add: 添加路由
 policy_routes_remove: 删除此路由
 policy_routes_cidr: 目标网段
 policy_routes_cidr_placeholder: 例如：10.0.0.0/24
+policy_routes_cidr_help: |-
+  本条规则匹配的目标 IPv4 网段，每条规则只填一个 CIDR（如 10.0.0.0/24）。
+  可与「目标域名」同时填，也可只填其一；两者都空则规则无效。
 policy_routes_domains: 目标域名
 policy_routes_domains_placeholder: 例如：*.atlassian.net
+policy_routes_domains_help: |-
+  本条规则匹配的域名，可填多个（回车或失焦添加芯片），最多 64 个。
+  支持 *.parent.tld（最左单标签通配，父域至少两级）。依赖本机 MagicDNS 解析；可与「目标网段」同时填，也可只填其一。
 policy_routes_peers: 网关节点
 policy_routes_peers_placeholder: 例如：10.144.0.9
+policy_routes_peers_help: |-
+  承接流量的对端虚拟 IPv4，可填多个候选（1–16 个），顺序即「按列表顺序」时的优先级。
+  对端须开启「允许此节点成为出口节点」，否则流量会被丢弃。
 policy_routes_select_by: 选路方式
+policy_routes_select_by_help: |-
+  多个网关候选时如何挑选：按列表顺序 / 按链路质量 / 按流分摊。
 policy_routes_select_by_priority: 按列表顺序
 policy_routes_select_by_quality: 按链路质量
 policy_routes_select_by_balance: 按流分摊
 policy_routes_failover_when: 何时切换
+policy_routes_failover_when_help: |-
+  当前选中的网关在何种条件下换到下一个候选：不可达时 / 质量劣化时 / 从不切换。
 policy_routes_failover_unreachable: 候选不可达时
 policy_routes_failover_degraded: 质量劣化时
 policy_routes_failover_never: 从不切换
 policy_routes_if_all_unavailable: 全部不可用时
+policy_routes_if_all_unavailable_help: |-
+  所有网关候选都不可用时：回退本机物理默认网关，或直接丢包（不回退）。选「丢包」且有多个候选时需确认风险。
 policy_routes_all_unavailable_open: 回退物理网关
 policy_routes_all_unavailable_closed: 丢包（不回退）
 policy_routes_require_confirmed: 我已确认丢包风险
 policy_routes_quality_degraded_cost: 劣化阈值（复合成本）
+policy_routes_quality_degraded_cost_help: |-
+  「质量劣化时」切换用的复合成本上限；仅在「何时切换 = 质量劣化时」填写，须为正整数。
 policy_routes_target_required: 网段与域名至少填一个。
 
 dns:

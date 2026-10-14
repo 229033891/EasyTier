@@ -223,7 +223,7 @@ advanced_group_system: System & Network
 advanced_group_security: Security & Privacy
 
 traffic_routing: Traffic & Routing
-traffic_routing_summary: Egress (steering: exit list / policy routes; local route table: custom routes) and gateway (allow as exit / subnet proxy) live here; they are usually configured as a pair.
+traffic_routing_summary: Gateway (allow as exit / subnet proxy) and egress (steering: policy routes before the exit list; local route table: custom routes) live here; they are usually configured as a pair.
 traffic_routing_client: Egress
 traffic_routing_steering: Steering
 traffic_routing_local_routes: Local Route Table
@@ -560,23 +560,40 @@ policy_routes_add: Add route
 policy_routes_remove: Remove this route
 policy_routes_cidr: Target CIDR
 policy_routes_cidr_placeholder: e.g. 10.0.0.0/24
+policy_routes_cidr_help: |-
+  One IPv4 CIDR this rule matches (e.g. 10.0.0.0/24). Only one CIDR per rule.
+  May be set together with domains, or alone; at least one of CIDR / domains is required.
 policy_routes_domains: Target domains
 policy_routes_domains_placeholder: e.g. *.atlassian.net
+policy_routes_domains_help: |-
+  Domains this rule matches. Add multiple chips (Enter or blur), up to 64.
+  Supports *.parent.tld (leftmost single-label wildcard; parent needs ≥2 labels). Relies on MagicDNS. May be set with CIDR or alone.
 policy_routes_peers: Gateway peers
 policy_routes_peers_placeholder: e.g. 10.144.0.9
+policy_routes_peers_help: |-
+  Peer virtual IPv4 gateways (1–16). List order is preference when Selection is “In list order”.
+  Each peer must have Enable Exit Node on, or traffic is dropped.
 policy_routes_select_by: Selection
+policy_routes_select_by_help: |-
+  How to pick among multiple gateway peers: list order / best quality / spread by flow.
 policy_routes_select_by_priority: In list order
 policy_routes_select_by_quality: Best link quality
 policy_routes_select_by_balance: Spread by flow
 policy_routes_failover_when: Fail over
+policy_routes_failover_when_help: |-
+  When to move to the next candidate: unreachable / quality degraded / never.
 policy_routes_failover_unreachable: When a candidate is unreachable
 policy_routes_failover_degraded: When quality degrades
 policy_routes_failover_never: Never
 policy_routes_if_all_unavailable: When all candidates are down
+policy_routes_if_all_unavailable_help: |-
+  If every gateway candidate is down: fall back to the physical default gateway, or drop (no fallback). Drop with multiple peers requires confirming the risk.
 policy_routes_all_unavailable_open: Fall back to the physical gateway
 policy_routes_all_unavailable_closed: Drop (no fallback)
 policy_routes_require_confirmed: I accept the packet-drop risk
 policy_routes_quality_degraded_cost: Degraded threshold (composite cost)
+policy_routes_quality_degraded_cost_help: |-
+  Composite-cost ceiling for “quality degraded” failover. Only with Fail over = When quality degrades; must be a positive integer.
 policy_routes_target_required: Set at least one of CIDR / domains.
 
 dns:
