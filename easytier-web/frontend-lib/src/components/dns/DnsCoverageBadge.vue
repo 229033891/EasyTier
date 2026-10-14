@@ -67,7 +67,7 @@ const modifier = computed(() =>
   align-items: center;
   padding: 0.1rem 0.45rem;
   border-radius: 999px;
-  font-size: var(--et-fs-meta, 0.75rem);
+  font-size: var(--et-fs-meta, 0.8125rem);
   font-weight: 600;
   letter-spacing: 0.02em;
   line-height: 1.25;
@@ -81,7 +81,7 @@ const modifier = computed(() =>
 
 .dns-coverage-badge--manual_required {
   background: var(--et-warning, #f59e0b);
-  color: #1e293b;
+  color: #0f172a;
   text-decoration: none;
 }
 

@@ -165,7 +165,7 @@ const tabs = computed(() => {
   border: 1px solid transparent !important;
   border-radius: calc(var(--et-radius, 0.75rem) - 0.2rem) !important;
   background: transparent !important;
-  color: var(--text-color-secondary, #64748b) !important;
+  color: var(--text-color-secondary, #334155) !important;
   box-shadow: none !important;
 }
 
@@ -211,15 +211,15 @@ const tabs = computed(() => {
 .acl-section-title {
   font-size: var(--et-fs-section, 1rem);
   font-weight: 600;
-  color: var(--text-color, #1e293b);
+  color: var(--text-color, #0f172a);
 }
 
 .acl-help {
   margin: 0 0 0.5rem;
   max-width: 22rem;
   text-align: center;
-  font-size: var(--et-fs-body, 0.875rem);
-  color: var(--text-color-secondary, #64748b);
+  font-size: var(--et-fs-body, 0.9375rem);
+  color: var(--text-color-secondary, #334155);
   line-height: 1.45;
   padding: 0 0.5rem;
 }

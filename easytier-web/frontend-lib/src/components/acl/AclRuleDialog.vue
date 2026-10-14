@@ -17,7 +17,7 @@ const rule = defineModel<AclRule>('rule', { required: true })
 
 const { t } = useI18n()
 
-/** 整块标题栏可点展开/折叠（触摸友好）；加减号自身已切换，需跳过以免翻两次 */
+/** 整块标题栏可点展开/折叠（触摸友好）；加减号自身已切换，需跳过以免翻两�?*/
 const panelCollapsed = reactive({
   rules: false,
   advanced: true,
@@ -190,8 +190,8 @@ function save() {
 
 <style scoped>
 .acl-dlg-label {
-  font-size: var(--et-fs-meta, 0.75rem);
+  font-size: var(--et-fs-meta, 0.8125rem);
   font-weight: 600;
-  color: var(--text-color-secondary, #64748b);
+  color: var(--text-color-secondary, #334155);
 }
 </style>

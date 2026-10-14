@@ -30,15 +30,14 @@ const severity = computed(() => {
 const detailText = computed(() => {
   const value = eventValue.value
   if (eventKey.value === 'DhcpIpv4Changed' && Array.isArray(value) && value.length >= 2) {
-    return `${value[0]} → ${value[1]}`
+    return `${value[0]} �?${value[1]}`
   }
-  if (value == null) return '—'
+  if (value == null) return '�?
   if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
     return String(value)
   }
   try {
-    // 紧凑排版：标量子结构折叠成单行，只占纵向空间，少占横向宽度
-    return formatCompactJson(value)
+    // 紧凑排版：标量子结构折叠成单行，只占纵向空间，少占横向宽�?    return formatCompactJson(value)
   } catch {
     return String(value)
   }
@@ -56,7 +55,7 @@ const detailText = computed(() => {
 .human-event {
   display: flex;
   flex-direction: column;
-  /* 不用 flex-start：否则 JSON 盒按内容收缩，横向空间白白浪费（纵向才是瓶颈） */
+  /* 不用 flex-start：否�?JSON 盒按内容收缩，横向空间白白浪费（纵向才是瓶颈�?*/
   gap: 0.5rem;
   min-width: 0;
 }
@@ -76,7 +75,7 @@ const detailText = computed(() => {
   border: 1px solid var(--et-border-color, #e2e8f0);
   border-radius: calc(var(--et-radius, 0.75rem) - 0.25rem);
   background: var(--surface-50, #f8fafc);
-  color: var(--text-color, #1e293b);
+  color: var(--text-color, #0f172a);
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 0.75rem;
   line-height: 1.45;

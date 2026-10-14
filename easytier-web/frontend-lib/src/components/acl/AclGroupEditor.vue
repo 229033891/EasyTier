@@ -162,13 +162,13 @@ function saveGroup() {
 .acl-section-title {
   font-size: var(--et-fs-section, 1rem);
   font-weight: 600;
-  color: var(--text-color, #1e293b);
+  color: var(--text-color, #0f172a);
 }
 
 .acl-help {
   margin: 0.2rem 0 0;
-  font-size: var(--et-fs-body, 0.875rem);
-  color: var(--text-color-secondary, #64748b);
+  font-size: var(--et-fs-body, 0.9375rem);
+  color: var(--text-color-secondary, #334155);
   line-height: 1.4;
 }
 
@@ -179,9 +179,9 @@ function saveGroup() {
 }
 
 .acl-label {
-  font-size: var(--et-fs-meta, 0.75rem);
+  font-size: var(--et-fs-meta, 0.8125rem);
   font-weight: 600;
-  color: var(--text-color-secondary, #64748b);
+  color: var(--text-color-secondary, #334155);
 }
 
 .acl-add-btn {
@@ -209,16 +209,16 @@ function saveGroup() {
 
 .acl-groups-table :deep(.p-datatable-thead > tr > th) {
   padding: 0.45rem 0.6rem !important;
-  font-size: var(--et-fs-meta, 0.75rem);
+  font-size: var(--et-fs-meta, 0.8125rem);
   font-weight: 600;
-  color: var(--text-color-secondary, #64748b);
+  color: var(--text-color-secondary, #334155);
   background: var(--surface-0, #ffffff) !important;
   border-bottom: 1px solid var(--et-border-color, #e2e8f0) !important;
 }
 
 .acl-groups-table :deep(.p-datatable-tbody > tr > td) {
   padding: 0.45rem 0.6rem !important;
-  font-size: var(--et-fs-body, 0.875rem);
+  font-size: var(--et-fs-body, 0.9375rem);
   border-bottom: 1px solid var(--et-border-color, #e2e8f0) !important;
 }
 

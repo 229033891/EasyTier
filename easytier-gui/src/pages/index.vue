@@ -67,7 +67,7 @@ const configServerEnabled = ref(false)
 const configServerLastError = ref('')
 /** Non-fatal connecting progress (`phase:*`); separate from lastError failures. */
 const configServerConnectingDetail = ref('')
-/** Set when GUI cannot query status (e.g. service RPC down) — not a config-server dial error. */
+/** Set when GUI cannot query status (e.g. service RPC down) �?not a config-server dial error. */
 const configServerProbeError = ref('')
 const currentMode = ref<Mode>({ mode: 'normal' })
 const editingMode = ref<Mode>({ mode: 'normal' })
@@ -81,7 +81,7 @@ let trayMenuGeneration = 0
 const configServerOwnerDown = ref(false)
 /** Fingerprint of last applied console W prune (sorted ids joined). */
 let lastPrunedConsoleWebOwnedKey: string | undefined
-/** Device-known instance ids after last successful RPC connect (running ∪ disabled). */
+/** Device-known instance ids after last successful RPC connect (running �?disabled). */
 const knownDeviceInstanceIds = ref<string[]>([])
 
 const showAutostartHint = ref(false)
@@ -101,7 +101,7 @@ const configServerStatus = computed<ConfigServerStatus>(() => {
     return 'disconnected'
   if (configServerOwnerDown.value)
     return 'owner_down'
-  // Cannot reach the process that owns the client — do not pretend the
+  // Cannot reach the process that owns the client �?do not pretend the
   // config-server itself failed (common when the Windows service is stopped).
   if (configServerProbeError.value)
     return 'unavailable'
@@ -187,8 +187,8 @@ function notifyOperationInProgress() {
 
 /**
  * Probe cadence while nothing hints at a config-server client: the binding
- * signal is `status.enabled`, never the locally stored URL (§1「绑定 = WebClient
- * 已创建」). Skipping the probe outright on an empty URL would leave a window
+ * signal is `status.enabled`, never the locally stored URL (§1「绑�?= WebClient
+ * 已创建�?. Skipping the probe outright on an empty URL would leave a window
  * where the WebClient is up but the delete button stays unlocked, so keep a
  * slow heartbeat probe instead of a hard short-circuit.
  */
@@ -199,8 +199,7 @@ let configServerIdleProbeTick = 0
 const promptedFormerWebGhostIds = new Set<string>()
 
 /**
- * P1.2: mislabeled user/legacy cache proven Web on device and absent from W →
- * prompt clear (never silent-delete pure local drafts).
+ * P1.2: mislabeled user/legacy cache proven Web on device and absent from W �? * prompt clear (never silent-delete pure local drafts).
  */
 async function maybePromptFormerWebGhosts(
   consoleWebOwnedIds: string[],
@@ -307,14 +306,14 @@ async function refreshConfigServerConnection() {
     const mode = currentMode.value
     const hostMode = mode.mode === 'normal' || mode.mode === 'service'
     // Remote mode owns no local config-server client, and a stopped service
-    // owner cannot hold one: both are genuinely "not bound" → full reset.
-    // An empty URL is **not** — the client may already be running (§1).
+    // owner cannot hold one: both are genuinely "not bound" �?full reset.
+    // An empty URL is **not** �?the client may already be running (§1).
     // Narrow inline: `config_server_url` only exists on normal/service modes.
     const hasUrl = (mode.mode === 'normal' || mode.mode === 'service')
       ? !!mode.config_server_url?.trim()
       : false
     // Idle tick only: requires !hasUrl. waitForConfigServerOutcome (has URL)
-    // never increments this counter — paths do not race (S9).
+    // never increments this counter �?paths do not race (S9).
     const idlePoll = hostMode
       && !hasUrl
       && !configServerEnabled.value
@@ -329,7 +328,7 @@ async function refreshConfigServerConnection() {
       configServerConnectingDetail.value = ''
       configServerProbeError.value = ''
       // `configServerOwnerDown` stays sticky here. Reaching this branch with a
-      // URL configured is impossible (URL ⇒ always probe), so "owner down" is
+      // URL configured is impossible (URL �?always probe), so "owner down" is
       // the cheapest proof that no client can be bound; keeping it stops the
       // idle probe from poking an already-stopped service every 15s. The next
       // successful probe clears it.
@@ -402,8 +401,7 @@ async function waitForConfigServerOutcome(
       return 'failed'
     }
     // Fail fast only when the client never started (init error). While enabled,
-    // lastError means a dial attempt failed and the background dialer is retrying —
-    // keep waiting until connected or timeout.
+    // lastError means a dial attempt failed and the background dialer is retrying �?    // keep waiting until connected or timeout.
     if (configServerLastError.value && !configServerEnabled.value) {
       return 'failed'
     }
@@ -543,7 +541,7 @@ async function onModeSave() {
   const unbinding = !!prevEndpoint.url && !nextEndpoint.url
   const rebinding = !!nextEndpoint.url && configServerChanged && !unbinding
 
-  // Service reinstall/restart applies config-server changes — confirm when that endpoint changes.
+  // Service reinstall/restart applies config-server changes �?confirm when that endpoint changes.
   if (next.mode === 'service' && configServerChanged) {
     const serviceMsg = unbinding
       ? `${t('config-server.update_service_confirm')}\n${t('config-server.unbind_keep_local_copies')}`
@@ -966,12 +964,11 @@ async function initWithMode(mode: Mode) {
         return initWithMode({ ...mode, mode: 'normal' })
       }
       url = mode.remote_rpc_address
-      // 远程是网络拨号（TCP + RPC 建链）：一两次连不上很常见（移动网络尤甚），给几次重试。
-      retrys = 3
+      // 远程是网络拨号（TCP + RPC 建链）：一两次连不上很常见（移动网络尤甚），给几次重试�?      retrys = 3
       break
     case 'service': {
       // Log level is owned by the Logging dialog preference; keep install args in sync.
-      // Compare against preferred *before* writing mode.file_log_level — onMounted passes
+      // Compare against preferred *before* writing mode.file_log_level �?onMounted passes
       // currentMode by reference, so an early assign would alias-mutate and make
       // modeConfigChanged() blind to log-level drift.
       const preferredLogLevel = loadFileLogLevel()
@@ -1005,15 +1002,14 @@ async function initWithMode(mode: Mode) {
     }
     case 'normal':
       url = mode.rpc_portal
-      // 带 portal 时同样要过网络；ring（无 portal）是进程内直连，一次即可。
-      retrys = url ? 3 : 1
+      // �?portal 时同样要过网络；ring（无 portal）是进程内直连，一次即可�?      retrys = url ? 3 : 1
       break
   }
   try {
     await connectRpcWithRetries(mode.mode === 'normal', url, retrys)
   }
   catch (e) {
-    // Service still "Running" but RPC portal dead — bounce once, then retry.
+    // Service still "Running" but RPC portal dead �?bounce once, then retry.
     if (mode.mode === 'service') {
       console.error('Service RPC connect failed; bouncing service', e)
       await bounceService()
@@ -1040,7 +1036,7 @@ async function initWithMode(mode: Mode) {
       throw e
     }
   }
-  // List AFTER RPC connect. knownIds only when list succeeds — a failed list
+  // List AFTER RPC connect. knownIds only when list succeeds �?a failed list
   // must not clear lastInstanceId via [].
   //
   // Web-cache prune uses console W (not R∪D); see maybePruneWebConfigsFromConsoleW
@@ -1060,7 +1056,7 @@ async function initWithMode(mode: Mode) {
     try {
       await initWebClient(mode.config_server_url, mode.secure_mode)
       // Connection happens asynchronously in the background dialer.
-      // Do not clear lastError here — waitForConfigServerOutcome / refresh owns that.
+      // Do not clear lastError here �?waitForConfigServerOutcome / refresh owns that.
     }
     catch (e: any) {
       configServerConnected.value = false
@@ -1215,7 +1211,7 @@ watch(clientRunning, async (newVal, oldVal) => {
   else if (newVal && !oldVal) {
     const lastInstanceId = loadLastNetworkInstanceId()
     // Do not restore a selection the device no longer has (console delete +
-    // GUI reopen would otherwise reopen a ghost "已停止" editor from cache).
+    // GUI reopen would otherwise reopen a ghost "已停�? editor from cache).
     if (lastInstanceId && knownDeviceInstanceIds.value.includes(lastInstanceId)) {
       instanceId.value = lastInstanceId
     }
@@ -1279,7 +1275,7 @@ const loggingApi = computed<LoggingSettingsApi>(() => ({
       return { level: await getLoggingLevel(), live: true }
     }
     catch {
-      // RPC down — preference only; Dialog must not present this as the live level.
+      // RPC down �?preference only; Dialog must not present this as the live level.
       return { level: loadFileLogLevel(), live: false }
     }
   },
@@ -1298,7 +1294,7 @@ const loggingApi = computed<LoggingSettingsApi>(() => ({
       const running = await isClientRunning().catch(() => false)
       if (running)
         throw e
-      // Preference is saved; core is not running yet — apply on next connect.
+      // Preference is saved; core is not running yet �?apply on next connect.
     }
   },
   getLogDir: getLogDirPath,
@@ -1333,8 +1329,7 @@ function getLabel(item: MenuItem) {
 const settingsDialogStyle = { width: 'min(480px, calc(100vw - 1.5rem))' }
 
 const settings_menu = ref()
-// 底部设置弹出菜单：各项统一为一级入口，复杂配置走弹窗
-const setting_menu_items: Ref<MenuItem[]> = ref([
+// 底部设置弹出菜单：各项统一为一级入口，复杂配置走弹�?const setting_menu_items: Ref<MenuItem[]> = ref([
   {
     label: () => {
       const modeLabel = t(`mode.${currentMode.value.mode}`)
@@ -1422,7 +1417,7 @@ async function connectRpcClient(isNormalMode: boolean, url?: string) {
       host-surface="gui-client"
       :delete-authority="configServerEnabled ? 'console' : 'local'"
     >
-      <!-- 与共享底部栏同一行：样式与禁用网络完全一致 -->
+      <!-- 与共享底部栏同一行：样式与禁用网络完全一�?-->
       <template #footer-extra>
         <Button
           :label="t('system_settings')" severity="secondary"
@@ -1493,7 +1488,7 @@ body {
   margin: 0;
 }
 
-/* 底部操作条：与上方网络底部栏同一套卡片 token */
+/* 底部操作条：与上方网络底部栏同一套卡�?token */
 .bottom-action-bar {
   flex-shrink: 0;
   display: flex;
@@ -1505,21 +1500,21 @@ body {
   border-radius: var(--et-radius, 0.75rem);
 }
 
-/* 未连接时的设置按钮：与底部栏 muted 体系一致 */
+/* 未连接时的设置按钮：与底部栏 muted 体系一�?*/
 .bottom-bar-btn.p-button {
   flex: 1 1 0;
   min-width: 0;
   max-width: 14rem;
   height: var(--et-btn, 2.5rem) !important;
   padding: 0 0.9rem !important;
-  font-size: var(--et-fs-body, 0.875rem) !important;
+  font-size: var(--et-fs-body, 0.9375rem) !important;
   font-weight: 600 !important;
   border-radius: var(--et-radius, 0.75rem) !important;
   box-sizing: border-box;
   justify-content: center;
   background: var(--surface-100, #f1f5f9) !important;
   border: 1px solid var(--et-border-color, #e2e8f0) !important;
-  color: var(--text-color, #1e293b) !important;
+  color: var(--text-color, #0f172a) !important;
 }
 
 .bottom-bar-btn.p-button:hover:not(:disabled) {
@@ -1550,7 +1545,7 @@ body {
 .settings-popup .p-menu-item-link {
   padding: 0.45rem 0.65rem !important;
   border-radius: 0.45rem;
-  font-size: var(--et-fs-body, 0.875rem) !important;
+  font-size: var(--et-fs-body, 0.9375rem) !important;
   font-weight: 600;
   gap: 0.45rem;
 }
@@ -1567,7 +1562,7 @@ body {
   opacity: 0.6;
 }
 
-/* 系统设置相关弹窗：统一宽度与外观 */
+/* 系统设置相关弹窗：统一宽度与外�?*/
 .app-dialog.p-dialog {
   width: min(480px, calc(100vw - 1.5rem)) !important;
   max-width: calc(100vw - 1.5rem);
@@ -1584,9 +1579,9 @@ body {
 }
 
 .app-dialog .p-dialog-content label {
-  font-size: var(--et-fs-body, 0.875rem);
+  font-size: var(--et-fs-body, 0.9375rem);
   font-weight: 600;
-  color: var(--text-color, #1e293b);
+  color: var(--text-color, #0f172a);
 }
 
 .app-dialog .p-dialog-footer {
@@ -1594,7 +1589,7 @@ body {
 }
 
 .app-dialog .p-dialog-content .p-inputtext[readonly] {
-  font-size: 0.8125rem;
+  font-size: var(--et-fs-meta, 0.8125rem);
   overflow-x: auto;
 }
 
@@ -1602,7 +1597,7 @@ body {
   max-width: calc(100% - 2rem);
 }
 
-/* Android / 窄屏：加大触控、防裁切、适配安全区 */
+/* Android / 窄屏：加大触控、防裁切、适配安全�?*/
 @media (max-width: 640px) {
   .settings-popup.p-menu {
     min-width: min(18rem, calc(100vw - 1rem));

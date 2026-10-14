@@ -221,9 +221,9 @@ function onRowReorder(event: any) {
 }
 
 .acl-label {
-  font-size: var(--et-fs-meta, 0.75rem);
+  font-size: var(--et-fs-meta, 0.8125rem);
   font-weight: 600;
-  color: var(--text-color-secondary, #64748b);
+  color: var(--text-color-secondary, #334155);
 }
 
 .acl-toggle {
@@ -246,7 +246,7 @@ function onRowReorder(event: any) {
   margin: 0;
   font-size: var(--et-fs-section, 1rem);
   font-weight: 600;
-  color: var(--text-color, #1e293b);
+  color: var(--text-color, #0f172a);
 }
 
 .acl-proto {
@@ -254,7 +254,7 @@ function onRowReorder(event: any) {
   align-self: flex-start;
   padding: 0.1rem 0.4rem;
   border-radius: 0.375rem;
-  font-size: var(--et-fs-meta, 0.75rem);
+  font-size: var(--et-fs-meta, 0.8125rem);
   font-weight: 600;
   letter-spacing: 0.02em;
   text-transform: uppercase;
@@ -265,9 +265,9 @@ function onRowReorder(event: any) {
 .acl-endpoint {
   flex: 0 0 auto;
   width: 1.75rem;
-  font-size: var(--et-fs-meta, 0.75rem);
+  font-size: var(--et-fs-meta, 0.8125rem);
   font-weight: 600;
-  color: var(--text-color-secondary, #64748b);
+  color: var(--text-color-secondary, #334155);
 }
 
 .acl-chip {
@@ -275,27 +275,27 @@ function onRowReorder(event: any) {
   padding: 0.05rem 0.35rem;
   border-radius: 0.3rem;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: var(--et-fs-meta, 0.75rem);
-  color: var(--text-color, #1e293b);
+  font-size: var(--et-fs-meta, 0.8125rem);
+  color: var(--text-color, #0f172a);
   background: var(--surface-100, #f1f5f9);
   border: 1px solid var(--et-border-color, #e2e8f0);
 }
 
 .acl-group {
-  font-size: var(--et-fs-meta, 0.75rem);
+  font-size: var(--et-fs-meta, 0.8125rem);
   font-weight: 600;
   color: var(--primary-color, var(--et-primary, #0ea5e9));
 }
 
 .acl-ports {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: var(--et-fs-meta, 0.75rem);
+  font-size: var(--et-fs-meta, 0.8125rem);
   color: var(--primary-color, var(--et-primary, #0ea5e9));
 }
 
 .acl-any,
 .acl-arrow {
-  font-size: var(--et-fs-meta, 0.75rem);
+  font-size: var(--et-fs-meta, 0.8125rem);
   color: var(--text-color-secondary, #94a3b8);
 }
 
@@ -309,12 +309,12 @@ function onRowReorder(event: any) {
 
 .acl-rules-table :deep(.p-datatable-thead > tr > th) {
   padding: 0.4rem 0.55rem !important;
-  font-size: var(--et-fs-meta, 0.75rem);
+  font-size: var(--et-fs-meta, 0.8125rem);
 }
 
 .acl-rules-table :deep(.p-datatable-tbody > tr > td) {
   padding: 0.4rem 0.55rem !important;
-  font-size: var(--et-fs-body, 0.875rem);
+  font-size: var(--et-fs-body, 0.9375rem);
   vertical-align: top;
 }
 

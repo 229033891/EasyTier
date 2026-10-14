@@ -50,7 +50,7 @@ const peerRouteInfos = computed(() => {
   return []
 })
 
-/** peer_id → 带直连隧道的 PeerInfo，供中转下一跳查隧道地址 */
+/** peer_id �?带直连隧道的 PeerInfo，供中转下一跳查隧道地址 */
 const peersById = computed(() => {
   const map = new Map<number, PeerInfo>()
   for (const pair of props.curNetworkInst?.detail?.peer_route_pairs || []) {
@@ -61,7 +61,7 @@ const peersById = computed(() => {
   return map
 })
 
-/** peer_id → 主机名/虚拟 IP，供中转路径展示 */
+/** peer_id �?主机�?虚拟 IP，供中转路径展示 */
 const peersMetaById = computed(() => {
   const map = new Map<number, RoutePeerLabel>()
   for (const pair of props.curNetworkInst?.detail?.peer_route_pairs || []) {
@@ -97,8 +97,7 @@ const peerConnRows = computed(() => flattenPeerConnRows(peerRouteInfos.value as 
 function rowLatency(row: PeerConnTableRow) {
   if (row.conn)
     return connLatencyMs(row.conn)
-  // 中转无直连：回退到路由汇总延迟
-  return latencyMs(row.pair)
+  // 中转无直连：回退到路由汇总延�?  return latencyMs(row.pair)
 }
 
 function rowJitter(row: PeerConnTableRow) {
@@ -289,7 +288,7 @@ interface ChipGroup {
   chips: InfoChip[]
 }
 
-/** 按类型分区；顺序：Peer ID → … → Listener */
+/** 按类型分区；顺序：Peer ID �?�?�?Listener */
 const myNodeInfoGroups = computed(() => {
   const groups: ChipGroup[] = []
   if (!props.curNetworkInst)
@@ -316,13 +315,9 @@ const myNodeInfoGroups = computed(() => {
     })
   }
 
-  // Prefer the L2 / platform sync summary over a separate Route chip list —
-  // both surfaces show the same installed CIDRs; keep one canonical view.
+  // Prefer the L2 / platform sync summary over a separate Route chip list �?  // both surfaces show the same installed CIDRs; keep one canonical view.
   // 只要字段有值就展示（哪怕空摘要 desired=[-] installed=[-] exit=...）：
-  // 空摘要不是"没数据"，而是"确实一条代理路由都没装"，让用户一眼确认。
-  // 注意来源因平台而异：桌面是 L2 路由同步；Android/OHOS 由 VpnService / 内核桥
-  // 覆盖写入（L2 ifcfg 在那边是 no-op），所以那边的空摘要等价于"VPN 没装任何路由"。
-  const routeSync = props.curNetworkInst.detail?.proxy_cidr_route_sync?.trim()
+  // 空摘要不�?没数�?，而是"确实一条代理路由都没装"，让用户一眼确认�?  // 注意来源因平台而异：桌面是 L2 路由同步；Android/OHOS �?VpnService / 内核�?  // 覆盖写入（L2 ifcfg 在那边是 no-op），所以那边的空摘要等价于"VPN 没装任何路由"�?  const routeSync = props.curNetworkInst.detail?.proxy_cidr_route_sync?.trim()
   if (routeSync) {
     groups.push({
       key: 'proxy_cidr_route_sync',
@@ -446,7 +441,7 @@ let prevRxSum: number | undefined
 const txRate = ref('0 B')
 const rxRate = ref('0 B')
 
-/** 可折叠 Panel：节点默认展开（仅图表）；详情/历史/Peer/VPN/事件默认收起 */
+/** 可折�?Panel：节点默认展开（仅图表）；详情/历史/Peer/VPN/事件默认收起 */
 const panelCollapsed = reactive({
   myNode: false,
   nodeDetails: true,
@@ -456,7 +451,7 @@ const panelCollapsed = reactive({
   eventLog: true,
 })
 
-/** 节点详情不再分组折叠：所有条目一次铺开，长内容允许换行，避免撑出横向滚动条。 */
+/** 节点详情不再分组折叠：所有条目一次铺开，长内容允许换行，避免撑出横向滚动条�?*/
 
 async function copyGroupChips(group: { titleKey: string; chips: InfoChip[] }) {
   const text = group.chips.map(c => c.label).join('\n')
@@ -547,8 +542,7 @@ async function loadVpnPortalConfig() {
   vpnPortalLoading.value = true
   try {
     const info = await props.api.get_vpn_portal_info(instanceId)
-    // 实例切换后，旧请求不能覆盖当前实例的状态。
-    if (loadToken === vpnPortalLoadToken && props.curNetworkInst?.instance_id === instanceId) {
+    // 实例切换后，旧请求不能覆盖当前实例的状态�?    if (loadToken === vpnPortalLoadToken && props.curNetworkInst?.instance_id === instanceId) {
       vpnPortalInfo.value = info
     }
   } catch (error) {
@@ -870,7 +864,7 @@ const eventLogContent = computed(() => {
                 <HumanEvent :event="item.event" />
               </li>
             </ul>
-            <div v-else class="status-empty">—</div>
+            <div v-else class="status-empty">�?/div>
           </div>
         </Panel>
   </div>
@@ -897,37 +891,37 @@ const eventLogContent = computed(() => {
   min-height: 0;
 }
 
-/* 面板标题栏：浅底色区分标题与内容；折叠态更矮（覆盖 PrimeVue 默认与全局触摸目标高度） */
+/* 面板标题栏：浅底色区分标题与内容；标题略大于正文、近�?*/
 .status-panels :deep(.p-panel .p-panel-header) {
-  padding: 0.35rem 0.75rem !important;
-  min-height: 2rem !important;
-  font-size: var(--et-fs-body, 0.875rem);
+  padding: 0.4rem 0.75rem !important;
+  min-height: 2.125rem !important;
+  font-size: var(--et-fs-section, 1.0625rem);
   font-weight: 600;
-  line-height: 1.2;
-  color: var(--text-color, #1e293b);
+  line-height: 1.25;
+  color: var(--text-color, #0f172a);
   background: var(--surface-50, #f8fafc);
   border: none;
   flex-shrink: 0;
 }
 
 .status-panels :deep(.p-panel .p-panel-header.cursor-pointer) {
-  min-height: 2rem !important;
+  min-height: 2.125rem !important;
 }
 
 .status-panels :deep(.p-panel .p-panel-content) {
   padding: 0.55rem 0.75rem !important;
   border: none;
   background: transparent;
-  font-size: var(--et-fs-body, 0.875rem);
-  color: var(--text-color, #1e293b);
+  font-size: var(--et-fs-body, 0.9375rem);
+  color: var(--text-color, #0f172a);
 }
 
 .status-panels :deep(.p-panel .p-panel-header .p-panel-title),
 .status-panels :deep(.p-panel .p-panel-header span:not(.p-badge)) {
-  font-size: var(--et-fs-body, 0.875rem);
+  font-size: var(--et-fs-section, 1.0625rem);
   font-weight: 600;
-  line-height: 1.2;
-  color: var(--text-color, #1e293b);
+  line-height: 1.25;
+  color: var(--text-color, #0f172a);
 }
 
 /* 桌面：展开的面板吃掉剩余高度，内容区内滚动 */
@@ -984,12 +978,10 @@ const eventLogContent = computed(() => {
   }
 }
 
-/* 节点详情分组：行高随 chip 内容自适应（1 行或多行）
- *
- * 这里是「字段分组」而非 peer 节点：一个 group 是一类字段（虚拟 IP、本机 IP、
- * 监听器…），组内 chip 是该字段的多个取值。分组卡片样式与 peer 表的
- * 节点/隧道实线-虚线分隔（.peer-border-peer / .peer-border-intra）无关，
- * 不要混用同一套「节点」话术。 */
+/* 节点详情分组：行高随 chip 内容自适应�? 行或多行�? *
+ * 这里是「字段分组」而非 peer 节点：一�?group 是一类字段（虚拟 IP、本�?IP�? * 监听器…），组�?chip 是该字段的多个取值。分组卡片样式与 peer 表的
+ * 节点/隧道实线-虚线分隔�?peer-border-peer / .peer-border-intra）无关，
+ * 不要混用同一套「节点」话术�?*/
 .node-detail-groups {
   display: flex;
   flex-direction: column;
@@ -1011,7 +1003,7 @@ const eventLogContent = computed(() => {
   border-radius: calc(var(--et-radius, 0.75rem) - 0.25rem);
   background: var(--surface-50, #f8fafc);
   padding: 0.35rem 0.5rem 0.4rem;
-  /* Never shrink inside the flex column — Android Chrome/WebView otherwise
+  /* Never shrink inside the flex column �?Android Chrome/WebView otherwise
      crushes rows so chips and copy buttons overlap. */
   height: auto;
   min-height: auto;
@@ -1022,12 +1014,12 @@ const eventLogContent = computed(() => {
   grid-column: 1;
   min-width: 0;
   padding-top: 0.15rem;
-  font-size: var(--et-fs-meta, 0.75rem);
+  font-size: var(--et-fs-meta, 0.8125rem);
   font-weight: 600;
   letter-spacing: 0.02em;
   text-transform: uppercase;
   line-height: 1.25;
-  color: var(--text-color-secondary, #64748b);
+  color: var(--text-color-secondary, #334155);
 }
 
 .node-info-group-count {
@@ -1053,9 +1045,7 @@ const eventLogContent = computed(() => {
 }
 
 /*
- * 标签用次要色、数值用正文色（回退色保证 Android WebView 可见）。
- * 禁止 flex-shrink，避免单行被压成 0 宽；过长 chip 可在容器内断行。
- */
+ * 标签用次要色、数值用正文色（回退色保�?Android WebView 可见）�? * 禁止 flex-shrink，避免单行被压成 0 宽；过长 chip 可在容器内断行�? */
 .node-info-chip {
   display: inline-block;
   flex: 0 0 auto;
@@ -1064,10 +1054,10 @@ const eventLogContent = computed(() => {
   padding: 0.1rem 0.45rem;
   min-height: 1.3rem;
   box-sizing: border-box;
-  font-size: var(--et-fs-body, 0.875rem);
+  font-size: var(--et-fs-body, 0.9375rem);
   font-weight: 500;
   line-height: 1.35;
-  color: var(--text-color, #1e293b);
+  color: var(--text-color, #0f172a);
   background: var(--surface-100, #f1f5f9);
   border: 1px solid var(--et-border-color, #e2e8f0);
   border-radius: 0.375rem;
@@ -1084,16 +1074,16 @@ const eventLogContent = computed(() => {
 }
 
 .status-subcard-title {
-  font-size: var(--et-fs-body, 0.875rem);
+  font-size: var(--et-fs-body, 0.9375rem);
   font-weight: 600;
-  color: var(--text-color, #1e293b);
+  color: var(--text-color, #0f172a);
   line-height: 1.35;
 }
 
 .status-meta-row,
 .status-meta-grid {
-  font-size: var(--et-fs-body, 0.875rem);
-  color: var(--text-color, #1e293b);
+  font-size: var(--et-fs-body, 0.9375rem);
+  color: var(--text-color, #0f172a);
 }
 
 .status-meta-row {
@@ -1114,9 +1104,9 @@ const eventLogContent = computed(() => {
 }
 
 .status-meta-label {
-  font-size: var(--et-fs-meta, 0.75rem);
+  font-size: var(--et-fs-meta, 0.8125rem);
   font-weight: 600;
-  color: var(--text-color-secondary, #64748b);
+  color: var(--text-color-secondary, #334155);
   margin-right: 0.25rem;
 }
 
@@ -1136,15 +1126,15 @@ const eventLogContent = computed(() => {
   border-radius: calc(var(--et-radius, 0.75rem) - 0.35rem);
   background: var(--surface-100, #f1f5f9);
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: var(--et-fs-meta, 0.75rem);
+  font-size: var(--et-fs-meta, 0.8125rem);
   line-height: 1.45;
-  color: var(--text-color, #1e293b);
+  color: var(--text-color, #0f172a);
 }
 
 .status-empty {
   padding: 1rem 0;
-  font-size: var(--et-fs-body, 0.875rem);
-  color: var(--text-color-secondary, #64748b);
+  font-size: var(--et-fs-body, 0.9375rem);
+  color: var(--text-color-secondary, #334155);
 }
 
 .status-empty--center {
@@ -1182,8 +1172,8 @@ const eventLogContent = computed(() => {
 }
 
 .status-event-time {
-  font-size: var(--et-fs-meta, 0.75rem);
-  color: var(--text-color-secondary, #64748b);
+  font-size: var(--et-fs-meta, 0.8125rem);
+  color: var(--text-color-secondary, #334155);
   font-variant-numeric: tabular-nums;
 }
 
@@ -1208,7 +1198,7 @@ const eventLogContent = computed(() => {
   .node-info-group-title {
     grid-column: 1;
     padding-top: 0;
-    font-size: var(--et-fs-meta, 0.75rem);
+    font-size: var(--et-fs-meta, 0.8125rem);
     text-transform: none;
     letter-spacing: 0;
     overflow: hidden;
@@ -1267,18 +1257,18 @@ const eventLogContent = computed(() => {
   }
 }
 
-/* 节点信息表格：行高紧凑，字号与面板正文一致 */
+/* 节点信息表格：行高紧凑，字号与面板正文一�?*/
 .status-panels :deep(.p-datatable .p-datatable-thead > tr > th) {
   padding: 0.4rem 0.6rem !important;
-  font-size: var(--et-fs-meta, 0.75rem);
+  font-size: var(--et-fs-meta, 0.8125rem);
   font-weight: 600;
-  color: var(--text-color-secondary, #64748b);
+  color: var(--text-color-secondary, #334155);
 }
 
 .status-panels :deep(.p-datatable .p-datatable-tbody > tr > td) {
   padding: 0.35rem 0.6rem !important;
-  font-size: var(--et-fs-body, 0.875rem);
-  color: var(--text-color, #1e293b);
+  font-size: var(--et-fs-body, 0.9375rem);
+  color: var(--text-color, #0f172a);
 }
 
 /* Peer table: never wrap cells; narrow viewports scroll horizontally instead. */
@@ -1305,9 +1295,9 @@ const eventLogContent = computed(() => {
   border-bottom: none;
 }
 .peer-table-scroll :deep(.p-datatable-tbody > tr:hover > td) {
-  background: color-mix(in srgb, var(--text-color, #1e293b) 6%, var(--surface-ground, #ffffff));
+  background: color-mix(in srgb, var(--text-color, #0f172a) 6%, var(--surface-ground, #ffffff));
 }
-/* Active send path (default_conn): emphasize the whole row instead of ★. */
+/* Active send path (default_conn): emphasize the whole row instead of �? */
 .peer-table-scroll :deep(.p-datatable-tbody > tr.peer-row-default > td) {
   font-weight: 600;
 }
