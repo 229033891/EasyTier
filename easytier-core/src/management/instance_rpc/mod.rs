@@ -29,7 +29,7 @@ use crate::{
 
 use super::resolve_instance;
 #[cfg(feature = "web-client")]
-use super::{ConfigFileStorage, ConfigPatchPersistence};
+use super::{ConfigFileStorage, ConfigPatchPersistence, InstanceMutationHooks};
 
 #[cfg(feature = "web-client")]
 mod config;
@@ -130,6 +130,9 @@ pub struct ResolvedInstanceManagementRpc<R> {
     resolver: R,
     #[cfg(feature = "web-client")]
     config_patch_persistence: Option<Arc<dyn ConfigPatchPersistence>>,
+    /// Optional host hooks (GUI localStorage writeback after managed hot-patch).
+    #[cfg(feature = "web-client")]
+    mutation_hooks: Option<Arc<dyn InstanceMutationHooks>>,
 }
 
 impl<R> Clone for ResolvedInstanceManagementRpc<R>
@@ -141,6 +144,8 @@ where
             resolver: self.resolver.clone(),
             #[cfg(feature = "web-client")]
             config_patch_persistence: self.config_patch_persistence.clone(),
+            #[cfg(feature = "web-client")]
+            mutation_hooks: self.mutation_hooks.clone(),
         }
     }
 }
@@ -170,12 +175,23 @@ where
             resolver: ManagerInstanceResolver { manager },
             #[cfg(feature = "web-client")]
             config_patch_persistence: None,
+            #[cfg(feature = "web-client")]
+            mutation_hooks: None,
         }
     }
     #[cfg(feature = "web-client")]
     pub fn new_with_config_storage(
         manager: Arc<InstanceManager<F>>,
         storage: Arc<dyn ConfigFileStorage>,
+    ) -> Self {
+        Self::new_with_config_storage_and_hooks(manager, storage, None)
+    }
+
+    #[cfg(feature = "web-client")]
+    pub fn new_with_config_storage_and_hooks(
+        manager: Arc<InstanceManager<F>>,
+        storage: Arc<dyn ConfigFileStorage>,
+        mutation_hooks: Option<Arc<dyn InstanceMutationHooks>>,
     ) -> Self {
         let persistence = Arc::new(ManagerConfigPatchPersistence {
             manager: manager.clone(),
@@ -185,6 +201,7 @@ where
         Self {
             resolver: ManagerInstanceResolver { manager },
             config_patch_persistence: Some(persistence),
+            mutation_hooks,
         }
     }
 
@@ -205,6 +222,8 @@ where
         resolver: BoundInstanceResolver { instance },
         #[cfg(feature = "web-client")]
         config_patch_persistence: Some(Arc::new(InMemoryConfigPatchPersistence)),
+        #[cfg(feature = "web-client")]
+        mutation_hooks: None,
     }
 }
 

@@ -54,6 +54,13 @@ pub trait InstanceMutationHooks: Send + Sync + 'static {
         Ok(())
     }
 
+    /// Console/managed hot-patch updated a running instance's shared TomlConfig.
+    /// Hosts should refresh local config caches (e.g. GUI localStorage); failures
+    /// must not roll back the already-applied patch.
+    async fn on_managed_config_patched(&self, _config: &TomlConfig) -> Result<(), String> {
+        Ok(())
+    }
+
     /// Called after runtime instances are removed.
     ///
     /// `keep_local_config` mirrors `DeleteNetworkInstanceRequest.keep_local_config`

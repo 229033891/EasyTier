@@ -4,6 +4,8 @@ import type { ConfigSource } from './config_source'
 export interface StoredGuiConfig {
   config: NetworkTypes.NetworkConfig
   source: ConfigSource
+  /** Last seen running-instance fingerprint (Service/Remote console-sync adopt). */
+  last_observed_runtime_fp?: string
 }
 
 /**

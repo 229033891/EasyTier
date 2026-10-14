@@ -8,6 +8,7 @@ import { handleMobileTunDeviceError, onNetworkInstanceUpdate } from './mobile_vp
 interface StoredGuiConfig {
   config: NetworkTypes.NetworkConfig
   source?: unknown
+  last_observed_runtime_fp?: string
 }
 
 const EVENTS = Object.freeze({
@@ -29,9 +30,10 @@ function onSaveConfigs(event: Event<StoredGuiConfig[]>) {
   console.log(`Received event '${EVENTS.SAVE_CONFIGS}': ${event.payload}`)
   localStorage.setItem(
     'networkList',
-    JSON.stringify(event.payload.map(({ config, source }) => ({
+    JSON.stringify(event.payload.map(({ config, source, last_observed_runtime_fp }) => ({
       config: NetworkTypes.normalizeNetworkConfig(config),
       source: normalizeConfigSource(source),
+      ...(last_observed_runtime_fp ? { last_observed_runtime_fp } : {}),
     }))),
   )
 }

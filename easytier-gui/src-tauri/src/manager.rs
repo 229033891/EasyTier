@@ -15,7 +15,14 @@ use easytier::proto::rpc_types::controller::BaseController;
 #[cfg(target_os = "android")]
 use easytier::proto::rpc_types::controller::Controller as _;
 use easytier::web_client::WebClientHooks;
-use easytier_core::management::remote_client::PersistentConfig;
+use easytier::proto::api::manage::GetNetworkInstanceConfigRequest;
+use easytier_core::management::config_source_from_rpc;
+use easytier_core::management::remote_client::{
+    PersistentConfig, RemoteClientError, merge_runtime_only_fields_into_stored,
+};
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
+use tauri::Emitter;
 
 pub(crate) struct GuiHooks {
     pub(crate) app: AppHandle,
@@ -45,10 +52,56 @@ impl WebClientHooks for GuiHooks {
     }
 
     async fn on_managed_config_overwrite(&self, instance_id: &uuid::Uuid) -> Result<(), String> {
-        // Tip only (§6.2); overwrite already applied — never fail the run path.
+        // Writeback + tip (§6.2); overwrite already applied — never fail the run path.
+        // Prefer emit only after a successful writeback so the UI does not reload
+        // a still-stale localStorage cache. `pre_run` usually wrote already; this
+        // path is a second chance via live RPC.
+        let client_manager = get_client_manager!()?;
+        match client_manager
+            .persist_synced_runtime_config(&self.app, *instance_id)
+            .await
+        {
+            Ok(()) => {
+                let _ = self
+                    .app
+                    .emit("managed_config_synced_overwrite", instance_id.to_string());
+            }
+            Err(error) => {
+                tracing::warn!(
+                    %instance_id,
+                    %error,
+                    "managed overwrite writeback failed; skip sync tip emit"
+                );
+            }
+        }
+        Ok(())
+    }
+
+    async fn on_managed_config_patched(
+        &self,
+        cfg: &easytier::common::config::TomlConfigLoader,
+    ) -> Result<(), String> {
+        // Hot-patch updates running TomlConfig without pre_run; refresh GUI storage
+        // so storage-first get_config does not show a stale local cache.
+        let client_manager = get_client_manager!()?;
+        if let Err(error) = client_manager
+            .persist_synced_toml_config(
+                &self.app,
+                cfg,
+                PersistedConfigSource::from_runtime_source(cfg.get_network_config_source()),
+            )
+            .await
+        {
+            tracing::warn!(
+                instance_id = %cfg.get_id(),
+                %error,
+                "managed hot-patch writeback failed"
+            );
+            return Err(error);
+        }
         let _ = self
             .app
-            .emit("managed_config_synced_overwrite", instance_id.to_string());
+            .emit("managed_config_synced_overwrite", cfg.get_id().to_string());
         Ok(())
     }
 
@@ -129,6 +182,9 @@ pub(crate) struct GUIConfig {
     inst_id: String,
     pub(crate) config: NetworkConfig,
     source: PersistedConfigSource,
+    /// Last observed running-instance config fingerprint (Service/Remote adopt).
+    /// `None` until the first successful runtime read; user Save must not clear it.
+    last_observed_runtime_fp: Option<String>,
     /// Mirrored from `enabled_networks` when listing; not persisted.
     disabled: bool,
 }
@@ -138,14 +194,66 @@ pub(crate) struct StoredGuiConfig {
     config: NetworkConfig,
     #[serde(default)]
     source: PersistedConfigSource,
+    /// See [`GUIConfig::last_observed_runtime_fp`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    last_observed_runtime_fp: Option<String>,
+}
+
+/// Stable fingerprint of a running NetworkConfig body (for console-sync detect).
+pub(crate) fn network_config_runtime_fingerprint(cfg: &NetworkConfig) -> String {
+    let Ok(bytes) = serde_json::to_vec(cfg) else {
+        return String::new();
+    };
+    let mut hasher = DefaultHasher::new();
+    bytes.hash(&mut hasher);
+    format!("{:016x}", hasher.finish())
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WebRuntimeObserveAction {
+    /// First sight (or only runtime-only drift): record fingerprint, keep storage body.
+    LearnFingerprint,
+    /// Console/device applied a different managed body: replace storage.
+    AdoptRuntime,
+    /// Fingerprint unchanged: storage-first.
+    KeepStorage,
+}
+
+fn web_runtime_observe_action(
+    stored: &NetworkConfig,
+    runtime: &NetworkConfig,
+    prev_fp: Option<&str>,
+    runtime_fp: &str,
+) -> WebRuntimeObserveAction {
+    match prev_fp {
+        None => WebRuntimeObserveAction::LearnFingerprint,
+        Some(prev) if prev == runtime_fp => WebRuntimeObserveAction::KeepStorage,
+        Some(_) => {
+            // Ignore pure runtime-only drift (e.g. auto wintun `dev_name`) so
+            // serialization jitter does not thrash localStorage / emit storms.
+            let mut merged = stored.clone();
+            merge_runtime_only_fields_into_stored(&mut merged, runtime);
+            if network_config_runtime_fingerprint(&merged) == runtime_fp {
+                WebRuntimeObserveAction::LearnFingerprint
+            } else {
+                WebRuntimeObserveAction::AdoptRuntime
+            }
+        }
+    }
 }
 
 impl GUIConfig {
-    fn new(inst_id: String, config: NetworkConfig, source: PersistedConfigSource) -> Self {
+    fn new_with_runtime_fp(
+        inst_id: String,
+        config: NetworkConfig,
+        source: PersistedConfigSource,
+        last_observed_runtime_fp: Option<String>,
+    ) -> Self {
         Self {
             inst_id,
             config,
             source,
+            last_observed_runtime_fp,
             disabled: false,
         }
     }
@@ -154,6 +262,7 @@ impl GUIConfig {
         StoredGuiConfig {
             config: self.config,
             source: self.source,
+            last_observed_runtime_fp: self.last_observed_runtime_fp,
         }
     }
 }
@@ -239,13 +348,63 @@ impl GUIStorage {
             cfg.dev_name = Some(stored_name.to_owned());
         }
 
+        let (source, last_observed_runtime_fp) = self
+            .network_configs
+            .get(&inst_id)
+            .map(|existing| {
+                (
+                    existing.source.merge_persisted(source),
+                    // User/local save must keep the last seen runtime fingerprint so a
+                    // later console apply (runtime body change) is still detectable.
+                    existing.last_observed_runtime_fp.clone(),
+                )
+            })
+            .unwrap_or((source, None));
+        let config =
+            GUIConfig::new_with_runtime_fp(inst_id.to_string(), cfg, source, last_observed_runtime_fp);
+        self.network_configs.insert(inst_id, config);
+        self.save_configs(app)
+    }
+
+    /// Persist config and record the runtime fingerprint (console sync / adopt).
+    fn save_config_observing_runtime(
+        &self,
+        app: &AppHandle,
+        inst_id: Uuid,
+        cfg: NetworkConfig,
+        source: PersistedConfigSource,
+        runtime_fp: String,
+    ) -> anyhow::Result<()> {
         let source = self
             .network_configs
             .get(&inst_id)
             .map(|existing| existing.source.merge_persisted(source))
             .unwrap_or(source);
-        let config = GUIConfig::new(inst_id.to_string(), cfg, source);
+        let config = GUIConfig::new_with_runtime_fp(
+            inst_id.to_string(),
+            cfg,
+            source,
+            Some(runtime_fp),
+        );
         self.network_configs.insert(inst_id, config);
+        self.save_configs(app)
+    }
+
+    /// Learn the current runtime fingerprint without replacing the stored body.
+    fn note_observed_runtime_fp(
+        &self,
+        app: &AppHandle,
+        inst_id: Uuid,
+        runtime_fp: String,
+    ) -> anyhow::Result<()> {
+        let Some(mut entry) = self.network_configs.get_mut(&inst_id) else {
+            return Ok(());
+        };
+        if entry.last_observed_runtime_fp.as_deref() == Some(runtime_fp.as_str()) {
+            return Ok(());
+        }
+        entry.last_observed_runtime_fp = Some(runtime_fp);
+        drop(entry);
         self.save_configs(app)
     }
 
@@ -451,6 +610,54 @@ impl GUIClientManager {
         Ok(())
     }
 
+    /// Persist a console-synced TomlConfig into GUI storage (hot-patch / overwrite writeback).
+    pub(crate) async fn persist_synced_toml_config(
+        &self,
+        app: &AppHandle,
+        cfg: &easytier::common::config::TomlConfigLoader,
+        source: PersistedConfigSource,
+    ) -> Result<(), String> {
+        let network = NetworkConfig::new_from_config(cfg).map_err(|e| e.to_string())?;
+        let fp = network_config_runtime_fingerprint(&network);
+        self.storage
+            .save_config_observing_runtime(app, cfg.get_id(), network, source, fp)
+            .map_err(|e| e.to_string())
+    }
+
+    /// Best-effort: read the running instance config and write it back to GUI storage.
+    pub(crate) async fn persist_synced_runtime_config(
+        &self,
+        app: &AppHandle,
+        instance_id: uuid::Uuid,
+    ) -> Result<(), String> {
+        // Must use the live process RPC (not storage-first get) so overwrite/hot-patch
+        // writeback captures console-applied fields.
+        let client = self
+            .get_rpc_client(app.clone())
+            .ok_or_else(|| "rpc client unavailable for synced writeback".to_string())?;
+        let resp = client
+            .get_network_instance_config(
+                BaseController::default(),
+                GetNetworkInstanceConfigRequest {
+                    inst_id: Some(instance_id.into()),
+                },
+            )
+            .await
+            .map_err(|e| e.to_string())?;
+        let Some(runtime_config) = resp.config else {
+            return Err(format!(
+                "running config unavailable for writeback: {instance_id}"
+            ));
+        };
+        let source = config_source_from_rpc(resp.source)
+            .map(PersistedConfigSource::from_runtime_source)
+            .unwrap_or(PersistedConfigSource::Web);
+        let fp = network_config_runtime_fingerprint(&runtime_config);
+        self.storage
+            .save_config_observing_runtime(app, instance_id, runtime_config, source, fp)
+            .map_err(|e| e.to_string())
+    }
+
     pub(crate) async fn pre_run_network_instance_hook(
         &self,
         app: &AppHandle,
@@ -483,16 +690,7 @@ impl GUIClientManager {
             }
         }
 
-        self.storage
-            .save_config(
-                app,
-                instance_id,
-                NetworkConfig::new_from_config(cfg).map_err(|e| e.to_string())?,
-                source,
-            )
-            .map_err(|e| e.to_string())?;
-
-        Ok(())
+        self.persist_synced_toml_config(app, cfg, source).await
     }
 
     pub(crate) async fn post_run_network_instance_hook(
@@ -722,7 +920,12 @@ impl GUIClientManager {
             let instance_id = stored.config.instance_id();
             self.storage.network_configs.insert(
                 instance_id.parse()?,
-                GUIConfig::new(instance_id.to_string(), stored.config, stored.source),
+                GUIConfig::new_with_runtime_fp(
+                    instance_id.to_string(),
+                    stored.config,
+                    stored.source,
+                    stored.last_observed_runtime_fp,
+                ),
             );
         }
 
@@ -836,6 +1039,7 @@ impl GUIClientManager {
         Ok(())
     }
 }
+#[async_trait]
 impl RemoteClientManager<AppHandle, GUIConfig, anyhow::Error> for GUIClientManager {
     fn get_rpc_client(
         &self,
@@ -855,11 +1059,133 @@ impl RemoteClientManager<AppHandle, GUIConfig, anyhow::Error> for GUIClientManag
     fn get_storage(&self) -> &impl Storage<AppHandle, GUIConfig, anyhow::Error> {
         &self.storage
     }
+
+    /// Storage-first body, with **Web-owned runtime adopt** for Service/Remote.
+    ///
+    /// When the running instance is Web-owned and its body fingerprint changes
+    /// since the last observation, adopt the runtime config into GUI storage
+    /// (console/device applied a newer managed config). Local Save keeps the
+    /// previous fingerprint so storage can stay ahead of runtime until apply.
+    async fn handle_get_network_config_with_source(
+        &self,
+        identify: AppHandle,
+        inst_id: uuid::Uuid,
+    ) -> Result<(NetworkConfig, ConfigSource), RemoteClientError<anyhow::Error>> {
+        let inst_id_str = inst_id.to_string();
+        let stored_row = self
+            .storage
+            .get_network_config(identify.clone(), &inst_id_str)
+            .await
+            .map_err(RemoteClientError::PersistentError)?;
+
+        let runtime = if let Some(client) = self.get_rpc_client(identify.clone()) {
+            match client
+                .get_network_instance_config(
+                    BaseController::default(),
+                    GetNetworkInstanceConfigRequest {
+                        inst_id: Some(inst_id.into()),
+                    },
+                )
+                .await
+            {
+                Ok(resp) => resp.config.map(|config| (config, resp.source)),
+                Err(error) => {
+                    tracing::warn!(
+                        %inst_id,
+                        %error,
+                        "get_network_instance_config failed; using storage body/source fallback"
+                    );
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
+        if let Some(row) = stored_row {
+            let source = runtime
+                .as_ref()
+                .and_then(|(_, rpc_source)| config_source_from_rpc(*rpc_source))
+                .unwrap_or_else(|| row.get_runtime_network_config_source());
+
+            if let Some((runtime_config, _)) = runtime.as_ref() {
+                let runtime_fp = network_config_runtime_fingerprint(runtime_config);
+                let observed = row.last_observed_runtime_fp.clone();
+
+                if source == ConfigSource::Web {
+                    match web_runtime_observe_action(
+                        &row.config,
+                        runtime_config,
+                        observed.as_deref(),
+                        &runtime_fp,
+                    ) {
+                        WebRuntimeObserveAction::LearnFingerprint => {
+                            let _ = self.storage.note_observed_runtime_fp(
+                                &identify,
+                                inst_id,
+                                runtime_fp,
+                            );
+                        }
+                        WebRuntimeObserveAction::AdoptRuntime => {
+                            if let Err(error) = self.storage.save_config_observing_runtime(
+                                &identify,
+                                inst_id,
+                                runtime_config.clone(),
+                                PersistedConfigSource::Web,
+                                runtime_fp,
+                            ) {
+                                tracing::warn!(
+                                    %inst_id,
+                                    %error,
+                                    "failed to adopt web runtime config into GUI storage"
+                                );
+                            } else {
+                                let _ = identify.emit(
+                                    "managed_config_synced_overwrite",
+                                    inst_id.to_string(),
+                                );
+                            }
+                            return Ok((runtime_config.clone(), ConfigSource::Web));
+                        }
+                        WebRuntimeObserveAction::KeepStorage => {}
+                    }
+                } else if observed.as_deref() != Some(runtime_fp.as_str()) {
+                    // Keep fingerprint current for User instances too so a later
+                    // Web takeover still detects the next runtime change.
+                    let _ = self
+                        .storage
+                        .note_observed_runtime_fp(&identify, inst_id, runtime_fp);
+                }
+            }
+
+            let mut config = row
+                .get_network_config()
+                .map_err(RemoteClientError::PersistentError)?;
+            if let Some((runtime_config, _)) = runtime.as_ref() {
+                merge_runtime_only_fields_into_stored(&mut config, runtime_config);
+            }
+            return Ok((config, source));
+        }
+
+        if let Some((config, rpc_source)) = runtime {
+            let source = config_source_from_rpc(rpc_source).unwrap_or(ConfigSource::User);
+            return Ok((config, source));
+        }
+
+        Err(RemoteClientError::NotFound(format!(
+            "No such network instance: {}",
+            inst_id_str
+        )))
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{PersistedConfigSource, StoredGuiConfig, is_automatic_windows_dev_name};
+    use super::{
+        PersistedConfigSource, StoredGuiConfig, WebRuntimeObserveAction,
+        is_automatic_windows_dev_name, network_config_runtime_fingerprint,
+        web_runtime_observe_action,
+    };
     use easytier::proto::api::manage::NetworkConfig;
 
     #[test]
@@ -923,5 +1249,66 @@ mod tests {
         assert!(!PersistedConfigSource::Legacy.is_web_like());
         assert!(!PersistedConfigSource::User.is_web_like());
         assert!(PersistedConfigSource::Web.is_web_like());
+    }
+
+    fn named(name: &str, secret: &str, dev: Option<&str>) -> NetworkConfig {
+        NetworkConfig {
+            network_name: Some(name.to_owned()),
+            network_secret: Some(secret.to_owned()),
+            dev_name: dev.map(str::to_owned),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn web_observe_learns_baseline_without_adopting_local_save() {
+        let stored = named("saved", "s1", None);
+        let runtime = named("running", "r0", Some("et_1_abcd"));
+        let fp = network_config_runtime_fingerprint(&runtime);
+        assert_eq!(
+            web_runtime_observe_action(&stored, &runtime, None, &fp),
+            WebRuntimeObserveAction::LearnFingerprint
+        );
+        assert_eq!(
+            web_runtime_observe_action(&stored, &runtime, Some(&fp), &fp),
+            WebRuntimeObserveAction::KeepStorage
+        );
+    }
+
+    #[test]
+    fn web_observe_adopts_when_runtime_body_changes() {
+        let stored = named("saved", "s1", Some("et_1_abcd"));
+        let old = named("running", "r0", Some("et_1_abcd"));
+        let new = named("console", "c1", Some("et_1_abcd"));
+        let old_fp = network_config_runtime_fingerprint(&old);
+        let new_fp = network_config_runtime_fingerprint(&new);
+        assert_ne!(old_fp, new_fp);
+        assert_eq!(
+            web_runtime_observe_action(&stored, &new, Some(&old_fp), &new_fp),
+            WebRuntimeObserveAction::AdoptRuntime
+        );
+    }
+
+    #[test]
+    fn web_observe_learns_when_only_runtime_dev_name_fills_in() {
+        let stored = named("same", "s", None);
+        let runtime = named("same", "s", Some("et_1_abcd"));
+        let prev = network_config_runtime_fingerprint(&named("same", "s", None));
+        let fp = network_config_runtime_fingerprint(&runtime);
+        assert_eq!(
+            web_runtime_observe_action(&stored, &runtime, Some(&prev), &fp),
+            WebRuntimeObserveAction::LearnFingerprint
+        );
+    }
+
+    #[test]
+    fn stored_gui_config_keeps_runtime_fingerprint() {
+        let stored: StoredGuiConfig = serde_json::from_value(serde_json::json!({
+            "config": NetworkConfig::default(),
+            "source": "web",
+            "last_observed_runtime_fp": "abc",
+        }))
+        .unwrap();
+        assert_eq!(stored.last_observed_runtime_fp.as_deref(), Some("abc"));
     }
 }

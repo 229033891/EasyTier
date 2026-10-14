@@ -34,16 +34,21 @@ export function parseStoredConfigs(raw: string | null): StoredGuiConfig[] {
 
   return parsed.flatMap((entry): StoredGuiConfig[] => {
     if (entry && typeof entry === 'object' && 'config' in entry) {
-      const { config, source } = entry as {
+      const { config, source, last_observed_runtime_fp } = entry as {
         config?: NetworkConfig
         source?: unknown
+        last_observed_runtime_fp?: unknown
       }
       if (!config) {
         return []
       }
+      const fp = typeof last_observed_runtime_fp === 'string' && last_observed_runtime_fp
+        ? last_observed_runtime_fp
+        : undefined
       return [{
         config: NetworkTypes.normalizeNetworkConfig(config),
         source: normalizeConfigSource(source),
+        ...(fp ? { last_observed_runtime_fp: fp } : {}),
       }]
     }
     // legacy: bare NetworkConfig
@@ -203,9 +208,10 @@ export async function sendConfigs(
     }
   }
   return await invoke('load_configs', {
-    configs: networkList.map(({ config, source }) => ({
+    configs: networkList.map(({ config, source, last_observed_runtime_fp }) => ({
       config: NetworkTypes.toBackendNetworkConfig(config),
       source,
+      ...(last_observed_runtime_fp ? { last_observed_runtime_fp } : {}),
     })),
     enabledNetworks,
   })

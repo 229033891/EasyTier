@@ -51,7 +51,7 @@ use std::sync::{Arc, LazyLock};
 use tokio::sync::{Mutex, RwLock, RwLockReadGuard};
 use uuid::Uuid;
 
-use tauri::{AppHandle, Emitter, Manager as _};
+use tauri::{AppHandle, Manager as _};
 
 #[cfg(not(target_os = "android"))]
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
@@ -458,12 +458,12 @@ fn should_report_to_config_server(
 
 /// Resolve web ownership from the process that owns the instance.
 ///
-/// The GUI-local `source` cache is only written by `GuiHooks::pre_run_network_instance`,
-/// which runs inside whichever process owns the config-server `WebClient`. In service
-/// and remote mode that owner is `ET-Gui` (or the remote node), so this process never
-/// learns `source = Web` for console-created networks and would silently drop the
-/// report. Ask the owner first, then fall back to the local cache when it cannot
-/// answer.
+/// The GUI-local `source` cache is written by `GuiHooks` (pre_run / overwrite /
+/// hot-patch writeback) and by Web-runtime adopt on get — but those hooks only
+/// run in the process that owns the config-server `WebClient`. In service and
+/// remote mode that owner is `ET-Gui` (or the remote node), so this GUI process
+/// may still lack a trustworthy local `Web` marker. Ask the owner first, then
+/// fall back to the local cache when it cannot answer.
 async fn resolve_is_web_owned(
     client_manager: &manager::GUIClientManager,
     app: &AppHandle,

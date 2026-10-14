@@ -1014,6 +1014,12 @@ web:
     discard_changes: 取消编辑
     discard_changes_tip: 取消当前编辑，恢复为上次已保存的配置
     unsaved_changes: 未保存
+    config_source_console: 控制台托管
+    config_source_console_tip: 所有权在控制台（Web 源）：权威配置在控制台数据库；设备会按控制台同步。不代表本机草稿已推送成功。
+    config_source_local: 仅本地
+    config_source_local_tip: 设备本地（User）配置：未接管前不会自动写入控制台数据库。
+    config_source_pending_sync: 待同步
+    config_source_pending_sync_tip: 控制台托管网络有未保存的本地修改；保存后才会推送到控制台。
     more_actions: 更多操作
     edit_as_file: 编辑为文件
     edit_as_file_tip: 以文本方式直接编辑完整配置文件

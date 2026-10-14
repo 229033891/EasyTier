@@ -3,7 +3,7 @@
 ## Status
 
 - Status: **Current**
-- 最近审阅：2026-10-14（§2.5 GUI 读序改为存储优先 + RPC 补 `dev_name`，修「保存网络名/密码后重进配置页仍显示运行中旧值」）
+- 最近审阅：2026-10-14（§2.5 存储优先 + 热更写回 + Service/Remote Web 运行态指纹采纳；徽章/RPC warn）
 - 上次审阅：2026-10-09（补 §2.5：读配置权威；GUI RPC 优先 vs Web 存储优先；补 §6：配置页 / 运行页职责）
 - 范围：Windows/Linux/macOS 桌面 `easytier-gui`、可选后台服务 `ET-Gui`、config-server 会话与 web-owned 配置回写
 - 索引：[`../README.md`](../README.md)
@@ -114,8 +114,12 @@ OHOS nearby：`easytier-contrib/.../nearby_management.rs` 对相关方法返回 
 
 | 调用方 | 顺序 | 权威 | 原因 |
 |--------|------|------|------|
-| **GUI / ET-Gui**（trait 默认） | **正文：本地存储优先**（RPC 只补空 `dev_name`）；**`ConfigSource`：RPC 优先**；无存储行才整份用 RPC | **已保存正文** / **运行时所有权** | Save 只写存储、不重建运行中实例 → 正文用存储，避免「保存后重进仍见旧网络名/密码」。所有权仍问运行中实例，否则 Service/Remote 下 GUI 本地学不到 `Web`，保存后**不会推控制台**。 |
+| **GUI / ET-Gui**（trait 默认 + GUI 覆盖） | **正文：本地存储优先**（RPC 只补空 `dev_name`）；**`ConfigSource`：RPC 优先**；无存储行才整份用 RPC；**Web 托管且运行态指纹变化时采纳运行态并写回存储** | **已保存正文**（本地 Save 领先时）/ **设备运行态**（控制台下发后）/ **运行时所有权** | Save 只写存储、不重建运行中实例 → 正文用存储，避免「保存后重进仍见旧网络名/密码」。Service/Remote 下 `GuiHooks` 不在 GUI 进程，靠 `last_observed_runtime_fp` 检测设备侧变化并采纳，避免编辑页长期过期、保存盖回控制台。 |
 | **Web 控制台**（`ClientManager` 覆盖） | **SQLite 优先** → 设备 RPC 仅当无行 | **Web 库** | 托管编辑以库为准；避免打开配置页时等忙设备。设备本地改过且未回写库的内容，编辑页不显示；从控制台保存会按 reconcile 盖回设备。 |
+
+**热更 / 覆盖回写本地（Normal）**：控制台 Full overwrite（`on_managed_config_overwrite`）与 hot-patch（`on_managed_config_patched`）成功后，持有 `WebClient` 的进程须把运行中 TomlConfig **写回 GUI 存储**并派发 `managed_config_synced_overwrite`。写回失败只 `warn`、不假成功 tip。脏稿收到同步事件时**确认后再** force reload。
+
+**Service / Remote Web 采纳**：GUI 存储记录 `last_observed_runtime_fp`；本地 Save **不**刷新该指纹。下次 `get_config` 若 RPC 源为 Web 且运行态指纹相对上次观察已变、且正文实质不同 → 采纳运行态写回存储并 emit。首次观察只记指纹、保留本地正文（覆盖「Save 领先于 runtime apply」窗口）。
 
 不要把两套读序合并成「全局 RPC 优先」或「全局只读存储、不叠 runtime」。
 

@@ -27,6 +27,18 @@ where
         let instance = self.instance(request.instance.as_ref())?;
         if let Some(patch) = request.patch {
             apply_config_patch(&instance, patch, self.config_patch_persistence.as_deref()).await?;
+            // Refresh host-side caches (GUI localStorage) after a successful hot-patch.
+            // Never fail the RPC for tip/writeback hooks — patch is already applied.
+            if let Some(hooks) = self.mutation_hooks.as_ref()
+                && let Some(toml) = instance.toml_config()
+                && let Err(error) = hooks.on_managed_config_patched(&toml).await
+            {
+                tracing::info!(
+                    instance_id = %instance.instance_id(),
+                    %error,
+                    "managed config patched tip/writeback hook failed"
+                );
+            }
         }
         Ok(PatchConfigResponse::default())
     }

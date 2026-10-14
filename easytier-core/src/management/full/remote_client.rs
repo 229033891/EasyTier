@@ -410,7 +410,16 @@ where
                 .await
             {
                 Ok(resp) => resp.config.map(|config| (config, resp.source)),
-                Err(_) => None,
+                Err(error) => {
+                    // Keep storage-first fallback, but do not swallow failures silently —
+                    // Service/Remote ownership and writeback diagnostics depend on this path.
+                    tracing::warn!(
+                        %inst_id,
+                        %error,
+                        "get_network_instance_config failed; using storage body/source fallback"
+                    );
+                    None
+                }
             }
         } else {
             None
@@ -448,7 +457,7 @@ where
 
 /// Fill runtime-assigned fields that storage may still lack (Windows wintun
 /// `dev_name`). Does **not** overwrite user edits already persisted in storage.
-pub(crate) fn merge_runtime_only_fields_into_stored(
+pub fn merge_runtime_only_fields_into_stored(
     stored: &mut NetworkConfig,
     runtime: &NetworkConfig,
 ) {
@@ -601,5 +610,17 @@ mod tests {
         assert_eq!(stored.network_name.as_deref(), Some("local-et"));
         assert_eq!(stored.network_secret.as_deref(), Some("local-secret"));
         assert_eq!(stored.dev_name.as_deref(), Some("et_2_ffff"));
+    }
+
+    #[test]
+    fn merge_keeps_storage_proxy_cidrs_when_runtime_hot_patched() {
+        // Writeback must update storage after hot-patch; until then get_config keeps
+        // storage body (this merge must not silently adopt runtime CIDRs).
+        let mut stored = cfg("n", Some("s"), Some("custom"));
+        stored.proxy_cidrs = vec!["10.0.0.0/24".to_owned()];
+        let mut runtime = cfg("n", Some("s"), Some("custom"));
+        runtime.proxy_cidrs = vec!["10.1.0.0/16".to_owned()];
+        merge_runtime_only_fields_into_stored(&mut stored, &runtime);
+        assert_eq!(stored.proxy_cidrs, vec!["10.0.0.0/24".to_owned()]);
     }
 }

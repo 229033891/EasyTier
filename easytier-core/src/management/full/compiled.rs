@@ -28,11 +28,16 @@ pub fn register_instance_management_rpc<F, H>(
     manager: Arc<InstanceManager<F>>,
     registry: &ServiceRegistry,
     storage: Arc<dyn ConfigFileStorage>,
+    hooks: Arc<dyn super::InstanceMutationHooks>,
 ) where
     F: InstanceFactory<Instance = CoreInstance<H>>,
     H: CoreInstanceHost,
 {
-    let rpc = InstanceManagementRpc::<F>::new_with_config_storage(manager.clone(), storage);
+    let rpc = InstanceManagementRpc::<F>::new_with_config_storage_and_hooks(
+        manager.clone(),
+        storage,
+        Some(hooks),
+    );
     registry.register(PeerManageRpcServer::new(rpc.clone()), "");
     registry.register(ConnectorManageRpcServer::new(rpc.clone()), "");
     registry.register(MappedListenerManageRpcServer::new(rpc.clone()), "");

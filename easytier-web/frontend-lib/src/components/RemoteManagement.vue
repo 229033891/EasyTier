@@ -447,6 +447,71 @@ const currentNetworkMeta = computed(() => {
     }
     return networkMetaCache.value[instanceId.value];
 });
+
+/** Ownership badge: Web = console-managed; User = local-only. Hide while meta unknown. */
+type ConfigSourceBadge = {
+    kind: 'console' | 'local' | 'pending';
+    label: string;
+    tip: string;
+    icon: string;
+    severity: 'info' | 'secondary' | 'warn';
+};
+
+function configSourceBadgeFor(
+    meta: Api.NetworkMeta | undefined,
+    opts?: { dirty?: boolean },
+): ConfigSourceBadge | null {
+    if (!meta || meta.source === undefined || meta.source === Api.ConfigSource.Unspecified) {
+        return null;
+    }
+    if (meta.source === Api.ConfigSource.Web) {
+        // Ownership ≠ sync success: dirty Web drafts are still console-owned but pending push.
+        if (opts?.dirty) {
+            return {
+                kind: 'pending',
+                label: t('web.device_management.config_source_pending_sync'),
+                tip: t('web.device_management.config_source_pending_sync_tip'),
+                icon: 'pi pi-cloud-upload',
+                severity: 'warn',
+            };
+        }
+        return {
+            kind: 'console',
+            label: t('web.device_management.config_source_console'),
+            tip: t('web.device_management.config_source_console_tip'),
+            icon: 'pi pi-cloud',
+            severity: 'info',
+        };
+    }
+    if (meta.source === Api.ConfigSource.User) {
+        return {
+            kind: 'local',
+            label: t('web.device_management.config_source_local'),
+            tip: t('web.device_management.config_source_local_tip'),
+            icon: 'pi pi-desktop',
+            severity: 'secondary',
+        };
+    }
+    return null;
+}
+
+const currentConfigSourceBadge = computed(() =>
+    configSourceBadgeFor(currentNetworkMeta.value, {
+        dirty: isConfigDirty.value && showConfigPanel.value,
+    }),
+);
+
+/** Per-instance badges for the network Select dropdown (avoids repeated helper calls). */
+const configSourceBadgeById = computed(() => {
+    const map: Record<string, ConfigSourceBadge> = {};
+    for (const [id, meta] of Object.entries(networkMetaCache.value)) {
+        const badge = configSourceBadgeFor(meta);
+        if (badge) {
+            map[id] = badge;
+        }
+    }
+    return map;
+});
 const currentNetworkControl = {
     remoteSave: computed(() => {
         const meta = currentNetworkMeta.value;
@@ -779,6 +844,13 @@ const loadCurrentNetworkConfig = async (opts?: { force?: boolean }) => {
                 offerReloadOnServerConfigUpdated();
             }
             return;
+        }
+        // Periodic clean reload: skip apply when body unchanged (avoid form flicker).
+        if (!opts?.force && currentNetworkConfig.value?.instance_id === selected) {
+            const nextSnap = captureNormalizedDirtySnapshot(ret).snapshot;
+            if (nextSnap !== null && nextSnap === cleanConfigSnapshot.value) {
+                return;
+            }
         }
         applyLoadedNetworkConfig(ret);
     })();
@@ -1571,13 +1643,18 @@ let periodFunc = new Utils.PeriodicTask(async () => {
         if (!isConfigMode.value) {
             jobs.push(loadCurrentNetworkInfo())
         }
-        // P1-1: while dirty, periodically probe whether the server baseline moved.
+        // Config editor: probe console/device drift. Dirty → confirm prompt;
+        // clean → get_config (GUI may adopt Web runtime into storage + emit).
         if (
-            isConfigDirty.value
-            && showConfigPanel.value
+            showConfigPanel.value
             && (pollTick === 1 || pollTick % CONFIG_MODE_LIST_POLL_EVERY === 0)
         ) {
-            jobs.push(checkServerConfigStaleWhileDirty())
+            if (isConfigDirty.value) {
+                jobs.push(checkServerConfigStaleWhileDirty())
+            }
+            else {
+                jobs.push(loadCurrentNetworkConfig())
+            }
         }
         if (jobs.length) {
             await Promise.all(jobs)
@@ -1587,13 +1664,39 @@ let periodFunc = new Utils.PeriodicTask(async () => {
     }
 }, STATUS_POLL_MS);
 
+/** GUI host: console overwrite/hot-patch wrote localStorage — refresh open editor. */
+const onManagedConfigSyncedOverwrite = (event: Event) => {
+    const detail = (event as CustomEvent<{ instanceId?: string }>).detail;
+    const syncedId = detail?.instanceId;
+    if (!syncedId || selectedInstanceId.value?.uuid !== syncedId) {
+        return;
+    }
+    // Invalidate meta so ownership badge refreshes.
+    delete networkMetaCache.value[syncedId];
+    void loadNetworkMetas([syncedId]);
+    if (!(showConfigPanel.value || isCombinedMode.value)) {
+        return;
+    }
+    // Dirty draft: ask before discarding local edits (console is authoritative
+    // once the user accepts reload).
+    if (isConfigDirty.value) {
+        offerReloadOnServerConfigUpdated();
+        return;
+    }
+    void loadCurrentNetworkConfig({ force: true }).catch((e) => {
+        console.debug('reload after managed sync failed', e);
+    });
+};
+
 onMounted(async () => {
     managementAlive = true;
     periodFunc.start();
+    window.addEventListener('managed_config_synced_overwrite', onManagedConfigSyncedOverwrite);
 });
 
 onUnmounted(() => {
     managementAlive = false;
+    window.removeEventListener('managed_config_synced_overwrite', onManagedConfigSyncedOverwrite);
     ++configLoadGeneration; // invalidate in-flight load/probe apply
     periodFunc.stop();
     networkMetaCache.value = {};
@@ -1644,6 +1747,14 @@ onUnmounted(() => {
                                         </span>
                                         <span v-else>{{ slotProps.value.uuid }}</span>
                                     </span>
+                                    <Tag
+                                        v-if="currentConfigSourceBadge"
+                                        class="network-source-tag leading-3 shrink-0"
+                                        :severity="currentConfigSourceBadge.severity"
+                                        :icon="currentConfigSourceBadge.icon"
+                                        :value="currentConfigSourceBadge.label"
+                                        v-tooltip.top="currentConfigSourceBadge.tip"
+                                    />
                                     <Tag v-if="isConfigDirty && showConfigPanel" class="network-dirty-tag leading-3 shrink-0"
                                         severity="warn"
                                         :value="t('web.device_management.unsaved_changes')" />
@@ -1663,6 +1774,14 @@ onUnmounted(() => {
                                             <span class="truncate block">{{ t('network_name') }}: {{
                                                 slotProps.option.meta?.network_name ?? slotProps.option.uuid }}</span>
                                         </div>
+                                        <Tag
+                                            v-if="configSourceBadgeById[slotProps.option.uuid]"
+                                            class="network-source-tag my-auto leading-3 shrink-0 mr-2"
+                                            :severity="configSourceBadgeById[slotProps.option.uuid].severity"
+                                            :icon="configSourceBadgeById[slotProps.option.uuid].icon"
+                                            :value="configSourceBadgeById[slotProps.option.uuid].label"
+                                            v-tooltip.top="configSourceBadgeById[slotProps.option.uuid].tip"
+                                        />
                                         <Tag v-if="residualKindFor(slotProps.option.uuid)" class="network-residual-tag my-auto leading-3 shrink-0 mr-2"
                                             severity="warn"
                                             :value="residualBadgeLabel(residualKindFor(slotProps.option.uuid)!)" />
@@ -2146,6 +2265,35 @@ onUnmounted(() => {
 :deep(.network-dirty-tag.p-tag) {
     background: color-mix(in srgb, #f59e0b 22%, #ffffff) !important;
     color: #b45309 !important;
+}
+
+:deep(.network-source-tag.p-tag) {
+    font-weight: 600 !important;
+    letter-spacing: 0.02em;
+    padding: 0.2rem 0.5rem !important;
+    gap: 0.25rem;
+}
+
+:deep(.network-source-tag.p-tag-info) {
+    background: color-mix(in srgb, var(--primary-color, #0ea5e9) 16%, #ffffff) !important;
+    color: var(--primary-color, #0284c7) !important;
+}
+
+:deep(.network-source-tag.p-tag-secondary) {
+    background: color-mix(in srgb, #64748b 12%, #ffffff) !important;
+    color: #475569 !important;
+}
+
+:deep(.network-source-tag.p-tag-warn) {
+    background: color-mix(in srgb, #f59e0b 18%, #ffffff) !important;
+    color: #b45309 !important;
+}
+
+/* Keep ownership readable on the filled running/stopped select chip. */
+:deep(.network-instance-select--running .network-source-tag.p-tag),
+:deep(.network-instance-select--stopped .network-source-tag.p-tag) {
+    background: rgba(255, 255, 255, 0.22) !important;
+    color: #ffffff !important;
 }
 
 /* ???????????Tag ?????????????? */
