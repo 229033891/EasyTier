@@ -76,6 +76,7 @@ Agent / 人工均适用：**未完成 §1 不要提交**。
 - [ ] **clippy `too_many_arguments`**：函数 >7 参需打包参数或 `#[allow(clippy::too_many_arguments)]` 并写清原因。
 - [ ] **编 `easytier-web` 的路径**：OpenWrt `build-bins`、Linux musl、Windows headless embed 都会编 web；只改 core 绿不够。
 - [ ] **本地 clippy 对齐 CI**：`-- -D warnings`，与 ET Test Check clippy 一致。
+- [ ] **Criterion bench group 名不要含 `/`**：Criterion 落盘会把 `/` 换成 `_`；`script/check_routing_bench.py` 按落盘路径读 `estimates.json`，group 用 `policy_route_empty` / `policy_route_{scale}`。
 
 ---
 
@@ -102,6 +103,22 @@ Agent / 人工均适用：**未完成 §1 不要提交**。
 ---
 
 ## 5. 失败记录（新 → 旧）
+
+### 2026-10-14 — Hot-path gates：`policy_route` criterion 路径找不到
+
+| 项 | 内容 |
+|----|------|
+| 仓库/分支 | `229033891/EasyTier` `dev` |
+| Run | https://github.com/229033891/EasyTier/actions/runs/38547749833 |
+| 失败 job | Hot-path gates (alloc + bench) → Enforce hot-path thresholds |
+| 根因一类 | env（gate 路径） |
+| 状态 | 已修复（bench group 去 `/` + `check_routing_bench.py` 读 `policy_route_*`） |
+
+**摘要**：`cargo bench` 已跑出 `policy_route/empty/miss` 等结果，但 Criterion 把 group 名里的 `/` 写成 `_`（落盘为 `target/criterion/policy_route_empty/miss/...`），门禁仍找 `policy_route/empty/...`，报 missing `estimates.json`。
+
+**防再犯**：见 §3「Criterion bench group 名不要含 `/`」；改 gate 时对照 `target/criterion` 实际目录。
+
+---
 
 ### 2026-10-14 — Windows GUI：`traffic_routing_summary` 未加引号冒号
 

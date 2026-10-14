@@ -1985,7 +1985,7 @@ if local_route_snapshot.is_empty() {
 **实现要点（item 4，性能门禁）**
 
 - **先修掉一个真瓶颈**：`match_rule` 原本对 `cidr_sorted` 做**线性扫描**，10K 规则时一次 miss 要比较 1 万次 —— §12.5 的「10K 劣化 < 20%」**根本达不到**（实测比例会到 ~10×）。改为**按前缀长度分桶（33 桶）+ 桶内二分**：`O(33 · log n)`。重建索引同时按 `(prefix_len, network)` 去重（`closed` 优先 → 低索引优先）；因**同长度 CIDR 互斥**，只有完全相同的 CIDR 才需仲裁，语义与旧扫描一致。
-- **基准扩展**：`easytier/benches/routing_lookup.rs` 新增 `policy_route/{empty,1000,10000}` 组（空表基线 + `hit` / `miss`）；`bench_support` 暴露 `local_route_table_with_rules` / `empty_local_route_table`。
+- **基准扩展**：`easytier/benches/routing_lookup.rs` 新增 `policy_route_{empty,1000,10000}` 组（空表基线 + `hit` / `miss`；group 名不用 `/`，避免 Criterion 落盘改名）；`bench_support` 暴露 `local_route_table_with_rules` / `empty_local_route_table`。
 - **CI 门禁**：`.github/workflows/test.yml` 新增 `bench-routing` job（显示名「Hot-path gates (alloc + bench)」），含两步：
   1. **分配 = 0（确定性）**：`cargo test --package easytier-core --features test-utils --test hot_path_alloc` —— `easytier-core/tests/hot_path_alloc.rs` 装计数分配器，预热后跑 2 万轮 `lookup`（空表 / 1K / 10K × `hit` / `miss` / `balance` 流哈希分支），断言**零分配**。
   2. **规模门禁（比值）**：`cargo bench --package easytier --bench routing_lookup -- --noplot` → `script/check_routing_bench.py` 读 criterion 的 `estimates.json`，断言 ① 空表 `lookup` median **≤ 1 μs**（零回归基线，宽松以免共享 runner 抖动）② **10K / 1K median 比值 ≤ 1.20**（§12.5 的规模门禁）。

@@ -17,6 +17,10 @@ and enforces two **machine-independent** bounds:
      20%. A full linear scan would blow this by ~10x, which is exactly the
      regression this gate exists to catch.
 
+Criterion stores groups under `target/criterion/<group>/<function>/new/`.
+Group names must not contain `/` (Criterion replaces `/` with `_` in paths);
+the benches use `policy_route_empty` / `policy_route_{scale}`.
+
 Both are ratios or very loose absolutes, so they hold across runners. Absolute
 latency targets (P99 < 1 us) are tracked by the benchmark itself, not gated here.
 
@@ -68,19 +72,31 @@ def check_le(label: str, value: float, limit: float, unit: str = "ns") -> None:
         failures.append(f"{label}: {value:.2f}{unit} > {limit:.2f}{unit}")
 
 
+def list_criterion_groups() -> None:
+    """Print what Criterion actually wrote (helps path-mismatch debugging)."""
+    if not CRITERION_DIR.is_dir():
+        print(f"  (no criterion dir at {CRITERION_DIR})")
+        return
+    groups = sorted(
+        p.name for p in CRITERION_DIR.iterdir() if p.is_dir() and p.name != "report"
+    )
+    print(f"  criterion groups present: {', '.join(groups) or '(none)'}")
+
+
 def main() -> int:
     print("routing hot-path gate (unified-routing §12.5)")
 
-    empty = median_ns("policy_route/empty", "miss")
+    empty = median_ns("policy_route_empty", "miss")
     if empty is not None:
-        check_le("policy_route/empty/miss", empty, EMPTY_MEDIAN_LIMIT_NS)
+        check_le("policy_route_empty/miss", empty, EMPTY_MEDIAN_LIMIT_NS)
 
     for case in ("hit", "miss"):
-        small = median_ns(f"policy_route/{SMALL_SCALE}", case)
-        large = median_ns(f"policy_route/{LARGE_SCALE}", case)
-        if small and large:
+        small = median_ns(f"policy_route_{SMALL_SCALE}", case)
+        large = median_ns(f"policy_route_{LARGE_SCALE}", case)
+        # Use `is not None` — a 0.0 median is falsy but still a valid estimate.
+        if small is not None and large is not None:
             check_le(
-                f"policy_route/{case} {LARGE_SCALE}/{SMALL_SCALE} ratio",
+                f"policy_route_{case} {LARGE_SCALE}/{SMALL_SCALE} ratio",
                 large / small,
                 SCALE_DEGRADATION_LIMIT,
                 unit="x",
@@ -90,6 +106,7 @@ def main() -> int:
         print("\nrouting hot-path gate FAILED:")
         for failure in failures:
             print(f"  - {failure}")
+        list_criterion_groups()
         return 1
 
     print("\nrouting hot-path gate passed")

@@ -7,8 +7,11 @@
 //!   - `exit_node`           出口节点解析（`PeerMap::resolve_exit_node_peer`，即 TD-4 锁 + TD-5 重复遍历）
 //!
 //! 另覆盖统一路由表的**次序 3.5**热路径（`LocalRouteTable::lookup`）：
-//!   - `policy_route/empty`  空表（零回归基线：一次 `ArcSwap` load 后 `Miss`）
-//!   - `policy_route/{1k,10k}`  规则规模档，测 `hit`（`by_ip` / LPM 命中）与 `miss`
+//!   - `policy_route_empty`  空表（零回归基线：一次 `ArcSwap` load 后 `Miss`）
+//!   - `policy_route_{1000,10000}`  规则规模档，测 `hit`（`by_ip` / LPM 命中）与 `miss`
+//!
+//! Group 名**不要**含 `/`：Criterion 会把 `/` 换成 `_` 再写
+//! `target/criterion/...`，门禁脚本按落盘路径读 `estimates.json`。
 //!
 //! 说明：`exit_node` 在 mock 环境下测的是**未命中时**的出口解析开销 ——
 //! 要真正返回 Some 需真实 peer + 网关连通性（`get_gateway_peer_id`），PeerMap 层构造不出。
@@ -98,7 +101,7 @@ fn bench_routing_lookup(c: &mut Criterion) {
 /// 出站路径只多一次 `ArcSwap` load。
 fn bench_policy_route_lookup(c: &mut Criterion) {
     let empty = empty_local_route_table();
-    let mut g = c.benchmark_group("policy_route/empty");
+    let mut g = c.benchmark_group("policy_route_empty");
     g.bench_function("miss", |b| {
         b.iter(|| black_box(empty.lookup(black_box(&POLICY_ROUTE_HIT_IP), None)))
     });
@@ -106,7 +109,7 @@ fn bench_policy_route_lookup(c: &mut Criterion) {
 
     for &scale in POLICY_SCALES {
         let table = local_route_table_with_rules(scale);
-        let mut g = c.benchmark_group(format!("policy_route/{scale}"));
+        let mut g = c.benchmark_group(format!("policy_route_{scale}"));
         // `hit`: the rule's own /24 — resolves through the bucketed LPM.
         g.bench_function("hit", |b| {
             b.iter(|| black_box(table.lookup(black_box(&POLICY_ROUTE_HIT_IP), None)))
