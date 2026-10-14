@@ -47,10 +47,6 @@
     "os:allow-arch",
     "os:allow-hostname",
     "os:allow-platform",
-    "os:allow-locale",
-    "autostart:default",
-    "autostart:allow-enable",
-    "autostart:allow-disable",
-    "autostart:allow-is-enabled"
+    "os:allow-locale"
   ]
 }
