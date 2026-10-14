@@ -3,7 +3,7 @@
 ## Status
 
 - Status: **Ops**（追加式日志；提交前必查）
-- 最近审阅：2026-10-14
+- 最近审阅：2026-10-15
 - 索引：[`../README.md`](../README.md)
 - 本地复现：[`../../script/easytier-test-fast.cmd`](../../script/easytier-test-fast.cmd) / [`../../script/test-easytier.ps1`](../../script/test-easytier.ps1)
 - MSVC 环境：[`windows-msvc-local-build.md`](./windows-msvc-local-build.md)
@@ -105,6 +105,22 @@ Agent / 人工均适用：**未完成 §1 不要提交**。
 ---
 
 ## 5. 失败记录（新 → 旧）
+
+### 2026-10-15 — ET Android：`autostart:default` permission not found
+
+| 项 | 内容 |
+|----|------|
+| 仓库/分支 | `229033891/EasyTier` `dev` |
+| Run | https://github.com/229033891/EasyTier/actions/runs/38652316606 |
+| 失败 job | build-mobile (aarch64-linux-android) → Build |
+| 根因一类 | compile（Tauri ACL / 平台权限） |
+| 状态 | 已修复（`desktop-autostart.json` + 从 `migrated.json` 移出） |
+
+**摘要**：GUI 登录自启把 `autostart:*` 写进共用 `capabilities/migrated.json`；Android 目标不编 `tauri-plugin-autostart`，build 脚本校验 capability 时报 `Permission autostart:default not found`。
+
+**防再犯**：见 §3「桌面专用 Tauri 权限勿进共用 capability」。
+
+**修复说明**：`autostart` 权限迁到 `capabilities/desktop-autostart.json`（`platforms: macOS/windows/linux`）。
 
 ### 2026-10-14 — Hot-path gates：10K/1K 比值 1.25× 超 1.20
 
