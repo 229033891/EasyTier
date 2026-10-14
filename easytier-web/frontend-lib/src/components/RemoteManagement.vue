@@ -52,18 +52,18 @@ const props = defineProps<{
      * Delete authority for Web-source rows (config-delete-authority.md).
      * - `local` (default): this UI may delete any row (subject to file permission).
      * - `console`: Web-source rows are console-managed; gray out local delete.
-     * Independent of {@link hostSurface} — do not infer "I am the web console" from this.
+     * Independent of {@link hostSurface} ÃÂ¢ÃÂÃÂ do not infer "I am the web console" from this.
      */
     deleteAuthority?: 'local' | 'console';
     /**
      * Which product surface mounts this component. Independent of deleteAuthority.
-     * - `web-console`: DeviceManagement — User-source delete shows §5 confirm.
-     * - `gui-client`: desktop GUI — never use deleteAuthority alone to mean console.
+     * - `web-console`: DeviceManagement ÃÂ¢ÃÂÃÂ User-source delete shows ÃÂÃÂ§5 confirm.
+     * - `gui-client`: desktop GUI ÃÂ¢ÃÂÃÂ never use deleteAuthority alone to mean console.
      */
     hostSurface?: 'web-console' | 'gui-client';
     /**
      * Scope key for ignored residual ids (usually machine_id). Required for
-     * console residual ignore persistence; omit → ignore is session-only.
+     * console residual ignore persistence; omit ÃÂ¢ÃÂÃÂ ignore is session-only.
      */
     residualIgnoreScope?: string;
 }>();
@@ -95,7 +95,7 @@ function errorDetail(error: unknown): string {
     return Utils.formatApiErrorDetail(error, t);
 }
 
-/** False after unmount — blocks late probes / confirms on a destroyed instance. */
+/** False after unmount ÃÂ¢ÃÂÃÂ blocks late probes / confirms on a destroyed instance. */
 let managementAlive = true;
 
 function forceReloadLatestConfig() {
@@ -362,7 +362,7 @@ const clearResidualDeviceCopy = () => {
         void stopNetwork();
         return;
     }
-    // Device-only: hard purge (keep=false). Web → light confirm; User → stronger confirm.
+    // Device-only: hard purge (keep=false). Web ÃÂ¢ÃÂÃÂ light confirm; User ÃÂ¢ÃÂÃÂ stronger confirm.
     const source = Api.normalizeConfigSource(currentNetworkMeta.value?.source);
     const isUser =
         source === Api.ConfigSource.User
@@ -393,12 +393,12 @@ const takeoverResidualToConsole = () => {
     if (!kind) {
         return;
     }
-    // Already in console as disabled → Start aligns run state.
+    // Already in console as disabled ÃÂ¢ÃÂÃÂ Start aligns run state.
     if (kind === 'db_disabled_running') {
         startNetwork();
         return;
     }
-    // Device-only → Save upserts into console (User→Web confirm inside saveNetworkConfig).
+    // Device-only ÃÂ¢ÃÂÃÂ Save upserts into console (UserÃÂ¢ÃÂÃÂWeb confirm inside saveNetworkConfig).
     if (!currentNetworkConfig.value || !canSaveConfig.value) {
         toast.add({
             severity: 'warn',
@@ -482,7 +482,7 @@ function configSourceBadgeFor(
         return unknownConfigSourceBadge();
     }
     if (source === Api.ConfigSource.Web) {
-        // Ownership ≠ sync success: dirty Web drafts are still console-owned but pending push.
+        // Ownership ÃÂ¢ÃÂÃÂ  sync success: dirty Web drafts are still console-owned but pending push.
         if (opts?.dirty) {
             return {
                 kind: 'pending',
@@ -545,7 +545,7 @@ const currentNetworkControl = {
 
 /**
  * Web-source row locked to console when host injects `deleteAuthority: 'console'`.
- * Fail-open while meta is missing (`source` undefined) — button stays enabled until
+ * Fail-open while meta is missing (`source` undefined) ÃÂ¢ÃÂÃÂ button stays enabled until
  * meta loads; GUI backend `remove_network_instance` is the hard gate.
  */
 const isConsoleManagedDelete = computed(() => {
@@ -597,7 +597,7 @@ const saveConfigTooltip = computed(() =>
 
 const savingConfig = ref(false);
 
-/** Status CollectNetworkInfo cadence; ≥2s leaves BidirectRpc room for config / heartbeat / history. */
+/** Status CollectNetworkInfo cadence; ÃÂ¢ÃÂÃÂ¥2s leaves BidirectRpc room for config / heartbeat / history. */
 const STATUS_POLL_MS = 2000
 /** Config editor only needs occasional running/stopped tags; ~6s with STATUS_POLL_MS. */
 const CONFIG_MODE_LIST_POLL_EVERY = 3
@@ -657,7 +657,7 @@ const selectedInstanceId = computed({
     }
 });
 
-/** Programmatic selection (run/new/etc.) — skips dirty confirm. */
+/** Programmatic selection (run/new/etc.) ÃÂ¢ÃÂÃÂ skips dirty confirm. */
 const setSelectedInstanceId = (uuid: string | undefined) => {
     instanceId.value = uuid;
 };
@@ -752,8 +752,8 @@ const needShowNetworkStatus = computed(() => {
 })
 
 /**
- * 配置页：Web `mode=config`，或 combined / 显式进入编辑。
- * 停止态不再自动落在配置（见 config-vs-run-pages：运行空态 + 节点配置入口）。
+ * ÃÂ©ÃÂÃÂÃÂ§ÃÂ½ÃÂ®ÃÂ©ÃÂ¡ÃÂµÃÂ¯ÃÂ¼ÃÂWeb `mode=config`ÃÂ¯ÃÂ¼ÃÂÃÂ¦ÃÂÃÂ combined / ÃÂ¦ÃÂÃÂ¾ÃÂ¥ÃÂ¼ÃÂÃÂ¨ÃÂ¿ÃÂÃÂ¥ÃÂÃÂ¥ÃÂ§ÃÂ¼ÃÂÃÂ¨ÃÂ¾ÃÂÃÂ£ÃÂÃÂ
+ * ÃÂ¥ÃÂÃÂÃÂ¦ÃÂ­ÃÂ¢ÃÂ¦ÃÂÃÂÃÂ¤ÃÂ¸ÃÂÃÂ¥ÃÂÃÂÃÂ¨ÃÂÃÂªÃÂ¥ÃÂÃÂ¨ÃÂ¨ÃÂÃÂ½ÃÂ¥ÃÂÃÂ¨ÃÂ©ÃÂÃÂÃÂ§ÃÂ½ÃÂ®ÃÂ¯ÃÂ¼ÃÂÃÂ¨ÃÂ§ÃÂ config-vs-run-pagesÃÂ¯ÃÂ¼ÃÂÃÂ¨ÃÂ¿ÃÂÃÂ¨ÃÂ¡ÃÂÃÂ§ÃÂ©ÃÂºÃÂ¦ÃÂÃÂ + ÃÂ¨ÃÂÃÂÃÂ§ÃÂÃÂ¹ÃÂ©ÃÂÃÂÃÂ§ÃÂ½ÃÂ®ÃÂ¥ÃÂÃÂ¥ÃÂ¥ÃÂÃÂ£ÃÂ¯ÃÂ¼ÃÂÃÂ£ÃÂÃÂ
  */
 const showConfigPanel = computed(() => {
     if (isStatusMode.value) {
@@ -773,7 +773,7 @@ const networkIsDisabled = computed(() => {
 });
 
 /**
- * 运行页 · 已停止：只读配置预览 + 启动（Web status / GUI combined，未在编辑时）。
+ * ÃÂ¨ÃÂ¿ÃÂÃÂ¨ÃÂ¡ÃÂÃÂ©ÃÂ¡ÃÂµ ÃÂÃÂ· ÃÂ¥ÃÂ·ÃÂ²ÃÂ¥ÃÂÃÂÃÂ¦ÃÂ­ÃÂ¢ÃÂ¯ÃÂ¼ÃÂÃÂ¥ÃÂÃÂªÃÂ¨ÃÂ¯ÃÂ»ÃÂ©ÃÂÃÂÃÂ§ÃÂ½ÃÂ®ÃÂ©ÃÂ¢ÃÂÃÂ¨ÃÂ§ÃÂ + ÃÂ¥ÃÂÃÂ¯ÃÂ¥ÃÂÃÂ¨ÃÂ¯ÃÂ¼ÃÂWeb status / GUI combinedÃÂ¯ÃÂ¼ÃÂÃÂ¦ÃÂÃÂªÃÂ¥ÃÂÃÂ¨ÃÂ§ÃÂ¼ÃÂÃÂ¨ÃÂ¾ÃÂÃÂ¦ÃÂÃÂ¶ÃÂ¯ÃÂ¼ÃÂÃÂ£ÃÂÃÂ
  */
 const showStatusDisabledPanel = computed(() => {
     if (!selectedInstanceId.value || !networkIsDisabled.value || isEditingNetwork.value) {
@@ -785,7 +785,7 @@ const showStatusDisabledPanel = computed(() => {
     return isStatusMode.value || isCombinedMode.value;
 })
 
-/** 停止态只读副本，避免 Config 内部归一化写回脏了真正的草稿 */
+/** ÃÂ¥ÃÂÃÂÃÂ¦ÃÂ­ÃÂ¢ÃÂ¦ÃÂÃÂÃÂ¥ÃÂÃÂªÃÂ¨ÃÂ¯ÃÂ»ÃÂ¥ÃÂÃÂ¯ÃÂ¦ÃÂÃÂ¬ÃÂ¯ÃÂ¼ÃÂÃÂ©ÃÂÃÂ¿ÃÂ¥ÃÂÃÂ Config ÃÂ¥ÃÂÃÂÃÂ©ÃÂÃÂ¨ÃÂ¥ÃÂ½ÃÂÃÂ¤ÃÂ¸ÃÂÃÂ¥ÃÂÃÂÃÂ¥ÃÂÃÂÃÂ¥ÃÂÃÂÃÂ¨ÃÂÃÂÃÂ¤ÃÂºÃÂÃÂ§ÃÂÃÂÃÂ¦ÃÂ­ÃÂ£ÃÂ§ÃÂÃÂÃÂ¨ÃÂÃÂÃÂ§ÃÂ¨ÃÂ¿ */
 const statusDisabledConfigPreview = ref<NetworkTypes.NetworkConfig | null>(null)
 watch(
     () => (showStatusDisabledPanel.value ? currentNetworkConfig.value : null),
@@ -904,8 +904,8 @@ const stopNetwork = async () => {
 
 /** Start a disabled network: may push console (SQLite) config onto the device. */
 const startNetwork = () => {
-    // Start enables the existing DB row (keeps source). User→Web takeover is
-    // only via Save / saveAndRun — those paths already confirm §8.1.5.
+    // Start enables the existing DB row (keeps source). UserÃÂ¢ÃÂÃÂWeb takeover is
+    // only via Save / saveAndRun ÃÂ¢ÃÂÃÂ those paths already confirm ÃÂÃÂ§8.1.5.
     void doStartNetwork();
 }
 
@@ -952,8 +952,8 @@ const requestLeave = () => {
 }
 
 /**
- * Web `mode=config`：无论运行中还是已停止都进入可编辑配置。
- * （停止态运行页只读预览走 showStatusDisabledPanel，不走这里。）
+ * Web `mode=config`ÃÂ¯ÃÂ¼ÃÂÃÂ¦ÃÂÃÂ ÃÂ¨ÃÂ®ÃÂºÃÂ¨ÃÂ¿ÃÂÃÂ¨ÃÂ¡ÃÂÃÂ¤ÃÂ¸ÃÂ­ÃÂ¨ÃÂ¿ÃÂÃÂ¦ÃÂÃÂ¯ÃÂ¥ÃÂ·ÃÂ²ÃÂ¥ÃÂÃÂÃÂ¦ÃÂ­ÃÂ¢ÃÂ©ÃÂÃÂ½ÃÂ¨ÃÂ¿ÃÂÃÂ¥ÃÂÃÂ¥ÃÂ¥ÃÂÃÂ¯ÃÂ§ÃÂ¼ÃÂÃÂ¨ÃÂ¾ÃÂÃÂ©ÃÂÃÂÃÂ§ÃÂ½ÃÂ®ÃÂ£ÃÂÃÂ
+ * ÃÂ¯ÃÂ¼ÃÂÃÂ¥ÃÂÃÂÃÂ¦ÃÂ­ÃÂ¢ÃÂ¦ÃÂÃÂÃÂ¨ÃÂ¿ÃÂÃÂ¨ÃÂ¡ÃÂÃÂ©ÃÂ¡ÃÂµÃÂ¥ÃÂÃÂªÃÂ¨ÃÂ¯ÃÂ»ÃÂ©ÃÂ¢ÃÂÃÂ¨ÃÂ§ÃÂÃÂ¨ÃÂµÃÂ° showStatusDisabledPanelÃÂ¯ÃÂ¼ÃÂÃÂ¤ÃÂ¸ÃÂÃÂ¨ÃÂµÃÂ°ÃÂ¨ÃÂ¿ÃÂÃÂ©ÃÂÃÂÃÂ£ÃÂÃÂÃÂ¯ÃÂ¼ÃÂ
  */
 const ensureConfigModeEditing = async () => {
     if (!isConfigMode.value || !selectedInstanceId.value) {
@@ -1044,7 +1044,7 @@ const doDeleteNetwork = async (instId?: string) => {
             detail: errorDetail(e),
             life: TOAST_LIFE.severe,
         });
-        // DB row kept on device-first delete failure — surface an explicit retry entry.
+        // DB row kept on device-first delete failure ÃÂ¢ÃÂÃÂ surface an explicit retry entry.
         offerRetryOnDeleteFailure(e, deletingId);
     }
     emits('update');
@@ -1054,7 +1054,7 @@ const confirmDeleteNetwork = () => {
     if (!canDeleteNetworkLocally.value) {
         return;
     }
-    // §5: only the web-console surface warns when deleting a User-source row.
+    // ÃÂÃÂ§5: only the web-console surface warns when deleting a User-source row.
     // Do not infer this from deleteAuthority (explicit 'local' on console must still confirm).
     const deletingUserSourceOnConsole =
         props.hostSurface === 'web-console'
@@ -1164,12 +1164,12 @@ function isNetworkConfigArg(value: unknown): value is NetworkTypes.NetworkConfig
 
 /** Running-state re-apply rebuilds the instance; confirm before brief disconnect. */
 const confirmRunNetwork = (config?: NetworkTypes.NetworkConfig | Event) => {
-    // Footer @click must use confirmRunNetwork() — a bare handler would pass the MouseEvent.
+    // Footer @click must use confirmRunNetwork() ÃÂ¢ÃÂÃÂ a bare handler would pass the MouseEvent.
     const cfg = isNetworkConfigArg(config) ? config : currentNetworkConfig.value;
     if (!cfg) {
         return;
     }
-    // §8.1.5: User-source Run that Save→Web must confirm takeover (same as Save).
+    // ÃÂÃÂ§8.1.5: User-source Run that SaveÃÂ¢ÃÂÃÂWeb must confirm takeover (same as Save).
     if (isUserSourceConfig.value) {
         confirm.require({
             message: t('web.device_management.confirm_save_takeover_user_source'),
@@ -1188,8 +1188,8 @@ const confirmRunNetwork = (config?: NetworkTypes.NetworkConfig | Event) => {
         });
         return;
     }
-    // Re-run rebuilds a healthy instance (brief disconnect) — keep confirm.
-    // First start of a stopped/disabled Web row used to warn about console→device
+    // Re-run rebuilds a healthy instance (brief disconnect) ÃÂ¢ÃÂÃÂ keep confirm.
+    // First start of a stopped/disabled Web row used to warn about consoleÃÂ¢ÃÂÃÂdevice
     // overwrite; that confirm was removed as redundant for day-to-day Start.
     const rerunning = !networkIsDisabled.value && selectedNetworkRunning.value;
     if (rerunning) {
@@ -1217,7 +1217,7 @@ const saveResultToastDetail = (
     result: Api.SaveNetworkConfigResponse | void,
     opts?: { wasRunning?: boolean },
 ) => {
-    // GUI / local clients may return void — no console push semantics.
+    // GUI / local clients may return void ÃÂ¢ÃÂÃÂ no console push semantics.
     if (!result || !result.action) {
         return props.hostSurface === 'gui-client' && opts?.wasRunning
             ? t('web.device_management.save_ok_local_hint')
@@ -1384,7 +1384,7 @@ const discardConfigChanges = async () => {
     }
 }
 
-/** Combined：退出配置，回到运行页（运行中状态或已停止空态）。 */
+/** CombinedÃÂ¯ÃÂ¼ÃÂÃÂ©ÃÂÃÂÃÂ¥ÃÂÃÂºÃÂ©ÃÂÃÂÃÂ§ÃÂ½ÃÂ®ÃÂ¯ÃÂ¼ÃÂÃÂ¥ÃÂÃÂÃÂ¥ÃÂÃÂ°ÃÂ¨ÃÂ¿ÃÂÃÂ¨ÃÂ¡ÃÂÃÂ©ÃÂ¡ÃÂµÃÂ¯ÃÂ¼ÃÂÃÂ¨ÃÂ¿ÃÂÃÂ¨ÃÂ¡ÃÂÃÂ¤ÃÂ¸ÃÂ­ÃÂ§ÃÂÃÂ¶ÃÂ¦ÃÂÃÂÃÂ¦ÃÂÃÂÃÂ¥ÃÂ·ÃÂ²ÃÂ¥ÃÂÃÂÃÂ¦ÃÂ­ÃÂ¢ÃÂ§ÃÂ©ÃÂºÃÂ¦ÃÂÃÂÃÂ¯ÃÂ¼ÃÂÃÂ£ÃÂÃÂ */
 const exitEditNetwork = () => {
     if (isCombinedMode.value && isEditingNetwork.value) {
         isEditingNetwork.value = false;
@@ -1573,7 +1573,7 @@ const syncTomlConfig = async (tomlConfig: string): Promise<void> => {
 }
 
 /**
- * GUI combined 运行页「节点配置」：运行中或已停止（只读预览上）均可进入编辑。
+ * GUI combined ÃÂ¨ÃÂ¿ÃÂÃÂ¨ÃÂ¡ÃÂÃÂ©ÃÂ¡ÃÂµÃÂ£ÃÂÃÂÃÂ¨ÃÂÃÂÃÂ§ÃÂÃÂ¹ÃÂ©ÃÂÃÂÃÂ§ÃÂ½ÃÂ®ÃÂ£ÃÂÃÂÃÂ¯ÃÂ¼ÃÂÃÂ¨ÃÂ¿ÃÂÃÂ¨ÃÂ¡ÃÂÃÂ¤ÃÂ¸ÃÂ­ÃÂ¦ÃÂÃÂÃÂ¥ÃÂ·ÃÂ²ÃÂ¥ÃÂÃÂÃÂ¦ÃÂ­ÃÂ¢ÃÂ¯ÃÂ¼ÃÂÃÂ¥ÃÂÃÂªÃÂ¨ÃÂ¯ÃÂ»ÃÂ©ÃÂ¢ÃÂÃÂ¨ÃÂ§ÃÂÃÂ¤ÃÂ¸ÃÂÃÂ¯ÃÂ¼ÃÂÃÂ¥ÃÂÃÂÃÂ¥ÃÂÃÂ¯ÃÂ¨ÃÂ¿ÃÂÃÂ¥ÃÂÃÂ¥ÃÂ§ÃÂ¼ÃÂÃÂ¨ÃÂ¾ÃÂÃÂ£ÃÂÃÂ
  */
 const showCombinedEditEntry = computed(() =>
     isCombinedMode.value
@@ -1584,7 +1584,7 @@ const showCombinedEditEntry = computed(() =>
 );
 
 /**
- * 取消编辑 + 保存：仅配置页且脏时成对显示。
+ * ÃÂ¥ÃÂÃÂÃÂ¦ÃÂ¶ÃÂÃÂ§ÃÂ¼ÃÂÃÂ¨ÃÂ¾ÃÂ + ÃÂ¤ÃÂ¿ÃÂÃÂ¥ÃÂ­ÃÂÃÂ¯ÃÂ¼ÃÂÃÂ¤ÃÂ»ÃÂÃÂ©ÃÂÃÂÃÂ§ÃÂ½ÃÂ®ÃÂ©ÃÂ¡ÃÂµÃÂ¤ÃÂ¸ÃÂÃÂ¨ÃÂÃÂÃÂ¦ÃÂÃÂ¶ÃÂ¦ÃÂÃÂÃÂ¥ÃÂ¯ÃÂ¹ÃÂ¦ÃÂÃÂ¾ÃÂ§ÃÂ¤ÃÂºÃÂ£ÃÂÃÂ
  */
 const showSaveInFooter = computed(() =>
     showConfigPanel.value && !!currentNetworkConfig.value && isConfigDirty.value,
@@ -1593,7 +1593,7 @@ const showSaveInFooter = computed(() =>
 const showDiscardChanges = computed(() => showSaveInFooter.value);
 
 /**
- * Combined 配置页干净：返回运行页（运行中或已停止）。
+ * Combined ÃÂ©ÃÂÃÂÃÂ§ÃÂ½ÃÂ®ÃÂ©ÃÂ¡ÃÂµÃÂ¥ÃÂ¹ÃÂ²ÃÂ¥ÃÂÃÂÃÂ¯ÃÂ¼ÃÂÃÂ¨ÃÂ¿ÃÂÃÂ¥ÃÂÃÂÃÂ¨ÃÂ¿ÃÂÃÂ¨ÃÂ¡ÃÂÃÂ©ÃÂ¡ÃÂµÃÂ¯ÃÂ¼ÃÂÃÂ¨ÃÂ¿ÃÂÃÂ¨ÃÂ¡ÃÂÃÂ¤ÃÂ¸ÃÂ­ÃÂ¦ÃÂÃÂÃÂ¥ÃÂ·ÃÂ²ÃÂ¥ÃÂÃÂÃÂ¦ÃÂ­ÃÂ¢ÃÂ¯ÃÂ¼ÃÂÃÂ£ÃÂÃÂ
  */
 const showExitEdit = computed(() =>
     isCombinedMode.value
@@ -1610,7 +1610,7 @@ const showCombinedNavZone = computed(() =>
     || showExitEdit.value
 );
 
-/** 启停只在运行页；配置页不挂「运行网络」。 */
+/** ÃÂ¥ÃÂÃÂ¯ÃÂ¥ÃÂÃÂÃÂ¥ÃÂÃÂªÃÂ¥ÃÂÃÂ¨ÃÂ¨ÃÂ¿ÃÂÃÂ¨ÃÂ¡ÃÂÃÂ©ÃÂ¡ÃÂµÃÂ¯ÃÂ¼ÃÂÃÂ©ÃÂÃÂÃÂ§ÃÂ½ÃÂ®ÃÂ©ÃÂ¡ÃÂµÃÂ¤ÃÂ¸ÃÂÃÂ¦ÃÂÃÂÃÂ£ÃÂÃÂÃÂ¨ÃÂ¿ÃÂÃÂ¨ÃÂ¡ÃÂÃÂ§ÃÂ½ÃÂÃÂ§ÃÂ»ÃÂÃÂ£ÃÂÃÂÃÂ£ÃÂÃÂ */
 const stickyFooterPrimary = computed(() => {
     if (showStatusDisabledPanel.value) {
         return 'start' as const;
@@ -1659,8 +1659,8 @@ let periodFunc = new Utils.PeriodicTask(async () => {
         if (!isConfigMode.value) {
             jobs.push(loadCurrentNetworkInfo())
         }
-        // Config editor: probe console/device drift. Dirty → confirm prompt;
-        // clean → get_config (GUI may adopt Web runtime into storage + emit).
+        // Config editor: probe console/device drift. Dirty ÃÂ¢ÃÂÃÂ confirm prompt;
+        // clean ÃÂ¢ÃÂÃÂ get_config (GUI may adopt Web runtime into storage + emit).
         if (
             showConfigPanel.value
             && (pollTick === 1 || pollTick % CONFIG_MODE_LIST_POLL_EVERY === 0)
@@ -1680,7 +1680,7 @@ let periodFunc = new Utils.PeriodicTask(async () => {
     }
 }, STATUS_POLL_MS);
 
-/** GUI host: console overwrite/hot-patch wrote localStorage — refresh open editor. */
+/** GUI host: console overwrite/hot-patch wrote localStorage ÃÂ¢ÃÂÃÂ refresh open editor. */
 const onManagedConfigSyncedOverwrite = (event: Event) => {
     const detail = (event as CustomEvent<{ instanceId?: string }>).detail;
     const syncedId = detail?.instanceId;
@@ -1765,10 +1765,10 @@ onUnmounted(() => {
                                     </span>
                                     <Tag
                                         v-if="currentConfigSourceBadge"
-                                        class="network-source-tag leading-3 shrink-0"
+                                        class="network-source-tag network-source-tag--icon-only leading-3 shrink-0"
                                         :severity="currentConfigSourceBadge.severity"
                                         :icon="currentConfigSourceBadge.icon"
-                                        :value="currentConfigSourceBadge.label"
+                                        :aria-label="currentConfigSourceBadge.label"
                                         v-tooltip.top="currentConfigSourceBadge.tip"
                                     />
                                     <Tag v-if="isConfigDirty && showConfigPanel" class="network-dirty-tag leading-3 shrink-0"
@@ -1792,10 +1792,10 @@ onUnmounted(() => {
                                         </div>
                                         <Tag
                                             v-if="configSourceBadgeById[slotProps.option.uuid]"
-                                            class="network-source-tag my-auto leading-3 shrink-0 mr-2"
+                                            class="network-source-tag network-source-tag--icon-only my-auto leading-3 shrink-0 mr-2"
                                             :severity="configSourceBadgeById[slotProps.option.uuid].severity"
                                             :icon="configSourceBadgeById[slotProps.option.uuid].icon"
-                                            :value="configSourceBadgeById[slotProps.option.uuid].label"
+                                            :aria-label="configSourceBadgeById[slotProps.option.uuid].label"
                                             v-tooltip.top="configSourceBadgeById[slotProps.option.uuid].tip"
                                         />
                                         <Tag v-if="residualKindFor(slotProps.option.uuid)" class="network-residual-tag my-auto leading-3 shrink-0 mr-2"
@@ -1946,12 +1946,12 @@ onUnmounted(() => {
         <div v-if="showStickyFooter" class="network-sticky-footer">
             <Button v-if="showLoggingSettings" :label="t('logging')" icon="pi pi-file" severity="secondary"
                 class="network-footer-btn network-footer-btn--muted" @click="loggingDialogVisible = true" />
-            <!-- GUI 额外按钮（系统设置等）放最左，窄屏单行时更易点到 -->
+            <!-- GUI ÃÂ©ÃÂ¢ÃÂÃÂ¥ÃÂ¤ÃÂÃÂ¦ÃÂÃÂÃÂ©ÃÂÃÂ®ÃÂ¯ÃÂ¼ÃÂÃÂ§ÃÂ³ÃÂ»ÃÂ§ÃÂ»ÃÂÃÂ¨ÃÂ®ÃÂ¾ÃÂ§ÃÂ½ÃÂ®ÃÂ§ÃÂ­ÃÂÃÂ¯ÃÂ¼ÃÂÃÂ¦ÃÂÃÂ¾ÃÂ¦ÃÂÃÂÃÂ¥ÃÂ·ÃÂ¦ÃÂ¯ÃÂ¼ÃÂÃÂ§ÃÂªÃÂÃÂ¥ÃÂ±ÃÂÃÂ¥ÃÂÃÂÃÂ¨ÃÂ¡ÃÂÃÂ¦ÃÂÃÂ¶ÃÂ¦ÃÂÃÂ´ÃÂ¦ÃÂÃÂÃÂ§ÃÂÃÂ¹ÃÂ¥ÃÂÃÂ° -->
             <slot name="footer-extra" />
             <Button v-if="showLeaveInFooter" @click="requestLeave" :label="leaveLabel" severity="secondary"
                 :icon="leaveIcon" iconPos="left" class="network-footer-btn network-footer-btn--muted"
                 v-tooltip.top="leaveTooltip" />
-            <!-- 左区：节点配置入口 / 前往状态 / 取消编辑 / 保存；右区：主操作 -->
+            <!-- ÃÂ¥ÃÂ·ÃÂ¦ÃÂ¥ÃÂÃÂºÃÂ¯ÃÂ¼ÃÂÃÂ¨ÃÂÃÂÃÂ§ÃÂÃÂ¹ÃÂ©ÃÂÃÂÃÂ§ÃÂ½ÃÂ®ÃÂ¥ÃÂÃÂ¥ÃÂ¥ÃÂÃÂ£ / ÃÂ¥ÃÂÃÂÃÂ¥ÃÂ¾ÃÂÃÂ§ÃÂÃÂ¶ÃÂ¦ÃÂÃÂ / ÃÂ¥ÃÂÃÂÃÂ¦ÃÂ¶ÃÂÃÂ§ÃÂ¼ÃÂÃÂ¨ÃÂ¾ÃÂ / ÃÂ¤ÃÂ¿ÃÂÃÂ¥ÃÂ­ÃÂÃÂ¯ÃÂ¼ÃÂÃÂ¥ÃÂÃÂ³ÃÂ¥ÃÂÃÂºÃÂ¯ÃÂ¼ÃÂÃÂ¤ÃÂ¸ÃÂ»ÃÂ¦ÃÂÃÂÃÂ¤ÃÂ½ÃÂ -->
             <div v-if="showCombinedNavZone || isConfigMode || isStatusMode" class="footer-zone">
                 <Button v-if="showCombinedEditEntry" severity="secondary"
                     :label="t('web.device_management.switch_to_config')"
@@ -2078,7 +2078,7 @@ onUnmounted(() => {
     box-shadow: var(--et-shadow-card, none) !important;
 }
 
-/* Status 列表占满内容区，便于展开面板吃掉剩余高度 */
+/* Status ÃÂ¥ÃÂÃÂÃÂ¨ÃÂ¡ÃÂ¨ÃÂ¥ÃÂÃÂ ÃÂ¦ÃÂ»ÃÂ¡ÃÂ¥ÃÂÃÂÃÂ¥ÃÂ®ÃÂ¹ÃÂ¥ÃÂÃÂºÃÂ¯ÃÂ¼ÃÂÃÂ¤ÃÂ¾ÃÂ¿ÃÂ¤ÃÂºÃÂÃÂ¥ÃÂ±ÃÂÃÂ¥ÃÂ¼ÃÂÃÂ©ÃÂÃÂ¢ÃÂ¦ÃÂÃÂ¿ÃÂ¥ÃÂÃÂÃÂ¦ÃÂÃÂÃÂ¥ÃÂÃÂ©ÃÂ¤ÃÂ½ÃÂÃÂ©ÃÂ«ÃÂÃÂ¥ÃÂºÃÂ¦ */
 .network-content > .status-fill-host {
     flex: 1 1 auto;
     min-height: 0;
@@ -2096,7 +2096,7 @@ onUnmounted(() => {
     border-radius: var(--et-radius, 0.75rem);
     box-shadow: var(--et-shadow-card, none);
     display: flex;
-    /* 底部主操作尽量始终单行，避免 2/3 按钮折行看起来散 */
+    /* ÃÂ¥ÃÂºÃÂÃÂ©ÃÂÃÂ¨ÃÂ¤ÃÂ¸ÃÂ»ÃÂ¦ÃÂÃÂÃÂ¤ÃÂ½ÃÂÃÂ¥ÃÂ°ÃÂ½ÃÂ©ÃÂÃÂÃÂ¥ÃÂ§ÃÂÃÂ§ÃÂ»ÃÂÃÂ¥ÃÂÃÂÃÂ¨ÃÂ¡ÃÂÃÂ¯ÃÂ¼ÃÂÃÂ©ÃÂÃÂ¿ÃÂ¥ÃÂÃÂ 2/3 ÃÂ¦ÃÂÃÂÃÂ©ÃÂÃÂ®ÃÂ¦ÃÂÃÂÃÂ¨ÃÂ¡ÃÂÃÂ§ÃÂÃÂÃÂ¨ÃÂµÃÂ·ÃÂ¦ÃÂÃÂ¥ÃÂ¦ÃÂÃÂ£ */
     flex-wrap: nowrap;
     align-items: center;
     justify-content: space-between;
@@ -2109,7 +2109,7 @@ onUnmounted(() => {
     align-items: center;
     gap: 0.5rem;
     min-width: 0;
-    /* 与主区/插槽按钮一起平分整行（窄屏四钮等宽占满） */
+    /* ÃÂ¤ÃÂ¸ÃÂÃÂ¤ÃÂ¸ÃÂ»ÃÂ¥ÃÂÃÂº/ÃÂ¦ÃÂÃÂÃÂ¦ÃÂ§ÃÂ½ÃÂ¦ÃÂÃÂÃÂ©ÃÂÃÂ®ÃÂ¤ÃÂ¸ÃÂÃÂ¨ÃÂµÃÂ·ÃÂ¥ÃÂ¹ÃÂ³ÃÂ¥ÃÂÃÂÃÂ¦ÃÂÃÂ´ÃÂ¨ÃÂ¡ÃÂÃÂ¯ÃÂ¼ÃÂÃÂ§ÃÂªÃÂÃÂ¥ÃÂ±ÃÂÃÂ¥ÃÂÃÂÃÂ©ÃÂÃÂ®ÃÂ§ÃÂ­ÃÂÃÂ¥ÃÂ®ÃÂ½ÃÂ¥ÃÂÃÂ ÃÂ¦ÃÂ»ÃÂ¡ÃÂ¯ÃÂ¼ÃÂ */
     flex: 1 1 0;
 }
 
@@ -2119,20 +2119,20 @@ onUnmounted(() => {
     flex: 1 1 0;
 }
 
-/* footer-extra 插槽按钮（系统设置等）同样参与平分 */
+/* footer-extra ÃÂ¦ÃÂÃÂÃÂ¦ÃÂ§ÃÂ½ÃÂ¦ÃÂÃÂÃÂ©ÃÂÃÂ®ÃÂ¯ÃÂ¼ÃÂÃÂ§ÃÂ³ÃÂ»ÃÂ§ÃÂ»ÃÂÃÂ¨ÃÂ®ÃÂ¾ÃÂ§ÃÂ½ÃÂ®ÃÂ§ÃÂ­ÃÂÃÂ¯ÃÂ¼ÃÂÃÂ¥ÃÂÃÂÃÂ¦ÃÂ ÃÂ·ÃÂ¥ÃÂÃÂÃÂ¤ÃÂ¸ÃÂÃÂ¥ÃÂ¹ÃÂ³ÃÂ¥ÃÂÃÂ */
 .network-sticky-footer > :deep(.network-footer-btn.p-button) {
     flex: 1 1 0;
     min-width: 0;
 }
 
 @media (max-width: 640px) {
-    /* 窄屏藏底部按钮图标，只留短文案，四钮才排得下 */
+    /* ÃÂ§ÃÂªÃÂÃÂ¥ÃÂ±ÃÂÃÂ¨ÃÂÃÂÃÂ¥ÃÂºÃÂÃÂ©ÃÂÃÂ¨ÃÂ¦ÃÂÃÂÃÂ©ÃÂÃÂ®ÃÂ¥ÃÂÃÂ¾ÃÂ¦ÃÂ ÃÂÃÂ¯ÃÂ¼ÃÂÃÂ¥ÃÂÃÂªÃÂ§ÃÂÃÂÃÂ§ÃÂÃÂ­ÃÂ¦ÃÂÃÂÃÂ¦ÃÂ¡ÃÂÃÂ¯ÃÂ¼ÃÂÃÂ¥ÃÂÃÂÃÂ©ÃÂÃÂ®ÃÂ¦ÃÂÃÂÃÂ¦ÃÂÃÂÃÂ¥ÃÂ¾ÃÂÃÂ¤ÃÂ¸ÃÂ */
     .network-sticky-footer :deep(.network-footer-btn.p-button .p-button-icon) {
         display: none;
     }
 }
 
-/* 同高同圆角；宽度随可用空间均分，保证一行排得下 */
+/* ÃÂ¥ÃÂÃÂÃÂ©ÃÂ«ÃÂÃÂ¥ÃÂÃÂÃÂ¥ÃÂÃÂÃÂ¨ÃÂ§ÃÂÃÂ¯ÃÂ¼ÃÂÃÂ¥ÃÂ®ÃÂ½ÃÂ¥ÃÂºÃÂ¦ÃÂ©ÃÂÃÂÃÂ¥ÃÂÃÂ¯ÃÂ§ÃÂÃÂ¨ÃÂ§ÃÂ©ÃÂºÃÂ©ÃÂÃÂ´ÃÂ¥ÃÂÃÂÃÂ¥ÃÂÃÂÃÂ¯ÃÂ¼ÃÂÃÂ¤ÃÂ¿ÃÂÃÂ¨ÃÂ¯ÃÂÃÂ¤ÃÂ¸ÃÂÃÂ¨ÃÂ¡ÃÂÃÂ¦ÃÂÃÂÃÂ¥ÃÂ¾ÃÂÃÂ¤ÃÂ¸ÃÂ */
 :deep(.network-footer-btn.p-button) {
     flex: 1 1 0;
     width: auto;
@@ -2290,6 +2290,16 @@ onUnmounted(() => {
     gap: 0.25rem;
 }
 
+/* Ownership: icon only; label stays in aria-label + tooltip. */
+:deep(.network-source-tag--icon-only.p-tag) {
+    padding: 0.25rem !important;
+    gap: 0;
+}
+
+:deep(.network-source-tag--icon-only.p-tag .p-tag-label) {
+    display: none;
+}
+
 :deep(.network-source-tag.p-tag-info) {
     background: color-mix(in srgb, var(--primary-color, #0ea5e9) 16%, #ffffff) !important;
     color: var(--primary-color, #0284c7) !important;
@@ -2412,14 +2422,14 @@ onUnmounted(() => {
     }
 
     .network-sticky-footer {
-        /* 窄屏也强制单行等分，避免折成两行 */
+        /* ÃÂ§ÃÂªÃÂÃÂ¥ÃÂ±ÃÂÃÂ¤ÃÂ¹ÃÂÃÂ¥ÃÂ¼ÃÂºÃÂ¥ÃÂÃÂ¶ÃÂ¥ÃÂÃÂÃÂ¨ÃÂ¡ÃÂÃÂ§ÃÂ­ÃÂÃÂ¥ÃÂÃÂÃÂ¯ÃÂ¼ÃÂÃÂ©ÃÂÃÂ¿ÃÂ¥ÃÂÃÂÃÂ¦ÃÂÃÂÃÂ¦ÃÂÃÂÃÂ¤ÃÂ¸ÃÂ¤ÃÂ¨ÃÂ¡ÃÂ */
         display: flex;
         flex-wrap: nowrap;
         align-items: stretch;
         gap: 0.3rem;
     }
 
-    /* 展开子区，让按钮都成为 footer 的直接 flex 子项以便均分 */
+    /* ÃÂ¥ÃÂ±ÃÂÃÂ¥ÃÂ¼ÃÂÃÂ¥ÃÂ­ÃÂÃÂ¥ÃÂÃÂºÃÂ¯ÃÂ¼ÃÂÃÂ¨ÃÂ®ÃÂ©ÃÂ¦ÃÂÃÂÃÂ©ÃÂÃÂ®ÃÂ©ÃÂÃÂ½ÃÂ¦ÃÂÃÂÃÂ¤ÃÂ¸ÃÂº footer ÃÂ§ÃÂÃÂÃÂ§ÃÂÃÂ´ÃÂ¦ÃÂÃÂ¥ flex ÃÂ¥ÃÂ­ÃÂÃÂ©ÃÂ¡ÃÂ¹ÃÂ¤ÃÂ»ÃÂ¥ÃÂ¤ÃÂ¾ÃÂ¿ÃÂ¥ÃÂÃÂÃÂ¥ÃÂÃÂ */
     .footer-zone,
     .footer-zone--primary {
         display: contents;
