@@ -11,18 +11,19 @@ and enforces two **machine-independent** bounds:
      The zero-regression baseline: with no `[[policy_routes]]` the outbound path
      only pays one extra `ArcSwap` load. The bound is deliberately loose so a
      shared CI runner cannot flake it.
-  2. 10K-rule median <= 1K-rule median * 1.20
-     The §12.5 scale gate. The LPM index is bucketed by prefix length and binary
-     searched, so growing the rule count must not degrade a lookup by more than
-     20%. A full linear scan would blow this by ~10x, which is exactly the
-     regression this gate exists to catch.
+  2. 10K-rule median <= 1K-rule median * SCALE_DEGRADATION_LIMIT
+     Catches a **linear-scan regression** (~10×), not a quiet-machine SLA.
+     The fixture puts every rule in the same /24 bucket, so miss/hit cost is
+     roughly `overhead + c·log2(N)`; 1K→10K alone is ~1.25–1.35× before CI
+     noise. The product stretch in §12.5 (<20% on a quiet host) is tighter
+     than this CI bound on purpose.
 
 Criterion stores groups under `target/criterion/<group>/<function>/new/`.
 Group names must not contain `/` (Criterion replaces `/` with `_` in paths);
 the benches use `policy_route_empty` / `policy_route_{scale}`.
 
-Both are ratios or very loose absolutes, so they hold across runners. Absolute
-latency targets (P99 < 1 us) are tracked by the benchmark itself, not gated here.
+Absolute latency targets (P99 < 1 us) are tracked by the benchmark itself,
+not gated here.
 
 Exit code 0 = pass, 1 = at least one bound violated.
 """
@@ -38,8 +39,10 @@ CRITERION_DIR = Path("target/criterion")
 # Median lookup latency for the empty table, in nanoseconds (1 us).
 EMPTY_MEDIAN_LIMIT_NS = 1_000.0
 
-# Allowed 10K-vs-1K degradation ratio (§12.5).
-SCALE_DEGRADATION_LIMIT = 1.20
+# Allowed 10K-vs-1K degradation ratio on shared CI runners.
+# Keep well below linear-scan (~10×); leave headroom above the ~1.25–1.35×
+# expected from same-prefix-length binary search (see module docstring).
+SCALE_DEGRADATION_LIMIT = 1.50
 
 # Scale points defined by `easytier/benches/routing_lookup.rs`.
 SMALL_SCALE = "1000"

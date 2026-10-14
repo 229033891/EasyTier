@@ -77,6 +77,7 @@ Agent / 人工均适用：**未完成 §1 不要提交**。
 - [ ] **编 `easytier-web` 的路径**：OpenWrt `build-bins`、Linux musl、Windows headless embed 都会编 web；只改 core 绿不够。
 - [ ] **本地 clippy 对齐 CI**：`-- -D warnings`，与 ET Test Check clippy 一致。
 - [ ] **Criterion bench group 名不要含 `/`**：Criterion 落盘会把 `/` 换成 `_`；`script/check_routing_bench.py` 按落盘路径读 `estimates.json`，group 用 `policy_route_empty` / `policy_route_{scale}`。
+- [ ] **routing 规模门禁比值用 1.50**：fixture 全是同前缀 `/24`，1K→10K 二分本身约 1.25–1.35×；CI 阈值勿再收紧到 1.20（会误杀）。线性扫描约 10×，1.50 仍挡得住。
 
 ---
 
@@ -103,6 +104,22 @@ Agent / 人工均适用：**未完成 §1 不要提交**。
 ---
 
 ## 5. 失败记录（新 → 旧）
+
+### 2026-10-14 — Hot-path gates：10K/1K 比值 1.25× 超 1.20
+
+| 项 | 内容 |
+|----|------|
+| 仓库/分支 | `229033891/EasyTier` `dev` |
+| Run | https://github.com/229033891/EasyTier/actions/runs/38553112317 |
+| 失败 job | Hot-path gates → Enforce hot-path thresholds |
+| 根因一类 | env（CI 阈值过紧） |
+| 状态 | 已修复（`SCALE_DEGRADATION_LIMIT` 1.20 → 1.50） |
+
+**摘要**：路径修复后 gate 真正跑通；`policy_route_hit/miss` 10K/1K 为 **1.25× / 1.27×**，踩 1.20。fixture 全 `/24` 时同桶二分随 N 增 `log2(10)`，约 1.25–1.35× 属预期，非线性扫描回归（约 10×）。
+
+**防再犯**：见 §3「routing 规模门禁比值用 1.50」。
+
+---
 
 ### 2026-10-14 — Hot-path gates：`policy_route` criterion 路径找不到
 

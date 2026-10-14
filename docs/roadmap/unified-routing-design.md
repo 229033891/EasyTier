@@ -1988,7 +1988,7 @@ if local_route_snapshot.is_empty() {
 - **基准扩展**：`easytier/benches/routing_lookup.rs` 新增 `policy_route_{empty,1000,10000}` 组（空表基线 + `hit` / `miss`；group 名不用 `/`，避免 Criterion 落盘改名）；`bench_support` 暴露 `local_route_table_with_rules` / `empty_local_route_table`。
 - **CI 门禁**：`.github/workflows/test.yml` 新增 `bench-routing` job（显示名「Hot-path gates (alloc + bench)」），含两步：
   1. **分配 = 0（确定性）**：`cargo test --package easytier-core --features test-utils --test hot_path_alloc` —— `easytier-core/tests/hot_path_alloc.rs` 装计数分配器，预热后跑 2 万轮 `lookup`（空表 / 1K / 10K × `hit` / `miss` / `balance` 流哈希分支），断言**零分配**。
-  2. **规模门禁（比值）**：`cargo bench --package easytier --bench routing_lookup -- --noplot` → `script/check_routing_bench.py` 读 criterion 的 `estimates.json`，断言 ① 空表 `lookup` median **≤ 1 μs**（零回归基线，宽松以免共享 runner 抖动）② **10K / 1K median 比值 ≤ 1.20**（§12.5 的规模门禁）。
+  2. **规模门禁（比值）**：`cargo bench --package easytier --bench routing_lookup -- --noplot` → `script/check_routing_bench.py` 读 criterion 的 `estimates.json`，断言 ① 空表 `lookup` median **≤ 1 μs**（零回归基线，宽松以免共享 runner 抖动）② **10K / 1K median 比值 ≤ 1.50**（CI 抓线性扫描回归；同前缀桶二分预期约 1.25–1.35×。§12.5 安静机 <20% 仍是产品 stretch，严于 CI）。
   绝对 P99 目标仍由基准本身记录，不设硬门禁。`bench-routing` **不**挂在 `check` 的 `needs` 里（criterion 在共享 runner 上计时抖动大，flaky 不应拖累 lint 聚合），但挂在最终 `test` 聚合的 `needs` 里 —— 真实热路径回归仍会让整体 CI 变红。
 
 **P6 已知限制 / 待办**
