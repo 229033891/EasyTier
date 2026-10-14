@@ -3,6 +3,11 @@ mod records;
 #[cfg(feature = "proxy-packet")]
 mod packet;
 
+/// P3: wraps a resolver to feed observed DNS answers into the unified routing
+/// table. Only compiled with the MagicDNS packet filter it plugs into.
+#[cfg(feature = "proxy-packet")]
+mod observe;
+
 mod os_wired;
 
 pub use records::{
@@ -13,6 +18,8 @@ pub use records::{
 
 pub use os_wired::{clear_magic_dns_os_wired, get_magic_dns_os_wired, set_magic_dns_os_wired};
 
+#[cfg(feature = "proxy-packet")]
+pub(crate) use observe::ObservingDnsResolver;
 #[cfg(feature = "proxy-packet")]
 pub(crate) use packet::magic_dns_packet_filter;
 #[cfg(feature = "proxy-packet")]

@@ -259,6 +259,8 @@ impl CoreInstanceConfig {
             } else {
                 config.get_exit_nodes()
             },
+            policy_routes: config.get_policy_routes(),
+            dns_config: config.get_dns_config(),
             foreign_context_default_flags: host.runtime_flags(TomlConfig::default().get_flags()),
         };
 
@@ -307,6 +309,7 @@ impl CoreInstanceConfig {
             manual_routes: config
                 .get_routes()
                 .map(|routes| routes.into_iter().collect::<BTreeSet<_>>()),
+            manual_routes_append: config.get_manual_routes_append(),
             exit_nodes: if host.ignore_unsupported_config && !host.proxy_enabled {
                 Vec::new()
             } else {

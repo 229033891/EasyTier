@@ -3,7 +3,7 @@
 ## Status
 
 - Status: **Roadmap**（Draft / 暂缓实现）
-- 最近审阅：2026-10-06
+- 最近审阅：2026-10-13（⚠️ **本文的「A 编译 + 下发答案记录」方案已被统一路由模型取代**，见 [`unified-routing-design.md`](./unified-routing-design.md)；域名分流已按 P1–P3 落地，现状见 [`../current/traffic-steering.md`](../current/traffic-steering.md) §5。本文保留作历史论证）
 - 适用范围：`easytier-core` 子网代理（`proxy_cidrs`）+ MagicDNS / 解析覆盖
 - 相关现状：子网代理仅支持 IP/CIDR 清单；DNS 侧已落地见 [`../current/magic-dns.md`](../current/magic-dns.md)（本文仍缺「域名→CIDR + 答案同步」）
 - 决策：先文档立项，**当前不实现代码**
@@ -91,16 +91,22 @@ A 配置:
 
 ### 4.3 与现有组件关系
 
-| 组件 | 作用 |
-|------|------|
-| `proxy_cidrs` / Peer 路由 | 继续承担 L3 导流；域名引擎只负责生成/更新 CIDR |
-| MagicDNS / DNS 记录同步 | 优先复用或扩展，用于把 A 记录下发到 B |
-| SOCKS5 / 出口节点 | 可选替代路径；应用层带域名时由 A 解析，不依赖本设计 |
+> ⚠️ **已由统一路由模型（P1–P3，已落地）取代。** 实际实现不再走「A 编译 CIDR + 向 B 下发答案记录」，而是**消费侧 `[[policy_routes]]` + 观测自己的 MagicDNS 应答**。下表保留作历史对照；现状见 [`../current/traffic-steering.md`](../current/traffic-steering.md) §5 与 [`unified-routing-design.md`](./unified-routing-design.md)。
+
+| 组件 | 本草案设想 | 已落地的实际做法 |
+|------|------|------|
+| `proxy_cidrs` / Peer 路由 | 域名引擎生成 / 更新 CIDR | **`[[policy_routes]]`** 直接配 `cidr` / `domains`，L3 次序 3.5；L2 与 L3 同源 |
+| MagicDNS / DNS 记录同步 | 把 A 记录从 A **下发到 B** | **B 观测自己 `resolve()` 的实际应答**（`ObservingDnsResolver`），A 不参与 |
+| SOCKS5 / 出口节点 | 可选替代路径；应用层带域名时由 A 解析 | 仍是独立能力；`[[policy_routes]]` 与 `exit_nodes` **分层并存**，互不替代 |
 
 ### 4.4 MVP 前提（明确写进产品说明）
 
+> ✅ **前提仍然成立**：观测点挂在 MagicDNS 的 resolver 上，**只有走 EasyTier DNS 的查询才看得见**。
+
 首期要求 B 使用节点提供的 DNS 覆盖路径（例如已启用 MagicDNS，或系统 DNS 指向本节点 DNS 服务）。  
 未走覆盖路径时，行为与今日相同：仅 CIDR 生效，域名二次解析仍可能打不中。
+
+**另需明示（统一路由模型新增）**：即使走了覆盖路径，DNS 查询**本身**仍走物理网卡出口；首次访问存在**最长 1 秒**直连窗口。见 [`../current/traffic-steering.md`](../current/traffic-steering.md) §5.1。
 
 ---
 

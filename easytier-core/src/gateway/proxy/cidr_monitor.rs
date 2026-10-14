@@ -24,6 +24,13 @@ pub(crate) struct ProxyCidrConfigSnapshot {
     /// Opt-in escape hatch: keep peer-advertised `/0` in the L2 desired set
     /// even when this node has no reachable exit.
     pub allow_peer_default_without_exit: bool,
+    /// CIDRs contributed by `Stable` / `Failover` policy rules. Filled by the
+    /// L2 collector from the unified routing table, so both planes share one
+    /// snapshot (no L2-installed-but-L3-unknown window).
+    pub local_routes: BTreeSet<Ipv4Cidr>,
+    /// Opt-in (Q5): **append** `manual_routes` to the computed set instead of
+    /// replacing it. Default `false` keeps the legacy override semantics.
+    pub manual_routes_append: bool,
 }
 
 impl From<&CoreInstanceRuntimeConfig> for ProxyCidrConfigSnapshot {
@@ -33,6 +40,10 @@ impl From<&CoreInstanceRuntimeConfig> for ProxyCidrConfigSnapshot {
             no_tun: config.services.proxy.no_tun,
             has_exit_nodes: false,
             allow_peer_default_without_exit: config.services.proxy.allow_peer_default_without_exit,
+            // The runtime-config snapshot has no access to the routing table;
+            // `collect_proxy_cidr_state` fills this in from the peer manager.
+            local_routes: BTreeSet::new(),
+            manual_routes_append: config.services.manual_routes_append,
         }
     }
 }
@@ -123,21 +134,38 @@ pub struct ProxyCidrDiff {
 
 /// Build the L2 desired IPv4 proxy CIDR set.
 ///
+/// Composition (unified routing §9.3):
+/// 1. peer-advertised routes,
+/// 2. CIDRs contributed by `Stable` / `Failover` policy rules (`local_routes`),
+/// 3. `manual_routes` — **replaces** everything by default, or is appended when
+///    `manual_routes_append` is set (Q5).
+///
 /// Peer-advertised `0.0.0.0/0` is filtered out unless this node has a reachable
-/// exit (`has_exit_nodes`) or the escape hatch
-/// `allow_peer_default_without_exit` is enabled. Filtering must happen here
-/// (desired set), not only in OS apply — otherwise the 1s reconciler retries
-/// forever.
+/// exit (`has_exit_nodes`), a live local `/0` rule, or the escape hatch
+/// `allow_peer_default_without_exit`. Filtering must happen here (desired set),
+/// not only in OS apply — otherwise the 1s reconciler retries forever.
 pub(crate) fn resolve_proxy_cidrs(
     peer_routes: BTreeSet<Ipv4Cidr>,
     config: ProxyCidrConfigSnapshot,
 ) -> BTreeSet<Ipv4Cidr> {
-    if let Some(manual_routes) = config.manual_routes {
-        return manual_routes;
-    }
-    let mut routes = peer_routes;
     let default = ipv4_default_cidr();
-    let install_local_default = config.has_exit_nodes && !config.no_tun;
+
+    if let Some(manual_routes) = &config.manual_routes
+        && !config.manual_routes_append
+    {
+        // Legacy override (default): `routes = [...]` is the whole truth and is
+        // returned untouched — notably it suppresses the exit `/0`.
+        return manual_routes.clone();
+    }
+
+    let mut routes = peer_routes;
+    routes.extend(config.local_routes.iter().copied());
+    if let Some(manual_routes) = &config.manual_routes {
+        routes.extend(manual_routes.iter().copied());
+    }
+
+    let install_local_default =
+        (config.has_exit_nodes || config.local_routes.contains(&default)) && !config.no_tun;
     let keep_peer_default =
         (config.allow_peer_default_without_exit && !config.no_tun) || install_local_default;
     if !keep_peer_default {
@@ -185,15 +213,11 @@ async fn collect_proxy_cidr_state(
             .resolve_exit_node_peer(&exit_nodes)
             .await
             .is_some();
-    let current = resolve_proxy_cidrs(
-        peer_routes,
-        ProxyCidrConfigSnapshot {
-            manual_routes: config.services.manual_routes.clone(),
-            no_tun: config.services.proxy.no_tun,
-            has_exit_nodes: local_exit_default,
-            allow_peer_default_without_exit: config.services.proxy.allow_peer_default_without_exit,
-        },
-    );
+    let mut snapshot = ProxyCidrConfigSnapshot::from(config);
+    snapshot.has_exit_nodes = local_exit_default;
+    // Same snapshot the L3 hot path reads → no L2-installed-but-L3-unknown window.
+    snapshot.local_routes = peer_manager.local_route_table().l2_contributing_cidrs();
+    let current = resolve_proxy_cidrs(peer_routes, snapshot);
     (current, local_exit_default)
 }
 
@@ -508,5 +532,59 @@ mod tests {
             },
         );
         assert_eq!(resolved, cidrs(&["10.0.0.0/8"]));
+    }
+
+    #[test]
+    fn local_routes_are_appended_to_peer_routes() {
+        let resolved = resolve_proxy_cidrs(
+            cidrs(&["10.0.0.0/8"]),
+            ProxyCidrConfigSnapshot {
+                local_routes: cidrs(&["198.51.100.0/24"]),
+                ..Default::default()
+            },
+        );
+        assert_eq!(resolved, cidrs(&["10.0.0.0/8", "198.51.100.0/24"]));
+    }
+
+    #[test]
+    fn local_default_rule_installs_full_tunnel() {
+        let resolved = resolve_proxy_cidrs(
+            cidrs(&["10.0.0.0/8"]),
+            ProxyCidrConfigSnapshot {
+                local_routes: cidrs(&["0.0.0.0/0"]),
+                ..Default::default()
+            },
+        );
+        assert_eq!(resolved, cidrs(&["0.0.0.0/0", "10.0.0.0/8"]));
+    }
+
+    #[test]
+    fn manual_routes_append_keeps_the_computed_set() {
+        let resolved = resolve_proxy_cidrs(
+            cidrs(&["10.0.0.0/8"]),
+            ProxyCidrConfigSnapshot {
+                manual_routes: Some(cidrs(&["192.0.2.0/24"])),
+                manual_routes_append: true,
+                local_routes: cidrs(&["198.51.100.0/24"]),
+                ..Default::default()
+            },
+        );
+        assert_eq!(
+            resolved,
+            cidrs(&["10.0.0.0/8", "192.0.2.0/24", "198.51.100.0/24"])
+        );
+    }
+
+    #[test]
+    fn manual_routes_override_still_replaces_local_routes() {
+        let resolved = resolve_proxy_cidrs(
+            cidrs(&["10.0.0.0/8"]),
+            ProxyCidrConfigSnapshot {
+                manual_routes: Some(cidrs(&["192.0.2.0/24"])),
+                local_routes: cidrs(&["198.51.100.0/24"]),
+                ..Default::default()
+            },
+        );
+        assert_eq!(resolved, cidrs(&["192.0.2.0/24"]));
     }
 }

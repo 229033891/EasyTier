@@ -131,6 +131,41 @@ message NetworkConfig {
   // PeerConn bonding (Phase 2a). Unset / 0 on FlagsInConfig defaults → bond_count=1, replica_fill_max=5.
   optional uint32 peer_link_bond_count = 86;
   optional uint32 peer_link_replica_fill_max = 87;
+
+  // Unified routing model: `[[policy_routes]]` (see docs/roadmap/unified-routing-design.md).
+  // Older clients ignore this field; behavior degrades to the pre-policy path.
+  repeated PolicyRouteConfig policy_routes = 88;
+  // Only meaningful together with `manual_routes` / `routes`: when true the manual
+  // list is *appended* to the auto-computed set instead of replacing it.
+  optional bool manual_routes_append = 89;
+  // Presence bit for `policy_routes`: proto3 repeated fields have no presence, so
+  // an empty list is indistinguishable from "field omitted". When this is true,
+  // `policy_routes` is authoritative — including the empty list (clear all).
+  // Older clients leave it unset; empty `policy_routes` then does not wipe the
+  // existing table.
+  optional bool has_policy_routes = 90;
+}
+
+// One `[[policy_routes]]` entry: a CIDR and/or domain match, plus the candidate
+// gateway peers and the selection policy. String fields keep the wire format
+// identical to the TOML key so validation errors surface on the same values.
+message PolicyRouteConfig {
+  // e.g. "10.0.0.0/24". At least one of `cidr` / `domains` must be set.
+  optional string cidr = 1;
+  // e.g. "*.atlassian.net" (wildcard parent needs >= 2 labels).
+  repeated string domains = 2;
+  // Candidate gateway peers (virtual IPs), in preference order.
+  repeated string peers = 3;
+  // "priority" | "quality" | "balance".
+  optional string select_by = 4;
+  // "unreachable" | "degraded" | "never".
+  optional string failover_when = 5;
+  // "open" (fall back to the physical gateway) | "closed" (drop).
+  optional string if_all_unavailable = 6;
+  // Required when `if_all_unavailable = closed` and more than one peer is set.
+  optional bool require_confirmed = 7;
+  // Composite-cost ceiling; required with `failover_when = degraded`.
+  optional int32 quality_degraded_cost = 8;
 }
 
 message DnsHostEntry {

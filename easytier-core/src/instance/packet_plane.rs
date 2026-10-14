@@ -18,7 +18,8 @@ use crate::{
 use crate::foundation::stats::{LabelSet, LabelType, MetricName};
 #[cfg(feature = "proxy-packet")]
 use crate::gateway::magic_dns::{
-    MagicDnsQueryResolver, MagicDnsResolverRegistration, magic_dns_packet_filter,
+    MagicDnsQueryResolver, MagicDnsResolverRegistration, ObservingDnsResolver,
+    magic_dns_packet_filter,
 };
 #[cfg(feature = "proxy-packet")]
 use crate::gateway::udp_broadcast::UdpBroadcastRelayStats;
@@ -151,6 +152,15 @@ impl CorePacketPlane {
         fake_ip: std::net::Ipv4Addr,
         resolver: Arc<dyn MagicDnsQueryResolver>,
     ) -> MagicDnsResolverRegistration {
+        // P3: every answer the resolver hands back is fed into the unified
+        // routing table so domain policy routes learn their IPs. The wrapper is
+        // a no-op while `[[policy_routes]]` carries no domain rules, and it is
+        // the only place that can observe what an application actually
+        // resolved (§9.8.3).
+        let resolver: Arc<dyn MagicDnsQueryResolver> = Arc::new(ObservingDnsResolver::new(
+            resolver,
+            Arc::downgrade(&self.peer_manager),
+        ));
         let runtime = tokio::runtime::Handle::current();
         let pipeline = self
             .peer_manager

@@ -2,6 +2,7 @@
 //! implementation and the graph algorithms backing it.
 
 pub(crate) mod graph_algo;
+pub(crate) mod local_route_table;
 pub(crate) mod peer_ospf_route;
 mod route_peer_wire;
 

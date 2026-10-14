@@ -13,6 +13,7 @@ use anyhow::Context;
 use ariadne::{CharSet, Config as AriadneConfig, IndexType, Label, Report, ReportKind, Source};
 use serde::{Deserialize, Serialize};
 
+use crate::peers::route::local_route_table::PolicyRouteConfig;
 use crate::proto::{
     acl::Acl,
     common::{CompressionAlgoPb, SecureModeConfig},
@@ -344,8 +345,14 @@ pub trait ConfigLoader: Send + Sync {
     fn get_exit_nodes(&self) -> Vec<IpAddr>;
     fn set_exit_nodes(&self, nodes: Vec<IpAddr>);
 
+    fn get_policy_routes(&self) -> Vec<PolicyRouteConfig>;
+    fn set_policy_routes(&self, routes: Vec<PolicyRouteConfig>);
+
     fn get_routes(&self) -> Option<Vec<cidr::Ipv4Cidr>>;
     fn set_routes(&self, routes: Option<Vec<cidr::Ipv4Cidr>>);
+
+    fn get_manual_routes_append(&self) -> bool;
+    fn set_manual_routes_append(&self, append: bool);
 
     fn get_socks5_portal(&self) -> Option<url::Url>;
     fn set_socks5_portal(&self, addr: Option<url::Url>);
@@ -650,12 +657,22 @@ struct Config {
     mapped_listeners: Option<Vec<url::Url>>,
     exit_nodes: Option<Vec<IpAddr>>,
 
+    /// Unified routing policy table (P1). Key is `[[policy_routes]]`, distinct
+    /// from the legacy `routes = [CIDR…]` manual proxy list.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    policy_routes: Vec<PolicyRouteConfig>,
+
     peer: Option<Vec<PeerConfig>>,
     proxy_network: Option<Vec<ProxyNetworkConfig>>,
 
     vpn_portal_config: Option<VpnPortalConfig>,
 
     routes: Option<Vec<cidr::Ipv4Cidr>>,
+
+    /// Opt-in (Q5): **append** `routes` to the computed proxy-CIDR set instead
+    /// of replacing it. Default `false` keeps the legacy override semantics.
+    #[serde(default)]
+    manual_routes_append: bool,
 
     socks5_proxy: Option<url::Url>,
 
@@ -1185,12 +1202,28 @@ impl ConfigLoader for TomlConfig {
         self.config.lock().unwrap().exit_nodes = Some(nodes);
     }
 
+    fn get_policy_routes(&self) -> Vec<PolicyRouteConfig> {
+        self.config.lock().unwrap().policy_routes.clone()
+    }
+
+    fn set_policy_routes(&self, routes: Vec<PolicyRouteConfig>) {
+        self.config.lock().unwrap().policy_routes = routes;
+    }
+
     fn get_routes(&self) -> Option<Vec<cidr::Ipv4Cidr>> {
         self.config.lock().unwrap().routes.clone()
     }
 
     fn set_routes(&self, routes: Option<Vec<cidr::Ipv4Cidr>>) {
         self.config.lock().unwrap().routes = routes;
+    }
+
+    fn get_manual_routes_append(&self) -> bool {
+        self.config.lock().unwrap().manual_routes_append
+    }
+
+    fn set_manual_routes_append(&self, append: bool) {
+        self.config.lock().unwrap().manual_routes_append = append;
     }
 
     fn get_socks5_portal(&self) -> Option<url::Url> {

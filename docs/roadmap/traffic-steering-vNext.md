@@ -2,10 +2,10 @@
 
 ## Status
 
-- Status: **Roadmap**（域名代理、统一导流模型仍待做；出口 `/0` / D+ 以 Current 为准）
+- Status: **Roadmap**（统一导流模型 P1–P6 已落地、见 [`unified-routing-design.md`](./unified-routing-design.md)；本文主要作历史决策追溯；出口 `/0` / D+ 以 Current 为准）
 - 日期：2026-10-03
-- 最近审阅：2026-10-08（§5.2 可观测项已落地）
-- **已落地（现状文档为准）**：客户端在出口 **可解析且有下一跳** 时本机安装 `0.0.0.0/0`/`::/0`；出口不可达则卸默认路由；`add`/`remove` 仅成功记账并周期性重试；**状态页 `proxy_cidr_route_sync` 展示「期望 vs 已安装 vs 最后错误」**；出口机不因 `enable_exit_node` 向 OSPF 通告默认路由；L3 在可解析出口时优先 `exit_nodes` 并打 `exit_node` 标志；对端 `/0` 默认不装 OS（D+）。见 [`../current/traffic-steering.md`](../current/traffic-steering.md)。
+- 最近审阅：2026-10-14（**统一路由模型 P1–P6 已落地**（含 GUI/Web + CI 门禁；跨平台验收待做）→ 以 [`unified-routing-design.md`](./unified-routing-design.md) 与 [`../current/traffic-steering.md`](../current/traffic-steering.md) §5 为准；本文 §3 / §4.3 / §11 已修订）
+- **已落地（现状文档为准）**：客户端在出口 **可解析且有下一跳** 时本机安装 `0.0.0.0/0`/`::/0`；出口不可达则卸默认路由；`add`/`remove` 仅成功记账并周期性重试；**状态页 `proxy_cidr_route_sync` 展示「期望 vs 已安装 vs 最后错误」**；出口机不因 `enable_exit_node` 向 OSPF 通告默认路由；L3 在可解析出口时优先 `exit_nodes` 并打 `exit_node` 标志；对端 `/0` 默认不装 OS（D+）。**另：`[[policy_routes]]` 统一路由（CIDR / 域名 → 节点）P1–P6 已落地**。见 [`../current/traffic-steering.md`](../current/traffic-steering.md)。
 - 目标读者：产品决策 + 后续实现
 - 索引：[`../README.md`](../README.md)
 - **现状行为（已实现）**：[`../current/traffic-steering.md`](../current/traffic-steering.md)
@@ -78,7 +78,8 @@
 
 - **L2 不管「选哪个出口 peer」**，只决定流量是否进入虚拟网。
 - **L3 不管装不装系统路由**，只决定进网后的 peer 与标记。
-- **域名绝不让消费端独立递归当权威**（沿用域名草案）；权威永远在配置了 `proxy_domains` 的代理节点。
+- ~~**域名绝不让消费端独立递归当权威**（沿用域名草案）；权威永远在配置了 `proxy_domains` 的代理节点。~~
+  → **已修订**：落地的统一路由模型把规则权威放在**配置规则的节点自己**（`[[policy_routes]]`），IP 由该节点观测**自己的** MagicDNS 应答得到 —— 消费端不对公网递归，只读本地 resolver 的实际返回。见 §4.3。
 
 ---
 
@@ -88,10 +89,14 @@
 
 | 次序 | 规则 | `is_exit_node` | 典型场景 |
 |------|------|----------------|----------|
-| 1 | 虚拟网 VIP 精确命中 | false | 点到点 |
-| 2 | **Proxy CIDR LPM**（含手工 CIDR + 域名编译出的 `/32` 等） | false | 子网代理 / 域名代理 |
-| 3 | `exit_nodes` **配置列表顺序**，第一个 VIP 可解析的 peer | **true** | 真正的「出口节点」路径 |
-| 4 | （可选宿主）`local_exit_node_fallback` | true | OHOS 等 |
+| 1 | 广播 / 网段广播（多 peer） | false | 广播域 |
+| 2 | 虚拟网 VIP 精确命中 | false | 点到点 |
+| 3 | **Proxy CIDR LPM**（手工 `proxy_cidrs`；**不含 `/0`**） | false | 子网代理 |
+| **3.5** | **本机 `[[policy_routes]]`**（`ArcSwap` 快照只读：CIDR LPM + 域名观测学到的 `/32`） | **true** | 统一路由模型（**已落地**，见 [`../current/traffic-steering.md`](../current/traffic-steering.md) §5） |
+| 4 | `exit_nodes` **配置列表顺序**，第一个 VIP 可解析的 peer | **true** | 真正的「出口节点」路径 |
+| 5 | （可选宿主）`local_exit_node_fallback` | true | OHOS 等 |
+
+次序 3.5 的三种结果：`Hit` → 规则选出的 `active_peer`；`Block`（`if_all_unavailable = closed` 且全候选不可达）→ **丢包**，不回退 exit；`Miss` → 继续 ↓。
 
 IPv6：VIP →（Public IPv6 gateway）→ Proxy LPM → `exit_nodes`；链路本地不进出口。注意 L2 不对称：对端宣告的 IPv6 proxy CIDR（含 `::/0`）**目前不写入任何 OS 路由**，只有本机出口才装 `::/0`。
 
@@ -133,6 +138,8 @@ IPv6：VIP →（Public IPv6 gateway）→ Proxy LPM → `exit_nodes`；链路�
 
 ### 4.1 归属
 
+> ⚠️ **已过时（保留作历史论证）**：下列 `proxy_domains`「A 编译、下发答案记录」方案**未采用**。已落地的做法见 §4.3：规则配在**消费侧**，IP 由消费侧观测自己的 MagicDNS 应答得到。
+
 - `proxy_domains` 配置在 **代理节点 A**（网络实例级配置，与 `proxy_cidrs` 同级；Web 托管随实例下发）。
 - A 上 Domain Engine 输出：
   1. 追加进 **A 宣告的 proxy CIDR**（默认 `/32`，可聚合）；
@@ -146,13 +153,17 @@ IPv6：VIP →（Public IPv6 gateway）→ Proxy LPM → `exit_nodes`；链路�
 
 ### 4.3 与出口的关系
 
-| 流量 | 期望路径 |
-|------|----------|
-| 访问「域名代理清单内」域名 | B 覆盖 DNS → `/32` LPM → A（次序 2） |
-| 访问清单外公网 | 仅当 B 配了 `exit_nodes`（及本机默认路由）→ 出口 peer（次序 3） |
-| 误把公网大段写进域名动态解析 | 用数量上限、默认 `/32`、可选仅私网缓解（域名草案 §7） |
+> ⚠️ **本节已按统一路由模型（P1–P3，已落地）修订。** 早期草案的 `proxy_domains`（A 编译 → 向 B 下发「域名 → IP 答案记录」）**未采用**。实现改为：**规则配在消费侧 B 自己的 `[[policy_routes]]` 上，B 观测自己的 MagicDNS 应答学到 IP** —— A 不参与，也**不要求 B 走覆盖 DNS** 才能命中。
 
-域名代理 **不替代** 出口；二者分层：域名解决「打中哪台代理机的哪些 IP」，出口解决「剩余上网从哪出」。
+| 流量 | 实际路径（已落地） |
+|------|----------|
+| 命中 `[[policy_routes]]` 的 `cidr` / `domains` | L3 **次序 3.5** → 规则选出的 `active_peer` |
+| 未命中任何规则 | 次序 4 `exit_nodes` → 出口 peer（带 `exit_node` 标志）；再不行才走对端 `/0` 兜底 |
+| 误把公网大段写进规则 | 规则数上限 + 观测 IP 上限（`/32`）缓解 |
+
+`[[policy_routes]]` **不替代**出口：规则只覆盖**显式匹配**的目标，其余仍走 `exit_nodes`。分层不变 —— 规则解决「这批目标交给哪台网关」，出口解决「剩下的上网从哪出」。
+
+**⚠️ 泄漏面（产品必须明示）**：DNS 查询本身**不走**指定出口（上游绑物理网卡）；首次访问有**最长 1 秒**直连窗口；**iOS / macOS-NE 与 `no_tun` 不支持**。详见 [`../current/traffic-steering.md`](../current/traffic-steering.md) §5.1 / §5.2。
 
 ### 4.4 MVP 前提（不变）
 
@@ -192,6 +203,8 @@ B 必须走 MagicDNS / 节点 DNS 覆盖；否则仅 CIDR 生效，二次解析�
 
 ## 6. 配置面（示意）
 
+> ⚠️ **已落地的字段是 `[[policy_routes]]`**（见 [`../current/traffic-steering.md`](../current/traffic-steering.md) §5）；下列 `[[proxy_domains]]` 是**未采用**的草案形状，保留作对照。
+
 ```toml
 # —— 出口（客户端）——
 exit_nodes = ["10.126.126.1"]   # 非空 → 本机自动管 TUN 默认路由（见 §3.1）
@@ -202,7 +215,15 @@ exit_nodes = ["10.126.126.1"]   # 非空 → 本机自动管 TUN 默认路由（
 # —— 手工子网代理 ——
 proxy_cidrs = ["10.0.0.0/24"]
 
-# —— 域名代理（仅代理节点 A）——
+# —— 统一路由模型（已落地；替换下面的 proxy_domains 草案）——
+[[policy_routes]]
+domains = ["*.atlassian.net"]   # 或 cidr = "10.0.0.0/24"
+peers   = ["10.144.0.9"]
+select_by          = "priority"
+failover_when      = "unreachable"
+if_all_unavailable = "open"
+
+# —— 域名代理（草案，未采用）——
 [[proxy_domains]]
 name = "nas.lan"
 ips = ["10.0.0.5"]              # 静态
@@ -213,6 +234,7 @@ resolve = true                  # 动态；可选 dns =
 
 # —— 高级：整表手动 ——
 # manual_routes = ["192.168.0.0/16"]  # 开启后接管 L2，不再自动加 exit 默认路由
+# manual_routes_append = false        # true 才与自动集合叠加（默认 false = 覆盖）
 ```
 
 GUI/Web：
@@ -288,4 +310,4 @@ TTL/防抖、失败保留上次成功、与静态合并。
 4. **可靠**：路由按 owner 对称装卸；失败不瞎记账，要重试、要可观测。  
 5. **实现顺序**：先 Phase A（出口+路由可靠），再域名 Phase B/C。
 
-**Phase A（出口默认路由 / D+ / 可观测）已落地**，以 [`../current/traffic-steering.md`](../current/traffic-steering.md) 为准。本文剩余价值：域名代理（Phase B/C）与统一导流模型；开工前同步帮助文案与冲突提示。
+**Phase A（出口默认路由 / D+ / 可观测）已落地**，以 [`../current/traffic-steering.md`](../current/traffic-steering.md) 为准。**统一导流模型（`[[policy_routes]]`）的 P1–P6 也已落地**（见 [`unified-routing-design.md`](./unified-routing-design.md)；仅剩跨平台验收）。本文剩余价值主要是未采用的 `proxy_domains` 草案对照，以及与 Current 的历史决策追溯。

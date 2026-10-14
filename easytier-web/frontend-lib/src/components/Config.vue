@@ -17,6 +17,7 @@ import {
   parseDefaultProtocolList,
   removeRow,
   type DnsConfig,
+  type PolicyRouteConfig,
   type VpnPortalClientConfig,
   type VpnPortalConfig,
 } from '../types/network'
@@ -33,6 +34,7 @@ import AclManager from './acl/AclManager.vue'
 import DnsHostsEditor from './dns/DnsHostsEditor.vue'
 import DnsForwardersEditor from './dns/DnsForwardersEditor.vue'
 import DnsUpstreamEditor from './dns/DnsUpstreamEditor.vue'
+import PolicyRoutesEditor from './policy/PolicyRoutesEditor.vue'
 import UrlListInput from './UrlListInput.vue'
 
 const props = defineProps<{
@@ -128,6 +130,7 @@ const panelCollapsed = reactive({
   toolbar: true,
   basic: false,
   advanced: true,
+  trafficRouting: true,
   portForwards: true,
   dns: true,
   acl: true,
@@ -146,6 +149,7 @@ watch(
     panelCollapsed.toolbar = true
     panelCollapsed.basic = false
     panelCollapsed.advanced = false
+    panelCollapsed.trafficRouting = false
     panelCollapsed.portForwards = false
     panelCollapsed.dns = false
     panelCollapsed.acl = false
@@ -161,6 +165,14 @@ function ensureDnsConfig(): DnsConfig {
   curNetwork.value.dns_config.forwarders ??= []
   curNetwork.value.dns_config.upstream_dns ??= []
   return curNetwork.value.dns_config
+}
+
+/** Same as `ensureDnsConfig`: keep the unified-routing editor always editable. */
+function ensurePolicyRoutes(): PolicyRouteConfig[] {
+  curNetwork.value.policy_routes ??= []
+  // Form owns the list (incl. empty = clear); see `has_policy_routes` in proto.
+  curNetwork.value.has_policy_routes = true
+  return curNetwork.value.policy_routes
 }
 
 function onToggleablePanelHeaderClick(
@@ -263,8 +275,7 @@ const bool_flags: BoolFlag[] = [
   { field: 'p2p_only', help: 'p2p_only_help', group: 'connectivity' },
   { field: 'lazy_p2p', help: 'lazy_p2p_help', group: 'connectivity' },
   { field: 'need_p2p', help: 'need_p2p_help', group: 'connectivity' },
-  { field: 'enable_exit_node', help: 'enable_exit_node_help', group: 'connectivity' },
-  { field: 'allow_peer_default_without_exit', help: 'allow_peer_default_without_exit_help', group: 'connectivity' },
+  // enable_exit_node / allow_peer_default_without_exit →「流量与路由」面板
   { field: 'relay_all_peer_rpc', help: 'relay_all_peer_rpc_help', group: 'connectivity' },
   // disable_relay_data 由基础设置的「允许作为中转节点」正向开关驱动，不再列为高级开关
   { field: 'enable_kcp_proxy', help: 'enable_kcp_proxy_help', group: 'transport' },
@@ -289,7 +300,7 @@ const bool_flags: BoolFlag[] = [
   { field: 'bind_device', help: 'bind_device_help', group: 'system' },
   { field: 'no_tun', help: 'no_tun_help', group: 'system' },
   { field: 'multi_thread', help: 'multi_thread_help', group: 'system' },
-  { field: 'proxy_forward_by_system', help: 'proxy_forward_by_system_help', group: 'system' },
+  // proxy_forward_by_system →「流量与路由」网关区（贴着子网代理）
   { field: 'enable_private_mode', help: 'enable_private_mode_help', group: 'security' },
   { field: 'disable_encryption', help: 'disable_encryption_help', group: 'security',
     inverted: { inputId: 'allow_encryption', label: 'allow_encryption', help: 'allow_encryption_help' } },
@@ -462,6 +473,8 @@ function syncNormalizedNetwork(network: NetworkConfig | undefined): void {
   Object.assign(network, normalizeNetworkConfig(network))
   // DNS 策略编辑器常显，进入配置页就补一个空 dns_config，省掉「+配置策略」这一步。
   ensureDnsConfig()
+  // 策略路由编辑器同理：常显，先补空数组。
+  ensurePolicyRoutes()
 }
 
 watch(() => curNetwork.value, syncNormalizedNetwork, { immediate: true, deep: false })
@@ -747,37 +760,6 @@ function removeVpnPortalClient(index: number) {
               </div>
 
               <div class="config-compact-grid config-compact-grid--inline-two">
-                <div class="config-compact-field config-compact-field--inline">
-                  <div class="config-compact-label flex items-center gap-1">
-                    <label for="subnet-proxy">{{ t('proxy_cidrs') }}</label>
-                    <i class="pi pi-question-circle config-help-tip" tabindex="0"
-                      v-tooltip.top="{ value: t('proxy_cidrs_help'), escape: false }" role="img"></i>
-                  </div>
-                  <div class="config-compact-control">
-                    <AutoComplete id="subnet-proxy" v-model="curNetwork.proxy_cidrs"
-                      :placeholder="t('chips_placeholder_typeahead', ['10.0.0.0/24'])" multiple fluid
-                      :suggestions="inetSuggestions" @complete="searchInetSuggestions"
-                      @keydown.capture="onChipsKeydown($event, curNetwork.proxy_cidrs ??= [], { typeahead: true })" />
-                  </div>
-                </div>
-
-                <div class="config-compact-field config-compact-field--inline">
-                  <div class="config-compact-label flex items-center gap-1">
-                    <label for="exit_nodes">{{ t('exit_nodes') }}</label>
-                    <i class="pi pi-question-circle config-help-tip" tabindex="0"
-                      v-tooltip.top="{ value: t('exit_nodes_help'), escape: false }" role="img"></i>
-                  </div>
-                  <div class="config-compact-control">
-                    <AutoComplete id="exit_nodes" v-model="curNetwork.exit_nodes"
-                      :placeholder="t('chips_placeholder_typeahead', ['192.168.8.8'])" multiple fluid
-                      :suggestions="exitNodeSuggestions" @complete="searchExitNodeSuggestions"
-                      @keydown.capture="onChipsKeydown($event, curNetwork.exit_nodes ??= [], { typeahead: true })" />
-                    <p v-if="tunControlsDisabled" class="config-field-hint m-0">{{ t('no_tun_exit_nodes_hint') }}</p>
-                  </div>
-                </div>
-              </div>
-
-              <div class="config-compact-grid config-compact-grid--inline-two">
                 <div class="config-compact-field config-compact-field--inline config-compact-field--top">
                   <div class="config-compact-label flex items-center gap-1">
                     <label for="default_protocol">{{ t('default_protocol') }}</label>
@@ -952,24 +934,6 @@ function removeVpnPortalClient(index: number) {
 
                 <div class="config-inline-field">
                   <div class="config-inline-label flex items-center gap-1">
-                    <label for="routes">{{ t('manual_routes') }}</label>
-                    <i class="pi pi-question-circle config-help-tip" tabindex="0"
-                      v-tooltip.top="{ value: t('manual_routes_help'), escape: false }" role="img"></i>
-                  </div>
-                  <div class="config-inline-control">
-                    <ToggleSwitch v-model="curNetwork.enable_manual_routes" input-id="enable_manual_routes"
-                      :aria-label="t('manual_routes')" />
-                  </div>
-                </div>
-                <div v-if="curNetwork.enable_manual_routes" class="config-inline-expand">
-                  <AutoComplete id="routes" v-model="curNetwork.routes"
-                    :placeholder="t('chips_placeholder_typeahead', ['192.168.0.0/16'])" multiple fluid
-                    :suggestions="inetSuggestions" @complete="searchInetSuggestions"
-                    @keydown.capture="onChipsKeydown($event, curNetwork.routes ??= [], { typeahead: true })" />
-                </div>
-
-                <div class="config-inline-field">
-                  <div class="config-inline-label flex items-center gap-1">
                     <label for="socks5_port">{{ t('socks5') }}</label>
                     <i class="pi pi-question-circle config-help-tip" tabindex="0"
                       v-tooltip.top="{ value: t('socks5_help'), escape: false }" role="img"></i>
@@ -1002,6 +966,135 @@ function removeVpnPortalClient(index: number) {
                 </div>
               </div>
 
+            </div>
+          </Panel>
+
+          <Panel v-model:collapsed="panelCollapsed.trafficRouting" :header="t('traffic_routing')" toggleable
+            :pt="panelHeaderPt('trafficRouting')">
+            <div class="flex flex-col gap-y-4">
+              <div class="flex items-center gap-1">
+                <i
+                  class="pi pi-question-circle config-help-tip" tabindex="0"
+                  v-tooltip.top="{ value: t('traffic_routing_summary'), escape: false }"
+                  :aria-label="t('traffic_routing_summary')"
+                  role="img"
+                />
+                <span class="et-meta">{{ t('traffic_routing_summary') }}</span>
+              </div>
+
+              <div class="config-section">
+                <div class="config-section__title">
+                  <span>{{ t('traffic_routing_client') }}</span>
+                </div>
+                <div class="flex flex-col gap-y-2">
+                  <div class="config-compact-field config-compact-field--inline">
+                    <div class="config-compact-label flex items-center gap-1">
+                      <label for="exit_nodes">{{ t('exit_nodes') }}</label>
+                      <i class="pi pi-question-circle config-help-tip" tabindex="0"
+                        v-tooltip.top="{ value: t('exit_nodes_help'), escape: false }" role="img"></i>
+                    </div>
+                    <div class="config-compact-control">
+                      <AutoComplete id="exit_nodes" v-model="curNetwork.exit_nodes"
+                        :placeholder="t('chips_placeholder_typeahead', ['192.168.8.8'])" multiple fluid
+                        :suggestions="exitNodeSuggestions" @complete="searchExitNodeSuggestions"
+                        @keydown.capture="onChipsKeydown($event, curNetwork.exit_nodes ??= [], { typeahead: true })" />
+                      <p v-if="tunControlsDisabled" class="config-field-hint m-0">{{ t('no_tun_exit_nodes_hint') }}</p>
+                    </div>
+                  </div>
+                  <div class="flex items-center gap-2 flex-wrap">
+                    <Checkbox v-model="curNetwork.allow_peer_default_without_exit"
+                      input-id="allow_peer_default_without_exit" :binary="true" />
+                    <label for="allow_peer_default_without_exit">{{ t('allow_peer_default_without_exit') }}</label>
+                    <i class="pi pi-question-circle config-help-tip" tabindex="0"
+                      v-tooltip.top="{ value: t('allow_peer_default_without_exit_help'), escape: false }"
+                      :aria-label="t('allow_peer_default_without_exit_help')" role="img"></i>
+                  </div>
+                  <div class="flex items-center gap-1 mt-1">
+                    <span class="config-section__subtitle">{{ t('policy_routes') }}</span>
+                    <i
+                      class="pi pi-question-circle config-help-tip" tabindex="0"
+                      v-tooltip.top="{ value: t('policy_routes_help'), escape: false }"
+                      :aria-label="t('policy_routes_help')"
+                      role="img"
+                    />
+                    <span class="et-meta">{{ t('policy_routes_summary') }}</span>
+                  </div>
+                  <PolicyRoutesEditor v-model:routes="curNetwork.policy_routes" />
+                </div>
+              </div>
+
+              <div class="config-section">
+                <div class="config-section__title">
+                  <span>{{ t('traffic_routing_gateway') }}</span>
+                </div>
+                <div class="flex flex-col gap-y-2">
+                  <div class="flex items-center gap-2 flex-wrap">
+                    <Checkbox v-model="curNetwork.enable_exit_node" input-id="enable_exit_node" :binary="true" />
+                    <label for="enable_exit_node">{{ t('enable_exit_node') }}</label>
+                    <i class="pi pi-question-circle config-help-tip" tabindex="0"
+                      v-tooltip.top="{ value: t('enable_exit_node_help'), escape: false }"
+                      :aria-label="t('enable_exit_node_help')" role="img"></i>
+                  </div>
+                  <div class="config-compact-field config-compact-field--inline">
+                    <div class="config-compact-label flex items-center gap-1">
+                      <label for="subnet-proxy">{{ t('proxy_cidrs') }}</label>
+                      <i class="pi pi-question-circle config-help-tip" tabindex="0"
+                        v-tooltip.top="{ value: t('proxy_cidrs_help'), escape: false }" role="img"></i>
+                    </div>
+                    <div class="config-compact-control">
+                      <AutoComplete id="subnet-proxy" v-model="curNetwork.proxy_cidrs"
+                        :placeholder="t('chips_placeholder_typeahead', ['10.0.0.0/24'])" multiple fluid
+                        :suggestions="inetSuggestions" @complete="searchInetSuggestions"
+                        @keydown.capture="onChipsKeydown($event, curNetwork.proxy_cidrs ??= [], { typeahead: true })" />
+                    </div>
+                  </div>
+                  <div class="flex items-center gap-2 flex-wrap">
+                    <Checkbox v-model="curNetwork.proxy_forward_by_system"
+                      input-id="proxy_forward_by_system" :binary="true" />
+                    <label for="proxy_forward_by_system">{{ t('proxy_forward_by_system') }}</label>
+                    <i class="pi pi-question-circle config-help-tip" tabindex="0"
+                      v-tooltip.top="{ value: t('proxy_forward_by_system_help'), escape: false }"
+                      :aria-label="t('proxy_forward_by_system_help')" role="img"></i>
+                  </div>
+                </div>
+              </div>
+
+              <div class="config-section">
+                <div class="config-section__title">
+                  <span>{{ t('traffic_routing_advanced') }}</span>
+                </div>
+                <div class="flex flex-col gap-y-2">
+                  <div class="config-inline-field">
+                    <div class="config-inline-label flex items-center gap-1">
+                      <label for="routes">{{ t('manual_routes') }}</label>
+                      <i class="pi pi-question-circle config-help-tip" tabindex="0"
+                        v-tooltip.top="{ value: t('manual_routes_help'), escape: false }" role="img"></i>
+                    </div>
+                    <div class="config-inline-control">
+                      <ToggleSwitch v-model="curNetwork.enable_manual_routes" input-id="enable_manual_routes"
+                        :aria-label="t('manual_routes')" />
+                    </div>
+                  </div>
+                  <div v-if="curNetwork.enable_manual_routes" class="config-inline-expand">
+                    <AutoComplete id="routes" v-model="curNetwork.routes"
+                      :placeholder="t('chips_placeholder_typeahead', ['192.168.0.0/16'])" multiple fluid
+                      :suggestions="inetSuggestions" @complete="searchInetSuggestions"
+                      @keydown.capture="onChipsKeydown($event, curNetwork.routes ??= [], { typeahead: true })" />
+
+                    <div class="config-inline-field">
+                      <div class="config-inline-label flex items-center gap-1">
+                        <label for="manual_routes_append">{{ t('manual_routes_append') }}</label>
+                        <i class="pi pi-question-circle config-help-tip" tabindex="0"
+                          v-tooltip.top="{ value: t('manual_routes_append_help'), escape: false }" role="img"></i>
+                      </div>
+                      <div class="config-inline-control">
+                        <ToggleSwitch v-model="curNetwork.manual_routes_append" input-id="manual_routes_append"
+                          :aria-label="t('manual_routes_append')" />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
             </div>
           </Panel>
 
@@ -1205,14 +1298,16 @@ function removeVpnPortalClient(index: number) {
   opacity: 0.96;
 }
 
+.config-section,
 .dns-section {
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
-  /* Nested under the DNS Strategy panel header — one visual step down. */
+  /* Nested under the panel header — one visual step down. */
   padding-left: 0.25rem;
 }
 
+.config-section__title,
 .dns-section__title {
   display: inline-flex;
   align-items: center;
@@ -1224,6 +1319,15 @@ function removeVpnPortalClient(index: number) {
   color: var(--text-color-secondary, #64748b);
 }
 
+.config-section__subtitle {
+  font-size: 0.75rem;
+  font-weight: 600;
+  line-height: 1.2;
+  color: var(--text-color-secondary, #64748b);
+}
+
+.config-section__title label,
+.config-section__title span,
 .dns-section__title label,
 .dns-section__title span {
   margin: 0;

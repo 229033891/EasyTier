@@ -12,6 +12,56 @@ use crate::config::{
         TomlConfigLoader, VpnPortalClientConfig, VpnPortalConfig, gen_default_flags,
     },
 };
+use crate::peers::route::local_route_table::PolicyRouteConfig;
+
+/// Proto → TOML for one `[[policy_routes]]` entry.
+///
+/// `select_by` / `failover_when` / `if_all_unavailable` stay as raw strings (an
+/// absent field becomes `""`), so the unified-routing validator rejects them with
+/// the same message the TOML path produces instead of silently defaulting.
+fn policy_route_from_proto(
+    route: &manage::PolicyRouteConfig,
+) -> Result<PolicyRouteConfig, anyhow::Error> {
+    let cidr = match route.cidr.as_deref().filter(|raw| !raw.is_empty()) {
+        Some(raw) => Some(
+            raw.parse()
+                .with_context(|| format!("failed to parse policy route cidr: {raw}"))?,
+        ),
+        None => None,
+    };
+    let peers = route
+        .peers
+        .iter()
+        .map(|peer| {
+            peer.parse()
+                .with_context(|| format!("failed to parse policy route peer: {peer}"))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(PolicyRouteConfig {
+        cidr,
+        domains: route.domains.clone(),
+        peers,
+        select_by: route.select_by.clone().unwrap_or_default(),
+        failover_when: route.failover_when.clone().unwrap_or_default(),
+        if_all_unavailable: route.if_all_unavailable.clone().unwrap_or_default(),
+        require_confirmed: route.require_confirmed.unwrap_or_default(),
+        quality_degraded_cost: route.quality_degraded_cost,
+    })
+}
+
+/// TOML → proto for one `[[policy_routes]]` entry.
+fn policy_route_to_proto(route: &PolicyRouteConfig) -> manage::PolicyRouteConfig {
+    manage::PolicyRouteConfig {
+        cidr: route.cidr.map(|cidr| cidr.to_string()),
+        domains: route.domains.clone(),
+        peers: route.peers.iter().map(ToString::to_string).collect(),
+        select_by: Some(route.select_by.clone()),
+        failover_when: Some(route.failover_when.clone()),
+        if_all_unavailable: Some(route.if_all_unavailable.clone()),
+        require_confirmed: Some(route.require_confirmed),
+        quality_degraded_cost: route.quality_degraded_cost,
+    }
+}
 
 fn parse_mapped_listener_urls(mapped_listeners: &[String]) -> Result<Vec<url::Url>, anyhow::Error> {
     MappedListenerPolicy::new(["tcp", "udp", "wg", "quic", "ws", "wss", "faketcp"])
@@ -104,6 +154,8 @@ const FORM_MANAGED_TOML_FIELDS: &[&str] = &[
     "proxy_network",
     "vpn_portal_config",
     "routes",
+    "manual_routes_append",
+    "policy_routes",
     "socks5_proxy",
     "port_forward",
     "secure_mode",
@@ -185,6 +237,15 @@ pub(crate) fn merge_network_config_toml(
         if key != "flags" && !FORM_MANAGED_TOML_FIELDS.contains(&key.as_str()) {
             generated.insert(key.clone(), value.clone());
         }
+    }
+    // `policy_routes` is form-managed, but proto3 repeated fields have no
+    // presence: an older client that omits the field looks identical to
+    // "clear all". Only wipe when the form explicitly set `has_policy_routes`.
+    if config.has_policy_routes != Some(true)
+        && config.policy_routes.is_empty()
+        && let Some(value) = original.get("policy_routes")
+    {
+        generated.insert("policy_routes".to_owned(), value.clone());
     }
     if !original.contains_key("instance_name") {
         generated.remove("instance_name");
@@ -431,6 +492,24 @@ impl NetworkConfigExt for NetworkConfig {
                 );
             }
             cfg.set_exit_nodes(exit_nodes);
+        }
+
+        // Unified routing model (P1–P5). Values stay as strings on the wire so a
+        // bad entry reports the same message the TOML loader would.
+        //
+        // `has_policy_routes` is the presence bit: proto3 repeated fields have
+        // none, so an empty list alone cannot mean "clear". Older clients leave
+        // the bit unset and an empty list is a no-op (preserve existing).
+        if self.has_policy_routes.unwrap_or(false) || !self.policy_routes.is_empty() {
+            let mut policy_routes = Vec::with_capacity(self.policy_routes.len());
+            for route in self.policy_routes.iter() {
+                policy_routes.push(policy_route_from_proto(route)?);
+            }
+            cfg.set_policy_routes(policy_routes);
+        }
+
+        if let Some(append) = self.manual_routes_append {
+            cfg.set_manual_routes_append(append);
         }
 
         if self.enable_socks5.unwrap_or_default()
@@ -818,6 +897,17 @@ impl NetworkConfigExt for NetworkConfig {
             result.exit_nodes = exit_nodes.iter().map(|n| n.to_string()).collect();
         }
 
+        let policy_routes = config.get_policy_routes();
+        if !policy_routes.is_empty() {
+            result.policy_routes = policy_routes.iter().map(policy_route_to_proto).collect();
+            // Non-empty table implies the form owns the field; clearing later
+            // needs the presence bit so an empty list is not a no-op.
+            result.has_policy_routes = Some(true);
+        }
+        if config.get_manual_routes_append() {
+            result.manual_routes_append = Some(true);
+        }
+
         if let Some(socks5_portal) = config.get_socks5_portal() {
             result.enable_socks5 = Some(true);
             result.socks5_port = socks5_portal.port().map(|p| p as i32);
@@ -991,6 +1081,115 @@ mod tests {
         let output = NetworkConfig::new_from_config(config).unwrap();
         assert_eq!(output.dns_config, input.dns_config);
         assert_eq!(output.enable_magic_dns, Some(true));
+    }
+
+    #[test]
+    fn policy_routes_round_trip_through_toml_model() {
+        let input = NetworkConfig {
+            policy_routes: vec![
+                manage::PolicyRouteConfig {
+                    cidr: Some("10.0.0.0/24".to_owned()),
+                    domains: vec!["*.atlassian.net".to_owned()],
+                    peers: vec!["10.144.0.9".to_owned()],
+                    select_by: Some("quality".to_owned()),
+                    failover_when: Some("degraded".to_owned()),
+                    if_all_unavailable: Some("closed".to_owned()),
+                    require_confirmed: Some(true),
+                    quality_degraded_cost: Some(500),
+                },
+                // Domain-only entry: no cidr, `open` fallback.
+                manage::PolicyRouteConfig {
+                    cidr: None,
+                    domains: vec!["api.example.com".to_owned()],
+                    peers: vec!["10.144.0.10".to_owned()],
+                    select_by: Some("balance".to_owned()),
+                    failover_when: Some("unreachable".to_owned()),
+                    if_all_unavailable: Some("open".to_owned()),
+                    require_confirmed: Some(false),
+                    quality_degraded_cost: None,
+                },
+            ],
+            has_policy_routes: Some(true),
+            manual_routes_append: Some(true),
+            ..standalone_config()
+        };
+
+        let config = input.gen_config().unwrap();
+        let routes = config.get_policy_routes();
+        assert_eq!(routes.len(), 2);
+        assert_eq!(
+            routes[0].cidr.map(|cidr| cidr.to_string()).as_deref(),
+            Some("10.0.0.0/24")
+        );
+        assert_eq!(routes[0].domains, vec!["*.atlassian.net".to_owned()]);
+        assert_eq!(routes[0].peers, vec!["10.144.0.9".parse::<std::net::IpAddr>().unwrap()]);
+        assert_eq!(routes[0].select_by, "quality");
+        assert_eq!(routes[0].failover_when, "degraded");
+        assert_eq!(routes[0].if_all_unavailable, "closed");
+        assert!(routes[0].require_confirmed);
+        assert_eq!(routes[0].quality_degraded_cost, Some(500));
+        assert!(routes[1].cidr.is_none());
+        assert!(config.get_manual_routes_append());
+
+        let output = NetworkConfig::new_from_config(config).unwrap();
+        assert_eq!(output.policy_routes, input.policy_routes);
+        assert_eq!(output.has_policy_routes, Some(true));
+        assert_eq!(output.manual_routes_append, Some(true));
+    }
+
+    #[test]
+    fn empty_policy_routes_with_presence_clears_via_gen_config() {
+        let clear = NetworkConfig {
+            policy_routes: vec![],
+            has_policy_routes: Some(true),
+            ..standalone_config()
+        };
+        assert!(clear.gen_config().unwrap().get_policy_routes().is_empty());
+    }
+
+    #[cfg(feature = "browser-config")]
+    #[test]
+    fn browser_merge_clears_policy_routes_only_with_presence() {
+        let original = r#"
+[[policy_routes]]
+cidr = "10.0.0.0/24"
+peers = ["10.144.0.9"]
+select_by = "priority"
+failover_when = "unreachable"
+if_all_unavailable = "open"
+
+[network_identity]
+network_name = "net"
+network_secret = "secret"
+"#;
+        let clear = NetworkConfig {
+            policy_routes: vec![],
+            has_policy_routes: Some(true),
+            network_name: Some("net".to_owned()),
+            network_secret: Some("secret".to_owned()),
+            ..standalone_config()
+        };
+        let merged = merge_network_config_toml(original, &clear).unwrap();
+        let table: toml::Table = toml::from_str(&merged).unwrap();
+        assert!(
+            !table.contains_key("policy_routes"),
+            "presence + empty must wipe [[policy_routes]]: {merged}"
+        );
+
+        // Older client / omitted presence: empty list must not wipe the TOML table.
+        let omit = NetworkConfig {
+            policy_routes: vec![],
+            has_policy_routes: None,
+            network_name: Some("net".to_owned()),
+            network_secret: Some("secret".to_owned()),
+            ..standalone_config()
+        };
+        let preserved = merge_network_config_toml(original, &omit).unwrap();
+        let table: toml::Table = toml::from_str(&preserved).unwrap();
+        assert!(
+            table.contains_key("policy_routes"),
+            "omitted presence must keep [[policy_routes]]: {preserved}"
+        );
     }
 
     #[test]

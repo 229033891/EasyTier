@@ -20,6 +20,62 @@ use crate::proto::core_peer::peer::Route as CoreRoute;
 use crate::proto::peer_rpc::RoutePeerInfo;
 
 pub use super::conn::peer_map::PeerMap;
+pub use super::route::local_route_table::{
+    AllUnavailable, FailoverWhen, LocalRouteTable, RouteLookup, RouteRule, RuleState, RuleUpdate,
+    SelectBy, build_snapshot,
+};
+
+/// The IP that `local_route_table_with_rules` rule 0 (`10.0.0.0/24`) owns.
+pub const POLICY_ROUTE_HIT_IP: Ipv4Addr = Ipv4Addr::new(10, 0, 0, 1);
+
+/// Empty unified routing table — the zero-regression baseline: one `ArcSwap`
+/// load, then `Miss`.
+pub fn empty_local_route_table() -> LocalRouteTable {
+    LocalRouteTable::empty()
+}
+
+/// A unified routing table with `count` explicit `/24` rules, each pinned to its
+/// own peer and already reconciled to `Stable`, so `lookup` returns `Hit` for an
+/// in-range IP and `Miss` outside. Mirrors the §12.5 scale points (1K / 10K).
+pub fn local_route_table_with_rules(count: usize) -> LocalRouteTable {
+    let table = LocalRouteTable::empty();
+    let rules: Vec<RouteRule> = (0..count)
+        .map(|i| {
+            let cidr = Ipv4Cidr::new(Ipv4Addr::new(10, (i >> 8) as u8, (i & 0xff) as u8, 0), 24)
+                .expect("/24 is valid");
+            RouteRule {
+                id: i as u32,
+                cidr: Some(cidr),
+                domains: Vec::new(),
+                peers: vec![IpAddr::V4(Ipv4Addr::new(
+                    172,
+                    16,
+                    (i >> 8) as u8,
+                    (i & 0xff) as u8,
+                ))],
+                select_by: SelectBy::Priority,
+                failover_when: FailoverWhen::Unreachable,
+                if_all_unavailable: AllUnavailable::Open,
+                require_confirmed: false,
+                quality_degraded_cost: None,
+            }
+        })
+        .collect();
+    table.store(build_snapshot(rules));
+    // Reconcile pass: without this every rule stays `Degraded` and `lookup`
+    // would take the Degraded branch instead of the hot `Hit` path.
+    let updates: Vec<RuleUpdate> = (0..count)
+        .map(|i| RuleUpdate {
+            idx: i,
+            active_peer: Some(i as u32 + 100),
+            state: RuleState::Stable,
+            challenger: None,
+            resolved_peers: Vec::new(),
+        })
+        .collect();
+    table.apply_peer_updates(&HashMap::new(), &updates);
+    table
+}
 
 /// 造一个空 `PeerMap`（无 route）。
 ///

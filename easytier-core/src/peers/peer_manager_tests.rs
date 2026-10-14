@@ -907,3 +907,96 @@ fn recent_traffic_tolerates_future_timestamps() {
     assert!(tracker.has(peer_id, Instant::now(), |_| false));
     tracker.mark(peer_id, false, true, |_| false);
 }
+
+/// Three-tick priority sequence: preferred A drops → failover to B → A recovers
+/// and must be selected again. Without the `select_by == Quality` gate on the
+/// switch band, costs are all 0 and the band would hold B forever.
+#[test]
+fn priority_failover_returns_to_preferred_peer() {
+    use crate::config::PeerId;
+    use crate::peers::conn::conn_select::ConnSelectConfig;
+    use crate::peers::route::local_route_table::SelectBy;
+
+    let cfg = ConnSelectConfig::default();
+    let cost = |peer: PeerId| -> Option<i32> {
+        match peer {
+            1 | 2 => Some(0), // both reachable; priority never consults cost
+            _ => None,
+        }
+    };
+    let eligible = |_: i32| true;
+
+    // Tick 1: no incumbent, A preferred → adopt A.
+    let (chosen, challenger) = select_reconciled_peer(
+        SelectBy::Priority,
+        None,
+        Some(1),
+        &cost,
+        &eligible,
+        None,
+        cfg,
+    );
+    assert_eq!((chosen, challenger), (Some(1), None));
+
+    // Tick 2: A gone, B is best → fail over immediately.
+    let cost_a_down = |peer: PeerId| -> Option<i32> {
+        match peer {
+            2 => Some(0),
+            _ => None,
+        }
+    };
+    let (chosen, challenger) = select_reconciled_peer(
+        SelectBy::Priority,
+        Some(1),
+        Some(2),
+        &cost_a_down,
+        &eligible,
+        None,
+        cfg,
+    );
+    assert_eq!((chosen, challenger), (Some(2), None));
+
+    // Tick 3: A recovered (still preferred by list order) → must switch back.
+    let (chosen, challenger) = select_reconciled_peer(
+        SelectBy::Priority,
+        Some(2),
+        Some(1),
+        &cost,
+        &eligible,
+        None,
+        cfg,
+    );
+    assert_eq!((chosen, challenger), (Some(1), None));
+}
+
+#[test]
+fn quality_switch_band_still_holds_incumbent() {
+    use crate::config::PeerId;
+    use crate::peers::conn::conn_select::ConnSelectConfig;
+    use crate::peers::route::local_route_table::SelectBy;
+
+    let cfg = ConnSelectConfig {
+        switch_windows: 3,
+        ..ConnSelectConfig::default()
+    };
+    // Incumbent cost 100, challenger 95 — inside the default band.
+    let cost = |peer: PeerId| -> Option<i32> {
+        match peer {
+            1 => Some(100),
+            2 => Some(95),
+            _ => None,
+        }
+    };
+    let eligible = |_: i32| true;
+
+    let (chosen, challenger) = select_reconciled_peer(
+        SelectBy::Quality,
+        Some(1),
+        Some(2),
+        &cost,
+        &eligible,
+        None,
+        cfg,
+    );
+    assert_eq!((chosen, challenger), (Some(1), None));
+}

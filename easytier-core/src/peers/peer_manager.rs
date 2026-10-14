@@ -1,6 +1,6 @@
 use std::time::{Duration, SystemTime};
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeSet, HashMap},
     net::{IpAddr, Ipv4Addr, Ipv6Addr},
     sync::{
         Arc, Weak,
@@ -58,6 +58,7 @@ use super::{
             BondConfig, bond_fill_live_ceiling, bond_fill_needed, bond_fill_needed_with_standby,
             flow_key_from_payload,
         },
+        conn_select::{ConnSelectConfig, OSPF_EDGE_COST_MIN_DELTA, apply_ospf_cost_hysteresis},
         peer_conn::{PeerConn, PeerConnId},
         peer_map::{PeerMap, direct_peer_info},
         peer_session::PeerSessionStore,
@@ -77,6 +78,11 @@ use super::{
     relay_peer_map::RelayPeerMap,
     route::{
         ArcRoute, DisabledRoute, ForeignNetworkRouteInfoMap, NextHopPolicy, Route, RouteInterface,
+        local_route_table::{
+            FailoverWhen, LocalRouteTable, PolicyRouteConfig, RouteLookup, RuleState, RuleUpdate,
+            SelectBy, build_rules_from_config, build_snapshot, is_degraded_cost,
+            validate_domain_rules_against_dns, validate_policy_route_configs, within_switch_band,
+        },
         peer_ospf_route::PeerRoute,
     },
     traffic_metrics::{
@@ -215,6 +221,14 @@ pub struct PortablePeerManagerConfig {
     pub snapshot: PeerRuntimeSnapshot,
     pub route_algo: RouteAlgoType,
     pub exit_nodes: Vec<IpAddr>,
+    /// Unified routing policy table (P1). Empty disables the feature entirely,
+    /// keeping the L3 outbound path on its original code path (zero regression).
+    #[serde(default)]
+    pub policy_routes: Vec<PolicyRouteConfig>,
+    /// `[dns_config]` at build time. Used only to pre-check `[[policy_routes]]`
+    /// `domains` against MagicDNS guard rules (P3 / C3); not applied here.
+    #[serde(default)]
+    pub dns_config: Option<crate::config::DnsConfig>,
     /// Defaults inherited by peer contexts created for foreign networks.
     ///
     /// This is explicit because those contexts participate in the same
@@ -246,9 +260,264 @@ impl PortablePeerManagerConfig {
             snapshot: PeerRuntimeSnapshot::new(runtime, flags),
             route_algo: RouteAlgoType::Ospf,
             exit_nodes: Vec::new(),
+            policy_routes: Vec::new(),
+            dns_config: None,
             foreign_context_default_flags,
         }
     }
+}
+
+/// Build the unified routing table from config (P1).
+///
+/// Returns an **empty** table when no `[[policy_routes]]` are configured, so
+/// the L3 outbound path keeps its original code path (zero regression) — the
+/// legacy `exit_nodes` list keeps being handled by the old step 4.
+///
+/// Configuration errors (missing policy fields, unconfirmed `closed` + multi
+/// peer, …) are hard failures, never silently defaulted.
+fn build_local_route_table(
+    policy_routes: &[PolicyRouteConfig],
+    exit_nodes: &[IpAddr],
+    dns_config: Option<&crate::config::DnsConfig>,
+    tld_dns_zone: &str,
+) -> anyhow::Result<LocalRouteTable> {
+    if policy_routes.is_empty() {
+        return Ok(LocalRouteTable::empty());
+    }
+    let validated = validate_policy_route_configs(policy_routes)
+        .map_err(|error| anyhow::anyhow!("invalid policy_routes: {error}"))?;
+    // P3 (§9.8.5 / C3): reject `domains` that MagicDNS guard rules would
+    // silently drop, instead of building a rule that never learns an IP.
+    validate_domain_rules_against_dns(&validated, dns_config, tld_dns_zone)
+        .map_err(|error| anyhow::anyhow!("invalid policy_routes: {error}"))?;
+    let rules = build_rules_from_config(&validated, exit_nodes)
+        .map_err(|error| anyhow::anyhow!("invalid policy_routes: {error}"))?;
+    let table = LocalRouteTable::empty();
+    if !rules.is_empty() {
+        table.store(build_snapshot(rules));
+    }
+    Ok(table)
+}
+
+/// Pick the next `(active_peer, challenger)` for a non-`balance` rule.
+///
+/// Stages:
+///   1. no incumbent            → adopt `best` immediately
+///   2. incumbent gone/degraded → fail over to `best` immediately
+///   3. incumbent fine but a better challenger exists:
+///      - `select_by = priority` → adopt `best` immediately (list order is the
+///        policy; otherwise a recovered preferred peer never wins back)
+///      - `select_by = quality`  → only after `switch_windows` consecutive ticks
+///        outside the cost switch band (margin + window hysteresis)
+fn select_reconciled_peer(
+    select_by: SelectBy,
+    active_peer: Option<PeerId>,
+    best: Option<PeerId>,
+    cost_of: &dyn Fn(PeerId) -> Option<i32>,
+    eligible: &dyn Fn(i32) -> bool,
+    challenger: Option<(PeerId, u32)>,
+    conn_select: ConnSelectConfig,
+) -> (Option<PeerId>, Option<(PeerId, u32)>) {
+    match (active_peer, best) {
+        (_, None) => (None, None),
+        (None, Some(best_peer)) => (Some(best_peer), None),
+        (Some(current), Some(best_peer)) if current == best_peer => (Some(current), None),
+        (Some(current), Some(best_peer)) => match cost_of(current) {
+            Some(current_cost) if eligible(current_cost) => {
+                // Priority (and balance, which never reaches here) must not use
+                // the quality switch band: every reachable candidate scores 0,
+                // so the band would hold forever and a recovered preferred peer
+                // would never become active again.
+                if select_by != SelectBy::Quality {
+                    return (Some(best_peer), None);
+                }
+                let holds = cost_of(best_peer).is_some_and(|best_cost| {
+                    within_switch_band(current_cost, best_cost, conn_select)
+                });
+                if holds {
+                    (Some(current), None)
+                } else {
+                    let streak = match challenger {
+                        Some((peer, ticks)) if peer == best_peer => ticks.saturating_add(1),
+                        _ => 1,
+                    };
+                    if streak >= conn_select.switch_windows {
+                        (Some(best_peer), None)
+                    } else {
+                        (Some(current), Some((best_peer, streak)))
+                    }
+                }
+            }
+            // Incumbent unreachable or over the ceiling: fail over now.
+            _ => (Some(best_peer), None),
+        },
+    }
+}
+
+/// One reconcile pass: recompute `peer_quality` / `active_peer` / `state` for
+/// every rule and publish the result. Runs off the packet hot path (~1 s); the
+/// hot path only ever reads the already-selected `active_peer`.
+///
+/// `select_by = priority` reuses `PeerMap::resolve_exit_node_peers` (list order
+/// + reachability); `select_by = quality` (P4) ranks the same candidates by
+/// their precomputed composite cost. `failover_when = degraded` additionally
+/// drops candidates whose cost exceeds `quality_degraded_cost`.
+///
+/// The selection awaits, so the pass must **not** publish a snapshot cloned
+/// before those awaits: a concurrent `observe_ips` (P3) would be clobbered and
+/// the freshly learned domain `/32` lost. Instead the intended updates are
+/// applied onto the *latest* snapshot via `LocalRouteTable::apply_peer_updates`
+/// (`ArcSwap::rcu`, retried on concurrent writes).
+async fn reconcile_local_routes_once(
+    peers: &PeerMap,
+    table: &LocalRouteTable,
+    conn_select: ConnSelectConfig,
+) {
+    let snap = table.load_full();
+    if snap.rules.is_empty() {
+        return;
+    }
+    // Costs are only read for `quality` / `degraded` rules; a priority-only
+    // config never touches `list_peer_conns`.
+    let needs_quality = snap.rules.iter().any(|r| {
+        r.rule.select_by == SelectBy::Quality || r.rule.failover_when == FailoverWhen::Degraded
+    });
+    // Composite cost per candidate peer, memoised across rules for this tick.
+    let mut quality: HashMap<PeerId, i32> = HashMap::new();
+    // Reachability of candidate VIPs, memoised across rules so shared peers are
+    // only resolved once per tick.
+    let mut reachable_by_ip: HashMap<IpAddr, Option<PeerId>> = HashMap::new();
+    let mut updates: Vec<RuleUpdate> = Vec::new();
+
+    for (idx, r) in snap.rules.iter().enumerate() {
+        let candidates: &[IpAddr] = match r.rule.failover_when {
+            FailoverWhen::Never => r.rule.peers.get(..1).unwrap_or(&[]),
+            FailoverWhen::Unreachable | FailoverWhen::Degraded => &r.rule.peers,
+        };
+        let mut reachable = Vec::with_capacity(candidates.len());
+        for ip in candidates {
+            let peer_id = match reachable_by_ip.get(ip) {
+                Some(cached) => *cached,
+                None => {
+                    let resolved = peers.resolve_exit_node_peers(std::slice::from_ref(ip)).await;
+                    let peer_id = resolved.into_iter().next();
+                    reachable_by_ip.insert(*ip, peer_id);
+                    peer_id
+                }
+            };
+            if let Some(peer_id) = peer_id {
+                reachable.push(peer_id);
+            }
+        }
+
+        let mut scored: Vec<(PeerId, i32)> = Vec::with_capacity(reachable.len());
+        for peer_id in reachable {
+            let cost = match quality.get(&peer_id) {
+                Some(cost) => *cost,
+                None if needs_quality => {
+                    let raw = peers.peer_edge_cost(peer_id).await.unwrap_or(i32::MAX);
+                    // Publish debounce: the same MIN_DELTA rule OSPF uses, but
+                    // against our own baseline so OSPF's publisher state (and its
+                    // `LAST_OSPF_EDGE_COST`) is left untouched.
+                    let cost = apply_ospf_cost_hysteresis(
+                        raw,
+                        snap.peer_quality.get(&peer_id).copied(),
+                        OSPF_EDGE_COST_MIN_DELTA,
+                    );
+                    quality.insert(peer_id, cost);
+                    cost
+                }
+                // Priority + unreachable/never: costs are never consulted.
+                None => 0,
+            };
+            scored.push((peer_id, cost));
+        }
+
+        let eligible =
+            |cost: i32| !is_degraded_cost(r.rule.failover_when, r.rule.quality_degraded_cost, cost);
+
+        // P5: `balance` spreads flows across *every* eligible candidate, so it
+        // publishes the whole list and lets the hot path pick by flow hash
+        // instead of reconciling a single `active_peer`.
+        if r.rule.select_by == SelectBy::Balance {
+            let resolved: Vec<PeerId> = scored
+                .iter()
+                .filter(|(_, cost)| eligible(*cost))
+                .map(|(peer, _)| *peer)
+                .collect();
+            let state = if resolved.is_empty() {
+                RuleState::Degraded
+            } else {
+                RuleState::Stable
+            };
+            // `active_peer` is informational only (first candidate); the hot
+            // path reads `resolved_peers`.
+            let active_peer = resolved.first().copied();
+            if r.active_peer != active_peer
+                || r.state != state
+                || r.challenger.is_some()
+                || r.resolved_peers != resolved
+            {
+                updates.push(RuleUpdate {
+                    idx,
+                    active_peer,
+                    state,
+                    challenger: None,
+                    resolved_peers: resolved,
+                });
+            }
+            continue;
+        }
+
+        let cost_of = |peer_id: PeerId| {
+            scored
+                .iter()
+                .find(|(candidate, _)| *candidate == peer_id)
+                .map(|(_, cost)| *cost)
+        };
+        // The candidate we actually *want*: list order for `priority`, lowest
+        // cost for `quality`. `None` when every reachable candidate is degraded.
+        let best = match r.rule.select_by {
+            SelectBy::Priority => scored
+                .iter()
+                .find(|(_, cost)| eligible(*cost))
+                .map(|(peer, _)| *peer),
+            SelectBy::Quality => scored
+                .iter()
+                .filter(|(_, cost)| eligible(*cost))
+                .min_by_key(|(_, cost)| *cost)
+                .map(|(peer, _)| *peer),
+            // `balance` returned above.
+            SelectBy::Balance => None,
+        };
+        let (chosen, challenger) = select_reconciled_peer(
+            r.rule.select_by,
+            r.active_peer,
+            best,
+            &cost_of,
+            &eligible,
+            r.challenger,
+            conn_select,
+        );
+        // `Stable` = the peer we want is the one in use; `Failover` = we are on
+        // an alternative (backup, or held by the switch band).
+        let state = match chosen {
+            None => RuleState::Degraded,
+            Some(current) if Some(current) == best => RuleState::Stable,
+            Some(_) => RuleState::Failover,
+        };
+        if r.active_peer != chosen || r.state != state || r.challenger != challenger {
+            updates.push(RuleUpdate {
+                idx,
+                active_peer: chosen,
+                state,
+                challenger,
+                resolved_peers: Vec::new(),
+            });
+        }
+    }
+
+    table.apply_peer_updates(&quality, &updates);
 }
 
 fn matching_group_memberships(
@@ -775,6 +1044,7 @@ pub struct PeerManagerCore {
     encryptor: Arc<dyn Encryptor + 'static>,
     data_compress_algo: CompressorAlgo,
     exit_nodes: Arc<RwLock<Vec<IpAddr>>>,
+    local_route_table: Arc<LocalRouteTable>,
     acl_filter: Arc<AclFilter>,
     context: Arc<CorePeerContext>,
     runtime_config: CoreRuntimeConfigStore,
@@ -934,6 +1204,12 @@ impl PeerManagerCore {
             .credential_manager()
             .install_initial_managed_credentials(&managed_credentials)
             .map_err(anyhow::Error::msg)?;
+        let local_route_table = Arc::new(build_local_route_table(
+            &config.policy_routes,
+            &config.exit_nodes,
+            config.dns_config.as_ref(),
+            &config.snapshot.flags.tld_dns_zone,
+        )?);
         let peer_manager = Self::assemble(
             config.route_algo,
             my_peer_id,
@@ -944,6 +1220,7 @@ impl PeerManagerCore {
             is_secure_mode_enabled,
             data_compress_algo,
             config.exit_nodes,
+            local_route_table,
             config.foreign_context_default_flags,
             foreign_rpc_registrar,
         );
@@ -962,6 +1239,7 @@ impl PeerManagerCore {
         is_secure_mode_enabled: bool,
         data_compress_algo: CompressorAlgo,
         exit_nodes: Vec<IpAddr>,
+        local_route_table: Arc<LocalRouteTable>,
         foreign_context_default_flags: FlagsInConfig,
         foreign_rpc_registrar: Arc<dyn ForeignNetworkRpcRegistrar>,
     ) -> Self {
@@ -1117,6 +1395,7 @@ impl PeerManagerCore {
             encryptor.clone(),
             data_compress_algo,
             exit_nodes.clone(),
+            local_route_table.clone(),
             recent_traffic.clone(),
             traffic_metrics.clone(),
             acl_filter.clone(),
@@ -1148,6 +1427,7 @@ impl PeerManagerCore {
             encryptor,
             data_compress_algo,
             exit_nodes,
+            local_route_table,
             acl_filter,
             runtime_config: core_context.runtime_config_store(),
             runtime_config_update: Mutex::new(()),
@@ -1750,14 +2030,28 @@ impl PeerManagerCore {
     }
 
     pub async fn get_msg_dst_peer(&self, addr: &IpAddr) -> (Vec<PeerId>, bool) {
-        let (peers, is_exit_node) = self.outbound_packet_router.get_msg_dst_peer(addr).await;
+        let (peers, is_exit_node) = self
+            .outbound_packet_router
+            .get_msg_dst_peer(addr, None)
+            .await;
         (peers.into_vec(), is_exit_node)
     }
 
     pub async fn get_msg_dst_peer_ipv4(&self, ipv4_addr: &Ipv4Addr) -> (Vec<PeerId>, bool) {
+        self.get_msg_dst_peer_ipv4_with_flow(ipv4_addr, None).await
+    }
+
+    /// Same as [`Self::get_msg_dst_peer_ipv4`], but forwards the inner-flow hash
+    /// so `select_by = balance` rules can spread flows (P5). Callers without a
+    /// payload pass `None`, which degrades every flow to the first candidate.
+    pub async fn get_msg_dst_peer_ipv4_with_flow(
+        &self,
+        ipv4_addr: &Ipv4Addr,
+        flow_key: Option<u64>,
+    ) -> (Vec<PeerId>, bool) {
         let (peers, is_exit_node) = self
             .outbound_packet_router
-            .get_msg_dst_peer_ipv4(ipv4_addr)
+            .get_msg_dst_peer_ipv4(ipv4_addr, flow_key)
             .await;
         (peers.into_vec(), is_exit_node)
     }
@@ -1799,6 +2093,21 @@ impl PeerManagerCore {
 
     pub async fn configured_exit_nodes(&self) -> Vec<IpAddr> {
         self.exit_nodes.read().await.clone()
+    }
+
+    /// Unified routing table. The L2 proxy-CIDR reconciler reads its
+    /// `Stable` / `Failover` CIDRs so both planes derive from **one** snapshot.
+    pub(crate) fn local_route_table(&self) -> &LocalRouteTable {
+        self.local_route_table.as_ref()
+    }
+
+    /// Record IPv4 addresses observed in a MagicDNS answer for `qname` (P3).
+    ///
+    /// Called by the DNS resolver wrapper on the answering path. The rule set
+    /// is authoritative from local config; only the IP set is learned. No-op
+    /// when no `[[policy_routes]]` are configured.
+    pub fn observe_dns_answer(&self, qname: &str, ips: &[Ipv4Addr]) {
+        self.local_route_table.observe_ips(qname, ips);
     }
 
     fn reload_acl(&self, acl: Option<&crate::proto::acl::Acl>) {
@@ -1914,6 +2223,25 @@ impl PeerManagerCore {
         )
         .spawn_into(&self.tasks)
         .await;
+
+        // P1/P4: ~1 s reconcile loop for the unified routing table. Not spawned
+        // at all when no `[[policy_routes]]` are configured, so the feature
+        // costs nothing unless it is actually used.
+        if !self.local_route_table.load_full().rules.is_empty() {
+            let peers = self.peers.clone();
+            let table = self.local_route_table.clone();
+            let conn_select = ConnSelectConfig::from_flags(&self.context.flags());
+            self.tasks.lock().await.spawn(async move {
+                // Run once immediately so a `closed` rule with already-reachable
+                // peers becomes Stable (and installs L2 routes) without waiting
+                // a full second — otherwise OS traffic can leak out the physical
+                // NIC for the first tick while the table is still Degraded.
+                loop {
+                    reconcile_local_routes_once(peers.as_ref(), table.as_ref(), conn_select).await;
+                    crate::foundation::time::sleep(std::time::Duration::from_secs(1)).await;
+                }
+            });
+        }
 
         self.foreign_network_client.run().await;
 
@@ -2567,6 +2895,7 @@ pub(crate) struct PeerOutboundPacketRouter {
     encryptor: Arc<dyn Encryptor>,
     data_compress_algo: CompressorAlgo,
     exit_nodes: Arc<RwLock<Vec<IpAddr>>>,
+    local_route_table: Arc<LocalRouteTable>,
     recent_traffic: RecentTrafficTracker,
     traffic_metrics: Arc<TrafficMetricRecorder>,
     acl_filter: Arc<AclFilter>,
@@ -2587,6 +2916,7 @@ impl PeerOutboundPacketRouter {
         encryptor: Arc<dyn Encryptor>,
         data_compress_algo: CompressorAlgo,
         exit_nodes: Arc<RwLock<Vec<IpAddr>>>,
+        local_route_table: Arc<LocalRouteTable>,
         recent_traffic: RecentTrafficTracker,
         traffic_metrics: Arc<TrafficMetricRecorder>,
         acl_filter: Arc<AclFilter>,
@@ -2609,6 +2939,7 @@ impl PeerOutboundPacketRouter {
             encryptor,
             data_compress_algo,
             exit_nodes,
+            local_route_table,
             recent_traffic,
             traffic_metrics,
             acl_filter,
@@ -2682,11 +3013,28 @@ impl PeerOutboundPacketRouter {
         dst_allows_input: impl Fn(crate::proto::common::PeerFeatureFlag) -> bool,
         next_hop_disables_relay: impl Fn(crate::proto::common::PeerFeatureFlag) -> bool,
     ) -> bool {
-        let Some(dst_peer_id) = self
-            .route
-            .get_peer_id_by_ip_allowing_default_proxy(dst_ip)
-            .await
-        else {
+        // Unified routing table first: `Route::get_peer_id_by_ip_allowing_default_proxy`
+        // cannot see the local policy table, so without this the KCP / QUIC /
+        // wrapped-TCP optimizations would be disabled for those flows (C9).
+        let owner = match dst_ip {
+            IpAddr::V4(v4) => match self.local_route_table.lookup(v4, None) {
+                RouteLookup::Hit { peer } => Some(peer),
+                // A blocked rule must not fall back to the route layer either —
+                // that could silently re-enable the bypass it just refused.
+                RouteLookup::Block => return false,
+                RouteLookup::Miss => None,
+            },
+            IpAddr::V6(_) => None, // P1: IPv4 only
+        };
+        let owner = match owner {
+            Some(peer_id) => Some(peer_id),
+            None => {
+                self.route
+                    .get_peer_id_by_ip_allowing_default_proxy(dst_ip)
+                    .await
+            }
+        };
+        let Some(dst_peer_id) = owner else {
             return false;
         };
         let Some(peer_info) = self.route.get_peer_info(dst_peer_id).await else {
@@ -2787,9 +3135,13 @@ impl PeerOutboundPacketRouter {
         result
     }
 
-    pub async fn get_msg_dst_peer(&self, addr: &IpAddr) -> (SmallVec<[PeerId; 1]>, bool) {
+    pub async fn get_msg_dst_peer(
+        &self,
+        addr: &IpAddr,
+        flow_key: Option<u64>,
+    ) -> (SmallVec<[PeerId; 1]>, bool) {
         match addr {
-            IpAddr::V4(ipv4_addr) => self.get_msg_dst_peer_ipv4(ipv4_addr).await,
+            IpAddr::V4(ipv4_addr) => self.get_msg_dst_peer_ipv4(ipv4_addr, flow_key).await,
             IpAddr::V6(ipv6_addr) => self.get_msg_dst_peer_ipv6(ipv6_addr).await,
         }
     }
@@ -2836,6 +3188,7 @@ impl PeerOutboundPacketRouter {
     pub async fn get_msg_dst_peer_ipv4(
         &self,
         ipv4_addr: &Ipv4Addr,
+        flow_key: Option<u64>,
     ) -> (SmallVec<[PeerId; 1]>, bool) {
         let mut is_exit_node = false;
         // Single-destination hot path stays stack-allocated; broadcast may spill.
@@ -2851,15 +3204,38 @@ impl PeerOutboundPacketRouter {
             .context
             .is_ip_in_same_network(&std::net::IpAddr::V4(*ipv4_addr))
         {
-            if let Some(peer_id) = self.resolve_exit_node_peer().await {
-                dst_peers.push(peer_id);
-                is_exit_node = true;
-            } else if let Some(peer_id) = self
-                .route
-                .get_peer_id_for_default_route_proxy(&IpAddr::V4(*ipv4_addr))
-                .await
-            {
-                dst_peers.push(peer_id);
+            // Step 3.5: unified routing table. Sync, lock-free, no alloc; the
+            // snapshot already holds the reconciled `active_peer`. Only reached
+            // after VIP + peer-proxy CIDR missed (subnet proxy wins).
+            match self.local_route_table.lookup(ipv4_addr, flow_key) {
+                RouteLookup::Hit { peer } => {
+                    // A policy route always hands off to a gateway peer that
+                    // NATs the packet out (§4.1 "B 做网关"), so the exit flag is
+                    // always set. The gateway still prefers its own
+                    // `proxy_cidrs` mapping when it has one.
+                    dst_peers.push(peer);
+                    is_exit_node = true;
+                }
+                RouteLookup::Block => {
+                    // `if_all_unavailable = closed` with every candidate down:
+                    // drop instead of leaking out the physical gateway. The
+                    // Linux blackhole route (Q6) is a later optimisation — an
+                    // L3 refusal works on every platform.
+                    tracing::debug!(%ipv4_addr, "policy route closed: dropping packet");
+                    return (dst_peers, false);
+                }
+                RouteLookup::Miss => {
+                    if let Some(peer_id) = self.resolve_exit_node_peer().await {
+                        dst_peers.push(peer_id);
+                        is_exit_node = true;
+                    } else if let Some(peer_id) = self
+                        .route
+                        .get_peer_id_for_default_route_proxy(&IpAddr::V4(*ipv4_addr))
+                        .await
+                    {
+                        dst_peers.push(peer_id);
+                    }
+                }
             }
         }
         if self.host_routing.local_exit_node_fallback
@@ -2941,8 +3317,11 @@ impl PeerOutboundPacketRouter {
             .await;
         }
 
+        // P5: reuse the sticky flow key computed above so `select_by = balance`
+        // rules spread whole flows (one stream → one egress) rather than packets.
+        let flow_key = msg.bond_flow_key();
         let (dst_peers, is_exit_node) = match ip_addr {
-            IpAddr::V4(ipv4_addr) => self.get_msg_dst_peer_ipv4(&ipv4_addr).await,
+            IpAddr::V4(ipv4_addr) => self.get_msg_dst_peer_ipv4(&ipv4_addr, flow_key).await,
             IpAddr::V6(ipv6_addr) => self.get_msg_dst_peer_ipv6(&ipv6_addr).await,
         };
 

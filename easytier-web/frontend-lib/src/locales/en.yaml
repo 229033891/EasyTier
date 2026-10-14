@@ -217,10 +217,16 @@ loss_rate: Loss Rate
 jitter: Jitter
 nat_type: NAT Type
 
-advanced_group_connectivity: Connectivity & Routing
+advanced_group_connectivity: Connectivity
 advanced_group_transport: Transport & Punching
 advanced_group_system: System & Network
 advanced_group_security: Security & Privacy
+
+traffic_routing: Traffic & Routing
+traffic_routing_summary: Client egress (exit list / policy routes) and gateway role (allow as exit / subnet proxy) live here; they are usually configured as a pair.
+traffic_routing_client: This node as client (egress)
+traffic_routing_gateway: This node as gateway (serve others)
+traffic_routing_advanced: Advanced
 
 latency_first: Enable Quality-First Routing
 latency_first_help: |-
@@ -324,11 +330,11 @@ no_tun_help: |-
   Useful on machines without administrator privileges (cannot install the TUN driver) — peers can still reach services on this host through a subnet proxy.
   Note: to reach addresses inside the virtual network from this host, use the SOCKS5 proxy (see "Socks5 Server" below).
 
-enable_exit_node: Enable Exit Node
+enable_exit_node: Allow This Node as Exit
 enable_exit_node_help: |-
-  Let this node act as an exit node: other nodes can forward all their internet traffic here and egress through this host.
-  Useful when this host has a stable public uplink that others can share.
-  Note: it only takes effect when the client side lists this node under "Exit Nodes". Relaying other people's traffic consumes this host's bandwidth — scope it deliberately.
+  Gateway-side switch: accept internet / policy-route traffic that peers send here, and egress it (or forward via this host's subnet proxy).
+  Useful when this host has a stable public uplink (or proxied LANs) that others can share.
+  Note: clients must still list this node under "Exit Nodes" or "Policy Routes"; this switch alone does not advertise a default route. Relaying consumes this host's bandwidth.
 
 allow_peer_default_without_exit: Allow Peer Default Without Exit
 allow_peer_default_without_exit_help: |-
@@ -528,6 +534,11 @@ manual_routes_help: |-
   Useful when routes must be exact, or auto-propagated routes clash with the local network.
   Note: leave blank to go back to automatic mode. A wrong entry silently breaks that segment. e.g.: 192.168.0.0/16
 
+manual_routes_append: Append to auto routes
+manual_routes_append_help: |-
+  When on, the manual route list is added to the auto-computed set (subnet proxies + policy routes) instead of replacing it.
+  Default off = legacy behaviour: the manual list takes over the L2 route table and no exit default route is added.
+
 socks5: Socks5 Server
 socks5_help: |-
   Run a SOCKS5 proxy on this host so clients connecting through it can reach addresses inside the virtual network (commonly paired with No TUN Mode).
@@ -539,6 +550,34 @@ exit_nodes_help: |-
   Exit node list: fill in the peer's virtual IPv4 address. This host installs a TUN default route and, once traffic enters the overlay, forwards internet traffic to the first reachable exit (with a next hop) in list order.
   The peer must have "Enable Exit Node" turned on, or L3 will not accept that traffic.
   Note: if installing/removing the system default or underlay excludes fails, the status page shows desired vs installed and the process retries periodically; internet access may be disrupted until routes land. A wrong or unreachable address cuts off all internet access — verify reachability first.
+
+policy_routes: Policy Routes
+policy_routes_help: |-
+  Unified routing model: send traffic for a target CIDR and/or domain to a chosen gateway peer. Matches take precedence over the exit node list.
+  Note: the peer you point at must have "Enable Exit Node" turned on, or it drops that traffic. Domain rules rely on this host's MagicDNS (queries that bypass EasyTier DNS are invisible), and the first connection has a direct-egress window of up to 1 second.
+policy_routes_summary: Route a target CIDR / domain to a chosen gateway peer; matches take precedence over the exit node list.
+policy_routes_add: Add route
+policy_routes_remove: Remove this route
+policy_routes_cidr: Target CIDR
+policy_routes_cidr_placeholder: e.g. 10.0.0.0/24
+policy_routes_domains: Target domains
+policy_routes_domains_placeholder: e.g. *.atlassian.net
+policy_routes_peers: Gateway peers
+policy_routes_peers_placeholder: e.g. 10.144.0.9
+policy_routes_select_by: Selection
+policy_routes_select_by_priority: In list order
+policy_routes_select_by_quality: Best link quality
+policy_routes_select_by_balance: Spread by flow
+policy_routes_failover_when: Fail over
+policy_routes_failover_unreachable: When a candidate is unreachable
+policy_routes_failover_degraded: When quality degrades
+policy_routes_failover_never: Never
+policy_routes_if_all_unavailable: When all candidates are down
+policy_routes_all_unavailable_open: Fall back to the physical gateway
+policy_routes_all_unavailable_closed: Drop (no fallback)
+policy_routes_require_confirmed: I accept the packet-drop risk
+policy_routes_quality_degraded_cost: Degraded threshold (composite cost)
+policy_routes_target_required: Set at least one of CIDR / domains.
 
 dns:
   title: DNS Policy

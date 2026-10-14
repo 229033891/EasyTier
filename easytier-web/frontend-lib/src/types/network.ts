@@ -10,6 +10,7 @@ import {
   type DnsConfig,
   type DnsHostEntry,
   type DnsForwarder,
+  type PolicyRouteConfig,
 } from '../generated/proto/api_manage'
 import {
   VpnPortalClientState,
@@ -44,7 +45,7 @@ export { AclAction, AclChainType, AclProtocol, CompressionAlgoPb, NatType, Netwo
 export { VpnPortalClientState }
 export { collectConfigConflictWarnings }
 export type { ConfigConflictWarning }
-export type { Acl, AclChain, AclRule, AclV1, DnsConfig, DnsForwarder, DnsHostEntry, GroupIdentity, GroupInfo, NetworkPeerConfig, PeerFeatureFlag, PortForwardConfig, SecureModeConfig, VpnPortalClientConfig, VpnPortalClientInfo, VpnPortalConfig, VpnPortalInfo }
+export type { Acl, AclChain, AclRule, AclV1, DnsConfig, DnsForwarder, DnsHostEntry, GroupIdentity, GroupInfo, NetworkPeerConfig, PeerFeatureFlag, PolicyRouteConfig, PortForwardConfig, SecureModeConfig, VpnPortalClientConfig, VpnPortalClientInfo, VpnPortalConfig, VpnPortalInfo }
 
 export type NetworkConfig = Omit<
   ProtoNetworkConfig,
@@ -174,6 +175,11 @@ export function DEFAULT_NETWORK_CONFIG(): NetworkConfig {
     enable_manual_routes: false,
     routes: [],
     exit_nodes: [],
+    // Form owns `policy_routes` (incl. empty = clear). Proto3 repeated fields
+    // have no presence, so the backend needs this bit to distinguish "clear"
+    // from "field omitted by an older client".
+    policy_routes: [],
+    has_policy_routes: true,
     enable_socks5: false,
     socks5_port: 1080,
     mtu: null,
@@ -399,6 +405,10 @@ export function normalizeNetworkConfig(config: NetworkConfig): NetworkConfig {
   normalized.relay_network_whitelist ??= []
   normalized.routes ??= []
   normalized.exit_nodes ??= []
+  normalized.policy_routes ??= []
+  // Always claim ownership when the form normalizes a config — otherwise an
+  // empty list cannot clear an existing `[[policy_routes]]` table on save.
+  normalized.has_policy_routes = true
   normalized.mapped_listeners ??= []
   normalized.port_forwards ??= []
   if (normalized.dns_config) {
@@ -407,6 +417,7 @@ export function normalizeNetworkConfig(config: NetworkConfig): NetworkConfig {
     normalized.dns_config.upstream_dns ??= []
   }
   normalized.disable_relay_data ??= false
+  normalized.manual_routes_append ??= false
   if (normalized.vpn_portal_config) {
     normalized.vpn_portal_config.clients ??= []
     normalized.vpn_portal_config.clients.forEach((client) => {
@@ -424,6 +435,9 @@ export function toBackendNetworkConfig(config: NetworkConfig): NetworkConfig {
   })
 
   applyNetworkingMethod(backend)
+  // See normalizeNetworkConfig: the form always owns `policy_routes`.
+  backend.has_policy_routes = true
+  backend.policy_routes ??= []
   backend.mtu = normalizeNumberForInput(config.mtu) ?? undefined
   // null 必须转成 undefined（字段缺席），否则后端会把「未设置」当成「设为 0」处理
   backend.peer_link_bond_count = normalizeNumberForInput(config.peer_link_bond_count) ?? undefined
@@ -657,6 +671,26 @@ export function addDnsHostRow(rows: DnsHostEntry[]) {
 }
 
 export function removeDnsHostRow(index: number, rows: DnsHostEntry[]) {
+  rows.splice(index, 1)
+}
+
+/** Defaults for a freshly added `[[policy_routes]]` row (mirrors the TOML example). */
+export const DEFAULT_POLICY_ROUTE = {
+  select_by: 'priority',
+  failover_when: 'unreachable',
+  if_all_unavailable: 'open',
+} as const
+
+export function addPolicyRouteRow(rows: PolicyRouteConfig[]) {
+  rows.push({
+    cidr: '',
+    domains: [],
+    peers: [],
+    ...DEFAULT_POLICY_ROUTE,
+  })
+}
+
+export function removePolicyRouteRow(index: number, rows: PolicyRouteConfig[]) {
   rows.splice(index, 1)
 }
 

@@ -282,7 +282,12 @@ impl PeerMap {
         None
     }
 
-    pub async fn resolve_exit_node_peer(&self, exit_nodes: &[IpAddr]) -> Option<PeerId> {
+    /// Resolve every candidate in list order to a *reachable* `PeerId`.
+    ///
+    /// Same IP→peer mapping and next-hop check as `resolve_exit_node_peer`, but
+    /// returns all matches so `select_by = quality` can rank them (P4).
+    pub(crate) async fn resolve_exit_node_peers(&self, exit_nodes: &[IpAddr]) -> Vec<PeerId> {
+        let mut out = Vec::with_capacity(exit_nodes.len());
         for exit_node in exit_nodes {
             let peer_id = match exit_node {
                 IpAddr::V4(ip) => self.get_peer_id_by_ipv4(ip).await,
@@ -296,10 +301,28 @@ impl PeerMap {
                 .await
                 .is_some()
             {
-                return Some(peer_id);
+                out.push(peer_id);
             }
         }
-        None
+        out
+    }
+
+    pub async fn resolve_exit_node_peer(&self, exit_nodes: &[IpAddr]) -> Option<PeerId> {
+        self.resolve_exit_node_peers(exit_nodes)
+            .await
+            .into_iter()
+            .next()
+    }
+
+    /// P4: best composite edge cost for `peer_id`, or `None` when it has no
+    /// usable connection.
+    ///
+    /// No publish hysteresis here — the caller keeps its own baseline (the
+    /// reconcile loop stores the previous costs in `peer_quality` and applies
+    /// `apply_ospf_cost_hysteresis` itself, so OSPF's publisher state is
+    /// untouched).
+    pub(crate) async fn peer_edge_cost(&self, peer_id: PeerId) -> Option<i32> {
+        best_edge_cost(self.list_peer_conns(peer_id).await)
     }
 
     pub async fn get_route_peer_info(&self, peer_id: PeerId) -> Option<RoutePeerInfo> {
@@ -478,6 +501,20 @@ impl Drop for PeerMap {
     }
 }
 
+/// Best (lowest) composite edge cost across a peer's usable connections.
+///
+/// Same score family as `select_conn`; unverified hole-punch connections
+/// (latency 0) are excluded because they are not eligible for `default_conn`
+/// and must not be advertised as the best edge for OSPF either.
+fn best_edge_cost(conns: Option<Vec<PeerConnInfo>>) -> Option<i32> {
+    conns
+        .into_iter()
+        .flatten()
+        .filter(|conn| !conn.unverified_hole_punch)
+        .map(|conn| ospf_edge_cost_from_score(f64::from(conn.quality_score), conn.quality_fused))
+        .min()
+}
+
 /// Aggregates the directly-connected peers of several peer maps into the
 /// peer-center reporting format.
 ///
@@ -505,15 +542,7 @@ pub(crate) async fn direct_peer_info(peer_maps: &[Arc<PeerMap>]) -> PeerInfoForG
         // Exclude unverified hole-punch connections (latency 0) — they are not
         // eligible for default_conn in select_conn and should not be advertised
         // as the best edge for OSPF either.
-        let Some(raw_cost) = conns
-            .into_iter()
-            .flatten()
-            .filter(|conn| !conn.unverified_hole_punch)
-            .map(|conn| {
-                ospf_edge_cost_from_score(f64::from(conn.quality_score), conn.quality_fused)
-            })
-            .min()
-        else {
+        let Some(raw_cost) = best_edge_cost(conns) else {
             continue;
         };
 

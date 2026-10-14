@@ -218,10 +218,16 @@ loss_rate: 丢包率
 jitter: 抖动
 nat_type: NAT 类型
 
-advanced_group_connectivity: 连接与路由
+advanced_group_connectivity: 连接
 advanced_group_transport: 传输与打洞
 advanced_group_system: 系统与网络
 advanced_group_security: 安全与隐私
+
+traffic_routing: 流量与路由
+traffic_routing_summary: 出网（出口列表 / 策略路由）与网关角色（允许成为出口 / 子网代理）集中在此；两者常成对配置。
+traffic_routing_client: 本机作为客户端（出网）
+traffic_routing_gateway: 本机作为网关（服务他人）
+traffic_routing_advanced: 高级
 
 latency_first: 开启质量优先选路
 latency_first_help: |-
@@ -325,11 +331,11 @@ no_tun_help: |-
   适合没有管理员权限（装不了 TUN 驱动）的机器 —— 此时其他节点仍能通过子网代理访问本机上的服务。
   注意：本机要主动访问虚拟网内的地址，需要借助 SOCKS5 代理（见下方「socks5 服务器」）。
 
-enable_exit_node: 启用出口节点
+enable_exit_node: 允许此节点成为出口节点
 enable_exit_node_help: |-
-  允许本节点充当「出口节点」：其他节点可以把全部上网流量转发到本节点，由本节点代为出网。
-  适合本机有稳定公网出口，想让其他节点借用这条出口的场景。
-  注意：需要在客户端侧把本节点填进「出口节点列表」才会生效；转发他人流量会消耗本机带宽，请自行控制使用范围。
+  网关侧开关：允许本节点接住对端转发来的上网 / 策略路由流量，并由本机代为出网（或再按本机「子网代理」转发）。
+  适合本机有稳定公网出口（或已代理的内网），想让其他节点借用的场景。
+  注意：客户端仍须在「出口节点列表」或「策略路由」里指向本节点才会把流量送来；本开关本身不会向全网通告默认路由。转发他人流量会消耗本机带宽。
 
 allow_peer_default_without_exit: 无出口时允许对端默认路由
 allow_peer_default_without_exit_help: |-
@@ -527,6 +533,11 @@ manual_routes_help: |-
   适合路由需要精确控制，或自动传播的路由与本地网络冲突的场景。
   注意：留空即恢复自动模式；填错会导致对应网段不通。例如：192.168.0.0/16
 
+manual_routes_append: 与自动路由叠加
+manual_routes_append_help: |-
+  开启后，「自定义路由」会与自动计算的路由集合（子网代理 + 策略路由）**叠加**，而不是整表覆盖。
+  默认关闭 = 旧行为：自定义路由直接接管本机 L2 路由表，且不自动加出口默认路由。
+
 socks5: socks5服务器
 socks5_help: |-
   在本机开一个 SOCKS5 代理，客户端连上它就能访问虚拟网内的地址（常与「无 TUN 模式」搭配使用）。
@@ -538,6 +549,34 @@ exit_nodes_help: |-
   出口节点列表：填对端的虚拟 IPv4 地址。本机会把默认上网路由指向虚拟网，进网后按列表顺序把公网流量转发给第一个可达且有下一跳的出口。
   对端必须开启「允许此节点成为出口节点」，否则 L3 接不住这些流量。
   注意：装/卸系统默认路由或 underlay 排除失败时，状态页可看「期望 vs 已安装」摘要，进程会周期性重试；在路由装好前本机上网可能短暂异常。填错地址或出口不可达会导致完全断网，请先确认可达。
+
+policy_routes: 策略路由
+policy_routes_help: |-
+  统一路由模型：按目标网段（CIDR）或域名，把流量交给指定的网关节点；命中优先于「出口节点列表」。
+  注意：被指向的节点必须开启「允许此节点成为出口节点」，否则这些流量会被对端丢弃。域名规则依赖本机 MagicDNS 解析（不走 EasyTier DNS 的查询看不到），且首次访问存在最长 1 秒的直连窗口。
+policy_routes_summary: 按目标网段 / 域名指定网关节点；命中优先于「出口节点列表」。
+policy_routes_add: 添加路由
+policy_routes_remove: 删除此路由
+policy_routes_cidr: 目标网段
+policy_routes_cidr_placeholder: 例如：10.0.0.0/24
+policy_routes_domains: 目标域名
+policy_routes_domains_placeholder: 例如：*.atlassian.net
+policy_routes_peers: 网关节点
+policy_routes_peers_placeholder: 例如：10.144.0.9
+policy_routes_select_by: 选路方式
+policy_routes_select_by_priority: 按列表顺序
+policy_routes_select_by_quality: 按链路质量
+policy_routes_select_by_balance: 按流分摊
+policy_routes_failover_when: 何时切换
+policy_routes_failover_unreachable: 候选不可达时
+policy_routes_failover_degraded: 质量劣化时
+policy_routes_failover_never: 从不切换
+policy_routes_if_all_unavailable: 全部不可用时
+policy_routes_all_unavailable_open: 回退物理网关
+policy_routes_all_unavailable_closed: 丢包（不回退）
+policy_routes_require_confirmed: 我已确认丢包风险
+policy_routes_quality_degraded_cost: 劣化阈值（复合成本）
+policy_routes_target_required: 网段与域名至少填一个。
 
 dns:
   title: DNS 策略

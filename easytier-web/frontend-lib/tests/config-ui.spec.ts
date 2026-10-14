@@ -75,16 +75,16 @@ const CONFIG_CHECKBOX_FIELDS = [
 ] as const satisfies readonly (readonly [keyof NetworkConfig, string])[]
 
 /**
- * 「高级设置」面板中三个布尔开关区（网络白名单 / 自定义路由 / SOCKS5）的渲染顺序。
- * VPN Portal 当前是面板内第一个 ToggleSwitch，IPv6 公网地址提供者排在这三个开关之后。
+ * ToggleSwitch 字段 → input-id（白名单开关 id 与字段名不同）。
+ * VPN Portal / IPv6 provider / manual_routes_append 另计，不在此表。
  */
 const CONFIG_TOGGLE_FIELDS = [
-  'enable_relay_network_whitelist',
-  'enable_manual_routes',
-  'enable_socks5',
-] as const satisfies readonly (keyof NetworkConfig)[]
+  ['enable_relay_network_whitelist', 'relay_network_whitelist_enabled'],
+  ['enable_socks5', 'enable_socks5'],
+  ['enable_manual_routes', 'enable_manual_routes'],
+] as const satisfies readonly (readonly [keyof NetworkConfig, string])[]
 
-/** 非 VPN ToggleSwitch 在序列中的起始下标 */
+/** 非 VPN ToggleSwitch 在序列中的起始下标（用于总数断言） */
 const CONFIG_TOGGLE_START_INDEX = 1
 
 /** 「VPN Portal」开关在 ToggleSwitch 序列中的下标 */
@@ -92,7 +92,7 @@ const VPN_PORTAL_TOGGLE_INDEX = 0
 
 const CONFIG_UI_BOOLEAN_FIELDS = [
   ...CONFIG_CHECKBOX_FIELDS.map(([field]) => field),
-  ...CONFIG_TOGGLE_FIELDS,
+  ...CONFIG_TOGGLE_FIELDS.map(([field]) => field),
 ] as const satisfies readonly (keyof NetworkConfig)[]
 
 vi.mock('vue-i18n', () => ({
@@ -230,6 +230,7 @@ const ToggleSwitchStub = defineComponent({
   setup(props, { emit }) {
     return () => h('button', {
       type: 'button',
+      id: props.inputId,
       disabled: props.disabled,
       role: 'switch',
       'aria-checked': String(Boolean(props.modelValue)),
@@ -716,14 +717,18 @@ describe('Config.vue network config projection', () => {
     }
 
     const toggleSwitches = wrapper.findAll('button[data-stub="toggle-switch"]')
+    // VPN Portal + listed toggles + optional IPv6 provider + optional append.
     const expectedToggleCount =
       CONFIG_TOGGLE_FIELDS.length +
       CONFIG_TOGGLE_START_INDEX +
-      (curNetwork.disable_ipv6 ? 0 : 1)
+      (curNetwork.disable_ipv6 ? 0 : 1) +
+      (curNetwork.enable_manual_routes ? 1 : 0)
     expect(toggleSwitches).toHaveLength(expectedToggleCount)
-    for (const [index, field] of CONFIG_TOGGLE_FIELDS.entries()) {
+    expect(toggleSwitches[VPN_PORTAL_TOGGLE_INDEX].attributes('id')).toBe('vpn_portal_enabled')
+    for (const [field, inputId] of CONFIG_TOGGLE_FIELDS) {
       const value = originalFlagValues.get(field)
-      const toggle = toggleSwitches[index + CONFIG_TOGGLE_START_INDEX]
+      const toggle = wrapper.find(`#${inputId}`)
+      expect(toggle.exists(), `${field} toggle should render`).toBe(true)
       expect(toggle.attributes('aria-checked'), `${field} should project into UI`)
         .toBe(String(value))
       if (toggle.attributes('disabled') !== undefined) {

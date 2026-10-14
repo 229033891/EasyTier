@@ -204,6 +204,8 @@ impl AttachedPeerRuntime {
                 snapshot: peer_snapshot,
                 route_algo: RouteAlgoType::Ospf,
                 exit_nodes: Vec::new(),
+                policy_routes: Vec::new(),
+                dns_config: None,
                 foreign_context_default_flags: flags,
             },
             Vec::new(),

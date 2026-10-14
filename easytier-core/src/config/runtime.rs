@@ -19,6 +19,10 @@ pub struct CoreRuntimeConfig {
     pub gateway: GatewayRuntimeConfig,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub manual_routes: Option<BTreeSet<Ipv4Cidr>>,
+    /// Opt-in (Q5): append `manual_routes` to the computed proxy-CIDR set
+    /// instead of replacing it. Default `false` = legacy override semantics.
+    #[serde(default)]
+    pub manual_routes_append: bool,
     /// Local exit-node VIPs. Non-empty means this node should install TUN default
     /// routes; it is not flooded via OSPF as `0.0.0.0/0`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -36,6 +40,7 @@ impl Default for CoreRuntimeConfig {
             dhcp_ipv4: false,
             gateway: GatewayRuntimeConfig::default(),
             manual_routes: None,
+            manual_routes_append: false,
             exit_nodes: Vec::new(),
             proxy: ProxyRuntimeConfig::default(),
             public_ipv6_auto: false,

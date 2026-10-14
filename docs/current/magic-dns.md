@@ -3,11 +3,11 @@
 ## Status
 
 - Status: **Current**
-- 最近审阅：2026-10-09（静态 hosts 支持 `*.suffix` 通配；**修正**通配匹配语义为 RFC 4592 多级；**补齐守卫**：单标签 zone 拒绝、route zone 冲突对精确条目也生效，见 §3）
+- 最近审阅：2026-10-13（**域名路由（`[[policy_routes]]`）已落地**，其 DNS 侧观测与泄漏面见 [`traffic-steering.md`](./traffic-steering.md) §5.1；`domain-proxy` 旧草案已被取代）；2026-10-09（静态 hosts 支持 `*.suffix` 通配；**修正**通配匹配语义为 RFC 4592 多级；**补齐守卫**：单标签 zone 拒绝、route zone 冲突对精确条目也生效，见 §3）
 - 范围：进程内 MagicDNS、`DnsConfig`（hosts / Split DNS / 上游）、OS 接线与控制台覆盖信号
 - 手工接线（OpenWrt / 非 systemd）：[`magic-dns-manual-wiring.md`](./magic-dns-manual-wiring.md)
 - 剩余缺口 / 决策留档：[`../roadmap/dns-policy.md`](../roadmap/dns-policy.md)
-- 相关：桌面 underlay DNS [`traffic-steering.md`](./traffic-steering.md) §3；域名子网代理（未实现）[`../roadmap/domain-proxy.md`](../roadmap/domain-proxy.md)
+- 相关：桌面 underlay DNS [`traffic-steering.md`](./traffic-steering.md) §3；**域名路由（`[[policy_routes]]` domains，已落地）** 见 [`traffic-steering.md`](./traffic-steering.md) §5（旧草案 [`../roadmap/domain-proxy.md`](../roadmap/domain-proxy.md) 已被统一路由模型取代）
 - 索引：[`../README.md`](../README.md)
 
 本文只描述 **代码今天做什么**。产品帮助文案应以本文为准。
@@ -135,6 +135,7 @@ CLI 示例：`--dns-host 'app.internal.=10.1.2.3'`、`--dns-host '*.corp.example
 - 离线归档无 `os` 时徽章偏 `manual_required`  
 - `StaticDnsHost` vs `DnsHostEntry` 双建模长期漂移风险  
 - 发布/解析仍单开关；headless「只被解析」未拆  
-- 域名驱动子网代理未接（见 domain-proxy Roadmap）
+- ~~域名驱动子网代理未接~~ → **已由统一路由模型落地**：`[[policy_routes]]` 的 `domains` 规则订阅本 resolver 的**实际应答**学到 IP（`ObservingDnsResolver`）。见 [`traffic-steering.md`](./traffic-steering.md) §5
+- **DNS 泄漏面（产品必须明示）**：上游查询强制绑**物理网卡**，即 DNS 查询**本身不走**指定出口；域名路由只保证「连接」走指定出口。另：`tld_dns_zone`（默认 `et.net.`）内的名字**不参与**域名路由观测（避免劫持 mesh 流量）
 - 静态 hosts 通配按 **RFC 4592 多级**匹配（`*.corp.example` 也吃 `a.b.corp.example`）—— 有意保留的语义，不是缺陷，见 §3  
 - **行为变化（发版需注明）**：`*.com` / `com` 这类单标签 zone、以及 zone 与 route zone 同名的静态条目，现在一律被拒（旧版本会静默装上，并在路由变化时来回抖）；`--dns-host` 遇到非法名字从「静默跳过」改为**报错退出**（TOML / 托管下发仍是 warn + 运行时跳过）

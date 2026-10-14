@@ -148,9 +148,45 @@ jobs:
           cargo check --package easytier-core --lib --target wasm32-wasip1
           --features management-rpc,proxy-smoltcp-stack,ring-crypto,wasi-crypto-offload
 
+  bench-routing:
+    name: Hot-path gates (alloc + bench)
+    runs-on: ubuntu-latest
+    needs: pre_job
+    if: needs.pre_job.outputs.should_skip != 'true'
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Prepare build environment
+        uses: ./.github/actions/prepare-build
+        with:
+          # Only the core crates are built; skip the GUI apt deps + pnpm.
+          gui: false
+          pnpm: false
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      # Deterministic gate: the per-packet lookup must not allocate (§12.1).
+      # `test-utils` is what exposes the crate-internal table to the test.
+      - name: Hot path must not allocate
+        run: >-
+          cargo test --package easytier-core --features test-utils
+          --test hot_path_alloc
+
+      # `--noplot` skips the gnuplot HTML report. Criterion still writes
+      # `target/criterion/**/new/estimates.json`, which the gate script reads.
+      - name: Run the routing benchmark
+        run: >-
+          cargo bench --package easytier --bench routing_lookup -- --noplot
+
+      - name: Enforce hot-path thresholds
+        run: python3 script/check_routing_bench.py
+
   check:
     name: Run linters & check
     runs-on: ubuntu-latest
+    # `bench-routing` is deliberately NOT in `needs`: criterion timing on shared
+    # runners is noisy, and a flaky bench failure should not block the lint/test
+    # aggregate. It stays a standalone required-status job, so a real hot-path
+    # regression still fails the overall CI run.
     needs: [ pre_job, check-fmt, check-clippy, check-hack, check-wasi ]
     if: needs.pre_job.result == 'success' && needs.pre_job.outputs.should_skip != 'true' && !cancelled()
     steps:
@@ -246,7 +282,9 @@ jobs:
 
   test:
     runs-on: ubuntu-latest
-    needs: [ pre_job, check, test_matrix ]
+    # Keep `bench-routing` out of `check` (noisy criterion), but still gate the
+    # overall CI result so a real hot-path regression cannot go green unnoticed.
+    needs: [ pre_job, check, test_matrix, bench-routing ]
     if: needs.pre_job.result == 'success' && needs.pre_job.outputs.should_skip != 'true' && !cancelled()
     steps:
       - name: Mark result as failed
