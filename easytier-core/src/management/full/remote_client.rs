@@ -420,10 +420,17 @@ where
             let mut config = row
                 .get_network_config()
                 .map_err(RemoteClientError::PersistentError)?;
-            let source = row.get_runtime_network_config_source();
             if let Some((runtime_config, _)) = runtime.as_ref() {
                 merge_runtime_only_fields_into_stored(&mut config, runtime_config);
             }
+            // Body from storage (saved edits); **source from runtime when known**.
+            // `resolve_is_web_owned` / GUI→Console report gate on this source. In
+            // Service/Remote mode the GUI process never learns `Web` in its own
+            // storage — only the owner process's runtime source is trustworthy.
+            let source = runtime
+                .as_ref()
+                .and_then(|(_, rpc_source)| config_source_from_rpc(*rpc_source))
+                .unwrap_or_else(|| row.get_runtime_network_config_source());
             return Ok((config, source));
         }
 
@@ -582,5 +589,17 @@ mod tests {
         let runtime = cfg("n", Some("s"), Some(""));
         merge_runtime_only_fields_into_stored(&mut stored, &runtime);
         assert!(stored.dev_name.as_deref().is_none_or(|n| n.is_empty()));
+    }
+
+    /// Documented contract: identity stays from storage; ownership is decided
+    /// separately via RPC `ConfigSource` (see `handle_get_network_config_with_source`).
+    #[test]
+    fn merge_never_copies_runtime_network_identity() {
+        let mut stored = cfg("local-et", Some("local-secret"), Some(""));
+        let runtime = cfg("console-et", Some("console-secret"), Some("et_2_ffff"));
+        merge_runtime_only_fields_into_stored(&mut stored, &runtime);
+        assert_eq!(stored.network_name.as_deref(), Some("local-et"));
+        assert_eq!(stored.network_secret.as_deref(), Some("local-secret"));
+        assert_eq!(stored.dev_name.as_deref(), Some("et_2_ffff"));
     }
 }

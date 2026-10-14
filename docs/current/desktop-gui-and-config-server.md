@@ -81,8 +81,7 @@
 
 实现：`easytier-gui/src-tauri/src/lib.rs`（`save_network_config` 同步段）
 
-0. **判定是否 web-owned**：`resolve_is_web_owned` 先按 §2.5 的 RPC 优先读序向**持有该实例的进程**
-   取权威 `ConfigSource`，GUI 本地 `storage.persisted_source` 只作兜底。
+0. **判定是否 web-owned**：`resolve_is_web_owned` 经 §2.5 取配置时，**`ConfigSource` 仍以运行中实例（RPC）为准**（配置正文才是存储优先）；GUI 本地 `storage.persisted_source` 只作兜底。
    判定是**权威优先**而非任一侧 `Web` 即上报（纯函数 `should_report_to_config_server`）：
    owner 明确 `Web` → 上报；明确 `User` → 不上报（即使本地仍是 `Web`）；
    owner 答不上来（RPC 调用失败）→ 才看本地缓存。
@@ -91,6 +90,8 @@
 2. 先 `report_via_process_client`（normal 同进程命中 registry）；
 3. 仅当错误为 `NotEnabled` 时，再 RPC `WebClientService.ReportManagedNetworkConfig` 到服务进程；
 4. 文案用 `gui_sync_message` / `gui_sync_message_for_error_code`，不暴露裸 Debug。
+
+> **客户端改配置并推控制台**：连着 config-server 且实例为 web-owned 时，上述第 2–3 步仍会把本次保存写入控制台 SQLite。未连接 / User 源 → 只落本机，不推库。
 
 > **为什么第 0 步要问权威侧**：GUI 本地 `source` 缓存只由 `GuiHooks::pre_run_network_instance` 写入，
 > 而该 hook 只在**持有 config-server `WebClient` 的那个进程**里安装。Service / Remote 模式下
@@ -113,7 +114,7 @@ OHOS nearby：`easytier-contrib/.../nearby_management.rs` 对相关方法返回 
 
 | 调用方 | 顺序 | 权威 | 原因 |
 |--------|------|------|------|
-| **GUI / ET-Gui**（trait 默认） | **本地存储优先** → RPC 仅补 `dev_name` 等运行时字段；无存储行才整份用 RPC | **已保存配置** | Save 只写存储、不重建运行中实例。若整份 RPC 优先，配置页「保存 → 退出 → 再进」会读到旧的 `network_name` / `network_secret`。存储 `dev_name` 为空时仍从 RPC 叠加上自动分配的 wintun 名，保证 `persist_runtime_dev_name` 能回写。 |
+| **GUI / ET-Gui**（trait 默认） | **正文：本地存储优先**（RPC 只补空 `dev_name`）；**`ConfigSource`：RPC 优先**；无存储行才整份用 RPC | **已保存正文** / **运行时所有权** | Save 只写存储、不重建运行中实例 → 正文用存储，避免「保存后重进仍见旧网络名/密码」。所有权仍问运行中实例，否则 Service/Remote 下 GUI 本地学不到 `Web`，保存后**不会推控制台**。 |
 | **Web 控制台**（`ClientManager` 覆盖） | **SQLite 优先** → 设备 RPC 仅当无行 | **Web 库** | 托管编辑以库为准；避免打开配置页时等忙设备。设备本地改过且未回写库的内容，编辑页不显示；从控制台保存会按 reconcile 盖回设备。 |
 
 不要把两套读序合并成「全局 RPC 优先」或「全局只读存储、不叠 runtime」。
