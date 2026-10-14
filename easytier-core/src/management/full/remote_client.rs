@@ -383,13 +383,24 @@ where
         identify: T,
         inst_id: uuid::Uuid,
     ) -> Result<(NetworkConfig, ConfigSource), RemoteClientError<E>> {
-        // Default: RPC first (live runtime config), storage fallback.
-        // GUI Windows `persist_runtime_dev_name` depends on this order: storage often
-        // still has an empty `dev_name` while the running instance already has an
-        // auto-assigned wintun name. Web console overrides this method to prefer
-        // SQLite (authoritative for managed edits) — see ClientManager in easytier-web.
-        if let Some(client) = self.get_rpc_client(identify.clone())
-            && let Ok(resp) = client
+        // Default (GUI / ET-Gui): **storage first**, then overlay runtime-only
+        // fields from RPC. Save writes storage only (does not rebuild the running
+        // instance); if we returned bare RPC config, the config page would show
+        // stale `network_name` / `network_secret` after Save → exit → re-enter.
+        //
+        // Overlay `dev_name` from RPC when storage is empty so Windows
+        // `persist_runtime_dev_name` still sees the auto-assigned wintun name.
+        // Web console overrides this method to prefer SQLite alone — see
+        // ClientManager in easytier-web.
+        let inst_id_str = inst_id.to_string();
+        let stored_row = self
+            .get_storage()
+            .get_network_config(identify.clone(), &inst_id_str)
+            .await
+            .map_err(RemoteClientError::PersistentError)?;
+
+        let runtime = if let Some(client) = self.get_rpc_client(identify.clone()) {
+            match client
                 .get_network_instance_config(
                     BaseController::default(),
                     GetNetworkInstanceConfigRequest {
@@ -397,39 +408,54 @@ where
                     },
                 )
                 .await
-            && let Some(config) = resp.config
-        {
-            let source = if let Some(source) = config_source_from_rpc(resp.source) {
-                source
-            } else {
-                self.get_storage()
-                    .get_network_config(identify.clone(), &inst_id.to_string())
-                    .await
-                    .map_err(RemoteClientError::PersistentError)?
-                    .map(|cfg| cfg.get_runtime_network_config_source())
-                    .unwrap_or(ConfigSource::User)
-            };
+            {
+                Ok(resp) => resp.config.map(|config| (config, resp.source)),
+                Err(_) => None,
+            }
+        } else {
+            None
+        };
+
+        if let Some(row) = stored_row {
+            let mut config = row
+                .get_network_config()
+                .map_err(RemoteClientError::PersistentError)?;
+            let source = row.get_runtime_network_config_source();
+            if let Some((runtime_config, _)) = runtime.as_ref() {
+                merge_runtime_only_fields_into_stored(&mut config, runtime_config);
+            }
             return Ok((config, source));
         }
 
-        let inst_id = inst_id.to_string();
+        if let Some((config, rpc_source)) = runtime {
+            let source = config_source_from_rpc(rpc_source).unwrap_or(ConfigSource::User);
+            return Ok((config, source));
+        }
 
-        let db_row = self
-            .get_storage()
-            .get_network_config(identify, &inst_id)
-            .await
-            .map_err(RemoteClientError::PersistentError)?
-            .ok_or(RemoteClientError::NotFound(format!(
-                "No such network instance: {}",
-                inst_id
-            )))?;
+        Err(RemoteClientError::NotFound(format!(
+            "No such network instance: {}",
+            inst_id_str
+        )))
+    }
+}
 
-        Ok((
-            db_row
-                .get_network_config()
-                .map_err(RemoteClientError::PersistentError)?,
-            db_row.get_runtime_network_config_source(),
-        ))
+/// Fill runtime-assigned fields that storage may still lack (Windows wintun
+/// `dev_name`). Does **not** overwrite user edits already persisted in storage.
+pub(crate) fn merge_runtime_only_fields_into_stored(
+    stored: &mut NetworkConfig,
+    runtime: &NetworkConfig,
+) {
+    let stored_dev_empty = stored
+        .dev_name
+        .as_deref()
+        .is_none_or(|name| name.is_empty());
+    if stored_dev_empty
+        && let Some(name) = runtime
+            .dev_name
+            .as_deref()
+            .filter(|name| !name.is_empty())
+    {
+        stored.dev_name = Some(name.to_owned());
     }
 }
 
@@ -512,4 +538,49 @@ where
     -> Result<Vec<C>, E>;
 
     async fn get_network_config(&self, identify: T, network_inst_id: &str) -> Result<Option<C>, E>;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::merge_runtime_only_fields_into_stored;
+    use easytier_proto::api::manage::NetworkConfig;
+
+    fn cfg(
+        network_name: &str,
+        network_secret: Option<&str>,
+        dev_name: Option<&str>,
+    ) -> NetworkConfig {
+        NetworkConfig {
+            network_name: Some(network_name.to_owned()),
+            network_secret: network_secret.map(str::to_owned),
+            dev_name: dev_name.map(str::to_owned),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn merge_keeps_stored_identity_when_runtime_differs() {
+        let mut stored = cfg("saved-name", Some("saved-secret"), None);
+        let runtime = cfg("running-name", Some("running-secret"), Some("et_1_abcd"));
+        merge_runtime_only_fields_into_stored(&mut stored, &runtime);
+        assert_eq!(stored.network_name.as_deref(), Some("saved-name"));
+        assert_eq!(stored.network_secret.as_deref(), Some("saved-secret"));
+        assert_eq!(stored.dev_name.as_deref(), Some("et_1_abcd"));
+    }
+
+    #[test]
+    fn merge_does_not_overwrite_non_empty_stored_dev_name() {
+        let mut stored = cfg("n", Some("s"), Some("custom_tun"));
+        let runtime = cfg("n", Some("s"), Some("et_1_abcd"));
+        merge_runtime_only_fields_into_stored(&mut stored, &runtime);
+        assert_eq!(stored.dev_name.as_deref(), Some("custom_tun"));
+    }
+
+    #[test]
+    fn merge_ignores_empty_runtime_dev_name() {
+        let mut stored = cfg("n", Some("s"), None);
+        let runtime = cfg("n", Some("s"), Some(""));
+        merge_runtime_only_fields_into_stored(&mut stored, &runtime);
+        assert!(stored.dev_name.as_deref().is_none_or(|n| n.is_empty()));
+    }
 }

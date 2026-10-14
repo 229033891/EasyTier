@@ -53,7 +53,8 @@ export class GUIRemoteClient implements Api.RemoteClient {
 
   async save_config(config: NetworkTypes.NetworkConfig): Promise<Api.SaveNetworkConfigResponse> {
     await backend.saveNetworkConfig(config)
-    // GUI local save has no console push — never surface "pending / syncing".
+    // GUI local save has no console push / hot-patch prediction — never surface
+    // "pending / syncing". Toast copy for `unchanged` is a plain "Saved".
     return { action: 'unchanged' }
   }
 

@@ -3,7 +3,7 @@
 ## Status
 
 - Status: **Current**
-- 最近审阅：2026-10-10（修 §2.3 第 0 步：上报门控改为先问权威 `ConfigSource`，修 Service / Remote 模式静默丢弃 web-owned 编辑；复查清单补 2 条）
+- 最近审阅：2026-10-14（§2.5 GUI 读序改为存储优先 + RPC 补 `dev_name`，修「保存网络名/密码后重进配置页仍显示运行中旧值」）
 - 上次审阅：2026-10-09（补 §2.5：读配置权威；GUI RPC 优先 vs Web 存储优先；补 §6：配置页 / 运行页职责）
 - 范围：Windows/Linux/macOS 桌面 `easytier-gui`、可选后台服务 `ET-Gui`、config-server 会话与 web-owned 配置回写
 - 索引：[`../README.md`](../README.md)
@@ -113,10 +113,10 @@ OHOS nearby：`easytier-contrib/.../nearby_management.rs` 对相关方法返回 
 
 | 调用方 | 顺序 | 权威 | 原因 |
 |--------|------|------|------|
-| **GUI / ET-Gui**（trait 默认） | **RPC 优先** → 本地存储兜底 | **运行中实例** | Windows `persist_runtime_dev_name` 必须读到内核已分配的 wintun `dev_name`；库里常仍是空名。若改成存储优先，会 15 次拿到空名并放弃回写，重启后堆积 `et_*` 网卡。 |
+| **GUI / ET-Gui**（trait 默认） | **本地存储优先** → RPC 仅补 `dev_name` 等运行时字段；无存储行才整份用 RPC | **已保存配置** | Save 只写存储、不重建运行中实例。若整份 RPC 优先，配置页「保存 → 退出 → 再进」会读到旧的 `network_name` / `network_secret`。存储 `dev_name` 为空时仍从 RPC 叠加上自动分配的 wintun 名，保证 `persist_runtime_dev_name` 能回写。 |
 | **Web 控制台**（`ClientManager` 覆盖） | **SQLite 优先** → 设备 RPC 仅当无行 | **Web 库** | 托管编辑以库为准；避免打开配置页时等忙设备。设备本地改过且未回写库的内容，编辑页不显示；从控制台保存会按 reconcile 盖回设备。 |
 
-不要把两套读序合并成「全局存储优先」。
+不要把两套读序合并成「全局 RPC 优先」或「全局只读存储、不叠 runtime」。
 
 ---
 

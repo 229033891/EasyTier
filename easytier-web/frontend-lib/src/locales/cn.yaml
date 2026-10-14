@@ -1025,7 +1025,8 @@ web:
     confirm_save_takeover_user_source: 该网络当前为设备本地（User）配置。保存后将由控制台接管（改为 Web 源），之后设备本地改动可能被控制台覆盖。确定继续？
     managed_config_synced_overwrite: 控制台已同步更新配置并覆盖本地实例（{id}）
     save_failed: 保存配置失败
-    save_ok_unchanged: 已保存（与设备运行配置一致）
+    save_ok_unchanged: 已保存
+    save_ok_local_hint: 已写入本地；若网络仍在运行，底座字段（如网络名称/密码）需重新运行后才会生效
     save_ok_patched: 已保存，正在热更新到设备
     save_ok_rebuilt: 已保存，将重建实例（可能短暂断流）
     save_ok_pending: 已保存，同步中

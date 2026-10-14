@@ -1026,7 +1026,8 @@ web:
     confirm_save_takeover_user_source: This network is currently a device-local (User) config. Saving will let the console take ownership (Web source); later local edits may be overwritten by the console. Continue?
     managed_config_synced_overwrite: Console synced a newer config over the local instance ({id})
     save_failed: Failed to save config
-    save_ok_unchanged: Saved (already matches device runtime)
+    save_ok_unchanged: Saved
+    save_ok_local_hint: Saved locally. If the network is still running, base fields (e.g. network name / password) apply after you run it again.
     save_ok_patched: Saved; hot-updating the device
     save_ok_rebuilt: Saved; instance will rebuild (may briefly disconnect)
     save_ok_pending: Saved; syncing

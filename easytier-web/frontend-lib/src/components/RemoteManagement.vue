@@ -1125,10 +1125,15 @@ const confirmRunNetwork = (config?: NetworkTypes.NetworkConfig | Event) => {
     void saveAndRunNewNetwork(cfg);
 }
 
-const saveResultToastDetail = (result: Api.SaveNetworkConfigResponse | void) => {
+const saveResultToastDetail = (
+    result: Api.SaveNetworkConfigResponse | void,
+    opts?: { wasRunning?: boolean },
+) => {
     // GUI / local clients may return void — no console push semantics.
     if (!result || !result.action) {
-        return t('web.device_management.save_ok_unchanged');
+        return props.hostSurface === 'gui-client' && opts?.wasRunning
+            ? t('web.device_management.save_ok_local_hint')
+            : t('web.device_management.save_ok_unchanged');
     }
     if (result.action === 'pending') {
         switch (result.reason) {
@@ -1147,6 +1152,15 @@ const saveResultToastDetail = (result: Api.SaveNetworkConfigResponse | void) => 
     }
     if (result.action === 'rebuilt') {
         return t('web.device_management.save_ok_rebuilt');
+    }
+    // GUI always reports `unchanged` (no hot-patch prediction). While running,
+    // base fields are stored but not applied until the next Run.
+    if (
+        result.action === 'unchanged'
+        && props.hostSurface === 'gui-client'
+        && opts?.wasRunning
+    ) {
+        return t('web.device_management.save_ok_local_hint');
     }
     return t('web.device_management.save_ok_unchanged');
 };
@@ -1200,7 +1214,7 @@ const doSaveNetworkConfig = async () => {
             summary: t('web.common.success'),
             detail: alignedStart
                 ? t('web.device_management.save_ok_aligned_start')
-                : saveResultToastDetail(result),
+                : saveResultToastDetail(result, { wasRunning }),
             life: TOAST_LIFE.success,
         });
     } catch (e: any) {
