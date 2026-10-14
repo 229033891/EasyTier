@@ -3,6 +3,20 @@ import type { StoredGuiConfig } from './prune_web_configs'
 /** Proto ConfigSource.Web — keep in sync with `ConfigResidual.isMislabeledFormerWebGhost`. */
 const WEB_SOURCE = 2
 
+/**
+ * Device meta may use proto int or pbjson string (`ConfigSourceWeb`).
+ * Keep this free of `easytier-frontend-lib` so unit tests stay package-entry free.
+ */
+function metaSourceIsWeb(source: unknown): boolean {
+  return source === WEB_SOURCE
+    || source === 'ConfigSourceWeb'
+    || source === 'CONFIG_SOURCE_WEB'
+    || source === 'Web'
+    || source === 'web'
+    || source === 'webhook'
+    || source === '2'
+}
+
 /** Candidates for P1.2 prompt: local user/legacy, absent from console W. */
 export function findFormerWebGhostCandidates(
   networkList: StoredGuiConfig[],
@@ -32,7 +46,7 @@ export function findFormerWebGhostCandidates(
  */
 export function filterProvenFormerWebGhosts(
   candidates: StoredGuiConfig[],
-  metas: Record<string, { source?: number } | undefined>,
+  metas: Record<string, { source?: number | string } | undefined>,
   consoleWebOwnedIds: ReadonlySet<string> | readonly string[] = [],
 ): string[] {
   const w = consoleWebOwnedIds instanceof Set
@@ -50,7 +64,7 @@ export function filterProvenFormerWebGhosts(
     if (w.has(id)) {
       continue
     }
-    if (metas[id]?.source === WEB_SOURCE) {
+    if (metaSourceIsWeb(metas[id]?.source)) {
       ids.push(id)
     }
   }

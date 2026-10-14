@@ -22,11 +22,12 @@ describe('former_web_ghosts', () => {
   })
 
   it('only proves ghosts when device meta source is Web', () => {
-    const candidates = [entry('ghost', 'user'), entry('draft', 'user')]
+    const candidates = [entry('ghost', 'user'), entry('draft', 'user'), entry('pbjson', 'legacy')]
     expect(filterProvenFormerWebGhosts(candidates, {
       ghost: { source: 2 },
       draft: { source: 1 },
-    }, new Set())).toEqual(['ghost'])
+      pbjson: { source: 'ConfigSourceWeb' },
+    }, new Set())).toEqual(['ghost', 'pbjson'])
   })
 
   it('dropStoredConfigsByIds removes selected ids', () => {

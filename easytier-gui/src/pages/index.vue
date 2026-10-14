@@ -212,7 +212,7 @@ async function maybePromptFormerWebGhosts(
     .filter(e => e.config.instance_id && !promptedFormerWebGhostIds.has(e.config.instance_id))
   if (!candidates.length)
     return
-  let metas: Record<string, { source?: number } | undefined> = {}
+  let metas: Record<string, { source?: number | string } | undefined> = {}
   try {
     const resp = await getNetworkMetas(candidates.map(c => c.config.instance_id!))
     metas = resp?.metas ?? {}

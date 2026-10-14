@@ -103,6 +103,22 @@ Agent / 人工均适用：**未完成 §1 不要提交**。
 
 ## 5. 失败记录（新 → 旧）
 
+### 2026-10-14 — Windows GUI：`traffic_routing_summary` 未加引号冒号
+
+| 项 | 内容 |
+|----|------|
+| 仓库/分支 | `229033891/EasyTier` `dev`（本地打包） |
+| Run | `artifacts/logs/easytier-windows-20261014-164934.log` |
+| 失败 job | 本地 `build-easytier-windows.ps1` → `pnpm … easytier-frontend-lib build` |
+| 根因一类 | frontend-yaml |
+| 状态 | 已修复（`en.yaml` `traffic_routing_summary` 已双引号包裹） |
+
+**摘要**：`traffic_routing_summary` 纯量含 `steering: policy` / `table: custom`，js-yaml 报 `bad indentation of a mapping entry`（约 226:85），vite `transform-yaml` 失败。
+
+**防再犯**：与 §3「locales YAML 纯量冒号」相同；改 `en.yaml` 后至少 `node -e "require('js-yaml').load(...)"` 或 `pnpm --filter easytier-frontend-lib build`。
+
+---
+
 ### 2026-10-14 — Check fmt & lockfile：`cargo fmt --check` 未过
 
 | 项 | 内容 |
