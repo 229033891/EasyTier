@@ -275,7 +275,7 @@ const bool_flags: BoolFlag[] = [
   { field: 'p2p_only', help: 'p2p_only_help', group: 'connectivity' },
   { field: 'lazy_p2p', help: 'lazy_p2p_help', group: 'connectivity' },
   { field: 'need_p2p', help: 'need_p2p_help', group: 'connectivity' },
-  // enable_exit_node / allow_peer_default_without_exit →「流量与路由」面板
+  // enable_exit_node / allow_peer_default_without_exit →「智能路由」面板
   { field: 'relay_all_peer_rpc', help: 'relay_all_peer_rpc_help', group: 'connectivity' },
   // disable_relay_data 正向展示为「允许作为中转节点」（与 allow_p2p 同模式）
   { field: 'disable_relay_data', help: 'disable_relay_data_help', group: 'connectivity',
@@ -302,7 +302,7 @@ const bool_flags: BoolFlag[] = [
   { field: 'bind_device', help: 'bind_device_help', group: 'system' },
   { field: 'no_tun', help: 'no_tun_help', group: 'system' },
   { field: 'multi_thread', help: 'multi_thread_help', group: 'system' },
-  // proxy_forward_by_system →「流量与路由」网关区（贴着子网代理）
+  // proxy_forward_by_system →「智能路由」网关区（贴着子网代理）
   { field: 'enable_private_mode', help: 'enable_private_mode_help', group: 'security' },
   { field: 'disable_encryption', help: 'disable_encryption_help', group: 'security',
     inverted: { inputId: 'allow_encryption', label: 'allow_encryption', help: 'allow_encryption_help' } },

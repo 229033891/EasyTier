@@ -223,7 +223,7 @@ advanced_group_transport: 传输与打洞
 advanced_group_system: 系统与网络
 advanced_group_security: 安全与隐私
 
-traffic_routing: 流量与路由
+traffic_routing: 智能路由
 traffic_routing_summary: 网关（允许成为出口 / 子网代理）与出网（选路：策略路由优先于出口列表；本机路由表：自定义路由）集中在此；两者常成对配置。
 traffic_routing_client: 出网
 traffic_routing_steering: 选路

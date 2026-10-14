@@ -222,7 +222,7 @@ advanced_group_transport: Transport & Punching
 advanced_group_system: System & Network
 advanced_group_security: Security & Privacy
 
-traffic_routing: Traffic & Routing
+traffic_routing: Smart Routing
 traffic_routing_summary: "Gateway (allow as exit / subnet proxy) and egress (steering: policy routes before the exit list; local route table: custom routes) live here; they are usually configured as a pair."
 traffic_routing_client: Egress
 traffic_routing_steering: Steering
