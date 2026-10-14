@@ -223,8 +223,10 @@ advanced_group_system: System & Network
 advanced_group_security: Security & Privacy
 
 traffic_routing: Traffic & Routing
-traffic_routing_summary: Egress (exit list / policy routes / custom routes) and gateway (allow as exit / subnet proxy) live here; they are usually configured as a pair.
+traffic_routing_summary: Egress (steering: exit list / policy routes; local route table: custom routes) and gateway (allow as exit / subnet proxy) live here; they are usually configured as a pair.
 traffic_routing_client: Egress
+traffic_routing_steering: Steering
+traffic_routing_local_routes: Local Route Table
 traffic_routing_gateway: Gateway
 
 latency_first: Enable Quality-First Routing

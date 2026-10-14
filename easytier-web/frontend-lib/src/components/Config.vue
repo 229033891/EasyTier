@@ -963,62 +963,74 @@ function removeVpnPortalClient(index: number) {
                 <div class="config-section__title">
                   <span>{{ t('traffic_routing_client') }}</span>
                 </div>
-                <div class="flex flex-col gap-y-3">
-                  <div class="config-outbound-peer">
-                    <div class="config-outbound-peer__title">
-                      <label for="exit_nodes">{{ t('exit_nodes') }}</label>
-                      <i class="pi pi-question-circle config-help-tip" tabindex="0"
-                        v-tooltip.top="{ value: t('exit_nodes_help'), escape: false }"
-                        :aria-label="t('exit_nodes_help')" role="img"></i>
+                <div class="flex flex-col gap-y-4">
+                  <div class="config-outbound-group">
+                    <div class="config-outbound-group__title">
+                      <span>{{ t('traffic_routing_steering') }}</span>
                     </div>
-                    <AutoComplete id="exit_nodes" v-model="curNetwork.exit_nodes"
-                      :placeholder="t('chips_placeholder_typeahead', ['192.168.8.8'])" multiple fluid
-                      :suggestions="exitNodeSuggestions" @complete="searchExitNodeSuggestions"
-                      @keydown.capture="onChipsKeydown($event, curNetwork.exit_nodes ??= [], { typeahead: true })" />
-                    <p v-if="tunControlsDisabled" class="config-field-hint m-0">{{ t('no_tun_exit_nodes_hint') }}</p>
-                    <div class="config-nested-option flex items-center gap-2 flex-wrap">
-                      <Checkbox v-model="curNetwork.allow_peer_default_without_exit"
-                        input-id="allow_peer_default_without_exit" :binary="true" />
-                      <label for="allow_peer_default_without_exit">{{ t('allow_peer_default_without_exit') }}</label>
-                      <i class="pi pi-question-circle config-help-tip" tabindex="0"
-                        v-tooltip.top="{ value: t('allow_peer_default_without_exit_help'), escape: false }"
-                        :aria-label="t('allow_peer_default_without_exit_help')" role="img"></i>
-                    </div>
-                  </div>
-
-                  <div class="config-outbound-peer">
-                    <div class="config-outbound-peer__title">
-                      <span>{{ t('policy_routes') }}</span>
-                      <i class="pi pi-question-circle config-help-tip" tabindex="0"
-                        v-tooltip.top="{ value: t('policy_routes_help'), escape: false }"
-                        :aria-label="t('policy_routes_help')" role="img"></i>
-                    </div>
-                    <PolicyRoutesEditor v-model:routes="curNetwork.policy_routes" />
-                  </div>
-
-                  <div class="config-outbound-peer">
-                    <div class="config-outbound-peer__title config-outbound-peer__title--control">
-                      <label for="enable_manual_routes">{{ t('manual_routes') }}</label>
-                      <i class="pi pi-question-circle config-help-tip" tabindex="0"
-                        v-tooltip.top="{ value: t('manual_routes_help'), escape: false }"
-                        :aria-label="t('manual_routes_help')" role="img"></i>
-                      <ToggleSwitch v-model="curNetwork.enable_manual_routes" input-id="enable_manual_routes"
-                        :aria-label="t('manual_routes')" />
-                    </div>
-                    <template v-if="curNetwork.enable_manual_routes">
-                      <AutoComplete id="routes" v-model="curNetwork.routes"
-                        :placeholder="t('chips_placeholder_typeahead', ['192.168.0.0/16'])" multiple fluid
-                        :suggestions="inetSuggestions" @complete="searchInetSuggestions"
-                        @keydown.capture="onChipsKeydown($event, curNetwork.routes ??= [], { typeahead: true })" />
-                      <div class="config-nested-option flex items-center gap-2 flex-wrap">
-                        <ToggleSwitch v-model="curNetwork.manual_routes_append" input-id="manual_routes_append"
-                          :aria-label="t('manual_routes_append')" />
-                        <label for="manual_routes_append">{{ t('manual_routes_append') }}</label>
-                        <i class="pi pi-question-circle config-help-tip" tabindex="0"
-                          v-tooltip.top="{ value: t('manual_routes_append_help'), escape: false }"
-                          :aria-label="t('manual_routes_append_help')" role="img"></i>
+                    <div class="flex flex-col gap-y-3">
+                      <div class="config-outbound-peer">
+                        <div class="config-outbound-peer__title">
+                          <label for="exit_nodes">{{ t('exit_nodes') }}</label>
+                          <i class="pi pi-question-circle config-help-tip" tabindex="0"
+                            v-tooltip.top="{ value: t('exit_nodes_help'), escape: false }"
+                            :aria-label="t('exit_nodes_help')" role="img"></i>
+                        </div>
+                        <AutoComplete id="exit_nodes" v-model="curNetwork.exit_nodes"
+                          :placeholder="t('chips_placeholder_typeahead', ['192.168.8.8'])" multiple fluid
+                          :suggestions="exitNodeSuggestions" @complete="searchExitNodeSuggestions"
+                          @keydown.capture="onChipsKeydown($event, curNetwork.exit_nodes ??= [], { typeahead: true })" />
+                        <p v-if="tunControlsDisabled" class="config-field-hint m-0">{{ t('no_tun_exit_nodes_hint') }}</p>
+                        <div class="config-nested-option flex items-center gap-2 flex-wrap">
+                          <Checkbox v-model="curNetwork.allow_peer_default_without_exit"
+                            input-id="allow_peer_default_without_exit" :binary="true" />
+                          <label for="allow_peer_default_without_exit">{{ t('allow_peer_default_without_exit') }}</label>
+                          <i class="pi pi-question-circle config-help-tip" tabindex="0"
+                            v-tooltip.top="{ value: t('allow_peer_default_without_exit_help'), escape: false }"
+                            :aria-label="t('allow_peer_default_without_exit_help')" role="img"></i>
+                        </div>
                       </div>
-                    </template>
+
+                      <div class="config-outbound-peer">
+                        <div class="config-outbound-peer__title">
+                          <span>{{ t('policy_routes') }}</span>
+                          <i class="pi pi-question-circle config-help-tip" tabindex="0"
+                            v-tooltip.top="{ value: t('policy_routes_help'), escape: false }"
+                            :aria-label="t('policy_routes_help')" role="img"></i>
+                        </div>
+                        <PolicyRoutesEditor v-model:routes="curNetwork.policy_routes" />
+                      </div>
+                    </div>
+                  </div>
+
+                  <div class="config-outbound-group">
+                    <div class="config-outbound-group__title">
+                      <span>{{ t('traffic_routing_local_routes') }}</span>
+                    </div>
+                    <div class="config-outbound-peer">
+                      <div class="config-outbound-peer__title config-outbound-peer__title--control">
+                        <label for="enable_manual_routes">{{ t('manual_routes') }}</label>
+                        <i class="pi pi-question-circle config-help-tip" tabindex="0"
+                          v-tooltip.top="{ value: t('manual_routes_help'), escape: false }"
+                          :aria-label="t('manual_routes_help')" role="img"></i>
+                        <ToggleSwitch v-model="curNetwork.enable_manual_routes" input-id="enable_manual_routes"
+                          :aria-label="t('manual_routes')" />
+                      </div>
+                      <template v-if="curNetwork.enable_manual_routes">
+                        <AutoComplete id="routes" v-model="curNetwork.routes"
+                          :placeholder="t('chips_placeholder_typeahead', ['192.168.0.0/16'])" multiple fluid
+                          :suggestions="inetSuggestions" @complete="searchInetSuggestions"
+                          @keydown.capture="onChipsKeydown($event, curNetwork.routes ??= [], { typeahead: true })" />
+                        <div class="config-nested-option flex items-center gap-2 flex-wrap">
+                          <ToggleSwitch v-model="curNetwork.manual_routes_append" input-id="manual_routes_append"
+                            :aria-label="t('manual_routes_append')" />
+                          <label for="manual_routes_append">{{ t('manual_routes_append') }}</label>
+                          <i class="pi pi-question-circle config-help-tip" tabindex="0"
+                            v-tooltip.top="{ value: t('manual_routes_append_help'), escape: false }"
+                            :aria-label="t('manual_routes_append_help')" role="img"></i>
+                        </div>
+                      </template>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -1295,7 +1307,30 @@ function removeVpnPortalClient(index: number) {
   gap: 0.5rem;
 }
 
-/* Peer options under「出网」: equal weight, one step below section title. */
+/* Under「出网」: groups (选路 / 本机路由表) then peer options at equal weight. */
+.config-outbound-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  min-width: 0;
+}
+
+.config-outbound-group__title {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  line-height: 1.2;
+  color: var(--text-color-secondary, #64748b);
+}
+
+.config-outbound-group__title span {
+  margin: 0;
+  font: inherit;
+  color: inherit;
+}
+
 .config-outbound-peer {
   display: flex;
   flex-direction: column;

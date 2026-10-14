@@ -224,8 +224,10 @@ advanced_group_system: 系统与网络
 advanced_group_security: 安全与隐私
 
 traffic_routing: 流量与路由
-traffic_routing_summary: 出网（出口列表 / 策略路由 / 自定义路由）与网关（允许成为出口 / 子网代理）集中在此；两者常成对配置。
+traffic_routing_summary: 出网（选路：出口列表 / 策略路由；本机路由表：自定义路由）与网关（允许成为出口 / 子网代理）集中在此；两者常成对配置。
 traffic_routing_client: 出网
+traffic_routing_steering: 选路
+traffic_routing_local_routes: 本机路由表
 traffic_routing_gateway: 网关
 
 latency_first: 开启质量优先选路
