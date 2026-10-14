@@ -1016,9 +1016,9 @@ web:
     discard_changes_tip: Cancel editing and reload the last saved config
     unsaved_changes: Unsaved
     config_source_console: Console-managed
-    config_source_console_tip: Console ownership (Web source): the console database is authoritative; the device syncs from it. This does not mean a local draft was pushed successfully.
+    config_source_console_tip: "Console ownership (Web source): the console database is authoritative; the device syncs from it. This does not mean a local draft was pushed successfully."
     config_source_local: Local only
-    config_source_local_tip: Device-local (User) config: it is not written to the console database until taken over.
+    config_source_local_tip: "Device-local (User) config: it is not written to the console database until taken over."
     config_source_pending_sync: Pending sync
     config_source_pending_sync_tip: This console-managed network has unsaved local edits; save to push them to the console.
     more_actions: More Actions
