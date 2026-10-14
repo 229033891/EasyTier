@@ -43,7 +43,9 @@ import {
   saveMode,
 } from '~/composables/mode'
 import {
+  beginTrayConnecting,
   buildTrayMenuItems,
+  endTrayConnecting,
   registerTrayExitHandler,
   setTrayMenu,
   setTrayRunState,
@@ -468,6 +470,7 @@ async function onModeSave() {
   const doSave = async () => {
     isModeSaving.value = true
     try {
+      await beginTrayConnecting()
       await initWithMode(next)
 
       // Validate config-server dial only when Normal mode activates/changes the endpoint.
@@ -537,6 +540,7 @@ async function onModeSave() {
     }
     finally {
       isModeSaving.value = false
+      await endTrayConnecting(clientRunning.value)
     }
   }
 
@@ -648,7 +652,7 @@ async function reconnectServiceRpc() {
   const url = normalizeServiceRpcUrl(currentMode.value.rpc_portal)
   await connectRpcWithRetries(false, url, 5)
   clientRunning.value = await isClientRunning().catch(() => false)
-  await setTrayRunState(clientRunning.value)
+  await setTrayRunState(clientRunning.value ? 'running' : 'idle')
   await refreshConfigServerConnection()
 }
 
@@ -661,6 +665,7 @@ async function onStartService() {
   }
   isModeSaving.value = true
   try {
+    await beginTrayConnecting()
     await setServiceStatus(true)
     await waitForServiceStatus('Running')
     await reconnectServiceRpc()
@@ -682,6 +687,7 @@ async function onStartService() {
   }
   finally {
     isModeSaving.value = false
+    await endTrayConnecting(clientRunning.value)
     await refreshTrayMenu()
   }
 }
@@ -710,6 +716,7 @@ async function onRestartService() {
     accept: async () => {
       isModeSaving.value = true
       try {
+        await beginTrayConnecting()
         await bounceService()
         await reconnectServiceRpc()
         toast.add({
@@ -730,6 +737,7 @@ async function onRestartService() {
       }
       finally {
         isModeSaving.value = false
+        await endTrayConnecting(clientRunning.value)
         await refreshTrayMenu()
       }
     },
@@ -758,6 +766,7 @@ async function onUninstallService() {
     accept: async () => {
       isModeSaving.value = true
       try {
+        await beginTrayConnecting()
         await initWithMode({ ...currentMode.value, mode: 'normal' })
         await initService(undefined)
         toast.add({
@@ -779,6 +788,7 @@ async function onUninstallService() {
       }
       finally {
         isModeSaving.value = false
+        await endTrayConnecting(clientRunning.value)
         await refreshTrayMenu()
       }
     },
@@ -861,7 +871,7 @@ async function onStopService() {
         await setServiceStatus(false)
         await waitForServiceStatus('Stopped')
         clientRunning.value = false
-        await setTrayRunState(false)
+        await setTrayRunState('idle')
         toast.add({
           severity: 'success',
           summary: t('web.common.success'),
@@ -1096,7 +1106,7 @@ async function initWithMode(mode: Mode) {
   currentMode.value = mode
   saveMode(mode)
   clientRunning.value = await isClientRunning()
-  await setTrayRunState(clientRunning.value)
+  await setTrayRunState(clientRunning.value ? 'running' : 'idle')
   await refreshTrayMenu()
 }
 
@@ -1129,7 +1139,13 @@ onMounted(async () => {
     window.removeEventListener('managed_config_synced_overwrite', onSyncedOverwrite)
   })
   currentMode.value = loadMode()
-  await initWithMode(currentMode.value)
+  await beginTrayConnecting()
+  try {
+    await initWithMode(currentMode.value)
+  }
+  finally {
+    await endTrayConnecting(clientRunning.value)
+  }
 
   if (type() === 'android') {
     setMobileVpnTileActionHandler(handleMobileVpnTileAction)
@@ -1201,7 +1217,7 @@ watch(instanceId, (newVal) => {
 })
 
 watch(clientRunning, async (newVal, oldVal) => {
-  await setTrayRunState(!!newVal)
+  await setTrayRunState(newVal ? 'running' : 'idle')
   if (!newVal && oldVal) {
     if (manualDisconnect.value) {
       manualDisconnect.value = false
@@ -1227,7 +1243,7 @@ watch(clientRunning, async (newVal, oldVal) => {
 
 onMounted(async () => {
   clientRunning.value = await isClientRunning().catch(() => false)
-  await setTrayRunState(clientRunning.value)
+  await setTrayRunState(clientRunning.value ? 'running' : 'idle')
   const timer = setInterval(async () => {
     try {
       clientRunning.value = await isClientRunning()

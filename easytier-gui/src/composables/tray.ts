@@ -211,12 +211,66 @@ export async function setTrayMenu(items: (MenuItem | PredefinedMenuItem)[] | und
   tray.setMenu(menu)
 }
 
-export async function setTrayRunState(isRunning: boolean = false) {
+/** OpenVPN-like tray chrome: grey idle / yellow connecting / green running. */
+export type TrayRunState = 'idle' | 'connecting' | 'running'
+
+const TRAY_ICONS: Record<TrayRunState, string> = {
+  idle: 'icons/tray-idle.ico',
+  connecting: 'icons/tray-connecting.ico',
+  running: 'icons/tray-running.ico',
+}
+
+let appliedTrayState: TrayRunState | null = null
+/** Nested begin/end so 1s poll / clientRunning watch cannot wipe yellow mid-connect. */
+let trayConnectingHold = 0
+
+function resolveTrayRunState(state: TrayRunState | boolean): TrayRunState {
+  if (typeof state === 'boolean')
+    return state ? 'running' : 'idle'
+  return state
+}
+
+async function applyTrayIcon(state: TrayRunState) {
+  if (appliedTrayState === state)
+    return
   const tray = await useTray()
   if (!tray)
     return
-  // Running → active icon; stopped → inactive icon
-  tray.setIcon(isRunning ? 'icons/icon.ico' : 'icons/icon-inactive.ico')
+  // Only remember state after setIcon succeeds so a failed swap can be retried.
+  await tray.setIcon(TRAY_ICONS[state])
+  appliedTrayState = state
+}
+
+/**
+ * Update tray icon. Pass boolean for idle/running, or `'connecting'` while
+ * starting / reconnecting. Settled updates are ignored while a
+ * {@link beginTrayConnecting} hold is active.
+ */
+export async function setTrayRunState(state: TrayRunState | boolean = false) {
+  const resolved = resolveTrayRunState(state)
+  if (trayConnectingHold > 0 && resolved !== 'connecting')
+    return
+  await applyTrayIcon(resolved)
+}
+
+/** Show yellow connecting icon until matching {@link endTrayConnecting}. */
+export async function beginTrayConnecting() {
+  trayConnectingHold++
+  try {
+    await applyTrayIcon('connecting')
+  }
+  catch (e) {
+    trayConnectingHold = Math.max(0, trayConnectingHold - 1)
+    throw e
+  }
+}
+
+/** Drop one connecting hold; when none remain, apply idle/running. */
+export async function endTrayConnecting(running: boolean) {
+  trayConnectingHold = Math.max(0, trayConnectingHold - 1)
+  if (trayConnectingHold > 0)
+    return
+  await applyTrayIcon(running ? 'running' : 'idle')
 }
 
 export async function setTrayTooltip(tooltip: string) {
