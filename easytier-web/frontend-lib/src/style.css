@@ -13,12 +13,12 @@
 }
 
 :root {
-  /* EasyTier ÃÂ¨ÃÂ§ÃÂÃÂ¨ÃÂ§ÃÂÃÂ¥ÃÂÃÂºÃÂ§ÃÂºÃÂ¿ÃÂ¯ÃÂ¼ÃÂweb / GUI / lib ÃÂ¥ÃÂÃÂ±ÃÂ§ÃÂÃÂ¨ÃÂ¯ÃÂ¼?*/
+  /* EasyTier 视觉基线（web / GUI / lib 共用） */
   --et-font: Inter, "Segoe UI", Avenir, Helvetica, Arial, sans-serif;
-  --et-fs-page-title: 1.4375rem;
-  --et-fs-section: 1.0625rem;
-  --et-fs-body: 0.9375rem;
-  --et-fs-meta: 0.8125rem;
+  --et-fs-page-title: 1.375rem;
+  --et-fs-section: 1rem;
+  --et-fs-body: 0.875rem;
+  --et-fs-meta: 0.75rem;
   --et-lh: 1.5;
 
   --et-space-1: 0.25rem;
@@ -29,7 +29,9 @@
   --et-pad-card: 1rem 1.125rem;
 
   /*
-   * PrimeFlex / PrimeVue3 ÃÂ©ÃÂÃÂÃÂ§ÃÂÃÂ token ÃÂ¢ÃÂ?PrimeVue4 ÃÂ¨ÃÂ¯ÃÂ­ÃÂ¤ÃÂ¹ÃÂÃÂ¥ÃÂÃÂÃÂ©ÃÂÃÂÃÂ£ÃÂ?   * ÃÂ¦ÃÂÃÂªÃÂ¥ÃÂ®ÃÂÃÂ¤ÃÂ¹ÃÂÃÂ¦ÃÂÃÂ¶ var(--surface-border) ÃÂ¤ÃÂ¼ÃÂÃÂ¦ÃÂÃÂ´ÃÂ¦ÃÂ®ÃÂµÃÂ¥ÃÂ¤ÃÂ±ÃÂ¦ÃÂÃÂÃÂ¯ÃÂ¼ÃÂÃÂ¨ÃÂ¾ÃÂ¹ÃÂ¦ÃÂ¡ÃÂÃÂ¥ÃÂÃÂÃÂ¨ÃÂÃÂ½ÃÂ¥ÃÂ?preflight ÃÂ§ÃÂ?currentColorÃÂ¯ÃÂ¼ÃÂÃÂ§ÃÂºÃÂ¯ÃÂ©ÃÂ»ÃÂÃÂ¯ÃÂ¼ÃÂÃÂ£ÃÂ?   */
+   * PrimeFlex / PrimeVue3 遗留 token → PrimeVue4 语义变量。
+   * 未定义时 var(--surface-border) 会整段失效，边框回落到 preflight 的 currentColor（纯黑）。
+   */
   --surface-border: var(--p-content-border-color, #e2e8f0);
   --surface-card: var(--p-content-background, #ffffff);
   --surface-ground: var(--p-surface-50, #f8fafc);
@@ -38,14 +40,10 @@
   --surface-50: var(--p-surface-50, #f8fafc);
   --surface-100: var(--p-surface-100, #f1f5f9);
   --surface-200: var(--p-surface-200, #e2e8f0);
-  /*
-   * Body text: near-black (do not defer to Aura --p-text-color ÃÂ¢ÃÂ?it reads gray on white).
-   * Dark scheme overrides below keep contrast on dark surfaces.
-   */
-  --text-color: #0f172a;
-  --text-color-secondary: #334155;
+  --text-color: var(--p-text-color, #0f172a);
+  --text-color-secondary: var(--p-text-muted-color, #334155);
   /* Placeholder hint color: lighter than secondary so empty hints != filled values */
-  --et-placeholder-color: #94a3b8;
+  --et-placeholder-color: #a8b5c5;
   --primary-color: var(--p-primary-color, #0ea5e9);
 
   --et-border-color: var(--surface-border, #e2e8f0);
@@ -58,13 +56,13 @@
   --et-btn-lg: 2.75rem;
   --et-btn-w: 10rem;
 
-  /* ÃÂ¥ÃÂÃÂÃÂ§ÃÂÃÂÃÂ¤ÃÂ¸ÃÂ»ÃÂ¨ÃÂÃÂ²ÃÂ¥ÃÂÃÂÃÂ©ÃÂÃÂÃÂ¯ÃÂ¼ÃÂÃÂ¤ÃÂ¸ÃÂ EasyTierPreset sky-500 ÃÂ¥ÃÂ¯ÃÂ¹ÃÂ©ÃÂ½ÃÂÃÂ¯ÃÂ¼?*/
+  /* 品牌主色回退（与 EasyTierPreset sky-500 对齐） */
   --et-primary: #0ea5e9;
   --et-primary-emphasis: #0284c7;
   --et-success: #10b981;
   --et-warn: #f59e0b;
   --et-danger: #ef4444;
-  --et-muted: #475569;
+  --et-muted: #334155;
 
   font-family: var(--et-font);
   font-size: var(--et-fs-body, 14px);
@@ -76,13 +74,6 @@
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   -webkit-text-size-adjust: 100%;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --text-color: #f1f5f9;
-    --text-color-secondary: #94a3b8;
-  }
 }
 
 .card {
@@ -115,11 +106,11 @@
 
 /*
  * Placeholder vs filled value: use dedicated light gray (--et-placeholder-color).
- * Do NOT use --text-color-secondary here (muted slate is too close to body text).
+ * Do NOT use --text-color-secondary here (#334155 is too close to body text).
  */
 :where(input, textarea)::placeholder {
-  color: var(--et-placeholder-color, #94a3b8);
-  -webkit-text-fill-color: var(--et-placeholder-color, #94a3b8);
+  color: var(--et-placeholder-color, #a8b5c5);
+  -webkit-text-fill-color: var(--et-placeholder-color, #a8b5c5);
   opacity: 1;
 }
 
@@ -132,8 +123,8 @@
 .p-autocomplete-input-multiple input::placeholder,
 .p-select-filter::placeholder,
 .p-multiselect-filter::placeholder {
-  color: var(--et-placeholder-color, #94a3b8) !important;
-  -webkit-text-fill-color: var(--et-placeholder-color, #94a3b8) !important;
+  color: var(--et-placeholder-color, #a8b5c5) !important;
+  -webkit-text-fill-color: var(--et-placeholder-color, #a8b5c5) !important;
   opacity: 1 !important;
 }
 
@@ -143,10 +134,10 @@
 .p-multiselect .p-placeholder,
 .p-multiselect-label.p-placeholder,
 .p-autocomplete .p-placeholder {
-  color: var(--et-placeholder-color, #94a3b8) !important;
+  color: var(--et-placeholder-color, #a8b5c5) !important;
 }
 
-/* ÃÂ©ÃÂÃÂÃÂ§ÃÂÃÂ PrimeFlex ÃÂ§ÃÂ±ÃÂ»ÃÂ¥ÃÂÃÂÃÂ¯ÃÂ¼ÃÂÃÂ¦ÃÂ¨ÃÂ¡ÃÂ¦ÃÂÃÂ¿ÃÂ©ÃÂÃÂÃÂ¤ÃÂ»ÃÂÃÂ¦ÃÂÃÂ surface-border / border-1ÃÂ¯ÃÂ¼ÃÂÃÂ¨ÃÂ¡ÃÂ¥ÃÂ¦ÃÂÃÂÃÂ¦ÃÂÃÂÃÂ¦ÃÂÃÂÃÂ¦ÃÂ ÃÂ·ÃÂ¥ÃÂ¼?*/
+/* 遗留 PrimeFlex 类名：模板里仍有 surface-border / border-1，补成有效样式 */
 .surface-border {
   border-color: var(--surface-border, #e2e8f0);
 }
@@ -163,7 +154,7 @@
   background: var(--surface-ground, #f8fafc);
 }
 
-/* PanelÃÂ¯ÃÂ¼ÃÂÃÂ¦ÃÂµÃÂÃÂ§ÃÂÃÂ°ÃÂ¦ÃÂÃÂÃÂ¨ÃÂ¾?+ ÃÂ¥ÃÂÃÂÃÂ¨ÃÂ§ÃÂÃÂ¯ÃÂ¼ÃÂÃÂ©ÃÂÃÂ¿ÃÂ¥ÃÂÃÂÃÂ¤ÃÂ¸ÃÂ»ÃÂ©ÃÂ¢ÃÂÃÂ¦ÃÂÃÂªÃÂ¦ÃÂ³ÃÂ¨ÃÂ¥ÃÂÃÂ¥ÃÂ¦ÃÂÃÂ¶ÃÂ¨ÃÂÃÂ½ÃÂ¥ÃÂ?currentColor ÃÂ©ÃÂ»ÃÂÃÂ¦ÃÂ¡ÃÂ */
+/* Panel：浅灰描边 + 圆角，避免主题未注入时落到 currentColor 黑框 */
 .p-panel {
   border: 1px solid var(--p-panel-border-color, var(--surface-border, #e2e8f0)) !important;
   border-radius: var(--et-radius, 0.75rem);
@@ -179,7 +170,7 @@
   background: transparent;
 }
 
-/* FieldsetÃÂ¯ÃÂ¼ÃÂÃÂ¥ÃÂÃÂÃÂ¦ÃÂ ÃÂ·ÃÂ©ÃÂÃÂ¿ÃÂ¥ÃÂÃÂÃÂ¥ÃÂÃÂ¾ÃÂ¤ÃÂ¾?ÃÂ¥ÃÂ¤ÃÂÃÂ¦ÃÂ¡ÃÂÃÂ¨ÃÂÃÂ½ÃÂ¥ÃÂÃÂ° currentColor ÃÂ©ÃÂ»ÃÂÃÂ¦ÃÂ¡ÃÂ */
+/* Fieldset：同样避免图例/外框落到 currentColor 黑框 */
 .p-fieldset {
   border: 1px solid var(--p-fieldset-border-color, var(--surface-border, #e2e8f0)) !important;
   border-radius: var(--et-radius, 0.75rem);
@@ -194,7 +185,7 @@
   padding: 0.35rem 0.65rem;
 }
 
-/* DividerÃÂ¯ÃÂ¼ÃÂÃÂ©ÃÂ»ÃÂÃÂ¨ÃÂ®ÃÂ¤ÃÂ¤ÃÂ¹ÃÂÃÂ¤ÃÂ¼ÃÂÃÂ¨ÃÂÃÂ½ÃÂ¥ÃÂ?currentColor ÃÂ©ÃÂ»ÃÂÃÂ§ÃÂºÃÂ¿ */
+/* Divider：默认也会落到 currentColor 黑线 */
 .p-divider.p-divider-horizontal:before {
   border-top-color: var(--surface-border, #e2e8f0) !important;
 }
@@ -204,7 +195,10 @@
 }
 
 /*
- * ÃÂ¨ÃÂ¡ÃÂ¨ÃÂ¥ÃÂÃÂÃÂ¦ÃÂÃÂ§ÃÂ¤ÃÂ»ÃÂ¶ÃÂ§ÃÂ»ÃÂÃÂ¤ÃÂ¸ÃÂÃÂ¦ÃÂÃÂÃÂ¨ÃÂ¾ÃÂ¹/ÃÂ¥ÃÂÃÂÃÂ¨ÃÂ§ÃÂ/ÃÂ§ÃÂÃÂ¦ÃÂ§ÃÂÃÂ¹ÃÂ¦ÃÂÃÂÃÂ£ÃÂ? * Aura ÃÂ©ÃÂ»ÃÂÃÂ¨ÃÂ®ÃÂ¤ÃÂ¨ÃÂ¾ÃÂ¹ÃÂ¦ÃÂ¡ÃÂÃÂ¨ÃÂ¿ÃÂÃÂ¦ÃÂ·ÃÂ¡ÃÂ¦ÃÂÃÂ¶ÃÂ¯ÃÂ¼ÃÂÃÂ¥ÃÂÃÂ¨ÃÂ§ÃÂÃÂ½ÃÂ¥ÃÂºÃÂÃÂ¤ÃÂ¸ÃÂÃÂ§ÃÂÃÂÃÂ¨ÃÂµÃÂ·ÃÂ¦ÃÂÃÂ¥ÃÂ¥ÃÂÃÂÃÂ£ÃÂÃÂÃÂ¦ÃÂ²ÃÂ¡ÃÂ¨ÃÂ¾ÃÂ¹ÃÂ¦ÃÂ¡ÃÂÃÂ£ÃÂÃÂÃÂ¯ÃÂ¼ÃÂÃÂ¨ÃÂ¿ÃÂÃÂ©ÃÂÃÂÃÂ§ÃÂ»ÃÂÃÂ¤ÃÂ¸ÃÂÃÂ¥ÃÂ?EasyTier tokenÃÂ£ÃÂ? * ÃÂ¥ÃÂ?multiple AutoCompleteÃÂ¯ÃÂ¼ÃÂÃÂ¥ÃÂ­ÃÂÃÂ§ÃÂ½ÃÂÃÂ¤ÃÂ»ÃÂ£ÃÂ§ÃÂ?/ ÃÂ¥ÃÂÃÂºÃÂ¥ÃÂÃÂ£ÃÂ¨ÃÂÃÂÃÂ§ÃÂÃÂ¹ÃÂ§ÃÂ­ÃÂÃÂ¯ÃÂ¼ÃÂÃÂ§ÃÂ?.p-autocomplete-input-multipleÃÂ£ÃÂ? */
+ * 表单控件统一描边/圆角/焦点态。
+ * Aura 默认边框过淡时，在白底上看起来像「没边框」；这里统一到 EasyTier token。
+ * 含 multiple AutoComplete（子网代理 / 出口节点等）的 .p-autocomplete-input-multiple。
+ */
 .p-inputtext,
 .p-password .p-password-input,
 .p-inputnumber .p-inputnumber-input,
@@ -332,7 +326,7 @@
   color: var(--primary-color, #0ea5e9) !important;
 }
 
-/* CheckboxÃÂ¯ÃÂ¼ÃÂÃÂ¥ÃÂÃÂ ÃÂ¥ÃÂ¤ÃÂ§ÃÂ¥ÃÂÃÂ¯ÃÂ§ÃÂÃÂ¹ÃÂ¥ÃÂÃÂºÃÂ¥ÃÂÃÂÃÂ¯ÃÂ¼ÃÂÃÂ¥ÃÂÃÂ¾ÃÂ©ÃÂÃÂÃÂ¦ÃÂÃÂÃÂ¨ÃÂµÃÂ°ÃÂ¥ÃÂÃÂÃÂ§ÃÂÃÂÃÂ¨ÃÂ?*/
+/* Checkbox：加大可点区域，勾选态走品牌色 */
 .p-checkbox {
   width: 1.15rem;
   height: 1.15rem;
@@ -370,8 +364,10 @@
 }
 
 /*
- * ToggleSwitch ÃÂ¥ÃÂÃÂÃÂ¥ÃÂºÃÂÃÂ¯ÃÂ¼ÃÂWin / Android ÃÂ¥ÃÂÃÂÃÂ¦ÃÂºÃÂÃÂ¯ÃÂ¼ÃÂÃÂ¯ÃÂ¼ÃÂ
- * Config ÃÂ¦ÃÂ?ToggleButton ÃÂ¦ÃÂÃÂ¢ÃÂ¦ÃÂÃÂÃÂ¥ÃÂ¼ÃÂÃÂ¥ÃÂÃÂ³ÃÂ¥ÃÂÃÂÃÂ¯ÃÂ¼ÃÂÃÂ¨ÃÂÃÂ¥ Aura tokenÃÂ¯ÃÂ¼ÃÂdt('toggleswitch.*')ÃÂ¯ÃÂ¼ÃÂÃÂ¦ÃÂÃÂªÃÂ¦ÃÂ³ÃÂ¨ÃÂ¥ÃÂÃÂ¥ÃÂ¯ÃÂ¼? * ÃÂ¥ÃÂ®ÃÂ½ÃÂ©ÃÂ«ÃÂ/ÃÂ¦ÃÂÃÂÃÂ¦ÃÂÃÂÃÂ¨ÃÂÃÂ²ÃÂ¥ÃÂ¤ÃÂ±ÃÂ¦ÃÂÃÂÃÂ¯ÃÂ¼ÃÂÃÂ¥ÃÂÃÂªÃÂ¥ÃÂÃÂ©ÃÂ¤ÃÂ¸ÃÂÃÂ¥ÃÂ°ÃÂÃÂ¥ÃÂÃÂÃÂ©ÃÂ»ÃÂÃÂ§ÃÂÃÂ¹ÃÂ£ÃÂÃÂÃÂ§ÃÂÃÂ¨ÃÂ¥ÃÂÃÂºÃÂ¥ÃÂ®ÃÂÃÂ¥ÃÂÃÂ¼ÃÂ¨ÃÂ¦ÃÂÃÂ§ÃÂÃÂÃÂ¯ÃÂ¼ÃÂÃÂ¤ÃÂ¸ÃÂÃÂ¤ÃÂ¾ÃÂÃÂ¨ÃÂµÃÂÃÂ¤ÃÂ¸ÃÂ»ÃÂ©ÃÂ¢ÃÂÃÂ¥ÃÂÃÂÃÂ©ÃÂÃÂÃÂ£ÃÂ? */
+ * ToggleSwitch 兜底（Win / Android 同源）：
+ * Config 把 ToggleButton 换成开关后，若 Aura token（dt('toggleswitch.*')）未注入，
+ * 宽高/手柄色失效，只剩一小块黑点。用固定值覆盖，不依赖主题变量。
+ */
 .p-toggleswitch {
   display: inline-block !important;
   position: relative !important;
@@ -409,7 +405,7 @@
   cursor: pointer;
 }
 
-/* outline ÃÂ¥ÃÂ·ÃÂ²ÃÂ¥ÃÂÃÂ»ÃÂ¦ÃÂÃÂÃÂ¯ÃÂ¼ÃÂÃÂ§ÃÂÃÂ¦ÃÂ§ÃÂÃÂ¹ÃÂ§ÃÂÃÂ¯ÃÂ§ÃÂÃÂ»ÃÂ¥ÃÂÃÂ¨ÃÂ¦ÃÂ»ÃÂÃÂ¥ÃÂÃÂÃÂ¤ÃÂ¸ÃÂÃÂ¯ÃÂ¼ÃÂÃÂ©ÃÂ¡ÃÂ»ÃÂ¥ÃÂÃÂÃÂ¥ÃÂÃÂ¨ slider ÃÂ¥ÃÂÃÂºÃÂ§ÃÂ¡ÃÂÃÂ¦ÃÂ ÃÂ·ÃÂ¥ÃÂ¼ÃÂÃÂ¤ÃÂ¹ÃÂÃÂ¥ÃÂÃÂÃÂ¯ÃÂ¼ÃÂÃÂ¦ÃÂÃÂÃÂ¨ÃÂÃÂ½ÃÂ¥ÃÂÃÂÃÂ¨ÃÂ¿?box-shadow: noneÃÂ¯ÃÂ¼?*/
+/* outline 已去掉：焦点环画在滑块上（须写在 slider 基础样式之后，才能压过 box-shadow: none） */
 .p-toggleswitch-input:focus-visible + .p-toggleswitch-slider {
   box-shadow: 0 0 0 2px #fff, 0 0 0 4px var(--primary-color, #0ea5e9) !important;
 }
@@ -453,7 +449,9 @@
 }
 
 /*
- * ÃÂ¥ÃÂÃÂ¨ÃÂ§ÃÂ«ÃÂÃÂ¦ÃÂÃÂÃÂ©ÃÂÃÂ®ÃÂ©ÃÂÃÂÃÂ¨ÃÂÃÂ²ÃÂ¯ÃÂ¼ÃÂÃÂ¦ÃÂÃÂ severity ÃÂ¤ÃÂ¸ÃÂÃÂ¦ÃÂµÃÂÃÂ¨ÃÂÃÂ²ÃÂ¥ÃÂºÃÂ + ÃÂ¦ÃÂÃÂÃÂ¨ÃÂ¾ÃÂ¹ÃÂ¯ÃÂ¼ÃÂÃÂ©ÃÂÃÂ¿ÃÂ¥ÃÂÃÂÃÂ£ÃÂÃÂÃÂ§ÃÂÃÂ½ÃÂ¥ÃÂºÃÂÃÂ§ÃÂÃÂ°ÃÂ¥ÃÂ­ÃÂÃÂ£ÃÂÃÂÃÂ§ÃÂÃÂÃÂ¤ÃÂ¸ÃÂÃÂ¥ÃÂÃÂºÃÂ¥ÃÂÃÂ¯ÃÂ§ÃÂÃÂ¹ÃÂ£ÃÂ? * ÃÂ¤ÃÂ¾ÃÂ§ÃÂ¦ÃÂ ÃÂÃÂ¥ÃÂ¯ÃÂ¼ÃÂ¨ÃÂÃÂª .sidebar-button ÃÂ©ÃÂÃÂ¤ÃÂ¥ÃÂ¤ÃÂÃÂ¯ÃÂ¼ÃÂÃÂ¤ÃÂ¿ÃÂÃÂ¦ÃÂÃÂÃÂ¦ÃÂÃÂÃÂ¥ÃÂ­ÃÂÃÂ¦ÃÂÃÂÃÂ©ÃÂÃÂ®ÃÂ¯ÃÂ¼ÃÂÃÂ£ÃÂ? */
+ * 全站按钮配色：按 severity 上浅色底 + 描边，避免「白底灰字」看不出可点。
+ * 侧栏导航 .sidebar-button 除外（保持文字按钮）。
+ */
 .p-button:not(.sidebar-button) {
   border-radius: var(--et-radius, 0.75rem) !important;
   font-weight: 600 !important;
@@ -525,7 +523,7 @@
   background: color-mix(in srgb, #ef4444 20%, #ffffff) !important;
 }
 
-/* text / ÃÂ¥ÃÂÃÂÃÂ¥ÃÂ½ÃÂ¢ÃÂ¥ÃÂÃÂ¾ÃÂ¦ÃÂ ÃÂÃÂ¦ÃÂÃÂÃÂ©ÃÂÃÂ®ÃÂ¯ÃÂ¼ÃÂÃÂ¥ÃÂÃÂÃÂ¦ÃÂ ÃÂ·ÃÂ§ÃÂ»ÃÂÃÂ¨ÃÂ¯ÃÂ­ÃÂ¤ÃÂ¹ÃÂÃÂ¥ÃÂºÃÂÃÂ¨ÃÂÃÂ² */
+/* text / 圆形图标按钮：同样给语义底色 */
 .p-button.p-button-text:not(.sidebar-button):not(.p-button-secondary):not(.p-button-success):not(.p-button-info):not(.p-button-warn):not(.p-button-danger):not(.p-button-contrast) {
   background: color-mix(in srgb, var(--primary-color, #0ea5e9) 10%, #ffffff) !important;
   color: var(--primary-color, #0284c7) !important;
@@ -557,7 +555,9 @@
 }
 
 /*
- * Toast / Message / Confirm ÃÂ§ÃÂ»ÃÂÃÂ¤ÃÂ¸ÃÂÃÂ¦ÃÂÃÂÃÂ§ÃÂ¤ÃÂºÃÂ¦ÃÂ ÃÂ·ÃÂ¥ÃÂ¼ÃÂÃÂ¯ÃÂ¼? * ÃÂ¤ÃÂ¸ÃÂÃÂ©ÃÂÃÂÃÂ¦ÃÂÃÂÃÂ¥ÃÂºÃÂÃÂ¨ÃÂÃÂ² + ÃÂ¥ÃÂ·ÃÂ¦ÃÂ¤ÃÂ¾ÃÂ§ÃÂ¨ÃÂ¯ÃÂ­ÃÂ¤ÃÂ¹ÃÂÃÂ¨ÃÂÃÂ²ÃÂ¦ÃÂÃÂ¡ + ÃÂ¦ÃÂ¸ÃÂÃÂ¦ÃÂÃÂ°ÃÂ¥ÃÂ­ÃÂÃÂ©ÃÂÃÂÃÂ¥ÃÂ±ÃÂÃÂ§ÃÂºÃÂ§ÃÂ¯ÃÂ¼ÃÂÃÂ©ÃÂÃÂ¿ÃÂ¥ÃÂÃÂÃÂ§ÃÂÃÂ½ÃÂ¥ÃÂºÃÂÃÂ©ÃÂÃÂÃÂ¥ÃÂÃÂºÃÂ©ÃÂ¡ÃÂµÃÂ©ÃÂÃÂ¢ÃÂ¥ÃÂÃÂÃÂ¥ÃÂ®ÃÂ¹ÃÂ£ÃÂ? */
+ * Toast / Message / Confirm 统一提示样式：
+ * 不透明底色 + 左侧语义色条 + 清晰字重层级，避免白底透出页面内容。
+ */
 .p-toast,
 .et-toast.p-toast {
   opacity: 1 !important;
@@ -587,7 +587,7 @@
 }
 
 .p-toast .p-toast-summary {
-  font-size: var(--et-fs-body, 0.9375rem) !important;
+  font-size: 0.875rem !important;
   font-weight: 650 !important;
   line-height: 1.35 !important;
   letter-spacing: 0.01em;
@@ -595,7 +595,7 @@
 
 .p-toast .p-toast-detail {
   margin-top: 0.15rem !important;
-  font-size: var(--et-fs-meta, 0.8125rem) !important;
+  font-size: 0.8125rem !important;
   font-weight: 450 !important;
   line-height: 1.45 !important;
   opacity: 0.9;
@@ -696,7 +696,7 @@
   padding: 0.7rem 0.85rem !important;
 }
 
-/* ÃÂ©ÃÂÃÂÃÂ§ÃÂÃÂ¨ Dialog / Confirm / DynamicDialogÃÂ¯ÃÂ¼ÃÂÃÂ¤ÃÂ¸ÃÂÃÂ¥ÃÂÃÂ¡ÃÂ§ÃÂÃÂÃÂ¨ÃÂ§ÃÂÃÂ¨ÃÂ§ÃÂÃÂ¥ÃÂ¯ÃÂ¹ÃÂ©ÃÂ½ÃÂ */
+/* 通用 Dialog / Confirm / DynamicDialog：与卡片视觉对齐 */
 .p-dialog-mask {
   background: rgba(15, 23, 42, 0.42) !important;
   backdrop-filter: blur(2px);
@@ -719,7 +719,7 @@
 }
 
 .p-dialog .p-dialog-title {
-  font-size: var(--et-fs-section, 1rem) !important;
+  font-size: var(--et-fs-section, 1.0625rem) !important;
   font-weight: 700 !important;
   letter-spacing: -0.02em;
   line-height: 1.35;
@@ -754,7 +754,7 @@
   font-weight: 600 !important;
 }
 
-/* ConfirmDialogÃÂ¯ÃÂ¼ÃÂÃÂ¥ÃÂÃÂ¾ÃÂ¦ÃÂ ?+ ÃÂ¦ÃÂÃÂÃÂ¦ÃÂ¡ÃÂÃÂ¦ÃÂ¨ÃÂªÃÂ¦ÃÂÃÂÃÂ¯ÃÂ¼ÃÂÃÂ©ÃÂÃÂ¿ÃÂ¥ÃÂÃÂÃÂ¦ÃÂÃÂ¤ÃÂ¦ÃÂÃÂÃÂ¤ÃÂ¸ÃÂÃÂ¥ÃÂ?*/
+/* ConfirmDialog：图标 + 文案横排，避免挤成一团 */
 .p-confirmdialog .p-dialog {
   width: min(24rem, calc(100vw - 2rem)) !important;
 }
@@ -788,7 +788,7 @@
   color: var(--primary-color, var(--et-primary, #0ea5e9)) !important;
 }
 
-/* DynamicDialog ÃÂ¥ÃÂÃÂÃÂ¨ÃÂÃÂªÃÂ¥ÃÂ¸ÃÂ¦ÃÂ¥ÃÂÃÂ¡ÃÂ§ÃÂÃÂÃÂ¦ÃÂÃÂ¶ÃÂ¯ÃÂ¼ÃÂÃÂ¥ÃÂÃÂ»ÃÂ¦ÃÂÃÂÃÂ¥ÃÂ¤ÃÂÃÂ¥ÃÂ±ÃÂÃÂ¥ÃÂ¤ÃÂÃÂ¤ÃÂ½ÃÂÃÂ¥ÃÂÃÂÃÂ¨ÃÂ¾ÃÂ¹ÃÂ¨ÃÂ·ÃÂ */
+/* DynamicDialog 内自带卡片时，去掉外层多余内边距 */
 .p-dialog:has(.change-password) {
   border: none !important;
   background: transparent !important;
@@ -809,7 +809,7 @@
   }
 
   .p-dialog {
-    background: var(--surface-card, #1e293b) !important;
+    background: var(--surface-card, #0f172a) !important;
     border-color: var(--surface-border, #334155) !important;
     color: var(--text-color, #f1f5f9) !important;
   }
@@ -822,7 +822,7 @@
   }
 }
 
-/* Select / ÃÂ¤ÃÂ¸ÃÂÃÂ¦ÃÂÃÂÃÂ¦ÃÂµÃÂ®ÃÂ¥ÃÂ±ÃÂÃÂ¯ÃÂ¼ÃÂÃÂ¥ÃÂ¼ÃÂºÃÂ¥ÃÂÃÂ¶ÃÂ¤ÃÂ¸ÃÂÃÂ©ÃÂÃÂÃÂ¦ÃÂÃÂÃÂ¯ÃÂ¼ÃÂÃÂ©ÃÂÃÂ¿ÃÂ¥ÃÂÃÂÃÂ©ÃÂÃÂÃÂ¥ÃÂÃÂºÃÂ¥ÃÂºÃÂÃÂ¥ÃÂ±ÃÂÃÂ¥ÃÂÃÂÃÂ¥ÃÂ®ÃÂ¹ */
+/* Select / 下拉浮层：强制不透明，避免透出底层内容 */
 .p-select-overlay,
 .p-autocomplete-overlay,
 .p-multiselect-overlay,
@@ -874,8 +874,8 @@
   .p-select-overlay .p-virtualscroller,
   .p-autocomplete-overlay .p-autocomplete-list,
   .p-multiselect-overlay .p-multiselect-list {
-    background: #1e293b !important;
-    background-color: #1e293b !important;
+    background: #0f172a !important;
+    background-color: #0f172a !important;
     border-color: #334155 !important;
   }
 }
@@ -887,12 +887,12 @@
   opacity: 1 !important;
 }
 
-/* ÃÂ¥ÃÂÃÂ¯ÃÂ¦ÃÂÃÂÃÂ¥ÃÂ?PanelÃÂ¯ÃÂ¼ÃÂÃÂ¦ÃÂ ÃÂÃÂ©ÃÂ¢ÃÂÃÂ¥ÃÂÃÂºÃÂ¦ÃÂÃÂ´ÃÂ¥ÃÂÃÂÃÂ¥ÃÂÃÂ¯ÃÂ§ÃÂÃÂ¹ÃÂ¦ÃÂÃÂ¶ÃÂ¤ÃÂ¿ÃÂÃÂ§ÃÂÃÂÃÂ¨ÃÂ¶ÃÂ³ÃÂ¥ÃÂ¤ÃÂÃÂ§ÃÂÃÂÃÂ¨ÃÂ§ÃÂ¦ÃÂ¦ÃÂÃÂ¸ÃÂ§ÃÂÃÂ®ÃÂ¦ÃÂ ÃÂÃÂ¯ÃÂ¼ÃÂÃÂ¤ÃÂ¸ÃÂ Config / AclRuleDialog ÃÂ§ÃÂ?pt ÃÂ©ÃÂÃÂÃÂ¥ÃÂ¥ÃÂÃÂ¯ÃÂ¼?*/
+/* 可折叠 Panel：标题区整块可点时保留足够的触摸目标（与 Config / AclRuleDialog 的 pt 配套） */
 .p-panel-header.cursor-pointer {
   min-height: 2.5rem;
 }
 
-/* ÃÂ¦ÃÂ ÃÂÃÂ§ÃÂ­ÃÂ¾ÃÂ¥ÃÂ·ÃÂ¦ÃÂ£ÃÂÃÂÃÂ¦ÃÂÃÂ§ÃÂ¤ÃÂ»ÃÂ¶ÃÂ¥ÃÂÃÂ³ÃÂ¯ÃÂ¼ÃÂConfig / DNS ÃÂ§ÃÂ¼ÃÂÃÂ¨ÃÂ¾ÃÂÃÂ¥ÃÂÃÂ¨ÃÂ§ÃÂ­ÃÂÃÂ¥ÃÂÃÂ±ÃÂ§ÃÂÃÂ¨ÃÂ¯ÃÂ¼ÃÂÃÂ©ÃÂ¡ÃÂ»ÃÂ¥ÃÂÃÂ¨ÃÂ¥ÃÂ±ÃÂÃÂ¯ÃÂ¼ÃÂscoped ÃÂ§ÃÂ©ÃÂ¿ÃÂ¤ÃÂ¸ÃÂÃÂ¨ÃÂ¿ÃÂÃÂ¥ÃÂ­ÃÂÃÂ§ÃÂ»ÃÂÃÂ¤ÃÂ»ÃÂ¶ÃÂ¯ÃÂ¼?*/
+/* 标签左、控件右（Config / DNS 编辑器等共用；须全局，scoped 穿不进子组件） */
 .config-inline-field {
   display: flex;
   align-items: center;
@@ -961,8 +961,9 @@
 }
 
 /*
- * ÃÂ¥ÃÂÃÂÃÂ¨ÃÂ¡ÃÂ¨/ÃÂ¥ÃÂÃÂ¡ÃÂ§ÃÂÃÂÃÂ¥ÃÂÃÂÃÂ¥ÃÂ½ÃÂ¢ÃÂ¥ÃÂÃÂ¾ÃÂ¦ÃÂ ÃÂÃÂ¦ÃÂÃÂÃÂ¤ÃÂ½ÃÂÃÂ¦ÃÂÃÂÃÂ©ÃÂÃÂ®ÃÂ¯ÃÂ¼ÃÂÃÂ¨ÃÂ®ÃÂ¾ÃÂ¥ÃÂ¤ÃÂÃÂ¥ÃÂÃÂÃÂ¨ÃÂ¡ÃÂ¨ÃÂ£ÃÂÃÂÃÂ§ÃÂ½ÃÂÃÂ§ÃÂ»ÃÂÃÂ¥ÃÂÃÂÃÂ¨ÃÂ¡ÃÂ¨ÃÂ¥ÃÂÃÂ±ÃÂ§ÃÂÃÂ¨ÃÂ¯ÃÂ¼ÃÂ
- * ÃÂ¤ÃÂ¸ÃÂ»ÃÂ¨ÃÂÃÂ²ÃÂ§ÃÂ»ÃÂÃÂ¤ÃÂ¸ÃÂÃÂ¨ÃÂµ?--primary-color / --et-primaryÃÂ¯ÃÂ¼ÃÂÃÂ¤ÃÂ¸ÃÂÃÂ¥ÃÂÃÂÃÂ§ÃÂÃÂ¨ÃÂ§ÃÂÃÂ¬ÃÂ§ÃÂ«ÃÂ blue-* ÃÂ¨ÃÂÃÂ²ÃÂ¦ÃÂÃÂ¿ÃÂ£ÃÂ? */
+ * 列表/卡片圆形图标操作按钮（设备列表、网络列表共用）
+ * 主色统一走 --primary-color / --et-primary，不再用独立 blue-* 色板。
+ */
 .et-icon-action-btn.p-button,
 .et-icon-action {
   width: var(--et-btn-sm) !important;
@@ -983,7 +984,7 @@
 }
 
 .et-icon-action-btn.p-button .p-button-icon {
-  font-size: var(--et-fs-body, 0.9375rem);
+  font-size: 0.875rem;
   line-height: 1;
   margin: 0 !important;
 }
@@ -1067,7 +1068,7 @@
   }
 }
 
-/* ÃÂ©ÃÂÃÂÃÂ§ÃÂ½ÃÂ®ÃÂ©ÃÂÃÂ¢ÃÂ¦ÃÂÃÂ¿ÃÂ¥ÃÂÃÂÃÂ¤ÃÂ¸ÃÂ»ÃÂ¦ÃÂÃÂÃÂ¤ÃÂ½ÃÂÃÂ¯ÃÂ¼ÃÂÃÂ¦ÃÂ·ÃÂ»ÃÂ¥ÃÂÃÂ ÃÂ§ÃÂ«ÃÂ¯ÃÂ¥ÃÂÃÂ£ÃÂ¨ÃÂ½ÃÂ¬ÃÂ¥ÃÂÃÂÃÂ£ÃÂÃÂÃÂ¥ÃÂÃÂ¯ÃÂ§ÃÂ?ACL ÃÂ§ÃÂ­ÃÂÃÂ¯ÃÂ¼ÃÂÃÂ¯ÃÂ¼ÃÂÃÂ¥ÃÂÃÂÃÂ¥ÃÂ®ÃÂ½ÃÂ¥ÃÂÃÂÃÂ©ÃÂ«?*/
+/* 配置面板内主操作（添加端口转发、启用 ACL 等）：同宽同高 */
 .et-panel-action-btn.p-button {
   width: var(--et-btn-w, 10rem) !important;
   min-width: var(--et-btn-w, 10rem) !important;
@@ -1077,7 +1078,7 @@
   box-sizing: border-box;
 }
 
-/* ÃÂ©ÃÂÃÂ®ÃÂ¥ÃÂÃÂ·ÃÂ¦ÃÂÃÂÃÂ§ÃÂ¤ÃÂºÃÂ¥ÃÂÃÂ¾ÃÂ¦ÃÂ ÃÂÃÂ¯ÃÂ¼ÃÂÃÂ¥ÃÂÃÂÃÂ¨ÃÂÃÂÃÂ¥ÃÂ¯ÃÂ¹ÃÂ©ÃÂ½?+ ÃÂ¥ÃÂÃÂºÃÂ¥ÃÂ®ÃÂÃÂ¥ÃÂ°ÃÂºÃÂ¥ÃÂ¯ÃÂ¸ÃÂ¯ÃÂ¼ÃÂÃÂ©ÃÂÃÂ¿ÃÂ¥ÃÂÃÂÃÂ¦ÃÂÃÂÃÂ©ÃÂ«ÃÂÃÂ¦ÃÂÃÂÃÂ¥ÃÂÃÂ¨ÃÂ¨ÃÂ¡ÃÂ */
+/* 问号提示图标：内联对齐 + 固定尺寸，避免撑高所在行 */
 .config-help-tip {
   display: inline-flex;
   align-items: center;

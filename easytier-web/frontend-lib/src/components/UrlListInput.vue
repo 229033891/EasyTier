@@ -40,7 +40,9 @@ const removeUrl = (index: number) => {
 
 <style scoped>
 /*
- * 悬停样式统一放进 @media (hover: hover)�? * 触屏设备�?:hover 会「粘住」——点一下之后一直保持高亮，直到点别处，看起来像选中态�? */
+ * 悬停样式统一放进 @media (hover: hover)：
+ * 触屏设备上 :hover 会「粘住」——点一下之后一直保持高亮，直到点别处，看起来像选中态。
+ */
 .url-add-dropzone {
     transition: border-color 0.2s ease, background-color 0.2s ease, color 0.2s ease;
     border-color: var(--et-border-color, #cbd5e1) !important;

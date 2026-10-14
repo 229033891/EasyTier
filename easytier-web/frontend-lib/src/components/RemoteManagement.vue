@@ -52,18 +52,18 @@ const props = defineProps<{
      * Delete authority for Web-source rows (config-delete-authority.md).
      * - `local` (default): this UI may delete any row (subject to file permission).
      * - `console`: Web-source rows are console-managed; gray out local delete.
-     * Independent of {@link hostSurface} â?do not infer "I am the web console" from this.
+     * Independent of {@link hostSurface} — do not infer "I am the web console" from this.
      */
     deleteAuthority?: 'local' | 'console';
     /**
      * Which product surface mounts this component. Independent of deleteAuthority.
-     * - `web-console`: DeviceManagement â?User-source delete shows Â§5 confirm.
-     * - `gui-client`: desktop GUI â?never use deleteAuthority alone to mean console.
+     * - `web-console`: DeviceManagement — User-source delete shows §5 confirm.
+     * - `gui-client`: desktop GUI — never use deleteAuthority alone to mean console.
      */
     hostSurface?: 'web-console' | 'gui-client';
     /**
      * Scope key for ignored residual ids (usually machine_id). Required for
-     * console residual ignore persistence; omit â?ignore is session-only.
+     * console residual ignore persistence; omit → ignore is session-only.
      */
     residualIgnoreScope?: string;
 }>();
@@ -95,7 +95,7 @@ function errorDetail(error: unknown): string {
     return Utils.formatApiErrorDetail(error, t);
 }
 
-/** False after unmount â?blocks late probes / confirms on a destroyed instance. */
+/** False after unmount — blocks late probes / confirms on a destroyed instance. */
 let managementAlive = true;
 
 function forceReloadLatestConfig() {
@@ -362,7 +362,7 @@ const clearResidualDeviceCopy = () => {
         void stopNetwork();
         return;
     }
-    // Device-only: hard purge (keep=false). Web â?light confirm; User â?stronger confirm.
+    // Device-only: hard purge (keep=false). Web → light confirm; User → stronger confirm.
     const source = Api.normalizeConfigSource(currentNetworkMeta.value?.source);
     const isUser =
         source === Api.ConfigSource.User
@@ -393,12 +393,12 @@ const takeoverResidualToConsole = () => {
     if (!kind) {
         return;
     }
-    // Already in console as disabled â?Start aligns run state.
+    // Already in console as disabled → Start aligns run state.
     if (kind === 'db_disabled_running') {
         startNetwork();
         return;
     }
-    // Device-only â?Save upserts into console (UserâWeb confirm inside saveNetworkConfig).
+    // Device-only → Save upserts into console (User→Web confirm inside saveNetworkConfig).
     if (!currentNetworkConfig.value || !canSaveConfig.value) {
         toast.add({
             severity: 'warn',
@@ -482,7 +482,7 @@ function configSourceBadgeFor(
         return unknownConfigSourceBadge();
     }
     if (source === Api.ConfigSource.Web) {
-        // Ownership â?sync success: dirty Web drafts are still console-owned but pending push.
+        // Ownership ≠ sync success: dirty Web drafts are still console-owned but pending push.
         if (opts?.dirty) {
             return {
                 kind: 'pending',
@@ -545,7 +545,7 @@ const currentNetworkControl = {
 
 /**
  * Web-source row locked to console when host injects `deleteAuthority: 'console'`.
- * Fail-open while meta is missing (`source` undefined) â?button stays enabled until
+ * Fail-open while meta is missing (`source` undefined) — button stays enabled until
  * meta loads; GUI backend `remove_network_instance` is the hard gate.
  */
 const isConsoleManagedDelete = computed(() => {
@@ -597,7 +597,7 @@ const saveConfigTooltip = computed(() =>
 
 const savingConfig = ref(false);
 
-/** Status CollectNetworkInfo cadence; â?s leaves BidirectRpc room for config / heartbeat / history. */
+/** Status CollectNetworkInfo cadence; ≥2s leaves BidirectRpc room for config / heartbeat / history. */
 const STATUS_POLL_MS = 2000
 /** Config editor only needs occasional running/stopped tags; ~6s with STATUS_POLL_MS. */
 const CONFIG_MODE_LIST_POLL_EVERY = 3
@@ -657,7 +657,7 @@ const selectedInstanceId = computed({
     }
 });
 
-/** Programmatic selection (run/new/etc.) â?skips dirty confirm. */
+/** Programmatic selection (run/new/etc.) — skips dirty confirm. */
 const setSelectedInstanceId = (uuid: string | undefined) => {
     instanceId.value = uuid;
 };
@@ -752,7 +752,9 @@ const needShowNetworkStatus = computed(() => {
 })
 
 /**
- * éç½®é¡µï¼Web `mode=config`ï¼æ combined / æ¾å¼è¿å¥ç¼è¾ã? * åæ­¢æä¸åèªå¨è½å¨éç½®ï¼è§?config-vs-run-pagesï¼è¿è¡ç©ºæ?+ èç¹éç½®å¥å£ï¼ã? */
+ * 配置页：Web `mode=config`，或 combined / 显式进入编辑。
+ * 停止态不再自动落在配置（见 config-vs-run-pages：运行空态 + 节点配置入口）。
+ */
 const showConfigPanel = computed(() => {
     if (isStatusMode.value) {
         return false;
@@ -771,7 +773,8 @@ const networkIsDisabled = computed(() => {
 });
 
 /**
- * è¿è¡é¡?Â· å·²åæ­¢ï¼åªè¯»éç½®é¢è§ + å¯å¨ï¼Web status / GUI combinedï¼æªå¨ç¼è¾æ¶ï¼ã? */
+ * 运行页 · 已停止：只读配置预览 + 启动（Web status / GUI combined，未在编辑时）。
+ */
 const showStatusDisabledPanel = computed(() => {
     if (!selectedInstanceId.value || !networkIsDisabled.value || isEditingNetwork.value) {
         return false;
@@ -782,7 +785,7 @@ const showStatusDisabledPanel = computed(() => {
     return isStatusMode.value || isCombinedMode.value;
 })
 
-/** åæ­¢æåªè¯»å¯æ¬ï¼é¿å Config åé¨å½ä¸åååèäºçæ­£çèç¨¿ */
+/** 停止态只读副本，避免 Config 内部归一化写回脏了真正的草稿 */
 const statusDisabledConfigPreview = ref<NetworkTypes.NetworkConfig | null>(null)
 watch(
     () => (showStatusDisabledPanel.value ? currentNetworkConfig.value : null),
@@ -901,8 +904,8 @@ const stopNetwork = async () => {
 
 /** Start a disabled network: may push console (SQLite) config onto the device. */
 const startNetwork = () => {
-    // Start enables the existing DB row (keeps source). UserâWeb takeover is
-    // only via Save / saveAndRun â?those paths already confirm Â§8.1.5.
+    // Start enables the existing DB row (keeps source). User→Web takeover is
+    // only via Save / saveAndRun — those paths already confirm §8.1.5.
     void doStartNetwork();
 }
 
@@ -949,7 +952,8 @@ const requestLeave = () => {
 }
 
 /**
- * Web `mode=config`ï¼æ è®ºè¿è¡ä¸­è¿æ¯å·²åæ­¢é½è¿å¥å¯ç¼è¾éç½®ã? * ï¼åæ­¢æè¿è¡é¡µåªè¯»é¢è§èµ?showStatusDisabledPanelï¼ä¸èµ°è¿éãï¼
+ * Web `mode=config`：无论运行中还是已停止都进入可编辑配置。
+ * （停止态运行页只读预览走 showStatusDisabledPanel，不走这里。）
  */
 const ensureConfigModeEditing = async () => {
     if (!isConfigMode.value || !selectedInstanceId.value) {
@@ -1040,7 +1044,7 @@ const doDeleteNetwork = async (instId?: string) => {
             detail: errorDetail(e),
             life: TOAST_LIFE.severe,
         });
-        // DB row kept on device-first delete failure â?surface an explicit retry entry.
+        // DB row kept on device-first delete failure — surface an explicit retry entry.
         offerRetryOnDeleteFailure(e, deletingId);
     }
     emits('update');
@@ -1050,7 +1054,7 @@ const confirmDeleteNetwork = () => {
     if (!canDeleteNetworkLocally.value) {
         return;
     }
-    // Â§5: only the web-console surface warns when deleting a User-source row.
+    // §5: only the web-console surface warns when deleting a User-source row.
     // Do not infer this from deleteAuthority (explicit 'local' on console must still confirm).
     const deletingUserSourceOnConsole =
         props.hostSurface === 'web-console'
@@ -1160,12 +1164,12 @@ function isNetworkConfigArg(value: unknown): value is NetworkTypes.NetworkConfig
 
 /** Running-state re-apply rebuilds the instance; confirm before brief disconnect. */
 const confirmRunNetwork = (config?: NetworkTypes.NetworkConfig | Event) => {
-    // Footer @click must use confirmRunNetwork() â?a bare handler would pass the MouseEvent.
+    // Footer @click must use confirmRunNetwork() — a bare handler would pass the MouseEvent.
     const cfg = isNetworkConfigArg(config) ? config : currentNetworkConfig.value;
     if (!cfg) {
         return;
     }
-    // Â§8.1.5: User-source Run that SaveâWeb must confirm takeover (same as Save).
+    // §8.1.5: User-source Run that Save→Web must confirm takeover (same as Save).
     if (isUserSourceConfig.value) {
         confirm.require({
             message: t('web.device_management.confirm_save_takeover_user_source'),
@@ -1184,8 +1188,8 @@ const confirmRunNetwork = (config?: NetworkTypes.NetworkConfig | Event) => {
         });
         return;
     }
-    // Re-run rebuilds a healthy instance (brief disconnect) â?keep confirm.
-    // First start of a stopped/disabled Web row used to warn about consoleâdevice
+    // Re-run rebuilds a healthy instance (brief disconnect) — keep confirm.
+    // First start of a stopped/disabled Web row used to warn about console→device
     // overwrite; that confirm was removed as redundant for day-to-day Start.
     const rerunning = !networkIsDisabled.value && selectedNetworkRunning.value;
     if (rerunning) {
@@ -1213,7 +1217,7 @@ const saveResultToastDetail = (
     result: Api.SaveNetworkConfigResponse | void,
     opts?: { wasRunning?: boolean },
 ) => {
-    // GUI / local clients may return void â?no console push semantics.
+    // GUI / local clients may return void — no console push semantics.
     if (!result || !result.action) {
         return props.hostSurface === 'gui-client' && opts?.wasRunning
             ? t('web.device_management.save_ok_local_hint')
@@ -1380,7 +1384,7 @@ const discardConfigChanges = async () => {
     }
 }
 
-/** Combinedï¼éåºéç½®ï¼åå°è¿è¡é¡µï¼è¿è¡ä¸­ç¶ææå·²åæ­¢ç©ºæï¼ã?*/
+/** Combined：退出配置，回到运行页（运行中状态或已停止空态）。 */
 const exitEditNetwork = () => {
     if (isCombinedMode.value && isEditingNetwork.value) {
         isEditingNetwork.value = false;
@@ -1569,7 +1573,8 @@ const syncTomlConfig = async (tomlConfig: string): Promise<void> => {
 }
 
 /**
- * GUI combined è¿è¡é¡µãèç¹éç½®ãï¼è¿è¡ä¸­æå·²åæ­¢ï¼åªè¯»é¢è§ä¸ï¼åå¯è¿å¥ç¼è¾ã? */
+ * GUI combined 运行页「节点配置」：运行中或已停止（只读预览上）均可进入编辑。
+ */
 const showCombinedEditEntry = computed(() =>
     isCombinedMode.value
     && !isEditingNetwork.value
@@ -1579,7 +1584,8 @@ const showCombinedEditEntry = computed(() =>
 );
 
 /**
- * åæ¶ç¼è¾ + ä¿å­ï¼ä»éç½®é¡µä¸èæ¶æå¯¹æ¾ç¤ºã? */
+ * 取消编辑 + 保存：仅配置页且脏时成对显示。
+ */
 const showSaveInFooter = computed(() =>
     showConfigPanel.value && !!currentNetworkConfig.value && isConfigDirty.value,
 );
@@ -1587,7 +1593,8 @@ const showSaveInFooter = computed(() =>
 const showDiscardChanges = computed(() => showSaveInFooter.value);
 
 /**
- * Combined éç½®é¡µå¹²åï¼è¿åè¿è¡é¡µï¼è¿è¡ä¸­æå·²åæ­¢ï¼ã? */
+ * Combined 配置页干净：返回运行页（运行中或已停止）。
+ */
 const showExitEdit = computed(() =>
     isCombinedMode.value
     && isEditingNetwork.value
@@ -1603,7 +1610,7 @@ const showCombinedNavZone = computed(() =>
     || showExitEdit.value
 );
 
-/** å¯ååªå¨è¿è¡é¡µï¼éç½®é¡µä¸æãè¿è¡ç½ç»ãã?*/
+/** 启停只在运行页；配置页不挂「运行网络」。 */
 const stickyFooterPrimary = computed(() => {
     if (showStatusDisabledPanel.value) {
         return 'start' as const;
@@ -1652,8 +1659,8 @@ let periodFunc = new Utils.PeriodicTask(async () => {
         if (!isConfigMode.value) {
             jobs.push(loadCurrentNetworkInfo())
         }
-        // Config editor: probe console/device drift. Dirty â?confirm prompt;
-        // clean â?get_config (GUI may adopt Web runtime into storage + emit).
+        // Config editor: probe console/device drift. Dirty → confirm prompt;
+        // clean → get_config (GUI may adopt Web runtime into storage + emit).
         if (
             showConfigPanel.value
             && (pollTick === 1 || pollTick % CONFIG_MODE_LIST_POLL_EVERY === 0)
@@ -1673,7 +1680,7 @@ let periodFunc = new Utils.PeriodicTask(async () => {
     }
 }, STATUS_POLL_MS);
 
-/** GUI host: console overwrite/hot-patch wrote localStorage â?refresh open editor. */
+/** GUI host: console overwrite/hot-patch wrote localStorage — refresh open editor. */
 const onManagedConfigSyncedOverwrite = (event: Event) => {
     const detail = (event as CustomEvent<{ instanceId?: string }>).detail;
     const syncedId = detail?.instanceId;
@@ -1939,12 +1946,12 @@ onUnmounted(() => {
         <div v-if="showStickyFooter" class="network-sticky-footer">
             <Button v-if="showLoggingSettings" :label="t('logging')" icon="pi pi-file" severity="secondary"
                 class="network-footer-btn network-footer-btn--muted" @click="loggingDialogVisible = true" />
-            <!-- GUI é¢å¤æé®ï¼ç³»ç»è®¾ç½®ç­ï¼æ¾æå·¦ï¼çªå±åè¡æ¶æ´æç¹å?-->
+            <!-- GUI 额外按钮（系统设置等）放最左，窄屏单行时更易点到 -->
             <slot name="footer-extra" />
             <Button v-if="showLeaveInFooter" @click="requestLeave" :label="leaveLabel" severity="secondary"
                 :icon="leaveIcon" iconPos="left" class="network-footer-btn network-footer-btn--muted"
                 v-tooltip.top="leaveTooltip" />
-            <!-- å·¦åºï¼èç¹éç½®å¥å?/ åå¾ç¶æ?/ åæ¶ç¼è¾ / ä¿å­ï¼å³åºï¼ä¸»æä½?-->
+            <!-- 左区：节点配置入口 / 前往状态 / 取消编辑 / 保存；右区：主操作 -->
             <div v-if="showCombinedNavZone || isConfigMode || isStatusMode" class="footer-zone">
                 <Button v-if="showCombinedEditEntry" severity="secondary"
                     :label="t('web.device_management.switch_to_config')"
@@ -2055,7 +2062,7 @@ onUnmounted(() => {
 }
 
 .network-select-placeholder {
-    color: var(--et-placeholder-color, #94a3b8);
+    color: var(--et-placeholder-color, #a8b5c5);
 }
 
 .network-content {
@@ -2071,7 +2078,7 @@ onUnmounted(() => {
     box-shadow: var(--et-shadow-card, none) !important;
 }
 
-/* Status åè¡¨å æ»¡åå®¹åºï¼ä¾¿äºå±å¼é¢æ¿åæå©ä½é«åº¦ */
+/* Status 列表占满内容区，便于展开面板吃掉剩余高度 */
 .network-content > .status-fill-host {
     flex: 1 1 auto;
     min-height: 0;
@@ -2089,7 +2096,7 @@ onUnmounted(() => {
     border-radius: var(--et-radius, 0.75rem);
     box-shadow: var(--et-shadow-card, none);
     display: flex;
-    /* åºé¨ä¸»æä½å°½éå§ç»åè¡ï¼é¿å 2/3 æé®æè¡çèµ·æ¥æ£ */
+    /* 底部主操作尽量始终单行，避免 2/3 按钮折行看起来散 */
     flex-wrap: nowrap;
     align-items: center;
     justify-content: space-between;
@@ -2102,7 +2109,7 @@ onUnmounted(() => {
     align-items: center;
     gap: 0.5rem;
     min-width: 0;
-    /* ä¸ä¸»å?ææ§½æé®ä¸èµ·å¹³åæ´è¡ï¼çªå±åé®ç­å®½å æ»¡ï¼?*/
+    /* 与主区/插槽按钮一起平分整行（窄屏四钮等宽占满） */
     flex: 1 1 0;
 }
 
@@ -2112,20 +2119,20 @@ onUnmounted(() => {
     flex: 1 1 0;
 }
 
-/* footer-extra ææ§½æé®ï¼ç³»ç»è®¾ç½®ç­ï¼åæ ·åä¸å¹³å?*/
+/* footer-extra 插槽按钮（系统设置等）同样参与平分 */
 .network-sticky-footer > :deep(.network-footer-btn.p-button) {
     flex: 1 1 0;
     min-width: 0;
 }
 
 @media (max-width: 640px) {
-    /* çªå±èåºé¨æé®å¾æ ï¼åªçç­ææ¡ï¼åé®ææå¾ä¸ */
+    /* 窄屏藏底部按钮图标，只留短文案，四钮才排得下 */
     .network-sticky-footer :deep(.network-footer-btn.p-button .p-button-icon) {
         display: none;
     }
 }
 
-/* åé«ååè§ï¼å®½åº¦éå¯ç¨ç©ºé´ååï¼ä¿è¯ä¸è¡æå¾ä¸ */
+/* 同高同圆角；宽度随可用空间均分，保证一行排得下 */
 :deep(.network-footer-btn.p-button) {
     flex: 1 1 0;
     width: auto;
@@ -2289,7 +2296,7 @@ onUnmounted(() => {
 }
 
 :deep(.network-source-tag.p-tag-secondary) {
-    background: color-mix(in srgb, var(--text-color-secondary, #334155) 12%, #ffffff) !important;
+    background: color-mix(in srgb, #334155 12%, #ffffff) !important;
     color: #475569 !important;
 }
 
@@ -2405,14 +2412,14 @@ onUnmounted(() => {
     }
 
     .network-sticky-footer {
-        /* çªå±ä¹å¼ºå¶åè¡ç­åï¼é¿åææä¸¤è¡ */
+        /* 窄屏也强制单行等分，避免折成两行 */
         display: flex;
         flex-wrap: nowrap;
         align-items: stretch;
         gap: 0.3rem;
     }
 
-    /* å±å¼å­åºï¼è®©æé®é½æä¸?footer çç´æ?flex å­é¡¹ä»¥ä¾¿åå */
+    /* 展开子区，让按钮都成为 footer 的直接 flex 子项以便均分 */
     .footer-zone,
     .footer-zone--primary {
         display: contents;
@@ -2504,13 +2511,13 @@ onUnmounted(() => {
     }
 
     :deep(.bg-surface-0) {
-        background-color: var(--surface-card, #1e293b);
+        background-color: var(--surface-card, #0f172a);
     }
 
     .network-header,
     .network-content,
     .network-sticky-footer {
-        background: var(--surface-card, #1e293b) !important;
+        background: var(--surface-card, #0f172a) !important;
         border-color: var(--surface-border, #334155);
         box-shadow: none !important;
     }

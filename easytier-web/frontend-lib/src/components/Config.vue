@@ -1292,11 +1292,11 @@ function removeVpnPortalClient(index: number) {
   display: inline-flex;
   align-items: center;
   gap: 0.35rem;
-  /* Below panel title; near-black so section labels do not wash out. */
-  font-size: var(--et-fs-body, 0.9375rem);
+  /* Below panel title (0.875rem / primary); peer titles stay identical. */
+  font-size: 0.8125rem;
   font-weight: 600;
-  line-height: 1.25;
-  color: var(--text-color, #0f172a);
+  line-height: 1.2;
+  color: var(--text-color-secondary, #334155);
 }
 
 .config-section__title label,
@@ -1324,9 +1324,9 @@ function removeVpnPortalClient(index: number) {
   display: inline-flex;
   align-items: center;
   gap: 0.35rem;
-  font-size: var(--et-fs-meta, 0.8125rem);
+  font-size: 0.75rem;
   font-weight: 600;
-  line-height: 1.25;
+  line-height: 1.2;
   color: var(--text-color-secondary, #334155);
 }
 
@@ -1349,9 +1349,9 @@ function removeVpnPortalClient(index: number) {
   gap: 0.35rem;
   min-height: 1.25rem;
   color: var(--text-color, #0f172a);
-  font-size: var(--et-fs-body, 0.9375rem);
+  font-size: 0.8125rem;
   font-weight: 500;
-  line-height: 1.25;
+  line-height: 1.2;
 }
 
 .config-outbound-peer__title label,
@@ -1410,20 +1410,20 @@ function removeVpnPortalClient(index: number) {
   overflow: hidden;
 }
 
-/* 面板标题栏紧凑化（与 Status.vue 保持一致）；标题略大于正文、近黑 */
+/* 面板标题栏紧凑化（与 Status.vue 保持一致） */
 .config-panels :deep(.p-panel .p-panel-header) {
-  padding: 0.4rem 0.75rem !important;
-  min-height: 2.125rem !important;
-  font-size: var(--et-fs-section, 1.0625rem);
+  padding: 0.35rem 0.75rem !important;
+  min-height: 2rem !important;
+  font-size: var(--et-fs-body, 0.9375rem);
   font-weight: 600;
-  line-height: 1.25;
+  line-height: 1.2;
   color: var(--text-color, #0f172a);
   background: transparent;
   border: none;
 }
 
 .config-panels :deep(.p-panel .p-panel-header.cursor-pointer) {
-  min-height: 2.125rem !important;
+  min-height: 2rem !important;
 }
 
 .config-panels :deep(.p-panel .p-panel-content) {
@@ -1436,9 +1436,9 @@ function removeVpnPortalClient(index: number) {
 
 .config-panels :deep(.p-panel .p-panel-header .p-panel-title),
 .config-panels :deep(.p-panel .p-panel-header span:not(.p-badge)) {
-  font-size: var(--et-fs-section, 1.0625rem);
+  font-size: var(--et-fs-body, 0.9375rem);
   font-weight: 600;
-  line-height: 1.25;
+  line-height: 1.2;
   color: var(--text-color, #0f172a);
 }
 
@@ -1480,7 +1480,7 @@ function removeVpnPortalClient(index: number) {
   gap: 0.45rem;
   margin: 0 0 0.625rem;
   color: var(--text-color, #0f172a);
-  font-size: var(--et-fs-body, 0.9375rem);
+  font-size: 0.8125rem;
   font-weight: 700;
 }
 
@@ -1530,7 +1530,7 @@ function removeVpnPortalClient(index: number) {
   line-height: 1.3;
   cursor: pointer;
   color: var(--text-color, #0f172a);
-  font-size: var(--et-fs-body, 0.9375rem);
+  font-size: 0.8125rem;
 }
 
 .advanced-flag-item--disabled {
@@ -1542,7 +1542,7 @@ function removeVpnPortalClient(index: number) {
 }
 
 .config-conflict-banner {
-  font-size: var(--et-fs-meta, 0.8125rem);
+  font-size: 0.8125rem;
   line-height: 1.4;
   border-radius: 0.375rem;
   padding: 0.5rem 0.75rem;
@@ -1627,7 +1627,7 @@ function removeVpnPortalClient(index: number) {
 .config-compact-label {
   min-height: 1.25rem;
   color: var(--text-color, #0f172a);
-  font-size: var(--et-fs-body, 0.9375rem);
+  font-size: 0.8125rem;
   font-weight: 500;
   white-space: nowrap;
   overflow: hidden;
@@ -1645,13 +1645,13 @@ function removeVpnPortalClient(index: number) {
 
 .config-field-hint {
   color: var(--text-color-secondary, #334155);
-  font-size: var(--et-fs-meta, 0.8125rem);
+  font-size: 0.75rem;
   line-height: 1.35;
 }
 
 .config-panels :deep(label) {
   color: var(--text-color, #0f172a);
-  font-size: var(--et-fs-body, 0.9375rem);
+  font-size: 0.8125rem;
   font-weight: 500;
 }
 
@@ -1669,8 +1669,8 @@ function removeVpnPortalClient(index: number) {
 .config-panels :deep(.p-autocomplete-input::placeholder),
 .config-panels :deep(.p-autocomplete .p-inputtext::placeholder),
 .config-panels :deep(.p-autocomplete-input-multiple input::placeholder) {
-  color: var(--et-placeholder-color, #94a3b8) !important;
-  -webkit-text-fill-color: var(--et-placeholder-color, #94a3b8) !important;
+  color: var(--et-placeholder-color, #a8b5c5) !important;
+  -webkit-text-fill-color: var(--et-placeholder-color, #a8b5c5) !important;
   opacity: 1 !important;
 }
 
@@ -1678,7 +1678,7 @@ function removeVpnPortalClient(index: number) {
 .config-panels :deep(.p-select .p-placeholder),
 .config-panels :deep(.p-multiselect .p-placeholder),
 .config-panels :deep(.p-autocomplete .p-placeholder) {
-  color: var(--et-placeholder-color, #94a3b8) !important;
+  color: var(--et-placeholder-color, #a8b5c5) !important;
 }
 
 .advanced-flag-item .config-help-tip {
@@ -1715,7 +1715,7 @@ function removeVpnPortalClient(index: number) {
 
   .advanced-flag-item label {
     margin-left: 0.35rem;
-    font-size: var(--et-fs-meta, 0.8125rem);
+    font-size: 0.75rem;
   }
 
   .advanced-flag-item .config-help-tip {
@@ -1740,7 +1740,7 @@ function removeVpnPortalClient(index: number) {
 
 @media (prefers-color-scheme: dark) {
   .advanced-flag-group {
-    background: var(--surface-800, #1e293b);
+    background: var(--surface-800, #0f172a);
   }
 
   @media (hover: hover) {

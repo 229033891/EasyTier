@@ -17,7 +17,7 @@ const rule = defineModel<AclRule>('rule', { required: true })
 
 const { t } = useI18n()
 
-/** 整块标题栏可点展开/折叠（触摸友好）；加减号自身已切换，需跳过以免翻两�?*/
+/** 整块标题栏可点展开/折叠（触摸友好）；加减号自身已切换，需跳过以免翻两次 */
 const panelCollapsed = reactive({
   rules: false,
   advanced: true,

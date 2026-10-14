@@ -209,7 +209,7 @@ const tabs = computed(() => {
 }
 
 .acl-section-title {
-  font-size: var(--et-fs-section, 1rem);
+  font-size: var(--et-fs-section, 1.0625rem);
   font-weight: 600;
   color: var(--text-color, #0f172a);
 }
@@ -233,7 +233,7 @@ const tabs = computed(() => {
 @media (prefers-color-scheme: dark) {
   .acl-tabs-bar {
     border-color: var(--surface-border, #334155) !important;
-    background: var(--surface-card, #1e293b);
+    background: var(--surface-card, #0f172a);
   }
 
   .acl-manager :deep(.p-tab) {
@@ -253,7 +253,7 @@ const tabs = computed(() => {
 
   .acl-empty {
     border-color: var(--surface-border, #334155);
-    background: var(--surface-card, #1e293b);
+    background: var(--surface-card, #0f172a);
   }
 
   .acl-section-title {
