@@ -1278,29 +1278,53 @@ function removeVpnPortalClient(index: number) {
   opacity: 0.96;
 }
 
-.config-section,
+/* 智能路由：网关 / 出网 — 与高级设置分组框同款 */
+.config-section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.625rem;
+  min-width: 0;
+  padding: 0.75rem;
+  border: 1px solid var(--et-border-color, #e2e8f0);
+  border-radius: calc(var(--et-radius, 0.75rem) - 0.125rem);
+  background: var(--surface-50, #f8fafc);
+}
+
+.config-section__title {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  margin: 0;
+  font-size: 0.8125rem;
+  font-weight: 700;
+  line-height: 1.2;
+  color: var(--text-color, #0f172a);
+}
+
+.config-section__title label,
+.config-section__title span {
+  margin: 0;
+  font: inherit;
+  color: inherit;
+}
+
 .dns-section {
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
-  /* Nested under the panel header — one visual step down. */
   padding-left: 0.25rem;
 }
 
-.config-section__title,
 .dns-section__title {
   display: inline-flex;
   align-items: center;
   gap: 0.35rem;
-  /* Below panel title (0.875rem / primary); peer titles stay identical. */
   font-size: 0.8125rem;
   font-weight: 600;
   line-height: 1.2;
   color: var(--text-color-secondary, #334155);
 }
 
-.config-section__title label,
-.config-section__title span,
 .dns-section__title label,
 .dns-section__title span {
   margin: 0;
