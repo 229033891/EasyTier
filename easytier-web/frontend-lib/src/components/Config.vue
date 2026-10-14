@@ -1434,20 +1434,20 @@ function removeVpnPortalClient(index: number) {
   overflow: hidden;
 }
 
-/* 面板标题栏紧凑化（与 Status.vue 保持一致） */
+/* 面板标题栏：浅底区分标题与内容（与 Status.vue 一致） */
 .config-panels :deep(.p-panel .p-panel-header) {
-  padding: 0.35rem 0.75rem !important;
-  min-height: 2rem !important;
-  font-size: var(--et-fs-body, 0.9375rem);
+  padding: 0.4rem 0.75rem !important;
+  min-height: 2.125rem !important;
+  font-size: var(--et-fs-section, 1.0625rem);
   font-weight: 600;
-  line-height: 1.2;
+  line-height: 1.25;
   color: var(--text-color, #0f172a);
-  background: transparent;
+  background: var(--surface-50, #f8fafc);
   border: none;
 }
 
 .config-panels :deep(.p-panel .p-panel-header.cursor-pointer) {
-  min-height: 2rem !important;
+  min-height: 2.125rem !important;
 }
 
 .config-panels :deep(.p-panel .p-panel-content) {
@@ -1460,9 +1460,9 @@ function removeVpnPortalClient(index: number) {
 
 .config-panels :deep(.p-panel .p-panel-header .p-panel-title),
 .config-panels :deep(.p-panel .p-panel-header span:not(.p-badge)) {
-  font-size: var(--et-fs-body, 0.9375rem);
+  font-size: var(--et-fs-section, 1.0625rem);
   font-weight: 600;
-  line-height: 1.2;
+  line-height: 1.25;
   color: var(--text-color, #0f172a);
 }
 
@@ -1763,6 +1763,10 @@ function removeVpnPortalClient(index: number) {
 }
 
 @media (prefers-color-scheme: dark) {
+  .config-panels :deep(.p-panel .p-panel-header) {
+    background: var(--surface-100, #334155);
+  }
+
   .advanced-flag-group {
     background: var(--surface-800, #0f172a);
   }
