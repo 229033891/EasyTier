@@ -1,7 +1,8 @@
 #[cfg(not(target_os = "android"))]
 use std::env;
+#[cfg(not(target_os = "android"))]
+use std::ffi::OsString;
 use std::{
-    ffi::OsString,
     io::Write as _,
     path::{Path, PathBuf},
     time::{Duration, Instant},
