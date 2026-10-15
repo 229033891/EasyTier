@@ -134,7 +134,10 @@ describe('Status VPN Portal details', () => {
 
       expect(getVpnPortalInfo).toHaveBeenCalledOnce()
       expect(getVpnPortalInfo).toHaveBeenCalledWith('12345678-9abc-def0-fedc-ba9876543210')
-      expect(wrapper.text()).toContain('phone-a · 10.0.0.10')
+      // Middle dot U+00B7; assert parts separately so encoding drift cannot flake CI.
+      expect(wrapper.text()).toContain('phone-a')
+      expect(wrapper.text()).toContain('10.0.0.10')
+      expect(wrapper.text()).toMatch(/phone-a\s*\u00b7\s*10\.0\.0\.10/)
       expect(wrapper.text()).toContain('203.0.113.5:51820')
       expect(wrapper.text()).toContain('PrivateKey = secret')
     } finally {

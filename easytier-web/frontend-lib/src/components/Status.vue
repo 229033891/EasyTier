@@ -50,7 +50,7 @@ const peerRouteInfos = computed(() => {
   return []
 })
 
-/** peer_id ÃÂ¢ÃÂÃÂ ÃÂ¥ÃÂ¸ÃÂ¦ÃÂ§ÃÂÃÂ´ÃÂ¨ÃÂ¿ÃÂÃÂ©ÃÂÃÂ§ÃÂ©ÃÂÃÂÃÂ§ÃÂÃÂ PeerInfoÃÂ¯ÃÂ¼ÃÂÃÂ¤ÃÂ¾ÃÂÃÂ¤ÃÂ¸ÃÂ­ÃÂ¨ÃÂ½ÃÂ¬ÃÂ¤ÃÂ¸ÃÂÃÂ¤ÃÂ¸ÃÂÃÂ¨ÃÂ·ÃÂ³ÃÂ¦ÃÂÃÂ¥ÃÂ©ÃÂÃÂ§ÃÂ©ÃÂÃÂÃÂ¥ÃÂÃÂ°ÃÂ¥ÃÂÃÂ */
+/** peer_id → 带直连隧道的 PeerInfo，供中转下一跳查隧道地址 */
 const peersById = computed(() => {
   const map = new Map<number, PeerInfo>()
   for (const pair of props.curNetworkInst?.detail?.peer_route_pairs || []) {
@@ -61,7 +61,7 @@ const peersById = computed(() => {
   return map
 })
 
-/** peer_id ÃÂ¢ÃÂÃÂ ÃÂ¤ÃÂ¸ÃÂ»ÃÂ¦ÃÂÃÂºÃÂ¥ÃÂÃÂ/ÃÂ¨ÃÂÃÂÃÂ¦ÃÂÃÂ IPÃÂ¯ÃÂ¼ÃÂÃÂ¤ÃÂ¾ÃÂÃÂ¤ÃÂ¸ÃÂ­ÃÂ¨ÃÂ½ÃÂ¬ÃÂ¨ÃÂ·ÃÂ¯ÃÂ¥ÃÂ¾ÃÂÃÂ¥ÃÂ±ÃÂÃÂ§ÃÂ¤ÃÂº */
+/** peer_id → 主机名/虚拟 IP，供中转路径展示 */
 const peersMetaById = computed(() => {
   const map = new Map<number, RoutePeerLabel>()
   for (const pair of props.curNetworkInst?.detail?.peer_route_pairs || []) {
@@ -97,7 +97,7 @@ const peerConnRows = computed(() => flattenPeerConnRows(peerRouteInfos.value as 
 function rowLatency(row: PeerConnTableRow) {
   if (row.conn)
     return connLatencyMs(row.conn)
-  // ÃÂ¤ÃÂ¸ÃÂ­ÃÂ¨ÃÂ½ÃÂ¬ÃÂ¦ÃÂÃÂ ÃÂ§ÃÂÃÂ´ÃÂ¨ÃÂ¿ÃÂÃÂ¯ÃÂ¼ÃÂÃÂ¥ÃÂÃÂÃÂ©ÃÂÃÂÃÂ¥ÃÂÃÂ°ÃÂ¨ÃÂ·ÃÂ¯ÃÂ§ÃÂÃÂ±ÃÂ¦ÃÂ±ÃÂÃÂ¦ÃÂÃÂ»ÃÂ¥ÃÂ»ÃÂ¶ÃÂ¨ÃÂ¿ÃÂ
+  // 中转无直连：回退到路由汇总延迟
   return latencyMs(row.pair)
 }
 
@@ -289,7 +289,7 @@ interface ChipGroup {
   chips: InfoChip[]
 }
 
-/** ÃÂ¦ÃÂÃÂÃÂ§ÃÂ±ÃÂ»ÃÂ¥ÃÂÃÂÃÂ¥ÃÂÃÂÃÂ¥ÃÂÃÂºÃÂ¯ÃÂ¼ÃÂÃÂ©ÃÂ¡ÃÂºÃÂ¥ÃÂºÃÂÃÂ¯ÃÂ¼ÃÂPeer ID ÃÂ¢ÃÂÃÂ ÃÂ¢ÃÂÃÂ¦ ÃÂ¢ÃÂÃÂ Listener */
+/** 按类型分区；顺序：Peer ID → … → Listener */
 const myNodeInfoGroups = computed(() => {
   const groups: ChipGroup[] = []
   if (!props.curNetworkInst)
@@ -316,12 +316,12 @@ const myNodeInfoGroups = computed(() => {
     })
   }
 
-  // Prefer the L2 / platform sync summary over a separate Route chip list ÃÂ¢ÃÂÃÂ
+  // Prefer the L2 / platform sync summary over a separate Route chip list —
   // both surfaces show the same installed CIDRs; keep one canonical view.
-  // ÃÂ¥ÃÂÃÂªÃÂ¨ÃÂ¦ÃÂÃÂ¥ÃÂ­ÃÂÃÂ¦ÃÂ®ÃÂµÃÂ¦ÃÂÃÂÃÂ¥ÃÂÃÂ¼ÃÂ¥ÃÂ°ÃÂ±ÃÂ¥ÃÂ±ÃÂÃÂ§ÃÂ¤ÃÂºÃÂ¯ÃÂ¼ÃÂÃÂ¥ÃÂÃÂªÃÂ¦ÃÂÃÂÃÂ§ÃÂ©ÃÂºÃÂ¦ÃÂÃÂÃÂ¨ÃÂ¦ÃÂ desired=[-] installed=[-] exit=...ÃÂ¯ÃÂ¼ÃÂÃÂ¯ÃÂ¼ÃÂ
-  // ÃÂ§ÃÂ©ÃÂºÃÂ¦ÃÂÃÂÃÂ¨ÃÂ¦ÃÂÃÂ¤ÃÂ¸ÃÂÃÂ¦ÃÂÃÂ¯"ÃÂ¦ÃÂ²ÃÂ¡ÃÂ¦ÃÂÃÂ°ÃÂ¦ÃÂÃÂ®"ÃÂ¯ÃÂ¼ÃÂÃÂ¨ÃÂÃÂÃÂ¦ÃÂÃÂ¯"ÃÂ§ÃÂ¡ÃÂ®ÃÂ¥ÃÂ®ÃÂÃÂ¤ÃÂ¸ÃÂÃÂ¦ÃÂÃÂ¡ÃÂ¤ÃÂ»ÃÂ£ÃÂ§ÃÂÃÂÃÂ¨ÃÂ·ÃÂ¯ÃÂ§ÃÂÃÂ±ÃÂ©ÃÂÃÂ½ÃÂ¦ÃÂ²ÃÂ¡ÃÂ¨ÃÂ£ÃÂ"ÃÂ¯ÃÂ¼ÃÂÃÂ¨ÃÂ®ÃÂ©ÃÂ§ÃÂÃÂ¨ÃÂ¦ÃÂÃÂ·ÃÂ¤ÃÂ¸ÃÂÃÂ§ÃÂÃÂ¼ÃÂ§ÃÂ¡ÃÂ®ÃÂ¨ÃÂ®ÃÂ¤ÃÂ£ÃÂÃÂ
-  // ÃÂ¦ÃÂ³ÃÂ¨ÃÂ¦ÃÂÃÂÃÂ¦ÃÂÃÂ¥ÃÂ¦ÃÂºÃÂÃÂ¥ÃÂÃÂ ÃÂ¥ÃÂ¹ÃÂ³ÃÂ¥ÃÂÃÂ°ÃÂ¨ÃÂÃÂÃÂ¥ÃÂ¼ÃÂÃÂ¯ÃÂ¼ÃÂÃÂ¦ÃÂ¡ÃÂÃÂ©ÃÂÃÂ¢ÃÂ¦ÃÂÃÂ¯ L2 ÃÂ¨ÃÂ·ÃÂ¯ÃÂ§ÃÂÃÂ±ÃÂ¥ÃÂÃÂÃÂ¦ÃÂ­ÃÂ¥ÃÂ¯ÃÂ¼ÃÂAndroid/OHOS ÃÂ§ÃÂÃÂ± VpnService / ÃÂ¥ÃÂÃÂÃÂ¦ÃÂ ÃÂ¸ÃÂ¦ÃÂ¡ÃÂ¥
-  // ÃÂ¨ÃÂ¦ÃÂÃÂ§ÃÂÃÂÃÂ¥ÃÂÃÂÃÂ¥ÃÂÃÂ¥ÃÂ¯ÃÂ¼ÃÂL2 ifcfg ÃÂ¥ÃÂÃÂ¨ÃÂ©ÃÂÃÂ£ÃÂ¨ÃÂ¾ÃÂ¹ÃÂ¦ÃÂÃÂ¯ no-opÃÂ¯ÃÂ¼ÃÂÃÂ¯ÃÂ¼ÃÂÃÂ¦ÃÂÃÂÃÂ¤ÃÂ»ÃÂ¥ÃÂ©ÃÂÃÂ£ÃÂ¨ÃÂ¾ÃÂ¹ÃÂ§ÃÂÃÂÃÂ§ÃÂ©ÃÂºÃÂ¦ÃÂÃÂÃÂ¨ÃÂ¦ÃÂÃÂ§ÃÂ­ÃÂÃÂ¤ÃÂ»ÃÂ·ÃÂ¤ÃÂºÃÂ"VPN ÃÂ¦ÃÂ²ÃÂ¡ÃÂ¨ÃÂ£ÃÂÃÂ¤ÃÂ»ÃÂ»ÃÂ¤ÃÂ½ÃÂÃÂ¨ÃÂ·ÃÂ¯ÃÂ§ÃÂÃÂ±"ÃÂ£ÃÂÃÂ
+  // 只要字段有值就展示（哪怕空摘要 desired=[-] installed=[-] exit=...）：
+  // 空摘要不是"没数据"，而是"确实一条代理路由都没装"，让用户一眼确认。
+  // 注意来源因平台而异：桌面是 L2 路由同步；Android/OHOS 由 VpnService / 内核桥
+  // 覆盖写入（L2 ifcfg 在那边是 no-op），所以那边的空摘要等价于"VPN 没装任何路由"。
   const routeSync = props.curNetworkInst.detail?.proxy_cidr_route_sync?.trim()
   if (routeSync) {
     groups.push({
@@ -364,7 +364,7 @@ const myNodeInfoGroups = computed(() => {
   }
 
   const publicChips: InfoChip[] = []
-  // ÃÂ¥ÃÂÃÂ¬ÃÂ§ÃÂ½ÃÂ IP ÃÂ©ÃÂÃÂÃÂ¥ÃÂ¸ÃÂ¦ÃÂ¤ÃÂ¾ÃÂ¦ÃÂ¥ÃÂÃÂ¬ÃÂ§ÃÂ«ÃÂ¯ÃÂ¥ÃÂÃÂ£ÃÂ¯ÃÂ¼ÃÂÃÂ¤ÃÂ¾ÃÂ¿ÃÂ¤ÃÂºÃÂÃÂ§ÃÂÃÂ´ÃÂ¦ÃÂÃÂ¥ÃÂ¤ÃÂ½ÃÂÃÂ¤ÃÂ¸ÃÂºÃÂ¥ÃÂ¯ÃÂ¹ÃÂ§ÃÂ«ÃÂ¯ÃÂ¦ÃÂÃÂ¥ÃÂ¥ÃÂÃÂ¥ÃÂ¥ÃÂÃÂ°ÃÂ¥ÃÂÃÂÃÂ¤ÃÂ½ÃÂ¿ÃÂ§ÃÂÃÂ¨ÃÂ¯ÃÂ¼ÃÂÃÂ¤ÃÂ¼ÃÂÃÂ¥ÃÂÃÂÃÂ¥ÃÂÃÂ UDP ÃÂ¤ÃÂ¾ÃÂ¦ÃÂ¥ÃÂÃÂ¬ÃÂ§ÃÂ«ÃÂ¯ÃÂ¥ÃÂÃÂ£
+  // 公网 IP 附带侦听端口，便于直接作为对端接入地址使用；优先取 UDP 侦听端口
   const listenerUrls = my_node_info.listeners ?? []
   const publicPort = (() => {
     const pick = listenerUrls.find(l => l.url?.startsWith('udp:')) ?? listenerUrls[0]
@@ -446,7 +446,7 @@ let prevRxSum: number | undefined
 const txRate = ref('0 B')
 const rxRate = ref('0 B')
 
-/** ÃÂ¥ÃÂÃÂ¯ÃÂ¦ÃÂÃÂÃÂ¥ÃÂÃÂ  PanelÃÂ¯ÃÂ¼ÃÂÃÂ¨ÃÂÃÂÃÂ§ÃÂÃÂ¹ÃÂ©ÃÂ»ÃÂÃÂ¨ÃÂ®ÃÂ¤ÃÂ¥ÃÂ±ÃÂÃÂ¥ÃÂ¼ÃÂÃÂ¯ÃÂ¼ÃÂÃÂ¤ÃÂ»ÃÂÃÂ¥ÃÂÃÂ¾ÃÂ¨ÃÂ¡ÃÂ¨ÃÂ¯ÃÂ¼ÃÂÃÂ¯ÃÂ¼ÃÂÃÂ¨ÃÂ¯ÃÂ¦ÃÂ¦ÃÂÃÂ/ÃÂ¥ÃÂÃÂÃÂ¥ÃÂÃÂ²/Peer/VPN/ÃÂ¤ÃÂºÃÂÃÂ¤ÃÂ»ÃÂ¶ÃÂ©ÃÂ»ÃÂÃÂ¨ÃÂ®ÃÂ¤ÃÂ¦ÃÂÃÂ¶ÃÂ¨ÃÂµÃÂ· */
+/** 可折叠 Panel：节点默认展开（仅图表）；详情/历史/Peer/VPN/事件默认收起 */
 const panelCollapsed = reactive({
   myNode: false,
   nodeDetails: true,
@@ -456,7 +456,7 @@ const panelCollapsed = reactive({
   eventLog: true,
 })
 
-/** ÃÂ¨ÃÂÃÂÃÂ§ÃÂÃÂ¹ÃÂ¨ÃÂ¯ÃÂ¦ÃÂ¦ÃÂÃÂÃÂ¤ÃÂ¸ÃÂÃÂ¥ÃÂÃÂÃÂ¥ÃÂÃÂÃÂ§ÃÂ»ÃÂÃÂ¦ÃÂÃÂÃÂ¥ÃÂÃÂ ÃÂ¯ÃÂ¼ÃÂÃÂ¦ÃÂÃÂÃÂ¦ÃÂÃÂÃÂ¦ÃÂÃÂ¡ÃÂ§ÃÂÃÂ®ÃÂ¤ÃÂ¸ÃÂÃÂ¦ÃÂ¬ÃÂ¡ÃÂ©ÃÂÃÂºÃÂ¥ÃÂ¼ÃÂÃÂ¯ÃÂ¼ÃÂÃÂ©ÃÂÃÂ¿ÃÂ¥ÃÂÃÂÃÂ¥ÃÂ®ÃÂ¹ÃÂ¥ÃÂÃÂÃÂ¨ÃÂ®ÃÂ¸ÃÂ¦ÃÂÃÂ¢ÃÂ¨ÃÂ¡ÃÂÃÂ¯ÃÂ¼ÃÂÃÂ©ÃÂÃÂ¿ÃÂ¥ÃÂÃÂÃÂ¦ÃÂÃÂÃÂ¥ÃÂÃÂºÃÂ¦ÃÂ¨ÃÂªÃÂ¥ÃÂÃÂÃÂ¦ÃÂ»ÃÂÃÂ¥ÃÂÃÂ¨ÃÂ¦ÃÂÃÂ¡ÃÂ£ÃÂÃÂ */
+/** 节点详情不再分组折叠：所有条目一次铺开，长内容允许换行，避免撑出横向滚动条。 */
 
 async function copyGroupChips(group: { titleKey: string; chips: InfoChip[] }) {
   const text = group.chips.map(c => c.label).join('\n')
@@ -547,7 +547,7 @@ async function loadVpnPortalConfig() {
   vpnPortalLoading.value = true
   try {
     const info = await props.api.get_vpn_portal_info(instanceId)
-    // ÃÂ¥ÃÂ®ÃÂÃÂ¤ÃÂ¾ÃÂÃÂ¥ÃÂÃÂÃÂ¦ÃÂÃÂ¢ÃÂ¥ÃÂÃÂÃÂ¯ÃÂ¼ÃÂÃÂ¦ÃÂÃÂ§ÃÂ¨ÃÂ¯ÃÂ·ÃÂ¦ÃÂ±ÃÂÃÂ¤ÃÂ¸ÃÂÃÂ¨ÃÂÃÂ½ÃÂ¨ÃÂ¦ÃÂÃÂ§ÃÂÃÂÃÂ¥ÃÂ½ÃÂÃÂ¥ÃÂÃÂÃÂ¥ÃÂ®ÃÂÃÂ¤ÃÂ¾ÃÂÃÂ§ÃÂÃÂÃÂ§ÃÂÃÂ¶ÃÂ¦ÃÂÃÂÃÂ£ÃÂÃÂ
+    // 实例切换后，旧请求不能覆盖当前实例的状态。
     if (loadToken === vpnPortalLoadToken && props.curNetworkInst?.instance_id === instanceId) {
       vpnPortalInfo.value = info
     }
@@ -615,7 +615,7 @@ const eventLogContent = computed(() => {
     try {
       items.push(JSON.parse(event))
     } catch {
-      // ÃÂ¥ÃÂÃÂÃÂ¦ÃÂÃÂ¡ÃÂ¦ÃÂÃÂÃÂ¥ÃÂÃÂÃÂ¦ÃÂÃÂ¶ÃÂ¨ÃÂ·ÃÂ³ÃÂ¨ÃÂ¿ÃÂÃÂ¯ÃÂ¼ÃÂÃÂ©ÃÂÃÂ¿ÃÂ¥ÃÂÃÂÃÂ¦ÃÂÃÂ´ÃÂ©ÃÂ¡ÃÂµÃÂ§ÃÂÃÂ½ÃÂ¥ÃÂ±ÃÂ
+      // 单条损坏时跳过，避免整页白屏
     }
   }
   return items
@@ -646,24 +646,19 @@ const eventLogContent = computed(() => {
           </div>
         </Panel>
 
-        <!-- ÃÂ¨ÃÂÃÂÃÂ§ÃÂÃÂ¹ÃÂ¨ÃÂ¯ÃÂ¦ÃÂ¦ÃÂÃÂÃÂ¯ÃÂ¼ÃÂÃÂ¤ÃÂ¸ÃÂÃÂ£ÃÂÃÂÃÂ¨ÃÂÃÂÃÂ§ÃÂÃÂ¹ÃÂ¤ÃÂ¿ÃÂ¡ÃÂ¦ÃÂÃÂ¯ÃÂ£ÃÂÃÂÃÂ¥ÃÂÃÂÃÂ§ÃÂºÃÂ§ÃÂ§ÃÂÃÂÃÂ¤ÃÂ¸ÃÂÃÂ§ÃÂºÃÂ§ÃÂ©ÃÂÃÂ¢ÃÂ¦ÃÂÃÂ¿ÃÂ¯ÃÂ¼ÃÂÃÂ¤ÃÂ¸ÃÂÃÂ¥ÃÂÃÂÃÂ¥ÃÂµÃÂÃÂ¥ÃÂÃÂ¨ÃÂ£ÃÂÃÂÃÂ¥ÃÂ½ÃÂÃÂ¥ÃÂÃÂÃÂ¨ÃÂÃÂÃÂ§ÃÂÃÂ¹ÃÂ¤ÃÂ¿ÃÂ¡ÃÂ¦ÃÂÃÂ¯ÃÂ£ÃÂÃÂÃÂ¥ÃÂÃÂ -->
+        <!-- 节点详情：与「节点信息」同级的一级面板，不再嵌在「当前节点信息」内 -->
         <Panel v-if="myNodeInfo" v-model:collapsed="panelCollapsed.nodeDetails" :header="t('node_info_details')"
           class="status-panel"
           :class="{ 'status-panel--expanded': !panelCollapsed.nodeDetails }"
           toggleable :pt="panelHeaderPt('nodeDetails')">
           <div class="node-detail-groups status-panel-body">
             <div v-for="group in myNodeInfoGroups" :key="group.key" class="node-info-group">
-              <div class="node-info-group-header">
-                <span class="node-info-group-title">
-                  {{ t(group.titleKey) }}
-                  <span v-if="group.chips.length > 1" class="node-info-group-count">
-                    ({{ group.chips.length }})
-                  </span>
+              <span class="node-info-group-title">
+                {{ t(group.titleKey) }}
+                <span v-if="group.chips.length > 1" class="node-info-group-count">
+                  ({{ group.chips.length }})
                 </span>
-                <Button v-if="group.chips.length" size="small" severity="secondary" text rounded icon="pi pi-copy"
-                  class="et-icon-action-btn node-info-group-copy" :aria-label="t('node_info_copy_group')"
-                  v-tooltip.top="t('node_info_copy_group')" @click="copyGroupChips(group)" />
-              </div>
+              </span>
               <div class="node-info-group-chips">
                 <span
                   v-for="(chip, i) in group.chips"
@@ -671,6 +666,9 @@ const eventLogContent = computed(() => {
                   class="node-info-chip"
                 >{{ chip.label }}</span>
               </div>
+              <Button v-if="group.chips.length" size="small" severity="secondary" text rounded icon="pi pi-copy"
+                class="et-icon-action-btn node-info-group-copy" :aria-label="t('node_info_copy_group')"
+                v-tooltip.top="t('node_info_copy_group')" @click="copyGroupChips(group)" />
             </div>
           </div>
         </Panel>
@@ -825,7 +823,7 @@ const eventLogContent = computed(() => {
 
               <div v-for="client in vpnPortalClients" :key="client.name" class="status-subcard">
                 <div class="mb-2 flex flex-wrap items-center justify-between gap-2">
-                  <div class="status-subcard-title">{{ client.name }} ÃÂÃÂ· {{ client.virtual_ip }}</div>
+                  <div class="status-subcard-title">{{ client.name }} · {{ client.virtual_ip }}</div>
                   <Tag :severity="vpnPortalStateSeverity(client.state)" :value="t(vpnPortalStateKey(client.state))" />
                 </div>
                 <div class="status-meta-grid mb-2">
@@ -872,14 +870,14 @@ const eventLogContent = computed(() => {
                 <HumanEvent :event="item.event" />
               </li>
             </ul>
-            <div v-else class="status-empty">ÃÂ¢ÃÂÃÂ</div>
+            <div v-else class="status-empty">—</div>
           </div>
         </Panel>
   </div>
 </template>
 
 <style lang="postcss" scoped>
-/* ÃÂ©ÃÂÃÂ¢ÃÂ¦ÃÂÃÂ¿ÃÂ¥ÃÂÃÂÃÂ¨ÃÂ¡ÃÂ¨ÃÂ¯ÃÂ¼ÃÂÃÂ¦ÃÂÃÂ´ÃÂ¤ÃÂ½ÃÂÃÂ¦ÃÂÃÂ¶ÃÂ§ÃÂ´ÃÂ§ÃÂ©ÃÂÃÂ¢ÃÂ¦ÃÂÃÂ¿ÃÂ©ÃÂÃÂ´ÃÂ¨ÃÂ·ÃÂÃÂ¯ÃÂ¼ÃÂÃÂ¦ÃÂ¡ÃÂÃÂ©ÃÂÃÂ¢ÃÂ§ÃÂ«ÃÂ¯ÃÂ¥ÃÂÃÂ ÃÂ¦ÃÂ»ÃÂ¡ÃÂ§ÃÂÃÂ¶ÃÂ§ÃÂºÃÂ§ÃÂ¤ÃÂ»ÃÂ¥ÃÂ¤ÃÂ¾ÃÂ¿ÃÂ¥ÃÂ±ÃÂÃÂ¥ÃÂ¼ÃÂÃÂ©ÃÂ¡ÃÂ¹ÃÂ¥ÃÂÃÂÃÂ¥ÃÂÃÂ©ÃÂ¤ÃÂ½ÃÂÃÂ©ÃÂ«ÃÂÃÂ¥ÃÂºÃÂ¦ */
+/* 面板列表：整体收紧面板间距；桌面端占满父级以便展开项吃剩余高度 */
 .status-panels {
   gap: 0.5rem;
   flex: 1 1 auto;
@@ -899,7 +897,7 @@ const eventLogContent = computed(() => {
   min-height: 0;
 }
 
-/* ÃÂ©ÃÂÃÂ¢ÃÂ¦ÃÂÃÂ¿ÃÂ¦ÃÂ ÃÂÃÂ©ÃÂ¢ÃÂÃÂ¦ÃÂ ÃÂÃÂ¯ÃÂ¼ÃÂÃÂ¦ÃÂµÃÂÃÂ¥ÃÂºÃÂÃÂ¨ÃÂÃÂ²ÃÂ¥ÃÂÃÂºÃÂ¥ÃÂÃÂÃÂ¦ÃÂ ÃÂÃÂ©ÃÂ¢ÃÂÃÂ¤ÃÂ¸ÃÂÃÂ¥ÃÂÃÂÃÂ¥ÃÂ®ÃÂ¹ÃÂ¯ÃÂ¼ÃÂÃÂ¦ÃÂ ÃÂÃÂ©ÃÂ¢ÃÂÃÂ§ÃÂÃÂ¥ÃÂ¥ÃÂ¤ÃÂ§ÃÂ¤ÃÂºÃÂÃÂ¦ÃÂ­ÃÂ£ÃÂ¦ÃÂÃÂÃÂ£ÃÂÃÂÃÂ¨ÃÂ¿ÃÂÃÂ©ÃÂ»ÃÂ */
+/* 面板标题栏：浅底色区分标题与内容；标题略大于正文、近黑 */
 .status-panels :deep(.p-panel .p-panel-header) {
   padding: 0.4rem 0.75rem !important;
   min-height: 2.125rem !important;
@@ -932,7 +930,7 @@ const eventLogContent = computed(() => {
   color: var(--text-color, #0f172a);
 }
 
-/* ÃÂ¦ÃÂ¡ÃÂÃÂ©ÃÂÃÂ¢ÃÂ¯ÃÂ¼ÃÂÃÂ¥ÃÂ±ÃÂÃÂ¥ÃÂ¼ÃÂÃÂ§ÃÂÃÂÃÂ©ÃÂÃÂ¢ÃÂ¦ÃÂÃÂ¿ÃÂ¥ÃÂÃÂÃÂ¦ÃÂÃÂÃÂ¥ÃÂÃÂ©ÃÂ¤ÃÂ½ÃÂÃÂ©ÃÂ«ÃÂÃÂ¥ÃÂºÃÂ¦ÃÂ¯ÃÂ¼ÃÂÃÂ¥ÃÂÃÂÃÂ¥ÃÂ®ÃÂ¹ÃÂ¥ÃÂÃÂºÃÂ¥ÃÂÃÂÃÂ¦ÃÂ»ÃÂÃÂ¥ÃÂÃÂ¨ */
+/* 桌面：展开的面板吃掉剩余高度，内容区内滚动 */
 @media (min-width: 641px) {
   .status-panels :deep(.p-panel.status-panel--expanded) {
     flex: 1 1 0;
@@ -986,12 +984,12 @@ const eventLogContent = computed(() => {
   }
 }
 
-/* ÃÂ¨ÃÂÃÂÃÂ§ÃÂÃÂ¹ÃÂ¨ÃÂ¯ÃÂ¦ÃÂ¦ÃÂÃÂÃÂ¥ÃÂÃÂÃÂ§ÃÂ»ÃÂÃÂ¯ÃÂ¼ÃÂÃÂ¨ÃÂ¡ÃÂÃÂ©ÃÂ«ÃÂÃÂ©ÃÂÃÂ chip ÃÂ¥ÃÂÃÂÃÂ¥ÃÂ®ÃÂ¹ÃÂ¨ÃÂÃÂªÃÂ©ÃÂÃÂÃÂ¥ÃÂºÃÂÃÂ¯ÃÂ¼ÃÂ1 ÃÂ¨ÃÂ¡ÃÂÃÂ¦ÃÂÃÂÃÂ¥ÃÂ¤ÃÂÃÂ¨ÃÂ¡ÃÂÃÂ¯ÃÂ¼ÃÂ
+/* 节点详情分组：行高随 chip 内容自适应（1 行或多行）
  *
- * ÃÂ¨ÃÂ¿ÃÂÃÂ©ÃÂÃÂÃÂ¦ÃÂÃÂ¯ÃÂ£ÃÂÃÂÃÂ¥ÃÂ­ÃÂÃÂ¦ÃÂ®ÃÂµÃÂ¥ÃÂÃÂÃÂ§ÃÂ»ÃÂÃÂ£ÃÂÃÂÃÂ¨ÃÂÃÂÃÂ©ÃÂÃÂ peer ÃÂ¨ÃÂÃÂÃÂ§ÃÂÃÂ¹ÃÂ¯ÃÂ¼ÃÂÃÂ¤ÃÂ¸ÃÂÃÂ¤ÃÂ¸ÃÂª group ÃÂ¦ÃÂÃÂ¯ÃÂ¤ÃÂ¸ÃÂÃÂ§ÃÂ±ÃÂ»ÃÂ¥ÃÂ­ÃÂÃÂ¦ÃÂ®ÃÂµÃÂ¯ÃÂ¼ÃÂÃÂ¨ÃÂÃÂÃÂ¦ÃÂÃÂ IPÃÂ£ÃÂÃÂÃÂ¦ÃÂÃÂ¬ÃÂ¦ÃÂÃÂº IPÃÂ£ÃÂÃÂ
- * ÃÂ§ÃÂÃÂÃÂ¥ÃÂÃÂ¬ÃÂ¥ÃÂÃÂ¨ÃÂ¢ÃÂÃÂ¦ÃÂ¯ÃÂ¼ÃÂÃÂ¯ÃÂ¼ÃÂÃÂ§ÃÂ»ÃÂÃÂ¥ÃÂÃÂ chip ÃÂ¦ÃÂÃÂ¯ÃÂ¨ÃÂ¯ÃÂ¥ÃÂ¥ÃÂ­ÃÂÃÂ¦ÃÂ®ÃÂµÃÂ§ÃÂÃÂÃÂ¥ÃÂ¤ÃÂÃÂ¤ÃÂ¸ÃÂªÃÂ¥ÃÂÃÂÃÂ¥ÃÂÃÂ¼ÃÂ£ÃÂÃÂÃÂ¥ÃÂÃÂÃÂ§ÃÂ»ÃÂÃÂ¥ÃÂÃÂ¡ÃÂ§ÃÂÃÂÃÂ¦ÃÂ ÃÂ·ÃÂ¥ÃÂ¼ÃÂÃÂ¤ÃÂ¸ÃÂ peer ÃÂ¨ÃÂ¡ÃÂ¨ÃÂ§ÃÂÃÂ
- * ÃÂ¨ÃÂÃÂÃÂ§ÃÂÃÂ¹/ÃÂ©ÃÂÃÂ§ÃÂ©ÃÂÃÂÃÂ¥ÃÂ®ÃÂÃÂ§ÃÂºÃÂ¿-ÃÂ¨ÃÂÃÂÃÂ§ÃÂºÃÂ¿ÃÂ¥ÃÂÃÂÃÂ©ÃÂÃÂÃÂ¯ÃÂ¼ÃÂ.peer-border-peer / .peer-border-intraÃÂ¯ÃÂ¼ÃÂÃÂ¦ÃÂÃÂ ÃÂ¥ÃÂÃÂ³ÃÂ¯ÃÂ¼ÃÂ
- * ÃÂ¤ÃÂ¸ÃÂÃÂ¨ÃÂ¦ÃÂÃÂ¦ÃÂ·ÃÂ·ÃÂ§ÃÂÃÂ¨ÃÂ¥ÃÂÃÂÃÂ¤ÃÂ¸ÃÂÃÂ¥ÃÂ¥ÃÂÃÂ£ÃÂÃÂÃÂ¨ÃÂÃÂÃÂ§ÃÂÃÂ¹ÃÂ£ÃÂÃÂÃÂ¨ÃÂ¯ÃÂÃÂ¦ÃÂÃÂ¯ÃÂ£ÃÂÃÂ */
+ * 这里是「字段分组」而非 peer 节点：一个 group 是一类字段（虚拟 IP、本机 IP、
+ * 监听器…），组内 chip 是该字段的多个取值。分组卡片样式与 peer 表的
+ * 节点/隧道实线-虚线分隔（.peer-border-peer / .peer-border-intra）无关，
+ * 不要混用同一套「节点」话术。 */
 .node-detail-groups {
   display: flex;
   flex-direction: column;
@@ -1004,31 +1002,26 @@ const eventLogContent = computed(() => {
 }
 
 .node-info-group {
-  display: flex;
-  flex-direction: column;
-  gap: 0.35rem;
+  display: grid;
+  grid-template-columns: 6.5rem minmax(0, 1fr) auto;
+  align-items: start;
+  column-gap: 0.5rem;
+  row-gap: 0.35rem;
   border: 1px solid var(--et-border-color, #e2e8f0);
   border-radius: calc(var(--et-radius, 0.75rem) - 0.25rem);
   background: var(--surface-50, #f8fafc);
   padding: 0.35rem 0.5rem 0.4rem;
-  /* Never shrink inside the flex column - Android Chrome/WebView otherwise
+  /* Never shrink inside the flex column — Android Chrome/WebView otherwise
      crushes rows so chips and copy buttons overlap. */
   height: auto;
   min-height: auto;
   flex: 0 0 auto;
 }
 
-/* Label + copy on one row; chips stay in the content area below. */
-.node-info-group-header {
-  display: flex;
-  align-items: center;
-  gap: 0.25rem;
-  min-width: 0;
-}
-
 .node-info-group-title {
+  grid-column: 1;
   min-width: 0;
-  flex: 1 1 auto;
+  padding-top: 0.15rem;
   font-size: var(--et-fs-meta, 0.8125rem);
   font-weight: 600;
   letter-spacing: 0.02em;
@@ -1044,6 +1037,7 @@ const eventLogContent = computed(() => {
 }
 
 .node-info-group-chips {
+  grid-column: 2;
   min-width: 0;
   display: flex;
   flex-wrap: wrap;
@@ -1054,13 +1048,13 @@ const eventLogContent = computed(() => {
 }
 
 .node-info-group-copy {
-  flex: 0 0 auto;
-  margin-left: auto;
+  grid-column: 3;
+  align-self: start;
 }
 
 /*
- * Label secondary, values body color (fallback keeps Android WebView readable).
- * No flex-shrink so single-line chips are not crushed to 0; long chips wrap.
+ * 标签用次要色、数值用正文色（回退色保证 Android WebView 可见）。
+ * 禁止 flex-shrink，避免单行被压成 0 宽；过长 chip 可在容器内断行。
  */
 .node-info-chip {
   display: inline-block;
@@ -1206,16 +1200,29 @@ const eventLogContent = computed(() => {
   }
 
   .node-info-group {
+    /* Narrow: title + copy on row 1, chips full-width on row 2. */
+    grid-template-columns: minmax(0, 1fr) auto;
     padding: 0.45rem 0.55rem;
   }
 
   .node-info-group-title {
+    grid-column: 1;
+    padding-top: 0;
     font-size: var(--et-fs-meta, 0.8125rem);
     text-transform: none;
     letter-spacing: 0;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+
+  .node-info-group-copy {
+    grid-column: 2;
+  }
+
+  .node-info-group-chips {
+    grid-column: 1 / -1;
+    width: 100%;
   }
 }
 
@@ -1260,7 +1267,7 @@ const eventLogContent = computed(() => {
   }
 }
 
-/* ÃÂ¨ÃÂÃÂÃÂ§ÃÂÃÂ¹ÃÂ¤ÃÂ¿ÃÂ¡ÃÂ¦ÃÂÃÂ¯ÃÂ¨ÃÂ¡ÃÂ¨ÃÂ¦ÃÂ ÃÂ¼ÃÂ¯ÃÂ¼ÃÂÃÂ¨ÃÂ¡ÃÂÃÂ©ÃÂ«ÃÂÃÂ§ÃÂ´ÃÂ§ÃÂ¥ÃÂÃÂÃÂ¯ÃÂ¼ÃÂÃÂ¥ÃÂ­ÃÂÃÂ¥ÃÂÃÂ·ÃÂ¤ÃÂ¸ÃÂÃÂ©ÃÂÃÂ¢ÃÂ¦ÃÂÃÂ¿ÃÂ¦ÃÂ­ÃÂ£ÃÂ¦ÃÂÃÂÃÂ¤ÃÂ¸ÃÂÃÂ¨ÃÂÃÂ´ */
+/* 节点信息表格：行高紧凑，字号与面板正文一致 */
 .status-panels :deep(.p-datatable .p-datatable-thead > tr > th) {
   padding: 0.4rem 0.6rem !important;
   font-size: var(--et-fs-meta, 0.8125rem);
@@ -1300,7 +1307,7 @@ const eventLogContent = computed(() => {
 .peer-table-scroll :deep(.p-datatable-tbody > tr:hover > td) {
   background: color-mix(in srgb, var(--text-color, #0f172a) 6%, var(--surface-ground, #ffffff));
 }
-/* Active send path (default_conn): emphasize the whole row instead of ÃÂ¢ÃÂÃÂ. */
+/* Active send path (default_conn): emphasize the whole row instead of ★. */
 .peer-table-scroll :deep(.p-datatable-tbody > tr.peer-row-default > td) {
   font-weight: 600;
 }
