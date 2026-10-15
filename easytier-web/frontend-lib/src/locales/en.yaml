@@ -597,10 +597,10 @@ policy_routes_quality_degraded_cost_help: |-
 policy_routes_target_required: Set at least one of CIDR / domains.
 
 dns:
-  title: DNS Policy
+  title: Domain Policy
   hosts:
     title: Static Hosts
-    magic_dns_off_hint: DNS policy is stored in this network config. Enable Magic DNS for MagicDNS wiring to take effect.
+    magic_dns_off_hint: Domain policy is stored in this network config. Enable Magic DNS for MagicDNS wiring to take effect.
     editor_help: "Highest priority. Static entries are authoritative on MagicDNS and override route hostnames. Use *.suffix (syntax: leftmost single-label * only, parent needs at least two labels so *.com is rejected; matching is RFC 4592 multi-label, e.g. *.corp.example → foo.corp.example and a.b.corp.example). Unmatched names fall through to split DNS / upstream DNS."
     name: Hostname
     name_placeholder: "e.g. app.internal. or *.corp.example"

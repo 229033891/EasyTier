@@ -459,7 +459,7 @@ function syncNormalizedNetwork(network: NetworkConfig | undefined): void {
   }
 
   Object.assign(network, normalizeNetworkConfig(network))
-  // DNS 策略编辑器常显，进入配置页就补一个空 dns_config，省掉「+配置策略」这一步。
+  // 域名策略编辑器常显，进入配置页就补一个空 dns_config，省掉「+配置策略」这一步。
   ensureDnsConfig()
   // 策略路由编辑器同理：常显，先补空数组。
   ensurePolicyRoutes()

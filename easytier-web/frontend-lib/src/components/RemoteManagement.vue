@@ -2325,6 +2325,8 @@ onUnmounted(() => {
 :deep(.network-source-tag--icon-only.p-tag) {
     padding: 0.25rem !important;
     gap: 0;
+    background: transparent !important;
+    background-color: transparent !important;
 }
 
 :deep(.network-source-tag--icon-only.p-tag .p-tag-label) {
@@ -2341,18 +2343,28 @@ onUnmounted(() => {
     color: #475569 !important;
 }
 
-/* Soft status chips (overlay / non-filled); match source soft-chip language. */
+/* Icon-only ownership: keep severity tint on the glyph, no soft chip fill. */
+:deep(.network-source-tag--icon-only.p-tag-info),
+:deep(.network-source-tag--icon-only.p-tag-secondary),
+:deep(.network-source-tag--icon-only.p-tag-warn) {
+    background: transparent !important;
+    background-color: transparent !important;
+}
+
+/* Run status text: tinted label only, no soft chip fill (align with icon-only source). */
 :deep(.network-status-tag.p-tag-success),
 :deep(.p-select-overlay .network-status-tag.p-tag-success),
 :deep(.network-select-overlay .network-status-tag.p-tag-success) {
-    background: color-mix(in srgb, #10b981 16%, #ffffff) !important;
+    background: transparent !important;
+    background-color: transparent !important;
     color: #047857 !important;
 }
 
 :deep(.network-status-tag.p-tag-danger),
 :deep(.p-select-overlay .network-status-tag.p-tag-danger),
 :deep(.network-select-overlay .network-status-tag.p-tag-danger) {
-    background: color-mix(in srgb, #ef4444 16%, #ffffff) !important;
+    background: transparent !important;
+    background-color: transparent !important;
     color: #b91c1c !important;
 }
 
