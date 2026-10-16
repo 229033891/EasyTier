@@ -79,6 +79,7 @@ Agent / 人工均适用：**未完成 §1 不要提交**。
 - [ ] **Criterion bench group 名不要含 `/`**：Criterion 落盘会把 `/` 换成 `_`；`script/check_routing_bench.py` 按落盘路径读 `estimates.json`，group 用 `policy_route_empty` / `policy_route_{scale}`。
 - [ ] **routing 规模门禁比值用 1.50**：fixture 全是同前缀 `/24`，1K→10K 二分本身约 1.25–1.35×；CI 阈值勿再收紧到 1.20（会误杀）。线性扫描约 10×，1.50 仍挡得住。
 - [ ] **桌面专用 Tauri 权限勿进共用 capability**：`autostart:*` 等仅 desktop 依赖提供的权限，必须写在带 `platforms: [macOS, windows, linux]` 的 capability；写进 Android 也会加载的 `migrated.json` 会在 ET Android `tauri build` 报 `Permission … not found`。
+- [ ] **proto 注释勿让续行以 `+`/`-`/`*` 开头**：prost 会把字段注释编成 `///`；Markdown 把行首 `+` 当成列表，后续未缩进行触发 clippy `doc_lazy_continuation`（`-D warnings` 直接挂）。改写成逗号并列，或续行缩进两空格。
 
 ---
 
@@ -105,6 +106,22 @@ Agent / 人工均适用：**未完成 §1 不要提交**。
 ---
 
 ## 5. 失败记录（新 → 旧）
+
+### 2026-10-16 — Check clippy：`doc_lazy_continuation`（proto 生成注释）
+
+| 项 | 内容 |
+|----|------|
+| 仓库/分支 | `229033891/EasyTier` `dev` |
+| Run | ET Test → Check clippy |
+| 失败 job | Check clippy |
+| 根因一类 | clippy |
+| 状态 | 已修复（`api_manage.proto` `desired_proxy_cidrs` 注释去掉行首 `+`） |
+
+**摘要**：`desired_proxy_cidrs` 多行注释第二行以 `+ manual_routes…` 开头；prost 生成 `/// + …` 后被当成 Markdown 列表，后续续行触发 `clippy::doc_lazy_continuation`（5 处），`easytier-proto` 编译失败。
+
+**防再犯**：见 §3「proto 注释勿让续行以 `+`/`-`/`*` 开头」。
+
+**修复说明**：改为逗号并列写法（`peer routes, policy local_routes, …`），本地 `cargo clippy -p easytier-proto -- -D warnings` 通过。
 
 ### 2026-10-15 — ET Android：`autostart:default` permission not found
 

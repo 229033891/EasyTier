@@ -193,10 +193,9 @@ pub(crate) fn resolve_proxy_cidrs(
     // mode only — a reachable `exit_nodes`) installs the TUN default.
     let exit_declares_default = config.has_exit_nodes && !manual_override;
     let local_rule_declares_default = config.local_routes.contains(&default);
-    let install_local_default = (exit_declares_default
-        || local_rule_declares_default
-        || manual_declares_default)
-        && !config.no_tun;
+    let install_local_default =
+        (exit_declares_default || local_rule_declares_default || manual_declares_default)
+            && !config.no_tun;
 
     // The escape hatch keeps the *peer-advertised* `/0`, which lives in the
     // learned set — override mode deliberately drops it.
@@ -760,10 +759,7 @@ mod tests {
                 ..Default::default()
             },
         );
-        assert_eq!(
-            resolved,
-            cidrs(&["0.0.0.0/0", "192.0.2.0/24"])
-        );
+        assert_eq!(resolved, cidrs(&["0.0.0.0/0", "192.0.2.0/24"]));
     }
 
     /// `no_tun` wins over the local `/0` declaration in both modes.

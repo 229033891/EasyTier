@@ -379,7 +379,8 @@ impl MagicDnsServerInstanceData {
                             .as_ref()
                             .map(|prev_client| prev_client.as_str() != client_key.as_str())
                             .unwrap_or(false);
-                        if cross_client && (prev.ips != entry.ips || prev.ttl_secs != entry.ttl_secs)
+                        if cross_client
+                            && (prev.ips != entry.ips || prev.ttl_secs != entry.ttl_secs)
                         {
                             tracing::warn!(
                                 name = %entry.name,

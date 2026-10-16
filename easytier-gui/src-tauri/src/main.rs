@@ -9,8 +9,7 @@ fn main() -> std::process::ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     if !args.is_empty() && !args.iter().all(|a| is_gui_only_arg(a)) {
         app_lib::run_cli()
-    }
-    else {
+    } else {
         app_lib::run_gui()
     }
 }

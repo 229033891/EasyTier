@@ -282,8 +282,7 @@ where
         // this, the instance selector / NetworkList keep showing the old name
         // while the config form (storage-first) already shows the new one —
         // same storage-first policy as `handle_get_network_config_with_source`.
-        let requested: std::collections::HashSet<uuid::Uuid> =
-            inst_ids.iter().copied().collect();
+        let requested: std::collections::HashSet<uuid::Uuid> = inst_ids.iter().copied().collect();
         if let Ok(configs) = self
             .get_storage()
             .list_network_configs(identify.clone(), ListNetworkProps::All)

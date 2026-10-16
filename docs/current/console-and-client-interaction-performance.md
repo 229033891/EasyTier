@@ -6,7 +6,7 @@
 - 最近审阅：2026-10-16（指针：Roadmap 阶段 G S10–S13 代码已合入、**待现网验收**后才改写本文正文；F1/F2/F4/F12 表格行已加「→ 已改 Ns，待验收」内联标注；2026-10-15 首版审查结论仍有效）
 - 范围：**控制台 / 客户端 UI 的交互延迟**（不含数据面转发性能）
 - 覆盖：ET Web 控制台（`easytier-web` + 前端）、桌面 / 安卓 GUI（`easytier-gui`）、节点侧管理 RPC（`easytier-core`）
-- OpenWrt LuCI 另见：[`../../luci-app-easytier/docs/web-console-performance-audit.md`](../../luci-app-easytier/docs/web-console-performance-audit.md)
+- OpenWrt LuCI 另见：[`../../luci-app-easytier/docs/web-console-performance-audit.md`](../../luci-app-easytier/docs/web-console-performance-audit.md)（该文 P1–P3 已于 2026-10-16 修复，待真机复测）
 - 相关：[`peer-connections.md`](./peer-connections.md)、[`p2p-direct-stability-audit.md`](./p2p-direct-stability-audit.md)、[`../roadmap/client-web-console-interaction.md`](../roadmap/client-web-console-interaction.md)（§9 S1–S9；阶段 G S10–S13）
 - 索引：[`../README.md`](../README.md)
 

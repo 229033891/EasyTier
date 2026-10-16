@@ -257,18 +257,18 @@ impl Server {
             if split.domains.is_empty() || split.servers.is_empty() {
                 continue;
             }
-            let forward_config =
-                match build_forward_config_from_servers(&split.servers, &excluded) {
-                    Ok(fc) => fc,
-                    Err(e) => {
-                        tracing::warn!(
-                            servers = ?split.servers,
-                            error = %e,
-                            "skipping split forwarder with no usable servers"
-                        );
-                        continue;
-                    }
-                };
+            let forward_config = match build_forward_config_from_servers(&split.servers, &excluded)
+            {
+                Ok(fc) => fc,
+                Err(e) => {
+                    tracing::warn!(
+                        servers = ?split.servers,
+                        error = %e,
+                        "skipping split forwarder with no usable servers"
+                    );
+                    continue;
+                }
+            };
             for domain in &split.domains {
                 let zone = match normalize_forward_zone(domain) {
                     Ok(z) => z,
@@ -441,8 +441,7 @@ impl Server {
             if split.domains.is_empty() || split.servers.is_empty() {
                 continue;
             }
-            let forward_config = match build_forward_config_from_servers(&split.servers, excluded)
-            {
+            let forward_config = match build_forward_config_from_servers(&split.servers, excluded) {
                 Ok(fc) => fc,
                 Err(e) => {
                     tracing::warn!(

@@ -1042,10 +1042,12 @@ async fn test_reload_hosts_to_split_takes_over_zone() {
     .unwrap();
 
     check_dns_record(&fake_ip, "corp.example", "10.9.9.1").await;
-    assert!(dns_server_inst
-        .data
-        .applied_static_zones_for_test()
-        .contains("corp.example."));
+    assert!(
+        dns_server_inst
+            .data
+            .applied_static_zones_for_test()
+            .contains("corp.example.")
+    );
 
     dns_server_inst
         .data
@@ -1107,10 +1109,12 @@ async fn test_reload_wildcard_hosts_split_still_wins() {
     .await
     .unwrap();
 
-    assert!(dns_server_inst
-        .data
-        .catalog_split_zones()
-        .contains("corp.example."));
+    assert!(
+        dns_server_inst
+            .data
+            .catalog_split_zones()
+            .contains("corp.example.")
+    );
 
     // Hot-reload: add conflicting wildcard hosts; Split must still win.
     dns_server_inst
