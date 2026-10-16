@@ -2,10 +2,7 @@
 
 use easytier_proto::api::manage::NetworkConfig;
 
-use super::{
-    api_input::NetworkConfigExt,
-    toml::TomlConfig,
-};
+use super::{api_input::NetworkConfigExt, toml::TomlConfig};
 
 /// Project a live `TomlConfig` into the management `NetworkConfig` schema.
 ///
@@ -28,7 +25,7 @@ mod tests {
     use super::*;
     use crate::config::{
         api_input::NetworkConfigExt,
-        toml::{ManagedCredentialConfig, TomlConfig},
+        toml::{ConfigLoader as _, ManagedCredentialConfig, TomlConfig},
     };
     use crate::peers::route::local_route_table::PolicyRouteConfig;
 
@@ -99,9 +96,6 @@ mod tests {
         let via_ext = NetworkConfig::new_from_config(&config).unwrap();
         assert_eq!(projected.policy_routes, via_ext.policy_routes);
         assert_eq!(projected.has_policy_routes, via_ext.has_policy_routes);
-        assert_eq!(
-            projected.manual_routes_append,
-            via_ext.manual_routes_append
-        );
+        assert_eq!(projected.manual_routes_append, via_ext.manual_routes_append);
     }
 }
