@@ -208,6 +208,11 @@ impl LocalRouteTable {
     }
 
     /// `true` when any rule carries domains (so MagicDNS observation is useful).
+    ///
+    /// Only the `proxy-packet` MagicDNS observe path calls this (skip parsing
+    /// when there is nothing to learn). Gate with the same feature so default
+    /// `easytier-core` builds do not treat it as dead_code under `-D warnings`.
+    #[cfg(feature = "proxy-packet")]
     pub fn has_domain_rules(&self) -> bool {
         self.snapshot
             .load()
