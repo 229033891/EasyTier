@@ -3,9 +3,9 @@
 ## Status
 
 - Status: **Roadmap**
-- 最近审阅：2026-10-12（P0 A–D + P1 已落地；§9 S1–S9 代码已落地，待现网观察；功能 P2 / 可选项另议）
+- 最近审阅：2026-10-16（阶段 G S10–S12 代码已落地，待现网验收；P0 A–D + P1 + §9 S1–S9 仍待现网观察）
 - 归属：[`web-evolution.md`](./web-evolution.md) 阶段 B（控制台体验 / REST）+ 客户端连接可靠性
-- 相关 Current：[`../current/desktop-gui-and-config-server.md`](../current/desktop-gui-and-config-server.md)、[`../current/web-managed-config.md`](../current/web-managed-config.md)
+- 相关 Current：[`../current/desktop-gui-and-config-server.md`](../current/desktop-gui-and-config-server.md)、[`../current/web-managed-config.md`](../current/web-managed-config.md)、[`../current/console-and-client-interaction-performance.md`](../current/console-and-client-interaction-performance.md)
 - 相关运维诊断：[`web-console-runtime-diagnostics.md`](./web-console-runtime-diagnostics.md)（控制台侧预定 vs 实际；**不替代**本文客户端交互项）
 - 索引：[`../README.md`](../README.md)
 
@@ -47,7 +47,7 @@ Client (--config-server udp|tcp|ws://host:22020/<token>)
 | 心跳 | 间隔/超时可由服务端策略下发；客户端有钳制 | `HeartbeatPolicy`；`web_client` heartbeat 任务 |
 | 控制台启动网络 | `overwrite: true`，配置来自 **SQLite** | `RemoteClientManager` 默认实现：`handle_update_network_state` / `handle_run_network_instance_with_source`；节点侧 `process_rpc::run_network_instance` |
 | 心跳自动补跑 | `overwrite: false`（已健康可跳过） | `runtime_revision` / reconcile |
-| 管理 RPC 超时 | 轻量查询 5000ms；写操作/大 payload 60000ms | 读路径仍用 `BaseController::default`（5s）；`client_manager/rpc_timeout.rs` 的 `slow_rpc_controller()`（60s）覆盖 `ClientManager` 慢 `handle_*`、reconcile 的 `run_network_instance` / `patch_config` / `delete_network_instance`、proxy-rpc（`restful/rpc.rs`） |
+| 管理 RPC 超时 | 轻量查询 5000ms；**collect 读路径 15000ms（S11）**；写操作 60000ms | `rpc_timeout.rs`：fast 5s / probe 15s（`collect_network_info` + soft-start 健康探针）/ slow 60s（run/delete/patch 等）；proxy-rpc 同分级（`restful/rpc.rs`） |
 | 断开会话 | 断开即停掉该机器**全部**存活会话（含 NAT 换端口后残留的旧 URL 隧道） | `ClientManager::disconnect_session_by_machine_id`；REST `DELETE /api/.../session/{user}/{machine}` |
 
 说明：服务端默认双听已缓解**新装** scheme 不匹配；客户端另有 `udp↔tcp` 运行时降级。`ws`/`wss` 写错或双向都不通时仍会失败。
@@ -188,6 +188,13 @@ Client (--config-server udp|tcp|ws://host:22020/<token>)
 - [x] S8：`networkMetaCache` `onUnmounted` 显式清空（前端）。
 - [x] S9：注释澄清 idle tick 与 wait 路径不并行（GUI；无行为变更）。
 
+**阶段 G（隧道争用 / 轮询叠加，2026-10-16；依据 Reno 安卓 HAR + 性能审查 F1/F12）**
+
+- [x] S10：状态页 `CollectNetworkInfo` 单飞（`collectNetworkInfoSingleFlight` + generation 丢弃过期结果）；`NetworkList` VIP 用 `collectNetworkInfoSingleFlightForKeys(instIds)` 按实例 UUID 登记，与状态页共享 key（遇 in-flight 则本轮跳过）。**待现网验收**：安卓状态页同 URL pending ≤1。补测：单飞 coalesce / 批量登记 / 状态遇批量则等待后再取（`collect-network-info-single-flight.spec.ts`）+ RemoteManagement generation 丢过期（`remote-management-config.spec.ts` S10 用例）。
+- [x] S11：只读 `collect_network_info` 改用 `MANAGED_RPC_PROBE=15s`（移出 60s 慢路径；`rpc_timeout.rs` + `handle_collect_network_info`）。**待现网验收**：不可达约 ≤15s 失败；写操作仍 60s；**弱网但可达场景下 15s 不误报**（collect 正常 p50 ≈ 84ms，裕量大，仍列入验收观察项）。
+- [x] S12：`RemoteManagement` `STATUS_POLL_MS` 2s → 5s（与 Dashboard S5 对齐）。**待现网验收**：状态刷新体感可接受。
+- [x] S13：设备/网络**列表页**轮询 2s/3s → 5s（F2/性能文建议#9；`DeviceList`、`NetworkList` `usePollingList` interval、`DeviceManagement` `PeriodicTask`、`usePollingList` 默认值同步 2000→5000）。这是 1.har 中 53 分钟 178 对 `machines`+`devices`（每对约 8.9KB）的来源，属当前最大的重复交互。**待现网验收**：列表页刷新体感可接受。
+
 ---
 
 ## 6. 非目标
@@ -218,6 +225,7 @@ Client (--config-server udp|tcp|ws://host:22020/<token>)
 | 2026-10-10 | 审阅修复：unauthorized 映射；诊断/日志错误态；revision 探针 generation+unmount；connecting_detail 独立字段；admin logs token 脱敏；DeviceManagement `:key` |
 | 2026-10-10 | 复核修正（§5 精确化）：Start 确认经 footer 可达、`confirmRunNetwork` 死代码待决；P1-2 对话框就绪但控制台路由无冲突产生源；P1-1 补 null 基线跃迁剩余项；`connecting_detail` 为 proto 新增可选字段（`GetConfigServerStatusResponse` #4，前后兼容，不属必选协议变更） |
 | 2026-10-11 | 修复复核发现的三处问题：① webhook 建联漏写 `route_bind`，NAT 换端口后旧隧道被路由选中（补 `set_route_bind` + 回归测试）；② `disconnect_session_by_machine_id` 只停最高 epoch 会话，导致 `DELETE` 返回 204 但旧 URL 隧道残留、下次 RPC 回落旧隧道（改为停该机器全部存活会话，候选 URL 上绑定到其他机器的会话跳过）；③ reconcile 慢 RPC 改用 60s 慢控制器（`slow_rpc_controller`），文档 §2「管理 RPC 超时」行与 P1-4 退避描述同步（15s 稳定后计数清零） |
+| 2026-10-16 | 阶段 G（S10–S13）：状态页 collect 单飞、读超时 15s、状态轮询 5s、设备/网络列表页轮询 5s；见 §5 阶段 G；待现网验收 |
 
 ---
 
@@ -318,3 +326,4 @@ Client (--config-server udp|tcp|ws://host:22020/<token>)
 | 2026-10-12 | 文档纠偏：勿将 S1–S3 标成「功能 P1」而与「先做 S4/S5」矛盾；S3 不必然触发 S2；S2 范围为本机会话而非全部设备；S8 无 onUnmounted 清 cache；S9 idle 与 wait 路径不并行自增 |
 | 2026-10-12 | §9 S1–S9 代码落地（阶段 F 勾选） |
 | 2026-10-12 | 复核（S1–S9 落地后）：修 `runtime_revision.rs` 两处 UTF-8 注释损坏（`§8.1.4`→`?8.1.4`、`—` 破损 + 注释被挤成一行）；`lifecycle_tests.rs` 3 处 rustfmt DIFF 已格式化为 0 diff；S2 的 `should_delete − retained` 逻辑经 `remain_inst_ids` 服务端语义核实无误；S1 记录 storage 回填 vs 旧 RPC 优先的语义差异（按 storage 接受） |
+| 2026-10-16 | 阶段 G：S10 状态页 collect 单飞 + NetworkList 避让；S11 collect 读超时 60s→15s probe；S12 状态轮询 2s→5s；S13 列表页轮询 2s/3s→5s（F2）。依据 `temp/1.har`/`2.har`（Reno 安卓）。Current 性能文仅更新审阅指针，验收后再改 F12/F1/F2 正文 |

@@ -16,6 +16,11 @@ import * as Api from './modules/api';
 import * as Utils from './modules/utils';
 import * as DnsCoverage from './modules/dnsCoverage';
 import * as ConfigResidual from './modules/config-residual';
+import {
+    collectNetworkInfoSingleFlight,
+    collectNetworkInfoSingleFlightForKeys,
+    isAnyCollectNetworkInfoInFlight,
+} from './modules/collectNetworkInfoSingleFlight';
 import { TOAST_LIFE } from './modules/toast';
 import { normalizeLoggerLevel, loggerLevelToRpc } from './modules/logging';
 
@@ -68,6 +73,9 @@ export {
     Utils,
     DnsCoverage,
     ConfigResidual,
+    collectNetworkInfoSingleFlight,
+    collectNetworkInfoSingleFlightForKeys,
+    isAnyCollectNetworkInfoInFlight,
     TOAST_LIFE,
     normalizeLoggerLevel,
     loggerLevelToRpc,

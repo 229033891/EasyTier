@@ -17,6 +17,7 @@ import {
     type ResidualKind,
 } from '../modules/config-residual';
 import * as Utils from '../modules/utils';
+import { collectNetworkInfoSingleFlight } from '../modules/collectNetworkInfoSingleFlight';
 import * as NetworkTypes from '../types/network';
 import LoggingSettingsDialog from './LoggingSettingsDialog.vue';
 import type { LoggingSettingsApi } from '../modules/logging';
@@ -631,11 +632,13 @@ const saveConfigTooltip = computed(() =>
 
 const savingConfig = ref(false);
 
-/** Status CollectNetworkInfo cadence; ≠s leaves BidirectRpc room for config / heartbeat / history. */
-const STATUS_POLL_MS = 2000
-/** Config editor only needs occasional running/stopped tags; ~6s with STATUS_POLL_MS. */
+/** Status CollectNetworkInfo cadence; 5s leaves BidirectRpc room for config / heartbeat / history (S12). */
+const STATUS_POLL_MS = 5000
+/** Config editor only needs occasional running/stopped tags; ~15s with STATUS_POLL_MS. */
 const CONFIG_MODE_LIST_POLL_EVERY = 3
 let pollTick = 0
+/** Invalidate in-flight status collect apply on instance switch / unmount (S10). */
+let networkInfoLoadGeneration = 0
 
 const instanceList = ref<Array<{ uuid: string; meta?: Api.NetworkMeta }>>([]);
 let instanceListSignature = '';
@@ -744,6 +747,9 @@ const selectedNetworkStopped = computed(() => {
 
 watch(selectedInstanceId, async (newVal, oldVal) => {
     try {
+        if (newVal?.uuid !== oldVal?.uuid) {
+            ++networkInfoLoadGeneration
+        }
         const loads: Array<Promise<unknown>> = []
         if (newVal?.uuid !== oldVal?.uuid && (networkIsDisabled.value || isEditingNetwork.value || isConfigMode.value)) {
             loads.push(loadCurrentNetworkConfig())
@@ -1470,7 +1476,14 @@ const loadCurrentNetworkInfo = async () => {
         curNetworkInfo.value = null;
     }
 
-    let network_info = await props.api.get_network_info(selected);
+    // S10: coalesce watch + PeriodicTask + post-start refresh onto one CollectNetworkInfo.
+    const gen = networkInfoLoadGeneration;
+    const network_info = await collectNetworkInfoSingleFlight(selected, () =>
+        props.api.get_network_info(selected),
+    );
+    if (!managementAlive || gen !== networkInfoLoadGeneration) {
+        return;
+    }
     if (selectedInstanceId.value?.uuid !== selected) {
         return;
     }
@@ -1753,6 +1766,7 @@ onUnmounted(() => {
     managementAlive = false;
     window.removeEventListener('managed_config_synced_overwrite', onManagedConfigSyncedOverwrite);
     ++configLoadGeneration; // invalidate in-flight load/probe apply
+    ++networkInfoLoadGeneration; // discard late CollectNetworkInfo apply (S10)
     periodFunc.stop();
     networkMetaCache.value = {};
     networkMetaLoadFailed.value = {};

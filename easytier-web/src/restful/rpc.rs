@@ -246,7 +246,8 @@ pub fn router_internal() -> Router<super::AppStateInner> {
 mod tests {
     use super::proxy_rpc_mutates_runtime_config;
     use crate::client_manager::{
-        MANAGED_RPC_FAST_TIMEOUT_MS, MANAGED_RPC_SLOW_TIMEOUT_MS, proxy_rpc_timeout_ms,
+        MANAGED_RPC_FAST_TIMEOUT_MS, MANAGED_RPC_PROBE_TIMEOUT_MS, MANAGED_RPC_SLOW_TIMEOUT_MS,
+        proxy_rpc_timeout_ms,
     };
 
     #[test]
@@ -299,7 +300,7 @@ mod tests {
         );
         assert_eq!(
             proxy_rpc_timeout_ms("api.manage.WebClientService", "collect_network_info"),
-            MANAGED_RPC_SLOW_TIMEOUT_MS
+            MANAGED_RPC_PROBE_TIMEOUT_MS
         );
         assert_eq!(
             proxy_rpc_timeout_ms("api.config.ConfigRpcService", "PatchConfig"),

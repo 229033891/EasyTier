@@ -1,12 +1,13 @@
 //! Graded RPC timeouts for console → node management calls.
 //!
-//! Default `BaseController` is 5s, which is too short for run/delete/patch/collect.
-//! Keep status/meta at 5s; slow mutators and recollect at 60s.
+//! Default `BaseController` is 5s, which is too short for run/delete/patch.
+//! Keep list/status at 5s; read collect (CollectNetworkInfo) at probe 15s (S11);
+//! slow mutators at 60s.
 
 use easytier::proto::rpc_types::controller::{BaseController, Controller as _};
 
 pub(crate) const MANAGED_RPC_FAST_TIMEOUT_MS: i32 = 5_000;
-/// Soft-start / health probes: longer than list/status, shorter than full mutators.
+/// Soft-start / health probes / status collect: longer than list, shorter than mutators.
 pub(crate) const MANAGED_RPC_PROBE_TIMEOUT_MS: i32 = 15_000;
 pub(crate) const MANAGED_RPC_SLOW_TIMEOUT_MS: i32 = 60_000;
 
@@ -20,9 +21,14 @@ pub(crate) fn slow_rpc_controller() -> BaseController {
     rpc_controller(MANAGED_RPC_SLOW_TIMEOUT_MS)
 }
 
-/// Whether this proxy-rpc method should use the slow timeout.
+pub(crate) fn probe_rpc_controller() -> BaseController {
+    rpc_controller(MANAGED_RPC_PROBE_TIMEOUT_MS)
+}
+
+/// Whether this proxy-rpc method should use the slow (60s) timeout.
 ///
-/// Aligns with revision-fence mutators in `restful/rpc.rs`, plus recollect.
+/// Aligns with revision-fence mutators in `restful/rpc.rs`.
+/// Read-only `collect_network_info` uses probe timeout instead (S11 / F12).
 pub(crate) fn proxy_rpc_needs_slow_timeout(service_name: &str, method_name: &str) -> bool {
     matches!(
         (service_name, method_name),
@@ -34,8 +40,6 @@ pub(crate) fn proxy_rpc_needs_slow_timeout(service_name: &str, method_name: &str
                 | "RetainNetworkInstance"
                 | "delete_network_instance"
                 | "DeleteNetworkInstance"
-                | "collect_network_info"
-                | "CollectNetworkInfo"
         ) | (
             "api.config.ConfigRpcService",
             "patch_config" | "PatchConfig"
@@ -51,10 +55,22 @@ pub(crate) fn proxy_rpc_needs_slow_timeout(service_name: &str, method_name: &str
     )
 }
 
+fn proxy_rpc_needs_probe_timeout(service_name: &str, method_name: &str) -> bool {
+    matches!(
+        (service_name, method_name),
+        (
+            "api.manage.WebClientService",
+            "collect_network_info" | "CollectNetworkInfo"
+        )
+    )
+}
+
 /// Timeout for a proxy-rpc `(service, method)` pair.
 pub(crate) fn proxy_rpc_timeout_ms(service_name: &str, method_name: &str) -> i32 {
     if proxy_rpc_needs_slow_timeout(service_name, method_name) {
         MANAGED_RPC_SLOW_TIMEOUT_MS
+    } else if proxy_rpc_needs_probe_timeout(service_name, method_name) {
+        MANAGED_RPC_PROBE_TIMEOUT_MS
     } else {
         MANAGED_RPC_FAST_TIMEOUT_MS
     }
@@ -84,7 +100,11 @@ mod tests {
         );
         assert_eq!(
             proxy_rpc_timeout_ms("api.manage.WebClientService", "CollectNetworkInfo"),
-            MANAGED_RPC_SLOW_TIMEOUT_MS
+            MANAGED_RPC_PROBE_TIMEOUT_MS
+        );
+        assert_eq!(
+            proxy_rpc_timeout_ms("api.manage.WebClientService", "collect_network_info"),
+            MANAGED_RPC_PROBE_TIMEOUT_MS
         );
         assert_eq!(
             proxy_rpc_timeout_ms("api.manage.WebClientService", "list_network_instance"),
@@ -104,6 +124,10 @@ mod tests {
         }
         assert_eq!(
             rpc_controller(MANAGED_RPC_PROBE_TIMEOUT_MS).timeout_ms(),
+            MANAGED_RPC_PROBE_TIMEOUT_MS
+        );
+        assert_eq!(
+            probe_rpc_controller().timeout_ms(),
             MANAGED_RPC_PROBE_TIMEOUT_MS
         );
     }

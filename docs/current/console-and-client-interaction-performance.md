@@ -3,11 +3,11 @@
 ## Status
 
 - Status: **Current**
-- 最近审阅：2026-10-15（首版：Web 控制台 + 安卓/GUI 交互慢的根因核查；含 OpenWrt LuCI 交叉引用）
+- 最近审阅：2026-10-16（指针：Roadmap 阶段 G S10–S13 代码已合入、**待现网验收**后才改写本文正文；F1/F2/F4/F12 表格行已加「→ 已改 Ns，待验收」内联标注；2026-10-15 首版审查结论仍有效）
 - 范围：**控制台 / 客户端 UI 的交互延迟**（不含数据面转发性能）
 - 覆盖：ET Web 控制台（`easytier-web` + 前端）、桌面 / 安卓 GUI（`easytier-gui`）、节点侧管理 RPC（`easytier-core`）
 - OpenWrt LuCI 另见：[`../../luci-app-easytier/docs/web-console-performance-audit.md`](../../luci-app-easytier/docs/web-console-performance-audit.md)
-- 相关：[`peer-connections.md`](./peer-connections.md)、[`p2p-direct-stability-audit.md`](./p2p-direct-stability-audit.md)、[`../roadmap/client-web-console-interaction.md`](../roadmap/client-web-console-interaction.md)（§9 已落地的 S1–S9）
+- 相关：[`peer-connections.md`](./peer-connections.md)、[`p2p-direct-stability-audit.md`](./p2p-direct-stability-audit.md)、[`../roadmap/client-web-console-interaction.md`](../roadmap/client-web-console-interaction.md)（§9 S1–S9；阶段 G S10–S13）
 - 索引：[`../README.md`](../README.md)
 
 > 本文区分 **[已核实]**（逐行读过代码）与 **[审查报告]**（委托审查产出、带行号锚点，其中抽样复核过）。**未做真机 profiling 与抓包。**
@@ -259,17 +259,17 @@ for route in routes.iter() {
 
 | ID | 位置 | 周期 | 问题 | 状态 |
 |----|------|------|------|------|
-| **F1** | `RemoteManagement.vue:635` | **2 s** | 全量快照（§2） | [已核实] |
+| **F1** | `RemoteManagement.vue:635` | **2 s** | 全量快照（§2） | [已核实] → **S12 已改 5s，待验收** |
 | **F1b** | `remote_client.rs:122-143` | 随 F1 | **同一次 2 s 轮询里还有第二个重 RPC**：`list_network_instance_ids` 内含 **2 次 RPC**（`list_network_instance` + `list_network_configs(ListNetworkProps::All)`）**并逐行 clone 全部配置**（`manager.rs:464-492` 的 `entry.value().clone()`） | [审查报告] |
-| **F2** | `DeviceManagement.vue:105-117` | **3 s** | `loadMergedDevices` → `/machines` + `/devices` **两个全量列表**，仅为解析 1 个设备 | [已核实] |
+| **F2** | `DeviceManagement.vue:105-117` | **3 s** | `loadMergedDevices` → `/machines` + `/devices` **两个全量列表**，仅为解析 1 个设备 | [已核实] → **S13 已改 5s，待验收** |
 | **F3** | `network.rs:290-300` | 随 F2/F4 | `handle_list_machines` **N+1**：循环内 `get_heartbeat_requests().await` + `get_machine_location().await`，各取一次 `RwLock` | [已核实] |
-| **F4** | `DeviceList.vue:54-58`、`NetworkList.vue:346-350` | **2 s** | 每轮 `1×/machines + 1×/devices + 2×D 设备 RPC` | [已核实] |
+| **F4** | `DeviceList.vue:54-58`、`NetworkList.vue:346-350` | **2 s** | 每轮 `1×/machines + 1×/devices + 2×D 设备 RPC` | [已核实] → **S13 已改 5s，待验收** |
 | **F5** | `instance/manager.rs:754-765` | — | 实例循环串行 `.await` | [已核实] |
 | **F6** | `peer_manager.rs:1517-1544` | — | 每 peer 锁往返 | [已核实] |
 | **F7** | `restful/mod.rs:225-231` | 5 s | `/summary` 遍历全部机器 + 每机器一次 await（S5 只降了频率，未降 O(machines) 成本） | [审查报告] |
 | **F9** | `RuntimeLogs.vue:238-240` | **3 s** | 裸 `setInterval`，**无 `document.hidden` 守卫**（共享 helper 有守卫，唯独此处绕过）⇒ 后台标签页持续拉日志 | [审查报告] |
 | **F10** | `Status.vue:37-95`、`:691-781` | 随 F1 | 四个 computed 各自遍历 `peer_route_pairs`；`DataTable` **无 paginator / 无虚拟滚动**；另有一个 2 s 定时器算速率 | [审查报告] |
-| **F12** | `rpc_timeout.rs:11,37` | — | **只读**的 `collect_network_info` 被划到 **60 s** 超时；设备不可达时页面空转最长 60 s | [已核实] |
+| **F12** | `rpc_timeout.rs:11,37` | — | **只读**的 `collect_network_info` 被划到 **60 s** 超时；设备不可达时页面空转最长 60 s | [已核实] → **S11 已改 15s probe，待验收** |
 
 ### 3.1 两处自相矛盾/失效的配置 [已核实]
 

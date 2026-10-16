@@ -258,6 +258,12 @@ function setupState(wrapper: Awaited<ReturnType<typeof mountRemote>>) {
   return (wrapper.vm as unknown as { $: { setupState: Record<string, any> } }).$.setupState
 }
 
+/** Unwrap a ref-like setupState binding (existing spec precedent: networkConfigRef). */
+function refValue(state: Record<string, any>, key: string): unknown {
+  const v = state[key]
+  return v && typeof v === 'object' && 'value' in v ? v.value : v
+}
+
 function networkConfigRef(wrapper: Awaited<ReturnType<typeof mountRemote>>): NetworkConfig {
   const cfg = setupState(wrapper).currentNetworkConfig
   return (cfg && typeof cfg === 'object' && 'value' in cfg ? cfg.value : cfg) as NetworkConfig
@@ -589,6 +595,47 @@ describe('RemoteManagement delete authority', () => {
       retry.accept()
       await settleRemoteManagement()
       expect(api.delete_network).toHaveBeenCalledTimes(2)
+    } finally {
+      wrapper.unmount()
+    }
+  })
+
+  it('S10: stale status collect after instance switch is dropped by generation', async () => {
+    // Deferred per instance id: A hangs so its in-flight collect straddles the switch.
+    const gates = new Map<string, { resolve: (v: unknown) => void; promise: Promise<unknown> }>()
+    const gateFor = (id: string) => {
+      if (!gates.has(id)) {
+        let resolve!: (v: unknown) => void
+        const promise = new Promise((r) => { resolve = r })
+        gates.set(id, { resolve, promise })
+      }
+      return gates.get(id)!.promise
+    }
+
+    const api = makeApi({ config: makeFlagConfig(), disabled: false, running: true })
+    api.get_network_info.mockImplementation((id: string) => gateFor(id))
+
+    const wrapper = await mountRemote(api)
+    try {
+      const state = setupState(wrapper)
+      // Watch + period + mounted refresh coalesce onto one in-flight collect.
+      expect(api.get_network_info).toHaveBeenCalledTimes(1)
+
+      // Switch selection away: generation bumps; the new selection falls back to "none".
+      await wrapper.setProps({ instanceId: undefined })
+      await settleRemoteManagement()
+
+      // Late result for the old instance arrives — must NOT be applied to the page.
+      gates.get(INSTANCE_ID)!.resolve({ running: true, error_msg: '' })
+      await settleRemoteManagement()
+
+      expect(refValue(state, 'curNetworkInfo')).toBeNull()
+      // No new collect was spawned for the dropped selection either.
+      expect(api.get_network_info).toHaveBeenCalledTimes(1)
+
+      // Next flight after the drop is a fresh one (key free again).
+      await settleRemoteManagement()
+      expect(refValue(state, 'curNetworkInfo')).toBeNull()
     } finally {
       wrapper.unmount()
     }

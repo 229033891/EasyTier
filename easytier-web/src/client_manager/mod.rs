@@ -11,8 +11,8 @@ pub mod storage;
 #[cfg(test)]
 pub(crate) use rpc_timeout::MANAGED_RPC_SLOW_TIMEOUT_MS;
 pub(crate) use rpc_timeout::{
-    MANAGED_RPC_FAST_TIMEOUT_MS, MANAGED_RPC_PROBE_TIMEOUT_MS, proxy_rpc_timeout_ms,
-    rpc_controller, slow_rpc_controller,
+    MANAGED_RPC_FAST_TIMEOUT_MS, MANAGED_RPC_PROBE_TIMEOUT_MS, probe_rpc_controller,
+    proxy_rpc_timeout_ms, rpc_controller, slow_rpc_controller,
 };
 
 use std::time::Duration;
@@ -1079,7 +1079,7 @@ impl
         Ok(())
     }
 
-    /// Graded timeout: collect can exceed 5s when many instances are running.
+    /// Graded timeout: status collect uses probe (15s), not mutator 60s (S11 / F12).
     async fn handle_collect_network_info(
         &self,
         identify: (UserIdInDb, uuid::Uuid),
@@ -1090,7 +1090,7 @@ impl
             .ok_or(RemoteClientError::ClientNotFound)?;
         let resp = client
             .collect_network_info(
-                slow_rpc_controller(),
+                probe_rpc_controller(),
                 CollectNetworkInfoRequest {
                     inst_ids: inst_ids
                         .unwrap_or_default()
