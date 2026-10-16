@@ -572,12 +572,13 @@ policy_routes_cidr_help: |-
 policy_routes_domains: 目标域名
 policy_routes_domains_placeholder: 例如：*.atlassian.net
 policy_routes_domains_help: |-
-  本条规则匹配的域名，可填多个（回车或失焦添加芯片），最多 64 个。
+  本条规则匹配的域名，可填多个（回车、逗号或失焦添加芯片），最多 64 个。
   支持 *.parent.tld（最左单标签通配，父域至少两级）。依赖本机 MagicDNS 解析；可与「目标网段」同时填，也可只填其一。
 policy_routes_peers: 网关节点
 policy_routes_peers_placeholder: 例如：10.144.0.9
 policy_routes_peers_help: |-
   承接流量的对端虚拟 IPv4，可填多个候选（1–16 个），顺序即「按列表顺序」时的优先级。
+  输入一个 IP 后按回车提交为芯片；用逗号（,／，）分隔可一次填多个，失焦同样会提交。
   对端须开启「允许此节点成为出口节点」，否则流量会被丢弃。
 policy_routes_select_by: 选路方式
 policy_routes_select_by_help: |-

@@ -922,8 +922,8 @@ function removeVpnPortalClient(index: number) {
                   <AutoComplete id="relay_network_whitelist" v-model="curNetwork.relay_network_whitelist"
                     :placeholder="t('chips_placeholder', ['*'])" multiple fluid
                     :disabled="relayControlsDisabled" :typeahead="false"
-                    @keydown.capture="onChipsKeydown($event, curNetwork.relay_network_whitelist ??= [])"
-                    @focusout.capture="onChipsFocusOut($event, curNetwork.relay_network_whitelist ??= [])" />
+                    @keydown.capture="onChipsKeydown($event, curNetwork, 'relay_network_whitelist')"
+                    @focusout.capture="onChipsFocusOut($event, curNetwork, 'relay_network_whitelist')" />
                 </div>
 
                 <div class="config-inline-field">
@@ -1000,7 +1000,7 @@ function removeVpnPortalClient(index: number) {
                       <AutoComplete id="subnet-proxy" v-model="curNetwork.proxy_cidrs"
                         :placeholder="t('chips_placeholder_typeahead', ['10.0.0.0/24'])" multiple fluid
                         :suggestions="inetSuggestions" @complete="searchInetSuggestions"
-                        @keydown.capture="onChipsKeydown($event, curNetwork.proxy_cidrs ??= [], { typeahead: true })" />
+                        @keydown.capture="onChipsKeydown($event, curNetwork, 'proxy_cidrs', { typeahead: true })" />
                       <div class="config-nested-option flex items-center gap-2 flex-wrap">
                         <Checkbox v-model="curNetwork.proxy_forward_by_system"
                           input-id="proxy_forward_by_system" :binary="true" />
@@ -1049,7 +1049,7 @@ function removeVpnPortalClient(index: number) {
                             <AutoComplete id="exit_nodes" v-model="curNetwork.exit_nodes"
                               :placeholder="t('chips_placeholder_typeahead', ['192.168.8.8'])" multiple fluid
                               :suggestions="exitNodeSuggestions" @complete="searchExitNodeSuggestions"
-                              @keydown.capture="onChipsKeydown($event, curNetwork.exit_nodes ??= [], { typeahead: true })" />
+                              @keydown.capture="onChipsKeydown($event, curNetwork, 'exit_nodes', { typeahead: true })" />
                           </div>
                           <div class="config-exit-nodes-row__option config-nested-option flex items-center gap-2 flex-wrap">
                             <Checkbox v-model="curNetwork.allow_peer_default_without_exit"
@@ -1082,7 +1082,7 @@ function removeVpnPortalClient(index: number) {
                         <AutoComplete id="routes" v-model="curNetwork.routes"
                           :placeholder="t('chips_placeholder_typeahead', ['192.168.0.0/16'])" multiple fluid
                           :suggestions="inetSuggestions" @complete="searchInetSuggestions"
-                          @keydown.capture="onChipsKeydown($event, curNetwork.routes ??= [], { typeahead: true })" />
+                          @keydown.capture="onChipsKeydown($event, curNetwork, 'routes', { typeahead: true })" />
                         <div class="config-nested-option flex items-center gap-2 flex-wrap">
                           <ToggleSwitch v-model="curNetwork.manual_routes_append" input-id="manual_routes_append"
                             :aria-label="t('manual_routes_append')" />

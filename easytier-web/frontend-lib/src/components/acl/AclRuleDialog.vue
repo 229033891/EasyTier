@@ -118,15 +118,15 @@ function save() {
             <label class="acl-dlg-label">{{ t('acl.rule.src_ips') }}</label>
             <AutoComplete v-model="rule.source_ips" multiple fluid :typeahead="false"
               :placeholder="t('chips_placeholder', ['10.126.126.0/24'])"
-              @keydown.capture="onChipsKeydown($event, rule.source_ips ??= [])"
-              @focusout.capture="onChipsFocusOut($event, rule.source_ips ??= [])" />
+              @keydown.capture="onChipsKeydown($event, rule, 'source_ips')"
+              @focusout.capture="onChipsFocusOut($event, rule, 'source_ips')" />
           </div>
           <div class="flex flex-col gap-1.5">
             <label class="acl-dlg-label">{{ t('acl.rule.dst_ips') }}</label>
             <AutoComplete v-model="rule.destination_ips" multiple fluid :typeahead="false"
               :placeholder="t('chips_placeholder', ['10.126.126.2/32'])"
-              @keydown.capture="onChipsKeydown($event, rule.destination_ips ??= [])"
-              @focusout.capture="onChipsFocusOut($event, rule.destination_ips ??= [])" />
+              @keydown.capture="onChipsKeydown($event, rule, 'destination_ips')"
+              @focusout.capture="onChipsFocusOut($event, rule, 'destination_ips')" />
           </div>
 
           <div v-if="showPorts" class="flex flex-row gap-4 flex-wrap">
@@ -134,15 +134,15 @@ function save() {
               <label class="acl-dlg-label">{{ t('acl.rule.src_ports') }}</label>
               <AutoComplete v-model="rule.source_ports" multiple fluid :typeahead="false"
                 :placeholder="t('chips_placeholder', ['1000-2000'])"
-                @keydown.capture="onChipsKeydown($event, rule.source_ports ??= [])"
-                @focusout.capture="onChipsFocusOut($event, rule.source_ports ??= [])" />
+                @keydown.capture="onChipsKeydown($event, rule, 'source_ports')"
+                @focusout.capture="onChipsFocusOut($event, rule, 'source_ports')" />
             </div>
             <div class="flex flex-col gap-1.5 grow">
               <label class="acl-dlg-label">{{ t('acl.rule.dst_ports') }}</label>
               <AutoComplete v-model="rule.ports" multiple fluid :typeahead="false"
                 :placeholder="t('chips_placeholder', ['1000-2000'])"
-                @keydown.capture="onChipsKeydown($event, rule.ports ??= [])"
-                @focusout.capture="onChipsFocusOut($event, rule.ports ??= [])" />
+                @keydown.capture="onChipsKeydown($event, rule, 'ports')"
+                @focusout.capture="onChipsFocusOut($event, rule, 'ports')" />
             </div>
           </div>
         </div>

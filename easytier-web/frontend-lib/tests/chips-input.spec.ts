@@ -21,48 +21,59 @@ function makeInputEvent(
 }
 
 describe('chipsInput', () => {
-  it('commitChipTokens splits on comma and skips duplicates', () => {
+  it('commitChipTokens dedupe-append tokens and returns a NEW array', () => {
     const values = ['10.0.0.1']
-    expect(commitChipTokens(values, '10.0.0.2, 10.0.0.1，10.0.0.3')).toBe(true)
-    expect(values).toEqual(['10.0.0.1', '10.0.0.2', '10.0.0.3'])
+    const next = commitChipTokens(values, '10.0.0.2, 10.0.0.1，10.0.0.3')
+    expect(next).toEqual(['10.0.0.1', '10.0.0.2', '10.0.0.3'])
+    // Pure: the input array is untouched; callers assign the new array back.
+    expect(values).toEqual(['10.0.0.1'])
   })
 
-  it('onChipsKeydown commits on Enter and clears the input', () => {
-    const values: string[] = []
+  it('onChipsKeydown assigns a fresh array so PrimeVue modelValue watch fires', () => {
+    const initial = [] as string[]
+    const row = { peers: initial }
     const { event, input } = makeInputEvent('keydown', '10.1.2.3', 'Enter')
     const prevent = vi.spyOn(event, 'preventDefault')
-    onChipsKeydown(event as KeyboardEvent, values)
-    expect(values).toEqual(['10.1.2.3'])
+    onChipsKeydown(event as KeyboardEvent, row, 'peers')
+    expect(row.peers).toEqual(['10.1.2.3'])
+    // Reference MUST change: PrimeVue re-renders chips only on modelValue
+    // identity change (shallow watch), not on in-place splice.
+    expect(row.peers).not.toBe(initial)
     expect(input.value).toBe('')
     expect(prevent).toHaveBeenCalled()
   })
 
-  it('onChipsFocusOut commits pending typed text', () => {
-    const values: string[] = []
+  it('onChipsFocusOut assigns a fresh array on blur', () => {
+    const row = { peers: [] as string[] }
     const { event, input } = makeInputEvent('focusout', '8.8.8.8')
-    onChipsFocusOut(event as FocusEvent, values)
-    expect(values).toEqual(['8.8.8.8'])
+    onChipsFocusOut(event as FocusEvent, row, 'peers')
+    expect(row.peers).toEqual(['8.8.8.8'])
     expect(input.value).toBe('')
   })
 
-  it('onChipsFocusOut clears whitespace-only drafts', () => {
-    const values: string[] = []
+  it('onChipsFocusOut clears whitespace-only drafts without creating non-array chips', () => {
+    const row: Record<string, unknown> = { peers: [] as string[] }
     const { event, input } = makeInputEvent('focusout', '   ')
-    onChipsFocusOut(event as FocusEvent, values)
-    expect(values).toEqual([])
+    onChipsFocusOut(event as FocusEvent, row, 'peers')
+    expect(row.peers).toEqual([])
     expect(input.value).toBe('')
   })
 
   it('onChipsKeydown clears whitespace-only drafts on Enter', () => {
-    const values: string[] = []
+    const row: Record<string, unknown> = { peers: [] }
     const { event, input } = makeInputEvent('keydown', '  ', 'Enter')
-    onChipsKeydown(event as KeyboardEvent, values)
-    expect(values).toEqual([])
+    onChipsKeydown(event as KeyboardEvent, row, 'peers')
+    expect(row.peers).toEqual([])
     expect(input.value).toBe('')
+    expect(event.defaultPrevented).toBe(true)
   })
 
-  it('ignores undefined values arrays', () => {
-    const { event } = makeInputEvent('keydown', '1.1.1.1', 'Enter')
-    expect(() => onChipsKeydown(event as KeyboardEvent, undefined)).not.toThrow()
+  it('initializes missing backing arrays to a real Array (never undefined)', () => {
+    const row: Record<string, unknown> = {}
+    const { event, input } = makeInputEvent('focusout', '10.0.0.9')
+    onChipsFocusOut(event as FocusEvent, row, 'peers')
+    expect(Array.isArray(row.peers)).toBe(true)
+    expect(row.peers).toEqual(['10.0.0.9'])
+    expect(input.value).toBe('')
   })
 })

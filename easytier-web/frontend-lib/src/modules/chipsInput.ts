@@ -1,6 +1,13 @@
 /**
  * Commit free-typed tokens into a PrimeVue AutoComplete `multiple` model.
  * Used on Enter / comma (and blur) so drafts are not left only in the input DOM.
+ *
+ * IMPORTANT: PrimeVue 4 form components (BaseEditableHolder) snapshot the v-model
+ * into internal `d_value` data and only refresh it from a shallow
+ * `watch(modelValue)` — an in-place Array#splice never fires that watcher, so
+ * committed chips would silently never render (input cleared, no chip). The
+ * handlers below therefore always ASSIGN a fresh array back to row[prop],
+ * replacing the reference, which does fire the watcher and re-renders chips.
  */
 
 export type ChipsInputOptions = {
@@ -8,20 +15,22 @@ export type ChipsInputOptions = {
   typeahead?: boolean
 }
 
-export function commitChipTokens(values: string[], raw: string): boolean {
-  const next = [...values]
-  let changed = false
+/** Object + property path that backs one AutoComplete chips field. */
+export type ChipsRow = object
+
+/** Pure: dedupe-append tokens; returns a NEW array (callers must assign it back). */
+export function commitChipTokens(
+  values: readonly string[] | null | undefined,
+  raw: string,
+): string[] {
+  const next = [...(values ?? [])]
   for (const part of raw.split(/[,，]+/)) {
     const token = part.trim()
     if (token && !next.includes(token)) {
       next.push(token)
-      changed = true
     }
   }
-  if (changed) {
-    values.splice(0, values.length, ...next)
-  }
-  return changed
+  return next
 }
 
 function chipsInputFromEvent(event: Event): HTMLInputElement | null {
@@ -41,12 +50,29 @@ function clearChipsDraft(input: HTMLInputElement): void {
   input.dispatchEvent(new Event('input', { bubbles: true }))
 }
 
+/** Replace row[prop] with a fresh array so PrimeVue's shallow modelValue watch re-renders. */
+function commitDraftInto(row: ChipsRow, prop: string, draft: string): string[] {
+  const holder = row as Record<string, unknown>
+  const current = Array.isArray(holder[prop]) ? (holder[prop] as string[]) : []
+  const next = commitChipTokens(current, draft)
+  holder[prop] = next
+  return next
+}
+
+function ensureChipsArray(row: ChipsRow, prop: string): void {
+  const holder = row as Record<string, unknown>
+  if (!Array.isArray(holder[prop])) {
+    holder[prop] = []
+  }
+}
+
 export function onChipsKeydown(
   event: KeyboardEvent,
-  values: string[] | null | undefined,
+  row: ChipsRow,
+  prop: string,
   opts?: ChipsInputOptions,
 ): void {
-  if (!Array.isArray(values) || event.isComposing) {
+  if (row == null || event.isComposing) {
     return
   }
   const isEnter = event.key === 'Enter'
@@ -65,6 +91,10 @@ export function onChipsKeydown(
     return
   }
 
+  // Create the backing array first: reactors reading row[prop] (e.g. the
+  // AutoComplete model binding) must never see undefined mid-interaction.
+  ensureChipsArray(row, prop)
+
   const draft = input.value
   const raw = draft.trim()
   if (!raw) {
@@ -80,7 +110,7 @@ export function onChipsKeydown(
   event.preventDefault()
   event.stopImmediatePropagation()
 
-  commitChipTokens(values, raw)
+  commitDraftInto(row, prop, raw)
   clearChipsDraft(input)
 }
 
@@ -94,15 +124,17 @@ export function onChipsKeydown(
  */
 export function onChipsFocusOut(
   event: FocusEvent,
-  values: string[] | null | undefined,
+  row: ChipsRow,
+  prop: string,
 ): void {
-  if (!Array.isArray(values)) {
+  if (row == null) {
     return
   }
   const input = chipsInputFromEvent(event)
   if (!input) {
     return
   }
+  ensureChipsArray(row, prop)
   const draft = input.value
   const raw = draft.trim()
   if (!raw) {
@@ -112,6 +144,6 @@ export function onChipsFocusOut(
     }
     return
   }
-  commitChipTokens(values, raw)
+  commitDraftInto(row, prop, raw)
   clearChipsDraft(input)
 }

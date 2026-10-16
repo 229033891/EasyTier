@@ -158,8 +158,8 @@ const allUnavailableOptions = computed(() => [
               multiple
               fluid
               :typeahead="false"
-              @keydown.capture="onChipsKeydown($event, row.domains ??= [])"
-              @focusout.capture="onChipsFocusOut($event, row.domains ??= [])"
+              @keydown.capture="onChipsKeydown($event, row, 'domains')"
+              @focusout.capture="onChipsFocusOut($event, row, 'domains')"
             />
           </div>
         </div>
@@ -183,8 +183,8 @@ const allUnavailableOptions = computed(() => [
               multiple
               fluid
               :typeahead="false"
-              @keydown.capture="onChipsKeydown($event, row.peers ??= [])"
-              @focusout.capture="onChipsFocusOut($event, row.peers ??= [])"
+              @keydown.capture="onChipsKeydown($event, row, 'peers')"
+              @focusout.capture="onChipsFocusOut($event, row, 'peers')"
             />
           </div>
         </div>

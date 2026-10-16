@@ -573,12 +573,13 @@ policy_routes_cidr_help: |-
 policy_routes_domains: Target domains
 policy_routes_domains_placeholder: e.g. *.atlassian.net
 policy_routes_domains_help: |-
-  Domains this rule matches. Add multiple chips (Enter or blur), up to 64.
+  Domains this rule matches. Add multiple chips (Enter, comma, or blur), up to 64.
   Supports *.parent.tld (leftmost single-label wildcard; parent needs ≥2 labels). Relies on MagicDNS. May be set with CIDR or alone.
 policy_routes_peers: Gateway peers
 policy_routes_peers_placeholder: e.g. 10.144.0.9
 policy_routes_peers_help: |-
   Peer virtual IPv4 gateways (1–16). List order is preference when Selection is “In list order”.
+  Type one IP and press Enter to commit it as a chip; comma-separated values (or blur) also commit.
   Each peer must have Enable Exit Node on, or traffic is dropped.
 policy_routes_select_by: Selection
 policy_routes_select_by_help: |-

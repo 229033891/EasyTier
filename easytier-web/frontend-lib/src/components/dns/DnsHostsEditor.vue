@@ -131,8 +131,8 @@ function hasUsableHostIp(row: DnsHostEntry): boolean {
             multiple
             fluid
             :typeahead="false"
-            @keydown.capture="onChipsKeydown($event, row.ips ??= [])"
-            @focusout.capture="onChipsFocusOut($event, row.ips ??= [])"
+            @keydown.capture="onChipsKeydown($event, row, 'ips')"
+            @focusout.capture="onChipsFocusOut($event, row, 'ips')"
           />
         </div>
       </div>

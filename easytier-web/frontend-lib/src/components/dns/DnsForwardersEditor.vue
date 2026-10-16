@@ -94,8 +94,8 @@ function forwarderRowSkipped(row: DnsForwarder): boolean {
             multiple
             fluid
             :typeahead="false"
-            @keydown.capture="onChipsKeydown($event, row.domains ??= [])"
-            @focusout.capture="onChipsFocusOut($event, row.domains ??= [])"
+            @keydown.capture="onChipsKeydown($event, row, 'domains')"
+            @focusout.capture="onChipsFocusOut($event, row, 'domains')"
           />
           <Button
             icon="pi pi-trash"
@@ -130,8 +130,8 @@ function forwarderRowSkipped(row: DnsForwarder): boolean {
             multiple
             fluid
             :typeahead="false"
-            @keydown.capture="onChipsKeydown($event, row.servers ??= [])"
-            @focusout.capture="onChipsFocusOut($event, row.servers ??= [])"
+            @keydown.capture="onChipsKeydown($event, row, 'servers')"
+            @focusout.capture="onChipsFocusOut($event, row, 'servers')"
           />
         </div>
       </div>
