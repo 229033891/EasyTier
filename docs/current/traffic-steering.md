@@ -86,7 +86,7 @@ IPv6：VIP / 非 `/0` 的 proxy LPM → `exit_nodes`（同样要求下一跳）�
   - `manual_routes_append = false`（默认）：学习集合整表只剩手动列表，`exit_nodes` **不**自动装 `/0`；但 policy 规则里**显式**的 `cidr = "0.0.0.0/0"` **仍生效**
   - 逃生阀 `allow_peer_default_without_exit` 保留的是**对端通告**的 `/0`，属学习集合 → override 模式下仍被手动列表覆盖（append 模式下正常生效）
 - `enable_exit_node` **不**向全网通告 `/0`  
-- **宿主侧路由聚合所需的策略字段**：`NetworkInstanceRunningInfo.allow_peer_default_without_exit`（`optional bool`）与 `exit_nodes`（`repeated string`）由核心下发，供 Android JNI 等**自己装路由、读不到 core config** 的宿主使用。用 `optional` 而非裸 bool 是因为 proto3 标量无 presence，漏发与 `false` 不可区分（老核心不填时宿主保留上一次的值）。桌面路径不读这两个字段，只看 `resolve_proxy_cidrs`。
+- **宿主侧路由聚合所需的策略字段**：`NetworkInstanceRunningInfo.allow_peer_default_without_exit`（`optional bool`）与 `exit_nodes`（`repeated string`）由核心下发，供 Android JNI 等**自己装路由、读不到 core config** 的宿主使用。用 `optional` 而非裸 bool 是因为 proto3 标量无 presence，漏发与 `false` 不可区分（老核心不填时宿主保留上一次的值）。桌面路径不读这两个字段，只看 `resolve_proxy_cidrs`。另有 `desired_proxy_cidrs`（`repeated string` #16）：核心按需计算的 L2 期望集合（含 manual_routes / policy CIDR / 观测 `/32`），宿主原样安装、不再复刻语义；老核心不发，按 `allow` 存在位回退旧拼装。
 - 可观测：`NetworkInstanceRunningInfo.proxy_cidr_route_sync` 展示「期望 vs 已安装 vs 最后错误」摘要  
   - **状态页展示规则**（2026-10-08 起）：字段**有值就展示**，空占位（`desired=[-] installed=[-] exit=…`）也照显示——空摘要不是「没数据」，而是「确实一条代理路由都没装」，便于一眼确认。字段缺失（老核心）或全空白不显示。
   - **摘要来源因平台而异**，排障时必须先分清：桌面 = L2 路由同步（`easytier/src/instance/virtual_nic.rs::report_proxy_cidr_route_sync`）；Android = GUI `easytier-gui/src/composables/mobile_vpn.ts::annotateNetworkInfoWithMobileVpnRoutes` 按 VpnService 实装路由**覆盖写入**（那边 L2 ifcfg 是 no-op，空占位等价于「VPN 没装任何路由」）；OHOS = `easytier-contrib/easytier-ohrs/src/exports/runtime_api.rs::annotate_ohos_proxy_cidr_route_sync` 覆盖（`nearby_management.rs` 调用）。
@@ -98,7 +98,7 @@ IPv6：VIP / 非 `/0` 的 proxy LPM → `exit_nodes`（同样要求下一跳）�
 |------|-----------|----------------------|---------------------------------------------|
 | Windows / Linux / macOS（非 NE）/ FreeBSD | 本进程 `apply_route_changes`（`resolve_proxy_cidrs`） | **默认不装**；仅 `allow_peer_default_without_exit` 或本机 exit（且 `manual_routes` 非 override 模式）时进入期望集合 | ✅ 与 L3 同源快照 |
 | Android（GUI / Web） | `VpnService.Builder.addRoute`，由 GUI `getRoutesForVpn` 汇总 | 无**可达** exit 且未开逃生阀时**过滤**对端 `/0`；exit VIP 出现在路由表且有下一跳时显式加 `/0` | ❌ 只汇 peer `proxy_cidrs` + 配置 `routes` + exit `/0`，**不读** `l2_contributing_cidrs` |
-| Android（`easytier-android-jni`） | Kotlin 汇集 peer `proxy_cidrs` | 同上（逃生阀 / exit 可达性取自 `NetworkInstanceRunningInfo` 新增的 `allow_peer_default_without_exit` / `exit_nodes` 字段，每 3 秒轮询刷新）；**只汇 peer `proxy_cidrs` + `/0` + MagicDNS `/32`，不装 `routes` / `manual_routes`** | ❌ 同上 |
+| Android（`easytier-android-jni`） | 新 core 下发的 `desired_proxy_cidrs`（#16）原样安装；老 core 回退为 Kotlin 拼装 | 新 core：期望集合已做过滤（含 exit `/0` / 逃生阀 `/0` / 手写路由 / policy CIDR），每 3 秒刷新；老 core 同上行 | ✅ 新 core（含 policy CIDR / 观测 `/32`）；老 core ❌ |
 | OHOS | `aggregate_tun_routes` | 无可达 exit 且未开逃生阀时过滤对端 `/0`；可达时插入 `/0`（再 `simplify`） | ❌ 只汇虚拟网段 + `manual_routes` + peer `proxy_cidrs` + exit `/0` |
 | iOS / macOS NE | 宿主 App / NE `includedRoutes` | 本仓库无法约束 | ❌ 本仓库无法约束 |
 
@@ -178,7 +178,8 @@ if_all_unavailable = "open"       # open = 回退物理网关；closed = 丢包�
 | 平台 | 域名 / `policy_routes` 导流 | 原因 |
 |------|-----------------------------|------|
 | Windows / macOS（非 NE）/ Linux（systemd）/ OpenWrt（手工） | ✅ | 本进程 `resolve_proxy_cidrs` + MagicDNS 自动接线；观测 `/32` 进 OS |
-| Android（Tauri / JNI） | ⚠️ **仅全隧道近似** | L3 / MagicDNS（`fake_ip`）可运行，但 `getRoutesForVpn` **不装** policy CIDR / 观测 `/32`；无可达 exit（或未手写进 `routes`）时，域名目标**不会**进 VpnService。JNI 关 DNS 时还会回落运营商 DNS |
+| Android（Tauri） | ⚠️ **仅全隧道近似** | L3 / MagicDNS（`fake_ip`）可运行，但 `getRoutesForVpn` **不装** policy CIDR / 观测 `/32`；无可达 exit（或未手写进 `routes`）时，域名目标**不会**进 VpnService |
+| Android（JNI） | ✅ 新 core；老 core ⚠️ | 新 core 下发期望集合（含 policy CIDR / 观测 `/32`）直接装进 VpnService；老 core 同上（仅全隧道近似）。两种关 DNS 都回落运营商 DNS |
 | OHOS | ⚠️ **仅全隧道近似** | 同 Android：`aggregate_tun_routes` 未读 `l2_contributing_cidrs` |
 | **iOS / macOS NE** | ❌ | OS 不走 EasyTier DNS，拿不到解析结果 |
 | **`no_tun`** | ❌ | MagicDNS Runner 不启动，无观测来源 |

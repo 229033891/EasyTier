@@ -260,6 +260,14 @@ message NetworkInstanceRunningInfo {
   // send these explicitly: an omitted bool is indistinguishable from `false`.
   optional bool allow_peer_default_without_exit = 14;
   repeated string exit_nodes = 15;
+  // Core-computed L2 desired proxy-CIDR set (peer routes + policy local_routes
+  // + manual_routes override/append + exit /0 + escape hatch, no_tun honored).
+  // Host-side installers (Android VpnService / OHOS) install this verbatim
+  // instead of reimplementing the semantics. Serialized with prost-serde JSON,
+  // so an empty set is omitted on the wire: hosts treat an absent field as
+  // empty, and detect old cores (which never send it) via the
+  // `allow_peer_default_without_exit` presence bit.
+  repeated string desired_proxy_cidrs = 16;
 }
 
 message NetworkInstanceRunningInfoMap {

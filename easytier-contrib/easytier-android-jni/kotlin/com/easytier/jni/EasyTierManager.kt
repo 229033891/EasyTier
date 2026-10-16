@@ -182,18 +182,29 @@ class EasyTierManager(
             // 获取当前节点的 IPv4 地址
             val newIpv4 = parseIpv4InetToString(newIpv4Inet)
 
-            // 获取所有节点的 proxy_cidrs（D+：仅 exit 可达或逃生阀时保留对端 0.0.0.0/0）
-            val localExitDefault = hasReachableExit(networkInfo.routes)
+            // Core-computed desired set (Option B): manual_routes override/append,
+            // policy CIDRs, exit /0 and escape-hatch filtering are already applied
+            // by the core — install it verbatim. Absent on old cores (detected via
+            // the allow-field presence bit) and possibly omitted when empty; both
+            // cases are safe because only a new core sends the marker.
             val newProxyCidrs = mutableListOf<String>()
-            networkInfo.routes?.forEach { route ->
-                route.proxy_cidrs?.forEach { cidr ->
-                    if (shouldInstallProxyCidr(cidr, localExitDefault)) {
-                        newProxyCidrs.add(cidr)
+            if (networkInfo.allow_peer_default_without_exit != null) {
+                newProxyCidrs.addAll(networkInfo.desired_proxy_cidrs ?: emptyList())
+            } else {
+                // Legacy assembly for old cores: peer-advertised proxy_cidrs with
+                // local exit/escape filtering (no manual_routes / policy support).
+                // 获取所有节点的 proxy_cidrs（仅 exit 可达或逃生阀时保留对端 0.0.0.0/0）
+                val localExitDefault = hasReachableExit(networkInfo.routes)
+                networkInfo.routes?.forEach { route ->
+                    route.proxy_cidrs?.forEach { cidr ->
+                        if (shouldInstallProxyCidr(cidr, localExitDefault)) {
+                            newProxyCidrs.add(cidr)
+                        }
                     }
                 }
-            }
-            if (localExitDefault) {
-                newProxyCidrs.add("0.0.0.0/0")
+                if (localExitDefault) {
+                    newProxyCidrs.add("0.0.0.0/0")
+                }
             }
             // MagicDNS fake IP route (align with Tauri mobile_vpn.ts).
             if (enableMagicDns) {

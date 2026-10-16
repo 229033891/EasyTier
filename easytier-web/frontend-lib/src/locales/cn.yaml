@@ -557,7 +557,7 @@ policy_routes: 策略路由
 policy_routes_help: |-
   按目标网段（CIDR）或域名，把流量交给指定的网关节点；命中优先于「出口节点列表」。
   注意：被指向的节点必须开启「允许此节点成为出口节点」，否则这些流量会被对端丢弃。域名规则依赖本机 MagicDNS 解析（不走 EasyTier DNS 的查询看不到），且首次访问存在最长 1 秒的直连窗口。
-  桌面端会把规则网段 / 学到的 /32 装进系统路由；Android / OHOS 目前不会（除非已开全隧道出口，或把网段手写进自定义路由）。
+  桌面端会把规则网段 / 学到的 /32 装进系统路由；Tauri 移动端与 OHOS 只装手写自定义路由、不装策略网段；Android JNI 版（新版客户端）与桌面一致全装，旧版 JNI 只装对端网段与出口 /0。
 policy_routes_dns_observe_off: 域名规则靠本机 MagicDNS 解析学到目标 IP；本网络未开启「启用魔法 DNS」，规则不会学到 IP。
 policy_routes_dns_observe_unsupported: 本网络开启了 no_tun，MagicDNS 不会接线，域名规则不会学到目标 IP；请改用网段规则。
 policy_routes_dns_observe_version: 目标设备 EasyTier 版本低于 2.7.4，不识别域名策略，域名规则不会生效。

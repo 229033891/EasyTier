@@ -7,7 +7,7 @@ use crate::{
     config::runtime::CoreRuntimeConfigStore,
     gateway::magic_dns::{MagicDnsRouteSnapshot, MagicDnsRouteSource},
     gateway::proxy::cidr_monitor::{
-        ProxyCidrDiff, ProxyCidrRouteSyncStatus, collect_proxy_cidr_diff,
+        ProxyCidrDiff, ProxyCidrRouteSyncStatus, collect_proxy_cidr_diff, collect_proxy_cidrs,
     },
     gateway::proxy::underlay_exclude::collect_underlay_exclude_ips,
     host::packet::HostPacket,
@@ -79,6 +79,23 @@ impl CorePacketPlane {
             collect_proxy_cidr_diff(self.peer_manager.as_ref(), &self.runtime_config, previous)
                 .await,
         )
+    }
+
+    /// On-demand L2 desired proxy-CIDR set for host-side installers (Android
+    /// VpnService / OHOS) that cannot read the core config. Same computation
+    /// the desktop installer reconciles against (`resolve_proxy_cidrs`, incl.
+    /// manual_routes override/append, policy local_routes, exit default and
+    /// escape hatch) — hosts install it verbatim instead of reimplementing
+    /// the semantics. Deliberately NOT gated on `proxy_cidr_monitor_available`:
+    /// an empty result must mean "install nothing", never "subsystem off", so
+    /// a new core always yields a usable (possibly empty) set.
+    pub async fn proxy_cidr_desired(&self) -> Vec<String> {
+        let config = self.runtime_config.snapshot();
+        collect_proxy_cidrs(self.peer_manager.as_ref(), config.as_ref())
+            .await
+            .into_iter()
+            .map(|cidr| cidr.to_string())
+            .collect()
     }
 
     pub fn proxy_cidr_route_sync_status(&self) -> ProxyCidrRouteSyncStatus {

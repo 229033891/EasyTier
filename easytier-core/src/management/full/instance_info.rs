@@ -103,5 +103,9 @@ where
                     .collect::<Vec<_>>()
             })
             .unwrap_or_default(),
+        // Core-computed L2 desired set; host installers apply it verbatim
+        // (manual_routes / policy CIDRs included). Computed on demand from
+        // live snapshots, so managed pushes are reflected on the next poll.
+        desired_proxy_cidrs: instance.packet_plane().proxy_cidr_desired().await,
     })
 }

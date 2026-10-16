@@ -168,7 +168,7 @@ pub(crate) fn resolve_proxy_cidrs(
     config: ProxyCidrConfigSnapshot,
 ) -> BTreeSet<Ipv4Cidr> {
     let default = ipv4_default_cidr();
-    let override = config.manual_routes.is_some() && !config.manual_routes_append;
+    let manual_override = config.manual_routes.is_some() && !config.manual_routes_append;
     // A `/0` the user wrote into `manual_routes` is a local declaration, exactly
     // like a policy `/0` rule — it must not be filtered back out below.
     let manual_declares_default = config
@@ -176,7 +176,7 @@ pub(crate) fn resolve_proxy_cidrs(
         .as_ref()
         .is_some_and(|routes| routes.contains(&default));
 
-    let mut routes = if override {
+    let mut routes = if manual_override {
         // Legacy override (default): `routes = [...]` is the whole truth for the
         // *learned* set — peer-advertised routes and policy CIDRs are dropped.
         config.manual_routes.clone().unwrap_or_default()
@@ -191,7 +191,7 @@ pub(crate) fn resolve_proxy_cidrs(
 
     // A local declaration of `/0` (explicit route, policy rule, or — in append
     // mode only — a reachable `exit_nodes`) installs the TUN default.
-    let exit_declares_default = config.has_exit_nodes && !override;
+    let exit_declares_default = config.has_exit_nodes && !manual_override;
     let local_rule_declares_default = config.local_routes.contains(&default);
     let install_local_default = (exit_declares_default
         || local_rule_declares_default
@@ -201,7 +201,7 @@ pub(crate) fn resolve_proxy_cidrs(
     // The escape hatch keeps the *peer-advertised* `/0`, which lives in the
     // learned set — override mode deliberately drops it.
     let keep_peer_default =
-        (!override && config.allow_peer_default_without_exit && !config.no_tun)
+        (!manual_override && config.allow_peer_default_without_exit && !config.no_tun)
             || install_local_default;
     if !keep_peer_default {
         routes.remove(&default);
@@ -227,7 +227,6 @@ pub(crate) fn diff_proxy_cidrs(
     }
 }
 
-#[allow(dead_code)]
 pub(crate) async fn collect_proxy_cidrs(
     peer_manager: &PeerManagerCore,
     config: &CoreInstanceRuntimeConfig,
