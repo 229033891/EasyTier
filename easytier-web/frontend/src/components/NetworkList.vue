@@ -360,7 +360,7 @@ const loadDevices = async (): Promise<Array<Utils.DeviceInfo>> => {
 
 const { data: deviceList, loading: devicesLoading, reloading: devicesReloading, error: listError, reload: reloadDevices } = usePollingList<Array<Utils.DeviceInfo>>({
     fetcher: loadDevices,
-    // S13: 网络列表依赖二次 RPC（metas + VIP collect），5s 一轮（F2/建议#9）
+    // S13: 网络列表依赖二次 RPC（metas + VIP collect），5s 一轮（F4/建议#9）
     // 减轻 list_machines 压力；VIP 因状态页 in-flight 让路时靠下轮补齐。
     interval: 5000,
 });

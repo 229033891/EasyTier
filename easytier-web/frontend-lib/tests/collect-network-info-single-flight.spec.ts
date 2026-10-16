@@ -89,4 +89,23 @@ describe('collectNetworkInfoSingleFlight', () => {
         release('ok')
         await expect(p).resolves.toBe('ok')
     })
+
+    // Stub APIs (`vi.fn()` → undefined) or a synchronous throw must not leave the
+    // key claimed forever, or every later collect for it deadlocks.
+    it('releases the key when the factory returns a non-promise or throws', async () => {
+        const stub = collectNetworkInfoSingleFlight('inst-stub', (() => undefined) as unknown as () => Promise<unknown>)
+        await expect(stub).resolves.toBeUndefined()
+        expect(isAnyCollectNetworkInfoInFlight(['inst-stub'])).toBe(false)
+
+        const throwing = collectNetworkInfoSingleFlight('inst-throw', () => {
+            throw new Error('boom')
+        })
+        await expect(throwing).rejects.toThrow('boom')
+        expect(isAnyCollectNetworkInfoInFlight(['inst-throw'])).toBe(false)
+
+        // The next caller gets a fresh flight, not the poisoned one.
+        const factory = vi.fn(async () => 'ok')
+        await expect(collectNetworkInfoSingleFlight('inst-stub', factory)).resolves.toBe('ok')
+        expect(factory).toHaveBeenCalledTimes(1)
+    })
 })

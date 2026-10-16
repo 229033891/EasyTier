@@ -52,6 +52,19 @@ function clearKeysIfPending(keys: string[], pending: Promise<unknown>) {
     }
 }
 
+/**
+ * Invoke `factory` defensively: a non-Promise return (e.g. a stub `undefined`)
+ * or a synchronous throw must still settle the registered flight, otherwise the
+ * key stays claimed forever and every later collect for it deadlocks.
+ */
+function invokeFactory<T>(factory: () => Promise<T>): Promise<T> {
+    try {
+        return Promise.resolve(factory())
+    } catch (e) {
+        return Promise.reject(e)
+    }
+}
+
 /** True when any of the instance ids already has an in-flight collect. */
 export function isAnyCollectNetworkInfoInFlight(keys: string[]): boolean {
     return keys.some((k) => inFlight.has(k))
@@ -67,7 +80,7 @@ export function collectNetworkInfoSingleFlightForKeys<T>(
 ): Promise<T> {
     const unique = [...new Set(keys.filter(Boolean))]
     if (unique.length === 0) {
-        return factory()
+        return invokeFactory(factory)
     }
     if (unique.length === 1) {
         return collectNetworkInfoSingleFlight(unique[0]!, factory)
@@ -90,7 +103,7 @@ export function collectNetworkInfoSingleFlightForKeys<T>(
         inFlight.set(k, pending)
     }
 
-    factory().then(
+    invokeFactory(factory).then(
         (value) => {
             clearKeysIfPending(unique, pending)
             resolve(value)
@@ -131,7 +144,7 @@ export function collectNetworkInfoSingleFlight<T>(
 
     inFlight.set(key, pending)
 
-    factory().then(
+    invokeFactory(factory).then(
         (value) => {
             clearKeysIfPending([key], pending)
             resolve(value)

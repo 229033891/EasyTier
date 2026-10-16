@@ -54,7 +54,7 @@ const loadDevices = async (): Promise<Array<Utils.DeviceInfo>> => {
 const { data: deviceList, loading: devicesLoading, reloading: devicesReloading, error: listError, reload: reloadDevices } = usePollingList<Array<Utils.DeviceInfo>>({
     fetcher: loadDevices,
     // S13: list_machines + /devices 与状态页 CollectNetworkInfo 共享设备隧道，
-    // 5s 一轮（F2/建议#9），给 collect/心跳/配置写留隧道窗口。
+    // 5s 一轮（F4/建议#9），给 collect/心跳/配置写留隧道窗口。
     interval: 5000,
 });
 

@@ -190,10 +190,10 @@ Client (--config-server udp|tcp|ws://host:22020/<token>)
 
 **阶段 G（隧道争用 / 轮询叠加，2026-10-16；依据 Reno 安卓 HAR + 性能审查 F1/F12）**
 
-- [x] S10：状态页 `CollectNetworkInfo` 单飞（`collectNetworkInfoSingleFlight` + generation 丢弃过期结果）；`NetworkList` VIP 用 `collectNetworkInfoSingleFlightForKeys(instIds)` 按实例 UUID 登记，与状态页共享 key（遇 in-flight 则本轮跳过）。**待现网验收**：安卓状态页同 URL pending ≤1。补测：单飞 coalesce / 批量登记 / 状态遇批量则等待后再取（`collect-network-info-single-flight.spec.ts`）+ RemoteManagement generation 丢过期（`remote-management-config.spec.ts` S10 用例）。
+- [x] S10：状态页 `CollectNetworkInfo` 单飞（`collectNetworkInfoSingleFlight` + generation 丢弃过期结果）；`NetworkList` VIP 用 `collectNetworkInfoSingleFlightForKeys(instIds)` 按实例 UUID 登记，与状态页共享 key（遇 in-flight 则本轮跳过）。**待现网验收**：安卓状态页同 URL pending ≤1。补测：单飞 coalesce / 批量登记 / 状态遇批量则等待后再取 / **工厂非 Promise 返回或同步抛错不泄漏 key**（`collect-network-info-single-flight.spec.ts`）+ RemoteManagement generation 丢过期（`remote-management-config.spec.ts` S10 用例）。复核中发现并修复：`factory()` 返回非 Promise（如 stub）或同步抛错时 `.then` 同步异常会让 key 永久占位、后续 collect 死锁——改用 `invokeFactory` 兜底为 `Promise.resolve`/`Promise.reject` 并保证结算清理。
 - [x] S11：只读 `collect_network_info` 改用 `MANAGED_RPC_PROBE=15s`（移出 60s 慢路径；`rpc_timeout.rs` + `handle_collect_network_info`）。**待现网验收**：不可达约 ≤15s 失败；写操作仍 60s；**弱网但可达场景下 15s 不误报**（collect 正常 p50 ≈ 84ms，裕量大，仍列入验收观察项）。
 - [x] S12：`RemoteManagement` `STATUS_POLL_MS` 2s → 5s（与 Dashboard S5 对齐）。**待现网验收**：状态刷新体感可接受。
-- [x] S13：设备/网络**列表页**轮询 2s/3s → 5s（F2/性能文建议#9；`DeviceList`、`NetworkList` `usePollingList` interval、`DeviceManagement` `PeriodicTask`、`usePollingList` 默认值同步 2000→5000）。这是 1.har 中 53 分钟 178 对 `machines`+`devices`（每对约 8.9KB）的来源，属当前最大的重复交互。**待现网验收**：列表页刷新体感可接受。
+- [x] S13：设备/网络**列表页**轮询 2s/3s → 5s（F2/F4、性能文建议#9；`DeviceList`、`NetworkList` `usePollingList` interval、`DeviceManagement` `PeriodicTask`、`usePollingList` 默认值同步 2000→5000）。这是 1.har 中 53 分钟 178 对 `machines`+`devices`（每对约 8.9KB）的来源，属当前最大的重复交互。**待现网验收**：列表页刷新体感可接受。
 
 ---
 
