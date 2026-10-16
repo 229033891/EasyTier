@@ -536,8 +536,10 @@ manual_routes_help: |-
 
 manual_routes_append: 与自动路由叠加
 manual_routes_append_help: |-
-  开启后，「自定义路由」会与自动计算的路由集合（子网代理 + 策略路由）**叠加**，而不是整表覆盖。
-  默认关闭 = 旧行为：自定义路由直接接管本机 L2 路由表，且不自动加出口默认路由。
+  开启后，「自定义路由」会与自动计算的路由集合（子网代理 + 策略路由）**叠加**，而不是整表覆盖；此时「出口节点列表」仍会自动安装 0.0.0.0/0。
+  默认关闭 = 旧行为：自定义路由接管自动集合；此模式下「出口节点列表」不再自动安装 0.0.0.0/0。
+  两种模式下，写在自定义路由里的 0.0.0.0/0 与策略路由里显式的 0.0.0.0/0 都生效（本机声明全隧道）；「逃生阀」保留的对端通告 0.0.0.0/0 属自动集合，覆盖模式下仍被接管。
+  桌面端会把规则网段装进系统路由；Android / OHOS 不会（除非已开全隧道出口，或把网段手写进自定义路由）。
 
 socks5: socks5服务器
 socks5_help: |-
@@ -555,6 +557,11 @@ policy_routes: 策略路由
 policy_routes_help: |-
   按目标网段（CIDR）或域名，把流量交给指定的网关节点；命中优先于「出口节点列表」。
   注意：被指向的节点必须开启「允许此节点成为出口节点」，否则这些流量会被对端丢弃。域名规则依赖本机 MagicDNS 解析（不走 EasyTier DNS 的查询看不到），且首次访问存在最长 1 秒的直连窗口。
+  桌面端会把规则网段 / 学到的 /32 装进系统路由；Android / OHOS 目前不会（除非已开全隧道出口，或把网段手写进自定义路由）。
+policy_routes_dns_observe_off: 域名规则靠本机 MagicDNS 解析学到目标 IP；本网络未开启「启用魔法 DNS」，规则不会学到 IP。
+policy_routes_dns_observe_unsupported: 本网络开启了 no_tun，MagicDNS 不会接线，域名规则不会学到目标 IP；请改用网段规则。
+policy_routes_dns_observe_version: 目标设备 EasyTier 版本低于 2.7.4，不识别域名策略，域名规则不会生效。
+policy_routes_dns_observe_manual: 域名规则要在目标机器上由 MagicDNS 接线才会学到 IP。此页无法判断设备系统 —— 桌面端通常自动接线，Linux（非桌面）/ 移动端需手动确认，否则规则不生效。
 policy_routes_add: 添加路由
 policy_routes_remove: 删除此路由
 policy_routes_cidr: 目标网段
@@ -597,9 +604,9 @@ policy_routes_target_required: 网段与域名至少填一个。
 
 dns:
   title: 域名策略
+  magic_dns_off_hint: 域名策略会保存在本网络配置中；需开启「启用魔法 DNS」后才会接线生效。开启前，下方三块编辑器不可编辑。
   hosts:
     title: 静态主机
-    magic_dns_off_hint: 域名策略会保存在本网络配置中；需开启「启用魔法 DNS」后才会接线生效。
     editor_help: 最高优先级。静态条目在 MagicDNS 上为权威记录，优先于路由 hostname。可用 *.suffix（语法仅最左单标签 *，父域至少两级，如 corp.example，*.com 会被拒绝；匹配按 RFC 4592 多级，如 *.corp.example → foo.corp.example 与 a.b.corp.example）。未命中时再看分流 DNS / 上游 DNS。
     name: 主机名
     name_placeholder: "例如 app.internal. 或 *.corp.example"
@@ -609,6 +616,16 @@ dns:
     add: 添加主机
     add_tip: 添加一条静态 DNS 主机
     remove: 删除主机
+    skip:
+      empty: 主机名为空，该条目会被跳过。
+      wildcard_needs_parent: 通配符需要父域名，例如 *.corp.example。
+      multi_wildcard: 只支持最左单标签通配，例如 *.corp.example。
+      invalid_wildcard_parent: 通配父域名非法，该条目会被跳过。
+      invalid_star: 星号只能写成 *.suffix 通配，否则请填写精确主机名。
+      empty_zone: 解析出的 zone 为空，该条目会被跳过。
+      single_label_zone: 静态主机至少需要两级 zone（如 corp.example），*.com 会被拒绝。
+    invalid_ips: 以下 IP 非法，应用时会被跳过：{ips}
+    invalid_ips_all_drop: 该条目没有可用 IP，整条主机不会生效。
   upstream:
     title: 上游 DNS
     help: |-
@@ -621,6 +638,7 @@ dns:
     add: 添加上游
     add_tip: 添加一条上游 DNS
     remove: 删除上游
+    invalid_entry: 该上游地址非法，会被跳过（仅支持 IP，如 1.1.1.1 或 udp://9.9.9.9:53）。
   forwarders:
     title: 分流 DNS
     editor_help: 将匹配的域名后缀转发到指定上游（优先于默认上游）。上游为首期仅 IP 字面量。
@@ -629,6 +647,9 @@ dns:
     add: 添加分流
     add_tip: 添加一条分流 DNS 规则
     remove: 删除分流
+    invalid_servers: 以下上游非法，会被跳过：{servers}
+    invalid_domains: 以下域名为空，会被跳过：{domains}
+    row_skipped: 该分流缺少可用域名或可用上游，整行会被跳过。
   coverage:
     label: DNS 覆盖
     covered: 自动

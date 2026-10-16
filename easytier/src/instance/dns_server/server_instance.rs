@@ -139,6 +139,11 @@ impl MagicDnsServerInstanceData {
                 tracing::error!("Failed to update DNS records for zone {}: {:?}", zone, e);
             }
         }
+        // Route upsert replaces Catalog authorities; re-evaluate static hosts so
+        // late-arriving route zones skip conflicting entries (dns-policy-audit BUG-1).
+        if let Err(e) = self.reapply_static_hosts().await {
+            tracing::error!("Failed to reapply static hosts after route update: {:?}", e);
+        }
     }
 
     async fn keep_zone_authoritative(&self, zone: &str) {
@@ -174,6 +179,16 @@ impl MagicDnsServerInstanceData {
         Ok(())
     }
 
+    #[cfg(test)]
+    pub(super) fn catalog_split_zones(&self) -> BTreeSet<String> {
+        self.dns_server.split_zones()
+    }
+
+    #[cfg(test)]
+    pub(super) fn applied_static_zones_for_test(&self) -> BTreeSet<String> {
+        self.applied_static_zones.lock().unwrap().clone()
+    }
+
     /// Install static hosts as authoritative Catalog zones so they win over
     /// parent MagicDNS route zones (dns-policy B2). Long TTL by default.
     ///
@@ -207,6 +222,11 @@ impl MagicDnsServerInstanceData {
     }
 
     /// Hot-reload local DnsConfig policy (hosts + split + upstream) without restarting UDP.
+    ///
+    /// Each step is isolated so one failure does not block the others (BUG-2). Soft
+    /// per-row skips inside a step still count as success. If any step returns Err,
+    /// this returns Err so the policy watch does **not** advance `last` and will
+    /// retry (R2).
     pub async fn reload_dns_policy(&self, dns: Option<&DnsConfig>) -> Result<(), anyhow::Error> {
         let hosts = dns.map(|d| d.hosts.clone()).unwrap_or_default();
         let forwarders = dns.map(|d| d.forwarders.clone()).unwrap_or_default();
@@ -219,9 +239,8 @@ impl MagicDnsServerInstanceData {
                 servers: f.servers,
             })
             .collect::<Vec<_>>();
-        // Retain current static/route zones while swapping splits, then reapply
-        // hosts so (1) wildcards see the new split set when skipping conflicts
-        // and (2) exact hosts re-upsert after splits (B2: hosts win).
+        // Retain: routes / TLD / this round's **exact** hosts zones.
+        // Not previous `applied_static_zones` (R3); not wildcards (F1 — Split wins).
         let retain_zones: BTreeSet<String> = {
             let mut zones = self
                 .route_store
@@ -230,18 +249,42 @@ impl MagicDnsServerInstanceData {
                 .keys()
                 .cloned()
                 .collect::<BTreeSet<_>>();
-            zones.extend(self.applied_static_zones.lock().unwrap().iter().cloned());
             if !self.magic_tld_zone.is_empty() {
                 zones.insert(self.magic_tld_zone.clone());
             }
+            for host in &hosts {
+                if let Ok(target) = classify_host_name(&host.name)
+                    && target.reject_reason().is_none()
+                    && !target.is_wildcard
+                {
+                    zones.insert(target.zone);
+                }
+            }
             zones
         };
-        self.dns_server
+        let mut step_failed = false;
+        if let Err(e) = self
+            .dns_server
             .reload_split_forwarders(&splits, &retain_zones)
-            .await?;
-        self.set_static_hosts_for_client(MAGIC_DNS_STATIC_HOSTS_LOCAL_CLIENT, hosts)
-            .await?;
-        self.dns_server.reload_root_forwarder(&upstream).await?;
+            .await
+        {
+            tracing::error!("MagicDNS split forwarder reload failed: {:?}", e);
+            step_failed = true;
+        }
+        if let Err(e) = self
+            .set_static_hosts_for_client(MAGIC_DNS_STATIC_HOSTS_LOCAL_CLIENT, hosts)
+            .await
+        {
+            tracing::error!("MagicDNS static hosts reload failed: {:?}", e);
+            step_failed = true;
+        }
+        if let Err(e) = self.dns_server.reload_root_forwarder(&upstream).await {
+            tracing::error!("MagicDNS root forwarder reload failed: {:?}", e);
+            step_failed = true;
+        }
+        if step_failed {
+            anyhow::bail!("MagicDNS dns_config hot-reload had step failures (will retry)");
+        }
         tracing::info!("MagicDNS dns_config policy reloaded");
         Ok(())
     }
@@ -257,10 +300,9 @@ impl MagicDnsServerInstanceData {
         if let Some(reason) = target.reject_reason() {
             return Some(reason);
         }
-        // Owning a zone that routes also own is not durable: the next
-        // `MagicDnsRecordStore::update()` rebuilds that authority from routes
-        // (wiping route hostnames in the meantime, then flipping back), so it is
-        // refused for exact names too — not just wildcards.
+        // Owning a zone that routes also own is not durable: `update()` rebuilds
+        // that authority from routes then re-runs `reapply_static_hosts()`, which
+        // skips these entries. Refuse up front for exact names too — not just wildcards.
         if route_zones.contains(&target.zone) {
             return Some("conflicts with MagicDNS route zone");
         }
@@ -281,14 +323,24 @@ impl MagicDnsServerInstanceData {
     async fn reapply_static_hosts(&self) -> Result<(), anyhow::Error> {
         let route_zones: BTreeSet<String> =
             self.route_store.snapshot().zones.keys().cloned().collect();
-        let split_zones = self.dns_server.split_zones();
+        let mut split_zones = self.dns_server.split_zones();
 
-        // zone -> (rr_name -> StaticHostRr). Later client key (BTreeMap order) wins
-        // on the same (zone, rr_name); exact apex and `*.zone` can share a zone.
+        // zone -> (rr_name -> StaticHostRr). Remote clients first, then local
+        // (`static-hosts:local`) so dns_config.hosts wins over mesh peers (C3).
+        // Exact apex and `*.zone` can share a zone.
         let mut zones: BTreeMap<String, BTreeMap<String, StaticHostRr>> = BTreeMap::new();
+        let mut rr_owners: BTreeMap<(String, String), String> = BTreeMap::new();
         {
             let map = self.static_hosts_by_client.lock().unwrap();
-            for hosts in map.values() {
+            let mut clients: Vec<(&String, &Vec<DnsHostEntry>)> = map.iter().collect();
+            clients.sort_by_key(|(key, _)| {
+                if *key == MAGIC_DNS_STATIC_HOSTS_LOCAL_CLIENT {
+                    1u8
+                } else {
+                    0u8
+                }
+            });
+            for (client_key, hosts) in clients {
                 for entry in hosts {
                     let target = match classify_host_name(&entry.name) {
                         Ok(t) => t,
@@ -312,14 +364,34 @@ impl MagicDnsServerInstanceData {
                         );
                         continue;
                     }
-                    zones.entry(target.zone).or_default().insert(
-                        target.rr_name.clone(),
-                        StaticHostRr {
-                            rr_name: target.rr_name,
-                            ips: entry.ips.clone(),
-                            ttl_secs: entry.ttl_secs,
-                        },
-                    );
+                    let rr = StaticHostRr {
+                        rr_name: target.rr_name.clone(),
+                        ips: entry.ips.clone(),
+                        ttl_secs: entry.ttl_secs,
+                    };
+                    let zone_map = zones.entry(target.zone.clone()).or_default();
+                    // Track which client last wrote this RR so we only warn on
+                    // cross-client conflicts (R4); same-client duplicates are quiet.
+                    let owner_key = (target.zone.clone(), target.rr_name.clone());
+                    let prev_owner = rr_owners.insert(owner_key, (*client_key).clone());
+                    if let Some(prev) = zone_map.insert(target.rr_name.clone(), rr) {
+                        let cross_client = prev_owner
+                            .as_ref()
+                            .map(|prev_client| prev_client.as_str() != client_key.as_str())
+                            .unwrap_or(false);
+                        if cross_client && (prev.ips != entry.ips || prev.ttl_secs != entry.ttl_secs)
+                        {
+                            tracing::warn!(
+                                name = %entry.name,
+                                zone = %target.zone,
+                                client = %client_key,
+                                prev_client = %prev_owner.as_deref().unwrap_or(""),
+                                prev_ips = ?prev.ips,
+                                new_ips = ?entry.ips,
+                                "static host RR conflict; later client wins (local preferred)"
+                            );
+                        }
+                    }
                 }
             }
         }
@@ -404,6 +476,16 @@ impl MagicDnsServerInstanceData {
             records.push(soa_record);
 
             let authority = build_authority(zone, &records)?;
+            // Exact hosts may own a zone that a Split forwarder also claimed —
+            // hosts win (roadmap §3.8); drop stale split bookkeeping (BUG-3).
+            if split_zones.contains(zone) {
+                tracing::warn!(
+                    zone = %zone,
+                    "exact static host zone overrides split forwarder (hosts win)"
+                );
+                self.dns_server.forget_split_zone(zone);
+                split_zones.remove(zone);
+            }
             self.dns_server
                 .upsert(
                     LowerName::from_str(zone)
@@ -500,23 +582,10 @@ impl MagicDnsServerRpc for MagicDnsServerInstanceData {
 
         let wants_static = input.client.as_deref() == Some(MAGIC_DNS_STATIC_HOSTS_CLIENT)
             || !input.static_hosts.is_empty();
-        if wants_static {
-            let hosts = input
-                .static_hosts
-                .into_iter()
-                .map(|h| DnsHostEntry {
-                    name: h.name,
-                    ips: h.ips,
-                    ttl_secs: h.ttl_secs,
-                })
-                .collect::<Vec<_>>();
-            let client_key = Self::static_hosts_client_key(&remote_addr);
-            self.set_static_hosts_for_client(&client_key, hosts)
-                .await
-                .map_err(|e| anyhow::anyhow!(e))?;
-        }
+        let static_hosts = input.static_hosts;
 
-        // Hosts-only pushes use an empty zone; do not clobber route records.
+        // Routes before hosts: update() rebuilds route authorities then re-applies
+        // static hosts, so same-request hosts cannot be silently overwritten (BUG-1).
         if !zone.is_empty() {
             let routes = input
                 .routes
@@ -537,6 +606,21 @@ impl MagicDnsServerRpc for MagicDnsServerInstanceData {
             }
 
             self.update().await;
+        }
+
+        if wants_static {
+            let hosts = static_hosts
+                .into_iter()
+                .map(|h| DnsHostEntry {
+                    name: h.name,
+                    ips: h.ips,
+                    ttl_secs: h.ttl_secs,
+                })
+                .collect::<Vec<_>>();
+            let client_key = Self::static_hosts_client_key(&remote_addr);
+            self.set_static_hosts_for_client(&client_key, hosts)
+                .await
+                .map_err(|e| anyhow::anyhow!(e))?;
         }
         Ok(Default::default())
     }
@@ -845,6 +929,8 @@ impl MagicDnsServerInstance {
         let watch_ctx = global_ctx.clone();
         let dns_policy_watch = AbortOnDropHandle::new(tokio::spawn(async move {
             let mut last = watch_ctx.config.get_dns_config();
+            // Log once per failed config snapshot (R2: avoid 1Hz error spam while retrying).
+            let mut logged_fail_for: Option<Option<DnsConfig>> = None;
             loop {
                 tokio::time::sleep(Duration::from_secs(1)).await;
                 let cur = watch_ctx.config.get_dns_config();
@@ -853,9 +939,16 @@ impl MagicDnsServerInstance {
                 }
                 let _apply = watch_data.record_apply.lock().await;
                 if let Err(e) = watch_data.reload_dns_policy(cur.as_ref()).await {
-                    tracing::error!("MagicDNS dns_config hot-reload failed: {:?}", e);
+                    if logged_fail_for.as_ref() != Some(&cur) {
+                        tracing::error!(
+                            "MagicDNS dns_config hot-reload failed (will retry until success): {:?}",
+                            e
+                        );
+                        logged_fail_for = Some(cur.clone());
+                    }
                     continue;
                 }
+                logged_fail_for = None;
                 last = cur;
             }
         }));

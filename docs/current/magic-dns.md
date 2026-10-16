@@ -3,10 +3,11 @@
 ## Status
 
 - Status: **Current**
-- 最近审阅：2026-10-13（**域名路由（`[[policy_routes]]`）已落地**，其 DNS 侧观测与泄漏面见 [`traffic-steering.md`](./traffic-steering.md) §5.1；`domain-proxy` 旧草案已被取代）；2026-10-09（静态 hosts 支持 `*.suffix` 通配；**修正**通配匹配语义为 RFC 4592 多级；**补齐守卫**：单标签 zone 拒绝、route zone 冲突对精确条目也生效，见 §3）
+- 最近审阅：2026-10-16（续修 R1–R4：分流按行 skip、主上游全坏回落系统 DNS、热重载硬失败可重试、retain zone 不装 Split、跨 client 才 warn；前端 **C1 编辑器灰化**（§3 控制台段）与 **C4 观测内联提示**；此前：route 后到 reapply、上游逐条 skip、hosts/Split 账本、本机优先、域名预检）；2026-10-13（**域名路由（`[[policy_routes]]`）已落地**，其 DNS 侧观测与泄漏面见 [`traffic-steering.md`](./traffic-steering.md) §5.1；`domain-proxy` 旧草案已被取代）；2026-10-09（静态 hosts 支持 `*.suffix` 通配；**修正**通配匹配语义为 RFC 4592 多级；**补齐守卫**：单标签 zone 拒绝、route zone 冲突对精确条目也生效，见 §3）
 - 范围：进程内 MagicDNS、`DnsConfig`（hosts / Split DNS / 上游）、OS 接线与控制台覆盖信号
 - 手工接线（OpenWrt / 非 systemd）：[`magic-dns-manual-wiring.md`](./magic-dns-manual-wiring.md)
 - 剩余缺口 / 决策留档：[`../roadmap/dns-policy.md`](../roadmap/dns-policy.md)
+- **缺陷与冲突审查（2026-10-16，3 BUG / 4 冲突 / 9 优化）**：[`dns-policy-audit.md`](./dns-policy-audit.md)
 - 相关：桌面 underlay DNS [`traffic-steering.md`](./traffic-steering.md) §3；**域名路由（`[[policy_routes]]` domains，已落地）** 见 [`traffic-steering.md`](./traffic-steering.md) §5（旧草案 [`../roadmap/domain-proxy.md`](../roadmap/domain-proxy.md) 已被统一路由模型取代）
 - 索引：[`../README.md`](../README.md)
 
@@ -59,12 +60,15 @@ CLI 示例：`--dns-host 'app.internal.=10.1.2.3'`、`--dns-host '*.corp.example
 - 同一父 zone 可同时放精确条目与通配（`corp.example` 的 apex A + `*.corp.example` 的 A）；apex 本身**不**被通配覆盖，需要显式配 `corp.example`。
 - **守卫**（`server_instance.rs::static_host_skip_reason()`，apply 路径与状态 RPC 共用同一判定，故「状态页报了但实际没装」不会发生）：
   - 单标签 zone（`*.com` / `com`）→ 拒绝（上一条，语法/策略层）。
-  - 静态条目的 zone 与任一 **route zone 同名** → 跳过，**精确与通配都查**。理由：`MagicDnsRecordStore::update()`（`update_dns_record` / `on_client_disconnected` 之后）会用路由记录重建该 zone，静态权威会被覆盖 → 静默失效 / 来回抖。
+  - 静态条目的 zone 与任一 **route zone 同名** → 跳过，**精确与通配都查**。`update()` 在重建 route 权威后会再跑 `reapply_static_hosts()`，因此 **route 后到** 也会把已装冲突条目卸掉并 warn，而不是静默留在 Catalog。
   - 静态条目的 zone 等于 MagicDNS 路由 TLD（默认 `et.net.`）→ 跳过。该 zone 在 `new()` 里早于任何路由装好，可能不在 route zone 快照里，故单独判一次。
-  - **通配**的父 zone 已被 Split forwarder 占用 → 跳过（Split 赢）。精确子域 hosts（如 `app.et.net.`）仍允许覆盖同名路由 hostname（B2）。
-- **三条入口的校验分层**（有意为之，判定共用 `HostZoneTarget::reject_reason()` / `DnsConfig::invalid_hosts()`，不会漂）：`--dns-host` **硬失败**（报错并终止启动）；TOML `[dns_config].hosts` 在**加载时** warn 一次（带文件名）并在运行时再 warn 跳过；控制台 / 托管下发的条目只运行时 warn 跳过 —— 远端配置永远不能把节点弄起不来。
+  - **通配**的父 zone 已被 Split forwarder 占用 → 跳过（Split 赢）。**精确**条目与同名 Split 冲突时 **hosts 赢**（warn，并从 `applied_split_zones` 去掉该 zone）。精确子域 hosts（如 `app.et.net.`）仍允许覆盖同名路由 hostname（B2）。
+  - mesh 通道与本机 `dns_config.hosts` 同 `(zone, rr)` 冲突时 **本机优先**（warn）。
+- **三条入口的校验分层**（有意为之，判定共用 `HostZoneTarget::reject_reason()` / `DnsConfig::invalid_hosts()`，不会漂）：`--dns-host` **硬失败**（报错并终止启动）；TOML `[dns_config].hosts` 在**加载时** warn 一次（带文件名）并在运行时再 warn 跳过；控制台 / 托管下发的条目只运行时 warn 跳过 —— 远端 **hosts** 配置永远不能把节点弄起不来。`upstream_dns` / `forwarders.servers` 非法条目 **逐条 warn + skip**；某一分流的 servers **全部**无效 → 跳过该分流行（其它分流照常装）；启动期 `upstream_dns` **全部**无效 → **回落系统 DNS**（不拖垮 `Server::new`）；**热重载**时全坏则 **保留上一份根上游** + warn（避免静默绕过企业解析器）。热重载 `retain_zones` 按本轮**精确** hosts 的 zone + route/TLD 推导（通配不保留，Split 赢；勿用上一轮 `applied_static_zones`）。任一步硬失败不推进配置快照并重试（同一失败配置只打一次 error）。
 
 **控制台编辑器常显**（2026-10-08 起）：进入配置页即由 `syncNormalizedNetwork` 补一个空 `dns_config`，DNS 编辑器始终可见，不再需要先点「+配置策略」——即「有 `dns_config`」不代表用户配过策略，别把它当成「已配置」信号。高级设置的「功能开关」分组标题也一并去掉（纯视觉）。
+
+**关闭 MagicDNS / 无 TUN 时编辑器灰化**（2026-10-16 起，C1）：`enable_magic_dns=false` 或无 TUN 时，hosts / forwarders / upstream 三块编辑器整体灰化（`fieldset[disabled]` + `pointer-events: none`；标题与帮助 tooltip 不受影响）并显示「开启后才接线生效」的内联提示 —— 配置**仍可保存在网络里**，只是不接线。`policy_routes` 编辑器另按 `expectedDnsCoverage()`（`enable_magic_dns` / `no_tun`）在含 `domains` 规则时内联提示「域名规则学不到 IP」（C4）；网络表单不知道设备 OS/版本，故已开 MagicDNS 时该调用恒为 `manual_required`，提示会常显。
 
 上游格式：**仅 IP 字面量**（如 `1.1.1.1`、`udp://8.8.8.8:53`）；DoT/DoH 与 hostname 上游未做。
 
@@ -75,7 +79,7 @@ CLI 示例：`--dns-host 'app.internal.=10.1.2.3'`、`--dns-host '*.corp.example
 | 路径 | 覆盖 | 说明 |
 |------|------|------|
 | Managed config | 纳管设备 | `DnsConfig.hosts` 随 web-owned Full/Patch 下发；OFF 实例仍可先存着，启用即生效 |
-| MagicDNS 静态通道 | 已开 MagicDNS 的 mesh 节点 | `UpdateDnsRecord` + `client="static-hosts"` → `static-hosts:<tunnel>`；断连清理；TTL 长于路由 1s |
+| MagicDNS 静态通道 | 已开 MagicDNS 的 mesh 节点 | `UpdateDnsRecord` + `client="static-hosts"` → `static-hosts:<tunnel>`；断连清理；TTL 长于路由 1s；与本机 `dns_config.hosts` 同 RR 冲突时**本机优先** |
 
 `< 2.7.4` 客户端：prost 静默丢未知字段；控制台标 `version_too_old` 并跳过 dns patch。旧节点抢到 `:49813` server 时静态 hosts 可能不可见（控制台 warning，未改选举协议）。
 

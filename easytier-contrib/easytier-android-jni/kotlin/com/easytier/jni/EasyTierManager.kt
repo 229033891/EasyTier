@@ -44,16 +44,30 @@ class EasyTierManager(
     private var currentProxyCidrs: List<String> = emptyList()
     private var currentEnableMagicDns: Boolean = false
     private var vpnServiceIntent: Intent? = null
-    private val allowPeerDefaultWithoutExit: Boolean
-    private val exitNodes: List<String>
-    private val enableMagicDns: Boolean
 
-    init {
-        val policy = parseRoutePolicy(networkConfig)
-        allowPeerDefaultWithoutExit = policy.allowPeerDefaultWithoutExit
-        exitNodes = policy.exitNodes
-        enableMagicDns = policy.enableMagicDns
-    }
+    /**
+     * Route policy deciding whether a peer-advertised `0.0.0.0/0` survives into
+     * VpnService.
+     *
+     * `networkConfig` is proto JSON: proto3 scalars have no presence, so a `false`
+     * boolean is *omitted* by the serializer and cannot be told apart from "unset".
+     * Parsing it once at construction would therefore pin the policy to whatever
+     * the serializer happened to include. The authoritative values ride along on
+     * `NetworkInstanceRunningInfo` (polled every [MONITOR_INTERVAL]), which is the
+     * only per-instance payload this host already fetches; the constructor string
+     * is only a bootstrap value for the window before the first poll lands.
+     */
+    @Volatile
+    private var routePolicy: RoutePolicy = parseRoutePolicy(networkConfig)
+
+    private val allowPeerDefaultWithoutExit: Boolean
+        get() = routePolicy.allowPeerDefaultWithoutExit
+
+    private val exitNodes: List<String>
+        get() = routePolicy.exitNodes
+
+    private val enableMagicDns: Boolean
+        get() = routePolicy.enableMagicDns
 
     // JSON 解析器
     private val moshi = Moshi.Builder().add(WireJsonAdapterFactory()).build()
@@ -145,6 +159,10 @@ class EasyTierManager(
             }
 
             Log.d(TAG, "网络信息: $networkInfo")
+
+            // Refresh the route policy from the same payload: it decides whether a
+            // peer-advertised `0.0.0.0/0` survives into VpnService below.
+            syncRoutePolicy(networkInfo.allow_peer_default_without_exit, networkInfo.exit_nodes)
 
             // 检查实例是否正在运行
             if (!networkInfo.running) {
@@ -287,6 +305,39 @@ class EasyTierManager(
                 currentIpv4 = currentIpv4,
                 currentProxyCidrs = currentProxyCidrs.toList()
         )
+    }
+
+    /**
+     * Merge the policy advertised on [NetworkInstanceRunningInfo] into the cached
+     * policy.
+     *
+     * Presence is signalled by [allowPeerDefaultWithoutExit] being non-null — it is
+     * the one `optional` field in this pair, so it is the only reliable "the core
+     * sent a policy" marker. `exit_nodes` is `repeated`, and an empty list is
+     * indistinguishable from "field absent" on the wire, so it is only adopted once
+     * that marker is seen. Without this, an old core (or a not-yet-ready instance,
+     * which returns `Default::default()`) would blank `exit_nodes`, `hasReachableExit`
+     * would go false, and a configured exit would silently stop installing `/0`.
+     */
+    private fun syncRoutePolicy(allowPeerDefaultWithoutExit: Boolean?, exitNodes: List<String>?) {
+        if (allowPeerDefaultWithoutExit == null) {
+            // No policy in this payload: keep everything we have.
+            return
+        }
+        val merged =
+                RoutePolicy(
+                        allowPeerDefaultWithoutExit,
+                        exitNodes ?: routePolicy.exitNodes,
+                        routePolicy.enableMagicDns
+                )
+        if (merged != routePolicy) {
+            Log.i(
+                    TAG,
+                    "路由策略已更新: allowPeerDefaultWithoutExit=${merged.allowPeerDefaultWithoutExit} " +
+                            "exitNodes=${merged.exitNodes}"
+            )
+            routePolicy = merged
+        }
     }
 
     private fun shouldInstallProxyCidr(cidr: String, localExitDefault: Boolean): Boolean {

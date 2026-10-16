@@ -537,8 +537,10 @@ manual_routes_help: |-
 
 manual_routes_append: Append to auto routes
 manual_routes_append_help: |-
-  When on, the manual route list is added to the auto-computed set (subnet proxies + policy routes) instead of replacing it.
-  Default off = legacy behaviour: the manual list takes over the L2 route table and no exit default route is added.
+  When on, the manual route list is added to the auto-computed set (subnet proxies + policy routes) instead of replacing it, and the exit-node list still auto-installs 0.0.0.0/0.
+  Default off = legacy behaviour: the manual list takes over the auto-computed set, and the exit-node list no longer auto-installs 0.0.0.0/0.
+  In both modes, a 0.0.0.0/0 written in the manual list or an explicit policy-route 0.0.0.0/0 still applies (this host declares full tunnel); the peer-default escape hatch belongs to the auto set and stays overridden in replace mode.
+  Desktop installs rule subnets into the system route table; Android / OHOS do not (unless a full-tunnel exit is on, or the subnet is written into the manual list).
 
 socks5: Socks5 Server
 socks5_help: |-
@@ -556,6 +558,11 @@ policy_routes: Policy Routes
 policy_routes_help: |-
   Send traffic for a target CIDR and/or domain to a chosen gateway peer; matches take precedence over the exit node list.
   Note: the peer you point at must have "Enable Exit Node" turned on, or it drops that traffic. Domain rules rely on this host's MagicDNS (queries that bypass EasyTier DNS are invisible), and the first connection has a direct-egress window of up to 1 second.
+  On desktop, rule CIDRs and learned /32s are installed into the OS route table. Android / OHOS do not install them today unless a full-tunnel exit is already up, or you add the CIDRs to manual routes.
+policy_routes_dns_observe_off: Domain rules learn target IPs via this host's MagicDNS. Magic DNS is off for this network, so no IP is learned.
+policy_routes_dns_observe_unsupported: This network enables no_tun, so MagicDNS is not wired and domain rules will not learn any IP — use CIDR rules instead.
+policy_routes_dns_observe_version: The target device runs EasyTier older than 2.7.4, which ignores domain policy, so domain rules never take effect.
+policy_routes_dns_observe_manual: Domain rules learn IPs only when MagicDNS is wired on the target machine. This page cannot detect the device OS — desktops are usually automatic, while Linux (non-desktop) and mobile may need manual wiring, otherwise the rules never take effect.
 policy_routes_add: Add route
 policy_routes_remove: Remove this route
 policy_routes_cidr: Target CIDR
@@ -598,9 +605,9 @@ policy_routes_target_required: Set at least one of CIDR / domains.
 
 dns:
   title: Domain Policy
+  magic_dns_off_hint: Domain policy is stored in this network config. Enable Magic DNS for MagicDNS wiring to take effect. The three editors below stay disabled until then.
   hosts:
     title: Static Hosts
-    magic_dns_off_hint: Domain policy is stored in this network config. Enable Magic DNS for MagicDNS wiring to take effect.
     editor_help: "Highest priority. Static entries are authoritative on MagicDNS and override route hostnames. Use *.suffix (syntax: leftmost single-label * only, parent needs at least two labels so *.com is rejected; matching is RFC 4592 multi-label, e.g. *.corp.example → foo.corp.example and a.b.corp.example). Unmatched names fall through to split DNS / upstream DNS."
     name: Hostname
     name_placeholder: "e.g. app.internal. or *.corp.example"
@@ -610,6 +617,16 @@ dns:
     add: Add host
     add_tip: Add a static DNS host entry
     remove: Remove host
+    skip:
+      empty: Hostname is empty; this entry will be skipped.
+      wildcard_needs_parent: Wildcards need a parent domain, e.g. *.corp.example.
+      multi_wildcard: Only leftmost single-label wildcards are supported, e.g. *.corp.example.
+      invalid_wildcard_parent: Invalid wildcard parent domain; this entry will be skipped.
+      invalid_star: Use *.suffix for wildcards, or an exact hostname.
+      empty_zone: The resolved zone is empty; this entry will be skipped.
+      single_label_zone: Static hosts need at least a two-label zone (e.g. corp.example); *.com is rejected.
+    invalid_ips: "These IPs are invalid and will be skipped: {ips}"
+    invalid_ips_all_drop: This entry has no usable IP, so the whole host takes no effect.
   upstream:
     title: Upstream DNS
     help: |-
@@ -622,6 +639,7 @@ dns:
     add: Add upstream
     add_tip: Add an upstream DNS server
     remove: Remove upstream
+    invalid_entry: This upstream address is invalid and will be skipped (IP literals only, e.g. 1.1.1.1 or udp://9.9.9.9:53).
   forwarders:
     title: Split DNS
     editor_help: Route matching domain suffixes to dedicated upstream servers (before default upstream). Upstream servers are IP literals only in phase 1.
@@ -630,6 +648,9 @@ dns:
     add: Add forwarder
     add_tip: Add a split DNS forwarder
     remove: Remove forwarder
+    invalid_servers: "These upstream servers are invalid and will be skipped: {servers}"
+    invalid_domains: "These domains are blank and will be skipped: {domains}"
+    row_skipped: This forwarder has no usable domain or usable upstream; the whole row will be skipped.
   coverage:
     label: DNS coverage
     covered: Auto

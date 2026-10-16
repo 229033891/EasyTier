@@ -895,35 +895,25 @@ pub fn validate_config_loader_policy_routes(
 /// state) and is therefore **not** checked here.
 pub fn validate_domain_rules_against_dns(
     routes: &[ValidatedPolicyRoute],
-    dns: Option<&DnsConfig>,
+    // Kept for API stability / future DNS interaction checks. Split forwarder
+    // overlap is intentionally allowed: ObservingDnsResolver learns IPs from
+    // actual answers (including Split), unlike static-hosts Catalog ownership.
+    _dns: Option<&DnsConfig>,
     tld_dns_zone: &str,
 ) -> Result<(), PolicyRouteError> {
     let tld = normalize_qname(tld_dns_zone);
-    let split_zones: BTreeSet<String> = dns
-        .into_iter()
-        .flat_map(|dns| dns.forwarders.iter())
-        .flat_map(|forwarder| forwarder.domains.iter())
-        .map(|zone| normalize_qname(zone))
-        .filter(|zone| !zone.is_empty())
-        .collect();
 
     for route in routes {
         for pattern in &route.domains {
-            let (zone, is_wildcard) = match pattern {
-                DomainPattern::Exact(name) => (name.as_str(), false),
-                DomainPattern::Wildcard(parent) => (parent.as_str(), true),
+            let zone = match pattern {
+                DomainPattern::Exact(name) => name.as_str(),
+                DomainPattern::Wildcard(parent) => parent.as_str(),
             };
             if name_is_in_zone(zone, &tld) {
                 return Err(PolicyRouteError::Invalid(format!(
                     "policy route domain {zone:?} falls inside the MagicDNS route TLD zone \
                      {tld:?}; MagicDNS answers it from route hostnames, so the rule would \
                      never learn an IP"
-                )));
-            }
-            if is_wildcard && split_zones.contains(zone) {
-                return Err(PolicyRouteError::Invalid(format!(
-                    "wildcard policy route domain {zone:?} is owned by a Split DNS forwarder; \
-                     MagicDNS drops the entry (split wins)"
                 )));
             }
         }
@@ -1320,17 +1310,16 @@ mod tests {
     }
 
     #[test]
-    fn domain_precheck_rejects_wildcard_over_split_zone() {
+    fn domain_precheck_allows_wildcard_over_split_zone() {
+        // Domain policy routes observe real answers (incl. Split). Unlike static
+        // hosts, a wildcard rule + same-suffix Split forwarder is a valid combo.
         let dns = dns_with_split(&["atlassian.net"]);
         let routes = vec![route_with_domains(&["*.atlassian.net"])];
-        let error = validate_domain_rules_against_dns(&routes, Some(&dns), "").unwrap_err();
-        assert!(error.to_string().contains("Split DNS"));
+        assert!(validate_domain_rules_against_dns(&routes, Some(&dns), "").is_ok());
 
-        // An exact child of the split zone is allowed (hosts win, B2).
         let routes = vec![route_with_domains(&["app.atlassian.net"])];
         assert!(validate_domain_rules_against_dns(&routes, Some(&dns), "").is_ok());
 
-        // A wildcard whose parent is not the split zone is allowed.
         let routes = vec![route_with_domains(&["*.example.com"])];
         assert!(validate_domain_rules_against_dns(&routes, Some(&dns), "").is_ok());
     }

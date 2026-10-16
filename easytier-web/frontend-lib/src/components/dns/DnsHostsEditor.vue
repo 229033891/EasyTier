@@ -3,6 +3,11 @@ import { AutoComplete, Button, InputNumber, InputText } from 'primevue'
 import { useI18n } from 'vue-i18n'
 import { onChipsFocusOut, onChipsKeydown } from '../../modules/chipsInput'
 import {
+  isValidHostIpv4,
+  staticHostSkipReason,
+  type DnsHostSkipReason,
+} from '../../modules/dnsHostValidate'
+import {
   addDnsHostRow,
   DEFAULT_DNS_HOST_TTL_SECS,
   removeDnsHostRow,
@@ -46,6 +51,33 @@ function removeHost(index: number) {
   removeDnsHostRow(index, next)
   touchHosts(next)
 }
+
+/**
+ * Why the runtime will skip this name (O2 console feedback).
+ * Blank draft rows are stripped on serialize, so 'empty' is only reported
+ * when the row carries IPs that would actually be sent and then skipped.
+ */
+function hostNameSkipReason(row: DnsHostEntry): DnsHostSkipReason | null {
+  const reason = staticHostSkipReason(row.name ?? '')
+  if (!reason) return null
+  if (reason === 'empty') {
+    const hasIps = (row.ips ?? []).some((ip) => (ip ?? '').trim().length > 0)
+    return hasIps ? reason : null
+  }
+  return reason
+}
+
+/** Non-blank IP chips the runtime will skip (`Ipv4Addr::from_str` fails). */
+function invalidHostIps(row: DnsHostEntry): string[] {
+  return (row.ips ?? []).filter((ip) => {
+    const text = (ip ?? '').trim()
+    return text.length > 0 && !isValidHostIpv4(text)
+  })
+}
+
+function hasUsableHostIp(row: DnsHostEntry): boolean {
+  return (row.ips ?? []).some((ip) => isValidHostIpv4((ip ?? '').trim()))
+}
 </script>
 
 <template>
@@ -78,6 +110,14 @@ function removeHost(index: number) {
           />
         </div>
       </div>
+      <p
+        v-if="hostNameSkipReason(row)"
+        class="dns-skip-hint"
+      >
+        <i class="pi pi-exclamation-triangle" aria-hidden="true" />{{
+          t('dns.hosts.skip.' + (hostNameSkipReason(row) as string))
+        }}
+      </p>
 
       <div class="config-inline-field">
         <label :for="`dns_host_ips_${index}`" class="config-inline-label config-inline-label--sm">
@@ -96,6 +136,22 @@ function removeHost(index: number) {
           />
         </div>
       </div>
+      <p
+        v-if="invalidHostIps(row).length > 0"
+        class="dns-skip-hint"
+      >
+        <i class="pi pi-exclamation-triangle" aria-hidden="true" />{{
+          t('dns.hosts.invalid_ips', [invalidHostIps(row).join(', ')])
+        }}
+      </p>
+      <p
+        v-if="invalidHostIps(row).length > 0 && !hasUsableHostIp(row)"
+        class="dns-skip-hint"
+      >
+        <i class="pi pi-exclamation-triangle" aria-hidden="true" />{{
+          t('dns.hosts.invalid_ips_all_drop')
+        }}
+      </p>
 
       <div class="config-inline-field">
         <label :for="`dns_host_ttl_${index}`" class="config-inline-label config-inline-label--sm">
@@ -154,5 +210,21 @@ function removeHost(index: number) {
 
 .dns-host-row__ttl :deep(.p-inputnumber) {
   max-width: 8rem;
+}
+
+/* O2: runtime will skip this entry — warn inline instead of tracing-only. */
+.dns-skip-hint {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.375rem;
+  margin: 0;
+  font-size: 0.8125rem;
+  line-height: 1.4;
+  color: var(--et-warning, #b45309);
+}
+
+.dns-skip-hint .pi {
+  margin-top: 0.125rem;
+  flex: none;
 }
 </style>

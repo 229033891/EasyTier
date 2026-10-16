@@ -3,7 +3,7 @@
 ## Status
 
 - Status: **Current**
-- 最近审阅：2026-10-14（`[[policy_routes]]` P1–P5：`priority` 恢复立即切回；切换带仅 `quality`；FIFO 不抹显式 `/32`；对账循环启动即跑一轮）
+- 最近审阅：2026-10-16（修正 `manual_routes` 语义：仅覆盖**学习集合**，append 模式仍自动装 exit `/0`、policy 显式 `/0` 两种模式均生效；Android JNI 逃生阀改由 `NetworkInstanceRunningInfo` 下发；标明 Android/OHOS 未接 `[[policy_routes]]` L2；补对端 `/0` 兜底需 `enable_exit_node`）
 - 范围：`exit_nodes` / `enable_exit_node` / `proxy_cidrs` / `manual_routes` / `manual_routes_append` / `[[policy_routes]]` / TUN 系统路由同步 / `allow_peer_default_without_exit`
 - 规划中的改动见：[`../roadmap/traffic-steering-vNext.md`](../roadmap/traffic-steering-vNext.md)、[`../roadmap/domain-proxy.md`](../roadmap/domain-proxy.md)；默认路由 Phase 2：[`../roadmap/default-route-and-underlay-excludes.md`](../roadmap/default-route-and-underlay-excludes.md)（论证全文 [`../archive/default-route-and-underlay-excludes-2026-10.md`](../archive/default-route-and-underlay-excludes-2026-10.md)）
 - DNS：[`magic-dns.md`](./magic-dns.md)
@@ -17,7 +17,7 @@
 
 | 层 | 管什么 | 相关配置 |
 |----|--------|----------|
-| **L2 入口** | 包会不会进 TUN（OS 路由表） | 对端通告的 `proxy_cidrs`（**IPv4**；见 §3 平台说明，IPv6 proxy CIDR 不装）；本机 `exit_nodes` 安装的默认路由；`manual_routes`；本机 `[[policy_routes]]` 中 `Stable`/`Failover` 规则的 CIDR（L2 与 L3 **同源**） |
+| **L2 入口** | 包会不会进 TUN（OS 路由表） | 对端通告的 `proxy_cidrs`（**IPv4**；见 §3 平台说明，IPv6 proxy CIDR 不装）；本机 `exit_nodes` 安装的默认路由（须无 override 模式 `manual_routes`）；`manual_routes`；本机 `[[policy_routes]]` 中 `Stable`/`Failover` 规则的 CIDR（**桌面**与 L3 **同源**；Android/OHOS 未接，见 §3 / §5.2） |
 | **L3 选路** | 进 TUN 后交给哪个 peer | VIP、proxy CIDR LPM（不含 `/0`）、**`[[policy_routes]]`（次序 3.5）**、`exit_nodes`、`enable_exit_node` |
 
 出口机 **不会** 因为 `enable_exit_node` 向 OSPF 通告 `0.0.0.0/0`。默认路由由**选用出口的客户端本机**安装。
@@ -38,7 +38,7 @@
    - `Block`（`if_all_unavailable = closed` 且全部候选不可达）→ **直接丢包**，**不**回退 `exit_nodes` / 对端 `/0` / 本机出口  
    - `Miss`（无规则命中，或 `open` 规则降级）→ 继续 ↓  
 4. 仍未命中且目标不在本网段 → 按 **`exit_nodes` 列表顺序**，第一个 VIP 可解析 **且有下一跳** 的 peer，并设置 `is_exit_node=true`  
-5. 出口列表为空或无法解析/无下一跳时：才使用对端通告的 `0.0.0.0/0`（子网代理兜底，**不**打 `exit_node` 标志）  
+5. 出口列表为空或无法解析/无下一跳时：才使用对端通告的 `0.0.0.0/0`（子网代理兜底，**不**打 `exit_node` 标志）。⚠️ 兜底路径**同样要求对端开了 `enable_exit_node`**：不带标志的包只有当对端 `proxy_cidrs` 精确命中时才做子网代理转发，否则按 `Pass` 交回普通转发、不会 NAT 出网（`udp_proxy_engine.rs:198` / `:226-228`、`tcp_proxy_engine.rs:552-557`）。所以「兜底选路」不等于「能出网」  
 6. （部分宿主，如 OHOS）`local_exit_node_fallback` → 本机出口  
 
 IPv6：VIP / 非 `/0` 的 proxy LPM → `exit_nodes`（同样要求下一跳）→ Public IPv6 gateway → 对端 `::/0` 兜底；链路本地地址不进出口。
@@ -62,7 +62,7 @@ IPv6：VIP / 非 `/0` 的 proxy LPM → `exit_nodes`（同样要求下一跳）�
 
 - 期望集合 = 对端 OSPF 通告的 proxy CIDR（排除本节点）  
 - **对端通告的 `0.0.0.0/0` 默认不进入期望集合**（不写入 OS）。L3 仍可作选路兜底。  
-- **本机 `exit_nodes` 中至少有一个 VIP 可解析且有下一跳**、未开 `manual_routes`、未 `no_tun`：加入本机管理的 `0.0.0.0/0`（低度量）；IPv4 `/0` **成功装上之后**再装 `::/0`（按 TUN 接口）  
+- **本机 `exit_nodes` 中至少有一个 VIP 可解析且有下一跳**、**未以 override 模式配置 `manual_routes`**、未 `no_tun`：加入本机管理的 `0.0.0.0/0`（低度量）；IPv4 `/0` **成功装上之后**再装 `::/0`（按 TUN 接口）。实现门闩在 `collect_proxy_cidr_state`：`manual_routes_append = false` 且配了 `manual_routes` 时不置 `has_exit_nodes`；**`manual_routes_append = true` 时照常置位**（append 语义 = 「手动列表是补充，不是对自节点默认路由意图的否决」）  
 - 逃生阀：`allow_peer_default_without_exit=true` 时，无 exit 也可把对端 `/0` 装进 OS（桌面用高度量；移动端无度量概念，会成为真默认）  
 - 装 TUN 默认路由前，会先把 **underlay 排除宿主路由**（`/32`/`/128`）装到**物理默认网关**上：已连接 peer 隧道的 `resolved_remote_addr`、对端 `stun_info.public_ip`、以及本进程 **config-server / 管理面** 连接目标。卸默认时**先卸 TUN `/0`，再卸排除**  
 - 桌面 DNS：TUN 就绪后，peer / STUN / config-server 域名解析经 `RuntimeDnsResolver`，hickory 套接字绑定物理默认网卡，避免首次查询被 TUN `/0` 吸走  
@@ -79,10 +79,14 @@ IPv6：VIP / 非 `/0` 的 proxy LPM → `exit_nodes`（同样要求下一跳）�
   - GUI 侧 `easytier-gui/.../manager.rs::persist_runtime_dev_name`：实例启动后读回名字落盘。`run_network_instance` **不等** `start()` 完成，所以 `pre_run_network_instance_hook` 存下的仍是空 `dev_name`；该函数只在「存储里 `dev_name` 为空且非 web 归属」时才轮询，成功一次后后续运行直接跳过
   - web 归属配置不动：console 侧 reconciler 用 `is_automatic_windows_dev_name` 主动忽略自动名，写回会把自动名当成用户配置  
 - ACL / KCP / QUIC / wrapped-TCP 等旁路通过 `get_peer_id_by_ip_allowing_default_proxy` 仍可解析对端通告的 `/0`  
-- **`[[policy_routes]]` 的 L2 贡献（P2 起）**：期望集合额外并入本机路由表中 `Stable` / `Failover` 规则的 CIDR，取自 **L3 热路径同一份 `ArcSwap` 快照**（L2 与 L3 同源，避免「装了路由但 L3 查不到」的黑洞）。**`Degraded` 规则不贡献 L2**。含显式 `/0` 规则时等价于「本节点声明全隧道」，与 `exit_nodes` 一样触发本机默认路由安装（仍受 `no_tun` 抑制）
-- `manual_routes_append = true` 时 `manual_routes` 与上述集合**叠加**（走完整累加 + `/0` 策略）；默认 `false` = 旧覆盖语义
-- `manual_routes` 开启：整表由手动列表覆盖，**不**自动加出口默认路由  
+- **`[[policy_routes]]` 的 L2 贡献（P2 起，桌面路径）**：`cidr_monitor` → `resolve_proxy_cidrs` 期望集合额外并入本机路由表中 `Stable` / `Failover` 规则的 CIDR，取自 **L3 热路径同一份 `ArcSwap` 快照**（L2 与 L3 同源，避免「装了路由但 L3 查不到」的黑洞）。**`Degraded` 规则不贡献 L2**。含显式 `/0` 规则时等价于「本节点声明全隧道」，可触发本机默认路由安装（仍受 `no_tun` 抑制）。**Android / OHOS 宿主装路由路径未读该快照**（见 §3 平台表与 §5.2）
+- `manual_routes` 只覆盖**学习集合**（对端 proxy CIDR — 含对端 `/0` — 与 policy `local_routes` 中的**非 `/0`** 条目）；**不覆盖本机自己的默认路由意图**：
+  - **用户手写在 `manual_routes` 里的 `/0`**：两种模式下都保留（与 policy 显式 `/0` 同为「本机声明全隧道」；`no_tun` 除外）
+  - `manual_routes_append = true`：手动列表与「对端 proxy CIDR + policy `local_routes`」**叠加**，且 `exit_nodes` 仍自动装 `/0`（低度量）
+  - `manual_routes_append = false`（默认）：学习集合整表只剩手动列表，`exit_nodes` **不**自动装 `/0`；但 policy 规则里**显式**的 `cidr = "0.0.0.0/0"` **仍生效**
+  - 逃生阀 `allow_peer_default_without_exit` 保留的是**对端通告**的 `/0`，属学习集合 → override 模式下仍被手动列表覆盖（append 模式下正常生效）
 - `enable_exit_node` **不**向全网通告 `/0`  
+- **宿主侧路由聚合所需的策略字段**：`NetworkInstanceRunningInfo.allow_peer_default_without_exit`（`optional bool`）与 `exit_nodes`（`repeated string`）由核心下发，供 Android JNI 等**自己装路由、读不到 core config** 的宿主使用。用 `optional` 而非裸 bool 是因为 proto3 标量无 presence，漏发与 `false` 不可区分（老核心不填时宿主保留上一次的值）。桌面路径不读这两个字段，只看 `resolve_proxy_cidrs`。
 - 可观测：`NetworkInstanceRunningInfo.proxy_cidr_route_sync` 展示「期望 vs 已安装 vs 最后错误」摘要  
   - **状态页展示规则**（2026-10-08 起）：字段**有值就展示**，空占位（`desired=[-] installed=[-] exit=…`）也照显示——空摘要不是「没数据」，而是「确实一条代理路由都没装」，便于一眼确认。字段缺失（老核心）或全空白不显示。
   - **摘要来源因平台而异**，排障时必须先分清：桌面 = L2 路由同步（`easytier/src/instance/virtual_nic.rs::report_proxy_cidr_route_sync`）；Android = GUI `easytier-gui/src/composables/mobile_vpn.ts::annotateNetworkInfoWithMobileVpnRoutes` 按 VpnService 实装路由**覆盖写入**（那边 L2 ifcfg 是 no-op，空占位等价于「VPN 没装任何路由」）；OHOS = `easytier-contrib/easytier-ohrs/src/exports/runtime_api.rs::annotate_ohos_proxy_cidr_route_sync` 覆盖（`nearby_management.rs` 调用）。
@@ -90,13 +94,13 @@ IPv6：VIP / 非 `/0` 的 proxy LPM → `exit_nodes`（同样要求下一跳）�
 
 ### 平台差异
 
-| 平台 | 路由安装方 | 对端通告的 `/0` 会怎样 |
-|------|-----------|----------------------|
-| Windows / Linux / macOS（非 NE）/ FreeBSD | 本进程 `apply_route_changes` | **默认不装**；仅 `allow_peer_default_without_exit` 或本机 exit 时进入期望集合 |
-| Android（GUI / Web） | `VpnService.Builder.addRoute`，由 GUI `getRoutesForVpn` 汇总 | 无**可达** exit 且未开逃生阀时**过滤**对端 `/0`；exit VIP 出现在路由表且有下一跳时显式加 `/0` |
-| Android（`easytier-android-jni`） | Kotlin 汇集 peer `proxy_cidrs` | 同上（按 NetworkConfig 的 exit VIP 可达性 / 逃生阀） |
-| OHOS | `aggregate_tun_routes` | 无可达 exit 且未开逃生阀时过滤对端 `/0`；可达时插入 `/0`（再 `simplify`） |
-| iOS / macOS NE | 宿主 App / NE `includedRoutes` | 本仓库无法约束 |
+| 平台 | 路由安装方 | 对端通告的 `/0` 会怎样 | `[[policy_routes]]` L2（CIDR / 域名 `/32`） |
+|------|-----------|----------------------|---------------------------------------------|
+| Windows / Linux / macOS（非 NE）/ FreeBSD | 本进程 `apply_route_changes`（`resolve_proxy_cidrs`） | **默认不装**；仅 `allow_peer_default_without_exit` 或本机 exit（且 `manual_routes` 非 override 模式）时进入期望集合 | ✅ 与 L3 同源快照 |
+| Android（GUI / Web） | `VpnService.Builder.addRoute`，由 GUI `getRoutesForVpn` 汇总 | 无**可达** exit 且未开逃生阀时**过滤**对端 `/0`；exit VIP 出现在路由表且有下一跳时显式加 `/0` | ❌ 只汇 peer `proxy_cidrs` + 配置 `routes` + exit `/0`，**不读** `l2_contributing_cidrs` |
+| Android（`easytier-android-jni`） | Kotlin 汇集 peer `proxy_cidrs` | 同上（逃生阀 / exit 可达性取自 `NetworkInstanceRunningInfo` 新增的 `allow_peer_default_without_exit` / `exit_nodes` 字段，每 3 秒轮询刷新）；**只汇 peer `proxy_cidrs` + `/0` + MagicDNS `/32`，不装 `routes` / `manual_routes`** | ❌ 同上 |
+| OHOS | `aggregate_tun_routes` | 无可达 exit 且未开逃生阀时过滤对端 `/0`；可达时插入 `/0`（再 `simplify`） | ❌ 只汇虚拟网段 + `manual_routes` + peer `proxy_cidrs` + exit `/0` |
+| iOS / macOS NE | 宿主 App / NE `includedRoutes` | 本仓库无法约束 | ❌ 本仓库无法约束 |
 
 补充：对端宣告的 **IPv6 proxy CIDR 目前不写入任何 OS 路由**（`::/0` 只在本机出口时装）。
 
@@ -151,9 +155,9 @@ if_all_unavailable = "open"       # open = 回退物理网关；closed = 丢包�
   - `balance` —— 把候选列表交给热路径，按**内层流 5-tuple 哈希取模**分摊：同一条 TCP 流恒定走同一个 peer，不同流可能走不同 peer → **出口 IP 不唯一**。
 - **规则 = 出口（重要）**：`[[policy_routes]]` 命中后**一律置 `exit_node` 标志**，即被指向的 peer **必须开启**「允许此节点成为出口节点」（`enable_exit_node`），否则该 peer 会**丢弃**这些包（不会静默回退到其它路径）。网关侧仍**优先查自己的 `proxy_cidrs`**：命中即按子网代理转发，没命中才 NAT 出网。
 - **切换防抖（仅 `quality`）**：发布侧沿用 `MIN_DELTA=20`；`select_by = quality` 时，相对 10% / 绝对 5 cost 单位带内不动，带外还需**连续 3 个 tick** 才切。`priority` **不**走切换带（否则成本恒 0，优选永远切不回来）。
-- **L2**：`cidr_monitor` 从**同一份快照**取 `Stable` / `Failover` 规则的 CIDR 作为本机代理路由（§3）。
-- **域名 → IP**：订阅 MagicDNS `resolve()` 的**实际应答**（全代码库唯一能看到应用实际解析结果的位置），学到 `/32` 后**原子**更新 L2 + L3；旧 IP 保留，超上限 FIFO 淘汰（**不**淘汰规则上显式配置的 `/32`）。
-- **配置校验硬失败**：缺 `select_by` / `failover_when` / `if_all_unavailable`、`closed` + 多 peer 未 `require_confirmed`、`quality_degraded_cost` 与 `failover_when = degraded` 未成对、`domains` 落在 `et.net.` 内或与 Split 父 zone 冲突 —— 均**加载失败并报错**，不静默取默认。
+- **L2（桌面）**：`cidr_monitor` 从**同一份快照**取 `Stable` / `Failover` 规则的 CIDR 作为本机代理路由（§3）；override 模式下非 `/0` 的 policy CIDR 被 `manual_routes` 覆盖，但显式 `/0` 规则不受影响。Android / OHOS **未接线**（§5.2）。
+- **域名 → IP（桌面）**：订阅 MagicDNS `resolve()` 的**实际应答**（全代码库唯一能看到应用实际解析结果的位置），学到 `/32` 后**原子**更新 L2 + L3；旧 IP 保留，超上限 FIFO 淘汰（**不**淘汰规则上显式配置的 `/32`）。移动端即便 L3 表有观测结果，宿主也**不会**把这些 `/32` 装进 VpnService / TUN 路由表。
+- **配置校验硬失败**：缺 `select_by` / `failover_when` / `if_all_unavailable`、`closed` + 多 peer 未 `require_confirmed`、`quality_degraded_cost` 与 `failover_when = degraded` 未成对、`domains` 落在 `et.net.` 内 —— 均**加载失败并报错**，不静默取默认。通配规则与 Split forwarder 同后缀**共存合法**（2026-10-16 起）：policy 规则经 ObservingDnsResolver 观测真实应答学 IP（含 Split 应答），不抢占 Catalog zone；「Split 赢」仅对静态 hosts **通配**条目成立（`static_host_skip_reason`）。
 
 ### 5.1 ⚠️ 泄漏面（产品必须明示）
 
@@ -169,11 +173,13 @@ if_all_unavailable = "open"       # open = 回退物理网关；closed = 丢包�
 
 ### 5.2 平台矩阵（域名路由可用性）
 
-| 平台 | 域名路由 | 原因 |
-|------|----------|------|
-| Windows / macOS（非 NE）/ Linux（systemd）/ OpenWrt（手工） | ✅ | 本进程可控 TUN 路由 + MagicDNS 自动接线 |
-| Android（Tauri / JNI） | ✅ | VpnService 装路由；MagicDNS 走 `fake_ip`（注意 JNI 关 DNS 时会回落运营商 DNS） |
-| OHOS | ✅ | 同 Android 模式（宿主框架授予） |
+此处「可用」= **L3 能选 peer 且 L2 能把目标装进系统/VPN 路由**（否则包进不了 TUN）。
+
+| 平台 | 域名 / `policy_routes` 导流 | 原因 |
+|------|-----------------------------|------|
+| Windows / macOS（非 NE）/ Linux（systemd）/ OpenWrt（手工） | ✅ | 本进程 `resolve_proxy_cidrs` + MagicDNS 自动接线；观测 `/32` 进 OS |
+| Android（Tauri / JNI） | ⚠️ **仅全隧道近似** | L3 / MagicDNS（`fake_ip`）可运行，但 `getRoutesForVpn` **不装** policy CIDR / 观测 `/32`；无可达 exit（或未手写进 `routes`）时，域名目标**不会**进 VpnService。JNI 关 DNS 时还会回落运营商 DNS |
+| OHOS | ⚠️ **仅全隧道近似** | 同 Android：`aggregate_tun_routes` 未读 `l2_contributing_cidrs` |
 | **iOS / macOS NE** | ❌ | OS 不走 EasyTier DNS，拿不到解析结果 |
 | **`no_tun`** | ❌ | MagicDNS Runner 不启动，无观测来源 |
 
@@ -185,21 +191,28 @@ if_all_unavailable = "open"       # open = 回退物理网关；closed = 丢包�
 
 | 场景 | 期望 |
 |------|----------------|
-| 本机 `exit_nodes` 可解析且有下一跳，未开 `manual_routes` / `no_tun` | TUN 安装 `0.0.0.0/0` 与 `::/0`；有 underlay 排除；公网 L3 走出口并带 `exit_node` 标志 |
+| 本机 `exit_nodes` 可解析且有下一跳，未配 `manual_routes`（或 `manual_routes_append = true`）/ `no_tun` | TUN 安装 `0.0.0.0/0` 与 `::/0`；有 underlay 排除；公网 L3 走出口并带 `exit_node` 标志 |
 | `exit_nodes` 非空但全部不可达 | **不**装本机默认路由；公网走系统原默认网关 |
 | 清空 `exit_nodes` 或出口掉线 | 卸掉上述默认路由与排除；对端子网 CIDR 保留 |
 | 只配 `enable_exit_node`，未配 `exit_nodes`、也未宣告 `/0` | 系统路由表通常 **不会** 出现 TUN 默认路由 |
 | 对端通告 `10.0.0.0/24` | 本机可同步安装对应 TUN 路由；命中走 LPM，非 exit 标志 |
-| 对端通告 `0.0.0.0/0`，本机 **未** 配出口，逃生阀关（默认） | OS **无** TUN `/0`；L3 仍可按兜底选路 |
+| 对端通告 `0.0.0.0/0`，本机 **未** 配出口，逃生阀关（默认） | OS **无** TUN `/0`；L3 仍可按兜底选路（但需对端开 `enable_exit_node` 才能真正出网） |
 | 对端通告 `0.0.0.0/0`，本机未配出口，`allow_peer_default_without_exit=true` | 桌面装高度量 `/0`（有物理默认时通常不抢；无物理默认时会接管）；移动端会成为真默认 |
 | 对端通告 `0.0.0.0/0`，本机 **已** 配可解析出口 | L2 装低度量 `/0`；L3 走 `exit_nodes`，带 `exit_node` 标志 |
-| `manual_routes` 开启 | L2 完全由手动列表决定 |
+| `manual_routes` 开启（`manual_routes_append = false`）且含 `0.0.0.0/0` | 手动列表里的 `/0` 照装（用户自己声明全隧道）；对端仍被过滤、`exit_nodes` 不自动加 |
+| `manual_routes` 开启（`manual_routes_append = false`） | L2 学习集合完全由手动列表决定；**不**因 `exit_nodes` 自动加 `/0`；逃生阀保留的对端 `/0` 同样被覆盖 |
+| `manual_routes_append = true` 且同时配了 `exit_nodes`（可解析） | L2 = 对端 proxy + policy `local_routes` + 手动列表 + **本机 `/0`**（append 不再否决自节点默认路由意图） |
+| `manual_routes_append = true`，未配 `exit_nodes` | L2 = 对端 proxy（含逃生阀保留的 `/0`）+ policy `local_routes` + 手动列表；无本机 `/0` |
+| `[[policy_routes]] cidr = "0.0.0.0/0"`（override 模式也含） | L2 装本机 `/0`（本机声明全隧道），并同时保留 `manual_routes` 条目 |
 | 移动端同样的对端 `/0` + 无 exit | **不**再整机吸流（与桌面一致）；有 exit 才全隧道 |
 | 对端通告 `::/0` | 本机**不**装任何 IPv6 默认路由（`::/0` 只随本机出口安装） |
-| `[[policy_routes]]` 配 `cidr = "10.0.0.0/24"`，`peers` 可达 | L3 命中次序 3.5 走该 peer；L2 同步装 `10.0.0.0/24` |
-| `[[policy_routes]]` 配 `domains`，应用解析出 A 记录 | 观测学到 `/32`；L3 立即就绪，L2 在 ≤1 秒内装上 |
+| `[[policy_routes]]` 配 `cidr = "10.0.0.0/24"`，`peers` 可达（**桌面**） | L3 命中次序 3.5 走该 peer；L2 同步装 `10.0.0.0/24` |
+| 同上（**Android / OHOS**） | L3 仍可命中；**L2 不装**该 CIDR（除非已全隧道或手写进 `routes` / `manual_routes`） |
+| `[[policy_routes]]` 配 `domains`，应用解析出 A 记录（**桌面**） | 观测学到 `/32`；L3 立即就绪，L2 在 ≤1 秒内装上 |
+| 同上（**Android / OHOS**） | L3 表可有观测结果；宿主路由**不**装这些 `/32` |
 | `[[policy_routes]]` `if_all_unavailable = closed` 且全部候选不可达 | 命中目标**丢包**，**不**回退物理网关 |
-| `[[policy_routes]]` `domains` 落在 `et.net.` 内，或通配父 zone 与 Split forwarder 冲突 | **加载失败并报错**（配置预检） |
+| `[[policy_routes]]` `domains` 落在 `et.net.` 内 | **加载失败并报错**（配置预检） |
+| `[[policy_routes]]` `domains = ["*.atlassian.net"]` 且 Split forwarder 也配 `atlassian.net` | **合法共存**（预检放行）：观测学 IP 不受 Split 影响；注意静态 hosts 的**通配**条目遇 Split 仍让位（Split 赢） |
 | `[[policy_routes]]` `select_by = "priority"`，优选 A 掉线再恢复 | 先切备选；A 恢复后**下一对账 tick 立即切回 A**（不走切换带） |
 | `[[policy_routes]]` `select_by = "quality"`，两候选成本不同 | 选**成本最低**的可达候选；成本差在带内、或未连续 3 tick 占优时不切 |
 | `[[policy_routes]]` `select_by = "balance"`，两条不同 TCP 流 | 各按自身流哈希选候选，**可能走不同 peer**；同一条流恒定走同一 peer |

@@ -36,9 +36,13 @@ crate 内设计稿（非本索引）：`easytier/docs/`（凭据计划已标 Arc
 | [desktop-gui-and-config-server.md](./current/desktop-gui-and-config-server.md) | 桌面 GUI / `ET-Gui` 进程模型与 config-server 回写路径 |
 | [socket-protection.md](./current/socket-protection.md) | Host VPN-bypass / `need_protect` 契约 |
 | [peer-connections.md](./current/peer-connections.md) | 节点间多 PeerConn 与单 `default_conn` 发送路径 |
+| [p2p-direct-throughput-audit.md](./current/p2p-direct-throughput-audit.md) | **P2P 直连吞吐瓶颈审查**（逐行核实出站通路；3 处瓶颈 / 3 处已排除；未压测） |
+| [p2p-direct-stability-audit.md](./current/p2p-direct-stability-audit.md) | **P2P 直连稳定性审查**（RDP 卡顿五机制 + 配置层缓解清单；混淆因素待排除） |
+| [console-and-client-interaction-performance.md](./current/console-and-client-interaction-performance.md) | **控制台与客户端交互性能审查**（Web 控制台 / 安卓 GUI 交互慢的根因；OpenWrt LuCI 见外部仓文档） |
 | [tunnels-and-transport.md](./current/tunnels-and-transport.md) | 隧道 scheme、打洞/中继与伪装差距 |
 | [magic-dns.md](./current/magic-dns.md) | MagicDNS / DnsConfig / OS 接线与覆盖信号（现状 SoT） |
 | [magic-dns-manual-wiring.md](./current/magic-dns-manual-wiring.md) | Linux 非 systemd / OpenWrt MagicDNS 手工接线 |
+| [dns-policy-audit.md](./current/dns-policy-audit.md) | **域名策略（DnsConfig）审查**（逐行核对全链路；3 处 BUG / 4 处冲突 / 9 项优化；静态核查未复现） |
 
 ## Roadmap — 待实现
 

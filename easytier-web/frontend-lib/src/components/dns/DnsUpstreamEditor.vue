@@ -1,10 +1,20 @@
 <script setup lang="ts">
 import { Button, InputText } from 'primevue'
 import { useI18n } from 'vue-i18n'
+import { isValidUpstreamDnsEntry } from '../../modules/dnsHostValidate'
 
 const servers = defineModel<string[]>('servers', { required: true })
 
 const { t } = useI18n()
+
+/**
+ * O2 console feedback: blank draft rows are stripped on serialize, so only
+ * non-blank entries that `parse_upstream_nameserver` would reject get a hint.
+ */
+function upstreamInvalid(value: string | undefined): boolean {
+  const text = (value ?? '').trim()
+  return text.length > 0 && !isValidUpstreamDnsEntry(text)
+}
 
 /** Stable per-row keys so editing mid-list does not remount/focus-jump. */
 const rowKeys: string[] = []
@@ -45,33 +55,43 @@ function removeServer(index: number) {
     <div
       v-for="(_, index) in servers"
       :key="rowKey(index)"
-      class="config-inline-field"
+      class="flex flex-col gap-1"
     >
-      <label :for="`dns_upstream_${index}`" class="config-inline-label config-inline-label--sm">
-        {{ t('dns.upstream.server') }}
-      </label>
-      <div class="config-inline-control dns-row-with-action">
-        <InputText
-          :id="`dns_upstream_${index}`"
-          v-model="servers[index]"
-          fluid
-          autocomplete="off"
-          autocorrect="off"
-          autocapitalize="off"
-          spellcheck="false"
-          :placeholder="t('dns.upstream.server_placeholder')"
-        />
-        <Button
-          icon="pi pi-trash"
-          severity="danger"
-          text
-          rounded
-          class="et-icon-action-btn"
-          :aria-label="t('dns.upstream.remove')"
-          v-tooltip.top="t('dns.upstream.remove')"
-          @click="removeServer(index)"
-        />
+      <div class="config-inline-field">
+        <label :for="`dns_upstream_${index}`" class="config-inline-label config-inline-label--sm">
+          {{ t('dns.upstream.server') }}
+        </label>
+        <div class="config-inline-control dns-row-with-action">
+          <InputText
+            :id="`dns_upstream_${index}`"
+            v-model="servers[index]"
+            fluid
+            autocomplete="off"
+            autocorrect="off"
+            autocapitalize="off"
+            spellcheck="false"
+            :placeholder="t('dns.upstream.server_placeholder')"
+          />
+          <Button
+            icon="pi pi-trash"
+            severity="danger"
+            text
+            rounded
+            class="et-icon-action-btn"
+            :aria-label="t('dns.upstream.remove')"
+            v-tooltip.top="t('dns.upstream.remove')"
+            @click="removeServer(index)"
+          />
+        </div>
       </div>
+      <p
+        v-if="upstreamInvalid(servers[index])"
+        class="dns-skip-hint"
+      >
+        <i class="pi pi-exclamation-triangle" aria-hidden="true" />{{
+          t('dns.upstream.invalid_entry')
+        }}
+      </p>
     </div>
 
     <div class="flex justify-start">
@@ -101,5 +121,21 @@ function removeServer(index: number) {
   min-width: 0;
   width: auto;
   max-width: 100%;
+}
+
+/* O2: runtime will skip this entry — warn inline instead of tracing-only. */
+.dns-skip-hint {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.375rem;
+  margin: 0;
+  font-size: 0.8125rem;
+  line-height: 1.4;
+  color: var(--et-warning, #b45309);
+}
+
+.dns-skip-hint .pi {
+  margin-top: 0.125rem;
+  flex: none;
 }
 </style>

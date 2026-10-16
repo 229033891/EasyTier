@@ -31,6 +31,7 @@ import {
 } from '../modules/configConflicts'
 import { onChipsFocusOut, onChipsKeydown } from '../modules/chipsInput'
 import AclManager from './acl/AclManager.vue'
+import { expectedDnsCoverage } from '../modules/dnsCoverage'
 import DnsHostsEditor from './dns/DnsHostsEditor.vue'
 import DnsForwardersEditor from './dns/DnsForwardersEditor.vue'
 import DnsUpstreamEditor from './dns/DnsUpstreamEditor.vue'
@@ -352,6 +353,23 @@ const conflictWarnings = computed(() => collectConfigConflictWarnings(curNetwork
 
 const relayControlsDisabled = computed(() => !!curNetwork.value.p2p_only)
 const tunControlsDisabled = computed(() => !!curNetwork.value.no_tun)
+
+/** DNS 策略编辑器：关闭魔法 DNS 时仍可保存配置，但应灰化并明示不接线（C1）。 */
+const dnsPolicyEditorsDisabled = computed(
+  () => !curNetwork.value.enable_magic_dns || tunControlsDisabled.value,
+)
+
+/**
+ * 网络配置页无设备 OS：用 enable_magic_dns / no_tun 推断观测能否工作（C4）。
+ * 未 covered 且规则含 domains 时在 PolicyRoutesEditor 内联警示。
+ */
+const policyDnsCoverage = computed(() =>
+  expectedDnsCoverage({
+    enable_magic_dns: curNetwork.value.enable_magic_dns,
+    no_tun: curNetwork.value.no_tun,
+    os_type: null,
+  }),
+)
 const ipv6ControlsHidden = computed(() => !!curNetwork.value.disable_ipv6)
 const encryptionAlgoHidden = computed(() => !!curNetwork.value.disable_encryption)
 
@@ -1013,7 +1031,10 @@ function removeVpnPortalClient(index: number) {
                             v-tooltip.top="{ value: t('policy_routes_help'), escape: false }"
                             :aria-label="t('policy_routes_help')" role="img"></i>
                         </div>
-                        <PolicyRoutesEditor v-model:routes="curNetwork.policy_routes" />
+                        <PolicyRoutesEditor
+                          v-model:routes="curNetwork.policy_routes"
+                          :dns-coverage="policyDnsCoverage"
+                        />
                       </div>
 
                       <div class="config-outbound-peer">
@@ -1183,13 +1204,6 @@ function removeVpnPortalClient(index: number) {
             <template #header>
               <div class="flex items-center gap-2 min-w-0">
                 <span>{{ t('dns.title') }}</span>
-                <i
-                  v-if="!curNetwork.enable_magic_dns"
-                  class="pi pi-question-circle config-help-tip" tabindex="0"
-                  v-tooltip.top="t('dns.hosts.magic_dns_off_hint')"
-                  :aria-label="t('dns.hosts.magic_dns_off_hint')"
-                  role="img"
-                />
               </div>
             </template>
             <div class="flex flex-col gap-y-4">
@@ -1206,11 +1220,18 @@ function removeVpnPortalClient(index: number) {
                   />
                 </div>
                 <p v-if="tunControlsDisabled" class="config-field-hint m-0">{{ t('no_tun_magic_dns_hint') }}</p>
+                <p
+                  v-else-if="!curNetwork.enable_magic_dns"
+                  class="config-field-hint m-0"
+                >{{ t('dns.magic_dns_off_hint') }}</p>
               </div>
 
               <!-- dns_config 由 syncNormalizedNetwork 保证存在；v-if 只用于类型收窄 -->
               <template v-if="curNetwork.dns_config">
-                <div class="dns-section">
+                <div
+                  class="dns-section"
+                  :class="{ 'dns-section--disabled': dnsPolicyEditorsDisabled }"
+                >
                   <div class="dns-section__title">
                     <span>{{ t('dns.hosts.title') }}</span>
                     <i
@@ -1220,10 +1241,18 @@ function removeVpnPortalClient(index: number) {
                       role="img"
                     />
                   </div>
-                  <DnsHostsEditor v-model:hosts="curNetwork.dns_config.hosts" />
+                  <fieldset
+                    class="dns-section__fieldset"
+                    :disabled="dnsPolicyEditorsDisabled"
+                  >
+                    <DnsHostsEditor v-model:hosts="curNetwork.dns_config.hosts" />
+                  </fieldset>
                 </div>
 
-                <div class="dns-section">
+                <div
+                  class="dns-section"
+                  :class="{ 'dns-section--disabled': dnsPolicyEditorsDisabled }"
+                >
                   <div class="dns-section__title">
                     <span>{{ t('dns.forwarders.title') }}</span>
                     <i
@@ -1233,10 +1262,18 @@ function removeVpnPortalClient(index: number) {
                       role="img"
                     />
                   </div>
-                  <DnsForwardersEditor v-model:forwarders="curNetwork.dns_config.forwarders" />
+                  <fieldset
+                    class="dns-section__fieldset"
+                    :disabled="dnsPolicyEditorsDisabled"
+                  >
+                    <DnsForwardersEditor v-model:forwarders="curNetwork.dns_config.forwarders" />
+                  </fieldset>
                 </div>
 
-                <div class="dns-section">
+                <div
+                  class="dns-section"
+                  :class="{ 'dns-section--disabled': dnsPolicyEditorsDisabled }"
+                >
                   <div class="dns-section__title">
                     <span>{{ t('dns.upstream.title') }}</span>
                     <i
@@ -1246,7 +1283,12 @@ function removeVpnPortalClient(index: number) {
                       role="img"
                     />
                   </div>
-                  <DnsUpstreamEditor v-model:servers="curNetwork.dns_config.upstream_dns" />
+                  <fieldset
+                    class="dns-section__fieldset"
+                    :disabled="dnsPolicyEditorsDisabled"
+                  >
+                    <DnsUpstreamEditor v-model:servers="curNetwork.dns_config.upstream_dns" />
+                  </fieldset>
                 </div>
               </template>
             </div>
@@ -1334,6 +1376,21 @@ function removeVpnPortalClient(index: number) {
 
 .dns-section__title--control {
   gap: 0.5rem;
+}
+
+.dns-section__fieldset {
+  margin: 0;
+  padding: 0;
+  border: none;
+  min-width: 0;
+}
+
+.dns-section--disabled {
+  opacity: 0.55;
+}
+
+.dns-section--disabled .dns-section__fieldset {
+  pointer-events: none;
 }
 
 /* Under「出网」: groups (选路 / 本机路由表) then peer options at equal weight. */

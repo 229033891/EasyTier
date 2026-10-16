@@ -83,5 +83,25 @@ where
                 .proxy_cidr_route_sync_status()
                 .summary(),
         ),
+        // Mirrored for host-side route aggregators (Android VpnService / OHOS),
+        // which build their own route sets and cannot read the core config.
+        // Sent unconditionally: the host decides between the `optional` presence
+        // bit and the value, and proto3 cannot express "explicitly false".
+        allow_peer_default_without_exit: Some(
+            instance
+                .toml_config()
+                .map(|config| config.get_flags().allow_peer_default_without_exit)
+                .unwrap_or(false),
+        ),
+        exit_nodes: instance
+            .toml_config()
+            .map(|config| {
+                config
+                    .get_exit_nodes()
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default(),
     })
 }

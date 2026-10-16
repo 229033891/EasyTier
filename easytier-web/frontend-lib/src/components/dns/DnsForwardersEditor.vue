@@ -2,6 +2,10 @@
 import { AutoComplete, Button } from 'primevue'
 import { useI18n } from 'vue-i18n'
 import { onChipsFocusOut, onChipsKeydown } from '../../modules/chipsInput'
+import {
+  isValidForwarderDomain,
+  isValidUpstreamDnsEntry,
+} from '../../modules/dnsHostValidate'
 import type { DnsForwarder } from '../../types/network'
 
 const forwarders = defineModel('forwarders', {
@@ -39,6 +43,36 @@ function removeForwarder(index: number) {
   next.splice(index, 1)
   touchForwarders(next)
 }
+
+/** Non-blank server chips the runtime will skip (per-entry warn + skip). */
+function invalidServers(row: DnsForwarder): string[] {
+  return (row.servers ?? []).filter((s) => {
+    const text = (s ?? '').trim()
+    return text.length > 0 && !isValidUpstreamDnsEntry(text)
+  })
+}
+
+/** Chips that `normalize_forward_zone` rejects (blank after trim/dots). */
+function invalidDomains(row: DnsForwarder): string[] {
+  return (row.domains ?? []).filter((d) => {
+    const text = (d ?? '').trim()
+    return text.length > 0 && !isValidForwarderDomain(text)
+  })
+}
+
+/**
+ * O2 console feedback: a split row with content but no usable domain or no
+ * usable server is skipped wholesale at runtime (silently for the empty
+ * side, with warn when servers exist but none parse). Pristine blank rows
+ * are stripped on serialize and stay quiet.
+ */
+function forwarderRowSkipped(row: DnsForwarder): boolean {
+  const entries = [...(row.domains ?? []), ...(row.servers ?? [])]
+  if (!entries.some((s) => (s ?? '').trim().length > 0)) return false
+  const okDomain = (row.domains ?? []).some((d) => isValidForwarderDomain(d ?? ''))
+  const okServer = (row.servers ?? []).some((s) => isValidUpstreamDnsEntry(s ?? ''))
+  return !okDomain || !okServer
+}
 </script>
 
 <template>
@@ -75,6 +109,14 @@ function removeForwarder(index: number) {
           />
         </div>
       </div>
+      <p
+        v-if="invalidDomains(row).length > 0"
+        class="dns-skip-hint"
+      >
+        <i class="pi pi-exclamation-triangle" aria-hidden="true" />{{
+          t('dns.forwarders.invalid_domains', [invalidDomains(row).join(', ')])
+        }}
+      </p>
 
       <div class="config-inline-field">
         <label :for="`dns_fwd_servers_${index}`" class="config-inline-label config-inline-label--sm">
@@ -93,6 +135,23 @@ function removeForwarder(index: number) {
           />
         </div>
       </div>
+      <p
+        v-if="invalidServers(row).length > 0"
+        class="dns-skip-hint"
+      >
+        <i class="pi pi-exclamation-triangle" aria-hidden="true" />{{
+          t('dns.forwarders.invalid_servers', [invalidServers(row).join(', ')])
+        }}
+      </p>
+
+      <p
+        v-if="forwarderRowSkipped(row)"
+        class="dns-skip-hint"
+      >
+        <i class="pi pi-exclamation-triangle" aria-hidden="true" />{{
+          t('dns.forwarders.row_skipped')
+        }}
+      </p>
     </div>
 
     <div class="flex justify-start">
@@ -122,5 +181,21 @@ function removeForwarder(index: number) {
   min-width: 0;
   width: auto;
   max-width: 100%;
+}
+
+/* O2: runtime will skip this entry/row — warn inline instead of tracing-only. */
+.dns-skip-hint {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.375rem;
+  margin: 0;
+  font-size: 0.8125rem;
+  line-height: 1.4;
+  color: var(--et-warning, #b45309);
+}
+
+.dns-skip-hint .pi {
+  margin-top: 0.125rem;
+  flex: none;
 }
 </style>

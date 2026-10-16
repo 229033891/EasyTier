@@ -21,9 +21,7 @@ use tokio::sync::{RwLock, RwLockReadGuard};
 
 use crate::common::dns::{get_default_resolver_config, magic_dns_forward_connector};
 
-use super::config::{
-    GeneralConfig, GeneralConfigBuilder, Record, RunConfig, RunConfigBuilder, SplitForwarderConfig,
-};
+use super::config::{GeneralConfig, Record, RunConfig, SplitForwarderConfig};
 
 pub struct Server {
     server: ServerFuture<CatalogRequestHandler>,
@@ -150,9 +148,22 @@ fn build_forward_config_from_servers(
     servers: &[String],
     excluded: &[IpAddr],
 ) -> Result<ForwardConfig> {
+    // One bad entry must not abort MagicDNS / hot-reload (dns-policy-audit BUG-2).
+    // Warn + skip invalid lines; only fail when nothing usable remains.
     let mut group = NameServerConfigGroup::new();
     for entry in servers {
-        for ns in parse_upstream_nameserver(entry)? {
+        let parsed = match parse_upstream_nameserver(entry) {
+            Ok(nss) => nss,
+            Err(e) => {
+                tracing::warn!(
+                    upstream = %entry,
+                    error = %e,
+                    "skipping invalid upstream DNS entry"
+                );
+                continue;
+            }
+        };
+        for ns in parsed {
             if excluded.contains(&ns.socket_addr.ip()) {
                 tracing::warn!(
                     upstream = %ns.socket_addr,
@@ -164,7 +175,7 @@ fn build_forward_config_from_servers(
         }
     }
     if group.is_empty() {
-        anyhow::bail!("all configured upstream DNS entries were empty or excluded");
+        anyhow::bail!("all configured upstream DNS entries were empty, invalid, or excluded");
     }
     Ok(ForwardConfig {
         name_servers: group,
@@ -172,14 +183,8 @@ fn build_forward_config_from_servers(
     })
 }
 
-fn build_forward_config(config: &RunConfig) -> Result<ForwardConfig> {
-    let excluded = config.excluded_forward_nameservers();
-
-    if !config.forward_nameservers().is_empty() {
-        return build_forward_config_from_servers(config.forward_nameservers(), excluded);
-    }
-
-    // B1: empty upstream_dns → today's system DNS behavior (incl. system ResolverOpts).
+fn build_system_forward_config(excluded: &[IpAddr]) -> Result<ForwardConfig> {
+    // B1: empty / unusable upstream_dns → system DNS (incl. system ResolverOpts).
     let system_conf =
         read_system_conf().unwrap_or((get_default_resolver_config(), ResolverOpts::default()));
     let servers: Vec<_> = system_conf
@@ -196,6 +201,29 @@ fn build_forward_config(config: &RunConfig) -> Result<ForwardConfig> {
         name_servers: servers.into(),
         options: Some(system_conf.1),
     })
+}
+
+/// Startup / `Server::new` root forwarder build.
+///
+/// Custom upstreams all unusable → fall back to system DNS (node must still start).
+/// Hot-reload must **not** use this path for that case — see [`Server::reload_root_forwarder`]
+/// (keep previous forwarder so a bad edit cannot silently bypass enterprise resolvers).
+fn build_forward_config(config: &RunConfig) -> Result<ForwardConfig> {
+    let excluded = config.excluded_forward_nameservers();
+
+    if !config.forward_nameservers().is_empty() {
+        match build_forward_config_from_servers(config.forward_nameservers(), excluded) {
+            Ok(fc) => return Ok(fc),
+            Err(e) => {
+                tracing::warn!(
+                    error = %e,
+                    "all configured upstream_dns entries unusable; falling back to system DNS"
+                );
+            }
+        }
+    }
+
+    build_system_forward_config(excluded)
 }
 
 fn normalize_forward_zone(domain: &str) -> Result<String> {
@@ -219,29 +247,61 @@ impl Server {
             catalog.upsert(zone.clone().into(), vec![Arc::new(authroty)]);
         }
 
-        // R2: split forwarders (domain suffix → dedicated upstreams). Catalog
+        // Split forwarders (domain suffix → dedicated upstreams). Catalog
         // longest-match makes these win over the root forwarder but lose to
         // more-specific hosts / MagicDNS route zones when names overlap.
+        // One bad split row must not abort Server::new (R1): warn + skip.
         let excluded = config.excluded_forward_nameservers().clone();
         let mut applied_split_zones = BTreeSet::new();
         for split in config.split_forwarders() {
             if split.domains.is_empty() || split.servers.is_empty() {
                 continue;
             }
-            let forward_config = build_forward_config_from_servers(&split.servers, &excluded)?;
+            let forward_config =
+                match build_forward_config_from_servers(&split.servers, &excluded) {
+                    Ok(fc) => fc,
+                    Err(e) => {
+                        tracing::warn!(
+                            servers = ?split.servers,
+                            error = %e,
+                            "skipping split forwarder with no usable servers"
+                        );
+                        continue;
+                    }
+                };
             for domain in &split.domains {
-                let zone = normalize_forward_zone(domain)?;
-                let auth = ForwardAuthority::builder_with_config(
+                let zone = match normalize_forward_zone(domain) {
+                    Ok(z) => z,
+                    Err(e) => {
+                        tracing::warn!(
+                            domain = %domain,
+                            error = %e,
+                            "skipping invalid split forwarder domain"
+                        );
+                        continue;
+                    }
+                };
+                let auth = match ForwardAuthority::builder_with_config(
                     forward_config.clone(),
                     magic_dns_forward_connector(),
                 )
                 .build()
-                .map_err(|e| anyhow::anyhow!("split ForwardAuthority build failed: {e}"))?;
-                catalog.upsert(
-                    LowerName::from_str(&zone)
-                        .with_context(|| format!("invalid split forwarder zone: {zone}"))?,
-                    vec![Arc::new(auth)],
-                );
+                {
+                    Ok(a) => a,
+                    Err(e) => {
+                        tracing::warn!(
+                            zone = %zone,
+                            error = %e,
+                            "skipping split forwarder zone (ForwardAuthority build failed)"
+                        );
+                        continue;
+                    }
+                };
+                let Ok(lower) = LowerName::from_str(&zone) else {
+                    tracing::warn!(zone = %zone, "skipping invalid split forwarder zone name");
+                    continue;
+                };
+                catalog.upsert(lower, vec![Arc::new(auth)]);
                 tracing::info!(
                     zone = %zone,
                     servers = ?split.servers,
@@ -356,6 +416,12 @@ impl Server {
         self.applied_split_zones.lock().unwrap().clone()
     }
 
+    /// Drop a zone from the split bookkeeping when an exact static host takes it
+    /// over (hosts win). Catalog already holds the hosts Authority.
+    pub fn forget_split_zone(&self, zone: &str) -> bool {
+        self.applied_split_zones.lock().unwrap().remove(zone)
+    }
+
     /// Hot-reload split forwarder zones (R2) without recreating the UDP listener.
     ///
     /// Zones in `retain_zones` (e.g. route / static hosts) are not removed when
@@ -369,13 +435,45 @@ impl Server {
         let mut next_zones = BTreeSet::new();
         let mut pending: Vec<(String, ForwardConfig)> = Vec::new();
 
+        // Per-row warn+skip (R1): one all-invalid servers list must not abort
+        // the whole reload before stale prune (R2 residue).
         for split in splits {
             if split.domains.is_empty() || split.servers.is_empty() {
                 continue;
             }
-            let forward_config = build_forward_config_from_servers(&split.servers, excluded)?;
+            let forward_config = match build_forward_config_from_servers(&split.servers, excluded)
+            {
+                Ok(fc) => fc,
+                Err(e) => {
+                    tracing::warn!(
+                        servers = ?split.servers,
+                        error = %e,
+                        "skipping split forwarder with no usable servers"
+                    );
+                    continue;
+                }
+            };
             for domain in &split.domains {
-                let zone = normalize_forward_zone(domain)?;
+                let zone = match normalize_forward_zone(domain) {
+                    Ok(z) => z,
+                    Err(e) => {
+                        tracing::warn!(
+                            domain = %domain,
+                            error = %e,
+                            "skipping invalid split forwarder domain"
+                        );
+                        continue;
+                    }
+                };
+                // R3: do not upsert Split over zones already owned by hosts/routes/TLD;
+                // avoids a brief Catalog flip before hosts reapply.
+                if retain_zones.contains(&zone) {
+                    tracing::debug!(
+                        zone = %zone,
+                        "deferring split forwarder; zone retained by routes/static hosts/TLD"
+                    );
+                    continue;
+                }
                 next_zones.insert(zone.clone());
                 pending.push((zone, forward_config.clone()));
             }
@@ -399,18 +497,29 @@ impl Server {
         }
 
         for (zone, forward_config) in pending {
-            let auth = ForwardAuthority::builder_with_config(
+            let auth = match ForwardAuthority::builder_with_config(
                 forward_config,
                 magic_dns_forward_connector(),
             )
             .build()
-            .map_err(|e| anyhow::anyhow!("split ForwardAuthority rebuild failed: {e}"))?;
-            self.upsert(
-                LowerName::from_str(&zone)
-                    .with_context(|| format!("invalid split forwarder zone: {zone}"))?,
-                Arc::new(auth),
-            )
-            .await;
+            {
+                Ok(a) => a,
+                Err(e) => {
+                    tracing::warn!(
+                        zone = %zone,
+                        error = %e,
+                        "skipping split forwarder zone reload (ForwardAuthority build failed)"
+                    );
+                    next_zones.remove(&zone);
+                    continue;
+                }
+            };
+            let Ok(lower) = LowerName::from_str(&zone) else {
+                tracing::warn!(zone = %zone, "skipping invalid split forwarder zone name");
+                next_zones.remove(&zone);
+                continue;
+            };
+            self.upsert(lower, Arc::new(auth)).await;
             tracing::info!(zone = %zone, "MagicDNS split forwarder zone reloaded");
         }
 
@@ -418,14 +527,28 @@ impl Server {
         Ok(())
     }
 
-    /// Hot-reload root `.` forwarder (R3 / B1).
+    /// Hot-reload root `.` forwarder (B1).
+    ///
+    /// - Empty `upstream_dns` → system DNS (intentional clear).
+    /// - Non-empty but all unusable → **keep previous** root forwarder + warn
+    ///   (do not silently fall back to system DNS and bypass enterprise resolvers).
     pub async fn reload_root_forwarder(&self, upstream_dns: &[String]) -> Result<()> {
-        let cfg = RunConfigBuilder::default()
-            .general(GeneralConfigBuilder::default().build()?)
-            .forward_nameservers(upstream_dns.to_vec())
-            .excluded_forward_nameservers(self.excluded_forward_nameservers.clone())
-            .build()?;
-        let forward_config = build_forward_config(&cfg)?;
+        let excluded = &self.excluded_forward_nameservers;
+        let forward_config = if upstream_dns.is_empty() {
+            build_system_forward_config(excluded)?
+        } else {
+            match build_forward_config_from_servers(upstream_dns, excluded) {
+                Ok(fc) => fc,
+                Err(e) => {
+                    tracing::warn!(
+                        error = %e,
+                        upstreams = ?upstream_dns,
+                        "all configured upstream_dns entries unusable; keeping previous root forwarder"
+                    );
+                    return Ok(());
+                }
+            }
+        };
         let auth =
             ForwardAuthority::builder_with_config(forward_config, magic_dns_forward_connector())
                 .build()
@@ -710,6 +833,104 @@ mod tests {
                 .name_servers
                 .iter()
                 .any(|ns| ns.socket_addr.ip() == expected_ip)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn build_forward_config_skips_invalid_entries_keeps_valid() -> Result<()> {
+        let excluded = vec!["10.255.255.254".parse()?];
+        let forward = build_forward_config_from_servers(
+            &[
+                "not-an-ip".to_string(),
+                "1.1.1.1".to_string(),
+                "doh://example.com/dns-query".to_string(),
+            ],
+            &excluded,
+        )?;
+        let ips: Vec<_> = forward
+            .name_servers
+            .iter()
+            .map(|ns| ns.socket_addr.ip())
+            .collect();
+        assert!(ips.contains(&"1.1.1.1".parse()?));
+        assert!(!ips.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn build_forward_config_from_servers_fails_when_all_entries_invalid() {
+        let excluded: Vec<std::net::IpAddr> = vec![];
+        let err = build_forward_config_from_servers(
+            &["hostname.example".to_string(), "dot://1.1.1.1".to_string()],
+            &excluded,
+        )
+        .unwrap_err();
+        assert!(
+            err.to_string().contains("invalid") || err.to_string().contains("empty"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn build_forward_config_falls_back_to_system_when_all_custom_invalid() -> Result<()> {
+        let cfg = RunConfigBuilder::default()
+            .general(GeneralConfigBuilder::default().build()?)
+            .forward_nameservers(vec![
+                "hostname.example".to_string(),
+                "dot://1.1.1.1".to_string(),
+            ])
+            .excluded_forward_nameservers(vec!["10.255.255.254".parse()?])
+            .build()?;
+        // R1: must not fail Server root build — fall back to system DNS.
+        let forward = build_forward_config(&cfg)?;
+        assert!(!forward.name_servers.is_empty());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn reload_root_keeps_previous_when_all_custom_invalid() -> Result<()> {
+        let cfg = RunConfigBuilder::default()
+            .general(GeneralConfigBuilder::default().build()?)
+            .forward_nameservers(vec!["1.1.1.1".to_string()])
+            .excluded_forward_nameservers(vec!["10.255.255.254".parse()?])
+            .build()?;
+        let mut server = Server::new(cfg)?;
+        server.run().await?;
+        // Bad hot-reload must not Err (would block last) and must not fall back
+        // via build_forward_config — keep previous root forwarder.
+        server
+            .reload_root_forwarder(&["hostname.example".to_string()])
+            .await?;
+        server.shutdown().await?;
+        Ok(())
+    }
+
+    #[test]
+    fn try_new_skips_all_invalid_split_keeps_sibling() -> Result<()> {
+        let cfg = RunConfigBuilder::default()
+            .general(GeneralConfigBuilder::default().build()?)
+            .split_forwarders(vec![
+                SplitForwarderConfig {
+                    domains: vec!["bad.example".to_string()],
+                    servers: vec!["not-an-ip".to_string()],
+                },
+                SplitForwarderConfig {
+                    domains: vec!["good.example".to_string()],
+                    servers: vec!["1.1.1.1".to_string()],
+                },
+            ])
+            .excluded_forward_nameservers(vec!["10.255.255.254".parse()?])
+            .build()?;
+        let server = Server::new(cfg)?;
+        let zones = server.split_zones();
+        assert!(
+            zones.contains("good.example."),
+            "usable split must install: {zones:?}"
+        );
+        assert!(
+            !zones.contains("bad.example."),
+            "all-invalid split must be skipped: {zones:?}"
         );
         Ok(())
     }

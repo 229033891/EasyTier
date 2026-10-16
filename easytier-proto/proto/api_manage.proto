@@ -253,6 +253,13 @@ message NetworkInstanceRunningInfo {
   optional string proxy_cidr_route_sync = 10;
   // Tip-only fallback status fields (removed with ConnectionPathTier); never reuse.
   reserved 11, 12, 13;
+  // Route policy that host-side (Android VpnService / OHOS) route aggregators
+  // need but cannot read themselves. `NetworkInstanceRunningInfo` is the only
+  // per-instance payload those hosts already poll, so the policy is mirrored
+  // here. Proto3 scalars have no presence, which is exactly why the server must
+  // send these explicitly: an omitted bool is indistinguishable from `false`.
+  optional bool allow_peer_default_without_exit = 14;
+  repeated string exit_nodes = 15;
 }
 
 message NetworkInstanceRunningInfoMap {

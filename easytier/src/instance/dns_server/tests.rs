@@ -836,3 +836,312 @@ async fn test_static_hosts_cleared_on_client_disconnect() {
         .unwrap();
     check_dns_record(&fake_ip, "gone.et.net", "5.5.5.5").await;
 }
+
+/// BUG-1: hosts installed before a peer publishes the same zone must be skipped
+/// after `update()` (reapply), not left claiming Catalog ownership.
+#[tokio::test]
+async fn test_late_route_zone_skips_prior_static_hosts() {
+    use easytier_core::config::{DnsConfig, DnsHostEntry};
+
+    let tun_ip = Ipv4Inet::from_str("10.144.144.44/24").unwrap();
+    let (global_ctx, core_instance, virtual_nic) = prepare_env("late-route", tun_ip).await;
+    let tun_name = virtual_nic.ifname().await.unwrap();
+
+    global_ctx.config.set_dns_config(Some(DnsConfig {
+        hosts: vec![DnsHostEntry {
+            name: "custom.local".to_string(),
+            ips: vec!["10.1.1.1".to_string()],
+            ttl_secs: Some(300),
+        }],
+        forwarders: vec![],
+        upstream_dns: vec![],
+    }));
+
+    let fake_ip = Ipv4Addr::from_str(MAGIC_DNS_FAKE_IP).unwrap();
+    let dns_server_inst = MagicDnsServerInstance::new(
+        core_instance.packet_plane(),
+        global_ctx,
+        Some(tun_name),
+        tun_ip,
+        fake_ip,
+    )
+    .await
+    .unwrap();
+
+    check_dns_record(&fake_ip, "custom.local", "10.1.1.1").await;
+
+    let mut ctrl = BaseController::default();
+    ctrl.set_tunnel_info(Some(crate::proto::common::TunnelInfo {
+        tunnel_type: "tcp".to_string(),
+        local_addr: None,
+        remote_addr: Some(crate::proto::common::Url {
+            url: "tcp://127.0.0.1:54324".to_string(),
+        }),
+        resolved_remote_addr: None,
+    }));
+    dns_server_inst
+        .data
+        .update_dns_record(
+            ctrl,
+            UpdateDnsRecordRequest {
+                zone: "custom.local.".to_string(),
+                routes: vec![Route {
+                    hostname: "peer1".to_string(),
+                    ipv4_addr: Some(Ipv4Inet::from_str("10.144.144.44/32").unwrap().into()),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+
+    check_dns_record(&fake_ip, "peer1.custom.local", "10.144.144.44").await;
+
+    let status = dns_server_inst
+        .data
+        .get_dns_record(
+            BaseController::default(),
+            crate::proto::common::Void::default(),
+        )
+        .await
+        .unwrap();
+    let a_names: Vec<&str> = status
+        .records
+        .values()
+        .flat_map(|list| list.records.iter())
+        .filter_map(|record| match record.record.as_ref() {
+            Some(dns_record::Record::A(a)) => Some(a.name.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        !a_names.contains(&"custom.local."),
+        "late route zone must cause static apex to be skipped in status: {a_names:?}"
+    );
+}
+
+/// C3: local dns_config.hosts win over mesh static-hosts channel on the same RR.
+#[tokio::test]
+async fn test_local_static_hosts_win_over_remote_client() {
+    use easytier_core::config::DnsHostEntry;
+
+    let tun_ip = Ipv4Inet::from_str("10.144.144.45/24").unwrap();
+    let (global_ctx, core_instance, virtual_nic) = prepare_env("local-wins", tun_ip).await;
+    let tun_name = virtual_nic.ifname().await.unwrap();
+
+    let fake_ip = Ipv4Addr::from_str(MAGIC_DNS_FAKE_IP).unwrap();
+    let dns_server_inst = MagicDnsServerInstance::new(
+        core_instance.packet_plane(),
+        global_ctx,
+        Some(tun_name),
+        tun_ip,
+        fake_ip,
+    )
+    .await
+    .unwrap();
+
+    dns_server_inst
+        .data
+        .set_static_hosts_for_client(
+            "static-hosts:tcp://10.0.0.9:1",
+            vec![DnsHostEntry {
+                name: "app.conflict".to_string(),
+                ips: vec!["10.0.0.1".to_string()],
+                ttl_secs: Some(300),
+            }],
+        )
+        .await
+        .unwrap();
+    dns_server_inst
+        .data
+        .apply_static_hosts(&[DnsHostEntry {
+            name: "app.conflict".to_string(),
+            ips: vec!["10.0.0.2".to_string()],
+            ttl_secs: Some(300),
+        }])
+        .await
+        .unwrap();
+
+    check_dns_record(&fake_ip, "app.conflict", "10.0.0.2").await;
+}
+
+/// BUG-3: exact hosts override a same-named Split zone and clear split bookkeeping.
+#[tokio::test]
+async fn test_exact_hosts_override_split_zone_bookkeeping() {
+    use easytier_core::config::{DnsConfig, DnsForwarder, DnsHostEntry};
+
+    let tun_ip = Ipv4Inet::from_str("10.144.144.46/24").unwrap();
+    let (global_ctx, core_instance, virtual_nic) = prepare_env("hosts-split", tun_ip).await;
+    let tun_name = virtual_nic.ifname().await.unwrap();
+
+    global_ctx.config.set_dns_config(Some(DnsConfig {
+        hosts: vec![DnsHostEntry {
+            name: "corp.example".to_string(),
+            ips: vec!["10.9.9.1".to_string()],
+            ttl_secs: Some(300),
+        }],
+        forwarders: vec![DnsForwarder {
+            domains: vec!["corp.example".to_string()],
+            servers: vec!["1.1.1.1".to_string()],
+        }],
+        upstream_dns: vec![],
+    }));
+
+    let fake_ip = Ipv4Addr::from_str(MAGIC_DNS_FAKE_IP).unwrap();
+    let dns_server_inst = MagicDnsServerInstance::new(
+        core_instance.packet_plane(),
+        global_ctx,
+        Some(tun_name),
+        tun_ip,
+        fake_ip,
+    )
+    .await
+    .unwrap();
+
+    check_dns_record(&fake_ip, "corp.example", "10.9.9.1").await;
+    assert!(
+        !dns_server_inst
+            .data
+            .catalog_split_zones()
+            .contains("corp.example."),
+        "split bookkeeping must drop zone taken by exact hosts"
+    );
+}
+
+/// R3 regression: hosts → same-zone split in one hot-reload must install Split
+/// (retain_zones must use this round's exact hosts, not the previous applied ledger).
+#[tokio::test]
+async fn test_reload_hosts_to_split_takes_over_zone() {
+    use easytier_core::config::{DnsConfig, DnsForwarder, DnsHostEntry};
+
+    let tun_ip = Ipv4Inet::from_str("10.144.144.47/24").unwrap();
+    let (global_ctx, core_instance, virtual_nic) = prepare_env("hosts-to-split", tun_ip).await;
+    let tun_name = virtual_nic.ifname().await.unwrap();
+
+    global_ctx.config.set_dns_config(Some(DnsConfig {
+        hosts: vec![DnsHostEntry {
+            name: "corp.example".to_string(),
+            ips: vec!["10.9.9.1".to_string()],
+            ttl_secs: Some(300),
+        }],
+        forwarders: vec![],
+        // Avoid empty → system DNS (may Err in sandboxes with no resolvers) (F3).
+        upstream_dns: vec!["1.1.1.1".to_string()],
+    }));
+
+    let fake_ip = Ipv4Addr::from_str(MAGIC_DNS_FAKE_IP).unwrap();
+    let dns_server_inst = MagicDnsServerInstance::new(
+        core_instance.packet_plane(),
+        global_ctx,
+        Some(tun_name),
+        tun_ip,
+        fake_ip,
+    )
+    .await
+    .unwrap();
+
+    check_dns_record(&fake_ip, "corp.example", "10.9.9.1").await;
+    assert!(dns_server_inst
+        .data
+        .applied_static_zones_for_test()
+        .contains("corp.example."));
+
+    dns_server_inst
+        .data
+        .reload_dns_policy(Some(&DnsConfig {
+            hosts: vec![],
+            forwarders: vec![DnsForwarder {
+                domains: vec!["corp.example".to_string()],
+                servers: vec!["1.1.1.1".to_string()],
+            }],
+            upstream_dns: vec!["1.1.1.1".to_string()],
+        }))
+        .await
+        .unwrap();
+
+    assert!(
+        dns_server_inst
+            .data
+            .catalog_split_zones()
+            .contains("corp.example."),
+        "split must take over after hosts cleared in same reload"
+    );
+    assert!(
+        !dns_server_inst
+            .data
+            .applied_static_zones_for_test()
+            .contains("corp.example."),
+        "static zone ledger must drop the zone after hosts cleared"
+    );
+}
+
+/// F1: wildcard hosts + same-zone Split on hot-reload must keep Split winning
+/// (retain_zones must not defer Split for wildcards).
+#[tokio::test]
+async fn test_reload_wildcard_hosts_split_still_wins() {
+    use easytier_core::config::{DnsConfig, DnsForwarder, DnsHostEntry};
+
+    let tun_ip = Ipv4Inet::from_str("10.144.144.48/24").unwrap();
+    let (global_ctx, core_instance, virtual_nic) = prepare_env("wild-split-reload", tun_ip).await;
+    let tun_name = virtual_nic.ifname().await.unwrap();
+
+    // Start with Split only so Server::new installs the forwarder zone.
+    global_ctx.config.set_dns_config(Some(DnsConfig {
+        hosts: vec![],
+        forwarders: vec![DnsForwarder {
+            domains: vec!["corp.example".to_string()],
+            servers: vec!["1.1.1.1".to_string()],
+        }],
+        upstream_dns: vec!["1.1.1.1".to_string()],
+    }));
+
+    let fake_ip = Ipv4Addr::from_str(MAGIC_DNS_FAKE_IP).unwrap();
+    let dns_server_inst = MagicDnsServerInstance::new(
+        core_instance.packet_plane(),
+        global_ctx,
+        Some(tun_name),
+        tun_ip,
+        fake_ip,
+    )
+    .await
+    .unwrap();
+
+    assert!(dns_server_inst
+        .data
+        .catalog_split_zones()
+        .contains("corp.example."));
+
+    // Hot-reload: add conflicting wildcard hosts; Split must still win.
+    dns_server_inst
+        .data
+        .reload_dns_policy(Some(&DnsConfig {
+            hosts: vec![DnsHostEntry {
+                name: "*.corp.example".to_string(),
+                ips: vec!["10.9.9.9".to_string()],
+                ttl_secs: Some(300),
+            }],
+            forwarders: vec![DnsForwarder {
+                domains: vec!["corp.example".to_string()],
+                servers: vec!["1.1.1.1".to_string()],
+            }],
+            upstream_dns: vec!["1.1.1.1".to_string()],
+        }))
+        .await
+        .unwrap();
+
+    assert!(
+        dns_server_inst
+            .data
+            .catalog_split_zones()
+            .contains("corp.example."),
+        "Split must remain after reload with conflicting wildcard hosts"
+    );
+    assert!(
+        !dns_server_inst
+            .data
+            .applied_static_zones_for_test()
+            .contains("corp.example."),
+        "wildcard must not own the zone when Split wins"
+    );
+}

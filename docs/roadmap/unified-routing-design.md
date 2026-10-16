@@ -1802,7 +1802,7 @@ if local_route_snapshot.is_empty() {
 
 - **L2 / L3 同源**：`cidr_monitor::collect_proxy_cidr_state` 经 `PeerManagerCore::local_route_table()` 读同一份 `ArcSwap` 快照，取 `Stable` / `Failover` 规则的 `compiled_cidrs` 作为 `local_routes`。**`Degraded` 规则不贡献 L2** —— 这正是「路由已装但 L3 查不到」的黑洞来源（§7.3）。
 - **`closed` 阻断**：`lookup()` 新增 `Block` 语义。`Degraded + closed` → `Block` → `get_msg_dst_peer_ipv4` 直接返回空目标（丢包），**不再回退** `exit_nodes` / peer `/0` / `local_exit_node_fallback`（否则会从物理网关泄漏）。传输优化旁路（KCP / QUIC / wrapped-TCP）同样拒绝。
-- **`manual_routes_append`**：默认 `false` = 旧语义（`routes` 直接覆盖，**不**叠加本地路由表，也**不**注入 `/0`）；置 `true` 才叠加。
+- **`manual_routes_append`**：默认 `false` = 旧语义（`routes` 覆盖**学习集合**：peer 通告 CIDR + policy `local_routes` 中的非 `/0` 条目，**不**注入 `/0`）；置 `true` 才叠加。⚠️ **两种模式都只作用于「学来的」集合**：本机自己的默认路由意图不受影响 —— `exit_nodes` 在 append 模式仍自动装 `/0`，policy 里**显式**的 `cidr = "0.0.0.0/0"` 与**写进 `manual_routes` 的 `/0`** 在两种模式下都生效（均为本机声明全隧道）。唯一的例外是逃生阀 `allow_peer_default_without_exit`：它保留的是**对端通告**的 `/0`，属学习集合，override 模式下仍被覆盖。
 - `local_routes` 含显式 `/0` 规则时等价于「本节点声明全隧道」，与 `exit_nodes` 一样触发本地默认路由安装（仍受 `no_tun` 抑制）。
 
 **P2 已知限制**

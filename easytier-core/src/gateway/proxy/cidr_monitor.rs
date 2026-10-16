@@ -19,7 +19,8 @@ use crate::{
 pub(crate) struct ProxyCidrConfigSnapshot {
     pub manual_routes: Option<BTreeSet<Ipv4Cidr>>,
     pub no_tun: bool,
-    /// Install the local default route. Set only after an exit VIP has a next hop.
+    /// Install the local default route. Set only after an exit VIP has a next
+    /// hop. Honoured in append mode as well — see `resolve_proxy_cidrs`.
     pub has_exit_nodes: bool,
     /// Opt-in escape hatch: keep peer-advertised `/0` in the L2 desired set
     /// even when this node has no reachable exit.
@@ -29,7 +30,8 @@ pub(crate) struct ProxyCidrConfigSnapshot {
     /// snapshot (no L2-installed-but-L3-unknown window).
     pub local_routes: BTreeSet<Ipv4Cidr>,
     /// Opt-in (Q5): **append** `manual_routes` to the computed set instead of
-    /// replacing it. Default `false` keeps the legacy override semantics.
+    /// replacing it. Default `false` keeps the legacy override semantics for the
+    /// *learned* set only; a local `/0` (exit or policy rule) is still installed.
     pub manual_routes_append: bool,
 }
 
@@ -137,37 +139,70 @@ pub struct ProxyCidrDiff {
 /// Composition (unified routing §9.3):
 /// 1. peer-advertised routes,
 /// 2. CIDRs contributed by `Stable` / `Failover` policy rules (`local_routes`),
-/// 3. `manual_routes` — **replaces** everything by default, or is appended when
-///    `manual_routes_append` is set (Q5).
+/// 3. `manual_routes` — **replaces** the learned set by default, or is appended
+///    when `manual_routes_append` is set (Q5).
 ///
 /// Peer-advertised `0.0.0.0/0` is filtered out unless this node has a reachable
 /// exit (`has_exit_nodes`), a live local `/0` rule, or the escape hatch
 /// `allow_peer_default_without_exit`. Filtering must happen here (desired set),
 /// not only in OS apply — otherwise the 1s reconciler retries forever.
+///
+/// **`manual_routes` only ever replaces the *learned* set** (peer-advertised
+/// routes plus policy `local_routes`). It does **not** disable the node's own
+/// default-route intent:
+///
+/// - a `/0` written in `manual_routes` itself is the user's explicit full-tunnel
+///   request and always survives;
+/// - `exit_nodes` with a reachable VIP + next hop still installs the local `/0`
+///   under `manual_routes_append = true` (see `collect_proxy_cidr_state`, which
+///   sets `has_exit_nodes` for append mode);
+/// - a policy rule carrying an explicit `/0` (`local_routes`) still installs the
+///   local `/0` under **either** mode — that is a local declaration of
+///   "full tunnel", not a learned route.
+///
+/// The escape hatch `allow_peer_default_without_exit` is the one exception: it
+/// keeps the **peer-advertised** `/0`, which is part of the learned set, so
+/// override mode still suppresses it.
 pub(crate) fn resolve_proxy_cidrs(
     peer_routes: BTreeSet<Ipv4Cidr>,
     config: ProxyCidrConfigSnapshot,
 ) -> BTreeSet<Ipv4Cidr> {
     let default = ipv4_default_cidr();
+    let override = config.manual_routes.is_some() && !config.manual_routes_append;
+    // A `/0` the user wrote into `manual_routes` is a local declaration, exactly
+    // like a policy `/0` rule — it must not be filtered back out below.
+    let manual_declares_default = config
+        .manual_routes
+        .as_ref()
+        .is_some_and(|routes| routes.contains(&default));
 
-    if let Some(manual_routes) = &config.manual_routes
-        && !config.manual_routes_append
-    {
-        // Legacy override (default): `routes = [...]` is the whole truth and is
-        // returned untouched — notably it suppresses the exit `/0`.
-        return manual_routes.clone();
-    }
+    let mut routes = if override {
+        // Legacy override (default): `routes = [...]` is the whole truth for the
+        // *learned* set — peer-advertised routes and policy CIDRs are dropped.
+        config.manual_routes.clone().unwrap_or_default()
+    } else {
+        let mut routes = peer_routes;
+        routes.extend(config.local_routes.iter().copied());
+        if let Some(manual_routes) = &config.manual_routes {
+            routes.extend(manual_routes.iter().copied());
+        }
+        routes
+    };
 
-    let mut routes = peer_routes;
-    routes.extend(config.local_routes.iter().copied());
-    if let Some(manual_routes) = &config.manual_routes {
-        routes.extend(manual_routes.iter().copied());
-    }
+    // A local declaration of `/0` (explicit route, policy rule, or — in append
+    // mode only — a reachable `exit_nodes`) installs the TUN default.
+    let exit_declares_default = config.has_exit_nodes && !override;
+    let local_rule_declares_default = config.local_routes.contains(&default);
+    let install_local_default = (exit_declares_default
+        || local_rule_declares_default
+        || manual_declares_default)
+        && !config.no_tun;
 
-    let install_local_default =
-        (config.has_exit_nodes || config.local_routes.contains(&default)) && !config.no_tun;
+    // The escape hatch keeps the *peer-advertised* `/0`, which lives in the
+    // learned set — override mode deliberately drops it.
     let keep_peer_default =
-        (config.allow_peer_default_without_exit && !config.no_tun) || install_local_default;
+        (!override && config.allow_peer_default_without_exit && !config.no_tun)
+            || install_local_default;
     if !keep_peer_default {
         routes.remove(&default);
     }
@@ -206,8 +241,14 @@ async fn collect_proxy_cidr_state(
 ) -> (BTreeSet<Ipv4Cidr>, bool) {
     let peer_routes = peer_manager.get_route().list_proxy_cidrs().await;
     let exit_nodes = peer_manager.configured_exit_nodes().await;
-    let local_exit_default = !config.services.proxy.no_tun
-        && config.services.manual_routes.is_none()
+    // Override mode (`manual_routes` without append) owns the learned set, so an
+    // exit `/0` would be dropped by `resolve_proxy_cidrs` anyway — do not report
+    // `local_exit_default` for it. Append mode keeps it: the manual list is
+    // *additional*, not a replacement for this node's default-route intent.
+    let manual_override =
+        config.services.manual_routes.is_some() && !config.services.manual_routes_append;
+    let local_exit_default = !manual_override
+        && !config.services.proxy.no_tun
         && peer_manager
             .get_peer_map()
             .resolve_exit_node_peer(&exit_nodes)
@@ -454,6 +495,117 @@ mod tests {
         assert_eq!(resolved, cidrs(&["192.0.2.0/24"]));
     }
 
+    /// A `/0` written directly in `manual_routes` is the user asking for a full
+    /// tunnel — it is a *local* declaration, so the peer-`/0` filter must not
+    /// delete it. Regression: an intermediate rewrite dropped the override
+    /// early-return and silently removed this route.
+    #[test]
+    fn manual_routes_keep_explicit_default() {
+        let resolved = resolve_proxy_cidrs(
+            cidrs(&["10.0.0.0/8"]),
+            ProxyCidrConfigSnapshot {
+                manual_routes: Some(cidrs(&["0.0.0.0/0", "192.0.2.0/24"])),
+                ..Default::default()
+            },
+        );
+        assert_eq!(resolved, cidrs(&["0.0.0.0/0", "192.0.2.0/24"]));
+    }
+
+    /// Same in append mode.
+    #[test]
+    fn manual_routes_append_keeps_explicit_default() {
+        let resolved = resolve_proxy_cidrs(
+            cidrs(&["10.0.0.0/8"]),
+            ProxyCidrConfigSnapshot {
+                manual_routes: Some(cidrs(&["0.0.0.0/0"])),
+                manual_routes_append: true,
+                ..Default::default()
+            },
+        );
+        assert_eq!(resolved, cidrs(&["0.0.0.0/0", "10.0.0.0/8"]));
+    }
+
+    /// `no_tun` still wins over every local `/0` declaration.
+    #[test]
+    fn manual_routes_explicit_default_is_suppressed_by_no_tun() {
+        let resolved = resolve_proxy_cidrs(
+            cidrs(&["10.0.0.0/8"]),
+            ProxyCidrConfigSnapshot {
+                manual_routes: Some(cidrs(&["0.0.0.0/0", "192.0.2.0/24"])),
+                no_tun: true,
+                ..Default::default()
+            },
+        );
+        assert_eq!(resolved, cidrs(&["192.0.2.0/24"]));
+    }
+
+    /// Append mode is *additive*: the user's list no longer cancels the node's
+    /// own default-route intent, so a reachable exit still installs the local
+    /// `/0` (the caller sets `has_exit_nodes` for append mode).
+    #[test]
+    fn manual_routes_append_keeps_exit_default() {
+        let resolved = resolve_proxy_cidrs(
+            cidrs(&["10.0.0.0/8"]),
+            ProxyCidrConfigSnapshot {
+                manual_routes: Some(cidrs(&["192.0.2.0/24"])),
+                manual_routes_append: true,
+                has_exit_nodes: true,
+                ..Default::default()
+            },
+        );
+        assert_eq!(
+            resolved,
+            cidrs(&["0.0.0.0/0", "10.0.0.0/8", "192.0.2.0/24"])
+        );
+    }
+
+    /// …but append mode without a reachable exit must not invent one.
+    #[test]
+    fn manual_routes_append_without_exit_has_no_default() {
+        let resolved = resolve_proxy_cidrs(
+            cidrs(&["10.0.0.0/8"]),
+            ProxyCidrConfigSnapshot {
+                manual_routes: Some(cidrs(&["192.0.2.0/24"])),
+                manual_routes_append: true,
+                ..Default::default()
+            },
+        );
+        assert_eq!(resolved, cidrs(&["10.0.0.0/8", "192.0.2.0/24"]));
+    }
+
+    /// The escape hatch keeps the *peer-advertised* `/0`, which belongs to the
+    /// learned set — override mode deliberately discards it.
+    #[test]
+    fn escape_hatch_is_suppressed_by_manual_routes_override() {
+        let resolved = resolve_proxy_cidrs(
+            cidrs(&["0.0.0.0/0", "10.0.0.0/8"]),
+            ProxyCidrConfigSnapshot {
+                manual_routes: Some(cidrs(&["192.0.2.0/24"])),
+                allow_peer_default_without_exit: true,
+                ..Default::default()
+            },
+        );
+        assert_eq!(resolved, cidrs(&["192.0.2.0/24"]));
+    }
+
+    /// …and is honoured again in append mode.
+    #[test]
+    fn escape_hatch_survives_manual_routes_append() {
+        let resolved = resolve_proxy_cidrs(
+            cidrs(&["0.0.0.0/0", "10.0.0.0/8"]),
+            ProxyCidrConfigSnapshot {
+                manual_routes: Some(cidrs(&["192.0.2.0/24"])),
+                manual_routes_append: true,
+                allow_peer_default_without_exit: true,
+                ..Default::default()
+            },
+        );
+        assert_eq!(
+            resolved,
+            cidrs(&["0.0.0.0/0", "10.0.0.0/8", "192.0.2.0/24"])
+        );
+    }
+
     #[test]
     fn unresolved_exit_snapshot_does_not_install_default() {
         let resolved = resolve_proxy_cidrs(
@@ -583,6 +735,7 @@ mod tests {
         );
     }
 
+    /// A policy CIDR (non-`/0`) is part of the learned set → override drops it.
     #[test]
     fn manual_routes_override_still_replaces_local_routes() {
         let resolved = resolve_proxy_cidrs(
@@ -590,6 +743,39 @@ mod tests {
             ProxyCidrConfigSnapshot {
                 manual_routes: Some(cidrs(&["192.0.2.0/24"])),
                 local_routes: cidrs(&["198.51.100.0/24"]),
+                ..Default::default()
+            },
+        );
+        assert_eq!(resolved, cidrs(&["192.0.2.0/24"]));
+    }
+
+    /// An explicit `[[policy_routes]] cidr = "0.0.0.0/0"` is a *local* full-tunnel
+    /// declaration, not a learned route, so it survives override mode too.
+    #[test]
+    fn local_default_rule_survives_manual_routes_override() {
+        let resolved = resolve_proxy_cidrs(
+            cidrs(&["10.0.0.0/8"]),
+            ProxyCidrConfigSnapshot {
+                manual_routes: Some(cidrs(&["192.0.2.0/24"])),
+                local_routes: cidrs(&["0.0.0.0/0"]),
+                ..Default::default()
+            },
+        );
+        assert_eq!(
+            resolved,
+            cidrs(&["0.0.0.0/0", "192.0.2.0/24"])
+        );
+    }
+
+    /// `no_tun` wins over the local `/0` declaration in both modes.
+    #[test]
+    fn local_default_rule_is_suppressed_by_no_tun() {
+        let resolved = resolve_proxy_cidrs(
+            cidrs(&["10.0.0.0/8"]),
+            ProxyCidrConfigSnapshot {
+                manual_routes: Some(cidrs(&["192.0.2.0/24"])),
+                local_routes: cidrs(&["0.0.0.0/0"]),
+                no_tun: true,
                 ..Default::default()
             },
         );

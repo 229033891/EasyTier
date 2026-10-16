@@ -3,6 +3,7 @@ import { computed } from 'vue'
 import { AutoComplete, Button, Checkbox, InputNumber, InputText, Select } from 'primevue'
 import { useI18n } from 'vue-i18n'
 import { onChipsFocusOut, onChipsKeydown } from '../../modules/chipsInput'
+import type { DnsCoverageState } from '../../modules/dnsCoverage'
 import {
   addPolicyRouteRow,
   removePolicyRouteRow,
@@ -14,7 +15,38 @@ const routes = defineModel('routes', {
   required: true,
 })
 
+const props = withDefaults(
+  defineProps<{
+    /** Network-form estimate of MagicDNS observe readiness (C4). */
+    dnsCoverage?: DnsCoverageState | null
+  }>(),
+  { dnsCoverage: null },
+)
+
 const { t } = useI18n()
+
+const hasDomainRules = computed(() =>
+  routes.value.some((row) => (row.domains?.length ?? 0) > 0),
+)
+
+/** Domain IP learning needs queries hitting MagicDNS; warn when coverage ≠ covered. */
+const showDnsObserveHint = computed(
+  () => hasDomainRules.value && props.dnsCoverage != null && props.dnsCoverage !== 'covered',
+)
+
+const dnsObserveHintKey = computed(() => {
+  switch (props.dnsCoverage) {
+    case 'off':
+      return 'policy_routes_dns_observe_off'
+    case 'unsupported':
+      return 'policy_routes_dns_observe_unsupported'
+    case 'version_too_old':
+      return 'policy_routes_dns_observe_version'
+    case 'manual_required':
+    default:
+      return 'policy_routes_dns_observe_manual'
+  }
+})
 
 /** Stable per-row keys (object identity); avoids focus jump on mid-list delete. */
 const rowKeyMap = new WeakMap<object, string>()
@@ -67,6 +99,9 @@ const allUnavailableOptions = computed(() => [
 
 <template>
   <div class="policy-routes-editor flex flex-col gap-y-3">
+    <p v-if="showDnsObserveHint" class="config-field-hint m-0 policy-routes-dns-hint">
+      {{ t(dnsObserveHintKey) }}
+    </p>
     <div
       v-for="(row, index) in routes"
       :key="rowKey(row)"
