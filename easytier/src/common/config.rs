@@ -585,7 +585,7 @@ enable_ipv6 = ${ENABLE_IPV6}
     ///
     /// 验证：
     /// - 数字类型（整数、端口号）的环境变量能正确解析和反序列化
-    /// - TOML 解析器能将字符串 "1380" 转换为整数
+    /// - TOML 解析器能将字符串形式的数字（如 "1300"）转换为整数
     #[tokio::test]
     async fn test_numeric_type_env_vars() {
         // 设置数字类型的环境变量

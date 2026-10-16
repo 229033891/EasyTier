@@ -679,10 +679,11 @@ edit_port_forward: "Edit Port Forward"
 
 mtu: MTU
 mtu_help: |-
-  MTU of the TUN interface (largest payload per packet). Defaults: 1380 unencrypted, 1360 encrypted. Allowed range: 400–1380.
-  Lower it (e.g. 1200) on poor links that fragment often to reduce loss; raise it for better bulk throughput.
-  Note: leave blank to use the default. Too large a value causes packet loss or outright failures on some links.
-mtu_placeholder: Leave blank as default value 1380
+  Configures flags.mtu (allowed range 400–1380). With encryption on, actual TUN MTU = value − 20; with encryption off, TUN = value.
+  Factory default 1300 → TUN 1280 when encrypted (same as Tailscale's default); 1300 when unencrypted.
+  Lower further (e.g. 1200) on poor/fragmenting links; raising helps bulk throughput but too large causes loss or black holes.
+  Leave blank for the factory default; keep both ends consistent.
+mtu_placeholder: Leave blank for default 1300
 
 instance_recv_bps_limit: Instance Receive Limit
 instance_recv_bps_limit_help: |-

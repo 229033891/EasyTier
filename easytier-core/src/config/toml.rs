@@ -115,7 +115,10 @@ pub fn gen_default_flags() -> Flags {
         dev_name: "".to_string(),
         enable_encryption: true,
         enable_ipv6: true,
-        mtu: 1380,
+        // Align TUN MTU with Tailscale's conservative 1280: with encryption on,
+        // virtual_nic subtracts 20 → TUN 1280 (see virtual_nic.rs). Do not set
+        // 1280 here or TUN becomes 1260.
+        mtu: 1300,
         latency_first: false,
         enable_exit_node: false,
         allow_peer_default_without_exit: false,

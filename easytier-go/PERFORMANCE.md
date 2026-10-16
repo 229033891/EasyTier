@@ -16,7 +16,7 @@ after result, and any profile evidence used to choose the next change.
 - Go forwarder: `go run ./cmd/dial-forward-bench`; it intentionally keeps
   forwarding outside the Core so measurements include the public data-plane
   ABI.
-- MTU: 1380; encryption enabled with the default algorithm.
+- MTU: flags 1300 → TUN 1280 with encryption (Tailscale-aligned); encryption enabled with the default algorithm.
 - TCP tests use one stream unless noted otherwise.
 - UDP tests use 1200-byte datagrams.
 - Reported results exclude the first two seconds of each iperf run.

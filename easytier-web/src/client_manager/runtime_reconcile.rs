@@ -834,7 +834,7 @@ mod tests {
         current.bind_device = Some(true);
         current.dev_name = Some(String::new());
         current.disable_ipv6 = Some(false);
-        current.mtu = Some(1380);
+        current.mtu = Some(1300);
         current.multi_thread = Some(true);
 
         let desired =

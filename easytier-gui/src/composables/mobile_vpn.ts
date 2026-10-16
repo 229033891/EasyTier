@@ -402,9 +402,9 @@ async function waitVpnStatus(target_status: boolean, timeout_sec: number) {
   }
 }
 
-/** Match desktop TUN MTU: config.mtu (default 1380), minus 20 when encryption is on (A11). */
+/** Match desktop TUN MTU: config.mtu (default 1300), minus 20 when encryption is on (A11). */
 function resolveVpnMtu(config: { mtu?: number | null, disable_encryption?: boolean | null }) {
-  let mtu = typeof config.mtu === 'number' && config.mtu > 0 ? config.mtu : 1380
+  let mtu = typeof config.mtu === 'number' && config.mtu > 0 ? config.mtu : 1300
   if (!config.disable_encryption) {
     mtu = Math.max(mtu - 20, 576)
   }

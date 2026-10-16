@@ -2,11 +2,11 @@
 
 ## Status
 
-- Status: **Roadmap**（Checklist；P-UX + P0.1–P0.4 + P1.1–P1.3/P1.6–P1.8 + P2.1–P2.3 + P-AUTO.L1 已落地；下一步 P0.5 或 P1.5）
+- Status: **Roadmap**（Checklist；P-UX + P0.1–P0.4 + P1.1–P1.3/P1.6–P1.8 + P2.1–P2.3 + P-AUTO.L1 已落地；下一步 P0.5 / P1.5 / **P-AUDIT.***）
 - 日期：2026-10-06
-- 最近审阅：2026-10-09（P2.4 bonding Phase 2 标记已合入；安卓审计迁 Archive）
-- 背景：对照 OpenVPN / IPsec 的「固定隧道 + 强保活」模型，梳理 EasyTier Mesh（多 PeerConn + 打洞 + 中继）的稳定性差距与可落地项；**另纳入 2026-10-06 用户反馈：高级选项互斥缺校验、长表单占空间、单协议配置失败后无智能回落**
-- 相关 Current：[`../current/peer-connections.md`](../current/peer-connections.md)、[`../current/tunnels-and-transport.md`](../current/tunnels-and-transport.md)
+- 最近审阅：2026-10-16（挂接 vs Tailscale 审查 P-AUDIT.1–.6；代码未改）
+- 背景：对照 OpenVPN / IPsec 的「固定隧道 + 强保活」模型，梳理 EasyTier Mesh（多 PeerConn + 打洞 + 中继）的稳定性差距与可落地项；**另纳入 2026-10-06 用户反馈：高级选项互斥缺校验、长表单占空间、单协议配置失败后无智能回落**；**2026-10-16**：对照 Tailscale 的延迟/卡顿/偶发不通代码审查见 [`../current/tailscale-gap-and-conflict-audit.md`](../current/tailscale-gap-and-conflict-audit.md)
+- 相关 Current：[`../current/peer-connections.md`](../current/peer-connections.md)、[`../current/tunnels-and-transport.md`](../current/tunnels-and-transport.md)、[`../current/tailscale-gap-and-conflict-audit.md`](../current/tailscale-gap-and-conflict-audit.md)、[`../current/p2p-direct-stability-audit.md`](../current/p2p-direct-stability-audit.md)
 - 相关 Roadmap：[`traffic-camouflage.md`](./traffic-camouflage.md)、[`multi-link-bonding.md`](./multi-link-bonding.md)（Phase 2a/2b 已合入；Phase 3 待做）、[`market-comparison-2026-10.md`](./market-comparison-2026-10.md)
 - 索引：[`../README.md`](../README.md)
 
@@ -153,8 +153,19 @@ score = w_lat * norm(rtt)
 - [x] **P1.2** `ping_interval_max_sec` 可配置（默认 32；与 per-conn TCP 打洞 1s cap 取更严）；自适应下限仍为 1s 踢拍
 - [x] **P1.3** 弱网/策略预设：**优先 scheme 列表**可自定义（例：`wss,tcp,quic,udp`），失败按序降级——**不写死「先 443」**（= P-AUTO.L1）
 - [ ] **P1.4** 验证 #2632：TCP/非 UDP 打洞连接 1s ping 在目标环境不再因 idle 掉线（`cargo test` / 现网抽样）
-- [ ] **P1.5** 可选：短时抖动宽限（如短暂丢包不立即拆 conn），避免比 OpenVPN 更「神经质」的闪断
+- [ ] **P1.5** 可选：短时抖动宽限（如短暂丢包不立即拆 conn），避免比 OpenVPN 更「神经质」的闪断（vs Tailscale 会话保持；见 `tailscale-gap-and-conflict-audit.md` X3）
 - [x] **P1.6** 度量：在现有 RTT 窗口上增加 **jitter** 统计，并与已有 `loss_rate` 一并暴露到 `PeerConnStats` / 状态面（`WindowLatency::get_jitter_us`；proto `jitter_us=6`；Status 表展示）
+
+### P-AUDIT — vs Tailscale 审查（2026-10-16；**未实现**）
+
+来源：[`../current/tailscale-gap-and-conflict-audit.md`](../current/tailscale-gap-and-conflict-audit.md) §8。与 P1.5/P2.5 正交；优先修热路径与可观测。
+
+- [ ] **P-AUDIT.1** `default_conn` / bond 发送快路径：命中缓存时校验 `is_closed` + loss fuse，否则清缓存重选（C1/C2）
+- [ ] **P-AUDIT.2** `send_msg_by_ip` 空 `dst_peers` / policy Block：计数 + 可观测日志（C4）
+- [ ] **P-AUDIT.3** `BufferFull` / NIC `try_send` 失败：计数暴露到 metrics/CLI（C5）
+- [ ] **P-AUDIT.4** 转发网关判定：`has_peer` → live conn（C3/C6）
+- [ ] **P-AUDIT.5** 状态面/帮助：scheme 回落为 `tcp` 时警告交互式 TCP-over-TCP（X2）
+- [ ] **P-AUDIT.6** 发送环满时背压（吞吐 B2 / S5；P2 级）
 - [x] **P1.7** `select_conn` 改为 **综合质量分**（延迟 + 丢包 + 抖动），含丢包熔断阈值与切换 hysteresis；默认丢包权重大于纯 RTT（`peers/conn/conn_select.rs`）
   - 默认：`w_lat=1` / `w_loss=4` / `w_jitter=1`；loss fuse 20%；switch margin 10% + abs 0.005 × 3 窗口（约 15s）
   - Flags 透参：`conn_select_w_*`（百分制权重）、`conn_select_loss_fuse_pct`、`conn_select_switch_*`（全 0 = 内置默认，否则按字面值，允许权重为 0）；TOML / NetworkConfig / `ConnSelectConfig::from_flags`
@@ -266,6 +277,7 @@ P1.6 stats jitter/loss 上报 + P1.1/P1.2 透参
 |----|------|------|
 | P0.* | P0.1–P0.4 **已完成（档位已简化删除）**；P0.5 验收未开始 | 全量拨号 + 质量选路 + 文档/模板 |
 | P1.* | P1.1–P1.3/P1.6–P1.8（单元）**已完成**；P0.5/P1.8b 现网验收、P1.4–P1.5 未开始 | 质量分 Flags 透参已接；P1.3=L1 |
+| P-AUDIT.* | **未开始**（2026-10-16 立项） | 见 Current `tailscale-gap-and-conflict-audit.md` |
 | P2.* | P2.1–P2.4 **已完成**；P2.5 未开始 | bonding Phase 2 见 [`multi-link-bonding.md`](./multi-link-bonding.md)；Phase 3 仍开放 |
 | P3.* | Backlog | |
 | P-UX.* | **已完成** | 老配置只提示；断点 760px；`configConflicts.ts` + Config 紧凑布局 |

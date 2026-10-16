@@ -3,9 +3,9 @@
 ## Status
 
 - Status: **Current**
-- 最近审阅：2026-10-15（首版：核实出厂默认与五个「易卡顿」机制；给配置层缓解清单）
+- 最近审阅：2026-10-16（出厂 `mtu`→**1300** / TUN 1280；Config UI 中英帮助与占位已同步；其余机制结论未改）
 - 范围：两节点**已直连**后，**长连接交互式流量（RDP / SSH / 终端）**的体感稳定性
-- 关联：[`p2p-direct-throughput-audit.md`](./p2p-direct-throughput-audit.md)（同一条通路的吞吐瓶颈）、[`peer-connections.md`](./peer-connections.md)（选路 / bond）、[`tunnels-and-transport.md`](./tunnels-and-transport.md)
+- 关联：[`p2p-direct-throughput-audit.md`](./p2p-direct-throughput-audit.md)（同一条通路的吞吐瓶颈）、[`peer-connections.md`](./peer-connections.md)（选路 / bond）、[`tunnels-and-transport.md`](./tunnels-and-transport.md)、[`tailscale-gap-and-conflict-audit.md`](./tailscale-gap-and-conflict-audit.md)（Bug/冲突 vs 设计分栏）
 - 上游缺口跟踪：[`../roadmap/connection-stability-todo.md`](../roadmap/connection-stability-todo.md)
 - 索引：[`../README.md`](../README.md)
 
@@ -37,7 +37,7 @@
 
 | 参数 | 默认值 | 位置 | 稳定性含义 |
 |------|--------|------|-----------|
-| `mtu` | **1380** | `toml.rs:118` | TUN 实际取 `1380 - 20 = 1360`（见 §3.3） |
+| `mtu` | **1300** | `toml.rs` `gen_default_flags` | TUN 实际取 `1300 - 20 = 1280`（对齐 Tailscale；见 §3.3） |
 | `enable_encryption` | **true** | `toml.rs:116` | 默认加密；MTU 因此被扣 20 |
 | `encryption_algorithm` | `EncryptionAlgorithm::default()` | `toml.rs:147` | — |
 | `data_compress_algo` | **None** | `toml.rs:133` | ✅ 默认不压缩，无额外延迟 |
@@ -88,15 +88,15 @@ UDP 直连正常时无此问题。但当 UDP 打洞失败 / UDP 被限速 / 连�
 `easytier/src/instance/virtual_nic.rs:735-742`：
 
 ```rust
-let mut mtu_in_config = flags.mtu;      // 1380
+let mut mtu_in_config = flags.mtu;      // 出厂 1300（2026-10-16 前为 1380）
 if <加密开启> {
-    mtu_in_config -= 20;                 // → 1360
+    mtu_in_config -= 20;                 // → 1280
 }
 // set mtu by ourselves, rust-tun does not handle it correctly on windows
 self.ifcfg.set_mtu(ifname.as_str(), mtu_in_config).await?;
 ```
 
-⇒ 默认加密下 **TUN MTU = 1360**。
+⇒ 默认加密下 **TUN MTU = 1280**（与 Tailscale `tstun` `defaultMTU` 一致）。
 
 线缆包大小（`packet/mod.rs:450`）：
 
@@ -104,11 +104,11 @@ self.ifcfg.set_mtu(ifname.as_str(), mtu_in_config).await?;
 UDP Tunnel: TUN MTU + 24 (Easy) + 20 (Encrypted) + 8 (UDP) + 20 (IP) = TUN MTU + 72
 ```
 
-⇒ 默认外层 UDP 包 ≈ **1360 + 72 = 1432 字节**。
+⇒ 默认外层 UDP 包 ≈ **1280 + 72 = 1352 字节**（旧默认 1360+72=1432）。
 
-**风险**：若实际路径 MTU < 1432（隧道套隧道、PPPoE、某些 4G/企业网），外层包会分片或被丢。代码库**无 PMTU 发现、无 MSS 钳制**（全仓 grep `mss`/`PMTU` 无实现）—— MTU 纯静态。
+**风险**：路径 MTU 极低（隧道套隧道、部分 4G/企业网）时仍可能分片或丢包。代码库**无 PMTU 发现、无 MSS 钳制**—— MTU 仍纯静态；出厂已取保守值，极端路径仍需手动再调低。
 
-> 对照：同类产品默认 MTU 取 **1280**（保守值），比 EasyTier 的 1360 小 80B。在本机这种「默认路由已被一层隧道/代理接管」的环境里，1432 很可能**已经超过真实路径 MTU**。
+> **历史**：2026-10-16 前出厂 `flags.mtu=1380` → TUN 1360；对照 Tailscale 1280 偏大约 80B，已改为 1300。
 > **推断成分**：未抓包确认本环境路径 MTU；需按 §5 方法实测。
 
 ### 3.4 S4 — 路径重映射引入乱序
@@ -134,7 +134,7 @@ UDP Tunnel: TUN MTU + 24 (Easy) + 20 (Encrypted) + 8 (UDP) + 20 (IP) = TUN MTU +
 | 维度 | EasyTier（默认） | Tailscale | 差异是否可核实 |
 |------|------------------|-----------|----------------|
 | **会话断连语义** | ping 失败 5 次 **拆 PeerConn**，重握手 | WireGuard 会话保持，短暂丢包后**续传** | ✅ EasyTier 侧已核实；对端为公开行为 |
-| **MTU** | TUN **1360**（线缆 ~1432） | **1280** | ✅ |
+| **MTU** | TUN **1280**（`flags.mtu=1300`，线缆 ~1352；2026-10-16 前为 1360） | **1280** | ✅ 出厂已对齐 |
 | **多路径** | 出厂 `bond_count=2`，按流哈希，**成员可变** | 单 peer 单会话（不看多条 conn 抢流） | ✅ |
 | **丢包抗性代理** | KCP/QUIC proxy **默认关** | 无对应物（靠 WG 自身） | ✅ |
 | **传输回落** | UDP → **TCP**（TCP-over-TCP 风险） | 直连失败走 DERP（自有帧格式，非裸 TCP 隧道） | ⚠️ 部分推断 |
@@ -151,15 +151,15 @@ UDP Tunnel: TUN MTU + 24 (Easy) + 20 (Encrypted) + 8 (UDP) + 20 (IP) = TUN MTU +
 | 优先级 | 项 | 现值 | 建议 | 目的 |
 |--------|-----|------|------|------|
 | **0** | 排除混杂因素 | — | 确认 EasyTier 的 UDP 是否被本机代理接管（见下方步骤 1） | 否则后续调参结论无效 |
-| **1** | `mtu` | 1380 | **1300**（→ TUN 1280，对齐保守默认）或 **1280**（更保险） | 消除 S3 超路径 MTU 丢包 |
+| **1** | `mtu` | **1300**（出厂已对齐） | 仍不通可试 **1280**（→ TUN 1260）或更低 | 极端路径再压 MTU |
 | **2** | `ping_fail_close_count` | 5 | **10** | 容忍闪断，避免 S1 拆连接 |
 | **3** | `default_protocol` | `"udp,tcp"` | **`"udp"`**（确认 UDP 可用时）；或 `"udp,quic"` | 消除 S2 TCP-over-TCP |
 | **4** | `peer_link_bond_count` | 2 | **1**（对照测试） | 消除 S4 重映射；单流路径更稳 |
 | 5 | `enable_kcp_proxy` / `enable_quic_proxy` | false | 若确为高丢包链路，**单端试开** | 抗丢包（上游 P2.5 未产品化，需手工） |
 | — | `data_compress_algo` | None | **保持 None** | 压缩增加延迟，勿开 |
 
-> ⚠️ **MTU 注意**：TUN MTU = `flags.mtu - 20`（加密时，`virtual_nic.rs:737`）。想要 TUN 1280 就填 **1300**；直接填 1280 会得到 TUN 1260（更保守，也不会有问题）。这是最容易填错的一项。
-> ⚠️ MTU 属「单端可试」参数（`connection-stability-todo.md` §2.6），但建议**两端一致**以免排障混淆。
+> ⚠️ **MTU 注意**：TUN MTU = `flags.mtu - 20`（加密时，`virtual_nic.rs:737`）。出厂已是 **1300→TUN 1280**；直接填 1280 会得到 TUN 1260。这是最容易填错的一项。
+> ⚠️ MTU 属「单端可试」参数（`connection-stability-todo.md` §2.6），但建议**两端一致**以免排障混淆。老网络若 TOML/库里仍写着 1380，不会随升级自动改写。
 
 **步骤 1（排除代理混杂）**：
 1. 用 `easytier-cli peer` 查看实际建立的 PeerConn **协议**（是 `udp` 还是回落成了 `tcp`）、**RTT / loss / jitter**。
@@ -192,4 +192,4 @@ UDP Tunnel: TUN MTU + 24 (Easy) + 20 (Encrypted) + 8 (UDP) + 20 (IP) = TUN MTU +
 
 ## 8. 结论（一句话）
 
-EasyTier 的 P2P 直连**能跑满带宽**（现场实测下载约 70 MB/s），其 RDP 体感弱于 Tailscale 的原因**不在吞吐，而在「丢一点包就放大成卡顿」的五个机制** —— 其中 **MTU 偏大（1360 vs 1280）**、**ping 失败 5 次即拆连接**、**TCP 回落**是三个可立即通过配置缓解的点。
+EasyTier 的 P2P 直连**能跑满带宽**（现场实测下载约 70 MB/s），其 RDP 体感弱于 Tailscale 的原因**不在吞吐，而在「丢一点包就放大成卡顿」的五个机制** —— 其中 **ping 失败 5 次即拆连接**、**TCP 回落**仍可用配置缓解；**MTU 出厂已对齐 Tailscale 1280**（2026-10-16），老配置若仍写 1380 需手工改或重建默认。

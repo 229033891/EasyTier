@@ -38,6 +38,7 @@ crate 内设计稿（非本索引）：`easytier/docs/`（凭据计划已标 Arc
 | [peer-connections.md](./current/peer-connections.md) | 节点间多 PeerConn 与单 `default_conn` 发送路径 |
 | [p2p-direct-throughput-audit.md](./current/p2p-direct-throughput-audit.md) | **P2P 直连吞吐瓶颈审查**（逐行核实出站通路；3 处瓶颈 / 3 处已排除；未压测） |
 | [p2p-direct-stability-audit.md](./current/p2p-direct-stability-audit.md) | **P2P 直连稳定性审查**（RDP 卡顿五机制 + 配置层缓解清单；混淆因素待排除） |
+| [tailscale-gap-and-conflict-audit.md](./current/tailscale-gap-and-conflict-audit.md) | **vs Tailscale 代码层审查**（Bug/冲突 C1–C6 vs 设计 S1–S5；UI 已连≠VIP；P-AUDIT 修复清单未落地） |
 | [console-and-client-interaction-performance.md](./current/console-and-client-interaction-performance.md) | **控制台与客户端交互性能审查**（Web 控制台 / 安卓 GUI 交互慢的根因；OpenWrt LuCI 见外部仓文档） |
 | [tunnels-and-transport.md](./current/tunnels-and-transport.md) | 隧道 scheme、打洞/中继与伪装差距 |
 | [magic-dns.md](./current/magic-dns.md) | MagicDNS / DnsConfig / OS 接线与覆盖信号（现状 SoT） |

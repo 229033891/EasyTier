@@ -22,7 +22,8 @@ import (
 )
 
 const (
-	tunMTU         = 1380
+	// Match Tailscale / EasyTier encrypted TUN default (flags.mtu 1300 − 20).
+	tunMTU         = 1280
 	tunNamePrefix  = "et-go"
 	tunReadWorkers = 32
 )

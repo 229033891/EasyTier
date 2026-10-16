@@ -170,7 +170,7 @@ sudo go run . \
 
 Repeat `-p` to configure more peers. The command creates `et-goN` on Linux and
 Windows or `utunN` on macOS, assigns the requested address, and sets an MTU of
-1380. Run it as root or with `CAP_NET_ADMIN` on Linux, with `sudo` on macOS, or
+1280 (aligned with Tailscale / EasyTier encrypted TUN default). Run it as root or with `CAP_NET_ADMIN` on Linux, with `sudo` on macOS, or
 from an Administrator terminal on Windows. Closing the command removes the TUN
 interface. The example does not install a default route or enable GSO.
 

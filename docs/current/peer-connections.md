@@ -3,10 +3,11 @@
 ## Status
 
 - Status: **Current**
-- 最近审阅：2026-10-09（补：状态页 CollectNetworkInfo 2s + 历史定向采样；Web 状态表一链路一行 + 连接历史丢包/抖动；配置读存储优先见 Archive）；2026-10-08（补：配置页开关统一 `ToggleSwitch`；`disable_p2p` 等负逻辑字段正向展示）；2026-10-07 补：`default_protocol` 有序 CSV + 手动 URL scheme 降级
+- 最近审阅：2026-10-16（交叉链接 `tailscale-gap-and-conflict-audit`；行为描述未改）；2026-10-09（补：状态页 CollectNetworkInfo 2s + 历史定向采样；Web 状态表一链路一行 + 连接历史丢包/抖动；配置读存储优先见 Archive）；2026-10-08（补：配置页开关统一 `ToggleSwitch`；`disable_p2p` 等负逻辑字段正向展示）；2026-10-07 补：`default_protocol` 有序 CSV + 手动 URL scheme 降级
 - 范围：同一对 peer 之间的 `PeerConn` / 默认发送路径
 - 多链路聚合（异质优先）：出厂默认 `bond_count=2`；见 §2 与 [`../roadmap/multi-link-bonding.md`](../roadmap/multi-link-bonding.md)
 - 连接稳定性（质量选路 / 保底）见：[`../roadmap/connection-stability-todo.md`](../roadmap/connection-stability-todo.md)
+- UI 已连 vs VIP/RDP 不通（bug vs 设计）见：[`tailscale-gap-and-conflict-audit.md`](./tailscale-gap-and-conflict-audit.md)
 - 隧道 scheme 与伪装差距见：[`tunnels-and-transport.md`](./tunnels-and-transport.md)
 - 索引：[`../README.md`](../README.md)
 

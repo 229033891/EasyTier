@@ -2027,7 +2027,7 @@ mod tests {
             "relay_all_peer_rpc": false,
             "multi_thread": false,
             "disable_relay_data": false,
-            "mtu": 1380
+            "mtu": 1300
         })
     }
 
