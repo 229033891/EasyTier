@@ -129,17 +129,24 @@ pub(crate) async fn send_peer_packet_to_chan(
     }
 }
 
+/// Receive one packet envelope, or `None` once the channel is closed.
+///
+/// CRITICAL (CR-15): this used to return `Result<_, anyhow::Error>` where both
+/// "channel closed" and "receive failed" collapsed into the same opaque error,
+/// so the only thing a caller could do with either was `panic!` — which under
+/// `panic = "abort"` turned an orderly shutdown into a process abort and hid
+/// real failures behind the same crash.
+///
+/// `None` is the honest signal here: `mpsc::Receiver::recv` yields `None` only
+/// when the channel is closed and every sender has been dropped, which is an
+/// expected shutdown. There is no separate transport-error case to represent.
 pub(crate) async fn recv_packet_envelope_from_chan(
     packet_recv_chan_receiver: &mut PacketRecvChanReceiver,
-) -> Result<PeerPacketEnvelope, anyhow::Error> {
+) -> Option<PeerPacketEnvelope> {
     match packet_recv_chan_receiver.0.try_recv() {
-        Ok(packet) => Ok(packet),
-        Err(TryRecvError::Empty) => packet_recv_chan_receiver
-            .0
-            .recv()
-            .await
-            .ok_or(anyhow::anyhow!("recv_packet_from_chan failed")),
-        Err(TryRecvError::Disconnected) => Err(anyhow::anyhow!("recv_packet_from_chan failed")),
+        Ok(packet) => Some(packet),
+        Err(TryRecvError::Empty) => packet_recv_chan_receiver.0.recv().await,
+        Err(TryRecvError::Disconnected) => None,
     }
 }
 
@@ -149,6 +156,7 @@ pub async fn recv_packet_from_chan(
     recv_packet_envelope_from_chan(packet_recv_chan_receiver)
         .await
         .map(|envelope| envelope.packet)
+        .ok_or_else(|| anyhow::anyhow!("recv_packet_from_chan failed"))
 }
 
 #[async_trait::async_trait]

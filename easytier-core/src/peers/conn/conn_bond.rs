@@ -328,7 +328,59 @@ pub fn pick_bond_set(
     selected
 }
 
+/// Per-(flow, conn) hash used to pick a bond member by consistent hashing.
+pub(crate) fn bond_flow_to_conn_hash(flow_key: u64, conn_id: PeerConnId) -> u64 {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    flow_key.hash(&mut hasher);
+    conn_id.hash(&mut hasher);
+    hasher.finish()
+}
+
+/// Pick the bond member for `flow_key` by **consistent hashing over conn ids**.
+///
+/// **Why not `flow_key % member_count`**: that hashes the member's *position*, so
+/// any change to the member set — a member dying, replica fill, `bond_count`
+/// change, or `pick_bond_set` re-ordering after a quality shift — can re-point an
+/// *unrelated* flow to a different conn. Two independent paths have different
+/// latency, and that reordering is seen as packet loss by the inner TCP / RDP
+/// stream (S4 stutter).
+///
+/// Hashing `(flow_key, conn_id)` and taking the minimum keeps a flow on its conn
+/// until **its own** member leaves the set — the standard consistent-hashing
+/// property — while keeping the load spreading bonding exists for: a single
+/// elephant flow still benefits from several parallel paths.
+///
+/// **Deliberately does NOT force the best-scoring member.** Bonding exists to
+/// aggregate throughput; collapsing it to "always the best path" would delete
+/// that capability, which is the same mistake as lowering `bond_count` to 1
+/// (see [`../roadmap/connection-stability-todo.md`](../roadmap/connection-stability-todo.md)
+/// §2.2: quality is the user-facing goal, aggregation is an orthogonal throughput
+/// win). Quality still governs *membership* via `pick_bond_set`.
+///
+/// **`#[cfg(test)]`-only on purpose.** The hot path in `peer.rs` inlines the same
+/// hash-and-take-minimum over an already-materialised member list, precisely so it
+/// need not build a `Vec<PeerConnId>` per packet. This slice-taking form exists
+/// as the readable reference that the tests assert against — the same arrangement
+/// as [`bond_member_index`] below. If it is ever needed in production again, drop
+/// the gate rather than re-introducing the per-packet allocation.
+#[cfg(test)]
+pub fn bond_member_for_flow(flow_key: u64, member_ids: &[PeerConnId]) -> Option<usize> {
+    let mut best_idx: Option<usize> = None;
+    let mut best_hash = u64::MAX;
+    for (idx, conn_id) in member_ids.iter().enumerate() {
+        let h = bond_flow_to_conn_hash(flow_key, *conn_id);
+        if h < best_hash {
+            best_hash = h;
+            best_idx = Some(idx);
+        }
+    }
+    best_idx
+}
+
 /// Stable index into `member_count` for a flow key.
+///
+/// Position-based; kept only as a reference for the S4 remapping test.
+#[cfg(test)]
 pub fn bond_member_index(flow_key: u64, member_count: usize) -> usize {
     if member_count == 0 {
         return 0;
@@ -732,6 +784,155 @@ mod tests {
         assert_eq!(bond_member_index(sticky, 4), bond_member_index(sticky, 4));
         assert_ne!(sticky, h1);
         assert_ne!(sticky, h2);
+    }
+
+    /// S4: position-based hashing (`key % member_count`) re-points flows whenever
+    /// the member set changes. Consistent hashing over conn ids has a much
+    /// stronger property:
+    ///
+    /// **A flow can only move because its own member left the set, or because a
+    /// newly added member now wins the min-hash. It is never re-pointed to a
+    /// different member that was already present.**
+    ///
+    /// That is exactly what reordering looks like to the inner TCP/RDP stream:
+    /// moving to an already-present sibling conn is pure loss with no benefit.
+    #[test]
+    fn consistent_hashing_never_repoints_a_flow_to_an_existing_sibling() {
+        let a = id(1);
+        let b = id(2);
+        let c = id(3);
+        let d = id(4);
+        let flows: Vec<u64> = (0u64..1024).collect();
+
+        // `b` dies, `d` joins (member death + replica fill).
+        let before = [a, b, c];
+        let after = [a, c, d];
+
+        let pick = |ids: &[PeerConnId]| -> Vec<PeerConnId> {
+            flows
+                .iter()
+                .map(|f| ids[bond_member_for_flow(*f, ids).unwrap()])
+                .collect()
+        };
+        let pb = pick(&before);
+        let pa = pick(&after);
+
+        let mut illegal = 0;
+        let mut moved = 0;
+        for i in 0..flows.len() {
+            if pb[i] == pa[i] {
+                continue;
+            }
+            moved += 1;
+            // Legal only if it left a dead member, or landed on the new one.
+            if pb[i] != b && pa[i] != d {
+                illegal += 1;
+            }
+        }
+        assert_eq!(
+            illegal, 0,
+            "a flow was re-pointed to an already-present sibling conn (S4 reorder)"
+        );
+        assert!(moved > 0, "sanity: the set change should move *some* flows");
+
+        // Every conn keeps a meaningful share of the load (bonding still spreads).
+        for id in [a, c, d] {
+            let share = pa.iter().filter(|p| **p == id).count();
+            assert!(
+                share > flows.len() / 8,
+                "conn {id:?} got only {share} flows"
+            );
+        }
+
+        // Stronger case: a **pure re-order** (no member added or removed) must
+        // move *nothing*. `pick_bond_set` re-orders via
+        // `cmp_candidate_score_then_id` whenever the quality band shifts, so
+        // this is the common case, not the exotic one.
+        let reordered: Vec<PeerConnId> = pick(&[c, a, b]);
+        let reordered_moved = pb
+            .iter()
+            .zip(reordered.iter())
+            .filter(|(x, y)| x != y)
+            .count();
+        assert_eq!(
+            reordered_moved, 0,
+            "re-ordering the same members must not re-point a single flow"
+        );
+    }
+
+    /// Counter-example documenting why the old index-based hash had to go.
+    ///
+    /// `flow_key % member_count` reads the member at a **position**. Both of its
+    /// failure modes come from that, and neither happens to consistent hashing:
+    ///
+    /// 1. **Pure re-order** — `pick_bond_set` re-orders members when the quality
+    ///    band shifts (`cmp_candidate_score_then_id`), with nothing added or
+    ///    removed. Every flow on a moved index is re-pointed to a sibling that
+    ///    was *already there*: pure reordering, which is the S4 stutter.
+    /// 2. **Count change** — replica fill or a `bond_count` change re-points a
+    ///    large share of flows at once.
+    #[test]
+    fn positional_hashing_repoints_flows_on_reorder_or_count_change() {
+        let a = id(1);
+        let b = id(2);
+        let c = id(3);
+        let flows: Vec<u64> = (0u64..1024).collect();
+
+        let pick_positional = |ids: &[PeerConnId]| -> Vec<PeerConnId> {
+            flows
+                .iter()
+                .map(|f| ids[bond_member_index(*f, ids.len())])
+                .collect()
+        };
+
+        // (1) Pure reorder, same members.
+        let before = pick_positional(&[a, b, c]);
+        let after = pick_positional(&[c, b, a]);
+        let moved = before
+            .iter()
+            .zip(after.iter())
+            .filter(|(x, y)| x != y)
+            .count();
+        // [a,b,c] → [c,b,a] leaves index 1 (`b`) alone and moves the other two.
+        assert!(
+            moved > flows.len() / 2,
+            "index-based hashing must move a majority of flows on a pure re-order, \
+             got {moved}/{}",
+            flows.len()
+        );
+
+        // (2) Count change.
+        let two = flows
+            .iter()
+            .map(|f| bond_member_index(*f, 2))
+            .collect::<Vec<_>>();
+        let three = flows
+            .iter()
+            .map(|f| bond_member_index(*f, 3))
+            .collect::<Vec<_>>();
+        let moved = flows
+            .iter()
+            .zip(two.iter().zip(three.iter()))
+            .filter(|(_, (x, y))| x != y)
+            .count();
+        assert!(
+            moved > flows.len() / 3,
+            "index-based hashing should move >1/3 of flows on a count change, got {moved}"
+        );
+    }
+
+    #[test]
+    fn bond_member_for_flow_is_deterministic_and_total() {
+        let ids = [id(1), id(2)];
+        for f in 0u64..64 {
+            let a = bond_member_for_flow(f, &ids);
+            let b = bond_member_for_flow(f, &ids);
+            assert_eq!(a, b, "must be deterministic");
+            assert!(a.is_some_and(|i| i < 2));
+        }
+        assert_eq!(bond_member_for_flow(7, &[]), None);
+        // Single member always wins, regardless of the key.
+        assert_eq!(bond_member_for_flow(7, &[id(9)]), Some(0));
     }
 
     #[test]

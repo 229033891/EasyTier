@@ -1,10 +1,9 @@
 use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
-use std::cell::UnsafeCell;
 use std::fmt;
 use std::sync::{
     Arc, Mutex,
-    atomic::{AtomicU32, Ordering},
+    atomic::{AtomicU32, AtomicU64, Ordering},
 };
 use std::time::Duration;
 use tokio_util::task::AbortOnDropHandle;
@@ -197,6 +196,13 @@ pub enum MetricName {
     CompressionBytesTxAfter,
 
     TcpProxyConnect,
+
+    /// VIP/L3 lookup found no dst peer (incl. policy Block → empty fanout)
+    DataPlaneNoDstPeerDrops,
+    /// Inbound data dropped because the NIC host channel was full
+    DataPlaneNicChannelDrops,
+    /// Outbound tunnel send hit BufferFull (ring full / silent loss path)
+    DataPlaneTunnelBufferFull,
 }
 
 impl fmt::Display for MetricName {
@@ -297,6 +303,10 @@ impl fmt::Display for MetricName {
             MetricName::CompressionBytesTxAfter => write!(f, "compression_bytes_tx_after"),
 
             MetricName::TcpProxyConnect => write!(f, "tcp_proxy_connect"),
+
+            MetricName::DataPlaneNoDstPeerDrops => write!(f, "data_plane_no_dst_peer_drops"),
+            MetricName::DataPlaneNicChannelDrops => write!(f, "data_plane_nic_channel_drops"),
+            MetricName::DataPlaneTunnelBufferFull => write!(f, "data_plane_tunnel_buffer_full"),
         }
     }
 }
@@ -481,10 +491,29 @@ impl Default for LabelSet {
     }
 }
 
-/// UnsafeCounter provides a high-performance counter using UnsafeCell
+/// A monotonically increasing metric counter.
+///
+/// CRITICAL (CR-05): this used to be an `UnsafeCell<u64>` with
+/// `unsafe impl Send + Sync`, while its own docs demanded "the caller must
+/// ensure that no other thread is accessing this counter simultaneously".
+/// That guarantee was never enforced and is false in practice: `CounterHandle`
+/// is `Clone` over a shared `Arc<MetricData>` and `get_counter()` hands the same
+/// `Arc` to multiple holders. `peer_manager.rs` clones `self_tx_packets` /
+/// `self_tx_bytes` / `compress_tx_bytes_*` into **both** `PeerOutboundPacketRouter`
+/// (runs on the TUN-reader task) and `PeerPacketRouter` (runs on the peer-recv
+/// task), and both mutate them. On the multi-threaded runtime that is a data race
+/// on every single packet.
+///
+/// It is now backed by `AtomicU64` with `Relaxed` ordering — statistics counters
+/// need no cross-core ordering, and one relaxed `fetch_update` is negligible
+/// next to the AES-GCM work done on the same packet.
+///
+/// The `unsafe fn` signatures are kept so existing `unsafe { .. }` call sites
+/// stay valid without churn; the bodies no longer contain any `unsafe` operation,
+/// so the contract is now upheld by the type system rather than by callers.
 #[derive(Debug)]
 pub struct UnsafeCounter {
-    value: UnsafeCell<u64>,
+    value: AtomicU64,
 }
 
 impl Default for UnsafeCounter {
@@ -496,72 +525,62 @@ impl Default for UnsafeCounter {
 impl UnsafeCounter {
     pub fn new() -> Self {
         Self {
-            value: UnsafeCell::new(0),
+            value: AtomicU64::new(0),
         }
     }
 
     pub fn new_with_value(initial: u64) -> Self {
         Self {
-            value: UnsafeCell::new(initial),
+            value: AtomicU64::new(initial),
         }
     }
 
-    /// Increment the counter by the given amount
+    /// Increment the counter by the given amount, saturating at `u64::MAX`.
+    ///
     /// # Safety
-    /// This method is unsafe because it uses UnsafeCell. The caller must ensure
-    /// that no other thread is accessing this counter simultaneously.
+    /// Vestigial: the implementation is now race-free (`AtomicU64`). Kept as
+    /// `unsafe fn` only so existing call sites need not change.
     pub unsafe fn add(&self, delta: u64) {
-        let ptr = self.value.get();
-        unsafe {
-            *ptr = (*ptr).saturating_add(delta);
-        }
+        self.value
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| {
+                Some(v.saturating_add(delta))
+            })
+            .ok();
     }
 
     /// Increment the counter by 1
     /// # Safety
-    /// This method is unsafe because it uses UnsafeCell. The caller must ensure
-    /// that no other thread is accessing this counter simultaneously.
+    /// Vestigial, see [`UnsafeCounter::add`].
     pub unsafe fn inc(&self) {
-        unsafe {
-            self.add(1);
-        }
+        // Safety: the body of `add` is now race-free, so this needs no
+        // additional obligation of its own.
+        unsafe { self.add(1) };
     }
 
     /// Get the current value of the counter
     /// # Safety
-    /// This method is unsafe because it uses UnsafeCell. The caller must ensure
-    /// that no other thread is modifying this counter simultaneously.
+    /// Vestigial, see [`UnsafeCounter::add`].
     pub unsafe fn get(&self) -> u64 {
-        let ptr = self.value.get();
-        unsafe { *ptr }
+        self.value.load(Ordering::Relaxed)
     }
 
     /// Reset the counter to zero
     /// # Safety
-    /// This method is unsafe because it uses UnsafeCell. The caller must ensure
-    /// that no other thread is accessing this counter simultaneously.
+    /// Vestigial, see [`UnsafeCounter::add`].
     pub unsafe fn reset(&self) {
-        let ptr = self.value.get();
-        unsafe {
-            *ptr = 0;
-        }
+        self.value.store(0, Ordering::Relaxed);
     }
 
     /// Set the counter to a specific value
     /// # Safety
-    /// This method is unsafe because it uses UnsafeCell. The caller must ensure
-    /// that no other thread is accessing this counter simultaneously.
+    /// Vestigial, see [`UnsafeCounter::add`].
     pub unsafe fn set(&self, value: u64) {
-        let ptr = self.value.get();
-        unsafe {
-            *ptr = value;
-        }
+        self.value.store(value, Ordering::Relaxed);
     }
 }
 
-// UnsafeCounter is Send + Sync because the safety is guaranteed by the caller
-unsafe impl Send for UnsafeCounter {}
-unsafe impl Sync for UnsafeCounter {}
+// `AtomicU64` makes this automatically `Send + Sync`; the explicit `unsafe impl`s
+// that used to paper over `UnsafeCell` are gone.
 
 /// MetricData contains both the counter and its last active cleanup epoch.
 #[derive(Debug)]
@@ -601,9 +620,8 @@ fn cleanup_metrics(counters: &DashMap<MetricKey, Arc<MetricData>>, current_epoch
     counters.shrink_to_fit();
 }
 
-// MetricData is Send + Sync because the safety is guaranteed by the caller
-unsafe impl Send for MetricData {}
-unsafe impl Sync for MetricData {}
+// MetricData is Send + Sync automatically: it only holds an `AtomicU64` counter
+// plus `Arc<AtomicU32>` / `AtomicU32` epoch fields.
 
 /// MetricKey uniquely identifies a metric with its name and labels
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]

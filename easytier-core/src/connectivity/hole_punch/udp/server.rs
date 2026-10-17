@@ -36,6 +36,66 @@ use super::{
 
 const MAX_K1_FOR_RANDOM_HARD_SYM: u32 = 180;
 
+/// Upper bound on how many destination ports a single punch round may span.
+///
+/// Must comfortably cover the largest legitimate ask (`UDP_ARRAY_SIZE_FOR_HARD_SYM`
+/// = 84) so real peers are unaffected, while keeping the per-round `Vec` reserve
+/// trivially small. See `send_punch_packet_easy_sym` for why this cannot be left
+/// to `saturating_*` arithmetic (CR-03).
+pub(crate) const MAX_PUNCH_PORTS_PER_ROUND: u32 = 1024;
+
+/// Resolve the inclusive destination-port range for one punch round.
+///
+/// CRITICAL (CR-03): `max_port_num` is a peer-controlled `u32` and the
+/// `saturating_*` arithmetic below only clamps at `u32::MAX` — it is **not** a
+/// range limit. With `base_port_num = 0`, `max_port_num = u32::MAX` and
+/// `is_incremental = true`, the range is `1..=4_294_967_295`. `Range<u32>` is
+/// `TrustedLen`, so the caller's `collect::<Vec<_>>()` reserves ~8.5 GB in a
+/// single allocation and aborts the process when it fails.
+///
+/// Legitimate callers only ever ask for a few dozen ports
+/// (`UDP_ARRAY_SIZE_FOR_HARD_SYM` is the largest at 84), so the bound has
+/// enormous headroom. Over-limit requests are **rejected**, not truncated: a
+/// silently shortened range would make the peer believe the punch covered its
+/// whole port array, turning a denial of service into a silent reliability bug.
+#[inline]
+fn punch_port_range(
+    base_port_num: u32,
+    max_port_num: u32,
+    is_incremental: bool,
+) -> anyhow::Result<(u32, u32)> {
+    if max_port_num > MAX_PUNCH_PORTS_PER_ROUND {
+        tracing::warn!(
+            base_port_num,
+            max_port_num,
+            MAX_PUNCH_PORTS_PER_ROUND,
+            "send_punch_packet_easy_sym rejected: port count over limit",
+        );
+        anyhow::bail!(
+            "send_punch_packet_easy_sym max_port_num {} exceeds limit {}",
+            max_port_num,
+            MAX_PUNCH_PORTS_PER_ROUND
+        );
+    }
+
+    let port_start = if is_incremental {
+        base_port_num.saturating_add(1)
+    } else {
+        base_port_num.saturating_sub(max_port_num)
+    };
+    let port_end = if is_incremental {
+        base_port_num.saturating_add(max_port_num)
+    } else {
+        base_port_num.saturating_sub(1)
+    };
+
+    if port_end <= port_start {
+        anyhow::bail!("send_punch_packet_easy_sym invalid port range");
+    }
+
+    Ok((port_start, port_end))
+}
+
 pub struct SelectedUdpPunchListener<S> {
     /// Kept for listener-selection side effects and tests; production callers
     /// only consume `mapped_addr`.
@@ -161,20 +221,9 @@ where
 
         let base_port_num = request.base_port_num;
         let max_port_num = request.max_port_num.max(1);
-        let port_start = if request.is_incremental {
-            base_port_num.saturating_add(1)
-        } else {
-            base_port_num.saturating_sub(max_port_num)
-        };
-        let port_end = if request.is_incremental {
-            base_port_num.saturating_add(max_port_num)
-        } else {
-            base_port_num.saturating_sub(1)
-        };
-
-        if port_end <= port_start {
-            anyhow::bail!("send_punch_packet_easy_sym invalid port range");
-        }
+        // CRITICAL (CR-03): bounds the per-round port span before any allocation.
+        let (port_start, port_end) =
+            punch_port_range(base_port_num, max_port_num, request.is_incremental)?;
 
         let ports = (port_start..=port_end)
             .map(|port| port as u16)
@@ -730,6 +779,12 @@ pub async fn send_cone_hole_punch_packets<S>(
 where
     S: VirtualUdpSocket + 'static,
 {
+    let (batch_count, per_batch, batch_interval) = cone_punch_budget(
+        request.packet_batch_count,
+        request.packet_count_per_batch,
+        request.packet_interval_ms,
+    )?;
+
     let dest_ip = request.dest_addr.ip();
     if dest_ip.is_unspecified() || dest_ip.is_multicast() {
         anyhow::bail!(
@@ -738,10 +793,10 @@ where
         );
     }
 
-    for _ in 0..request.packet_batch_count {
+    for _ in 0..batch_count {
         tracing::info!(?request, "sending hole punching packet");
 
-        for _ in 0..request.packet_count_per_batch {
+        for _ in 0..per_batch {
             let udp_packet =
                 new_hole_punch_packet(request.transaction_id, HOLE_PUNCH_PACKET_BODY_LEN);
             if let Err(err) = udp
@@ -751,11 +806,95 @@ where
                 tracing::error!(?err, "failed to send hole punch packet to dest addr");
             }
         }
-        crate::foundation::time::sleep(Duration::from_millis(request.packet_interval_ms as u64))
-            .await;
+        crate::foundation::time::sleep(batch_interval).await;
     }
 
     Ok(())
+}
+
+/// Upper bound on how many UDP sockets one both-easy-sym round may bind.
+///
+/// `wait_time_ms` right below the call site is already clamped with `.min(8000)`
+///; `udp_socket_count` was not, which is plainly an oversight — the two fields
+/// are read from the same request and bound the same round.
+pub(crate) const MAX_UDP_SOCKETS_PER_PUNCH_ROUND: u32 = 256;
+
+/// Resolve how many UDP sockets a both-easy-sym round may bind.
+///
+/// CRITICAL. `udp_socket_count` is a peer-controlled `u32` that used to flow
+/// straight into `UdpSocketArray::new_with_context(..)`, binding that many
+/// sockets on the host. A single RPC could therefore exhaust the host's UDP
+/// socket table and, with it, unrelated services.
+///
+/// Rejected rather than clamped so a caller asking for more finds out instead of
+/// silently getting a smaller array — same reasoning as `punch_port_range`.
+fn resolve_udp_socket_count(requested: u32) -> anyhow::Result<usize> {
+    if requested == 0 || requested > MAX_UDP_SOCKETS_PER_PUNCH_ROUND {
+        tracing::warn!(
+            requested,
+            MAX_UDP_SOCKETS_PER_PUNCH_ROUND,
+            "both-easy-sym hole punch rejected: socket count out of range",
+        );
+        anyhow::bail!(
+            "both-easy-sym hole punch udp_socket_count {} out of range (1..={})",
+            requested,
+            MAX_UDP_SOCKETS_PER_PUNCH_ROUND
+        );
+    }
+    Ok(requested as usize)
+}
+
+/// Upper bound on how many punch datagrams one cone request may send.
+///
+/// Both `packet_batch_count` and `packet_count_per_batch` are peer-controlled
+/// `u32`, and the legitimate client sends `5 x 2 = 10` over ~2 seconds
+/// (`udp/client.rs`), so this leaves ~50x headroom.
+pub(crate) const MAX_PUNCH_PACKETS_PER_ROUND: u32 = 512;
+
+/// Floor on the inter-batch interval.
+///
+/// A peer-supplied `packet_interval_ms = 0` turns the loop into a hot spin that
+/// still holds the punch server's admission **read** lock — see
+/// [`cone_punch_budget`].
+pub(crate) const MIN_PUNCH_BATCH_INTERVAL_MS: u32 = 1;
+
+/// Validate and normalise the send budget for one cone punch round.
+///
+/// CRITICAL. This loop runs while `send_punch_packet_cone` holds the punch
+/// server's `admission` **read** lock, and `stop()` needs the matching **write**
+/// lock. Tokio's `RwLock` is write-preferring: once a writer is queued no new
+/// readers are admitted, and the writer waits for existing readers. So an
+/// unbounded (or hot-spinning) loop under a read lock means **`stop()` can never
+/// complete** — a peer can wedge the whole hole-punch service simply by asking
+/// for `u32::MAX` packets, or by asking for zero delay.
+///
+/// The budget is bounded rather than clamped so a caller that genuinely needs a
+/// bigger round finds out, instead of silently getting a different number of
+/// packets than it asked for — the same reasoning as `punch_port_range`.
+fn cone_punch_budget(
+    batch_count: u32,
+    count_per_batch: u32,
+    interval_ms: u32,
+) -> anyhow::Result<(u32, u32, std::time::Duration)> {
+    let total = batch_count.saturating_mul(count_per_batch);
+    if total > MAX_PUNCH_PACKETS_PER_ROUND {
+        tracing::warn!(
+            batch_count,
+            count_per_batch,
+            total,
+            MAX_PUNCH_PACKETS_PER_ROUND,
+            "cone hole punch rejected: packet budget over limit",
+        );
+        anyhow::bail!(
+            "cone hole punch would send {} packets, limit is {}",
+            total,
+            MAX_PUNCH_PACKETS_PER_ROUND
+        );
+    }
+
+    let interval =
+        Duration::from_millis(u64::from(interval_ms).max(u64::from(MIN_PUNCH_BATCH_INTERVAL_MS)));
+    Ok((batch_count, count_per_batch, interval))
 }
 
 #[tracing::instrument(err, ret(level = tracing::Level::DEBUG), skip(ports, udp))]
@@ -844,7 +983,7 @@ where
             .with_context(|| "failed to get udp port mapping")?;
 
         tracing::info!("send_punch_packet_hard_sym start");
-        let socket_count = request.udp_socket_count as usize;
+        let socket_count = resolve_udp_socket_count(request.udp_socket_count)?;
         let transaction_id = request.transaction_id;
 
         let udp_array = UdpSocketArray::new_with_context(
@@ -883,7 +1022,27 @@ where
 
                 if let Some(s) = udp_array.try_fetch_punched_socket(transaction_id) {
                     tracing::info!(?s, ?transaction_id, "got punched socket in both easy sym");
-                    assert!(Arc::strong_count(&s.socket) == 1);
+                    // CRITICAL: this used to be
+                    // `assert!(Arc::strong_count(&s.socket) == 1)`, which is not a
+                    // real invariant. `try_fetch_punched_socket` removes the
+                    // record from the array's map, but anything else holding a
+                    // clone concurrently — the map being iterated elsewhere, an
+                    // in-flight `send_with_all` — legitimately makes the count
+                    // 2 for an instant. Under `panic = "abort"` that turned a
+                    // benign race into a **process abort**, and because it fired
+                    // mid-loop it also skipped the `listeners` cleanup below,
+                    // leaking every already-promoted listener (the 5s janitor
+                    // walks a different collection, so nothing else reclaims
+                    // them).
+                    //
+                    // The count is diagnostic only; record it and carry on.
+                    let socket_refs = Arc::strong_count(&s.socket);
+                    if socket_refs > 1 {
+                        tracing::debug!(
+                            socket_refs,
+                            "punched socket still referenced elsewhere when adopted"
+                        );
+                    }
                     let Some(port) = s.socket.local_addr().ok().map(|addr| addr.port()) else {
                         tracing::warn!("failed to get local addr from punched socket");
                         continue;
@@ -949,6 +1108,34 @@ where
 
 #[cfg(test)]
 mod tests {
+    // CR-03: the port-range bound must reject a hostile `max_port_num` instead
+    // of reserving gigabytes in the caller's `collect`.
+    #[test]
+    fn punch_port_range_rejects_the_8gb_allocation() {
+        // `base_port_num = 0, max_port_num = u32::MAX, is_incremental = true`
+        // used to produce `1..=4_294_967_295` => ~8.5 GB reserved up front.
+        assert!(punch_port_range(0, u32::MAX, true).is_err());
+        // Same for the descending variant.
+        assert!(punch_port_range(u32::MAX, u32::MAX, false).is_err());
+        // Anything materially past the limit is rejected, not truncated.
+        assert!(punch_port_range(0, MAX_PUNCH_PORTS_PER_ROUND + 1, true).is_err());
+    }
+
+    #[test]
+    fn punch_port_range_accepts_legitimate_requests() {
+        // The largest legitimate ask is UDP_ARRAY_SIZE_FOR_HARD_SYM (84).
+        assert_eq!(punch_port_range(1234, 84, true).unwrap(), (1235, 1318));
+        assert_eq!(punch_port_range(1234, 84, false).unwrap(), (1150, 1233));
+        // The limit itself is inclusive.
+        assert_eq!(
+            punch_port_range(0, MAX_PUNCH_PORTS_PER_ROUND, true).unwrap(),
+            (1, MAX_PUNCH_PORTS_PER_ROUND)
+        );
+        // Saturating edges must not produce an inverted range.
+        assert!(punch_port_range(u32::MAX, 1, true).is_err());
+        assert!(punch_port_range(0, 1, false).is_err());
+    }
+
     use std::{
         collections::VecDeque,
         io,

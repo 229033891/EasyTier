@@ -98,7 +98,7 @@ function rowLatency(row: PeerConnTableRow) {
   if (row.conn)
     return connLatencyMs(row.conn)
   // 中转无直连：回退到路由汇总延迟
-  return latencyMs(row.pair)
+  return latencyMs(row.pair, { policyForcedLabel: t('path_latency_policy_forced') })
 }
 
 function rowJitter(row: PeerConnTableRow) {
@@ -128,9 +128,36 @@ function rowRxBytes(row: PeerConnTableRow) {
 }
 
 function rowTunnelProto(row: PeerConnTableRow) {
-  if (!row.conn)
-    return tunnelProto(row.pair)
-  return oneTunnelProto(row.conn.tunnel)
+  const base = row.conn ? oneTunnelProto(row.conn.tunnel) : tunnelProto(row.pair)
+  return allPathsRetransmit(base) ? `${base}${t('tunnel_proto_tcp_over_tcp_warning')}` : base
+}
+
+/**
+ * P-AUDIT.5: flag when *every* tunnel to a peer uses a retransmitting transport.
+ *
+ * `default_protocol = "udp,tcp"` means UDP may be throttled/blocked and the dial
+ * silently falls back to TCP. An interactive inner TCP stream (RDP/SSH/HTTP) then
+ * becomes TCP-over-TCP, where mild packet loss collapses throughput — a common
+ * cause of "sometimes it's very laggy" (audit §4 S2 / §5 X2).
+ *
+ * Only warns when there is *no* clean path left; a mixed set can still carry
+ * traffic over UDP, so flagging it would be noise.
+ */
+function allPathsRetransmit(protoList: string) {
+  const protos = protoList
+    .split(',')
+    .map(s => s.trim())
+    .filter(Boolean)
+  if (!protos.length)
+    return false
+  // `tunnel_type` looks like "tcp", "tcp://host:port", "faketcp://…".
+  // QUIC/KCP also retransmit; udp/wg/ring do not.
+  return protos.every(p => /^(tcp|faketcp|quic|kcp)(:\/\/|$)/.test(p))
+}
+
+function rowTunnelProtoTip(row: PeerConnTableRow) {
+  const base = row.conn ? oneTunnelProto(row.conn.tunnel) : tunnelProto(row.pair)
+  return allPathsRetransmit(base) ? t('tunnel_proto_tcp_over_tcp_help') : undefined
 }
 
 function rowRemoteAddr(row: PeerConnTableRow) {
@@ -727,7 +754,13 @@ const eventLogContent = computed(() => {
               </template>
             </Column>
             <Column :field="rowTunnelProto" :header="t('tunnel_proto')"
-              header-class="peer-col-secondary" body-class="peer-col-secondary" />
+              header-class="peer-col-secondary" body-class="peer-col-secondary">
+              <template #body="slotProps">
+                <span v-tooltip.top="{ value: rowTunnelProtoTip(slotProps.data), escape: true }">
+                  {{ rowTunnelProto(slotProps.data) }}
+                </span>
+              </template>
+            </Column>
             <Column :header="t('local_addr')"
               header-class="peer-col-secondary" body-class="peer-col-secondary">
               <template #body="slotProps">

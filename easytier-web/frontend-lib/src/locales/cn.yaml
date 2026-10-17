@@ -204,8 +204,14 @@ history_sampling_hint: 每 60 秒采样一次，保留 7 天；流量为相邻�
 hostname: 主机名
 route_cost: 路由
 tunnel_proto: 协议
+tunnel_proto_tcp_over_tcp_warning: " ⚠"
+tunnel_proto_tcp_over_tcp_help: |-
+  该对端所有隧道都使用自带重传的传输（TCP / QUIC / KCP）。内层 TCP 流（RDP / SSH / HTTP）会退化成 TCP-over-TCP，轻微丢包即显著卡顿。
+  常见原因：「协议顺序」含 `tcp`，UDP 被限速或阻断后回落。
+  排查：确认 UDP 可用时把「协议顺序」设为仅 `udp`（或 `udp,quic`）。
 peer_addr: 对端地址
 latency: 延迟
+path_latency_policy_forced: 政策绕行
 path_quality: 质量分
 path_quality_help: |-
   每行一条隧道的质量分（越低越好：延迟 + 丢包 + 抖动）。

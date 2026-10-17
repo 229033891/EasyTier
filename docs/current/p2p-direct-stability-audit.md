@@ -3,7 +3,7 @@
 ## Status
 
 - Status: **Current**
-- 最近审阅：2026-10-16（出厂 `mtu`→**1300** / TUN 1280；Config UI 中英帮助与占位已同步；其余机制结论未改）
+- 最近审阅：2026-10-17（S3 摘要表数值对齐出厂 1300→TUN 1280，正文早已更新、摘要表遗漏；**§3.3 同步 CR-13：MTU 改为共享校验 `validate_tunnel_mtu`，越界由「静默产生坏 MTU」改为拒绝启动，合法范围 `[1300, 65535]`**；新增 **S1b「UDP 打洞 conn 缺 NAT 保活上限」**，2026-10-17 已修为 10s 上限）
 - 范围：两节点**已直连**后，**长连接交互式流量（RDP / SSH / 终端）**的体感稳定性
 - 关联：[`p2p-direct-throughput-audit.md`](./p2p-direct-throughput-audit.md)（同一条通路的吞吐瓶颈）、[`peer-connections.md`](./peer-connections.md)（选路 / bond）、[`tunnels-and-transport.md`](./tunnels-and-transport.md)、[`tailscale-gap-and-conflict-audit.md`](./tailscale-gap-and-conflict-audit.md)（Bug/冲突 vs 设计分栏）
 - 上游缺口跟踪：[`../roadmap/connection-stability-todo.md`](../roadmap/connection-stability-todo.md)
@@ -22,8 +22,9 @@
 | # | 机制 | 类型 | 影响 |
 |---|------|------|------|
 | S1 | ping 连续失败 5 次即**拆连接**，且无短时抖动宽限 | 已核实 | 闪断后恢复慢 → RDP 冻结数秒 |
+| S1b | UDP 打洞 conn **无 NAT 保活上限**（退避到 32s > NAT 老化 ~30s） | **已修** 2026-10-17 → 10s | 空闲后黑洞无人察觉，随后拆连+重打洞 |
 | S2 | `default_protocol` 含 `tcp`，UDP 不可用时**回落 TCP** → TCP-over-TCP | 已核实 | 轻微丢包即吞吐崩塌 |
-| S3 | MTU **静态** 1360（线缆 ~1432B），无 PMTU 发现、无 MSS 钳制 | 已核实 | 隧道套隧道时超路径 MTU → 丢包 |
+| S3 | MTU **静态** 1280（线缆 ~1352B），无 PMTU 发现、无 MSS 钳制 | 已核实；越界校验 2026-10-17 已补（CR-13） | 隧道套隧道时仍可能超路径 MTU → 丢包 |
 | S4 | bond / 质量选路会**重映射流**到另一条 conn | 已核实 | 换路瞬间乱序 → 卡顿 |
 | S5 | 发送队列满时**静默丢包**（深度仅 128） | 已核实 | 突发即丢，内层 TCP 误判为拥塞 |
 
@@ -85,18 +86,28 @@ UDP 直连正常时无此问题。但当 UDP 打洞失败 / UDP 被限速 / 连�
 
 ### 3.3 S3 — MTU 静态且偏大
 
-`easytier/src/instance/virtual_nic.rs:735-742`：
+`easytier/src/instance/virtual_nic.rs`（**2026-10-17 CR-13 已改**，下面是改后代码）：
 
 ```rust
-let mut mtu_in_config = flags.mtu;      // 出厂 1300（2026-10-16 前为 1380）
-if <加密开启> {
-    mtu_in_config -= 20;                 // → 1280
-}
-// set mtu by ourselves, rust-tun does not handle it correctly on windows
-self.ifcfg.set_mtu(ifname.as_str(), mtu_in_config).await?;
+// 单一共享校验：与 api_input 走同一条规则，避免两处分叉
+let mtu_in_config = match easytier_core::config::validate_tunnel_mtu(flags.mtu) {
+    Ok(configured) => configured,
+    Err(err) => {
+        tracing::error!(?err, configured_mtu = flags.mtu,
+            "refusing to start tun interface with an unusable MTU");
+        return Err(anyhow::anyhow!("invalid tunnel MTU {}: {err}", flags.mtu).into());
+    }
+};
+// 校验保证 mtu >= MIN_TUNNEL_MTU（= 1280 + 加密开销），故不会下溢；
+// saturating_sub 只是防未来常量改动悄悄回绕的兜底
+let mtu_in_config = if flags.enable_encryption {
+    mtu_in_config.saturating_sub(easytier_core::config::ENCRYPTION_MTU_OVERHEAD)  // -20
+} else { mtu_in_config };
 ```
 
 ⇒ 默认加密下 **TUN MTU = 1280**（与 Tailscale `tstun` `defaultMTU` 一致）。
+
+**⚠️ 行为变更（CR-13，需写进 release note）**：合法范围收紧为 **`[1300, 65535]`**（`MIN_TUNNEL_MTU = 1280 + 20`、`MAX_TUNNEL_MTU = u16::MAX`）。改前 `mtu` 越界（如 `0` / `-1`）会**静默产生一个坏 MTU**，Linux 上 `SIOCSIFMTU` 只抛裸 `EINVAL`；改后**拒绝启动**并给出可读错误。**部署中若有 `mtu` 设成 `0` / `-1` / 极小值的配置，升级后实例将起不来**，需先改配置。`api_input.rs` 侧同步改为 `u32::try_from` + 共享校验，`ConfigError::InvalidMtu` 载荷由 `u32` 改为 `i64`（忠实反映调用方实际发来的值，GUI 传 `-1` 不再被报成 `4294967295`）。
 
 线缆包大小（`packet/mod.rs:450`）：
 

@@ -103,6 +103,34 @@ pub(crate) fn default_instance_name() -> String {
     "default".to_owned()
 }
 
+/// Default number of consecutive control-ping failures before a PeerConn is torn
+/// down.
+///
+/// Lives here — rather than being inlined at each use site — because there are
+/// two places that need it and they used to drift: `gen_default_flags()` and the
+/// `0`-means-unset fallback in `PeerConn::ping_fail_close_count`.
+///
+/// **Why 10 and not 5**: after a teardown the conn must be rebuilt, costing ~5s
+/// (direct task loop) + 2–6s (punch) + 5s (handshake). Tearing down a path that
+/// would have recovered after a couple of lost packets is therefore *worse* than
+/// riding it out — the rebuild cost dwarfs the failure window. Each failing ping
+/// cycle is ~3s (1s interval + 2s timeout; the interval backoff resets to 1s on
+/// first loss), so 10 ≈ 30s to declare a path dead, while a brief blip never
+/// triggers a teardown at all.
+///
+/// **Trade-off**: a genuinely dead path is noticed ~15s later. Since the rebuild
+/// costs ~30s either way, total time-to-recovery barely moves, so the tolerance
+/// is close to free. Operators who prefer fast failure can set this back to 5
+/// via `flags.ping_fail_close_count`.
+pub const DEFAULT_PING_FAIL_CLOSE_COUNT: u32 = 10;
+
+/// Default ceiling for the adaptive control-ping interval.
+///
+/// 32s = `1 << PingIntervalController::max_backoff_idx`. Must stay above the
+/// per-conn caps applied to hole-punched conns (TCP 1s / UDP 10s), since
+/// `PeerConn::max_ping_interval` returns `min(cap, flags_max)`.
+pub const DEFAULT_PING_INTERVAL_MAX_SEC: u32 = 32;
+
 pub fn gen_default_flags() -> Flags {
     #[allow(deprecated)]
     Flags {
@@ -119,7 +147,18 @@ pub fn gen_default_flags() -> Flags {
         // virtual_nic subtracts 20 → TUN 1280 (see virtual_nic.rs). Do not set
         // 1280 here or TUN becomes 1260.
         mtu: 1300,
-        latency_first: false,
+        // Quality-first routing: pick the globally cheapest path (latency +
+        // loss + jitter, via `conn_select_*` edge cost) instead of minimising
+        // hop count first. This lets a relay leg win over a degraded direct
+        // conn — with `false`, `get_gateway_peer_id` short-circuits to `dst`
+        // whenever a direct PeerConn exists, so the mesh can never fall back
+        // to transit for that destination.
+        //
+        // MUST stay in sync with the GUI default template
+        // (`easytier-web/frontend-lib/src/types/network.ts`), which has always
+        // shipped `true`. A TOML/CLI deployment used to silently get the
+        // opposite of what the GUI produced.
+        latency_first: true,
         enable_exit_node: false,
         allow_peer_default_without_exit: false,
         proxy_forward_by_system: false,
@@ -159,8 +198,8 @@ pub fn gen_default_flags() -> Flags {
         prefer_peer_relay: false,
         enable_udp_broadcast_relay: false,
         socket_mark: None,
-        ping_fail_close_count: 5,
-        ping_interval_max_sec: 32,
+        ping_fail_close_count: DEFAULT_PING_FAIL_CLOSE_COUNT,
+        ping_interval_max_sec: DEFAULT_PING_INTERVAL_MAX_SEC,
         // PeerConn quality select (P1.7). Canonical values for TOML diff.
         // Runtime: all-zero block → code defaults; else literal (0 weight allowed).
         conn_select_w_lat: 100,

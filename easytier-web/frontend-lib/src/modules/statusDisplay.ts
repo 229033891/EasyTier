@@ -64,7 +64,17 @@ function defaultConnFirst(info: PeerRoutePair) {
   return defaultConn ? [defaultConn, ...conns.filter(conn => conn !== defaultConn)] : conns
 }
 
-export function latencyMs(info: PeerRoutePair) {
+/**
+ * A path containing a peer that refused relay duty (`disable_relay_data`, or a
+ * `relay_network_whitelist` miss) carries `AVOID_RELAY_COST` on one of its legs.
+ * The backend reports that penalty truthfully instead of erasing it, so a
+ * reported cost at or above this threshold means "policy-forced detour", not a
+ * genuinely huge latency. Mirrors `AVOID_RELAY_COST` in
+ * `easytier-core/src/peers/route/peer_ospf_route.rs`.
+ */
+export const POLICY_FORCED_PATH_COST = 1_000_000_000
+
+export function latencyMs(info: PeerRoutePair, opts?: { policyForcedLabel?: string }) {
   const connId = defaultConnId(info)
   let minLatencyUs: number | undefined
 
@@ -88,8 +98,14 @@ export function latencyMs(info: PeerRoutePair) {
   // 中转无直连 tunnel：回退到路由表汇总的路径延迟（毫秒）
   const pathLatency = numericValue(info.route?.path_latency_latency_first)
     ?? numericValue(info.route?.path_latency)
-  if (pathLatency !== undefined && pathLatency > 0)
+  if (pathLatency !== undefined && pathLatency > 0) {
+    // The backend keeps the relay-policy penalty in `path_latency` instead of
+    // erasing it, so a cost this large is a policy-forced detour. Render it as
+    // such rather than printing "1000000000ms".
+    if (pathLatency >= POLICY_FORCED_PATH_COST)
+      return opts?.policyForcedLabel || 'policy detour'
     return `${Math.ceil(pathLatency)}ms`
+  }
 
   return ''
 }

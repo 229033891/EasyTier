@@ -103,7 +103,13 @@ async fn full_host_packet_queue_does_not_block_peer_packet_processing() {
         .send(HostPacket::copy_from_payload(b"queued"))
         .await
         .unwrap();
-    let processor = NicPacketProcessor { nic_channel };
+    let stats = StatsManager::default();
+    let nic_channel_drops =
+        stats.get_counter(MetricName::DataPlaneNicChannelDrops, LabelSet::new());
+    let processor = NicPacketProcessor {
+        nic_channel,
+        nic_channel_drops: nic_channel_drops.clone(),
+    };
     let mut packet = ZCPacket::new_with_payload(b"next");
     packet.fill_peer_manager_hdr(1, 2, PacketType::Data as u8);
 
@@ -116,6 +122,7 @@ async fn full_host_packet_queue_does_not_block_peer_packet_processing() {
     assert!(result.is_ok(), "a full host queue blocked the peer router");
     assert!(result.unwrap().is_none());
     assert_eq!(nic_receiver.try_recv().unwrap().payload(), b"queued");
+    assert_eq!(nic_channel_drops.get(), 1);
 }
 
 #[test]

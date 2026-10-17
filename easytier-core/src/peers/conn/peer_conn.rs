@@ -472,7 +472,11 @@ impl PeerConn {
     pub(crate) fn max_ping_interval(&self) -> Duration {
         let flags_max = {
             let secs = self.context.flags().ping_interval_max_sec;
-            let secs = if secs == 0 { 32 } else { secs };
+            let secs = if secs == 0 {
+                crate::config::toml::DEFAULT_PING_INTERVAL_MAX_SEC
+            } else {
+                secs
+            };
             Duration::from_secs(secs as u64)
         };
         match self.ping_max_interval {
@@ -483,7 +487,11 @@ impl PeerConn {
 
     fn ping_fail_close_count(&self) -> u32 {
         let n = self.context.flags().ping_fail_close_count;
-        if n == 0 { 5 } else { n }
+        if n == 0 {
+            crate::config::toml::DEFAULT_PING_FAIL_CLOSE_COUNT
+        } else {
+            n
+        }
     }
 
     pub fn is_closed(&self) -> bool {

@@ -1586,6 +1586,55 @@ async fn udp_session_layer_routes_stun_and_hole_punch_control_packets() {
 }
 
 #[tokio::test]
+async fn stun_change_request_socket_allocation_is_rate_limited_per_source() {
+    // CRITICAL: honouring a `ChangeRequest` binds a socket per datagram, and the
+    // allocation rate is driven entirely by whoever sends the datagram. The
+    // concurrency semaphore in front of it does not bound the *rate*, so a single
+    // source could churn sockets indefinitely. Past the burst budget the reply
+    // must fall back to the listener socket.
+    use crate::socket::udp::{
+        CHANGE_REQUEST_BURST, ChangeRequestBudget, MAX_TRACKED_CHANGE_REQUEST_SOURCES,
+    };
+
+    let budget = ChangeRequestBudget::default();
+    let src: SocketAddr = "198.18.0.7:40000".parse().unwrap();
+
+    // The burst is honoured in full — a real client's handful of probes.
+    for i in 0..CHANGE_REQUEST_BURST {
+        assert!(
+            budget.take(src),
+            "fresh socket refused within the burst at request {i}"
+        );
+    }
+    // Then it is refused.
+    for i in 0..5 {
+        assert!(
+            !budget.take(src),
+            "fresh socket still allowed past the burst at request {i}"
+        );
+    }
+
+    // Another source has its own budget.
+    let other: SocketAddr = "198.18.0.8:40000".parse().unwrap();
+    assert!(budget.take(other), "budget must be per source");
+
+    // Memory is bounded even with spoofed sources.
+    let flood = ChangeRequestBudget::default();
+    for i in 0..(MAX_TRACKED_CHANGE_REQUEST_SOURCES + 50) {
+        let addr = SocketAddr::V4(SocketAddrV4::new(
+            Ipv4Addr::new(198, 18, (i / 256) as u8, (i % 256) as u8),
+            40000,
+        ));
+        let _ = flood.take(addr);
+    }
+    assert!(
+        flood.tracked_sources() <= MAX_TRACKED_CHANGE_REQUEST_SOURCES,
+        "budget tracked {} sources, cap is {MAX_TRACKED_CHANGE_REQUEST_SOURCES}",
+        flood.tracked_sources()
+    );
+}
+
+#[tokio::test]
 async fn udp_session_recv_loop_does_not_wait_for_stun_responder() {
     let local_addr = SocketAddr::from(([127, 0, 0, 1], 12000));
     let stun_remote_addr = SocketAddr::from(([127, 0, 0, 1], 12001));

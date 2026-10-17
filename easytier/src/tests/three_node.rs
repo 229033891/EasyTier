@@ -1661,9 +1661,11 @@ pub async fn proxy_three_node_disconnect_test(#[values("tcp", "wg")] proto: &str
                         .any(|r| *r == inst4.peer_id())
                 },
                 // 0 down, assume last packet is recv in -0.01
-                // one ping outstanding at a time, each waits up to 2s:
-                // default ping_fail_close_count=5 closes at ~[4, 11)
-                Duration::from_secs(15),
+                // one ping outstanding at a time, each waits up to 2s.
+                // default ping_fail_close_count=10 (see config::toml) closes at
+                // ~[7, 31) instead of the old 5's ~[4, 11); the wait must cover
+                // the upper bound.
+                Duration::from_secs(40),
             )
             .await;
 

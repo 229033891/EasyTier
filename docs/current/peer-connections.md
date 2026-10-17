@@ -3,7 +3,7 @@
 ## Status
 
 - Status: **Current**
-- 最近审阅：2026-10-16（交叉链接 `tailscale-gap-and-conflict-audit`；行为描述未改）；2026-10-09（补：状态页 CollectNetworkInfo 2s + 历史定向采样；Web 状态表一链路一行 + 连接历史丢包/抖动；配置读存储优先见 Archive）；2026-10-08（补：配置页开关统一 `ToggleSwitch`；`disable_p2p` 等负逻辑字段正向展示）；2026-10-07 补：`default_protocol` 有序 CSV + 手动 URL scheme 降级
+- 最近审阅：2026-10-17（`latency_first` core/GUI 统一为 `true`；打洞 conn 保活 TCP 1s / **UDP 10s**；可用性闸门 `has_peer_with_live_conn`；**Bond 改一致哈希**；`AVOID_RELAY_COST` 有限化 + `path_latency` 如实上报 + Web「政策绕行」；GUI KCP 默认关闭）；2026-10-16（交叉链接 `tailscale-gap-and-conflict-audit`）；2026-10-09；2026-10-08；2026-10-07
 - 范围：同一对 peer 之间的 `PeerConn` / 默认发送路径
 - 多链路聚合（异质优先）：出厂默认 `bond_count=2`；见 §2 与 [`../roadmap/multi-link-bonding.md`](../roadmap/multi-link-bonding.md)
 - 连接稳定性（质量选路 / 保底）见：[`../roadmap/connection-stability-todo.md`](../roadmap/connection-stability-todo.md)
@@ -70,16 +70,23 @@
 - Web「对端连接历史」另有延迟 / **丢包** / **抖动** / 流量趋势（按 peer 聚合采样，非 per-conn）；仅配置服务器形态有库表。详情见 Archive 文。
 - Web 状态页 `CollectNetworkInfo` 约 **2s** 一轮（配置模式跳过 info、列表约 6s）；历史采样优先按 heartbeat 运行中实例定向 collect，减轻与配置/心跳的隧道争用（见 Archive §6）。
 
-跨 peer 的 OSPF：配置键 `latency_first`（UI：「质量优先选路」）开启时用 LeastCost（最小化质量边代价，可多跳）；关闭时用 LeastHop（先最少跳，同跳再比代价）。边代价由同一质量分编码进 peer-center `DirectConnectedPeerInfo.latency_ms`（`round(score*1000)`，熔断路径另加固定加成；发布端 `|Δ|<20` 不改写，配合约 60s 上报节流）。零丢包/抖动时量级仍≈ RTT 毫秒，与历史行为兼容。
+跨 peer 的 OSPF：配置键 `latency_first`（UI：「质量优先选路」）**出厂默认 `true`**（2026-10-17 起 core / GUI / proto 三处默认统一为质量优先）→ 用 LeastCost（最小化质量边代价，可多跳）；关闭时用 LeastHop（先最少跳，同跳再比代价）。边代价由同一质量分编码进 peer-center `DirectConnectedPeerInfo.latency_ms`（`round(score*1000)`，熔断路径另加固定加成；发布端 `|Δ|<20` 不改写，配合约 60s 上报节流）。零丢包/抖动时量级仍≈ RTT 毫秒，与历史行为兼容。
+
+> **为什么 `true` 是有意义的开关**：`latency_first = false` 时，`get_gateway_peer_id`（`peers/conn/peer_map.rs`）对 LeastHop 直接短路——只要目标有直连 `PeerConn` 就返回目标自身，**中继腿永不参与竞争**，即使它质量更好。`true` 才允许 OSPF 在直连与中继之间按代价择优（`peer_manager.rs` `send_msg_internal` 的 `latency_first_gateway` 分支）。
+> **升级注意**：未显式写 `latency_first` 的既有 TOML/CLI 配置，升级后会从 LeastHop 变成 LeastCost，即跨 peer 选路结果可能改变（中继可能胜出）。需要旧行为请显式写 `latency_first = false`。
 
 ### 2.2 拨号与选路（今日：全量拨号 + 质量选路，无档位）
 
 | 项 | 今日 |
 |----|------|
 | **初始节点 URL** | `[[peer]]` / `peer_urls` / `public_server_url`（完整 tunnel URL），全部恒维持连接 |
+| **保活 / 拆连** | `ping_interval_max_sec`（**默认 32s**，自适应退避上限）+ `ping_fail_close_count`（**默认 10**，连续失败多少次才拆 conn）。两个默认值都集中在 `config::toml::DEFAULT_PING_*`，`PeerConn` 的 `0 → 未设置` 回落值也引用同一常量，避免漂移。<br>per-conn 更严的 ping 上限：**TCP/FakeTCP 打洞 1s**（#2632）、**UDP 打洞 10s**（NAT UDP 老化常见 ~30s）；取 `min(cap, ping_interval_max_sec)`，**只收紧不放宽**。<br>**为什么拆连阈值是 10**：拆完要重建（~5s 任务循环 + 2–6s 打洞 + 5s 握手），重建代价远大于故障窗口 ⇒ 短暂抖动就拆-建是亏的。失败后退避重置为 1s，每轮约 3s，10 轮 ≈ 30s 判死。真死链路会晚 ~15s 发现，但两种情况重建都要 ~30s，**总恢复时间几乎不变** |
+| **可用性闸门** | 转发前校验目标**有 live conn**（`PeerMap::has_peer_with_live_conn`），而非仅在 map 里存在（`has_peer` = `contains_key`，最后一条 conn 断开后条目仍在）。否则一个已死的直连/网关条目会先匹配上分支，包在 `Peer::send_msg` 里失败并**不再落到可用的中继腿**——恰好是「该由中继兜底」的时刻。选路 `get_gateway_peer_id` 仍用 `has_peer`：「下一跳是谁」是拓扑问题，与「能不能交给他」不是一回事 |
 | **硬约束** | `disable_p2p`（不主动直连）/ `p2p_only`（绝不中转）/ 允许中转开关（`disable_relay_data` 取反：**仅 OSPF 避让，不硬丢包**） |
 | **遗留可选** | `prefer_peer_relay`：UI 隐藏；**不**抑制打洞；仅 TOML 可启用 OSPF 对端中继拓扑投影（与质量分正交） |
-| **选优** | 同 peer 按 `select_conn` 综合质量分（RTT+loss+jitter）；对端间 OSPF 由 `latency_first`（质量优先选路）在 LeastHop / LeastCost 间切换，LeastCost 边代价同源编码进 `latency_ms`；`lazy_p2p` 减少无业务时的背景打洞 |
+| **选优** | 同 peer 按 `select_conn` 综合质量分（RTT+loss+jitter）+ 熔断 + 迟滞；热路径命中缓存时也校验 `closed`/fuse（fused incumbent 暴露窗口 ≈20s → 0）。对端间 OSPF 由 `latency_first`（**默认 `true`**，质量优先选路）选 LeastCost，可跨跳换质量 —— 直连与中继腿按代价公平竞争。`lazy_p2p` 减少无业务时的背景打洞 |
+| **Bond 选流** | `peer_link_bond_count=2` 出厂；成员集由 `pick_bond_set` 按质量档 + 异质优先 + 副本补齐选出（**fused / 未验证打洞不进发送集**）。流→成员用**一致哈希**（对每成员 `conn_id` 求哈希取最小），因此成员集变化时**只有「自己的成员离开」或「新成员胜出」才迁移**，纯重排导致 **0 个流迁移**。⚠️ 成员仍按**哈希**分摊而非「永远走最优」——bonding 的价值是聚合吞吐，压成单最优等于删能力 |
+| **政策绕行可见性** | `disable_relay_data` / 中继白名单不匹配的节点，其出边加 `AVOID_RELAY_COST = 1e9`（约 1000× `OSPF_EDGE_COST_MAX`；**有限且 `saturating_add`**，仍是事实否决）。`path_latency` **如实上报**该惩罚（不再 `% AVOID_RELAY_COST` 抹除），故**远大于实测质量值**的 `path_latency` 即表示「该路径含拒载中转的节点」；Web 渲染为「政策绕行 / Policy detour」而非天文数字。⚠️ proto 尚无「哪个中间跳拒载」字段，只能看出「被绕行」看不出「谁拒载」 |
 | **协议偏好** | `flags.default_protocol` 为有序 CSV（**默认 `udp,tcp`**；老单值=长度 1；可含 `wg`/`faketcp`）。**为什么 udp 在前**：tcp/ws/wss/quic/faketcp 都自带重传，内层 TCP（RDP/SSH/HTTP）会退化成 TCP over TCP，轻微丢包即卡顿；`udp` 是**默认开启项中**唯一不叠加重传的常用传输（`wg` 也是纯 UDP，但需双方都宣告，故保持 opt-in）。`tcp` 留第二位以保住「UDP 被阻断时自动落到 TCP」。直连按列表排序对端已宣告监听；手动 peer URL **先按配置的 scheme 拨号**，失败后才在 tcp/udp/ws/wss/quic 间改写 scheme 降级（保留源有效端口：显式或原 scheme 默认，如 wss→tcp 保 443；`wg`/`faketcp`/`ring` 不改写）。`ListConnector.url` 恒为配置 URL；`active_url` 为当前存活/降级获胜拨号 URL；remove 可按二者任一匹配 |
 | **Web 控件** | 高级设置 →「连接」：「质量优先选路」(`latency_first`)、`disable_p2p` **正向展示为「允许 P2P 直连」**、「允许作为中转节点」(`disable_relay_data` 取反，同为 `inverted` 机制，字段名不变)、「协议顺序」(`default_protocol`)——配置页开关约定见 [`desktop-gui-and-config-server.md`](./desktop-gui-and-config-server.md) §4 |
 

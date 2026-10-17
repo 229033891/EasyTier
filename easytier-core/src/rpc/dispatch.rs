@@ -20,6 +20,7 @@ pub(crate) async fn dispatch_request(
     descriptor: RpcDescriptor,
     request: RpcRequest,
     tunnel_info: Option<TunnelInfo>,
+    from_peer_id: Option<u32>,
 ) -> Result<Bytes> {
     dispatch_payload(
         registry,
@@ -27,6 +28,7 @@ pub(crate) async fn dispatch_request(
         Bytes::from(request.request),
         Some(Duration::from_millis(request.timeout_ms as u64)),
         tunnel_info,
+        from_peer_id,
     )
     .await
 }
@@ -37,10 +39,15 @@ pub(crate) async fn dispatch_payload(
     raw_request: Bytes,
     timeout_duration: Option<Duration>,
     tunnel_info: Option<TunnelInfo>,
+    from_peer_id: Option<u32>,
 ) -> Result<Bytes> {
     let mut controller = BaseController::default();
     controller.set_raw_input(raw_request.clone());
     controller.set_tunnel_info(tunnel_info);
+    // Transport-verified sender identity (CR-07). `PeerConn` already dropped any
+    // packet whose `from_peer_id` disagreed with the authenticated peer, so this
+    // is trustworthy and must be preferred over any id in the request body.
+    controller.verified_from_peer_id = from_peer_id;
     let call = registry.call_method(descriptor, controller.clone(), raw_request);
     let response = match timeout_duration {
         Some(duration) => timeout(duration, call).await??,

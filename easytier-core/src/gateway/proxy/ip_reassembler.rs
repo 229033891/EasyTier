@@ -16,13 +16,28 @@ struct IpReassemblerKey {
 
 #[derive(Debug, Clone)]
 struct IpFragment {
-    offset: u16,
+    /// Byte offset of this fragment within the reassembled datagram.
+    ///
+    /// Widened to `u32` on purpose (CR-fix): the header field is a 13-bit value
+    /// and the fragment's own length is up to 65535, so `u16` arithmetic could
+    /// wrap and make a *later* fragment appear to overlap, or make a fragmented
+    /// datagram look complete at the wrong length.
+    offset: u32,
     data: Vec<u8>,
 }
 
+/// Largest IPv4 payload that can legitimately be reassembled.
+///
+/// IPv4's total-length field is 16 bits, so a reassembled datagram can never
+/// exceed the header. Anything beyond that is a malformed or hostile input and
+/// is dropped rather than buffered.
+const MAX_IPV4_PAYLOAD_LEN: u32 = u16::MAX as u32 - smoltcp::wire::IPV4_HEADER_LEN as u32;
+
 #[derive(Debug)]
 struct IpPacket {
-    total_length: Option<u16>,
+    /// Expected reassembled length in bytes, `None` until the last fragment
+    /// arrives. Widened to `u32` for the same reason as [`IpFragment::offset`].
+    total_length: Option<u32>,
     fragments: Vec<IpFragment>,
 }
 
@@ -36,8 +51,8 @@ impl IpPacket {
 
     fn add_fragment(&mut self, fragment: IpFragment) {
         for existing in &self.fragments {
-            let existing_end = existing.offset + existing.data.len() as u16;
-            let fragment_end = fragment.offset + fragment.data.len() as u16;
+            let existing_end = existing.offset + existing.data.len() as u32;
+            let fragment_end = fragment.offset + fragment.data.len() as u32;
             if existing.offset <= fragment.offset && fragment.offset < existing_end {
                 tracing::trace!(
                     existing_offset = existing.offset,
@@ -62,7 +77,7 @@ impl IpPacket {
         self.fragments.push(fragment);
     }
 
-    fn set_total_length(&mut self, total_length: u16) {
+    fn set_total_length(&mut self, total_length: u32) {
         self.total_length = Some(total_length);
     }
 
@@ -70,14 +85,21 @@ impl IpPacket {
         let total_length = self.total_length?;
         self.fragments.sort_by_key(|fragment| fragment.offset);
 
-        let mut offset = 0;
+        let mut offset = 0u32;
         let mut ret = Vec::with_capacity(total_length as usize);
         for fragment in &self.fragments {
             if fragment.offset != offset {
                 return None;
             }
             ret.extend_from_slice(&fragment.data);
-            offset += fragment.data.len() as u16;
+            offset += fragment.data.len() as u32;
+            // Stop before the accumulator could ever be trusted to compare
+            // against a wrapped value; `u32` makes this unreachable in practice,
+            // but the ceiling is also the reassembly limit.
+            if offset > MAX_IPV4_PAYLOAD_LEN {
+                tracing::warn!(offset, "reassembly exceeded the IPv4 payload ceiling");
+                return None;
+            }
         }
 
         (offset == total_length).then_some(ret)
@@ -87,7 +109,7 @@ impl IpPacket {
 impl<T: AsRef<[u8]> + ?Sized> From<&Ipv4Packet<&T>> for IpFragment {
     fn from(packet: &Ipv4Packet<&T>) -> Self {
         Self {
-            offset: packet.frag_offset(),
+            offset: packet.frag_offset() as u32,
             data: packet.payload().to_vec(),
         }
     }
@@ -144,6 +166,24 @@ impl IpReassembler {
 
         tracing::trace!(?key, offset = fragment.offset, total_length, "add fragment");
 
+        // A fragment that starts beyond what IPv4 can express is malformed by
+        // construction: the reassembled datagram could never be that long. smoltcp
+        // does not check `frag_offset + payload_len <= 65535` for us, and the old
+        // `u16` arithmetic could wrap here, letting a hostile set of fragments
+        // satisfy `offset == total_length` at a nonsense length and hand the
+        // caller an oversized pseudo-datagram.
+        let fragment_end = fragment.offset + fragment.data.len() as u32;
+        if fragment_end > MAX_IPV4_PAYLOAD_LEN {
+            tracing::warn!(
+                ?key,
+                offset = fragment.offset,
+                fragment_end,
+                MAX_IPV4_PAYLOAD_LEN,
+                "dropping fragment that cannot fit in an IPv4 datagram",
+            );
+            return None;
+        }
+
         let mut entry = self.packets.entry(key.clone()).or_insert_with(|| {
             let packet = IpPacket::new();
             let timestamp = Instant::now();
@@ -152,9 +192,7 @@ impl IpReassembler {
         let value_mut = entry.value_mut();
 
         if Self::is_last_fragment(packet) {
-            value_mut
-                .packet
-                .set_total_length(total_length + fragment.offset);
+            value_mut.packet.set_total_length(fragment_end);
         }
 
         value_mut.packet.add_fragment(fragment);
@@ -317,5 +355,81 @@ mod tests {
         std::thread::sleep(Duration::from_secs(2));
         reassembler.remove_expired_packets();
         assert_eq!(0, reassembler.packets.len());
+    }
+
+    /// Build a single-fragment IPv4 packet whose payload is `payload_len` bytes
+    /// and whose `frag_offset` field is `frag_offset`.
+    fn raw_fragment(ident: u16, frag_offset: u16, payload_len: usize) -> Vec<u8> {
+        let packet_len = smoltcp::wire::IPV4_HEADER_LEN + payload_len;
+        let mut buf = vec![0u8; packet_len];
+        let mut packet = Ipv4Packet::new_unchecked(&mut buf);
+        packet.set_version(4);
+        packet.set_header_len(smoltcp::wire::IPV4_HEADER_LEN as u8);
+        packet.set_total_len(packet_len as u16);
+        packet.set_ident(ident);
+        packet.set_more_frags(false);
+        packet.set_frag_offset(frag_offset);
+        packet.set_next_header(IpProtocol::Udp);
+        packet.set_src_addr(Ipv4Addr::new(10, 1, 2, 3));
+        packet.set_dst_addr(Ipv4Addr::new(10, 1, 2, 4));
+        packet.fill_checksum();
+        buf
+    }
+
+    #[test]
+    fn fragment_spanning_past_the_ceiling_is_rejected() {
+        // The regression. `frag_offset` is a 13-bit field, so the largest
+        // declared offset is `0x1FFF`, but a fragment can carry up to a full
+        // IPv4 payload. `offset + payload` can therefore exceed what IPv4 can
+        // express, and smoltcp does not check it for us. With the old `u16`
+        // arithmetic `total_length + frag_offset` wrapped, so a crafted pair
+        // could satisfy `offset == total_length` at a nonsense length and hand
+        // the caller an oversized pseudo-datagram.
+        let reassembler = IpReassembler::new(Duration::from_secs(60));
+
+        // Largest declared offset, plus a full-sized payload.
+        let bad = raw_fragment(9, 0x1FFF, MAX_IPV4_PAYLOAD_LEN as usize);
+        let packet = Ipv4Packet::new_checked(bad.as_slice()).unwrap();
+        assert!(
+            reassembler.add_fragment(&packet).is_none(),
+            "a fragment spanning past the IPv4 ceiling must be dropped"
+        );
+        assert!(
+            reassembler.packets.is_empty(),
+            "the rejected fragment must not be buffered"
+        );
+    }
+
+    #[test]
+    fn in_range_fragment_is_still_buffered() {
+        // Guard against over-tightening: a large but representable fragment must
+        // still be accepted (it simply does not complete reassembly on its own).
+        let reassembler = IpReassembler::new(Duration::from_secs(60));
+
+        let raw = raw_fragment(13, 0x1FFF, 64);
+        let packet = Ipv4Packet::new_checked(raw.as_slice()).unwrap();
+        assert!(
+            reassembler.add_fragment(&packet).is_none(),
+            "an incomplete but valid reassembly returns None"
+        );
+        assert_eq!(
+            reassembler.packets.len(),
+            1,
+            "a valid fragment must still be buffered"
+        );
+    }
+
+    #[test]
+    fn legitimate_maximum_size_fragment_is_still_accepted() {
+        // A fragment that exactly fills the ceiling must still reassemble.
+        let reassembler = IpReassembler::new(Duration::from_secs(60));
+
+        let payload_len = MAX_IPV4_PAYLOAD_LEN as usize;
+        let raw = raw_fragment(11, 0, payload_len);
+        let packet = Ipv4Packet::new_checked(raw.as_slice()).unwrap();
+        let reassembled = reassembler
+            .add_fragment(&packet)
+            .expect("a maximum-size fragment must reassemble");
+        assert_eq!(reassembled.len(), payload_len);
     }
 }

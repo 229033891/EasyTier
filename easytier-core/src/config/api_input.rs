@@ -6,11 +6,12 @@ use anyhow::Context;
 use easytier_proto::api::manage;
 
 use crate::config::{
-    MappedListenerPolicy, normalize_secure_mode_config,
+    ConfigError, MappedListenerPolicy, normalize_secure_mode_config,
     toml::{
         ConfigLoader, ManagedCredentialConfig, NetworkIdentity, PeerConfig, PortForwardConfig,
         TomlConfigLoader, VpnPortalClientConfig, VpnPortalConfig, gen_default_flags,
     },
+    validate_tunnel_mtu,
 };
 use crate::peers::route::local_route_table::{
     PolicyRouteConfig, validate_config_loader_policy_routes,
@@ -735,7 +736,21 @@ impl NetworkConfigExt for NetworkConfig {
         }
 
         if let Some(mtu) = self.mtu {
-            flags.mtu = mtu as u32;
+            // CRITICAL (CR-13): this used to be a bare `mtu as u32`, so a GUI
+            // or API caller could send `-1` and get `4294967295`. The value then
+            // reaches `virtual_nic.rs`, where encryption subtracts
+            // `ENCRYPTION_MTU_OVERHEAD`; for small values that underflows the
+            // `u32`, and on Linux `mtu as libc::c_int` turns the oversized
+            // result into a negative `c_int`, so `SIOCSIFMTU` fails with `EINVAL`
+            // instead of a clear config error.
+            //
+            // Reject out-of-range values at the boundary so the failure is
+            // reported as a configuration problem, where the caller can see it.
+            let Ok(configured) = u32::try_from(mtu) else {
+                return Err(ConfigError::InvalidMtu(mtu as i64).into());
+            };
+            validate_tunnel_mtu(configured).map_err(|_| ConfigError::InvalidMtu(mtu as i64))?;
+            flags.mtu = configured;
         }
 
         if let Some(instance_recv_bps_limit) = self.instance_recv_bps_limit {

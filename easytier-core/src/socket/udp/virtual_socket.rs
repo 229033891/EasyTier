@@ -121,6 +121,25 @@ where
     ) -> io::Result<()> {
         Ok(())
     }
+
+    /// Like [`UdpSessionStunResponder::respond_stun`], but the caller may veto
+    /// the freshly bound socket that an RFC 5780 `ChangeRequest` attribute asks
+    /// for.
+    ///
+    /// CRITICAL: honouring `ChangeRequest` binds a socket per datagram, so the
+    /// allocation rate is driven entirely by whoever sends the datagram. The
+    /// default forwards to [`UdpSessionStunResponder::respond_stun`], which keeps
+    /// every existing implementor behaving exactly as before; responders that
+    /// care about the rate limit override this.
+    async fn respond_stun_with_options(
+        &self,
+        socket: Arc<S>,
+        datagram: &[u8],
+        remote_addr: SocketAddr,
+        _allow_fresh_socket: bool,
+    ) -> io::Result<()> {
+        self.respond_stun(socket, datagram, remote_addr).await
+    }
 }
 
 #[derive(Debug, Default)]

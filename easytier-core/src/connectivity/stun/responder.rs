@@ -75,7 +75,27 @@ where
     S: VirtualUdpSocket,
     F: VirtualUdpSocketFactory<Socket = S> + ?Sized,
 {
+    respond_stun_packet_with_options(socket, factory, addr, req_buf, true).await
+}
+
+/// See [`UdpSessionStunResponder::respond_stun_with_options`].
+async fn respond_stun_packet_with_options<S, F>(
+    socket: Arc<S>,
+    factory: &F,
+    addr: SocketAddr,
+    req_buf: &[u8],
+    allow_fresh_socket: bool,
+) -> anyhow::Result<()>
+where
+    S: VirtualUdpSocket,
+    F: VirtualUdpSocketFactory<Socket = S> + ?Sized,
+{
     let response = build_stun_response(addr, req_buf)?;
+    // A vetoed `ChangeRequest` degrades to a same-socket reply rather than an
+    // error: the client still learns the mapping, it just does not observe the
+    // source-port change.
+    let wants_fresh_socket =
+        allow_fresh_socket && response.send_source == StunResponseSendSource::NewSocket;
     match response.send_source {
         StunResponseSendSource::SameSocket => {
             socket
@@ -83,7 +103,7 @@ where
                 .await
                 .with_context(|| "send stun response error")?;
         }
-        StunResponseSendSource::NewSocket => {
+        StunResponseSendSource::NewSocket if wants_fresh_socket => {
             let bind_addr = if addr.is_ipv4() {
                 "0.0.0.0:0".parse().unwrap()
             } else {
@@ -98,9 +118,17 @@ where
                 .await?;
             socket.send_to(&response.bytes, addr).await?;
         }
+        // Rate-limited: fall back to the existing socket rather than binding a
+        // new one for this datagram.
+        StunResponseSendSource::NewSocket => {
+            socket
+                .send_to(&response.bytes, addr)
+                .await
+                .with_context(|| "send rate-limited stun response error")?;
+        }
     }
 
-    tracing::debug!(?addr, "udp respond stun packet done");
+    tracing::debug!(?addr, wants_fresh_socket, "udp respond stun packet done");
     Ok(())
 }
 
@@ -117,6 +145,22 @@ where
         remote_addr: SocketAddr,
     ) -> std::io::Result<()> {
         respond_stun_packet(socket, self, remote_addr, datagram)
+            .await
+            .map_err(|error| std::io::Error::other(error.to_string()))
+    }
+
+    /// Same as [`UdpSessionStunResponder::respond_stun`], but the caller may veto
+    /// the freshly bound socket that a `ChangeRequest` attribute asks for.
+    ///
+    /// See the trait method for why this is rate limited.
+    async fn respond_stun_with_options(
+        &self,
+        socket: Arc<S>,
+        datagram: &[u8],
+        remote_addr: SocketAddr,
+        allow_fresh_socket: bool,
+    ) -> std::io::Result<()> {
+        respond_stun_packet_with_options(socket, self, remote_addr, datagram, allow_fresh_socket)
             .await
             .map_err(|error| std::io::Error::other(error.to_string()))
     }

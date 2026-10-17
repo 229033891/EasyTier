@@ -97,18 +97,59 @@ impl PeerCenterRpc for PeerCenterServer {
     #[tracing::instrument()]
     async fn report_peers(
         &self,
-        _: BaseController,
+        ctrl: BaseController,
         req: ReportPeersRequest,
     ) -> Result<ReportPeersResponse, rpc_types::error::Error> {
-        let my_peer_id = req.my_peer_id;
+        // CRITICAL (CR-07 follow-up): attribute the report to the **transport**,
+        // not to the request body.
+        //
+        // This is the peer-center twin of the OSPF identity bug. The previous
+        // code keyed the global map on `req.my_peer_id`, a field the caller wrote
+        // into its own payload — so any authenticated member could overwrite a
+        // *third party's* entry with its own view of that node's direct peers and
+        // latencies.
+        //
+        // That is not cosmetic: `PeerInfoForGlobalMap::direct_peers` carries
+        // `latency_ms`, and those values feed `calculate_cost` in the OSPF path —
+        // the very numbers CR-09 had to clamp. Poisoning them lets one member
+        // distort route quality for the whole network.
+        //
+        // Unlike the OSPF handler we do **not** reject on a mismatch: here
+        // `my_peer_id` is used solely as the map key, never for authorisation,
+        // so the safer thing is to record the data under the verified identity. A
+        // caller that misstated its own id still gets its data stored — correctly
+        // attributed — instead of silently losing it.
+        //
+        // A *missing* verified id is refused: the report cannot be attributed to
+        // anyone. This path only runs over a peer tunnel (`PeerCenterRpcServer` is
+        // registered on the peer rpc server), so `None` means the request did not
+        // come from a peer at all.
+        let Some(reporting_peer_id) = ctrl.verified_from_peer_id else {
+            tracing::warn!(
+                claimed_peer_id = req.my_peer_id,
+                "peer-center report rejected: no transport-verified peer id"
+            );
+            return Err(rpc_types::error::Error::MalformatRpcPacket(
+                "peer-center report arrived without a transport-verified peer id".to_owned(),
+            ));
+        };
+        if reporting_peer_id != req.my_peer_id {
+            tracing::debug!(
+                reporting_peer_id,
+                claimed_peer_id = req.my_peer_id,
+                "peer-center report claimed a different peer id; attributing to the \
+                 transport-verified sender"
+            );
+        }
+
         let peers = req.peer_infos.unwrap_or_default();
 
-        tracing::debug!("receive report_peers");
+        tracing::debug!(reporting_peer_id, "receive report_peers");
 
         let data = &self.data;
         let mut state = data.state.write();
         state.peer_infos.insert(
-            my_peer_id,
+            reporting_peer_id,
             PeerCenterInfoEntry {
                 peer_info: peers,
                 update_time: std::time::Instant::now(),
@@ -150,6 +191,15 @@ mod tests {
     use super::*;
     use crate::proto::peer_rpc::DirectConnectedPeerInfo;
 
+    /// A controller that looks like one the peer rpc server built for `peer_id`
+    /// — i.e. carrying a transport-verified sender identity (CR-07 follow-up).
+    fn verified_controller(peer_id: PeerId) -> BaseController {
+        BaseController {
+            verified_from_peer_id: Some(peer_id),
+            ..Default::default()
+        }
+    }
+
     #[tokio::test]
     async fn server_clones_share_instance_data() {
         let server = PeerCenterServer::new();
@@ -162,7 +212,7 @@ mod tests {
 
         server
             .report_peers(
-                BaseController::default(),
+                verified_controller(99),
                 ReportPeersRequest {
                     my_peer_id: 99,
                     peer_infos: Some(peers),
@@ -194,7 +244,7 @@ mod tests {
 
         server_a
             .report_peers(
-                BaseController::default(),
+                verified_controller(100),
                 ReportPeersRequest {
                     my_peer_id: 100,
                     peer_infos: Some(peers),
@@ -231,7 +281,7 @@ mod tests {
             .insert(100, DirectConnectedPeerInfo { latency_ms: 3 });
         server
             .report_peers(
-                BaseController::default(),
+                verified_controller(99),
                 ReportPeersRequest {
                     my_peer_id: 99,
                     peer_infos: Some(peers),
@@ -249,7 +299,7 @@ mod tests {
 
         server
             .report_peers(
-                BaseController::default(),
+                verified_controller(99),
                 ReportPeersRequest {
                     my_peer_id: 99,
                     peer_infos: Some(PeerInfoForGlobalMap::default()),
@@ -288,7 +338,7 @@ mod tests {
             .insert(100, DirectConnectedPeerInfo { latency_ms: 3 });
         server
             .report_peers(
-                BaseController::default(),
+                verified_controller(99),
                 ReportPeersRequest {
                     my_peer_id: 99,
                     peer_infos: Some(peers),
@@ -310,7 +360,7 @@ mod tests {
             .insert(100, DirectConnectedPeerInfo { latency_ms: 30 });
         server
             .report_peers(
-                BaseController::default(),
+                verified_controller(99),
                 ReportPeersRequest {
                     my_peer_id: 99,
                     peer_infos: Some(peers),
@@ -343,7 +393,7 @@ mod tests {
             .insert(100, DirectConnectedPeerInfo { latency_ms: 3 });
         server
             .report_peers(
-                BaseController::default(),
+                verified_controller(99),
                 ReportPeersRequest {
                     my_peer_id: 99,
                     peer_infos: Some(peers),
@@ -380,5 +430,101 @@ mod tests {
             "expired peer did not change digest"
         );
         assert!(!updated.global_peer_map.contains_key(&99));
+    }
+
+    // -----------------------------------------------------------------------
+    // CR-07 follow-up: the global peer map must be keyed by verified identity.
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn report_cannot_overwrite_a_third_partys_global_peer_map_entry() {
+        // The poisoning this closes: peer 7 used to be able to write an entry
+        // claiming to be peer 99, with attacker-chosen latencies that then feed
+        // `calculate_cost` for the whole network (see CR-09).
+        let server = PeerCenterServer::new();
+
+        let mut victim_view = PeerInfoForGlobalMap::default();
+        victim_view
+            .direct_peers
+            .insert(100, DirectConnectedPeerInfo { latency_ms: 3 });
+        server
+            .report_peers(
+                verified_controller(99),
+                ReportPeersRequest {
+                    my_peer_id: 99,
+                    peer_infos: Some(victim_view),
+                },
+            )
+            .await
+            .unwrap();
+
+        // Peer 7 reports, but lies about who it is.
+        let mut attacker_view = PeerInfoForGlobalMap::default();
+        attacker_view
+            .direct_peers
+            .insert(200, DirectConnectedPeerInfo { latency_ms: 1 });
+        server
+            .report_peers(
+                verified_controller(7),
+                ReportPeersRequest {
+                    my_peer_id: 99,
+                    peer_infos: Some(attacker_view),
+                },
+            )
+            .await
+            .unwrap();
+
+        let resp = server
+            .get_global_peer_map(
+                BaseController::default(),
+                GetGlobalPeerMapRequest { digest: 0 },
+            )
+            .await
+            .unwrap();
+
+        // The victim's entry must be untouched...
+        assert_eq!(
+            resp.global_peer_map[&99].direct_peers[&100].latency_ms, 3,
+            "peer 7 overwrote peer 99's entry"
+        );
+        // ...and the attacker's data recorded under its real identity.
+        assert_eq!(
+            resp.global_peer_map[&7].direct_peers[&200].latency_ms, 1,
+            "peer 7's own report should still be recorded, under peer 7"
+        );
+    }
+
+    #[tokio::test]
+    async fn report_without_a_transport_verified_peer_is_rejected() {
+        // No peer tunnel => no attributable sender. Refused rather than stored
+        // under an unverifiable key.
+        let server = PeerCenterServer::new();
+        let err = server
+            .report_peers(
+                BaseController::default(),
+                ReportPeersRequest {
+                    my_peer_id: 99,
+                    peer_infos: Some(PeerInfoForGlobalMap::default()),
+                },
+            )
+            .await
+            .expect_err("unattributable report must be refused");
+
+        let resp = server
+            .get_global_peer_map(
+                BaseController::default(),
+                GetGlobalPeerMapRequest { digest: 0 },
+            )
+            .await
+            .unwrap();
+        assert!(
+            resp.global_peer_map.is_empty(),
+            "an unattributable report was stored"
+        );
+        // Sanity: the error is a client-side rejection, not an internal failure.
+        assert!(matches!(
+            err,
+            rpc_types::error::Error::MalformatRpcPacket(_)
+        ));
     }
 }

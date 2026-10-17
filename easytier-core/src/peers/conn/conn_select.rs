@@ -107,7 +107,9 @@ pub fn conn_quality_score(
 }
 
 /// Cap for values published into `DirectConnectedPeerInfo.latency_ms` / OSPF edge weight.
-/// Must stay well below `AVOID_RELAY_COST` (i32::MAX) so fuse/avoid math remains distinct.
+/// Must stay well below `AVOID_RELAY_COST` (`peer_ospf_route.rs`) so fuse/avoid math
+/// remains distinct: a value in this range is a *measured* quality edge, anything
+/// above it carries the relay-policy penalty.
 pub const OSPF_EDGE_COST_MAX: i32 = 1_000_000;
 /// Extra cost when the path is loss-fused (discourages multi-hop via bad links).
 pub const OSPF_FUSE_COST_BONUS: i32 = 10_000;
@@ -158,6 +160,33 @@ pub fn score_conn(m: &ConnMetrics, cfg: ConnSelectConfig) -> ScoredConn {
         unverified_hole_punch,
         fused,
     }
+}
+
+/// Verified and below the loss fuse — the only kind of path that counts as a
+/// real alternative when invalidating a cached `default_conn` / bond member.
+///
+/// Must stay identical to the `has_unfused` predicate inside
+/// [`pick_default_conn`] and [`super::conn_bond::pick_bond_set`]: both ignore
+/// unverified hole-punches (latency 0, never measured by a pong round trip).
+pub fn is_unfused_verified(metrics: &ConnMetrics, cfg: ConnSelectConfig) -> bool {
+    let scored = score_conn(metrics, cfg);
+    !scored.unverified_hole_punch && !scored.fused
+}
+
+/// Whether a cached `default_conn` / bond member must be dropped from the hot
+/// send path (P-AUDIT.1). Closed always invalidates; fused only when a
+/// verified unfused alternative exists.
+pub fn cached_path_unusable(
+    closed: bool,
+    metrics: &ConnMetrics,
+    cfg: ConnSelectConfig,
+    has_unfused_alternative: bool,
+) -> bool {
+    if closed {
+        return true;
+    }
+    let scored = score_conn(metrics, cfg);
+    scored.fused && has_unfused_alternative
 }
 
 /// Pick the next default PeerConn id given scored candidates and hysteresis state.
@@ -294,6 +323,40 @@ mod tests {
         assert!(!scored[1].fused);
         let (picked, _) = pick_default_conn(&scored, None, 0, cfg).unwrap();
         assert_eq!(picked, id(2));
+    }
+
+    #[test]
+    fn cached_path_unusable_closed_or_fused_with_alternative() {
+        let cfg = ConnSelectConfig::default();
+        let high_loss = metrics(1, 5_000, 0.35, 0, false);
+        let low_loss = metrics(2, 25_000, 0.01, 0, false);
+
+        // Closed always invalidates, regardless of metrics or alternatives.
+        assert!(cached_path_unusable(true, &low_loss, cfg, false));
+        assert!(cached_path_unusable(true, &high_loss, cfg, false));
+
+        // Fused incumbent drops out only once a verified unfused path exists.
+        assert!(cached_path_unusable(false, &high_loss, cfg, true));
+        // Sole fused path: keep carrying traffic until something better appears.
+        assert!(!cached_path_unusable(false, &high_loss, cfg, false));
+
+        // Healthy incumbent is never invalidated.
+        assert!(!cached_path_unusable(false, &low_loss, cfg, true));
+    }
+
+    #[test]
+    fn is_unfused_verified_matches_selector_alternative_rule() {
+        let cfg = ConnSelectConfig::default();
+        let healthy = metrics(1, 25_000, 0.01, 0, false);
+        let high_loss = metrics(2, 5_000, 0.35, 0, false);
+        // Unverified hole-punch has latency 0 but is not loss-fused; it must
+        // NOT count as a real alternative (`pick_default_conn` / `pick_bond_set`
+        // both require `!unverified_hole_punch && !fused`).
+        let unverified = metrics(3, 0, 0.0, 0, true);
+
+        assert!(is_unfused_verified(&healthy, cfg));
+        assert!(!is_unfused_verified(&high_loss, cfg));
+        assert!(!is_unfused_verified(&unverified, cfg));
     }
 
     #[test]

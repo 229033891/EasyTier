@@ -147,6 +147,21 @@ impl Server {
                     }
                     Ok(packet) => packet,
                 };
+
+                // CRITICAL (CR-07): capture the sender identity from the **outer**
+                // ZCPacket header *before* the payload is consumed.
+                //
+                // `RpcPacket.from_peer` (read further down) is a field the sender
+                // wrote into its own payload — it is authenticated only in the
+                // sense that the whole blob was encrypted, so an authenticated
+                // peer can set it to any value. The outer
+                // `peer_manager_header().from_peer_id` is different:
+                // `PeerConn::after_received` drops any packet whose
+                // `from_peer_id` differs from the authenticated peer id
+                // *before* decrypting, so a packet that got this far is proven
+                // to come from that peer.
+                let verified_from_peer_id =
+                    packet.peer_manager_header().map(|h| h.from_peer_id.get());
                 let packet = match common::RpcPacket::decode(packet.payload()) {
                     Err(err) => {
                         tracing::error!(?err, "Failed to decode packet");
@@ -161,7 +176,20 @@ impl Server {
                 }
 
                 let key = PacketMergerKey {
-                    from_peer_id: packet.from_peer,
+                    // CRITICAL (CR-07): key the merger on the *verified* sender,
+                    // not on `packet.from_peer`.
+                    //
+                    // Pieces of one RPC are keyed by `(from_peer, transaction_id)`
+                    // and `PacketMerger::feed` only checks that all pieces agree on
+                    // those two fields. Because `packet.from_peer` is chosen by the
+                    // sender, an authenticated peer could set it to a third party's
+                    // id and, if its `transaction_id` happened to collide with that
+                    // party's in-flight request, have its own pieces spliced into
+                    // the victim's request body — the merged packet would then be
+                    // attributed to the victim. Keying on the transport-verified id
+                    // means pieces from different connections can never share a
+                    // merger entry.
+                    from_peer_id: verified_from_peer_id.unwrap_or(packet.from_peer),
                     transaction_id: packet.transaction_id,
                 };
 
@@ -186,6 +214,7 @@ impl Server {
                             reg.clone(),
                             tunnel_info.clone(),
                             metrics.clone(),
+                            verified_from_peer_id,
                         ));
                     }
                     Ok(None) => {}
@@ -212,6 +241,7 @@ impl Server {
         descriptor: common::RpcDescriptor,
         reg: Arc<ServiceRegistry>,
         tunnel_info: Option<TunnelInfo>,
+        verified_from_peer_id: Option<u32>,
     ) -> Result<Bytes> {
         let body = if let Some(compression_info) = packet.compression_info {
             decompress_packet(
@@ -223,7 +253,19 @@ impl Server {
             packet.body
         };
         let rpc_request = RpcRequest::decode(Bytes::from(body))?;
-        dispatch_request(reg.as_ref(), descriptor, rpc_request, tunnel_info).await
+        // CR-07: hand the transport-verified sender id down so handlers can bind
+        // identity to the connection instead of trusting the request body.
+        // Note this is deliberately NOT `packet.from_peer`: that field lives
+        // inside the encrypted payload and is fully chosen by the sender, so an
+        // authenticated peer could put any id there.
+        dispatch_request(
+            reg.as_ref(),
+            descriptor,
+            rpc_request,
+            tunnel_info,
+            verified_from_peer_id,
+        )
+        .await
     }
 
     async fn handle_rpc(
@@ -232,6 +274,7 @@ impl Server {
         reg: Arc<ServiceRegistry>,
         tunnel_info: Option<TunnelInfo>,
         metrics: Option<ArcRpcMetrics>,
+        verified_from_peer_id: Option<u32>,
     ) {
         let from_peer = packet.from_peer;
         let to_peer = packet.to_peer;
@@ -258,7 +301,14 @@ impl Server {
         let now = std::time::Instant::now();
 
         let compression_info = packet.compression_info;
-        let resp_bytes = Self::handle_rpc_request(packet, desc.clone(), reg, tunnel_info).await;
+        let resp_bytes = Self::handle_rpc_request(
+            packet,
+            desc.clone(),
+            reg,
+            tunnel_info,
+            verified_from_peer_id,
+        )
+        .await;
 
         match &resp_bytes {
             Ok(r) => {

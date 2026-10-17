@@ -305,7 +305,10 @@ impl Default for PeerPolicyConfig {
             p2p_enabled: true,
             relay_peer_rpc: false,
             relay_data: true,
-            latency_first: false,
+            // Kept in sync with `gen_default_flags()` (config/toml.rs) and the
+            // GUI default template (frontend-lib/src/types/network.ts): all
+            // three default to quality-first routing.
+            latency_first: true,
             encryption_required: true,
         }
     }
@@ -328,6 +331,38 @@ pub struct TrafficConfig {
     pub foreign_relay_bps_limit: Option<u64>,
 }
 
+/// Bytes of tunnel framing added on top of the configured MTU when encryption is
+/// on. `virtual_nic.rs` subtracts exactly this much before handing the value to
+/// the interface, so it must stay in sync with [`MIN_TUNNEL_MTU`].
+pub const ENCRYPTION_MTU_OVERHEAD: u32 = 20;
+
+/// Smallest MTU that is still usable on a tunnel interface.
+///
+/// CRITICAL (CR-13): with encryption enabled the virtual NIC subtracts
+/// [`ENCRYPTION_MTU_OVERHEAD`]. That subtraction is what used to underflow for
+/// tiny configured values, and 1280 is the IPv6 minimum MTU, so anything below
+/// it could not carry a legal packet anyway.
+pub const MIN_TUNNEL_MTU: u32 = 1280 + ENCRYPTION_MTU_OVERHEAD;
+
+/// Largest MTU a tunnel interface can be given.
+///
+/// `u16::MAX` is the natural ceiling for an MTU on every supported platform, and
+/// it is also what `TrafficConfig::mtu` already encodes.
+pub const MAX_TUNNEL_MTU: u32 = u16::MAX as u32;
+
+/// Validate a configured tunnel MTU.
+///
+/// Shared by every entry point (`api_input`, TOML, the CLI and the virtual NIC)
+/// so they cannot drift: the core used to degrade a bad value to `None` while
+/// the TUN path consumed it unchecked, which is exactly how an underflow reached
+/// `SIOCSIFMTU`.
+pub fn validate_tunnel_mtu(mtu: u32) -> Result<u32, ConfigError> {
+    if !(MIN_TUNNEL_MTU..=MAX_TUNNEL_MTU).contains(&mtu) {
+        return Err(ConfigError::InvalidMtu(mtu as i64));
+    }
+    Ok(mtu)
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum ConfigError {
     #[error("missing required field: {0}")]
@@ -337,7 +372,10 @@ pub enum ConfigError {
     #[error("invalid IPv6 prefix length: {0}")]
     InvalidIpv6Prefix(u8),
     #[error("invalid MTU: {0}")]
-    InvalidMtu(u32),
+    // `i64` so the error can faithfully report what the caller actually sent:
+    // the management API takes `i32` (where `-1` must not be reinterpreted as
+    // `u32::MAX`), while the TOML/CLI path is unsigned.
+    InvalidMtu(i64),
 }
 
 impl IpPrefix {
@@ -564,7 +602,7 @@ impl TryFrom<pb::TrafficConfig> for TrafficConfig {
         Ok(Self {
             mtu: value
                 .mtu
-                .map(|mtu| u16::try_from(mtu).map_err(|_| ConfigError::InvalidMtu(mtu)))
+                .map(|mtu| u16::try_from(mtu).map_err(|_| ConfigError::InvalidMtu(mtu as i64)))
                 .transpose()?,
             instance_recv_bps_limit: value.instance_recv_bps_limit,
             foreign_relay_bps_limit: value.foreign_relay_bps_limit,
@@ -800,6 +838,64 @@ mod tests {
         assert_eq!(
             IpPrefix::new("2001:db8::1".parse().unwrap(), 129),
             Err(ConfigError::InvalidIpv6Prefix(129))
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // CR-13: a configured MTU must be usable on the tunnel interface.
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn tunnel_mtu_must_survive_the_encryption_overhead_subtraction() {
+        // Two distinct properties the bound has to guarantee:
+        //
+        //  1. no `u32` wrap — the subtraction used to produce ~4e9, which then
+        //     became a negative `c_int` in `SIOCSIFMTU`;
+        //  2. the post-subtraction value is still a usable MTU (>= IPv6 minimum).
+        //
+        // Anything that would violate either is rejected up front.
+        for mtu in [0u32, 1, 19, 20, 100, 1280, MIN_TUNNEL_MTU - 1] {
+            assert!(
+                validate_tunnel_mtu(mtu).is_err(),
+                "mtu {mtu} must be rejected"
+            );
+        }
+
+        // Below the overhead the subtraction wraps outright.
+        assert!(validate_tunnel_mtu(ENCRYPTION_MTU_OVERHEAD - 1).is_err());
+
+        // At the bound both properties hold exactly.
+        let at_bound = validate_tunnel_mtu(MIN_TUNNEL_MTU).unwrap();
+        let after = at_bound - ENCRYPTION_MTU_OVERHEAD;
+        assert_eq!(after, 1280, "the bound must leave exactly the IPv6 minimum");
+        assert!(after >= 1280);
+    }
+
+    #[test]
+    fn tunnel_mtu_accepts_the_usable_range() {
+        assert_eq!(validate_tunnel_mtu(MIN_TUNNEL_MTU), Ok(MIN_TUNNEL_MTU));
+        assert_eq!(validate_tunnel_mtu(1300), Ok(1300));
+        assert_eq!(validate_tunnel_mtu(MAX_TUNNEL_MTU), Ok(MAX_TUNNEL_MTU));
+        // The documented default must be valid.
+        assert!(validate_tunnel_mtu(1300).is_ok());
+    }
+
+    #[test]
+    fn tunnel_mtu_rejects_values_that_cannot_be_passed_to_an_interface() {
+        assert!(validate_tunnel_mtu(MAX_TUNNEL_MTU + 1).is_err());
+        assert!(validate_tunnel_mtu(u32::MAX).is_err());
+        // `-1` from the management API used to become `u32::MAX` via `as`.
+        assert!(validate_tunnel_mtu(-1i32 as u32).is_err());
+    }
+
+    #[test]
+    fn invalid_mtu_error_reports_the_value_the_caller_actually_sent() {
+        // `i64` payload so a negative `i32` from the management API is reported
+        // as `-1` instead of being reinterpreted as `u32::MAX`.
+        assert_eq!(ConfigError::InvalidMtu(-1).to_string(), "invalid MTU: -1");
+        assert_eq!(
+            ConfigError::InvalidMtu(u32::MAX as i64).to_string(),
+            "invalid MTU: 4294967295"
         );
     }
 

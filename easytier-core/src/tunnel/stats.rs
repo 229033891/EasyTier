@@ -1,7 +1,4 @@
-use std::{
-    cell::UnsafeCell,
-    sync::atomic::{AtomicU32, Ordering::Relaxed},
-};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering, Ordering::Relaxed};
 
 pub struct WindowLatency {
     latency_us_window: Vec<AtomicU32>,
@@ -100,35 +97,48 @@ impl WindowLatency {
     }
 }
 
+/// Per-tunnel byte / packet counters.
+///
+/// CRITICAL (CR-06): these were `UnsafeCell<u64>` behind `unsafe impl Send + Sync`
+/// while being read from tasks other than the writer — `PeerConn::get_stats()`
+/// runs on **every** send (`Peer::select_conn`) and on the 3s GC loop, the ping
+/// controller clones them each tick, and the writers are the tunnel forward /
+/// per-conn receive tasks. That is a data race on a multi-threaded runtime, and it
+/// feeds directly into `score_conn` (quality score) and `PingIntervalController`
+/// (`tx_increase` / `rx_increase`), so a torn read can change path selection.
+///
+/// Now `AtomicU64` with `Relaxed` ordering: the counters are statistics and need
+/// no cross-core ordering, and one relaxed `fetch_add` is negligible against the
+/// per-packet encryption work.
 #[derive(Debug)]
 pub struct Throughput {
-    tx_bytes: UnsafeCell<u64>,
-    rx_bytes: UnsafeCell<u64>,
-    tx_packets: UnsafeCell<u64>,
-    rx_packets: UnsafeCell<u64>,
+    tx_bytes: AtomicU64,
+    rx_bytes: AtomicU64,
+    tx_packets: AtomicU64,
+    rx_packets: AtomicU64,
 }
 
 impl Clone for Throughput {
     fn clone(&self) -> Self {
         Self {
-            tx_bytes: UnsafeCell::new(unsafe { *self.tx_bytes.get() }),
-            rx_bytes: UnsafeCell::new(unsafe { *self.rx_bytes.get() }),
-            tx_packets: UnsafeCell::new(unsafe { *self.tx_packets.get() }),
-            rx_packets: UnsafeCell::new(unsafe { *self.rx_packets.get() }),
+            tx_bytes: AtomicU64::new(self.tx_bytes.load(Ordering::Relaxed)),
+            rx_bytes: AtomicU64::new(self.rx_bytes.load(Ordering::Relaxed)),
+            tx_packets: AtomicU64::new(self.tx_packets.load(Ordering::Relaxed)),
+            rx_packets: AtomicU64::new(self.rx_packets.load(Ordering::Relaxed)),
         }
     }
 }
 
-unsafe impl Send for Throughput {}
-unsafe impl Sync for Throughput {}
+// `AtomicU64` makes this automatically `Send + Sync`; the `unsafe impl`s that
+// used to paper over `UnsafeCell` are gone.
 
 impl Default for Throughput {
     fn default() -> Self {
         Self {
-            tx_bytes: UnsafeCell::new(0),
-            rx_bytes: UnsafeCell::new(0),
-            tx_packets: UnsafeCell::new(0),
-            rx_packets: UnsafeCell::new(0),
+            tx_bytes: AtomicU64::new(0),
+            rx_bytes: AtomicU64::new(0),
+            tx_packets: AtomicU64::new(0),
+            rx_packets: AtomicU64::new(0),
         }
     }
 }
@@ -139,33 +149,29 @@ impl Throughput {
     }
 
     pub fn tx_bytes(&self) -> u64 {
-        unsafe { *self.tx_bytes.get() }
+        self.tx_bytes.load(Ordering::Relaxed)
     }
 
     pub fn rx_bytes(&self) -> u64 {
-        unsafe { *self.rx_bytes.get() }
+        self.rx_bytes.load(Ordering::Relaxed)
     }
 
     pub fn tx_packets(&self) -> u64 {
-        unsafe { *self.tx_packets.get() }
+        self.tx_packets.load(Ordering::Relaxed)
     }
 
     pub fn rx_packets(&self) -> u64 {
-        unsafe { *self.rx_packets.get() }
+        self.rx_packets.load(Ordering::Relaxed)
     }
 
     pub fn record_tx_bytes(&self, bytes: u64) {
-        unsafe {
-            *self.tx_bytes.get() += bytes;
-            *self.tx_packets.get() += 1;
-        }
+        self.tx_bytes.fetch_add(bytes, Ordering::Relaxed);
+        self.tx_packets.fetch_add(1, Ordering::Relaxed);
     }
 
     pub fn record_rx_bytes(&self, bytes: u64) {
-        unsafe {
-            *self.rx_bytes.get() += bytes;
-            *self.rx_packets.get() += 1;
-        }
+        self.rx_bytes.fetch_add(bytes, Ordering::Relaxed);
+        self.rx_packets.fetch_add(1, Ordering::Relaxed);
     }
 }
 

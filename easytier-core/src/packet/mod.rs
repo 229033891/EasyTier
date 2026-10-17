@@ -312,9 +312,32 @@ impl ForeignNetworkPacketHeader {
     pub fn get_network_name(&self, zc_packet_payload: &[u8]) -> String {
         let offset = self.network_name_offset.get() as usize;
         let len = self.network_name_len.get() as usize;
-        std::str::from_utf8(&zc_packet_payload[offset..offset + len])
-            .unwrap()
-            .to_string()
+        // CRITICAL (CR-11): `network_name_offset` / `network_name_len` are `U16`
+        // parsed straight off the wire by `ref_from_prefix`, and the range was
+        // never checked — `&payload[offset..offset + len]` panics on an
+        // out-of-range slice, and `from_utf8(..).unwrap()` panics on non-UTF-8.
+        // Reached from `PeerPacketRouter` for any peer-sent
+        // `packet_type == ForeignNetworkPacket`. With `panic = "abort"` both are
+        // a remote process kill.
+        //
+        // The sibling accessor `foreign_network_inner_packet_info` in this same
+        // file already uses `payload.get(..)?`; match it.
+        let Some(region) = zc_packet_payload.get(offset..offset.saturating_add(len)) else {
+            tracing::debug!(
+                offset,
+                len,
+                payload_len = zc_packet_payload.len(),
+                "foreign network name region out of range",
+            );
+            return String::new();
+        };
+        match std::str::from_utf8(region) {
+            Ok(name) => name.to_string(),
+            Err(e) => {
+                tracing::debug!(len, error = %e, "foreign network name is not valid utf8");
+                String::new()
+            }
+        }
     }
 
     pub fn get_dst_peer_id(&self) -> u32 {
@@ -861,12 +884,30 @@ impl ZCPacket {
     }
 
     pub fn foreign_network_packet(mut self) -> Self {
-        let hdr = self.foreign_network_hdr().unwrap();
+        let Some(hdr) = self.foreign_network_hdr() else {
+            tracing::debug!("foreign_network_packet: header too short");
+            return Self::new_from_buf(BytesMut::new(), ZCPacketType::DummyTunnel);
+        };
         let foreign_hdr_len = hdr.get_header_len();
+
+        // CRITICAL (CR-12): `foreign_hdr_len` is a peer-controlled `U16` taken
+        // straight from the header. `BytesMut::advance` panics when the count
+        // exceeds the buffer length, so an over-large `header_len` aborted the
+        // process under `panic = "abort"`. `foreign_network_inner_packet_info`
+        // above uses `.get(..)?` for the same field; match it.
+        let advance_by = foreign_hdr_len.saturating_add(self.payload_offset());
+        if advance_by > self.inner.len() {
+            tracing::debug!(
+                advance_by,
+                buf_len = self.inner.len(),
+                "foreign_network_packet: header length over buffer, dropping packet",
+            );
+            return Self::new_from_buf(BytesMut::new(), ZCPacketType::DummyTunnel);
+        }
 
         Self::new_from_buf(
             {
-                self.inner.advance(foreign_hdr_len + self.payload_offset());
+                self.inner.advance(advance_by);
                 self.inner
             },
             ZCPacketType::DummyTunnel,

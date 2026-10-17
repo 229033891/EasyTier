@@ -6,7 +6,8 @@ use rand::RngExt;
 use tokio_util::task::AbortOnDropHandle;
 
 use crate::{
-    config::IpPrefix, config::runtime::CoreRuntimeConfigStore, peers::peer_manager::PeerManagerCore,
+    config::IpPrefix, config::PeerId, config::runtime::CoreRuntimeConfigStore,
+    peers::peer_manager::PeerManagerCore,
 };
 
 #[cfg(feature = "dhcp-ipv4")]
@@ -26,6 +27,27 @@ pub enum DhcpIpv4Decision {
 pub struct DhcpIpv4Allocator {
     default_subnet: Option<Ipv4Inet>,
     current: Option<Ipv4Inet>,
+}
+
+/// Deterministic sort key that gives every peer its own candidate ordering.
+///
+/// CRITICAL (CR-14). This is the SplitMix64 finalizer over
+/// `(peer_id, candidate address)`. Two properties are required:
+///
+/// * **Node-specific** — distinct peer ids yield unrelated orderings, so two
+///   nodes racing for the same address diverge on the retry instead of marching
+///   together in lockstep forever.
+/// * **Stable forever** — it is plain integer arithmetic specified here, not a
+///   library PRNG, so the order cannot silently change under us when `rand` is
+///   upgraded. A restarting node must re-derive the same address, and an
+///   EasyTier upgrade must not renumber a mesh.
+fn candidate_order_key(my_peer_id: PeerId, candidate: &Ipv4Inet) -> u64 {
+    let mut z = (my_peer_id as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15)
+        ^ (u32::from(candidate.address()) as u64).wrapping_mul(0xD6E8_FEB8_6659_FD93);
+    z = z.wrapping_add(0x9E37_79B9_7F4A_7C15);
+    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    z ^ (z >> 31)
 }
 
 impl DhcpIpv4Allocator {
@@ -48,7 +70,12 @@ impl DhcpIpv4Allocator {
         self.current = next;
     }
 
-    pub fn evaluate(&self, has_routes: bool, used_ipv4: &HashSet<Ipv4Inet>) -> DhcpIpv4Decision {
+    pub fn evaluate(
+        &self,
+        has_routes: bool,
+        used_ipv4: &HashSet<Ipv4Inet>,
+        my_peer_id: PeerId,
+    ) -> DhcpIpv4Decision {
         if !has_routes {
             return DhcpIpv4Decision::WaitForPeers;
         }
@@ -67,11 +94,37 @@ impl DhcpIpv4Allocator {
             return DhcpIpv4Decision::Unchanged;
         }
 
-        let next = subnet.network().iter().find(|candidate| {
-            candidate.address() != subnet.first_address()
-                && candidate.address() != subnet.last_address()
-                && !used_ipv4.contains(candidate)
-        });
+        // CRITICAL (CR-14): the candidate order must be **node-specific**.
+        //
+        // `used_ipv4` comes from `list_routes`, which skips our own route, so
+        // every node in the mesh observes the *same* set of in-use addresses.
+        // Picking the first free address in a shared order therefore made every
+        // concurrently-starting node choose the *same* VIP. Worse, the collision
+        // was self-sustaining: both nodes then observed that address as taken by
+        // a peer and both advanced to the next one, and the next one, in
+        // lockstep — a permanent flapping loop that never converges.
+        //
+        // The order is a deterministic **permutation keyed by `my_peer_id`**, not
+        // a rotation. Rotation is not enough: two peer ids congruent modulo the
+        // host count share one cyclic order, so they would still agree on every
+        // successive address and keep colliding (this is covered by
+        // `peers_diverge_instead_of_marching_in_lockstep_after_a_collision`).
+        // A per-node permutation makes any two distinct nodes order the remaining
+        // candidates differently, so the retry after a collision diverges.
+        //
+        // It stays a pure function of `my_peer_id` (no RNG), so a restarting node
+        // re-derives the same order and therefore the same address.
+        let mut candidates: Vec<Ipv4Inet> = subnet
+            .network()
+            .iter()
+            .filter(|candidate| {
+                candidate.address() != subnet.first_address()
+                    && candidate.address() != subnet.last_address()
+            })
+            .collect();
+        candidates.sort_by_key(|candidate| candidate_order_key(my_peer_id, candidate));
+        let next = candidates.into_iter().find(|c| !used_ipv4.contains(c));
+
         if self.current == next {
             return DhcpIpv4Decision::Unchanged;
         }
@@ -87,6 +140,13 @@ impl DhcpIpv4Allocator {
 pub struct DhcpIpv4RouteSnapshot {
     pub has_routes: bool,
     pub used_ipv4: HashSet<Ipv4Inet>,
+    /// Our own peer id.
+    ///
+    /// CRITICAL (CR-14): `used_ipv4` deliberately excludes our own address, so
+    /// it is identical on every node. `DhcpIpv4Allocator::evaluate` needs the
+    /// peer id to derive a *node-specific* candidate order — otherwise every
+    /// node picks the same VIP and then flapping in lockstep forever.
+    pub my_peer_id: PeerId,
 }
 
 #[async_trait]
@@ -106,6 +166,7 @@ impl DhcpIpv4RouteSource for PeerManagerCore {
         DhcpIpv4RouteSnapshot {
             has_routes,
             used_ipv4,
+            my_peer_id: self.my_peer_id(),
         }
     }
 }
@@ -233,11 +294,11 @@ impl DhcpIpv4Service {
             self.allocator.lock().unwrap().reset();
         }
         let snapshot = self.route_source.dhcp_ipv4_route_snapshot().await;
-        let decision = self
-            .allocator
-            .lock()
-            .unwrap()
-            .evaluate(snapshot.has_routes, &snapshot.used_ipv4);
+        let decision = self.allocator.lock().unwrap().evaluate(
+            snapshot.has_routes,
+            &snapshot.used_ipv4,
+            snapshot.my_peer_id,
+        );
 
         let DhcpIpv4Decision::Change { previous, next } = decision else {
             return snapshot.has_routes;
@@ -292,6 +353,13 @@ mod tests {
     };
 
     use super::*;
+
+    /// Peer id used by tests that only care about "some node in the mesh".
+    ///
+    /// `0` yields a scan offset of `0`, i.e. the plain "first free address"
+    /// order, which is what the pre-CR-14 tests were written against. Tests
+    /// about collision behaviour pass explicit, *differing* ids on purpose.
+    const TEST_PEER_ID: PeerId = 0;
 
     struct StaticRouteSource {
         snapshot: Mutex<DhcpIpv4RouteSnapshot>,
@@ -404,7 +472,7 @@ mod tests {
         let allocator = DhcpIpv4Allocator::default();
 
         assert_eq!(
-            allocator.evaluate(false, &HashSet::new()),
+            allocator.evaluate(false, &HashSet::new(), TEST_PEER_ID),
             DhcpIpv4Decision::WaitForPeers
         );
     }
@@ -414,7 +482,7 @@ mod tests {
         let allocator = DhcpIpv4Allocator::default();
 
         assert_eq!(
-            allocator.evaluate(true, &HashSet::new()),
+            allocator.evaluate(true, &HashSet::new(), TEST_PEER_ID),
             DhcpIpv4Decision::WaitForPeers
         );
     }
@@ -425,24 +493,34 @@ mod tests {
         allocator.commit(Some("10.1.2.8/24".parse().unwrap()));
         let used = HashSet::from(["10.1.2.2/24".parse().unwrap()]);
 
-        assert_eq!(allocator.evaluate(true, &used), DhcpIpv4Decision::Unchanged);
+        assert_eq!(
+            allocator.evaluate(true, &used, TEST_PEER_ID),
+            DhcpIpv4Decision::Unchanged
+        );
     }
 
     #[test]
-    fn selects_first_available_host_after_a_conflict() {
+    fn selects_an_available_host_after_a_conflict() {
         let mut allocator = DhcpIpv4Allocator::default();
         allocator.commit(Some("10.1.2.1/24".parse().unwrap()));
         let used = HashSet::from([
-            "10.1.2.1/24".parse().unwrap(),
+            "10.1.2.1/24".parse::<Ipv4Inet>().unwrap(),
             "10.1.2.2/24".parse().unwrap(),
         ]);
 
+        // CR-14: the specific address is now peer-id-derived, so assert the
+        // contract rather than a literal.
+        let decision = allocator.evaluate(true, &used, TEST_PEER_ID);
+        let DhcpIpv4Decision::Change { previous, next } = decision else {
+            panic!("expected a change, got {decision:?}");
+        };
+        assert_eq!(previous, Some("10.1.2.1/24".parse().unwrap()));
+        let next = next.expect("a free host should be available");
+        assert!(!used.contains(&next), "{next} is already in use");
+        assert_ne!(next, previous.unwrap());
         assert_eq!(
-            allocator.evaluate(true, &used),
-            DhcpIpv4Decision::Change {
-                previous: Some("10.1.2.1/24".parse().unwrap()),
-                next: Some("10.1.2.3/24".parse().unwrap()),
-            }
+            next.network(),
+            "10.1.2.0/24".parse::<Ipv4Inet>().unwrap().network()
         );
     }
 
@@ -456,6 +534,121 @@ mod tests {
         assert_eq!(allocator.current(), None);
     }
 
+    // -----------------------------------------------------------------------
+    // CR-14: node-specific candidate order stops the duplicate-VIP flapping.
+    // -----------------------------------------------------------------------
+
+    fn subnet_allocator() -> DhcpIpv4Allocator {
+        DhcpIpv4Allocator::new("10.1.2.0/24".parse().unwrap())
+    }
+
+    fn decision_next(decision: &DhcpIpv4Decision) -> Option<Ipv4Inet> {
+        match decision {
+            DhcpIpv4Decision::Change { next, .. } => *next,
+            _ => None,
+        }
+    }
+
+    /// The address a node with `peer_id` would pick given `used`.
+    ///
+    /// CR-14: the concrete address is peer-id-derived, so service-level tests
+    /// must ask the allocator rather than hard-coding a literal.
+    fn expected_pick(used: &[&str], peer_id: PeerId) -> Ipv4Inet {
+        let used: HashSet<Ipv4Inet> = used.iter().map(|s| s.parse().unwrap()).collect();
+        decision_next(&DhcpIpv4Allocator::default().evaluate(true, &used, peer_id))
+            .expect("a free address should be available")
+    }
+
+    #[test]
+    fn different_peers_pick_different_addresses_on_a_fresh_mesh() {
+        // The core CR-14 regression. On a fresh mesh nobody has an address yet,
+        // so `used_ipv4` is identical (empty) on every node. The old code always
+        // returned the *first* free host, so every node claimed 10.1.2.1.
+        let used: HashSet<Ipv4Inet> = HashSet::new();
+        let mut picks = HashSet::new();
+        for peer_id in 1..=8u32 {
+            let decision = subnet_allocator().evaluate(true, &used, peer_id);
+            let next = decision_next(&decision).expect("a free address should exist");
+            assert!(
+                picks.insert(next),
+                "peer {peer_id} collided on {next}: {picks:?}"
+            );
+        }
+        assert_eq!(picks.len(), 8);
+    }
+
+    #[test]
+    fn peers_diverge_instead_of_marching_in_lockstep_after_a_collision() {
+        // Model the old self-sustaining flapping: both nodes hold the same
+        // address, both observe it as taken *by a peer*, so both must move —
+        // but to *different* addresses, or they would simply collide again and
+        // loop forever.
+        let subnet = "10.1.2.0/24".parse::<Ipv4Inet>().unwrap();
+
+        let first_pick = |peer_id: PeerId| {
+            decision_next(&subnet_allocator().evaluate(true, &HashSet::new(), peer_id)).unwrap()
+        };
+
+        // Peer ids that share a scan offset share their first preference. Those
+        // are the residual collision case — precisely the one that used to never
+        // converge. The scan offset is `peer_id % <usable host count>`, so search
+        // a range wide enough to wrap it rather than hard-coding the modulus.
+        let (a, b) = (1..=600u32)
+            .flat_map(|x| (1..=600u32).map(move |y| (x, y)))
+            .find(|(x, y)| x != y && first_pick(*x) == first_pick(*y))
+            .expect("some pair of peer ids must share a first preference");
+
+        let shared = first_pick(a);
+        // Both now see `shared` advertised by somebody else (not by themselves,
+        // because `list_routes` skips our own route).
+        let used: HashSet<Ipv4Inet> = HashSet::from([shared]);
+        let next_a = decision_next(&subnet_allocator().evaluate(true, &used, a)).unwrap();
+        let next_b = decision_next(&subnet_allocator().evaluate(true, &used, b)).unwrap();
+
+        assert_ne!(
+            next_a, next_b,
+            "peers {a}/{b} advanced to the same address {next_a}; the flapping loop \
+             would never converge"
+        );
+        // And they must both stay inside the subnet, skipping network/broadcast.
+        for next in [next_a, next_b] {
+            assert_eq!(next.network(), subnet.network());
+            assert_ne!(next, subnet.first_address().into());
+            assert_ne!(next, subnet.last_address().into());
+            assert!(!used.contains(&next));
+        }
+    }
+
+    #[test]
+    fn candidate_order_is_stable_for_a_given_peer() {
+        // No RNG: a restarting node must re-derive the same order, otherwise it
+        // would pick a new address on every restart.
+        let used: HashSet<Ipv4Inet> = HashSet::new();
+        let first = decision_next(&subnet_allocator().evaluate(true, &used, 42));
+        for _ in 0..5 {
+            assert_eq!(
+                decision_next(&subnet_allocator().evaluate(true, &used, 42)),
+                first
+            );
+        }
+    }
+
+    #[test]
+    fn a_free_current_address_is_never_churned() {
+        // The rotation must not disturb stability: once we hold a free address we
+        // keep it, even though it is not this node's first preference.
+        for peer_id in 1..=16u32 {
+            let mut allocator = subnet_allocator();
+            allocator.commit(Some("10.1.2.7/24".parse().unwrap()));
+            let used: HashSet<Ipv4Inet> = HashSet::from(["10.1.2.1/24".parse().unwrap()]);
+            assert_eq!(
+                allocator.evaluate(true, &used, peer_id),
+                DhcpIpv4Decision::Unchanged,
+                "peer {peer_id} would have churned its address"
+            );
+        }
+    }
+
     #[tokio::test]
     async fn service_does_not_apply_ipv4_when_no_peer_has_one() {
         let host = Arc::new(RecordingHost::default());
@@ -463,6 +656,7 @@ mod tests {
             DhcpIpv4RouteSnapshot {
                 has_routes: true,
                 used_ipv4: HashSet::new(),
+                my_peer_id: TEST_PEER_ID,
             },
             host.clone(),
         );
@@ -490,6 +684,7 @@ mod tests {
         let (service, runtime_config) = service(
             DhcpIpv4RouteSnapshot {
                 has_routes: true,
+                my_peer_id: TEST_PEER_ID,
                 used_ipv4: HashSet::from(["198.18.0.2/24".parse().unwrap()]),
             },
             host.clone(),
@@ -497,22 +692,16 @@ mod tests {
 
         assert!(service.reconcile_once().await);
 
-        assert_eq!(service.current(), Some("198.18.0.1/24".parse().unwrap()));
-        assert_eq!(
-            *host.changes.lock().unwrap(),
-            [(None, Some("198.18.0.1/24".parse().unwrap()))]
-        );
+        let picked = expected_pick(&["198.18.0.2/24"], TEST_PEER_ID);
+        assert_eq!(service.current(), Some(picked));
+        assert_eq!(*host.changes.lock().unwrap(), [(None, Some(picked))]);
         assert_eq!(
             runtime_config.snapshot().peer.runtime.core.routes.ipv4,
-            Some(IpPrefix::new("198.18.0.1".parse().unwrap(), 24).unwrap())
+            Some(IpPrefix::new(picked.address().into(), 24).unwrap())
         );
         assert_eq!(
             *host.published.lock().unwrap(),
-            [(
-                None,
-                Some("198.18.0.1/24".parse().unwrap()),
-                Some("198.18.0.1/24".parse().unwrap())
-            )]
+            [(None, Some(picked), Some(picked))]
         );
     }
 
@@ -523,6 +712,7 @@ mod tests {
         let (service, _runtime_config) = service(
             DhcpIpv4RouteSnapshot {
                 has_routes: true,
+                my_peer_id: TEST_PEER_ID,
                 used_ipv4: HashSet::from(["198.18.0.2/24".parse().unwrap()]),
             },
             host.clone(),
@@ -530,7 +720,15 @@ mod tests {
 
         service.reconcile_once().await;
 
-        let expected = Some(IpPrefix::new("198.18.0.1".parse().unwrap(), 24).unwrap());
+        let expected = Some(
+            IpPrefix::new(
+                expected_pick(&["198.18.0.2/24"], TEST_PEER_ID)
+                    .address()
+                    .into(),
+                24,
+            )
+            .unwrap(),
+        );
         assert!(host.published_with_permit.load(Ordering::Acquire));
         assert_eq!(
             host.published_runtime_ipv4.lock().unwrap().as_slice(),
@@ -546,6 +744,7 @@ mod tests {
         let (service, runtime_config) = service(
             DhcpIpv4RouteSnapshot {
                 has_routes: true,
+                my_peer_id: TEST_PEER_ID,
                 used_ipv4: HashSet::from(["198.18.0.2/24".parse().unwrap()]),
             },
             host.clone(),
@@ -569,6 +768,7 @@ mod tests {
         let (service, _runtime_config) = service(
             DhcpIpv4RouteSnapshot {
                 has_routes: true,
+                my_peer_id: TEST_PEER_ID,
                 used_ipv4: HashSet::from(["198.18.0.2/24".parse().unwrap()]),
             },
             host.clone(),
@@ -578,12 +778,10 @@ mod tests {
 
         service.reconcile_once().await;
 
+        let picked = expected_pick(&["198.18.0.2/24"], TEST_PEER_ID);
         assert_eq!(
             host.changes.lock().unwrap().as_slice(),
-            [
-                (None, Some("198.18.0.1/24".parse().unwrap())),
-                (None, Some("198.18.0.1/24".parse().unwrap())),
-            ]
+            [(None, Some(picked)), (None, Some(picked))]
         );
     }
 }

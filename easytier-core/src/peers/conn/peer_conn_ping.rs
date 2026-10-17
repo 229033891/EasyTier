@@ -204,7 +204,23 @@ impl PeerConnPinger {
                 match receiver.recv().await {
                     Ok(p) => {
                         let payload = p.payload();
-                        let Ok(seq_buf) = payload[0..4].try_into() else {
+                        // CRITICAL (CR-10): `payload[0..4]` panics when the peer
+                        // sends a Pong shorter than 4 bytes, and `start_recv_loop`
+                        // forwards *any* `packet_type == Pong` packet here with no
+                        // length check. The `try_into()` was meant to be the guard
+                        // but it runs on the slice, which is already indexed.
+                        //
+                        // The blast radius is worse than a dead task: the panic
+                        // happens before `notify_close()`, so the conn is never
+                        // closed, `has_live_conns()` keeps counting it, the direct
+                        // connector will not re-dial ("already has a conn"), and
+                        // `latency_us` stays 0 — which is the *best possible*
+                        // score, so `score_conn` keeps selecting this dead path.
+                        let Some(seq_bytes) = payload.get(..4) else {
+                            tracing::debug!("pingpong recv short packet, continue");
+                            continue;
+                        };
+                        let Ok(seq_buf) = <[u8; 4]>::try_from(seq_bytes) else {
                             tracing::debug!("pingpong recv invalid packet, continue");
                             continue;
                         };

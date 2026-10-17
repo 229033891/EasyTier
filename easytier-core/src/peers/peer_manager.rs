@@ -724,6 +724,7 @@ pub(crate) async fn close_untrusted_credential_peers<F>(
 
 struct NicPacketProcessor {
     nic_channel: HostPacketSender,
+    nic_channel_drops: CounterHandle,
 }
 
 #[async_trait::async_trait]
@@ -746,7 +747,11 @@ impl PeerPacketFilter for NicPacketProcessor {
                 .nic_channel
                 .try_send(HostPacket::from_core_packet(packet))
             {
-                tracing::trace!(
+                self.nic_channel_drops.inc();
+                // `debug!` not `warn!`: this fires per dropped packet, so a
+                // warn would flood the log. The `data_plane_nic_channel_drops`
+                // counter is the observable signal (P-AUDIT.3).
+                tracing::debug!(
                     ?error,
                     "dropping packet because nic channel cannot accept it"
                 );
@@ -970,11 +975,15 @@ async fn init_packet_process_pipeline(
     peer_packet_process_pipeline: &PeerPacketPipeline,
     nic_channel: HostPacketSender,
     peer_rpc_tspt_sender: UnboundedSender<ZCPacket>,
+    nic_channel_drops: CounterHandle,
 ) {
     // for tun/tap ip/eth packet.
     append_peer_pipeline(
         peer_packet_process_pipeline,
-        permanent_peer_pipeline_entry(Box::new(NicPacketProcessor { nic_channel })),
+        permanent_peer_pipeline_entry(Box::new(NicPacketProcessor {
+            nic_channel,
+            nic_channel_drops,
+        })),
     );
 
     // for peer rpc packet
@@ -1021,6 +1030,18 @@ pub(crate) struct PeerManagerTrafficCounters {
     pub self_tx_bytes: CounterHandle,
     pub compress_tx_bytes_before: CounterHandle,
     pub compress_tx_bytes_after: CounterHandle,
+    /// P-AUDIT.2: send_msg_by_ip found no next hop / empty dst fanout.
+    pub no_dst_peer_drops: CounterHandle,
+    /// P-AUDIT.3: inbound NIC channel full.
+    pub nic_channel_drops: CounterHandle,
+    /// P-AUDIT.3: outbound tunnel ring BufferFull.
+    pub tunnel_buffer_full: CounterHandle,
+}
+
+fn note_tunnel_buffer_full(counter: &CounterHandle, err: &Error) {
+    if matches!(err, Error::Tunnel(crate::tunnel::TunnelError::BufferFull)) {
+        counter.inc();
+    }
 }
 
 pub struct PeerManagerCore {
@@ -1306,23 +1327,23 @@ impl PeerManagerCore {
             MetricName::TrafficControlPacketsTxByInstance,
             InstanceLabelKind::To,
         ));
+        let net_label =
+            LabelSet::new().with_label_type(LabelType::NetworkName(network_name.clone()));
         let self_tx_counters = PeerManagerTrafficCounters {
-            self_tx_packets: stats_manager.get_counter(
-                MetricName::TrafficPacketsSelfTx,
-                LabelSet::new().with_label_type(LabelType::NetworkName(network_name.clone())),
-            ),
-            self_tx_bytes: stats_manager.get_counter(
-                MetricName::TrafficBytesSelfTx,
-                LabelSet::new().with_label_type(LabelType::NetworkName(network_name.clone())),
-            ),
-            compress_tx_bytes_before: stats_manager.get_counter(
-                MetricName::CompressionBytesTxBefore,
-                LabelSet::new().with_label_type(LabelType::NetworkName(network_name.clone())),
-            ),
-            compress_tx_bytes_after: stats_manager.get_counter(
-                MetricName::CompressionBytesTxAfter,
-                LabelSet::new().with_label_type(LabelType::NetworkName(network_name.clone())),
-            ),
+            self_tx_packets: stats_manager
+                .get_counter(MetricName::TrafficPacketsSelfTx, net_label.clone()),
+            self_tx_bytes: stats_manager
+                .get_counter(MetricName::TrafficBytesSelfTx, net_label.clone()),
+            compress_tx_bytes_before: stats_manager
+                .get_counter(MetricName::CompressionBytesTxBefore, net_label.clone()),
+            compress_tx_bytes_after: stats_manager
+                .get_counter(MetricName::CompressionBytesTxAfter, net_label.clone()),
+            no_dst_peer_drops: stats_manager
+                .get_counter(MetricName::DataPlaneNoDstPeerDrops, net_label.clone()),
+            nic_channel_drops: stats_manager
+                .get_counter(MetricName::DataPlaneNicChannelDrops, net_label.clone()),
+            tunnel_buffer_full: stats_manager
+                .get_counter(MetricName::DataPlaneTunnelBufferFull, net_label),
         };
         let traffic_rx_metrics = Arc::new(LogicalTrafficMetrics::new(
             stats_manager.clone(),
@@ -1404,6 +1425,8 @@ impl PeerManagerCore {
             self_tx_counters.self_tx_bytes.clone(),
             self_tx_counters.compress_tx_bytes_before.clone(),
             self_tx_counters.compress_tx_bytes_after.clone(),
+            self_tx_counters.no_dst_peer_drops.clone(),
+            self_tx_counters.tunnel_buffer_full.clone(),
         );
 
         Self {
@@ -2207,6 +2230,7 @@ impl PeerManagerCore {
             &self.peer_packet_process_pipeline,
             self.nic_channel.clone(),
             self.peer_rpc_tspt.packet_sender(),
+            self.counters.nic_channel_drops.clone(),
         )
         .await;
         self.peer_rpc_mgr.run();
@@ -2378,7 +2402,7 @@ impl PeerConnectionAdmission {
             origin,
         );
         peer.set_is_hole_punched(!is_directly_connected);
-        apply_tcp_hole_punch_ping_policy(&mut peer, is_directly_connected);
+        apply_hole_punch_ping_policy(&mut peer, is_directly_connected);
         peer.do_handshake_as_client().await?;
         let conn_id = peer.get_conn_id();
         let peer_id = peer.get_peer_id();
@@ -2520,7 +2544,7 @@ impl PeerConnectionAdmission {
         }
 
         conn.set_is_hole_punched(!is_directly_connected);
-        apply_tcp_hole_punch_ping_policy(&mut conn, is_directly_connected);
+        apply_hole_punch_ping_policy(&mut conn, is_directly_connected);
 
         let add_peer_ret = if is_local_network {
             let local_secure_mode = self
@@ -2564,20 +2588,47 @@ impl PeerConnectionAdmission {
 /// `PeerConnectionOrigin` or changing `HolePunchTunnelSink`.
 ///
 /// Only hole-punch admissions pass `is_directly_connected=false`.
-fn apply_tcp_hole_punch_ping_policy(conn: &mut PeerConn, is_directly_connected: bool) {
+/// Control-ping ceiling for a hole-punched TCP / FakeTCP conn.
+///
+/// 1s: intermediate devices cut idle punched TCP flows (#2632). See
+/// `connection-stability-todo.md` S4.
+const HOLE_PUNCH_TCP_PING_MAX: Duration = Duration::from_secs(1);
+
+/// Control-ping ceiling for a hole-punched **UDP** conn.
+///
+/// The adaptive ping backs off to `flags.ping_interval_max_sec` (default 32s)
+/// once a link goes idle. NAT UDP state aging is commonly ~30s, so a 32s gap
+/// lets the mapping expire: data blackholes until the *next* ping fails, five
+/// consecutive failures tear the conn down, and recovery needs a full re-punch
+/// plus handshake. 10s keeps 3x margin against a 30s aging timer for the cost
+/// of a few 9-byte control packets per conn.
+///
+/// `PeerConn::max_ping_interval` returns `min(cap, flags_max)`, so an operator
+/// who configures a stricter `ping_interval_max_sec` still wins; only a laxer
+/// one is tightened here, because the NAT keepalive is a correctness
+/// requirement rather than a tuning knob.
+const HOLE_PUNCH_UDP_PING_MAX: Duration = Duration::from_secs(10);
+
+/// Control-ping ceiling for a hole-punched conn, or `None` when it should keep
+/// the global `flags.ping_interval_max_sec` (directly-connected conns).
+fn hole_punch_ping_max(tunnel_type: Option<&str>, is_directly_connected: bool) -> Option<Duration> {
     if is_directly_connected {
-        return;
+        return None;
     }
     // UDP hole punch always reports tunnel_type "udp". TCP / FakeTCP may use
     // plain "tcp"/"faketcp" or an opaque host transport_label (e.g.
     // "faketcp_test-driver", "host-tcp") — treat everything except UDP as TCP-like.
-    if conn
-        .tunnel_type()
-        .is_some_and(is_udp_hole_punch_tunnel_type)
-    {
-        return;
+    if tunnel_type.is_some_and(is_udp_hole_punch_tunnel_type) {
+        Some(HOLE_PUNCH_UDP_PING_MAX)
+    } else {
+        Some(HOLE_PUNCH_TCP_PING_MAX)
     }
-    conn.set_ping_max_interval(Some(Duration::from_secs(1)));
+}
+
+fn apply_hole_punch_ping_policy(conn: &mut PeerConn, is_directly_connected: bool) {
+    if let Some(cap) = hole_punch_ping_max(conn.tunnel_type(), is_directly_connected) {
+        conn.set_ping_max_interval(Some(cap));
+    }
 }
 
 fn is_udp_hole_punch_tunnel_type(tunnel_type: &str) -> bool {
@@ -2589,8 +2640,12 @@ fn is_udp_hole_punch_tunnel_type(tunnel_type: &str) -> bool {
 }
 
 #[cfg(test)]
-mod tcp_hole_punch_ping_policy_tests {
-    use super::is_udp_hole_punch_tunnel_type;
+mod hole_punch_ping_policy_tests {
+    use super::{
+        HOLE_PUNCH_TCP_PING_MAX, HOLE_PUNCH_UDP_PING_MAX, hole_punch_ping_max,
+        is_udp_hole_punch_tunnel_type,
+    };
+    use std::time::Duration;
 
     #[test]
     fn classifies_udp_vs_tcp_hole_punch_transports() {
@@ -2602,6 +2657,63 @@ mod tcp_hole_punch_ping_policy_tests {
         assert!(!is_udp_hole_punch_tunnel_type("host-accepted"));
         assert!(!is_udp_hole_punch_tunnel_type("faketcp_test-driver"));
         assert!(!is_udp_hole_punch_tunnel_type("faketcp://127.0.0.1:1"));
+    }
+
+    #[test]
+    fn udp_hole_punch_gets_nat_safe_ping_ceiling() {
+        // The point of the fix: a 32s ceiling can outlive a ~30s NAT UDP
+        // mapping and blackhole the conn before anything notices.
+        assert_eq!(
+            hole_punch_ping_max(Some("udp"), false),
+            Some(HOLE_PUNCH_UDP_PING_MAX)
+        );
+        assert_eq!(
+            hole_punch_ping_max(Some("txt-udp"), false),
+            Some(HOLE_PUNCH_UDP_PING_MAX)
+        );
+        assert!(
+            HOLE_PUNCH_UDP_PING_MAX < Duration::from_secs(32),
+            "UDP ceiling must stay below the default ping_interval_max_sec"
+        );
+        // Still far stricter than the ~30s NAT aging timer it protects.
+        assert!(HOLE_PUNCH_UDP_PING_MAX * 3 <= Duration::from_secs(30));
+    }
+
+    #[test]
+    fn tcp_like_hole_punch_keeps_aggressive_ceiling() {
+        for ty in ["tcp", "faketcp", "host-tcp", "faketcp_test-driver"] {
+            assert_eq!(
+                hole_punch_ping_max(Some(ty), false),
+                Some(HOLE_PUNCH_TCP_PING_MAX),
+                "{ty} must keep the 1s cap"
+            );
+        }
+        // Unknown/absent tunnel type is treated as TCP-like, matching
+        // `is_udp_hole_punch_tunnel_type` returning false.
+        assert_eq!(
+            hole_punch_ping_max(None, false),
+            Some(HOLE_PUNCH_TCP_PING_MAX)
+        );
+    }
+
+    #[test]
+    fn directly_connected_conns_keep_the_global_default() {
+        assert_eq!(hole_punch_ping_max(Some("udp"), true), None);
+        assert_eq!(hole_punch_ping_max(Some("tcp"), true), None);
+        assert_eq!(hole_punch_ping_max(None, true), None);
+    }
+
+    #[test]
+    fn per_conn_cap_never_relaxes_the_operator_setting() {
+        // `PeerConn::max_ping_interval` = min(cap, flags_max): a stricter
+        // operator value must survive, and only a laxer one gets tightened.
+        let flags_max = Duration::from_secs(32);
+        assert_eq!(
+            HOLE_PUNCH_UDP_PING_MAX.min(flags_max),
+            HOLE_PUNCH_UDP_PING_MAX
+        );
+        let stricter = Duration::from_secs(3);
+        assert_eq!(HOLE_PUNCH_UDP_PING_MAX.min(stricter), stricter);
     }
 }
 
@@ -2881,6 +2993,8 @@ struct PeerOutboundPacketRouterCounters {
     self_tx_bytes: CounterHandle,
     compress_tx_bytes_before: CounterHandle,
     compress_tx_bytes_after: CounterHandle,
+    no_dst_peer_drops: CounterHandle,
+    tunnel_buffer_full: CounterHandle,
 }
 
 pub(crate) struct PeerOutboundPacketRouter {
@@ -2925,6 +3039,8 @@ impl PeerOutboundPacketRouter {
         self_tx_bytes: CounterHandle,
         compress_tx_bytes_before: CounterHandle,
         compress_tx_bytes_after: CounterHandle,
+        no_dst_peer_drops: CounterHandle,
+        tunnel_buffer_full: CounterHandle,
     ) -> Self {
         let host_routing = context.host_routing_policy();
         Self {
@@ -2949,6 +3065,8 @@ impl PeerOutboundPacketRouter {
                 self_tx_bytes,
                 compress_tx_bytes_before,
                 compress_tx_bytes_after,
+                no_dst_peer_drops,
+                tunnel_buffer_full,
             },
         }
     }
@@ -3131,6 +3249,8 @@ impl PeerOutboundPacketRouter {
         if result.is_ok() {
             self.counters.self_tx_bytes.add(msg_len);
             self.counters.self_tx_packets.inc();
+        } else if let Err(ref e) = result {
+            note_tunnel_buffer_full(&self.counters.tunnel_buffer_full, e);
         }
         result
     }
@@ -3221,6 +3341,8 @@ impl PeerOutboundPacketRouter {
                     // drop instead of leaking out the physical gateway. The
                     // Linux blackhole route (Q6) is a later optimisation — an
                     // L3 refusal works on every platform.
+                    // Counted via send_msg_by_ip empty-dst path (no_dst_peer_drops);
+                    // `debug!` not `warn!` — per-packet, would flood the log.
                     tracing::debug!(%ipv4_addr, "policy route closed: dropping packet");
                     return (dst_peers, false);
                 }
@@ -3306,7 +3428,7 @@ impl PeerOutboundPacketRouter {
         let cur_to_peer_id = msg.peer_manager_header().unwrap().to_peer_id.into();
         if cur_to_peer_id != 0 {
             self.mark_recent_traffic_with_policy(cur_to_peer_id, packet_policy);
-            return send_msg_internal(
+            let result = send_msg_internal(
                 self.peers.as_ref(),
                 &self.foreign_network_client,
                 &self.relay_peer_map,
@@ -3315,6 +3437,10 @@ impl PeerOutboundPacketRouter {
                 cur_to_peer_id,
             )
             .await;
+            if let Err(ref e) = result {
+                note_tunnel_buffer_full(&self.counters.tunnel_buffer_full, e);
+            }
+            return result;
         }
 
         // P5: reuse the sticky flow key computed above so `select_by = balance`
@@ -3326,7 +3452,10 @@ impl PeerOutboundPacketRouter {
         };
 
         if dst_peers.is_empty() {
-            tracing::info!("no peer id for ip: {}", ip_addr);
+            self.counters.no_dst_peer_drops.inc();
+            // `debug!` not `warn!` — per-packet, would flood the log. The
+            // `data_plane_no_dst_peer_drops` counter is the signal (P-AUDIT.2).
+            tracing::debug!(%ip_addr, "no peer id for ip; dropping packet");
             return Ok(());
         }
 
@@ -3397,6 +3526,7 @@ impl PeerOutboundPacketRouter {
             )
             .await
             {
+                note_tunnel_buffer_full(&self.counters.tunnel_buffer_full, &e);
                 errs.push(e);
             }
         }
@@ -3425,6 +3555,9 @@ struct PeerPacketRouterCounters {
     compress_tx_bytes_after: CounterHandle,
     compress_rx_bytes_before: CounterHandle,
     compress_rx_bytes_after: CounterHandle,
+    /// Outbound tunnel send hit `BufferFull` (ring full / silent loss path).
+    /// Covers the relay-forwarding leg too — this is where a relay node drops.
+    tunnel_buffer_full: CounterHandle,
 }
 
 pub(crate) struct PeerPacketRouter {
@@ -3512,14 +3645,25 @@ impl PeerPacketRouter {
                 compress_rx_bytes_before: stats_mgr
                     .get_counter(MetricName::CompressionBytesRxBefore, label_set.clone()),
                 compress_rx_bytes_after: stats_mgr
-                    .get_counter(MetricName::CompressionBytesRxAfter, label_set),
+                    .get_counter(MetricName::CompressionBytesRxAfter, label_set.clone()),
+                tunnel_buffer_full: stats_mgr
+                    .get_counter(MetricName::DataPlaneTunnelBufferFull, label_set),
             },
         }
     }
 
     pub async fn run(mut self) {
         tracing::trace!("start_peer_recv");
-        while let Ok(envelope) = recv_packet_envelope_from_chan(&mut self.packet_recv).await {
+        loop {
+            // CRITICAL (CR-15): this used to be
+            // `while let Ok(..) = .. { .. }` followed by `panic!("done_peer_recv")`.
+            // Under `panic = "abort"` an ordinary shutdown therefore aborted the
+            // whole process. Exit quietly instead.
+            let Some(envelope) = recv_packet_envelope_from_chan(&mut self.packet_recv).await else {
+                tracing::debug!("peer recv channel closed, stopping ingress loop");
+                break;
+            };
+
             // Avoid-only relay policy: a node that disallows relay is excluded
             // at route-computation time (AVOID_RELAY_COST). Packets that still
             // arrive for forwarding (stale routes, convergence windows,
@@ -3540,7 +3684,6 @@ impl PeerPacketRouter {
 
             self.handle_packet(ret).await;
         }
-        panic!("done_peer_recv");
     }
 
     async fn handle_packet(&self, mut ret: ZCPacket) {
@@ -3632,6 +3775,9 @@ impl PeerPacketRouter {
             )
             .await;
             if let Err(ref e) = ret {
+                // Count the silent-loss path on the forwarded leg too: for a
+                // relay node this is the only place BufferFull shows up.
+                note_tunnel_buffer_full(&self.counters.tunnel_buffer_full, e);
                 if e.is_expected_path_unavailable() {
                     if take_path_unavailable_warn_token(to_peer_id) {
                         tracing::warn!(?ret, ?to_peer_id, ?from_peer_id, "forward packet error");
@@ -3923,17 +4069,19 @@ pub(crate) async fn send_msg_internal(
         None
     };
     let send_result = if let Some(gateway) = latency_first_gateway
-        && (peers.has_peer(gateway) || foreign_network_client.has_next_hop(gateway))
+        && (peers.has_peer_with_live_conn(gateway) || foreign_network_client.has_next_hop(gateway))
     {
         relay_peer_map.send_msg(msg, dst_peer_id, policy).await
-    } else if let Some(peer) = peers.get_peer_by_id(dst_peer_id) {
+    } else if let Some(peer) = peers.get_peer_by_id(dst_peer_id)
+        && peer.has_live_conns()
+    {
         peer.send_msg(msg).await
     } else if peers.is_self(dst_peer_id) {
         peers.send_msg_directly(msg, dst_peer_id).await
     } else if foreign_network_client.has_next_hop(dst_peer_id) {
         foreign_network_client.send_msg(msg, dst_peer_id).await
     } else if let Some(gateway) = peers.get_gateway_peer_id(dst_peer_id, policy.clone()).await {
-        if peers.has_peer(gateway) || foreign_network_client.has_next_hop(gateway) {
+        if peers.has_peer_with_live_conn(gateway) || foreign_network_client.has_next_hop(gateway) {
             relay_peer_map.send_msg(msg, dst_peer_id, policy).await
         } else {
             tracing::warn!(

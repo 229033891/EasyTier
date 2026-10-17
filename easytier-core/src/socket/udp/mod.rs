@@ -1,4 +1,10 @@
 mod layer;
+
+// Exposed for tests only; not part of the crate's public surface.
+#[cfg(test)]
+pub(crate) use layer::{
+    CHANGE_REQUEST_BURST, ChangeRequestBudget, MAX_TRACKED_CHANGE_REQUEST_SOURCES,
+};
 mod listener;
 mod packet;
 mod session;

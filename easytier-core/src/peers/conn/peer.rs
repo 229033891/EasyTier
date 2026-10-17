@@ -11,10 +11,13 @@ use tokio::{select, sync::mpsc};
 use tracing::Instrument;
 
 use super::conn_bond::{
-    BondCandidate, BondConfig, bond_member_index, conn_diversity_class, flow_key_from_payload,
+    BondCandidate, BondConfig, bond_flow_to_conn_hash, conn_diversity_class, flow_key_from_payload,
     pick_bond_set,
 };
-use super::conn_select::{ConnMetrics, ConnSelectConfig, pick_default_conn, score_conn};
+use super::conn_select::{
+    ConnMetrics, ConnSelectConfig, cached_path_unusable, is_unfused_verified, pick_default_conn,
+    score_conn,
+};
 use super::peer_conn::{PeerConn, PeerConnId};
 use crate::peers::{
     PacketRecvChan,
@@ -277,7 +280,10 @@ impl Peer {
     }
 
     pub async fn send_msg(&self, msg: ZCPacket) -> Result<(), Error> {
-        let bond = BondConfig::from_flags(&self.context.flags());
+        // `bond_config()` borrows the config snapshot; `context.flags()` would
+        // deep-copy `FlagsInConfig` on every packet (bond is enabled by
+        // default via `peer_link_bond_count = 2`).
+        let bond = self.context.bond_config();
         if bond.enabled() {
             let members = self.select_bond_conns(bond);
             if let Some(members) = members
@@ -288,10 +294,27 @@ impl Peer {
                 let key = msg
                     .bond_flow_key()
                     .unwrap_or_else(|| flow_key_from_payload(msg.payload()));
-                let idx = bond_member_index(key, members.len());
+                // Consistent hashing over conn ids, not `key % member_count`:
+                // hashing the member's *position* re-points unrelated flows
+                // whenever the member set changes (S4). Inlined here rather
+                // than calling `bond_member_for_flow` so no `Vec<PeerConnId>`
+                // is allocated per packet.
+                let mut picked: Option<&ArcPeerConn> = None;
+                let mut picked_hash = u64::MAX;
+                for conn in members.iter() {
+                    let h = bond_flow_to_conn_hash(key, conn.get_conn_id());
+                    if h < picked_hash {
+                        picked_hash = h;
+                        picked = Some(conn);
+                    }
+                }
+                let Some(conn) = picked else {
+                    // Unreachable: guarded by `!members.is_empty()` above.
+                    return Err(Error::PeerNoConnectionError(self.peer_node_id));
+                };
                 // On member failure drop the cached set so the next packet rebuilds
                 // without a half-dead member (matches single-path cache-clear semantics).
-                return members[idx].send_msg(msg).await.inspect_err(|_| {
+                return conn.send_msg(msg).await.inspect_err(|_| {
                     self.bond_conns.store(None);
                 });
             }
@@ -300,8 +323,12 @@ impl Peer {
 
         let default_conn = self.default_conn.load();
         if let Some(conn) = default_conn.as_ref() {
-            conn.send_msg(msg).await?;
-            return Ok(());
+            if self.cached_conn_should_invalidate(conn) {
+                self.default_conn.store(None);
+            } else {
+                conn.send_msg(msg).await?;
+                return Ok(());
+            }
         }
         drop(default_conn);
 
@@ -313,11 +340,69 @@ impl Peer {
         Ok(())
     }
 
+    fn conn_select_metrics(conn: &PeerConn) -> ConnMetrics {
+        let stats = conn.get_stats();
+        ConnMetrics {
+            conn_id: conn.get_conn_id(),
+            latency_us: stats.latency_us,
+            loss_rate: conn.loss_rate(),
+            jitter_us: stats.jitter_us,
+            is_hole_punched: conn.is_hole_punched(),
+        }
+    }
+
+    /// True when another live PeerConn is a *real* alternative: verified and
+    /// below the loss fuse. Unverified hole-punches do not count, matching the
+    /// `has_unfused` rule in `pick_default_conn` / `pick_bond_set`.
+    fn has_unfused_alternative(&self, exclude: PeerConnId, cfg: ConnSelectConfig) -> bool {
+        self.conns.iter().any(|entry| {
+            let conn = entry.value();
+            if conn.is_closed() || conn.get_conn_id() == exclude {
+                return false;
+            }
+            is_unfused_verified(&Self::conn_select_metrics(conn), cfg)
+        })
+    }
+
+    fn cached_conn_should_invalidate(&self, conn: &PeerConn) -> bool {
+        if conn.is_closed() {
+            return true;
+        }
+        // `conn_select_config()` borrows the config snapshot, so the fuse scan
+        // costs only atomic loads on each conn's latency window.
+        let cfg = self.context.conn_select_config();
+        cached_path_unusable(
+            false,
+            &Self::conn_select_metrics(conn),
+            cfg,
+            self.has_unfused_alternative(conn.get_conn_id(), cfg),
+        )
+    }
+
+    /// Bond cache is stale if any member is closed/fused while a better path exists.
+    fn bond_cache_should_invalidate(&self, members: &[ArcPeerConn], cfg: ConnSelectConfig) -> bool {
+        let any_member_bad = members.iter().any(|conn| {
+            let metrics = Self::conn_select_metrics(conn);
+            let scored = score_conn(&metrics, cfg);
+            conn.is_closed() || scored.fused
+        });
+        if !any_member_bad {
+            return false;
+        }
+        // Rebuild only when a verified, unfused path exists (unverified hole-punch
+        // does not count — same rule as pick_default_conn).
+        self.conns.iter().any(|entry| {
+            let conn = entry.value();
+            !conn.is_closed() && is_unfused_verified(&Self::conn_select_metrics(conn), cfg)
+        })
+    }
+
     /// Build / refresh the bond member cache (diversity-first, replica-fill).
     fn select_bond_conns(&self, bond: BondConfig) -> Option<Arc<Vec<ArcPeerConn>>> {
+        let cfg = self.context.conn_select_config();
         if let Some(cached) = self.bond_conns.load_full()
             && !cached.is_empty()
-            && cached.iter().all(|c| !c.is_closed())
+            && !self.bond_cache_should_invalidate(cached.as_slice(), cfg)
         {
             return Some(cached);
         }
@@ -326,12 +411,11 @@ impl Peer {
         // Re-check under lock.
         if let Some(cached) = self.bond_conns.load_full()
             && !cached.is_empty()
-            && cached.iter().all(|c| !c.is_closed())
+            && !self.bond_cache_should_invalidate(cached.as_slice(), cfg)
         {
             return Some(cached);
         }
 
-        let cfg = ConnSelectConfig::from_flags(&self.context.flags());
         let mut candidates = Vec::with_capacity(self.conns.len());
         let mut by_id = std::collections::HashMap::with_capacity(self.conns.len());
         for entry in self.conns.iter() {
@@ -339,14 +423,7 @@ impl Peer {
             if conn.is_closed() {
                 continue;
             }
-            let stats = conn.get_stats();
-            let metrics = ConnMetrics {
-                conn_id: conn.get_conn_id(),
-                latency_us: stats.latency_us,
-                loss_rate: conn.loss_rate(),
-                jitter_us: stats.jitter_us,
-                is_hole_punched: conn.is_hole_punched(),
-            };
+            let metrics = Self::conn_select_metrics(&conn);
             candidates.push(BondCandidate {
                 scored: score_conn(&metrics, cfg),
                 class: conn_diversity_class(&conn),

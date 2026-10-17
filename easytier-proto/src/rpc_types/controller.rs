@@ -46,6 +46,25 @@ pub struct BaseController {
     pub trace_id: i32,
     pub raw_data: Arc<Mutex<BaseControllerRawData>>,
     pub tunnel_info: Option<TunnelInfo>,
+    /// Peer id **verified by the transport layer** for the tunnel this call
+    /// arrived on, filled in by the server-side dispatcher only.
+    ///
+    /// CRITICAL (CR-07): `PeerConn` already drops any packet whose
+    /// `from_peer_id` disagrees with the authenticated peer id, so this value is
+    /// trustworthy. Handlers must prefer it over any peer id inside the request
+    /// body — `OspfRouteRpc::sync_route_info` used to read `request.my_peer_id`
+    /// directly, which let any member act as (and inject routes in the name of)
+    /// any other peer, and made `get_peer_identity_type_from_interface` return
+    /// `None` for the impersonated id, which in turn defaulted it to `Admin` and
+    /// bypassed the credential restrictions entirely.
+    ///
+    /// `None` on the **client** side (there is no inbound transport) and in unit
+    /// tests that construct a controller by hand; handlers that require identity
+    /// binding must reject `None` rather than falling back to the request body.
+    ///
+    /// This field is purely in-memory — `BaseController` is not a protobuf
+    /// message and is never serialized — so a peer can neither see nor forge it.
+    pub verified_from_peer_id: Option<u32>,
 }
 
 impl Controller for BaseController {
@@ -100,6 +119,7 @@ impl Default for BaseController {
                 raw_output: None,
             })),
             tunnel_info: None,
+            verified_from_peer_id: None,
         }
     }
 }

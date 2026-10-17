@@ -293,14 +293,20 @@ impl TcpProxyEngine {
             return TcpProxyPacketAction::Pass;
         };
 
-        let hdr = packet
-            .mut_peer_manager_header()
-            .expect("peer manager header");
-        hdr.packet_type = PacketType::Data as u8;
-
         let payload_bytes = packet.mut_payload();
         let ip_packet = Ipv4Packet::new_checked(&payload_bytes[..]).expect("checked ipv4 packet");
-        let tcp_packet = TcpPacket::new_checked(ip_packet.payload()).expect("checked tcp packet");
+        // CRITICAL (CR-04): the TCP header has NOT been validated at this point
+        // — only the IPv4 header (above) and `next_header == Tcp`. smoltcp
+        // rejects a TCP header when `len < 20`, `header_len > len`, **or
+        // `header_len < 20`** (i.e. a peer-supplied `data_offset` below 5), and
+        // `data_offset` is entirely attacker-controlled. The previous
+        // `.expect("checked tcp packet")` therefore turned one malformed packet
+        // into a process abort under `panic = "abort"`. The NIC path in this same
+        // file (`try_process_packet_from_nic`) already does the right thing with
+        // `let Ok(..) else { return false }`; match it.
+        let Some(tcp_packet) = TcpPacket::new_checked(ip_packet.payload()).ok() else {
+            return TcpProxyPacketAction::Pass;
+        };
 
         let source_ip = ip_packet.src_addr();
         let source_port = tcp_packet.src_port();
@@ -350,6 +356,16 @@ impl TcpProxyEngine {
             tcp_packet.fill_checksum(&IpAddress::Ipv4(source), &IpAddress::Ipv4(local_ip));
         }
         ip_packet.fill_checksum();
+
+        // Only now retype the packet, once every fallible parse has succeeded.
+        // Doing it earlier (as the previous code did, just above the TCP parse)
+        // meant the `Pass` paths in between forwarded a
+        // `DataWithKcpSrcModified` / `DataWithQuicSrcModified` packet that had
+        // already been relabelled as plain `Data`.
+        packet
+            .mut_peer_manager_header()
+            .expect("peer manager header")
+            .packet_type = PacketType::Data as u8;
 
         tracing::trace!(?source, ?local_ip, ?packet, "tcp packet after modified");
         TcpProxyPacketAction::Handled { new_syn }

@@ -31,6 +31,7 @@ use crate::{
     foundation::stats::{LabelSet, LabelType, MetricName, StatsManager},
     foundation::token_bucket::{ArcByteLimiter, BucketConfig, TokenBucketManager},
     peers::{
+        conn::{conn_bond::BondConfig, conn_select::ConnSelectConfig},
         credential_manager::{CredentialManager, CredentialStorage},
         util::shrink_dashmap,
         whitelist::check_network_in_relay_whitelist,
@@ -555,6 +556,25 @@ pub(crate) trait PeerContext: Send + Sync {
         FlagsInConfig::default()
     }
 
+    /// Resolve the PeerConn bond config without deep-copying `FlagsInConfig`.
+    ///
+    /// `flags()` clones the whole prost message (50+ fields, several heap
+    /// allocations). Prefer this on per-packet paths such as `Peer::send_msg`,
+    /// which resolves the bond config for every packet (bond is on by default
+    /// via `peer_link_bond_count = 2`). Contexts without a config store fall
+    /// back to `flags()`.
+    ///
+    /// NOTE: must stay non-generic — `PeerContext` is used as `dyn`.
+    fn bond_config(&self) -> BondConfig {
+        BondConfig::from_flags(&self.flags())
+    }
+
+    /// Resolve the PeerConn quality-select config without deep-copying
+    /// `FlagsInConfig`. See [`PeerContext::bond_config`] for why.
+    fn conn_select_config(&self) -> ConnSelectConfig {
+        ConnSelectConfig::from_flags(&self.flags())
+    }
+
     fn packet_policy(&self) -> PeerPacketPolicy {
         PeerPacketPolicy::from_flags(&self.flags())
     }
@@ -748,6 +768,18 @@ impl PeerContext for CorePeerContext {
 
     fn flags(&self) -> FlagsInConfig {
         self.snapshot().flags.clone()
+    }
+
+    fn bond_config(&self) -> BondConfig {
+        // Borrow the snapshot instead of cloning `FlagsInConfig`: this is on the
+        // per-packet send fast path.
+        self.config
+            .with_snapshot(|snapshot| BondConfig::from_flags(&snapshot.peer.flags))
+    }
+
+    fn conn_select_config(&self) -> ConnSelectConfig {
+        self.config
+            .with_snapshot(|snapshot| ConnSelectConfig::from_flags(&snapshot.peer.flags))
     }
 
     fn packet_policy(&self) -> PeerPacketPolicy {

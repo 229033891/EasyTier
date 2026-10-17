@@ -1530,10 +1530,19 @@ impl<'a> CommandHandler<'a> {
         impl From<PeerRoutePair> for PeerTableItem {
             fn from(p: PeerRoutePair) -> Self {
                 let route = p.route.clone().unwrap_or_default();
+                // A path crossing a peer that refuses relay duty carries the
+                // `AVOID_RELAY_COST` penalty. The backend reports that penalty
+                // truthfully instead of erasing it (see `peer_ospf_route.rs`),
+                // so print a policy marker rather than `1000000000.00`. Must stay
+                // in sync with `POLICY_FORCED_PATH_COST` in
+                // `easytier-web/frontend-lib/src/modules/statusDisplay.ts`.
+                const POLICY_FORCED_PATH_COST: i32 = 1_000_000_000;
                 let lat_ms = if route.cost == 1 {
-                    p.get_latency_ms().unwrap_or(0.0)
+                    format!("{:.2}", p.get_latency_ms().unwrap_or(0.0))
+                } else if route.path_latency_latency_first() >= POLICY_FORCED_PATH_COST {
+                    "policy detour".to_string()
                 } else {
-                    route.path_latency_latency_first() as f64
+                    format!("{:.2}", route.path_latency_latency_first() as f64)
                 };
                 PeerTableItem {
                     cidr: route.ipv4_addr.map(|ip| ip.to_string()).unwrap_or_default(),
@@ -1544,7 +1553,7 @@ impl<'a> CommandHandler<'a> {
                         .unwrap_or_default(),
                     hostname: route.hostname.clone(),
                     cost: cost_to_str(route.cost),
-                    lat_ms: format!("{:.2}", lat_ms),
+                    lat_ms,
                     loss_rate: format!("{:.1}%", p.get_loss_rate().unwrap_or(0.0) * 100.0),
                     rx_bytes: format_size(p.get_rx_bytes().unwrap_or(0), humansize::DECIMAL),
                     tx_bytes: format_size(p.get_tx_bytes().unwrap_or(0), humansize::DECIMAL),

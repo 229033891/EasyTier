@@ -732,10 +732,35 @@ impl VirtualNic {
         let dev = AsyncDevice::new(dev)?;
 
         let flags = self.global_ctx.get_flags();
-        let mut mtu_in_config = flags.mtu;
-        if flags.enable_encryption {
-            mtu_in_config -= 20;
-        }
+        // CRITICAL (CR-13): this used to be an unchecked `mtu_in_config -= 20`
+        // on a `u32`. The subtraction underflows for any configured MTU below
+        // the encryption overhead, and on Linux the oversized result then
+        // becomes a negative `libc::c_int` in `SIOCSIFMTU`, which fails with a
+        // bare `EINVAL` instead of a usable configuration error.
+        //
+        // `validate_tunnel_mtu` is the single shared rule (also applied by
+        // `api_input`), so the config entry point and the consumer cannot
+        // disagree about what counts as a usable MTU.
+        let mtu_in_config = match easytier_core::config::validate_tunnel_mtu(flags.mtu) {
+            Ok(configured) => configured,
+            Err(err) => {
+                tracing::error!(
+                    ?err,
+                    configured_mtu = flags.mtu,
+                    "refusing to start tun interface with an unusable MTU"
+                );
+                return Err(anyhow::anyhow!("invalid tunnel MTU {}: {err}", flags.mtu).into());
+            }
+        };
+        // `validate_tunnel_mtu` guarantees `mtu >= MIN_TUNNEL_MTU`, which is
+        // `ENCRYPTION_MTU_OVERHEAD` above the IPv6 minimum MTU, so this cannot
+        // underflow. `saturating_sub` is kept as a belt-and-braces guarantee
+        // that a future constant change can never silently wrap.
+        let mtu_in_config = if flags.enable_encryption {
+            mtu_in_config.saturating_sub(easytier_core::config::ENCRYPTION_MTU_OVERHEAD)
+        } else {
+            mtu_in_config
+        };
         {
             // set mtu by ourselves, rust-tun does not handle it correctly on windows
             let _g = self.global_ctx.net_ns.guard();

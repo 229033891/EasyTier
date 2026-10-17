@@ -48,6 +48,13 @@ pub struct PeerMap {
     packet_send: PacketRecvChan,
     routes: RwLock<Vec<ArcRoute>>,
     alive_client_urls: Arc<Mutex<HashMap<url::Url, HashSet<PeerConnId>>>>,
+    /// Peers present in `peer_map` that do not yet have a connection attached.
+    ///
+    /// `PeerConn::start_recv_loop` awaits, so for a moment a freshly created peer
+    /// legitimately has an empty `conns`. `clean_peer_without_conn` would read
+    /// that as a leak and delete the peer out from under the connection being
+    /// established, so this set tells it to leave those alone.
+    connecting_peers: DashSet<PeerId>,
 }
 
 impl PeerMap {
@@ -63,26 +70,65 @@ impl PeerMap {
             packet_send,
             routes: RwLock::new(Vec::new()),
             alive_client_urls: Arc::new(Mutex::new(HashMap::new())),
+            connecting_peers: DashSet::new(),
         }
-    }
-
-    async fn add_new_peer(&self, peer: Peer) {
-        let peer_id = peer.peer_node_id;
-        self.peer_map.insert(peer_id, Arc::new(peer));
-        self.context.issue_event(PeerEvent::PeerAdded(peer_id));
     }
 
     pub async fn add_new_peer_conn(&self, peer_conn: PeerConn) -> Result<(), Error> {
         let _ = self.maintain_alive_client_urls(&peer_conn);
         let peer_id = peer_conn.get_peer_id();
-        let no_entry = self.peer_map.get(&peer_id).is_none();
-        if no_entry {
-            let new_peer = Peer::new(peer_id, self.packet_send.clone(), self.context.clone());
-            new_peer.add_peer_conn(peer_conn).await?;
-            self.add_new_peer(new_peer).await;
-        } else {
-            let peer = self.peer_map.get(&peer_id).unwrap().clone();
-            peer.add_peer_conn(peer_conn).await?;
+
+        // CRITICAL: this used to do a `peer_map.get(..).is_none()` check, then
+        // `await` inside `Peer::new(..).add_peer_conn(..)`, then a separate
+        // `insert`. Two problems in that shape:
+        //
+        // 1. Two concurrent connections to the same peer could both observe
+        //    "absent", each build a *private* `Peer`, attach its own conn, and
+        //    then race to `insert` — the loser's connection was silently
+        //    discarded, leaving a peer that reconnects forever.
+        // 2. The `else` branch re-looked the peer up and `.unwrap()`ed it. The
+        //    3s `clean_peer_without_conn` could remove the entry inside that
+        //    window, turning a normal race into a panic (and, under
+        //    `panic = "abort"`, a process abort).
+        //
+        // `entry().or_insert_with(..)` makes find-or-create atomic, and the
+        // `Arc` is cloned out of the entry so the map guard — and its shard lock
+        // — is released before any `.await`.
+        let created = std::cell::Cell::new(false);
+        let peer = {
+            let entry = self.peer_map.entry(peer_id).or_insert_with(|| {
+                created.set(true);
+                Arc::new(Peer::new(
+                    peer_id,
+                    self.packet_send.clone(),
+                    self.context.clone(),
+                ))
+            });
+            entry.clone()
+        };
+        let created = created.get();
+        if created {
+            // Protect the conn-less window below from `clean_peer_without_conn`.
+            self.connecting_peers.insert(peer_id);
+        }
+
+        let add_result = peer.add_peer_conn(peer_conn).await;
+
+        // The peer has a connection (or failed to get one); either way it is no
+        // longer in the "under construction" state.
+        self.connecting_peers.remove(&peer_id);
+
+        if let Err(e) = add_result {
+            // Only undo the entry we created; an existing peer must survive a
+            // rejected connection.
+            if created {
+                self.peer_map.remove(&peer_id);
+            }
+            return Err(e);
+        }
+
+        if created {
+            self.context.issue_event(PeerEvent::PeerAdded(peer_id));
         }
         Ok(())
     }
@@ -147,6 +193,39 @@ impl PeerMap {
 
     pub fn has_peer(&self, peer_id: PeerId) -> bool {
         peer_id == self.my_peer_id || self.peer_map.contains_key(&peer_id)
+    }
+
+    /// Whether a packet can actually be handed to `peer_id` right now: either it
+    /// is us (the self-send path), or the map entry still holds ≥1 live PeerConn.
+    ///
+    /// `has_peer` is `contains_key` and stays true after the last conn dies
+    /// (the entry is only reaped by the close listener). Forwarding decisions
+    /// must NOT use it as an availability check: a dead entry passes the gate,
+    /// the send then fails deep inside `Peer::send_msg`, and — because the
+    /// branch that holds the dead conn is matched first — the caller never
+    /// falls through to the next usable path (relay). That is exactly the case
+    /// where a relay leg *should* save the packet (P-AUDIT.4 / audit C3+C6).
+    ///
+    /// Selection (`get_gateway_peer_id`) intentionally keeps using `has_peer`:
+    /// "who should be the next hop" is a topology question, "can we hand it to
+    /// them" is this one. Conflating them would change routing, not just
+    /// availability.
+    pub fn has_peer_with_live_conn(&self, peer_id: PeerId) -> bool {
+        if peer_id == self.my_peer_id {
+            return true;
+        }
+        // Clone the Arc and drop the map guard *before* touching the peer's own
+        // `conns` map — same discipline as `add_new_peer_conn` a few lines up.
+        // This runs once per forwarded packet, so it must not hold two DashMap
+        // shard locks at the same time even if no current caller inverts the
+        // order.
+        match self.peer_map.get(&peer_id) {
+            Some(peer) => {
+                let peer = peer.clone();
+                peer.has_live_conns()
+            }
+            None => false,
+        }
     }
 
     #[cfg(test)]
@@ -445,6 +524,11 @@ impl PeerMap {
         let mut to_remove = vec![];
 
         for peer_id in self.list_peers() {
+            // A peer that is still having its first connection attached has no
+            // conns yet; that is transient, not a leak.
+            if self.connecting_peers.contains(&peer_id) {
+                continue;
+            }
             let conns = self.list_peer_conns(peer_id).await;
             if conns.is_none() || conns.as_ref().unwrap().is_empty() {
                 to_remove.push(peer_id);

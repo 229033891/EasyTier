@@ -144,7 +144,10 @@ export function DEFAULT_NETWORK_CONFIG(): NetworkConfig {
     ipv6_public_addr_auto: false,
     ipv6_public_addr_provider: false,
     ipv6_public_addr_prefix: '',
-    enable_kcp_proxy: true,
+    // KCP is off by default, matching core `gen_default_flags()`: the lossy-link
+    // proxy costs CPU on every hop and its auto-enable policy is still a roadmap
+    // item (P2.5). Users who want it opt in explicitly.
+    enable_kcp_proxy: false,
     disable_kcp_input: false,
     enable_quic_proxy: false,
     disable_quic_input: false,

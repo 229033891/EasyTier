@@ -196,6 +196,27 @@ fn build_tcp_packet(src: SocketAddr, dst: SocketAddr) -> Vec<u8> {
     buf
 }
 
+/// Build a well-formed IPv4/TCP packet whose TCP `data_offset` is deliberately
+/// illegal (`header_len < 20`).
+///
+/// CRITICAL (CR-04): `smoltcp`'s `TcpPacket::new_checked` rejects a header when
+/// `len < 20`, `header_len > len`, **or `header_len < 20`** — and `data_offset`
+/// is entirely peer-controlled. `TcpProxyService::handle_peer_packet` only
+/// validated the IPv4 header and `next_header == Tcp` before calling
+/// `.expect("checked tcp packet")`, so this one packet aborted the process under
+/// `panic = "abort"`.
+fn build_tcp_packet_with_bad_data_offset(
+    src: SocketAddr,
+    dst: SocketAddr,
+    data_offset_words: u8,
+) -> Vec<u8> {
+    let mut buf = build_tcp_packet(src, dst);
+    // Byte 12 of the TCP header is the high nibble of data offset.
+    buf[20 + 12] = (data_offset_words & 0xf0) | (buf[20 + 12] & 0x0f);
+    buf[20 + 13] = data_offset_words & 0x0f;
+    buf
+}
+
 fn build_udp_followup_fragment(src: Ipv4Addr, dst: Ipv4Addr) -> Vec<u8> {
     let mut buf = vec![0u8; 28];
     {
@@ -870,6 +891,64 @@ async fn data_plane_passes_through_unmatched_or_malformed_modified_data() {
     malformed_packet.fill_peer_manager_hdr(1, 2, PacketType::DataWithQuicSrcModified as u8);
     let result = gateway.try_process_packet_from_peer(malformed_packet).await;
     assert!(result.is_some());
+
+    let mut receiver = gateway.packet_recv.lock().await;
+    assert!(receiver.try_recv().is_err());
+}
+
+#[tokio::test]
+async fn data_plane_passes_through_tcp_packet_with_illegal_data_offset() {
+    // CR-04 regression: the peer path used `.expect("checked tcp packet")` here,
+    // which a peer-controlled `data_offset < 5` could trip.
+    //
+    // Note `from_peer_id == to_peer_id` is required: the KCP/QUIC src modes only
+    // enter the TCP parse for loopback-modified packets, otherwise the packet is
+    // rejected as "not ours" before the header is ever looked at.
+    let gateway = test_gateway();
+    let local = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(10, 144, 144, 1)), 40000);
+    let remote = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(10, 144, 144, 3)), 22);
+    gateway.entries.insert(
+        FlowKey {
+            src: local,
+            dst: remote,
+            kind: TCP_ENTRY,
+        },
+        FlowData::Tcp {
+            _reservation: Arc::new(()),
+        },
+    );
+
+    for packet_type in [
+        PacketType::DataWithKcpSrcModified,
+        PacketType::DataWithQuicSrcModified,
+    ] {
+        for data_offset_words in [0u8, 1, 4] {
+            // Sanity: the helper really does produce a header smoltcp rejects,
+            // otherwise this test would pass for the wrong reason.
+            let raw = build_tcp_packet_with_bad_data_offset(remote, local, data_offset_words);
+            assert!(
+                TcpPacket::new_checked(&raw[20..]).is_err(),
+                "data_offset {data_offset_words} was expected to be rejected by smoltcp"
+            );
+
+            let mut packet = ZCPacket::new_with_payload(&raw);
+            packet.fill_peer_manager_hdr(7, 7, packet_type as u8);
+
+            // Must be passed through rather than panic or be swallowed.
+            let passed = gateway
+                .try_process_packet_from_peer(packet)
+                .await
+                .expect("malformed TCP packet was swallowed instead of passed through");
+            // ...and the `Pass` path must not have relabelled the packet as
+            // plain `Data`; that would corrupt the upstream demultiplexing.
+            assert_eq!(
+                passed.peer_manager_header().unwrap().packet_type,
+                packet_type as u8,
+                "packet_type={packet_type:?} data_offset={data_offset_words} was relabelled \
+                 on the Pass path"
+            );
+        }
+    }
 
     let mut receiver = gateway.packet_recv.lock().await;
     assert!(receiver.try_recv().is_err());

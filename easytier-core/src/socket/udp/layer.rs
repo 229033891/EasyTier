@@ -2,6 +2,7 @@ use std::{
     io,
     net::{SocketAddr, SocketAddrV4, SocketAddrV6},
     sync::{Arc, Mutex as StdMutex, atomic::Ordering},
+    time::Instant,
 };
 
 use async_trait::async_trait;
@@ -446,6 +447,7 @@ pub(super) async fn udp_session_layer_recv_task<S, R>(
     R: UdpSessionStunResponder<S>,
 {
     let control_permits = Arc::new(Semaphore::new(UDP_SESSION_QUEUE_CAPACITY));
+    let change_request_budget = ChangeRequestBudget::default();
     loop {
         let datagram = match socket.recv_session_datagram().await {
             Ok(datagram) => datagram,
@@ -485,6 +487,7 @@ pub(super) async fn udp_session_layer_recv_task<S, R>(
                     socket.clone(),
                     stun_responder.clone(),
                     control_permits.clone(),
+                    change_request_budget.clone(),
                     datagram_payload.clone(),
                     remote_addr,
                 );
@@ -918,10 +921,91 @@ fn dispatch_hole_punch_packet(
     true
 }
 
+/// Fresh-socket (RFC 5780 `ChangeRequest`) responses allowed per source
+/// address before we stop being willing to burn a socket on it.
+pub(crate) const CHANGE_REQUEST_BURST: u32 = 8;
+
+/// How much of the burst is replenished per second, per source address.
+const CHANGE_REQUEST_REFILL_PER_SEC: u32 = 2;
+
+/// Upper bound on how many distinct source addresses get a bucket.
+///
+/// The source address of an inbound UDP datagram is trivially spoofable, so this
+/// map must not be allowed to grow with it.
+pub(crate) const MAX_TRACKED_CHANGE_REQUEST_SOURCES: usize = 1024;
+
+/// Per-source budget for STUN responses that need a freshly bound socket.
+///
+/// A `ChangeRequest` attribute makes us answer from a *new* socket so the client
+/// can observe a different source port (the RFC 5780 NAT-mapping-discovery
+/// trick). That is a socket allocation per datagram, and the only gate in front
+/// of it is a concurrency semaphore — which bounds how many handlers run at once
+/// but not how many a sender can push through over time. A single spoofed source
+/// could therefore drive unbounded socket churn.
+///
+/// A legitimate client sends a handful of these, so a small burst with a slow
+/// refill leaves real clients untouched. Once a source is out of budget we answer
+/// on the existing socket instead: the client still learns the mapping (that is
+/// what matters for hole punching), it just does not observe the port change.
+/// That degrades one niche RFC feature rather than an unbounded resource.
+#[derive(Debug, Default)]
+pub(crate) struct ChangeRequestBudget {
+    buckets: DashMap<SocketAddr, (Instant, u32)>,
+}
+
+impl Clone for ChangeRequestBudget {
+    fn clone(&self) -> Self {
+        // Shared, not deep-copied: the receive loop hands a cheap handle to each
+        // spawned handler and they must all spend from one budget.
+        Self {
+            buckets: self.buckets.clone(),
+        }
+    }
+}
+
+impl ChangeRequestBudget {
+    /// Spend one unit of `remote_addr`'s budget.
+    pub(crate) fn take(&self, remote_addr: SocketAddr) -> bool {
+        if !self.buckets.contains_key(&remote_addr)
+            && self.buckets.len() >= MAX_TRACKED_CHANGE_REQUEST_SOURCES
+        {
+            // Refusing to track new sources keeps a spoofed flood from growing
+            // this map without bound.
+            return false;
+        }
+
+        let now = Instant::now();
+        let mut entry = self
+            .buckets
+            .entry(remote_addr)
+            .or_insert((now, CHANGE_REQUEST_BURST));
+        let (last_refill, remaining) = &mut *entry;
+
+        // Refill at a fixed rate, capped at the burst size.
+        let elapsed = now.saturating_duration_since(*last_refill);
+        *remaining = (*remaining as f64
+            + (elapsed.as_secs_f64() * f64::from(CHANGE_REQUEST_REFILL_PER_SEC)))
+        .min(f64::from(CHANGE_REQUEST_BURST)) as u32;
+        *last_refill = now;
+
+        if *remaining == 0 {
+            return false;
+        }
+        *remaining -= 1;
+        true
+    }
+
+    #[cfg(test)]
+    pub(crate) fn tracked_sources(&self) -> usize {
+        self.buckets.len()
+    }
+}
+
 fn spawn_stun_control_handler<S, H>(
     socket: Arc<S>,
     stun_responder: Arc<H>,
     permits: Arc<Semaphore>,
+    change_request_budget: ChangeRequestBudget,
     datagram: BytesMut,
     remote_addr: SocketAddr,
 ) where
@@ -932,10 +1016,19 @@ fn spawn_stun_control_handler<S, H>(
         tracing::debug!(?remote_addr, "udp stun responder queue full");
         return;
     };
+    // Decided before spawning so the limiter itself cannot be saturated by
+    // queued-but-not-yet-run handlers.
+    let allow_fresh_socket = change_request_budget.take(remote_addr);
+    if !allow_fresh_socket {
+        tracing::debug!(
+            ?remote_addr,
+            "stun change-request socket budget exhausted; replying on the existing socket"
+        );
+    }
     tokio::spawn(async move {
         let _permit = permit;
         if let Err(err) = stun_responder
-            .respond_stun(socket, &datagram, remote_addr)
+            .respond_stun_with_options(socket, &datagram, remote_addr, allow_fresh_socket)
             .await
         {
             tracing::debug!(?err, ?remote_addr, "udp respond stun packet error");

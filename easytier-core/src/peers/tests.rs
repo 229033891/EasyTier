@@ -322,6 +322,61 @@ async fn peer_channel_uses_admission_origin_instead_of_packet_header() {
     );
 }
 
+/// P-AUDIT.4: a peer entry outlives its last PeerConn, so `has_peer`
+/// (contains_key) cannot be used as an availability check. The forwarding gate
+/// must reject the dead entry so the packet can fall through to a relay leg
+/// instead of failing inside `Peer::send_msg`.
+#[tokio::test]
+async fn has_peer_with_live_conn_tracks_conn_liveness_not_map_presence() {
+    let peer_session_store = Arc::new(PeerSessionStore::new());
+    let (client_tunnel, server_tunnel) = create_ring_tunnel_pair();
+    let client_ctx = Arc::new(NoopPeerContext::default());
+    let server_ctx = Arc::new(NoopPeerContext::default());
+
+    let mut client_conn = PeerConn::new(
+        1,
+        client_ctx.clone(),
+        client_tunnel,
+        peer_session_store.clone(),
+    );
+    let mut server_conn = PeerConn::new(2, server_ctx.clone(), server_tunnel, peer_session_store);
+    let (client_ret, server_ret) = tokio::join!(
+        client_conn.do_handshake_as_client(),
+        server_conn.do_handshake_as_server(),
+    );
+    client_ret.unwrap();
+    server_ret.unwrap();
+
+    let (client_tx, _client_rx) = create_packet_recv_chan();
+    let client_map = PeerMap::new(client_tx, client_ctx, 1);
+    client_map.add_new_peer_conn(client_conn).await.unwrap();
+
+    // Self is always reachable (self-send path), even with an empty peer map.
+    assert!(client_map.has_peer_with_live_conn(1));
+    // Unknown peer: both predicates agree.
+    assert!(!client_map.has_peer(999));
+    assert!(!client_map.has_peer_with_live_conn(999));
+
+    // Live conn: both true.
+    assert!(client_map.has_peer(2));
+    assert!(client_map.has_peer_with_live_conn(2));
+
+    let conn_id = client_map.get_peer_default_conn_id(2).await.unwrap();
+    client_map.close_peer_conn(2, &conn_id).await.unwrap();
+    timeout(Duration::from_secs(1), async {
+        while client_map.has_peer_with_live_conn(2) {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+
+    // The whole point: the map entry lingers, so `has_peer` still says yes
+    // while the availability check correctly says no.
+    assert!(client_map.has_peer(2));
+    assert!(!client_map.has_peer_with_live_conn(2));
+}
+
 #[tokio::test]
 async fn peer_map_reselects_cached_connection_after_close() {
     let peer_session_store = Arc::new(PeerSessionStore::new());

@@ -32,6 +32,14 @@ pub enum Error {
 
     #[error("Shutdown")]
     Shutdown,
+
+    /// The callee is temporarily at capacity and the caller should retry later.
+    ///
+    /// Used by admission-limited RPCs (e.g. hole punching) so a saturated server
+    /// sheds load instead of accumulating unbounded per-request work. Distinct
+    /// from [`Error::ExecutionError`], which means the request itself was bad.
+    #[error("Service temporarily unavailable: {0}")]
+    ServiceUnavailable(String),
 }
 
 impl From<prost::DecodeError> for Error {

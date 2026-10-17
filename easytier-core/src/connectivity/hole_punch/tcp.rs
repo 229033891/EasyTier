@@ -14,7 +14,7 @@ use async_trait::async_trait;
 use dashmap::DashMap;
 use quanta::Instant;
 use rand::RngExt as _;
-use tokio::task::JoinSet;
+use tokio::{sync::Semaphore, task::JoinSet};
 use tokio_util::task::AbortOnDropHandle;
 
 use crate::{
@@ -441,7 +441,20 @@ where
     tasks: Arc<Mutex<JoinSet<()>>>,
     reaper: Mutex<Option<AbortOnDropHandle<()>>>,
     stopping: AtomicBool,
+    /// Admits at most this many concurrent `exchange_mapped_addr` rounds.
+    ///
+    /// CRITICAL: each round binds a local port, runs a STUN probe and spawns a
+    /// task that retries the connect up to five times. Nothing capped how many
+    /// rounds could be in flight, so a peer calling this repeatedly could hold
+    /// the node in unbounded socket churn plus outbound STUN traffic. The UDP
+    /// punch path already serialises itself (`sym_punch_lock`); the TCP side had
+    /// no equivalent.
+    admission: Arc<Semaphore>,
 }
+
+/// Enough concurrent TCP punch rounds to cover a realistic mesh while keeping
+/// the worst-case socket/probe fan-out bounded.
+const MAX_CONCURRENT_TCP_PUNCH_ROUNDS: usize = 16;
 
 impl<H> TcpHolePunchServer<H>
 where
@@ -461,6 +474,7 @@ where
             tasks: Arc::new(Mutex::new(JoinSet::new())),
             reaper: Mutex::new(None),
             stopping: AtomicBool::new(true),
+            admission: Arc::new(Semaphore::new(MAX_CONCURRENT_TCP_PUNCH_ROUNDS)),
         })
     }
 
@@ -510,6 +524,16 @@ where
         _controller: Self::Controller,
         input: TcpHolePunchRequest,
     ) -> rpc_types::error::Result<TcpHolePunchResponse> {
+        // Taken before any bind or STUN probe. `try_acquire` (not `acquire`) so
+        // a saturated server rejects rather than piling up waiters that would
+        // all fire the moment a permit frees.
+        let _admission = self.admission.clone().try_acquire_owned().map_err(|_| {
+            tracing::warn!("tcp hole punch rpc rejected: too many concurrent rounds");
+            rpc_types::error::Error::ServiceUnavailable(
+                "too many concurrent tcp hole punch rounds".to_owned(),
+            )
+        })?;
+
         let local_nat_type =
             NatType::try_from(self.stun.get_stun_info().tcp_nat_type).unwrap_or(NatType::Unknown);
         tracing::debug!(?local_nat_type, "tcp hole punch rpc received");

@@ -125,6 +125,12 @@ impl RpcOperationSession {
                             .timeout_ms
                             .map(std::time::Duration::from_millis),
                         None,
+                        // Operation requests carry no tunnel, so there is no
+                        // transport-verified identity (CR-07). Handlers that
+                        // require identity binding must treat `None` as
+                        // "unauthenticated" rather than falling back to a
+                        // request-body peer id.
+                        None,
                     )
                     .await
                 } => {

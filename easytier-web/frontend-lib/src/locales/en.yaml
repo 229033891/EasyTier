@@ -205,6 +205,15 @@ tunnel_proto: Protocol
 peer_addr: Peer Address
 hostname: Hostname
 latency: Latency
+path_latency_policy_forced: Policy detour
+tunnel_proto_tcp_over_tcp_warning: " ⚠"
+tunnel_proto_tcp_over_tcp_help: |-
+  Every tunnel to this peer uses a retransmitting transport (TCP / QUIC / KCP).
+  An inner TCP stream (RDP / SSH / HTTP) then becomes TCP-over-TCP, where mild
+  packet loss causes severe stalls.
+  Usual cause: "protocol order" includes `tcp` and the dial fell back after UDP
+  was throttled or blocked.
+  Fix: when UDP works, set "protocol order" to `udp` only (or `udp,quic`).
 path_quality: Quality
 path_quality_help: |-
   Per-tunnel path score (lower is better: RTT + loss + jitter).

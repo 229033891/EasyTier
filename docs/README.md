@@ -62,6 +62,7 @@ crate 内设计稿（非本索引）：`easytier/docs/`（凭据计划已标 Arc
 | [traffic-camouflage.md](./roadmap/traffic-camouflage.md) | 传输伪装 / 抗识别（wss 范式与 TLS 外观，Draft） |
 | [traffic-camouflage-phase-a-todo.md](./roadmap/traffic-camouflage-phase-a-todo.md) | Phase A TODO：中继 + wss:443 Ops/状态（**暂不实现**） |
 | [connection-stability-todo.md](./roadmap/connection-stability-todo.md) | 连接稳定性优化 TODO（相对 OpenVPN/IPsec；**端点可自定义，不假设 443**） |
+| [code-review-fixes-2026-10.md](./roadmap/code-review-fixes-2026-10.md) | **全仓代码审查修复清单**（15 条 CR-01…CR-15 + 10 条附带发现；`panic=abort` 放大前提；分 Phase A–D） |
 | [web-evolution.md](./roadmap/web-evolution.md) | easytier-web 演进约束与阶段 |
 | [web-console-runtime-diagnostics.md](./roadmap/web-console-runtime-diagnostics.md) | 控制台侧栏：**系统诊断** + **运行日志**（预定 vs 实际 / ring buffer；MVP 已实现待验收） |
 | [web-console-log-persistence.md](./roadmap/web-console-log-persistence.md) | 控制台**日志本地留存**：默认 `./logs`+warn 滚动（可写性预检降级）+ 运行日志页读文件筛选（A/B/C 已落地，待验收） |
@@ -115,3 +116,68 @@ crate 内设计稿（非本索引）：`easytier/docs/`（凭据计划已标 Arc
 2. 从 Roadmap 开工前，先把 Status 改为 Accepted / In progress；Current 仅预留**已知缺口**（勿把未实现方案写成现状）。
 3. **Current 严门槛**：代码落地但未达「可依赖」（待联调 / 待现网）→ 只更新绑定 Roadmap；行为已可依赖后再改对应 `current/`，Roadmap 标剩余缺口 / Superseded / Archive。细则与决策表见 [`ops/doc-update-after-task.md`](./ops/doc-update-after-task.md)。
 4. 对外与 Current/Ops/Roadmap 文遵守上文「品牌与溯源」硬约束；涉及 `main`/`dev` 分支同步的历史跟踪放 `archive/`。
+5. **引用验证结果必须写明口径**（跑的是哪个 feature 组合 / 哪条命令）—— 见下节「本地构建与验证」的 feature 门控说明。裸数字（如「1150 passed」）不带口径就是错误信息。
+
+---
+
+## 本地构建与验证
+
+> **结论先行**：本机**可以**完整跑 `cargo check` / `cargo test` / `cargo clippy` / `cargo fmt`。
+> 历史上多次出现「本环境编不了、缺原生工具链（`zstd-sys`）」的判断 —— 那是**沙箱未禁用**时的现象，**不是真的缺工具链**。2026-10-17 已实测推翻：`cargo check -p easytier` 通过（`zstd-sys` / `zstd-safe` / `zstd` 均正常编译）。
+> 引用旧文档时注意：`docs/roadmap/code-review-fixes-2026-10.md` 与 `docs/current/tailscale-gap-and-conflict-audit.md` 曾以此为「不做某项改动」的理由，该理由已不成立。
+
+### 前提（两条缺一不可）
+
+1. **禁用沙箱** —— 调用 Bash 工具时传 `dangerouslyDisableSandbox: true`。
+   沙箱会拦 `reg.exe`（使 `vcvars64.bat` 失败），并让写 `CARGO_TARGET_DIR` 报 `os error 5（拒绝访问）`。
+2. **注入 MSVC 环境** —— 普通终端跑一次 `vcvars64.bat`（或从「x64 Native Tools Command Prompt」启动）即可；**自动化工具里的 Bash 禁止调 `cmd.exe`**，只能手写下面这几个变量：
+
+```bash
+export MSVC="/c/Program Files (x86)/Microsoft Visual Studio/2022/BuildTools/VC/Tools/MSVC/14.44.35207"
+export PATH="$PATH:$MSVC/bin/Hostx64/x64"
+export INCLUDE="C:\\Program Files (x86)\\Microsoft Visual Studio\\2022\\BuildTools\\VC\\Tools\\MSVC\\14.44.35207\\include;C:\\Program Files (x86)\\Windows Kits\\10\\Include\\10.0.26100.0\\ucrt;C:\\Program Files (x86)\\Windows Kits\\10\\Include\\10.0.26100.0\\shared;C:\\Program Files (x86)\\Windows Kits\\10\\Include\\10.0.26100.0\\um"
+export LIB="C:\\Program Files (x86)\\Microsoft Visual Studio\\2022\\BuildTools\\VC\\Tools\\MSVC\\14.44.35207\\lib\\x64;C:\\Program Files (x86)\\Windows Kits\\10\\Lib\\10.0.26100.0\\ucrt\\x64;C:\\Program Files (x86)\\Windows Kits\\10\\Lib\\10.0.26100.0\\um\\x64"
+export CARGO_PROFILE_DEV_DEBUG=0 CARGO_INCREMENTAL=0 CARGO_TARGET_DIR='D:\EasyTier\.cache\cargo-target'
+```
+
+- `14.44.35207` / `10.0.26100.0` 随本机安装变化，按实际目录替换。
+- 用 **Bash 工具**跑 cargo；PowerShell 工具对 `.exe` 走管道会报 `CantActivateDocumentInPipeline`。
+- `CARGO_PROFILE_DEV_DEBUG=0` 省掉调试信息，编译更快、占盘更小。
+
+### 常用命令
+
+| 目的 | 命令 |
+|---|---|
+| 类型检查（core） | `cargo check -p easytier-core` |
+| 类型检查（**全链路**，含 TUN / CLI） | `cargo check -p easytier` |
+| 单测（**默认 features**） | `cargo test -p easytier-core --lib` → **986** |
+| 单测（含数据面 / TCP 代理） | `cargo test -p easytier-core --lib --features proxy-smoltcp-stack` → **1150** |
+| lint | `cargo clippy -p easytier-core -p easytier-proto --tests` |
+| 格式（CI 会卡） | `cargo fmt --check` |
+| 前端单测 | `cd easytier-web/frontend-lib && node node_modules/vitest/vitest.mjs run --config vitest.config.ts` → **192** |
+
+### ⚠️ feature 门控：引用测试数**必须**写明口径
+
+`easytier-core` 默认 features = `aes-gcm` / `endpoint-discovery` / `extended-services` / `management` / `tcp-hole-punch`，**不含** `proxy-smoltcp-stack`，而 `gateway/dataplane/**` **整个模块**（`gateway/mod.rs`）被它门控。于是：
+
+- 裸 `--lib` → **986** passed
+- 叠加 `--features proxy-smoltcp-stack` → **1150** passed（`gateway/dataplane/tests.rs` 一个文件就 19 条）
+
+两者**不是同一口径，不能相减**。同理，`proxy-packet` 门控的代码（`gateway/magic_dns/{packet,observe}.rs`、`instance/packet_plane` 的 `register_magic_dns_resolver` 等）在裸 `cargo check -p easytier-core` 下**静默跳过、不报错** —— 改到这些文件时必须显式加 `--features proxy-packet`，或直接 `cargo check -p easytier`（该 crate 经 `quic`/`kcp`/`icmp-proxy` 默认开 `proxy-packet`）。
+
+### 已知坑
+
+| 现象 | 处理 |
+|---|---|
+| `failed to write …\.fingerprint\…\lib-*.json` + `拒绝访问。(os error 5)` | 删掉那个 `.json` 后重跑即可（偶发文件锁，非权限配置问题） |
+| `--features full` 失败：`openssl-sys: Command 'perl' not found` | `full` 含 `openssl-crypto`，要从源码构建 OpenSSL。CI 的 `cargo clippy --all-targets --features full -- -D warnings` **本地无法复现**；要跑需先装 Strawberry Perl |
+| 默认 features 下出现一批「never used」告警 | 多数是 feature 门控造成的**假死代码**，**不要盲删** |
+
+### 前端 / proto（不必走 pnpm）
+
+- 类型检查：`node easytier-web/frontend-lib/node_modules/vue-tsc/bin/vue-tsc.js -b`
+- 单测：`node easytier-web/frontend-lib/node_modules/vitest/vitest.mjs run --config vitest.config.ts`
+- proto TS 生成：`node scripts/codegen-proto.mjs`（`@protobuf-ts/protoc` 自带 protoc，无需系统安装）
+- Rust 侧 proto：由 `easytier-proto/build/main.rs` 自动下载 protoc（Windows 走 GitHub release）
+- 不跑 cargo 时的替代校验：`rustfmt --edition 2024 --check <file>`（edition 必须写 2024，否则 let-chains 会误报「only allowed in Rust 2024」）
+

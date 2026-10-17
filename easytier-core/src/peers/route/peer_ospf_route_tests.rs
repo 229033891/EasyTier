@@ -1184,6 +1184,124 @@ fn missing_peer_resync_does_not_repeat_metadata_for_absent_connection_rows() {
     );
 }
 
+/// P-AUDIT.8: `clear_expired_peer` removes a stale peer only when the topology
+/// also says it is unreachable. While some neighbour still *claims* adjacency
+/// to it, the peer survives with **stale** data and keeps appearing in
+/// `list_routes` (i.e. in the status page) for as long as that claim holds.
+///
+/// This test pins down that behaviour so the expiry window can be reasoned
+/// about precisely instead of guessed.
+#[tokio::test]
+async fn stale_peer_survives_while_a_neighbour_still_claims_adjacency() {
+    let service = test_service_impl(1);
+    let now = SystemTime::now();
+    let old = now - Duration::from_secs(120);
+
+    for peer_id in 1..=3 {
+        install_peer_info(&service, peer_id, Vec::new(), false);
+    }
+    // me(1) <-> alive(2); alive(2) still advertises dead(3).
+    install_conn_row(&service, 1, [2]);
+    install_conn_row(&service, 2, [1, 3]);
+    install_conn_row(&service, 3, [2]);
+
+    // Only peer 3 went silent.
+    for (peer_id, info) in service.synced_route_info.peer_infos.write().iter_mut() {
+        info.last_update = Some((if *peer_id == 3 { old } else { now }).into());
+    }
+    service.update_route_table_and_cached_local_conn_bitmap();
+
+    // Topology still considers 3 reachable (via 2), so expiry keeps it.
+    assert!(
+        service.route_table.topology_peer_reachable(3),
+        "precondition: 3 is still reachable through 2"
+    );
+    service.clear_expired_peer().await;
+    assert!(
+        service.synced_route_info.peer_infos.read().contains_key(&3),
+        "a stale-but-still-claimed peer must survive the 90s unreachable sweep"
+    );
+
+    // ...and it is still advertised to the UI.
+    let routes = service
+        .route_table
+        .list_routes(1, &service.route_table_with_cost);
+    assert!(
+        routes.iter().any(|r| r.peer_id == 3),
+        "the status page keeps a row for a peer nobody has heard from in 120s"
+    );
+
+    // Now the neighbour stops claiming it — the state every real mesh reaches
+    // once its own neighbours prune the dead peer. Convergence follows.
+    //
+    // `next_hop_map` entries are only ever updated/inserted; an entry that
+    // stops being reachable is dropped by `clean_expired_route_info` once the
+    // snapshot version moves past it, so the version has to advance here too
+    // (in production it advances on every route sync).
+    install_conn_row(&service, 2, [1]);
+    service.synced_route_info.version.set_if_larger(100);
+    service.update_route_table_and_cached_local_conn_bitmap();
+    service.route_table.clean_expired_route_info();
+    assert!(!service.route_table.topology_peer_reachable(3));
+    service.clear_expired_peer().await;
+    assert!(
+        !service.synced_route_info.peer_infos.read().contains_key(&3),
+        "once unclaimed and stale, the peer is removed"
+    );
+    assert!(
+        !service
+            .route_table
+            .list_routes(1, &service.route_table_with_cost)
+            .iter()
+            .any(|r| r.peer_id == 3),
+        "and disappears from the status page"
+    );
+}
+
+/// P-AUDIT.10: the relay-policy penalty must stay visible in the reported
+/// `path_latency`.
+///
+/// It used to be `cost % AVOID_RELAY_COST`, which erased the penalty — so a
+/// path forced by policy reported the same clean latency as a merit-chosen one
+/// and the status page could not explain the routing.
+#[test]
+fn avoid_relay_penalty_is_visible_in_reported_path_latency() {
+    // Chain 1 -> 2 -> 3. Peer 2 refuses relay duty, so the 1->2 edge (and thus
+    // every path through 2) carries the policy penalty.
+    let build = |avoid: bool| -> i32 {
+        let service = test_service_impl(1);
+        install_peer_info(&service, 1, Vec::new(), false);
+        install_peer_info(&service, 2, Vec::new(), avoid);
+        install_peer_info(&service, 3, Vec::new(), false);
+        install_conn_row(&service, 1, [2]);
+        install_conn_row(&service, 2, [1, 3]);
+        install_conn_row(&service, 3, [2]);
+        service.update_route_table_and_cached_local_conn_bitmap();
+        service
+            .route_table
+            .get_topology_next_hop(3)
+            .expect("3 should be reachable via 2")
+            .path_latency
+    };
+
+    let clean = build(false);
+    let penalised = build(true);
+
+    // A measured quality edge is small; the penalty is far above it.
+    assert!(
+        clean < 1_000_000,
+        "baseline path cost should be a measured quality value, got {clean}"
+    );
+    assert!(
+        penalised > 1_000_000_000,
+        "policy-forced path must report the penalty, not erase it (got {penalised})"
+    );
+    assert!(
+        penalised > clean * 1000,
+        "penalty must dominate so the policy is still effectively a veto"
+    );
+}
+
 #[test]
 fn missing_peer_resync_deduplicates_new_versions_and_waits_for_reachability() {
     let service = test_service_impl(1);
@@ -1764,4 +1882,99 @@ fn default_proxy_remains_available_for_service_paths() {
         table.get_peer_id_for_default_route_proxy(&"8.8.8.8".parse::<IpAddr>().unwrap()),
         Some(3)
     );
+}
+
+// ---------------------------------------------------------------------------
+// CR-07: OSPF sender identity must come from the transport, not the body.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn verified_from_peer_id_accepts_matching_body() {
+    assert_eq!(resolve_verified_from_peer_id(Some(7), 7).unwrap(), 7);
+}
+
+#[test]
+fn verified_from_peer_id_rejects_impersonation() {
+    // The attack this closes: an authenticated peer writes somebody else's id
+    // into `SyncRouteInfoRequest::my_peer_id` and submits route updates under
+    // that identity.
+    assert!(resolve_verified_from_peer_id(Some(7), 9).is_err());
+}
+
+#[test]
+fn verified_from_peer_id_rejects_missing_transport_identity() {
+    // "Unauthenticated" must never degrade into "believe the caller". The
+    // operation-RPC path has no tunnel, so it has no verified identity either.
+    assert!(resolve_verified_from_peer_id(None, 9).is_err());
+}
+
+// ---------------------------------------------------------------------------
+// CR-09: a peer-reported cost must never become a zero/huge Dijkstra weight.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn negative_edge_cost_does_not_wrap_into_a_free_path() {
+    // The regression: `-1 as usize == 2^64 - 1`, and `1 + (2^64 - 1) == 0`.
+    let w = edge_cost_from_i32(-1);
+    assert_eq!(w, MIN_EDGE_COST);
+    // Simulate one relaxation step: the result must not beat the start node.
+    assert!(MIN_EDGE_COST + w > 0);
+}
+
+#[test]
+fn negative_edge_cost_floors_regardless_of_magnitude() {
+    for negative in [-1, -2, -1_000, i32::MIN] {
+        assert_eq!(
+            edge_cost_from_i32(negative),
+            MIN_EDGE_COST,
+            "cost {negative} must floor to MIN_EDGE_COST"
+        );
+    }
+}
+
+#[test]
+fn zero_and_positive_edge_costs_stay_nonzero() {
+    // 0 would degenerate `first_hop` tie-breaking even when nothing is hostile.
+    assert_eq!(edge_cost_from_i32(0), MIN_EDGE_COST);
+    assert_eq!(edge_cost_from_i32(1), 1);
+    assert_eq!(edge_cost_from_i32(500), 500);
+}
+
+// ---------------------------------------------------------------------------
+// CR-08: a peer-chosen `version` must not be able to freeze a third party.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn version_jump_limit_accepts_ordinary_increments() {
+    // Real versions advance by exactly one per routing-state change.
+    for stored in [0, 1, 7, 1_000, 500_000_000] {
+        assert!(
+            version_advance_is_plausible(stored, stored + 1),
+            "stored={stored} should accept stored+1"
+        );
+    }
+}
+
+#[test]
+fn version_jump_limit_rejects_the_u32_max_freeze() {
+    // The attack: one member claims `u32::MAX` for a third party so that the
+    // real peer's own `version + 1` can never win again.
+    assert!(!version_advance_is_plausible(0, u32::MAX));
+    assert!(!version_advance_is_plausible(1, u32::MAX));
+    assert!(!version_advance_is_plausible(12_345, u32::MAX));
+}
+
+#[test]
+fn version_jump_limit_rejects_stale_and_absurd_advances() {
+    // Out-of-order updates were already ignored; keep that behaviour.
+    assert!(!version_advance_is_plausible(10, 10));
+    assert!(!version_advance_is_plausible(10, 9));
+    // Exactly at the limit is still allowed, one past it is not.
+    assert!(version_advance_is_plausible(0, MAX_VERSION_JUMP));
+    assert!(!version_advance_is_plausible(0, MAX_VERSION_JUMP + 1));
+    // A long-lived peer's absolute version is never capped, only the jump.
+    assert!(version_advance_is_plausible(
+        u32::MAX - MAX_VERSION_JUMP,
+        u32::MAX
+    ));
 }

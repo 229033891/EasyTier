@@ -15,6 +15,21 @@ use tokio::{
 };
 use tokio_util::task::AbortOnDropHandle;
 
+/// Periodically drain finished tasks out of a [`JoinSet`] so it does not grow.
+///
+/// CRITICAL (CR-15 follow-up). This used to be
+/// `while tasks.lock().unwrap().try_join_next().is_some() {}`, which discarded
+/// every `JoinError`. This reaper is the single drain point for nine call sites
+/// (peer rpc server, foreign network, hole punch, dataplane, port forward,
+/// socks5, …), so a panicking task anywhere in those subsystems was **completely
+/// invisible**: no log, no counter, nothing. A silently dead task is precisely the
+/// failure mode that leaves the UI showing "connected" while the data plane has
+/// stopped.
+///
+/// Cancellation is *not* a failure — `JoinSet` aborts its tasks on drop, so that
+/// is the ordinary shutdown path and must stay quiet. A panic is the signal worth
+/// surfacing, and under `panic = "abort"` it can only come from a
+/// `panic = "unwind"` build (tests, or a profile that overrides it).
 pub(crate) async fn reap_joinset_background<T>(tasks: Weak<Mutex<JoinSet<T>>>, origin: &'static str)
 where
     T: Send + 'static,
@@ -24,7 +39,22 @@ where
         let Some(tasks) = tasks.upgrade() else {
             break;
         };
-        while tasks.lock().unwrap().try_join_next().is_some() {}
+        loop {
+            let finished = tasks.lock().unwrap().try_join_next();
+            let Some(finished) = finished else { break };
+            match finished {
+                Ok(_) => {}
+                Err(err) if err.is_panic() => {
+                    tracing::error!(
+                        origin,
+                        panic = %err,
+                        "background task panicked; its work has stopped silently"
+                    );
+                }
+                // Cancelled, or the task was aborted as part of shutdown.
+                Err(_) => tracing::trace!(origin, "background task ended by cancellation"),
+            }
+        }
     }
     tracing::debug!(origin, "joinset task reaper exited");
 }

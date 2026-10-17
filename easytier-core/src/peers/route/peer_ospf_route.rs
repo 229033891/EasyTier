@@ -81,8 +81,88 @@ use super::{
 
 pub type Version = u32;
 
-// the cost (latency between two peers) is i32, i32::MAX is large enough.
-const AVOID_RELAY_COST: usize = i32::MAX as usize;
+/// Cost added to every **outgoing** edge of a peer that asked not to be used as
+/// a relay (`disable_relay_data`, or a `relay_network_whitelist` miss).
+///
+/// Was `i32::MAX`. Two problems with that value:
+///
+/// 1. It made `cost += AVOID_RELAY_COST` an `usize` overflow risk (regular edge
+///    costs are added into the same accumulator), so the penalty could wrap.
+/// 2. `path_latency` recovered the "quality part" with `cost % AVOID_RELAY_COST`
+///    — which **erased its own trace**. A path forced by policy reported the same
+///    clean latency as a path chosen on merit, so the status page could not show
+///    why it was routed that way.
+///
+/// It stays ~1000x above any real edge cost (`OSPF_EDGE_COST_MAX = 1_000_000`,
+/// i.e. ~1000x an RTT-millisecond-equivalent), so it remains *effectively* a veto
+/// — you never route through a refusing peer when an alternative exists — but it
+/// is finite, saturating, and no longer hides itself from the status surface.
+/// A reported cost far above `OSPF_EDGE_COST_MAX` therefore means "this leg was
+/// policy-forced", which is the signal the status page can key on.
+const AVOID_RELAY_COST: usize = 1_000_000_000;
+
+/// Convert a possibly-negative, peer-influenced `i32` route cost into a
+/// Dijkstra-safe edge weight.
+///
+/// CRITICAL (CR-09): `RouteCostCalculator::calculate_cost` returns `i32` and is
+/// fed by data a peer can influence (the peer-center copies `latency_ms`
+/// straight out of `report_peers`). Casting a negative value with `as usize`
+/// yields `2^64 - n` instead of an error, and the relaxation in
+/// [`build_route_graph`] accumulates with `+`, which wraps in release builds —
+/// so `1 + (2^64 - 1) == 0`. An attacker reporting a negative latency could
+/// therefore make an arbitrary path score better than any real one, and
+/// `path_latency` would report that path as `0`.
+///
+/// Negative and zero costs are floored to [`MIN_EDGE_COST`] rather than to 0: a
+/// zero-weight edge collapses Dijkstra's `first_hop` bookkeeping into an
+/// arbitrary tie-break, which would silently change *which* next hop is chosen
+/// even when nothing is malicious.
+#[inline]
+fn edge_cost_from_i32(cost: i32) -> usize {
+    // `u32::try_from` rejects negatives; the ceiling keeps a peer-reported
+    // `i32::MAX` from dominating the whole graph as a de-facto veto.
+    match u32::try_from(cost) {
+        Ok(v) => usize::try_from(v)
+            .unwrap_or(AVOID_RELAY_COST)
+            .max(MIN_EDGE_COST),
+        Err(_) => MIN_EDGE_COST,
+    }
+}
+
+/// Smallest edge weight [`edge_cost_from_i32`] will produce.
+const MIN_EDGE_COST: usize = 1;
+
+/// Largest `version` advance accepted for a peer we already hold a record for.
+///
+/// CRITICAL (CR-08). `RoutePeerInfo::version` is a `u32` the **peer itself**
+/// picks, and the accept rule is `new > old`. So one member advertising
+/// `version = u32::MAX` for a third party permanently freezes that third
+/// party's route updates at every node — the victim's own `version + 1` can
+/// never win again. The poisoned row is then re-broadcast to further nodes by
+/// `build_sync_route_raw_req`, so the freeze spreads.
+///
+/// This bound is only meaningful because real versions advance by exactly one
+/// per routing-state change (`update_my_conn_info`: `old + 1`, and likewise for
+/// peer/foreign-network/group-trust updates). Those changes are network-scale
+/// events — a peer up/down, a NIC address change, a VIP change — not per-packet.
+/// A peer accumulating a million of them inside one sync interval is not a
+/// thing a mesh can do, so the limit has enormous headroom against false
+/// positives while still bounding what a single forged field can do.
+///
+/// Note this bounds the **jump**, not the absolute value: a long-lived peer may
+/// legitimately hold a version far above `0`, which is fine, because what causes
+/// the freeze is the *relative* jump from our last stored record.
+const MAX_VERSION_JUMP: Version = 1 << 20;
+
+/// Whether `new_version` is a plausible successor to `stored_version`.
+///
+/// Assumes `new_version > stored_version`; both out-of-order and implausible
+/// jumps return `false`. Used to reject the CR-08 freeze without imposing any
+/// cap on the absolute value.
+#[inline]
+fn version_advance_is_plausible(stored_version: Version, new_version: Version) -> bool {
+    new_version > stored_version && new_version.wrapping_sub(stored_version) <= MAX_VERSION_JUMP
+}
 
 /// Check if `child` CIDR is a subset of `parent` CIDR.
 /// Returns true if `child` is contained within `parent`, or if they are equal.
@@ -218,8 +298,17 @@ pub struct OspfRouteTable {
     peer_infos: DashMap<PeerId, RoutePeerInfo>,
     next_hop_map: NextHopMap,
     suppressed_peer_ids: DashMap<PeerId, ()>,
-    ipv4_peer_id_map: DashMap<Ipv4Addr, PeerIdVersion>,
-    ipv6_peer_id_map: DashMap<Ipv6Addr, PeerIdVersion>,
+    /// Address → owning peer, **rebuilt from scratch every round**.
+    ///
+    /// CRITICAL: these used to be plain `DashMap`s that were only ever
+    /// `entry().and_modify().or_insert()`ed into and never cleared. A peer that
+    /// changed its VIP therefore kept resolving through its *old* address for the
+    /// lifetime of the process, so traffic addressed to the vacated IP kept being
+    /// routed to that peer. The CIDR tries next to them already used the correct
+    /// rebuild-per-round pattern (`ArcSwap` of a fresh `PrefixMap`); these now do
+    /// too, which also makes lookups lock-free.
+    ipv4_peer_id_map: ArcSwap<DashMap<Ipv4Addr, PeerIdVersion>>,
+    ipv6_peer_id_map: ArcSwap<DashMap<Ipv6Addr, PeerIdVersion>>,
     cidr_peer_id_map: ArcSwap<PrefixMap<Ipv4Cidr, PeerIdVersion>>,
     cidr_v6_peer_id_map: ArcSwap<PrefixMap<Ipv6Cidr, PeerIdVersion>>,
     next_hop_map_version: AtomicVersion,
@@ -231,8 +320,8 @@ impl OspfRouteTable {
             peer_infos: DashMap::new(),
             next_hop_map: DashMap::new(),
             suppressed_peer_ids: DashMap::new(),
-            ipv4_peer_id_map: DashMap::new(),
-            ipv6_peer_id_map: DashMap::new(),
+            ipv4_peer_id_map: ArcSwap::from_pointee(DashMap::new()),
+            ipv6_peer_id_map: ArcSwap::from_pointee(DashMap::new()),
             cidr_peer_id_map: ArcSwap::new(Arc::new(PrefixMap::new())),
             cidr_v6_peer_id_map: ArcSwap::new(Arc::new(PrefixMap::new())),
             next_hop_map_version: AtomicVersion::new(),
@@ -276,11 +365,17 @@ impl OspfRouteTable {
     }
 
     pub fn get_peer_id_by_ipv4(&self, ipv4_addr: &Ipv4Addr) -> Option<PeerId> {
-        self.ipv4_peer_id_map.get(ipv4_addr).map(|p| p.peer_id)
+        self.ipv4_peer_id_map
+            .load()
+            .get(ipv4_addr)
+            .map(|p| p.peer_id)
     }
 
     pub fn get_peer_id_by_ipv6(&self, ipv6_addr: &Ipv6Addr) -> Option<PeerId> {
-        self.ipv6_peer_id_map.get(ipv6_addr).map(|p| p.peer_id)
+        self.ipv6_peer_id_map
+            .load()
+            .get(ipv6_addr)
+            .map(|p| p.peer_id)
     }
 
     fn sync_suppressed_peer_ids(&self, snapshot: &OspfRouteSnapshot) {
@@ -338,9 +433,25 @@ impl OspfRouteTable {
                     continue;
                 };
 
-                let mut cost = cost_calc.calculate_cost(src_peer_id, *dst_peer_id) as usize;
+                // CRITICAL (CR-09): `calculate_cost` returns a signed `i32` and is fed by
+                // peer-controlled data (the peer-center copies `latency_ms`
+                // straight out of `report_peers`). A negative cost cast with
+                // `as usize` becomes `2^64 - n`, and the Dijkstra relaxation
+                // below accumulates with `+` (wrapping in release), so
+                // `1 + (2^64 - 1) == 0`: any downstream path would then score
+                // *better* than the node itself, making the attacker's path
+                // look free and be reported as `path_latency: 0`.
+                //
+                // Floor at 1 rather than 0 — a zero-weight edge degenerates
+                // Dijkstra's `first_hop` bookkeeping into an arbitrary choice.
+                // `LeastHop` tables are unaffected: `normalize_edge_cost`
+                // remaps anything >= AVOID_RELAY_COST into its own range before
+                // this ever runs.
+                let mut cost =
+                    edge_cost_from_i32(cost_calc.calculate_cost(src_peer_id, *dst_peer_id));
                 if peer_avoid_relay_data {
-                    cost += AVOID_RELAY_COST;
+                    // Saturating: the policy penalty must dominate but never wrap.
+                    cost = cost.saturating_add(AVOID_RELAY_COST);
                 }
 
                 graph.add_edge(*src_node_idx, *dst_node_idx, cost);
@@ -360,20 +471,10 @@ impl OspfRouteTable {
             // remove peer info for peers we cannot forward to.
             self.peer_reachable(*k)
         });
-        self.ipv4_peer_id_map.retain(|_, v| {
-            // remove ipv4 map for peers we cannot forward to.
-            self.peer_reachable(v.peer_id)
-        });
-        self.ipv6_peer_id_map.retain(|_, v| {
-            // remove ipv6 map for peers we cannot forward to.
-            self.peer_reachable(v.peer_id)
-        });
 
         shrink_dashmap(&self.peer_infos, None);
         shrink_dashmap(&self.next_hop_map, None);
         shrink_dashmap(&self.suppressed_peer_ids, None);
-        shrink_dashmap(&self.ipv4_peer_id_map, None);
-        shrink_dashmap(&self.ipv6_peer_id_map, None);
     }
 
     fn gen_next_hop_map_with_least_hop(
@@ -444,9 +545,15 @@ impl OspfRouteTable {
         let (costs, next_hops) = dijkstra_with_first_hop(graph, *start_node, |e| *e.weight());
 
         for (dst, (next_hop, path_len)) in next_hops.iter() {
+            let total_cost = *costs.get(dst).unwrap();
             let info = OspfNextHopInfo {
                 next_hop_peer_id: *graph.node_weight(*next_hop).unwrap(),
-                path_latency: (*costs.get(dst).unwrap() % AVOID_RELAY_COST) as i32,
+                // Reported as the **true** accumulated cost. It used to be
+                // `cost % AVOID_RELAY_COST`, which silently dropped the
+                // policy penalty and made a policy-forced path look like a
+                // merit-chosen one. Costs far above `OSPF_EDGE_COST_MAX` now
+                // mean "this path contains a peer that refused relay duty".
+                path_latency: total_cost.min(i32::MAX as usize) as i32,
                 path_len: *path_len,
                 version,
             };
@@ -511,6 +618,10 @@ impl OspfRouteTable {
 
         let mut new_cidr_prefix_trie = PrefixMap::new();
         let mut new_cidr_v6_prefix_trie = PrefixMap::new();
+        // Rebuilt from scratch every round: an address only stays resolvable
+        // while the peer that owns it is actually reachable. See the field docs.
+        let new_ipv4_peer_id_map = DashMap::new();
+        let new_ipv6_peer_id_map = DashMap::new();
 
         // build peer_infos, ipv4_peer_id_map, cidr_peer_id_map
         // only set map for peers we can reach.
@@ -545,11 +656,28 @@ impl OspfRouteTable {
                 }
                 let old_next_hop = self.get_next_hop(old_peer.peer_id);
                 let new_next_hop = item.value();
-                old_next_hop.is_none() || new_next_hop.path_len < old_next_hop.unwrap().path_len
+                let better = match old_next_hop {
+                    None => true,
+                    Some(old) => {
+                        old.path_len != new_next_hop.path_len
+                            && old.path_len > new_next_hop.path_len
+                    }
+                };
+                if !better {
+                    return false;
+                }
+                // CRITICAL (determinism): when two peers claim the same address
+                // and sit at the *same* distance, the winner used to be whichever
+                // `DashMap` happened to be iterated first — which varies between
+                // rebuilds. That silently flipped address ownership from run to
+                // run. Break the tie on the peer id, so the same inputs always
+                // produce the same map. (Credential ownership nearby already
+                // uses a `BTreeSet` for exactly this reason.)
+                old_peer.peer_id > peer_id_and_version.peer_id
             };
 
             if let Some(ipv4_addr) = info.ipv4_addr {
-                self.ipv4_peer_id_map
+                new_ipv4_peer_id_map
                     .entry(ipv4_addr.into())
                     .and_modify(|v| {
                         if is_new_peer_better(v) {
@@ -560,7 +688,7 @@ impl OspfRouteTable {
             }
 
             if let Some(ipv6_addr) = info.ipv6_addr.and_then(|x| x.address) {
-                self.ipv6_peer_id_map
+                new_ipv6_peer_id_map
                     .entry(ipv6_addr.into())
                     .and_modify(|v| {
                         if is_new_peer_better(v) {
@@ -575,7 +703,7 @@ impl OspfRouteTable {
                 .as_ref()
                 .and_then(|addr| addr.address)
             {
-                self.ipv6_peer_id_map
+                new_ipv6_peer_id_map
                     .entry(ipv6_addr.into())
                     .and_modify(|v| {
                         if is_new_peer_better(v) {
@@ -642,6 +770,8 @@ impl OspfRouteTable {
         self.cidr_peer_id_map.store(Arc::new(new_cidr_prefix_trie));
         self.cidr_v6_peer_id_map
             .store(Arc::new(new_cidr_v6_prefix_trie));
+        self.ipv4_peer_id_map.store(Arc::new(new_ipv4_peer_id_map));
+        self.ipv6_peer_id_map.store(Arc::new(new_ipv6_peer_id_map));
         tracing::trace!(
             my_peer_id = my_peer_id,
             cidrs = ?self.cidr_peer_id_map.load(),
@@ -1365,10 +1495,25 @@ impl SyncedRouteInfo {
             if info.peer_route_id != my_peer_route_id
                 && info.version > self.get_peer_info_version_with_default(info.peer_id)
             {
-                // if dst peer send to us with higher version info of my peer, our peer id is duplicated
-                // TODO: handle this better. restart peer manager?
-                panic!("my peer id is duplicated");
-                // return Err(Error::DuplicatePeerId);
+                // A peer advertised higher-version info carrying *our* peer id
+                // with a different route id — our id is duplicated.
+                //
+                // CRITICAL: this must stay a recoverable error. All three
+                // conditions come straight off the wire, and `update_peer_infos`
+                // feeds it every `peer_infos` entry the sender submits without
+                // checking that the entry is about the sender. With
+                // `panic = "abort"` in the release profile, a `panic!` here is a
+                // **remote process kill**: any member that finished a handshake
+                // could abort every other node with one `sync_route_info` call.
+                tracing::warn!(
+                    my_peer_id,
+                    my_peer_route_id,
+                    info.peer_route_id,
+                    info.version,
+                    dst_peer_id,
+                    "peer id duplicated: peer advertised our own peer id with a different route id",
+                );
+                return Err(Error::DuplicatePeerId);
             }
         } else if info.peer_id == dst_peer_id {
             let Some(dst_peer_route_id) = dst_peer_route_id else {
@@ -1417,10 +1562,35 @@ impl SyncedRouteInfo {
             // time between peers may not be synchronized, so update last_update to local now.
             // note only last_update with larger version will be updated to local saved peer info.
             route_info.last_update = Some(Timestamp::now());
-            if guard
-                .get_mut(&route_info.peer_id)
-                .is_none_or(|old| route_info.version > old.version)
-            {
+            let accept = match guard.get(&route_info.peer_id) {
+                None => true,
+                Some(old) if !version_advance_is_plausible(old.version, route_info.version) => {
+                    // CRITICAL (CR-08): an implausible jump means this record is
+                    // either forged or corrupt. Accepting it would permanently
+                    // freeze the real peer's updates (our `version + 1` can never
+                    // beat `u32::MAX`), and re-broadcasting it would spread the
+                    // freeze. Drop our stored record instead so the mesh
+                    // re-learns this peer from scratch — the cost is a short
+                    // window where the peer is unroutable, which is strictly
+                    // better than a permanent stale route.
+                    if route_info.version > old.version {
+                        tracing::warn!(
+                            peer_id = route_info.peer_id,
+                            stored_version = old.version,
+                            claimed_version = route_info.version,
+                            MAX_VERSION_JUMP,
+                            claimed_route_id = route_info.peer_route_id,
+                            stored_route_id = old.peer_route_id,
+                            "peer info version jump exceeds limit; dropping stored \
+                             record and forcing a resync",
+                        );
+                        guard.remove(&route_info.peer_id);
+                    }
+                    false
+                }
+                Some(_) => true,
+            };
+            if accept {
                 self.raw_peer_infos
                     .insert(route_info.peer_id, raw_route_info.clone());
                 guard.insert(route_info.peer_id, route_info);
@@ -1439,10 +1609,30 @@ impl SyncedRouteInfo {
         connected_peers: BTreeSet<PeerId>,
     ) -> bool {
         let mut guard = self.conn_map.write();
-        if guard
-            .get_mut(&peer_id_version.peer_id)
-            .is_none_or(|old| peer_id_version.version > old.version.get())
-        {
+        // Same CR-08 reasoning as `update_peer_infos`: a forged `version` here
+        // freezes the connectivity bitmap for that peer, so routing keeps using
+        // a stale neighbour set. Out-of-order or implausible advances are
+        // ignored and the stored record is dropped to force a resync.
+        let new_version: Version = peer_id_version.version;
+        let accept = match guard.get(&peer_id_version.peer_id) {
+            None => true,
+            Some(old) if !version_advance_is_plausible(old.version.get(), new_version) => {
+                if new_version > old.version.get() {
+                    tracing::warn!(
+                        peer_id = peer_id_version.peer_id,
+                        stored_version = old.version.get(),
+                        claimed_version = new_version,
+                        MAX_VERSION_JUMP,
+                        "conn info version jump exceeds limit; dropping stored record \
+                         and forcing a resync",
+                    );
+                    guard.remove(&peer_id_version.peer_id);
+                }
+                false
+            }
+            Some(_) => true,
+        };
+        if accept {
             guard.insert(
                 peer_id_version.peer_id,
                 RouteConnInfo {
@@ -3103,11 +3293,21 @@ impl PeerRouteServiceImpl {
         let mut unreachable_peers_for_peer_info = session.unreachable_peers_for_peer_info.lock();
         let last_sync_succ_timestamp = session.last_sync_succ_timestamp.load();
         for (peer_id, peer_info) in peer_infos.iter().rev() {
-            // stop iter if last_update of peer info is older than session.last_sync_succ_timestamp
+            // Skip (do NOT stop) peers whose info predates the last successful
+            // sync with this session.
+            //
+            // CRITICAL: this used to `break`, on the assumption that
+            // `OrderedHashMap` iteration order tracks freshness. It does not.
+            // Re-inserting an existing key replaces the value **in place** and
+            // keeps the original node position, while `last_update` is refreshed
+            // on every accepted version bump. So a peer that joined early and
+            // changed recently sits at the *front* of the scan, and one stale
+            // entry sitting after it aborted the whole loop — permanently
+            // withholding that peer's fresh updates from the destination.
             if let Some(last_update) = peer_info.last_update {
                 let last_update = SystemTime::try_from(last_update).unwrap();
                 if last_sync_succ_timestamp.is_some_and(|t| last_update < t) {
-                    break;
+                    continue;
                 }
             }
 
@@ -3181,10 +3381,13 @@ impl PeerRouteServiceImpl {
         };
 
         for (peer_id, conn_info) in conn_map.iter().rev() {
-            // stop iter if last_update of conn info is older than session.last_sync_succ_timestamp
+            // Skip, do not stop — see the identical note in `build_route_info`:
+            // `OrderedHashMap` insertion order is not freshness order, so a
+            // `break` here let one stale entry withhold every later-scanned peer's
+            // connectivity update.
             let last_update = TryInto::<SystemTime>::try_into(conn_info.last_update).unwrap();
             if last_sync_succ_timestamp.is_some_and(|t| last_update < t) {
-                break;
+                continue;
             }
 
             if session.check_saved_conn_version_update_to_date(*peer_id, conn_info.version.get()) {
@@ -3618,8 +3821,28 @@ impl PeerRouteServiceImpl {
                             "stale non-initiator route sync rejected"
                         );
                     } else if err == Error::DuplicatePeerId as i32 {
+                        // CRITICAL (CR-02): `resp.error` is written by the
+                        // *remote* side (`do_sync_route_info`), so it is fully
+                        // peer-controlled. With `panic = "abort"` the previous
+                        // `panic!` here let any peer kill this node by
+                        // answering a single `sync_route_info` with
+                        // `error = DuplicatePeerId`. Treat it as a recoverable
+                        // condition: log it and force the session to renegotiate
+                        // from scratch (drop initiator state) so we re-learn the
+                        // peer's real route id instead of aborting.
                         if !self.context.feature_flags().is_public_server {
-                            panic!("duplicate peer id");
+                            tracing::warn!(
+                                ?my_peer_id,
+                                ?dst_peer_id,
+                                "peer reported duplicate peer id; dropping initiator \
+                                 state and renegotiating instead of aborting",
+                            );
+                            session
+                                .need_sync_initiator_info
+                                .store(true, Ordering::Relaxed);
+                            session.clear_dst_initiator_if_session_unchanged_locked(
+                                expected_dst_session_id,
+                            );
                         }
                     } else {
                         tracing::error!(?ret, ?my_peer_id, ?dst_peer_id, "sync_route_info failed");
@@ -3706,6 +3929,61 @@ impl Debug for RouteSessionManager {
     }
 }
 
+/// Resolve the OSPF sender identity, binding it to the transport that carried
+/// the request.
+///
+/// CRITICAL (CR-07). `PeerConn::after_received` drops any packet whose outer
+/// `peer_manager_header().from_peer_id` differs from the authenticated peer id
+/// *before* attempting decryption, so a packet that reaches the RPC dispatcher
+/// on a peer tunnel is *proven* to originate from that peer. Relays do not
+/// disturb this: `RelayPeerMap::send_msg` forwards third-party packets verbatim
+/// (`send_via_next_hop` -> `send_msg_to_next_hop` -> `send_msg_directly`), and
+/// only stamps a fresh header on the handshake path (`PeerConn::send_noise_msg`),
+/// so the outer id stays the **originator's** all the way through the mesh.
+///
+/// `request.my_peer_id` is a different matter: it is a field the caller wrote
+/// into its own (encrypted) payload and can therefore be set to any value.
+///
+/// Consequences of trusting the body that this closes:
+/// 1. Any member could act as — and inject routes in the name of — any other
+///    peer.
+/// 2. `get_peer_identity_type_from_interface` returns `None` for a
+///    non-neighbour id, which then defaulted to `PeerIdentityType::Admin`,
+///    bypassing the credential restriction that only lets a peer report on
+///    itself.
+///
+/// A missing verified id (`None`) is rejected rather than falling back to the
+/// untrusted body value: "unauthenticated" must not degrade into "believe the
+/// caller".
+fn resolve_verified_from_peer_id(
+    verified_from_peer_id: Option<PeerId>,
+    body_peer_id: PeerId,
+) -> Result<PeerId, rpc_types::error::Error> {
+    match verified_from_peer_id {
+        Some(verified) if verified == body_peer_id => Ok(verified),
+        Some(verified) => {
+            tracing::warn!(
+                ?verified,
+                ?body_peer_id,
+                "OSPF route sync rejected: request body peer id does not match the \
+                 transport-verified peer",
+            );
+            Err(rpc_types::error::Error::MalformatRpcPacket(
+                "OSPF route request peer id does not match transport identity".to_owned(),
+            ))
+        }
+        None => {
+            tracing::warn!(
+                ?body_peer_id,
+                "OSPF route sync rejected: no transport-verified peer id on controller",
+            );
+            Err(rpc_types::error::Error::MalformatRpcPacket(
+                "OSPF route request arrived without a transport-verified peer id".to_owned(),
+            ))
+        }
+    }
+}
+
 #[async_trait::async_trait]
 impl OspfRouteRpc for RouteSessionManager {
     type Controller = BaseController;
@@ -3714,7 +3992,10 @@ impl OspfRouteRpc for RouteSessionManager {
         ctrl: BaseController,
         request: SyncRouteInfoRequest,
     ) -> Result<SyncRouteInfoResponse, rpc_types::error::Error> {
-        let from_peer_id = request.my_peer_id;
+        // CRITICAL (CR-07): bind the sender identity to the **transport**, not to the
+        // request body. See [`resolve_verified_from_peer_id`].
+        let from_peer_id =
+            resolve_verified_from_peer_id(ctrl.verified_from_peer_id, request.my_peer_id)?;
         let from_session_id = request.my_session_id;
         let is_initiator = request.is_initiator;
         let peer_infos = request.peer_infos.map(|x| x.items);
