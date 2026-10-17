@@ -533,6 +533,20 @@ impl Peer {
         self.conns.iter().any(|entry| !entry.value().is_closed())
     }
 
+    /// ≥1 live conn that is not *sustainedly* fast-probe degraded.
+    ///
+    /// The narrower sibling of [`Self::has_live_conns`]: a conn that is open but
+    /// has stopped round-tripping still counts as live there (correctly — we do
+    /// not want to tear it down), but it must not be the last thing standing
+    /// between us and an expensive detour. `false` here means "connected, and
+    /// carrying nothing".
+    pub fn has_usable_conns(&self) -> bool {
+        self.conns.iter().any(|entry| {
+            let conn = entry.value();
+            !conn.is_closed() && !conn.is_fast_probe_sustainedly_degraded()
+        })
+    }
+
     pub fn live_conn_count(&self) -> usize {
         self.conns
             .iter()

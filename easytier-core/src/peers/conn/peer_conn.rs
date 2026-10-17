@@ -309,6 +309,10 @@ pub struct PeerConn {
     /// round-tripping. Published as 100% loss by `loss_rate()` so the edge cost
     /// is inflated and OSPF re-routes, without closing the conn.
     fast_probe_degraded: Arc<AtomicBool>,
+    /// Phase F2: `fast_probe_degraded` past the sustained window. This one, and
+    /// only this one, is allowed to re-price **our own** outgoing edge in the local
+    /// SPF — see `FAST_PROBE_SUSTAINED_ROUNDS` for why that needs more evidence.
+    fast_probe_sustained: Arc<AtomicBool>,
     liveness: PeerConnLiveness,
 
     peer_session_store: Arc<PeerSessionStore>,
@@ -413,6 +417,7 @@ impl PeerConn {
             throughput,
             loss_rate_stats: Arc::new(AtomicU32::new(0)),
             fast_probe_degraded: Arc::new(AtomicBool::new(false)),
+            fast_probe_sustained: Arc::new(AtomicBool::new(false)),
             liveness,
 
             peer_session_store,
@@ -1453,6 +1458,7 @@ impl PeerConn {
             self.get_conn_info().network_name,
             self.liveness.clone(),
             self.fast_probe_degraded.clone(),
+            self.fast_probe_sustained.clone(),
             self.close_event_notifier.clone(),
             self.max_ping_interval(),
             self.ping_fail_close_count(),
@@ -1473,6 +1479,7 @@ impl PeerConn {
             self.get_conn_info().network_name,
             self.liveness.clone(),
             self.fast_probe_degraded.clone(),
+            self.fast_probe_sustained.clone(),
             self.close_event_notifier.clone(),
             self.max_ping_interval(),
             self.ping_fail_close_count(),
@@ -1581,6 +1588,22 @@ impl PeerConn {
             return 1.0;
         }
         (f64::from(self.loss_rate_stats.load(Ordering::Relaxed)) / 100.0) as f32
+    }
+
+    /// Whether this conn has been failing the fast liveness probe long enough
+    /// that the **local** routing view may stop using it.
+    ///
+    /// This is deliberately a stricter bar than [`Self::loss_rate`] reporting
+    /// 100%: raising a metric only makes the network *prefer* other paths, while
+    /// re-pricing our own outgoing edge moves real traffic and — if it is the
+    /// only path — can make a perfectly good peer look unreachable. See
+    /// `FAST_PROBE_SUSTAINED_ROUNDS`.
+    ///
+    /// Still purely local: it never closes the conn, and it never changes what we
+    /// advertise to other nodes (that stays on the reported-cost path, so a
+    /// degraded-but-usable link is not deleted from anyone else's table).
+    pub fn is_fast_probe_sustainedly_degraded(&self) -> bool {
+        self.fast_probe_sustained.load(Ordering::Relaxed)
     }
 
     pub fn get_conn_info(&self) -> PeerConnInfo {

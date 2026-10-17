@@ -3993,6 +3993,14 @@ impl RouteInterface for PeerManagerRouteInterface {
         peers
     }
 
+    async fn list_peers_without_usable_conn(&self) -> Vec<PeerId> {
+        let Some(peer_map) = self.peers.upgrade() else {
+            return vec![];
+        };
+
+        peer_map.list_peers_without_usable_conn().await
+    }
+
     fn my_peer_id(&self) -> PeerId {
         self.my_peer_id
     }

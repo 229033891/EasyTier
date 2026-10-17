@@ -329,7 +329,7 @@ key = (cost, hops, tie_key(first_hop))
 
 | 环节 | 事实 | 锚点 |
 |---|---|---|
-| 边权来源 | `cost_calc` **只**读 peer-center 的 `global_peer_map`，不看本地 conn 状态 | `peer_center/instance.rs:379-385` |
+| 边权来源 | `cost_calc` **只**读 peer-center 的 `global_peer_map`，不看本地 conn 状态。**⚠️ 已被 F-local 部分推翻**：本机对自己**出边**另有一层覆盖，见本节末 | `peer_center/instance.rs:379-385` |
 | 上报（我 → 中心） | 作业 5s 一跳，但**只有 peer *集合* 变化或距上次上报 ≥60s 才真发**；`peer_list` 只取 `direct_peers.keys()`，**不含代价** ⇒ **纯代价变化最多 60s 才上报一次** | `peer_center/instance.rs:327-336` |
 | 分发（中心 → 我） | 轮询 **15s**（摘要未变也 15s） | `peer_center/instance.rs:279-300` |
 | OSPF 点对点同步 | 1s，但只带**拓扑（谁连谁）与各自的 *路由表***，不带边权 | `peer_ospf_route.rs:4125`、`400-457` |
@@ -348,6 +348,39 @@ key = (cost, hops, tie_key(first_hop))
 **本阶段能确定的收益**：检测从「拆连才可见（≈15s）」压到 **1.9s**，且不再等 `ping_fail_close_count`；配合①后，改路时间由分钟级降到**十秒级**。
 
 > **为什么不用「中间节点回报 send 失败」**：那个 hop 凭什么知道送不出去？只有靠它自己的超时/保活，**与源侧的检测延迟是同一个量级**，所以它**治不了 §10**，只是多一条通道。真正能压缩空窗的只有本地快速探测 + 快速收敛。
+
+#### F-local：让探测结论也进**本地**视图（✅ 已落地，2026-10-17）
+
+上表的「边权来源只读 peer-center」有一个直接后果，值得单独记：**一条还开着、但已经不往返的 conn，在本地视角里和健康 conn 完全一样。**
+
+| 事实 | 锚点 |
+|---|---|
+| `RouteInterface::list_peers` = `list_peers_with_conn` = **只有活 conn 的 peer** | `peer_manager.rs:3992` |
+| 重建**只**由两件事驱动：`connected_peers` **集合**变化（`update_my_conn_info` `:1873`）、或 `cost_calc.need_update()` | `update_my_infos` `:3565` |
+| 所以 conn **还开着** ⇒ 集合没变 ⇒ 不重建；边权又只来自中心 ⇒ **本地一个输入都没动** | 同上 |
+| 结果：死掉的直连边继续以面值参与本地 SPF，中继再贵也不会顶上 | 由 `open_but_degraded_direct_edge_is_not_detectable_locally` 钉住 |
+
+改法：探测多写一个 `fast_probe_sustained` 位；本地 SPF 建图时，**只对 `src == 自己` 的出边**，若该 peer 落在「连着但全都不往返」集合里，就给它加 `OSPF_FUSE_COST_BONUS`。
+
+| 项 | 取值 / 结论 |
+|---|---|
+| 持续门槛 | **连续 9 轮未往返**（`FAST_PROBE_SUSTAINED_ROUNDS`），比度量的 3 轮严格 |
+| 真实耗时 | 每一轮未往返还要烧掉超时预算 ⇒ **9 × (333ms + 300ms) ≈ 5.7s**，不是 3s。`only_a_sustained_run_of_misses_gates_local_routing` 同时断言它 **< 10s**（再慢就劣于它本来要避免的保活拆连）与 **> 3s**（防止被悄悄调快到未记录的值） |
+| 误判概率 | 30% 独立丢包下 9 连 miss ≈ **2e-5**。比「3 轮即抬价」保守一个量级以上 |
+| 每包开销 | **0**（发送侧仍只读 `next_hop_map`；判定全部在建表时） |
+| 重建触发 | 复用现有 1s 循环轮询该集合并比对，**天然限速 1/s**，抖动链路打不出重建风暴；任一次成功往返即离开集合 ⇒ **自愈** |
+| 新增接口 | `RouteInterface::list_peers_without_usable_conn`（默认空 = 不启用，安全方向） |
+
+**为什么是「抬价」而不是「剔除这条边」**：剔除会让 `peer_reachable(dst)` 变 false ⇒ 前缀与 CIDR 被撤 ⇒ 一次探测误判就可能把唯一通路变成断网。抬价只影响**选谁**，最坏是选到一条次优路，链路本身还在表里可回退。这与 peer-center 已经在做的 `OSPF_FUSE_COST_BONUS` 是同一个旋钮，只是把它前移到本地。`outpricing_a_degraded_own_edge_keeps_the_peer_reachable` 专门守住这条。
+
+**边界（重要，不要误读收益）**：
+
+- **只覆盖 `LeastCost` 表，对 `LeastHop` 表无效**。`gen_next_hop_map_with_least_hop` 的 `normalize_edge_cost` 把每条边一律映射成 **1**（或 `AVOID_RELAY_COST + 1`），即**只看跳数、完全不看权重**——这是 LeastHop 的契约（「最少跳就是最少跳」），所以质量类覆盖对它天然不适用。要让 LeastHop 也让路，就得教它「这条边不能用」，那会改 `peer_reachable` 语义并撤掉前缀，正是本节刻意避免的。默认流量是 `latency_first = true`（`config/mod.rs:311`、`toml.rs:168`）⇒ 走 `LeastCost`，覆盖生效；`latency_first = false` 的流量行为与改动前完全一致（不变差，也不受益）。
+- 只作用于**本机可感知**的失效。本机对「下游某一跳死了」（§10 的形状）依旧没有感知通道，那条路只能靠中心把代价传回来（~10–22s）。
+- **不解决 §10 记录的现场**：那里 shdx 到 home-pc 很可能没有替代路径，没有可恢复的包；本改动只让它**更快变诚实**（~5.7s 就明确不再使用，而不是一直显示「连通」）。
+- 只影响本地计算，**不改我广播的 `connected_peers`**——否则就是 F2 里否掉的方案 ②。
+
+⇒ 收益：**本机可感知的失效，改路从 ≈15s（等保活拆连）降到 ≈7s（5.7s 门槛 + 1s 循环）**，并且顺手关掉「降级但仍开着」这条路径上的「更贵中继不顶上」。
 
 ### 5.7 重建成本基线（B/D 的度量 + LFA 的 go/no-go 依据）
 
@@ -421,10 +454,11 @@ Phase A 不是「修复」，是**回滚到已知正确行为**；Phase C 小而
 
 构建（Phase A + C + F + F2 + B/D 后实测）：
 
-- `cargo test -p easytier-core --lib` → **1011 passed / 0 failed**；`cargo clippy -p easytier-core --lib` 与 `cargo fmt --check -p easytier-core` 干净。
+- `cargo test -p easytier-core --lib` → **1017 passed / 0 failed**；`cargo clippy -p easytier-core --lib` 与 `cargo fmt --check -p easytier-core` 干净。
 - **Phase A 已覆盖**（`select_next_hop_tests`，`peer_map.rs`）：自己恒可发；活 hop 可选；**死 hop 被拒并顺延到下一候选**；**回收掉的主下一跳不遮住活的备选**（P9 回归）；实在没有本地可发候选时仍返回第一个无本地条目的候选（跨网网关行为不变）；全死 ⇒ `None`；`probe` 在首个可用候选处短路（每包热路径，不允许无条件探测）。
 - **Phase C 已覆盖**（`graph_algo.rs::tests`）：`equal_cost_prefers_the_fewer_hop_path`（等代价取少跳 —— 「同质量优先直连」）、`strictly_cheaper_multi_hop_path_still_wins`（**成本仍是主键**：13 vs 2 走中继，防止把「直连优先」过度应用）、`equal_cost_equal_hops_is_stable_across_edge_order`（完全相同时不随加边顺序翻面）。
 - **Phase F 已覆盖**（`peer_conn_ping.rs::tests` / `peer_conn.rs::tests`）：`fast_probe_timeout_scales_with_rtt_and_is_clamped`（含「3 次未往返 < 2s」的预算断言）、`keepalive_and_fast_probe_sequences_never_collide`（两条探测流 seq 不重叠）、`fast_probe_degraded_flag_drives_reported_loss`（降级位 → `loss_rate()==1.0`，且 **conn 仍不关闭**）。
+- **F-local 已覆盖**：`peer_conn_ping.rs::tests::only_a_sustained_run_of_misses_gates_local_routing`（门槛严格晚于度量门槛、且真实耗时被夹在 3s–10s 之间，防止被悄悄调快/调慢）；`peer_ospf_route_tests.rs` 的 `sustainedly_degraded_own_edge_is_outpriced_by_a_costlier_relay`（**核心用例**：直连持续降级 ⇒ 25 倍贵的中继顶上）、`outpricing_a_degraded_own_edge_keeps_the_peer_reachable`（**抬价不剔除**：唯一通路时前缀仍可解析）、`the_override_only_touches_edges_leaving_us`（覆盖只作用于自己出边）、以及两个前提用例 `torn_down_direct_edge_hands_over_to_a_costlier_relay` / `open_but_degraded_direct_edge_is_not_detectable_locally`。
 - **Phase F2 已覆盖**（`peer_center/instance.rs::tests`）：`reports_when_only_a_cost_changed`（纯代价变化必须上报）、集合变化/心跳/中心切换各自的应报行为。
 - **Phase B/D 已覆盖**：`graph_algo.rs::tests` 的 `equal_cost_alternates_are_all_reported`（菱形两条都报）、`costlier_paths_are_not_alternates`（**次优不作候选**）、`direct_edge_wins_the_tie_and_the_detour_is_the_alternate`；`peer_ospf_route_tests.rs` 的 `equal_cost_diamond_offers_every_first_hop`（路由表级：两个候选且首选在前）、`single_path_topology_has_no_alternates`。另有测量工具 `route_rebuild_cost_baseline`（`#[ignore]`，见 §5.7）。
 - **仍待覆盖**：端到端「主用 conn 死 → 立刻切到等代价备选」的集成验证（需 Phase 拓扑 harness 或现网）；以及**不等代价备份 + 真 LFA**——**本轮决定不做**，go/no-go 见 §5.7。
@@ -504,3 +538,4 @@ CPU：先跑 §5.7 的 harness 拿基线，再看实例占用（注意快速探�
 | 2026-10-17 | **Phase C 落地（代码）**：`dijkstra_with_first_hop`（`graph_algo.rs`）改为按字典序键 `(cost, hops, tie_key(first_hop))` 做松弛与堆排序，新增 `tie_key` 形参由调用方注入 **peer id**（不能用节点下标——每次重建都会变）。**撤回初版的「切换阈值」建议**：20 个 ms 当量会否掉 §7 的验收用例（13ms 直连 vs 两跳各 <0.5ms，差 11），也与「否则走质量最好」冲突；抖动由边级迟滞负责。**过程记录**：先只比 `(cost, hops)` 的版本被新用例 `equal_cost_equal_hops_is_stable_across_edge_order` **实测挡住**（改加边顺序结果不同），因此补上第 3 个键——这也把 §1.2 里「等代价会抖」从推断变成了实证。5 条 `graph_algo` 用例 + 全量 993 项通过，clippy/fmt 干净。 |
 | 2026-10-17 | **Phase A 落地（代码，待现网）**：回退首版实现（`choose_sendable_gateway` / `relay_quality` / `best_established_relay` / 兜底 relay 全部移除），改为**只对被点名的那个下一跳查活连接**——新纯函数 `next_hop_is_sendable(hop, my_id, hop_in_peer_map, hop_live)` + 5 条单测；死 hop 不再被选中（改为 `debug!` 记录后继续找下一条 route）。语义边界：**不搜索替代下一跳**（跨节点的兜底就是 P1/P2 的环路与误投），跨网网关与本机无条目的 peer 行为与改动前一致。实测 `cargo test -p easytier-core --lib` 991 通过、clippy/fmt 干净。 |
 | 2026-10-17 | **P9 修正（Phase A 的资格判据自伤）**：`next_hop_is_sendable` 的「不在本表 ⇒ 可发」把**跨网网关**（本机无条目属设计如此）和**条目已被 `clean_peer_without_conn` 回收的死下一跳**混为一谈，于是后者被立刻返回、**把已连上的等代价备选遮住**，包在 `send_msg_internal` 的网关闸门处被丢——B/D 的兜底恰好在唯一有意义的场景里失效（比不做 B/D 更坏：表里明明有能走的路）。改为 `select_next_hop(my_id, candidates, probe)`：**T1 自发 / T2 本地有活连接优先，T3「无本地条目」仅作兜底**（只有调用方能用 `foreign_network_client.has_next_hop` 区分二者）。跨网路由行为与改动前一致，陈旧下一跳退化为改动前同样的「告警 + 丢弃」。`probe` 做成惰性回调以保住每包热路径的短路（有用例断言只探测 1 次）。单测 5 条 → 9 条（含这条回归），全量 1011 项通过。 |
+| 2026-10-17 | **纠正一条此前的错误结论 + 补 F-local**。① **「备用跳只收等代价 ⇒ 更贵的中继不顶上」在 conn 真被拆掉时并不成立**：`RouteInterface::list_peers` 就是 `list_peers_with_conn`，最后一条 conn 一断，该 peer 立刻离开我广播的 `connected_peers` ⇒ `update_my_conn_info` 发现集合变化 ⇒ 重建（conn-removed 事件还会立刻唤醒 1s 循环）⇒ **那条边根本不在图里**，Dijkstra 可以选任何剩下的路，代价多少都无所谓。新增 `torn_down_direct_edge_hands_over_to_a_costlier_relay`（直连在时选中直连且**没有等代价备选**；直连被拆后下一跳变成 25 倍贵的中继）。所以**不需要不等代价备份（LFA）** 来满足「否则走质量最好的」。② **真正的缺口是另一件事**：conn 还**开着**但不往返时，重建的两个输入（peer 集合、来自中心的边权）**一个都没动**，本地 SPF 继续给死边面值（新增 `open_but_degraded_direct_edge_is_not_detectable_locally` 钉住）。③ 落地 **F-local**：探测多写一个 `fast_probe_sustained` 位（连续 **9 轮**，比度量的 3 轮严格；30% 丢包下 9 连 miss ≈ 2e-5），本地建图时**只对 `src == 自己` 的出边**加 `OSPF_FUSE_COST_BONUS` 把它**抬价**。**抬价而非剔除**：剔除会让 `peer_reachable` 变 false ⇒ 前缀被撤 ⇒ 一次误判即断网；抬价只影响选谁，最坏是选到次优路（`outpricing_a_degraded_own_edge_keeps_the_peer_reachable` 守住）。触发复用现有 1s 循环轮询比对，天然限速 1/s、任一次成功往返即自愈；**每包开销 0**；新增 `RouteInterface::list_peers_without_usable_conn`（默认空）。**修正我自己此前的「传播是地板」**：本机可感知的失效，改路从 ≈15s（等保活拆连）降到 **≈7s**，不必等中心。**不解决 §10 记录的现场**（那里 shdx 到 home-pc 无替代路径，没有可恢复的包），只让它更快变诚实。**只覆盖 `LeastCost` 表**：`gen_next_hop_map_with_least_hop` 的 `normalize_edge_cost` 把每条边一律映射成 1（只看跳数、不看权重），这是 LeastHop 的契约，质量类覆盖对它天然无效；默认流量 `latency_first = true` 走 `LeastCost`，`latency_first = false` 的流量行为与改动前一致。架构口径随之修正：边权不再是「只来自中心」，而是「**中心为准 + 本机对自己出边的覆盖**」，且**不改广播**（`the_override_only_touches_edges_leaving_us` 守住）。单测 +6，全量 1017 项通过。 |

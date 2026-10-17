@@ -39,6 +39,27 @@ const PING_WAIT_TIMEOUT: Duration = Duration::from_secs(2);
 const FAST_PROBE_INTERVAL: Duration = Duration::from_millis(333);
 /// Consecutive misses before the conn is published as degraded (100% loss).
 const FAST_PROBE_MISSES_TO_DEGRADE: u32 = 3;
+/// Consecutive missed probe rounds before the degradation is allowed to drive the
+/// **local** routing view (see `PeerConn::is_fast_probe_sustainedly_degraded`).
+///
+/// Publishing 100% loss is cheap to undo — worst case the network avoids a link
+/// that is merely bad — so it fires on the third miss. Letting it re-price our
+/// own outgoing edge in the local SPF is not: a probe burst that happens to be
+/// lost while data still flows would move real traffic onto a worse path, or make
+/// the peer look unreachable when it is the only path. So that decision waits for
+/// a *sustained* run of misses, long enough that independent loss alone cannot
+/// produce it: at 30% per-probe loss, 9 consecutive misses happen with
+/// probability ~2e-5.
+///
+/// Note the real wall-clock cost is larger than `9 × 333ms`, because every missed
+/// round also burns its timeout budget (`FAST_PROBE_TIMEOUT_MIN`, 300ms at best).
+/// A dead low-RTT link therefore reaches this gate in ~5.7s, not 3s.
+const FAST_PROBE_SUSTAINED_ROUNDS: u32 = 9;
+
+/// Whether `consecutive_misses` is enough degradation to override local routing.
+fn fast_probe_is_sustained(consecutive_misses: u32) -> bool {
+    consecutive_misses >= FAST_PROBE_SUSTAINED_ROUNDS
+}
 /// Per-probe wait budget derived from the measured RTT, clamped to this range.
 const FAST_PROBE_TIMEOUT_MIN: Duration = Duration::from_millis(300);
 const FAST_PROBE_TIMEOUT_MAX: Duration = Duration::from_secs(2);
@@ -191,6 +212,10 @@ pub struct PeerConnPinger {
     /// through `PeerConn::loss_rate`, which is what raises the OSPF edge cost and
     /// lets the sender re-route (the conn itself is left alone).
     fast_probe_degraded: Arc<AtomicBool>,
+    /// Set once the degradation has lasted `FAST_PROBE_SUSTAINED_ROUNDS`. Only
+    /// this one may re-price our own outgoing edge in the local SPF; see that
+    /// constant for why that needs a stricter gate than the metric does.
+    fast_probe_sustained: Arc<AtomicBool>,
     close_notify: Arc<PeerConnCloseNotify>,
     max_interval: Duration,
     /// Consecutive ping failures before closing; default 5.
@@ -220,6 +245,7 @@ impl PeerConnPinger {
         network_name: String,
         liveness: PeerConnLiveness,
         fast_probe_degraded: Arc<AtomicBool>,
+        fast_probe_sustained: Arc<AtomicBool>,
         close_notify: Arc<PeerConnCloseNotify>,
         max_interval: Duration,
         fail_close_count: u32,
@@ -236,6 +262,7 @@ impl PeerConnPinger {
             network_name,
             liveness,
             fast_probe_degraded,
+            fast_probe_sustained,
             close_notify,
             max_interval,
             fail_close_count: fail_close_count.max(1),
@@ -385,8 +412,11 @@ impl PeerConnPinger {
                 // Any successful round trip on this conn also clears the fast
                 // probe's degraded reading: the flag must never outlive its
                 // evidence, even if the probe task is gone (it only ever raises
-                // the flag, and this is the independent second opinion).
+                // the flag, and this is the independent second opinion). The
+                // sustained gate goes with it — a link that just proved it
+                // round-trips must not stay re-priced in the local SPF.
                 self.fast_probe_degraded.store(false, Ordering::Relaxed);
+                self.fast_probe_sustained.store(false, Ordering::Relaxed);
             } else {
                 loss_rate_stats_1.record_latency(1);
                 loss_counter.fetch_add(1, Ordering::Relaxed);
@@ -445,6 +475,7 @@ impl PeerConnPinger {
         let mut seq = 0u32;
         let mut misses = 0u32;
         let mut was_degraded = false;
+        let mut was_sustained = false;
         loop {
             sleep(FAST_PROBE_INTERVAL).await;
 
@@ -455,6 +486,7 @@ impl PeerConnPinger {
                 // Not negotiated (or not yet): stay out of the way and make sure
                 // we never leave a stale degraded reading behind.
                 self.fast_probe_degraded.store(false, Ordering::Relaxed);
+                self.fast_probe_sustained.store(false, Ordering::Relaxed);
                 misses = 0;
                 was_degraded = false;
                 continue;
@@ -478,6 +510,12 @@ impl PeerConnPinger {
             misses = if ok { 0 } else { misses + 1 };
             let degraded = misses >= FAST_PROBE_MISSES_TO_DEGRADE;
             self.fast_probe_degraded.store(degraded, Ordering::Relaxed);
+            // `misses` already restarts at 0 on any success, so the sustained
+            // flag can only be reached by one unbroken run of misses, and is
+            // dropped by the same evidence that drops `degraded`.
+            let sustained = fast_probe_is_sustained(misses);
+            self.fast_probe_sustained
+                .store(sustained, Ordering::Relaxed);
 
             // Log the transitions only: at ~3 probes/s a per-probe log would
             // flood exactly during the incident it is meant to explain.
@@ -495,7 +533,28 @@ impl PeerConnPinger {
                     "fast liveness probe: link round-trips again"
                 );
             }
+            // Separate line: this is the one that makes the **local** SPF stop
+            // pricing this edge, so it is the log to grep for when asking "why
+            // did traffic move off a link that still shows as connected".
+            if sustained != was_sustained {
+                if sustained {
+                    tracing::warn!(
+                        peer_id = self.peer_id,
+                        misses,
+                        rtt_us,
+                        "fast liveness probe: degradation sustained, local edge cost will be overridden"
+                    );
+                } else {
+                    tracing::info!(
+                        peer_id = self.peer_id,
+                        misses,
+                        rtt_us,
+                        "fast liveness probe: sustained degradation cleared, restoring local edge cost"
+                    );
+                }
+            }
             was_degraded = degraded;
+            was_sustained = sustained;
         }
     }
 }
@@ -587,6 +646,7 @@ mod tests {
             "test".to_owned(),
             PeerConnLiveness::new(),
             Arc::new(AtomicBool::new(false)),
+            Arc::new(AtomicBool::new(false)),
             Arc::new(PeerConnCloseNotify::new(PeerConnId::new_v4())),
             Duration::from_secs(32),
             5,
@@ -649,6 +709,7 @@ mod tests {
             "test".to_owned(),
             local_liveness,
             Arc::new(AtomicBool::new(false)),
+            Arc::new(AtomicBool::new(false)),
             Arc::new(PeerConnCloseNotify::new(PeerConnId::new_v4())),
             Duration::from_secs(32),
             5,
@@ -682,6 +743,49 @@ mod tests {
         assert!(
             worst_miss * FAST_PROBE_MISSES_TO_DEGRADE < Duration::from_secs(2),
             "3 misses should land under 2s: {worst_miss:?} each"
+        );
+    }
+
+    /// The gate that lets degradation re-price our **own** outgoing edge must be
+    /// strictly later than the gate that publishes 100% loss, and must not be
+    /// reachable by a couple of unlucky probes.
+    #[test]
+    fn only_a_sustained_run_of_misses_gates_local_routing() {
+        // Read through locals so this reads as an invariant about the rule rather
+        // than a compile-time tautology.
+        let (to_degrade, to_gate_local) =
+            (FAST_PROBE_MISSES_TO_DEGRADE, FAST_PROBE_SUSTAINED_ROUNDS);
+        assert!(
+            to_gate_local > to_degrade,
+            "the local override must need more evidence than the metric"
+        );
+        for misses in 0..to_degrade {
+            assert!(!fast_probe_is_sustained(misses));
+        }
+        // Degraded for the metric, still not enough to move traffic.
+        for misses in to_degrade..to_gate_local {
+            assert!(
+                !fast_probe_is_sustained(misses),
+                "{misses} misses must not re-price the local edge"
+            );
+        }
+        assert!(fast_probe_is_sustained(to_gate_local));
+        assert!(fast_probe_is_sustained(to_gate_local + 100));
+
+        // Every missed round also burns its timeout budget, so the real cost of
+        // the gate is `rounds x (interval + timeout)`, not `rounds x interval`.
+        // Assert the real figure so a future retune cannot quietly make the local
+        // override slower than the keepalive teardown it exists to avoid waiting
+        // for (~15s).
+        let worst_round = FAST_PROBE_INTERVAL + fast_probe_timeout(0);
+        let gate_cost = worst_round * to_gate_local;
+        assert!(
+            gate_cost < Duration::from_secs(10),
+            "sustained gate takes {gate_cost:?}, which no longer beats keepalive teardown"
+        );
+        assert!(
+            gate_cost > Duration::from_secs(3),
+            "gate got cheaper than documented ({gate_cost:?})"
         );
     }
 

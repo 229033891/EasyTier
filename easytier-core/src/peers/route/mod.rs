@@ -56,6 +56,18 @@ pub type ForeignNetworkRouteInfoMap =
 #[async_trait::async_trait]
 pub trait RouteInterface {
     async fn list_peers(&self) -> Vec<PeerId>;
+    /// Peers we are connected to whose live conns are all *sustainedly*
+    /// fast-probe degraded — "connected, but carrying nothing".
+    ///
+    /// The OSPF builder re-prices **our own outgoing edges** to these peers, so a
+    /// black-holing link stops winning the local SPF immediately instead of
+    /// waiting for the peer-center to hand back an inflated cost.
+    ///
+    /// Defaults to empty, which is the safe direction: an implementation that
+    /// cannot answer simply does not get the local override.
+    async fn list_peers_without_usable_conn(&self) -> Vec<PeerId> {
+        Vec::new()
+    }
     fn my_peer_id(&self) -> PeerId;
     fn need_periodic_requery_peers(&self) -> bool {
         false

@@ -489,6 +489,26 @@ impl PeerMap {
         ret
     }
 
+    /// Peers we are still connected to that are carrying nothing: ≥1 live conn,
+    /// but no live conn that is not *sustainedly* fast-probe degraded.
+    ///
+    /// These are the peers whose **own outgoing edge** the local SPF must stop
+    /// pricing at face value. They are deliberately still advertised to other
+    /// nodes — a link that is degraded but not dead should stay in everyone
+    /// else's table as a last resort, just with the inflated cost the peer-center
+    /// already carries (the alternative, dropping the edge from what we advertise,
+    /// deletes a usable path from other nodes' tables).
+    pub async fn list_peers_without_usable_conn(&self) -> Vec<PeerId> {
+        let mut ret = Vec::new();
+        for item in self.peer_map.iter() {
+            let peer = item.value();
+            if peer.has_live_conns() && !peer.has_usable_conns() {
+                ret.push(*item.key());
+            }
+        }
+        ret
+    }
+
     pub async fn list_peer_conns(&self, peer_id: PeerId) -> Option<Vec<PeerConnInfo>> {
         if let Some(p) = self.get_peer_by_id(peer_id) {
             Some(p.list_peer_conns().await)

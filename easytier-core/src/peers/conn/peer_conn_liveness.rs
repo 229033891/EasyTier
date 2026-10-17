@@ -97,11 +97,6 @@ impl PeerConnLiveness {
         (probe - 1) as u8
     }
 
-    #[cfg(test)]
-    pub(super) fn has_active_probe(&self) -> bool {
-        self.active_probe().is_some()
-    }
-
     /// Whether the peer negotiated the liveness-echo feature.
     ///
     /// The fast probe (`peer_conn_ping.rs`) is gated on this: probing faster is

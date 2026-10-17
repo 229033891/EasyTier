@@ -37,6 +37,7 @@ use crate::{
     config::peers::PeerGroupIdentity,
     peers::{
         PeerPacketFilter,
+        conn::conn_select::OSPF_FUSE_COST_BONUS,
         context::{
             ArcPeerContext, NetworkIdentity as CoreNetworkIdentity, PeerContext, PeerContextEvent,
             TrustedKeyMetadata, TrustedKeySource,
@@ -436,6 +437,7 @@ impl OspfRouteTable {
         snapshot: &OspfRouteSnapshot,
         lookup: &OspfRouteSnapshotLookup<'_>,
         cost_calc: &T,
+        locally_unusable: &BTreeSet<PeerId>,
     ) -> (PeerGraph, NodeIndex) {
         let mut graph: PeerGraph = PeerGraph::new();
 
@@ -493,6 +495,20 @@ impl OspfRouteTable {
                 // this ever runs.
                 let mut cost =
                     edge_cost_from_i32(cost_calc.calculate_cost(src_peer_id, *dst_peer_id));
+                if src_peer_id == my_peer_id && locally_unusable.contains(dst_peer_id) {
+                    // Our own edge, and we know first-hand that it stopped
+                    // round-tripping (sustainedly). The peer-center has not told
+                    // us yet — or ever will, if we are the only ones who can see
+                    // it — so the reported cost for this edge is still whatever
+                    // it was when the link was healthy.
+                    //
+                    // *Price* it out, never drop it: an inflated cost only changes
+                    // which path we prefer, so a probe false positive degrades to a
+                    // worse route, whereas removing the edge would retract the
+                    // peer's prefixes and could take the only path away. Same knob
+                    // the peer-center already turns for the reported metric.
+                    cost = cost.saturating_add(OSPF_FUSE_COST_BONUS as usize);
+                }
                 if peer_avoid_relay_data {
                     // Saturating: the policy penalty must dominate but never wrap.
                     cost = cost.saturating_add(AVOID_RELAY_COST);
@@ -668,12 +684,41 @@ impl OspfRouteTable {
         self.next_hop_map_version.set_if_larger(version);
     }
 
+    /// [`Self::build_from_snapshot_with_unusable`] with no local override — i.e. the
+    /// pure "everything comes from the peer-center" build. Test convenience; the one
+    /// production caller goes through the `_with_unusable` form so the local
+    /// link-state override cannot be forgotten.
+    #[cfg(test)]
     pub fn build_from_snapshot<T: RouteCostCalculatorInterface>(
         &self,
         my_peer_id: PeerId,
         snapshot: &OspfRouteSnapshot,
         policy: NextHopPolicy,
         cost_calc: &T,
+    ) {
+        self.build_from_snapshot_with_unusable(
+            my_peer_id,
+            snapshot,
+            policy,
+            cost_calc,
+            &BTreeSet::new(),
+        )
+    }
+
+    /// [`Self::build_from_snapshot`] plus the local link-state override.
+    ///
+    /// `locally_unusable` lists peers whose own conn to us is connected but no
+    /// longer carrying anything (sustainedly fast-probe degraded). Their edge
+    /// **out of us** is re-priced, and only that one: everything else in the graph
+    /// still comes from the peer-center, so this cannot change what we advertise
+    /// to other nodes.
+    pub fn build_from_snapshot_with_unusable<T: RouteCostCalculatorInterface>(
+        &self,
+        my_peer_id: PeerId,
+        snapshot: &OspfRouteSnapshot,
+        policy: NextHopPolicy,
+        cost_calc: &T,
+        locally_unusable: &BTreeSet<PeerId>,
     ) {
         let version = snapshot.version;
         self.sync_suppressed_peer_ids(snapshot);
@@ -687,8 +732,13 @@ impl OspfRouteTable {
             .collect::<Vec<_>>();
 
         // build next hop map
-        let (graph, start_node) =
-            Self::build_peer_graph_from_snapshot(my_peer_id, snapshot, &lookup, cost_calc);
+        let (graph, start_node) = Self::build_peer_graph_from_snapshot(
+            my_peer_id,
+            snapshot,
+            &lookup,
+            cost_calc,
+            locally_unusable,
+        );
 
         if graph.node_count() == 0 {
             tracing::warn!("no peer in graph, cannot build next hop map");
@@ -2687,6 +2737,10 @@ struct PeerRouteServiceImpl {
     interface_peers_generation: AtomicU64,
     applied_interface_peers_generation: AtomicU64,
     applied_interface_peers: std::sync::Mutex<BTreeSet<PeerId>>,
+    /// Peers that are still connected to us but whose conns all stopped
+    /// round-tripping. Their edge out of us is re-priced during the build; see
+    /// `build_from_snapshot_with_unusable`.
+    locally_unusable_edges: std::sync::Mutex<BTreeSet<PeerId>>,
     self_conn_info_withdrawn: AtomicBool,
 
     last_update_my_foreign_network: AtomicCell<Option<Instant>>,
@@ -2761,6 +2815,7 @@ impl PeerRouteServiceImpl {
             interface_peers_generation: AtomicU64::new(1),
             applied_interface_peers_generation: AtomicU64::new(0),
             applied_interface_peers: std::sync::Mutex::new(BTreeSet::new()),
+            locally_unusable_edges: std::sync::Mutex::new(BTreeSet::new()),
             self_conn_info_withdrawn: AtomicBool::new(false),
 
             last_update_my_foreign_network: AtomicCell::new(None),
@@ -3138,20 +3193,24 @@ impl PeerRouteServiceImpl {
 
         let calc_locked = self.cost_calculator.read().unwrap();
         let route_snapshot = self.local_route_snapshot();
+        let locally_unusable = self.locally_unusable_edges.lock().unwrap().clone();
 
-        self.route_table.build_from_snapshot(
+        self.route_table.build_from_snapshot_with_unusable(
             self.my_peer_id,
             &route_snapshot,
             NextHopPolicy::LeastHop,
             calc_locked.as_ref().unwrap(),
+            &locally_unusable,
         );
 
-        self.route_table_with_cost.build_from_snapshot(
-            self.my_peer_id,
-            &route_snapshot,
-            NextHopPolicy::LeastCost,
-            calc_locked.as_ref().unwrap(),
-        );
+        self.route_table_with_cost
+            .build_from_snapshot_with_unusable(
+                self.my_peer_id,
+                &route_snapshot,
+                NextHopPolicy::LeastCost,
+                calc_locked.as_ref().unwrap(),
+                &locally_unusable,
+            );
 
         drop(calc_locked);
 
@@ -3161,6 +3220,48 @@ impl PeerRouteServiceImpl {
             .as_mut()
             .unwrap()
             .end_update();
+    }
+
+    /// Refresh the set of peers whose own conn to us is connected but dead, and
+    /// report whether it moved.
+    ///
+    /// Polled from the existing 1s loop rather than wired to conn events: the
+    /// degradation is a *derived* state (it needs the sustained window to elapse),
+    /// so the only honest trigger is "look again", and a 1s poll is also the rate
+    /// limit — a flapping link cannot cause a rebuild storm. Self-healing comes
+    /// for free: as soon as a round trip succeeds, the peer leaves the set and the
+    /// next rebuild prices its edge normally again.
+    async fn update_locally_unusable_edges(&self) -> bool {
+        let current: BTreeSet<PeerId> = {
+            let interface = self.interface.lock().await;
+            let Some(interface) = interface.as_ref() else {
+                return false;
+            };
+            interface
+                .list_peers_without_usable_conn()
+                .await
+                .into_iter()
+                .collect()
+        };
+
+        let mut applied = self.locally_unusable_edges.lock().unwrap();
+        if *applied == current {
+            return false;
+        }
+        if !current.is_empty() {
+            tracing::warn!(
+                ?current,
+                "local link state: connected peers that stopped round-tripping; \
+                 pricing our edges to them out of the local SPF"
+            );
+        } else if !applied.is_empty() {
+            tracing::info!(
+                was = ?*applied,
+                "local link state: all connections round-trip again; restoring normal edge costs"
+            );
+        }
+        *applied = current;
+        true
     }
 
     fn update_foreign_network_owner_map(&self) {
@@ -3566,13 +3667,22 @@ impl PeerRouteServiceImpl {
         let my_peer_info_updated = self.update_my_peer_info();
         let my_conn_info_updated = self.update_my_conn_info().await;
         let my_foreign_network_updated = self.update_my_foreign_network().await;
+        // A conn that is open but no longer round-tripping changes none of the
+        // advertised data, so nothing above would trigger a rebuild — which is
+        // exactly why the local SPF used to keep pricing a black-holing edge at
+        // face value until the peer-center caught up.
+        let local_link_state_changed = self.update_locally_unusable_edges().await;
         let mut untrusted_changed = false;
         if my_peer_info_updated || my_conn_info_updated {
             untrusted_changed = self.refresh_credential_trusts_and_disconnect().await;
         }
 
         let mut public_ipv6_state_updated = false;
-        if my_peer_info_updated || my_conn_info_updated || untrusted_changed {
+        if my_peer_info_updated
+            || my_conn_info_updated
+            || untrusted_changed
+            || local_link_state_changed
+        {
             self.update_route_table_and_cached_local_conn_bitmap();
             self.update_foreign_network_owner_map();
             public_ipv6_state_updated = self.notify_public_ipv6_route_change();
@@ -3580,6 +3690,8 @@ impl PeerRouteServiceImpl {
         if my_peer_info_updated {
             self.update_peer_info_last_update();
         }
+        // `local_link_state_changed` is deliberately excluded: it is not a change
+        // in what we advertise, so it must not trigger a peer sync.
         my_peer_info_updated
             || my_conn_info_updated
             || my_foreign_network_updated

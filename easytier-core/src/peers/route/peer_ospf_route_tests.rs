@@ -1868,6 +1868,273 @@ fn single_path_topology_has_no_alternates() {
     );
 }
 
+/// Non-uniform edge costs, so a test can make the direct edge the cheapest one
+/// and an alternative much more expensive. Unlisted edges cost `UNLISTED`, so a
+/// path that "somehow" avoids the edges under test cannot win by accident.
+struct FixedEdgeCosts {
+    costs: HashMap<(PeerId, PeerId), i32>,
+}
+
+const UNLISTED: i32 = 10_000;
+
+impl FixedEdgeCosts {
+    fn new(costs: &[(PeerId, PeerId, i32)]) -> Self {
+        Self {
+            costs: costs
+                .iter()
+                .map(|&(src, dst, cost)| ((src, dst), cost))
+                .collect(),
+        }
+    }
+}
+
+impl RouteCostCalculatorInterface for FixedEdgeCosts {
+    fn calculate_cost(&self, src: PeerId, dst: PeerId) -> i32 {
+        self.costs.get(&(src, dst)).copied().unwrap_or(UNLISTED)
+    }
+}
+
+/// A *torn-down* direct conn already hands the destination to a costlier relay.
+///
+/// This pins down what "the backup only accepts exactly-equal-cost paths" does
+/// and does not cover. `RouteInterface::list_peers` is
+/// `PeerMap::list_peers_with_conn`, so the moment the last conn to the
+/// destination dies it leaves our advertised `connected_peers`; that changes the
+/// snapshot, the OSPF loop rebuilds (also woken by the conn-removed peer event),
+/// and the edge is gone from the graph — so Dijkstra is free to pick *any*
+/// remaining path no matter how much worse it is. That is the user's rule
+/// ("otherwise take the best quality") and it needs no unequal-cost backup.
+///
+/// What the equal-cost alternates do **not** cover is the window between the
+/// conn dying and the rebuild, and a conn that is black-holing but still open
+/// (see `open_but_degraded_direct_edge_is_not_detectable_locally`).
+#[test]
+fn torn_down_direct_edge_hands_over_to_a_costlier_relay() {
+    // 1 (me) --2--> 3 is cheap; 1 --1--> 2 --50--> 3 is 25x worse.
+    let costs = FixedEdgeCosts::new(&[
+        (1, 2, 1),
+        (1, 3, 2),
+        (2, 1, 1),
+        (2, 3, 50),
+        (3, 1, 2),
+        (3, 2, 50),
+    ]);
+
+    let with_direct = OspfRouteSnapshot {
+        peer_infos: vec![peer(1), peer(2), peer(3)],
+        conn_map: vec![
+            connected(1, [2, 3]),
+            connected(2, [1, 3]),
+            connected(3, [1, 2]),
+        ],
+        suppressed_peer_ids: BTreeSet::new(),
+        version: 1,
+    };
+
+    let table = OspfRouteTable::new();
+    table.build_from_snapshot(1, &with_direct, NextHopPolicy::LeastCost, &costs);
+
+    assert_eq!(table.get_next_hop(3).unwrap().next_hop_peer_id, 3);
+    // No equal-cost alternate exists, so Phase B/D has nothing to offer here.
+    assert_eq!(
+        table.get_next_hops(3),
+        super::NextHopCandidates::from_slice(&[3]),
+        "the direct path is the only candidate, so there is no equal-cost backup"
+    );
+
+    // The last conn to 3 died: `list_peers_with_conn` drops it, so the advertised
+    // set changes and the edge disappears from the graph on the next rebuild.
+    let after_teardown = OspfRouteSnapshot {
+        peer_infos: vec![peer(1), peer(2), peer(3)],
+        conn_map: vec![
+            connected(1, [2]),
+            connected(2, [1, 3]),
+            connected(3, [1, 2]),
+        ],
+        suppressed_peer_ids: BTreeSet::new(),
+        version: 2,
+    };
+    table.build_from_snapshot(1, &after_teardown, NextHopPolicy::LeastCost, &costs);
+
+    let next_hop = table.get_next_hop(3).unwrap();
+    assert_eq!(
+        next_hop.next_hop_peer_id, 2,
+        "the only remaining path, 25x more expensive, must take over"
+    );
+    assert_eq!(next_hop.path_len, 2);
+}
+
+/// The counterpart, and the real remaining gap: while the conn is *open* the
+/// advertised set does not change, so nothing local can notice it stopped
+/// carrying traffic. `calculate_cost` keeps reporting the pre-failure number,
+/// the snapshot is unchanged, and no rebuild is triggered — the next hop stays
+/// the dead direct edge until the peer-center hands back an inflated cost.
+///
+/// This is why the fast liveness probe must feed the *local* view too, and not
+/// only the reported one.
+#[test]
+fn open_but_degraded_direct_edge_is_not_detectable_locally() {
+    let costs = FixedEdgeCosts::new(&[
+        (1, 2, 1),
+        (1, 3, 2),
+        (2, 1, 1),
+        (2, 3, 50),
+        (3, 1, 2),
+        (3, 2, 50),
+    ]);
+
+    let snapshot = OspfRouteSnapshot {
+        peer_infos: vec![peer(1), peer(2), peer(3)],
+        conn_map: vec![
+            connected(1, [2, 3]),
+            connected(2, [1, 3]),
+            connected(3, [1, 2]),
+        ],
+        suppressed_peer_ids: BTreeSet::new(),
+        version: 7,
+    };
+
+    let table = OspfRouteTable::new();
+    table.build_from_snapshot(1, &snapshot, NextHopPolicy::LeastCost, &costs);
+
+    // Rebuilding with an identical snapshot — which is all a conn that is alive
+    // but black-holing can produce — keeps the dead direct edge as the choice,
+    // because the only input that moved (the cost) comes from the peer-center.
+    table.build_from_snapshot(1, &snapshot, NextHopPolicy::LeastCost, &costs);
+    assert_eq!(table.get_next_hop(3).unwrap().next_hop_peer_id, 3);
+    assert_eq!(
+        table.get_next_hops(3),
+        super::NextHopCandidates::from_slice(&[3])
+    );
+    assert_eq!(
+        costs.calculate_cost(1, 3),
+        2,
+        "the local view of the edge cost is whatever the peer-center last told us"
+    );
+}
+
+/// Phase F2: once our own conn to the destination is *sustainedly* degraded, the
+/// local SPF must stop pricing that edge at face value — and must therefore hand
+/// the destination to a relay that is far more expensive, which is exactly the
+/// "otherwise take the best quality that is left" rule.
+///
+/// This is the case `open_but_degraded_direct_edge_is_not_detectable_locally`
+/// shows is otherwise invisible: without the override the direct edge keeps its
+/// stale cost of 2 and wins forever.
+#[test]
+fn sustainedly_degraded_own_edge_is_outpriced_by_a_costlier_relay() {
+    let costs = FixedEdgeCosts::new(&[
+        (1, 2, 1),
+        (1, 3, 2),
+        (2, 1, 1),
+        (2, 3, 50),
+        (3, 1, 2),
+        (3, 2, 50),
+    ]);
+    let snapshot = OspfRouteSnapshot {
+        peer_infos: vec![peer(1), peer(2), peer(3)],
+        conn_map: vec![
+            connected(1, [2, 3]),
+            connected(2, [1, 3]),
+            connected(3, [1, 2]),
+        ],
+        suppressed_peer_ids: BTreeSet::new(),
+        version: 1,
+    };
+
+    let table = OspfRouteTable::new();
+    table.build_from_snapshot_with_unusable(
+        1,
+        &snapshot,
+        NextHopPolicy::LeastCost,
+        &costs,
+        &BTreeSet::from([3]),
+    );
+
+    let next_hop = table.get_next_hop(3).unwrap();
+    assert_eq!(
+        next_hop.next_hop_peer_id, 2,
+        "the direct edge is connected-but-dead, so the 25x worse relay must take over"
+    );
+    assert_eq!(next_hop.path_len, 2);
+}
+
+/// The override prices the edge out; it must **not** delete it.
+///
+/// If it did, a probe false positive on the only path to a peer would retract
+/// that peer's prefixes and turn a degraded link into an outage. `peer_reachable`
+/// and the CIDR lookup therefore have to keep resolving.
+#[test]
+fn outpricing_a_degraded_own_edge_keeps_the_peer_reachable() {
+    let mut remote_proxy = peer(3);
+    remote_proxy.info.proxy_cidrs.push("10.10.0.0/16".into());
+
+    let costs = FixedEdgeCosts::new(&[(1, 3, 2), (3, 1, 2)]);
+    let snapshot = OspfRouteSnapshot {
+        peer_infos: vec![peer(1), peer(3), remote_proxy],
+        conn_map: vec![connected(1, [3]), connected(3, [1])],
+        suppressed_peer_ids: BTreeSet::new(),
+        version: 1,
+    };
+
+    let table = OspfRouteTable::new();
+    // Single path, and it is the degraded one: still the only way through.
+    table.build_from_snapshot_with_unusable(
+        1,
+        &snapshot,
+        NextHopPolicy::LeastCost,
+        &costs,
+        &BTreeSet::from([3]),
+    );
+
+    assert!(
+        table.peer_reachable(3),
+        "a degraded-but-only path must not be retracted"
+    );
+    assert_eq!(
+        table.get_peer_id_for_proxy(&"10.10.1.1".parse::<IpAddr>().unwrap()),
+        Some(3)
+    );
+}
+
+/// Only **our own** outgoing edges are re-priced. A neighbour we have no reason to
+/// distrust stays at the cost the peer-center gave it — the local override must
+/// not become a way to bias paths we know nothing about.
+#[test]
+fn the_override_only_touches_edges_leaving_us() {
+    let costs = FixedEdgeCosts::new(&[
+        (1, 2, 1),
+        (1, 3, 2),
+        (2, 1, 1),
+        (2, 3, 50),
+        (3, 1, 2),
+        (3, 2, 50),
+    ]);
+    let snapshot = OspfRouteSnapshot {
+        peer_infos: vec![peer(1), peer(2), peer(3)],
+        conn_map: vec![
+            connected(1, [2, 3]),
+            connected(2, [1, 3]),
+            connected(3, [1, 2]),
+        ],
+        suppressed_peer_ids: BTreeSet::new(),
+        version: 1,
+    };
+
+    let table = OspfRouteTable::new();
+    // 2 is flagged even though we are not adjacent to it via a usable conn —
+    // only edge 2->3 could have been affected, and the cost 50 must be untouched,
+    // so the result is identical to a build with no flags at all.
+    table.build_from_snapshot_with_unusable(
+        1,
+        &snapshot,
+        NextHopPolicy::LeastCost,
+        &costs,
+        &BTreeSet::from([2]),
+    );
+    assert_eq!(table.get_next_hop(3).unwrap().next_hop_peer_id, 3);
+}
+
 #[test]
 fn default_proxy_cidr_is_excluded_from_specific_lookup() {
     let mut remote_proxy_peer = peer(3);
