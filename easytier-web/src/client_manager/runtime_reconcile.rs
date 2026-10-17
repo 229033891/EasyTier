@@ -120,6 +120,8 @@ fn hot_patch_base(config: &NetworkConfig) -> anyhow::Result<NetworkConfig> {
     // (address and private key) decides between patch and recreate.
     config.vpn_portal_config = None;
     config.managed_credentials.clear();
+    // `config` here is the round-trip of `new_from_config`, which always sets
+    // `dhcp` explicitly, so this fallback is defensive only and never triggers.
     if config.dhcp.unwrap_or_default() {
         config.virtual_ipv4 = None;
         config.network_length = None;

@@ -531,7 +531,25 @@ $env:CARGO_INCREMENTAL    = '0'
 4. **畸形包注入**（CR-10/CR-11/CR-12 + 5-F9）—— 修的是「不该 panic / 不该返回超大包」，需要主动构造畸形输入验证。
 5. **NAT 打洞**（5-F3）—— `ChangeRequest` 速率限制不应影响真实客户端的映射发现；观察跨 NAT 打洞成功率是否与改前一致。
 6. **打洞服务启停**（5-F1）—— 确认并发打洞时 `stop()` 仍能及时完成（读锁不再被长期占用）。
-7. ~~`easytier` crate 的编译验证（CR-13）~~ —— **2026-10-17 已完成**：`cargo check -p easytier` 通过，`virtual_nic.rs` 随该 crate 一并编译验证。**仍未跑**的是 `cargo test -p easytier`（CLI / `three_node.rs` 三节点集成测试）。
+7. ~~`easytier` crate 的编译验证（CR-13）~~ —— **2026-10-17 已完成**：`cargo check -p easytier` 通过，`virtual_nic.rs` 随该 crate 一并编译验证。
+8. **`easytier` 集成测试**（`cargo test -p easytier --test tests`，1475 条）—— ⚠️ **2026-10-17 首跑有 1 条失败，尚未定论**：`credential_tests::credential_non_reusable_allows_only_one_peer` 在 `wait_for_condition` 超时（`easytier/src/tunnel/common.rs:557`）。见 §6.1。
+
+### 6.1 `easytier` 集成测试失败：待定论，**大概率不是本批改动引入**
+
+**现象**：`credential_non_reusable_allows_only_one_peer` 超时（约 38s）。同批另有约 13 条 `common::config::compatibility_tests` 失败，形态不同（见下）。
+
+**已确认的事实**：
+
+| 项 | 结论 |
+|---|---|
+| 该测试文件是否被本批改动 | **否** —— `credential_tests.rs` 不在提交文件列表内（本批只动了 `easytier/src/tests/three_node.rs`） |
+| CI 是否覆盖这条测试 | **否** —— `.github/workflows/test.yml` 只跑 `cargo test --package easytier-core`，**从不跑 `easytier` 的集成测试**。所以这类失败不会在 CI 拦住 |
+| 是否是已知 flake | **是同类** —— [`credential-pin-preference-failover.md`](./credential-pin-preference-failover.md) §3 记录了姊妹用例 `credential_non_reusable_across_two_admins_allows_only_one_peer` 在 CI #107/#108 连续 TIMEOUT，判定为**竞态 flake**（日志停在 `stable=true samples=2`，差一次采样）。本条是**同一族**的「非复用凭据选举可见性」测试 |
+| 本批是否改过该机制 | 间接：`5-F6` 把 `build_route_info` / `build_conn_peer_list` 的 `break` 改成 `continue`（原逻辑因 `OrderedHashMap` 插入序 ≠ 新鲜度序而不成立）。这**会改变路由信息的传播集合**，理论上可能影响收敛时序，**不能排除关联** |
+
+**⚠️ 因此结论是「未定论」**：既没有证据说它由本批引入，也没有证据说无关。判定需要**在 `79331629` 的父提交上跑同一测试**做对照 —— 本文档写下时尚未完成该对照。
+
+**另外那 13 条 `common::config::compatibility_tests` 失败**：形态与本条不同（不是超时而是断言失败，且集中在设置/读取环境变量的用例）。**高度疑似并发跑测试导致的环境变量互相污染** —— 那批用例要 `set_var`，而本轮曾同时有多个 `cargo test` 在跑（含被我中断的那些）。已清理残留进程后单线程复跑，结果待补。
 
 ### 尚未处理 / 遗留
 

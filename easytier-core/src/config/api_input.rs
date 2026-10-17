@@ -361,6 +361,10 @@ impl NetworkConfigExt for NetworkConfig {
                 .with_context(|| format!("failed to parse instance id: {:?}", self.instance_id))?,
         );
         cfg.set_hostname(self.hostname.clone());
+        // `unwrap_or_default()` (= `false`) keeps a bare NetworkConfig in the
+        // static-IP branch below, which simply skips setting `ipv4` when
+        // `virtual_ipv4` is empty. That is the long-standing, relay-capable
+        // default; do NOT flip it to `true` — see `ConfigLoader::get_dhcp`.
         cfg.set_dhcp(self.dhcp.unwrap_or_default());
         cfg.set_inst_name(self.network_name.clone().unwrap_or_default());
 

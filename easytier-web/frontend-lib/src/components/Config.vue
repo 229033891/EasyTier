@@ -374,6 +374,29 @@ const ipv6ControlsHidden = computed(() => !!curNetwork.value.disable_ipv6)
 const encryptionAlgoHidden = computed(() => !!curNetwork.value.disable_encryption)
 
 /**
+ * 空网络密码告警。
+ *
+ * `DEFAULT_NETWORK_CONFIG()` ships `network_secret: ''`, which means "anybody who
+ * knows the network name can join". That is the right *starting* value (we must
+ * not invent a secret the operator cannot see), but it should not go unnoticed.
+ *
+ * Two states legitimately have no network secret, so both suppress the warning:
+ * - `disable_encryption` — traffic is unencrypted by explicit choice.
+ * - credential mode — identity comes from `secure_mode.local_private_key`, and
+ *   `api_input::gen_config` treats an empty secret as "use the credential key".
+ */
+const showEmptySecretWarning = computed(
+  () =>
+    !curNetwork.value.network_secret?.trim() &&
+    !curNetwork.value.disable_encryption &&
+    // Same predicate as `api_input::gen_config`: credential mode is
+    // "network_secret absent AND secure_mode.local_private_key non-empty"
+    // (see `easytier-core/src/config/api_input.rs`). `SecureModeConfig` carries
+    // `enabled`, not an "is credential" flag, so key presence is the signal.
+    !(curNetwork.value.secure_mode?.local_private_key?.trim()),
+)
+
+/**
  * 加密算法选项对齐 `EncryptionAlgorithm::from_str`（easytier-core/src/config/encryption.rs）：除下列名称外，后端还接受
  * openssl-* 前缀别名（openssl-aes-gcm / openssl-aes-256-gcm / openssl-chacha20）；这里只列会原样回写的 canonical 名称。
  */
@@ -620,6 +643,18 @@ function removeVpnPortalClient(index: number) {
                         @click="generateAndCopyNetworkSecret" />
                     </InputGroupAddon>
                   </InputGroup>
+                  <!--
+                    An empty network secret is a legitimate state (credential mode
+                    authenticates with `secure_mode.local_private_key` instead, and
+                    `disable_encryption` skips it entirely), so this is a warning
+                    and not a validation error — blocking the save would lock
+                    those two flows out of the GUI.
+                  -->
+                  <small v-if="showEmptySecretWarning" class="config-field-warning"
+                    id="network_secret-warning" role="alert">
+                    <i class="pi pi-exclamation-triangle" aria-hidden="true"></i>
+                    {{ t('network_secret_empty_warning') }}
+                  </small>
                 </div>
               </div>
 
@@ -1727,6 +1762,17 @@ function removeVpnPortalClient(index: number) {
 .config-field-hint {
   color: var(--text-color-secondary, #334155);
   font-size: 0.75rem;
+  line-height: 1.35;
+}
+
+/* Inline field-level warning (e.g. an empty network secret). Uses the theme's
+   `warn` token so it stays readable in dark mode without hardcoding a color. */
+.config-field-warning {
+  align-items: center;
+  color: var(--p-orange-600, #c2410c);
+  display: flex;
+  font-size: 0.75rem;
+  gap: 0.25rem;
   line-height: 1.35;
 }
 

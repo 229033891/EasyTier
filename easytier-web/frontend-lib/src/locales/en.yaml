@@ -25,6 +25,7 @@ network_secret_generated: Strong password generated and copied
 network_secret_copy_failed: Password generated, but clipboard copy failed
 network_secret_overwrite_confirm: A network secret already exists. Replace it with a newly generated strong password?
 network_secret_overwrite_header: Replace Network Secret
+network_secret_empty_warning: The network secret is empty — anyone who knows the network name can join. Use the key button to generate a strong one.
 public_server_url: Public Server URL
 peer_urls: Peer URLs
 proxy_cidrs: Subnet Proxy
@@ -504,6 +505,8 @@ default_protocol_help: |-
   Manual peer URLs dial the configured scheme first, and only fail over by rewriting among tcp/udp/ws/wss/quic (host and ports kept; never forced to 443). wg and faketcp stay in the list for Direct sort but are never rewritten on manual peers.
   Default is udp,tcp: every other common transport (tcp/ws/wss/quic/faketcp) retransmits on its own, which turns an inner TCP flow (RDP/SSH/HTTP) into TCP over TCP that stalls under mild packet loss; tcp stays second so "UDP is blocked, fall back to TCP" still works. Example wss,tcp,quic,udp: if UDP is blocked, TCP/WSS from the list are still tried.
   Chip order in the dropdown is try order; newly checked schemes are appended in catalog order — uncheck and re-check to change relative position.
+  ⚠️ This list sets priority only, it does not exclude: unchecked schemes sort last and are still tried.
+  ⚠️ "Bonded Link Count" truncates the dial chain: dialing stops once N schemes succeed (N = bond count), so entries after the Nth are usually never reached unless the earlier ones fail. Keep tcp early as the fallback.
 
 encryption_algorithm: Encryption Algorithm
 encryption_algorithm_help: |-
@@ -705,6 +708,7 @@ peer_link_bond_count: Bonded Link Count
 peer_link_bond_count_help: |-
   Target number of PeerConns sending in parallel between a peer pair. Default 2 spreads different flows (inner IP 5-tuple) across tunnels when multiple same-quality-band tunnels are live.
   Quality first: much worse paths stay hot standby and do not join the send set; the actual count may be below this target when the band is thin. Set to 1 for a single default_conn (extra tunnels are hot standbys only). Max 5; a single RDP flow is still capped by one tunnel.
+  ⚠️ Setting 1 also disables multi-protocol dialing: only the first entry of "Protocol Order" is dialed and the rest are never tried, so a rate-limited udp will not fall back to tcp. Keep 2 to have a second protocol warm (standby tunnels cost no extra bandwidth when idle).
 peer_link_bond_count_placeholder: Leave blank as default 2
 peer_link_replica_fill_max: Same-Class Fill Limit
 peer_link_replica_fill_max_help: |-

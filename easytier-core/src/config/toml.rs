@@ -1076,6 +1076,18 @@ impl ConfigLoader for TomlConfig {
     }
 
     fn get_dhcp(&self) -> bool {
+        // `Option<bool>` → `false` when the key is absent. This is the
+        // long-standing CLI/core default: a TOML deployment that does not ask
+        // for an address (`--dhcp`/`--ipv4`) runs as a node with no virtual
+        // IPv4 (relay-only / gateway-style) instead of demanding one.
+        //
+        // NOTE: the GUI default template ships `dhcp: true` (see
+        // `easytier-web/frontend-lib/src/types/network.ts`) — that is
+        // intentional and context-specific, not a bug to "sync away": the GUI
+        // is an end-user network-creation flow that always runs with a TUN
+        // adapter, whereas a bare CLI/core config may legitimately be
+        // address-less. Flipping this default to `true` would make every such
+        // config require a host adapter and fail to start.
         self.config.lock().unwrap().dhcp.unwrap_or_default()
     }
 

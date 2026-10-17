@@ -185,7 +185,14 @@ export function DEFAULT_NETWORK_CONFIG(): NetworkConfig {
     has_policy_routes: true,
     enable_socks5: false,
     socks5_port: 1080,
-    mtu: null,
+    // Match core `gen_default_flags().mtu = 1300` (toml.rs). This used to be
+    // `null`, which *resolved* to 1300 anyway (api_input.rs only applies
+    // `if let Some(mtu)`), so the effective value was never wrong — but a new
+    // network showed an empty MTU field while a TOML one showed 1300, and any
+    // round-trip through `new_from_config` pinned a literal instead of deferring
+    // to the core default. Spell it out so both ends display and persist the
+    // same number.
+    mtu: 1300,
     instance_recv_bps_limit: null,
     peer_link_bond_count: 2,
     peer_link_replica_fill_max: 2,

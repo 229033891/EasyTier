@@ -872,6 +872,23 @@ struct RpcPortalOptions {
 }
 
 impl Cli {
+    /// Listeners installed when neither `-l/--listeners` nor a pre-existing
+    /// config supplies any.
+    ///
+    /// MUST stay in sync with the GUI default template's `listener_urls`
+    /// (`easytier-web/frontend-lib/src/types/network.ts`).
+    ///
+    /// This used to be the bare port `"11010"` handed to `parse_listeners`,
+    /// which expands over `IpScheme::VARIANTS` — i.e. *every* compiled-in
+    /// scheme (tcp, udp, wg, quic, ws, wss, faketcp on a default build). That
+    /// opened five extra ports that the `udp,tcp` dialing preference never
+    /// uses, and made the CLI listen on a different set than the GUI.
+    const DEFAULT_LISTENERS: [&str; 3] = [
+        "tcp://0.0.0.0:11010",
+        "udp://0.0.0.0:11010",
+        "wg://0.0.0.0:11011",
+    ];
+
     fn gen_listeners(addr: SocketAddr) -> impl Iterator<Item = String> {
         let dynamic = addr.port() == 0;
         IpScheme::VARIANTS.iter().map(move |proto| {
@@ -1119,8 +1136,10 @@ impl NetworkOptions {
                     .collect(),
             );
         } else if cfg.get_listeners().is_none() {
+            // Default listeners. MUST stay in sync with the GUI default template
+            // (`easytier-web/frontend-lib/src/types/network.ts` → `listener_urls`).
             cfg.set_listeners(
-                Cli::parse_listeners(false, vec!["11010".to_string()])?
+                Cli::DEFAULT_LISTENERS
                     .into_iter()
                     .map(|s| s.parse().unwrap())
                     .collect(),
@@ -2042,6 +2061,25 @@ mod tests {
             .flat_map(|(_, o)| IpScheme::VARIANTS.iter().map(o))
             .collect::<Vec<_>>();
         assert_eq!(Cli::parse_listeners(false, input).unwrap(), output);
+
+        // The *default* listeners (used when no `-l` is given) must match the
+        // GUI template's `listener_urls`, not the full `IpScheme::VARIANTS`
+        // expansion that a bare "11010" would produce.
+        assert_eq!(
+            Cli::DEFAULT_LISTENERS,
+            [
+                "tcp://0.0.0.0:11010",
+                "udp://0.0.0.0:11010",
+                "wg://0.0.0.0:11011",
+            ]
+        );
+        // Every default must parse as a URL (this is what the code does with it).
+        for listener in Cli::DEFAULT_LISTENERS {
+            assert!(
+                listener.parse::<url::Url>().is_ok(),
+                "default listener must be a valid URL: {listener}"
+            );
+        }
 
         let cases: [(IpSchemeMap, IpSchemeMap); _] = [
             (
