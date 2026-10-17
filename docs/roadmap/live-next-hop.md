@@ -174,6 +174,14 @@ A: 再收到 → 又选 B ……                                        ↺
 
 `tailscale-gap-and-conflict-audit.md:207` 明确写过该短路「**保持不变**（它回答的是拓扑问题）」，`connection-stability-todo.md:166` 也写「选路仍用 `has_peer`」。首版改法推翻了它，却只改了 `peer-connections.md`，另两处未同步而留下互相矛盾的记录。（本批文档已把三处口径对齐，见 §3 F-3。）
 
+### P9 — 「不在 peer 表里」被当成可发：兜底下一跳反被兜底遮住（Phase A 自引入）
+
+`next_hop_is_sendable` 的规则是「`hop == 我` ⇒ 可发；否则 `不在表里 || 有活连接` ⇒ 可发」。后半句把**跨网网关**（本机确实没有条目，属设计如此）和**已被回收的死下一跳**（`clean_peer_without_conn` → `close_peer` 摘掉条目，路由条目却还留着）当成同一件事，于是后者会被立刻返回。
+
+后果不是「选了一个错跳」这么轻：按主下一跳优先返回，**后面代价相同、且已经连上的等代价备选根本不再被看**，包随后在 `send_msg_internal` 的网关闸门处因「既无活连接、也非跨网网关」被丢掉。也就是说 Phase B/D 的兜底**恰好在它唯一有意义的场景（主下一跳连条目都不剩了）里失效**。
+
+改动前没有备选概念，丢掉的结果一样，所以这不是旧缺陷被暴露，而是**新加的兜底被自己的资格判据挡掉**——比不做 B/D 更坏，因为表里明明有一条能走的路。已改为分档（§5.3），T3 只作兜底。
+
 ---
 
 ## 5. 方案
@@ -216,12 +224,24 @@ A: 再收到 → 又选 B ……                                        ↺
 `get_gateway_peer_id` 现在：
 
 1. 取候选列表 `route.get_next_hops_with_policy(dst, policy)`（首选 + 等代价备选，顺序由路由给出）。
-2. **按顺序**对每个候选套 `next_hop_is_sendable`（自发 / 跨网网关 / 有活连接，见 Phase A）。
-3. 返回第一个可用的；不可用的逐个 `debug!` 记录（保留 P6 的可观测性）。
-4. 全部不可用 ⇒ 返回 `None`，保持「明确失败」，**不打洞、不猜**。
+2. **按顺序**套 `select_next_hop`（纯函数 + 惰性 `probe`，见 Phase A），分三档：
+   - **T1 自发**（`hop == my_id`）；
+   - **T2 本地可发**：条目在 **且** ≥1 条活连接（`has_peer` 只是 `contains_key`，最后一条 conn 断了条目还在，所以活连接判据不可省）；
+   - **T3 无本地条目**：**仅作兜底**。
+3. 取第一个 T1/T2 命中；T2 落空的候选逐个 `debug!` 记录（保留 P6 的可观测性）。
+4. 全部候选都不可用时，才返回第一个 T3 候选；连 T3 都没有 ⇒ `None`，保持「明确失败」，**不打洞、不猜**。
 
 - 「另一条已建立的线」= **候选列表里的下一个**，不是全表扫描，也不是任意活 peer。
 - 首版引入的 `best_established_relay` / `relay_quality` 已删除（P2/P4/P5 一并消失）。
+
+#### T3 为什么只能兜底（2026-10-17 修正，见 §4 P9）
+
+从 `PeerMap` 内部看，下面两件事**长得一模一样**（都是「本机 peer 表里没有」）：
+
+1. **跨网网关**——本来就没有本机条目，发送时由 `foreign_network_client.has_next_hop` 接手（调用点的 `NOTIC`）；
+2. **已被回收的死下一跳**——`clean_peer_without_conn` → `close_peer` 会把条目从 peer 表摘掉，而命名它的路由条目还要留 `REMOVE_UNREACHABLE_PEER_INFO_AFTER` 那么久。
+
+只有调用方能区分二者（`foreign_network_client.has_next_hop`）。首版实现把「不在表里」直接当可发，于是**回收掉的主下一跳会立刻被返回，把已经连上的等代价备选遮住**，包随后在发送侧因「既无活连接、也非跨网网关」被丢掉——**兜底恰好在最需要它的时候失效**（正是 Phase B/D 要解决的场景）。T3 降级为兜底后：本地可发候选永远优先；实在没有才走 T3，跨网路由行为与改动前一致，而一个陈旧下一跳退化为改动前同样的「告警 + 丢弃」，不引入新失败模式。
 
 ### 5.4 度量本身是对的，缺的是新鲜度与确定性
 
@@ -401,8 +421,8 @@ Phase A 不是「修复」，是**回滚到已知正确行为**；Phase C 小而
 
 构建（Phase A + C + F + F2 + B/D 后实测）：
 
-- `cargo test -p easytier-core --lib` → **1007 passed / 0 failed**；`cargo clippy -p easytier-core --lib` 与 `cargo fmt --check -p easytier-core` 干净。
-- **Phase A 已覆盖**（`next_hop_is_sendable_tests`，`peer_map.rs`）：自己恒可发；活 hop 可选；**死 hop 被拒**；跨网网关（本机无条目）可选；未知 peer 交给发送路径（与改动前一致）。
+- `cargo test -p easytier-core --lib` → **1011 passed / 0 failed**；`cargo clippy -p easytier-core --lib` 与 `cargo fmt --check -p easytier-core` 干净。
+- **Phase A 已覆盖**（`select_next_hop_tests`，`peer_map.rs`）：自己恒可发；活 hop 可选；**死 hop 被拒并顺延到下一候选**；**回收掉的主下一跳不遮住活的备选**（P9 回归）；实在没有本地可发候选时仍返回第一个无本地条目的候选（跨网网关行为不变）；全死 ⇒ `None`；`probe` 在首个可用候选处短路（每包热路径，不允许无条件探测）。
 - **Phase C 已覆盖**（`graph_algo.rs::tests`）：`equal_cost_prefers_the_fewer_hop_path`（等代价取少跳 —— 「同质量优先直连」）、`strictly_cheaper_multi_hop_path_still_wins`（**成本仍是主键**：13 vs 2 走中继，防止把「直连优先」过度应用）、`equal_cost_equal_hops_is_stable_across_edge_order`（完全相同时不随加边顺序翻面）。
 - **Phase F 已覆盖**（`peer_conn_ping.rs::tests` / `peer_conn.rs::tests`）：`fast_probe_timeout_scales_with_rtt_and_is_clamped`（含「3 次未往返 < 2s」的预算断言）、`keepalive_and_fast_probe_sequences_never_collide`（两条探测流 seq 不重叠）、`fast_probe_degraded_flag_drives_reported_loss`（降级位 → `loss_rate()==1.0`，且 **conn 仍不关闭**）。
 - **Phase F2 已覆盖**（`peer_center/instance.rs::tests`）：`reports_when_only_a_cost_changed`（纯代价变化必须上报）、集合变化/心跳/中心切换各自的应报行为。
@@ -483,3 +503,4 @@ CPU：先跑 §5.7 的 harness 拿基线，再看实例占用（注意快速探�
 | 2026-10-17 | **Phase F 落地（代码，待现网）**：新增 BFD 式快速活性探测（`peer_conn_ping.rs::fast_probe`，333ms × 3 次未往返 ≈ **1.9s** 判死，单次等待 `clamp(3×RTT, 300ms, 2s)`）。它**只写度量**（`PeerConn::fast_probe_degraded` → `loss_rate()==1.0` → `score_conn` fused → `ospf_edge_cost_from_score` +`OSPF_FUSE_COST_BONUS` → 边权重报 → 下次 SPF 改路），**不拆连**，`ping_fail_close_count` 时间常数不变。门禁 = `liveness-echo-v1` 协商（`PeerConnLiveness::is_enabled`），未协商则空转并清位。**实现中发现并修掉的一个坑**：保活与快速探测共用 0 起 seq 时，broadcast 的 `Pong` 会被另一条流当作自己的应答（**假成功，正好掩盖要报告的失败**），故把 u32 拆开（保活低 31 位 / 快速探测最高位）。成本 ≈4.5 KB/s，全在控制面。997 项测试通过。 |
 | 2026-10-17 | **Phase C 落地（代码）**：`dijkstra_with_first_hop`（`graph_algo.rs`）改为按字典序键 `(cost, hops, tie_key(first_hop))` 做松弛与堆排序，新增 `tie_key` 形参由调用方注入 **peer id**（不能用节点下标——每次重建都会变）。**撤回初版的「切换阈值」建议**：20 个 ms 当量会否掉 §7 的验收用例（13ms 直连 vs 两跳各 <0.5ms，差 11），也与「否则走质量最好」冲突；抖动由边级迟滞负责。**过程记录**：先只比 `(cost, hops)` 的版本被新用例 `equal_cost_equal_hops_is_stable_across_edge_order` **实测挡住**（改加边顺序结果不同），因此补上第 3 个键——这也把 §1.2 里「等代价会抖」从推断变成了实证。5 条 `graph_algo` 用例 + 全量 993 项通过，clippy/fmt 干净。 |
 | 2026-10-17 | **Phase A 落地（代码，待现网）**：回退首版实现（`choose_sendable_gateway` / `relay_quality` / `best_established_relay` / 兜底 relay 全部移除），改为**只对被点名的那个下一跳查活连接**——新纯函数 `next_hop_is_sendable(hop, my_id, hop_in_peer_map, hop_live)` + 5 条单测；死 hop 不再被选中（改为 `debug!` 记录后继续找下一条 route）。语义边界：**不搜索替代下一跳**（跨节点的兜底就是 P1/P2 的环路与误投），跨网网关与本机无条目的 peer 行为与改动前一致。实测 `cargo test -p easytier-core --lib` 991 通过、clippy/fmt 干净。 |
+| 2026-10-17 | **P9 修正（Phase A 的资格判据自伤）**：`next_hop_is_sendable` 的「不在本表 ⇒ 可发」把**跨网网关**（本机无条目属设计如此）和**条目已被 `clean_peer_without_conn` 回收的死下一跳**混为一谈，于是后者被立刻返回、**把已连上的等代价备选遮住**，包在 `send_msg_internal` 的网关闸门处被丢——B/D 的兜底恰好在唯一有意义的场景里失效（比不做 B/D 更坏：表里明明有能走的路）。改为 `select_next_hop(my_id, candidates, probe)`：**T1 自发 / T2 本地有活连接优先，T3「无本地条目」仅作兜底**（只有调用方能用 `foreign_network_client.has_next_hop` 区分二者）。跨网路由行为与改动前一致，陈旧下一跳退化为改动前同样的「告警 + 丢弃」。`probe` 做成惰性回调以保住每包热路径的短路（有用例断言只探测 1 次）。单测 5 条 → 9 条（含这条回归），全量 1011 项通过。 |

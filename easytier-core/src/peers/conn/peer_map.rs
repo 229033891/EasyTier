@@ -208,9 +208,9 @@ impl PeerMap {
     ///
     /// `get_gateway_peer_id` applies this in both places where it commits to an
     /// answer: the LeastHop direct short-circuit, and every candidate the route
-    /// table names (see `next_hop_is_sendable`). A dead entry is therefore
-    /// never selected — but it also never *blocks* a better answer, because the
-    /// route table's equal-cost alternates are still consulted afterwards
+    /// table names (see `select_next_hop`). A dead entry is therefore never
+    /// selected — but it also never *blocks* a better answer, because the route
+    /// table's equal-cost alternates are still consulted afterwards
     /// (roadmap §5.3).
     pub fn has_peer_with_live_conn(&self, peer_id: PeerId) -> bool {
         if peer_id == self.my_peer_id {
@@ -298,26 +298,35 @@ impl PeerMap {
             let candidates = route
                 .get_next_hops_with_policy(dst_peer_id, policy.clone())
                 .await;
-            for gateway_peer_id in candidates.iter() {
+            let chosen = select_next_hop(self.my_peer_id, &candidates, |gateway_peer_id| {
                 // NOTIC: for foreign network, gateway_peer_id may not connect to me
-                let hop_in_peer_map = self.has_peer(*gateway_peer_id);
-                let hop_live = self.has_peer_with_live_conn(*gateway_peer_id);
-                if next_hop_is_sendable(
-                    *gateway_peer_id,
-                    self.my_peer_id,
-                    hop_in_peer_map,
-                    hop_live,
-                ) {
-                    return Some(*gateway_peer_id);
+                let hop_in_peer_map = self.has_peer(gateway_peer_id);
+                let hop_live = self.has_peer_with_live_conn(gateway_peer_id);
+                if hop_in_peer_map && !hop_live {
+                    // A stale entry must not win: `select_next_hop` tries the next
+                    // candidate, and if none is usable falls through to `None` so
+                    // the caller fails fast instead of handing the packet to a
+                    // dead peer.
+                    tracing::debug!(
+                        gateway = gateway_peer_id,
+                        dst = dst_peer_id,
+                        "route names a next hop with no live conn, skipping it"
+                    );
+                } else if !hop_in_peer_map {
+                    // Could be a foreign-network gateway, or a peer reaped since
+                    // the route was learnt. Only the caller can tell them apart,
+                    // so this candidate may not win unless it is the last resort.
+                    tracing::debug!(
+                        gateway = gateway_peer_id,
+                        dst = dst_peer_id,
+                        "route names a next hop with no local peer entry, \
+                         deferring to a locally sendable candidate if one exists"
+                    );
                 }
-                // A stale entry must not win: try the next candidate, and if none
-                // is usable fall through to `None` so the caller fails fast
-                // instead of handing the packet to a dead peer.
-                tracing::debug!(
-                    gateway = *gateway_peer_id,
-                    dst = dst_peer_id,
-                    "route names a next hop with no live conn, skipping it"
-                );
+                (hop_in_peer_map, hop_live)
+            });
+            if let Some(gateway_peer_id) = chosen {
+                return Some(gateway_peer_id);
             }
         }
 
@@ -672,70 +681,165 @@ pub(crate) async fn direct_peer_info(peer_maps: &[Arc<PeerMap>]) -> PeerInfoForG
     ret
 }
 
-/// Whether the single next hop named by the route table can take the packet
-/// right now.
+/// Pick the next hop from an ordered candidate list (primary first, then
+/// equal-cost alternates).
 ///
-/// Split out of `PeerMap::get_gateway_peer_id` as a pure predicate so the rule
-/// is testable without building a peer map or a route table.
+/// Split out of `PeerMap::get_gateway_peer_id` as a pure function so the rule is
+/// testable without building a peer map or a route table. The liveness lookup is
+/// a callback rather than a parameter so it stays **lazy**: the loop stops at the
+/// first usable candidate, because this runs once per forwarded packet.
 ///
-/// The rule, in order:
+/// `probe(hop) -> (hop_in_peer_map, hop_live)`.
+///
+/// # The rule, in order
 ///
 /// 1. `hop == my_id` — the self-send path always works.
-/// 2. `hop_in_peer_map == false` — a *foreign-network* gateway legitimately has
-///    no local entry, and the foreign-network client handles it at send time.
-///    Accepting absence here keeps the pre-existing behaviour for that case
-///    (see the `NOTIC` comment at the call site); an unknown/stale peer is also
-///    accepted and then fails at send time, as before.
-/// 3. Otherwise the entry exists, so require a live PeerConn. `has_peer` is
-///    `contains_key` and outlives the last conn: without this check a route
-///    pointing at a dead entry is selected, the send fails inside
-///    `Peer::send_msg`, and the caller never falls through to another usable
-///    path (P-AUDIT.4 / audit C3+C6).
+/// 2. Entry present **and** ≥1 live PeerConn. `has_peer` is `contains_key` and
+///    outlives the last conn, so the live check is the only thing separating a
+///    usable hop from a stale one. Without it, a route pointing at a dead entry
+///    wins, the send fails inside `Peer::send_msg`, and — because that branch is
+///    matched first — the caller never falls through to another usable path
+///    (P-AUDIT.4 / audit C3+C6).
+/// 3. No local entry — **last resort only**.
 ///
-/// This deliberately does **not** search for a different next hop: choosing a
-/// next hop that is not on a path to the destination is a misroute (see
-/// `docs/roadmap/live-next-hop.md` P1/P2). Returning `false` makes the caller
-/// fail fast instead.
-fn next_hop_is_sendable(hop: PeerId, my_id: PeerId, hop_in_peer_map: bool, hop_live: bool) -> bool {
-    if hop == my_id {
-        return true;
+/// # Why tier 3 may not win outright
+///
+/// Two unrelated things look identical from inside a `PeerMap`:
+///
+/// * a **foreign-network gateway**, which has no local entry *by design* and is
+///   picked up at send time by `foreign_network_client.has_next_hop` (the `NOTIC`
+///   at the call site), and
+/// * a route entry naming a peer that has since been **reaped** from the peer map
+///   — `clean_peer_without_conn` → `close_peer` removes the entry, while route
+///   entries naming it are retained for `REMOVE_UNREACHABLE_PEER_INFO_AFTER`.
+///
+/// Only the caller can tell them apart. Returning tier 3 before tier 2 was found
+/// would let a hop that is guaranteed to fail at send time shadow the equal-cost
+/// alternates, i.e. the Phase B/D fallback would be unreachable exactly in the
+/// case it exists for — the primary being fully gone, entry and all.
+///
+/// When tier 3 is all that is left we still return it, so foreign-network
+/// routing keeps its pre-existing behaviour, and a stale hop degrades to the
+/// pre-existing "drop with a warning" rather than a new failure mode.
+///
+/// This deliberately does **not** invent a next hop that is not on a path to the
+/// destination: that is a misroute (roadmap P1/P2). `None` makes the caller fail
+/// fast instead.
+fn select_next_hop<P>(my_id: PeerId, candidates: &[PeerId], mut probe: P) -> Option<PeerId>
+where
+    P: FnMut(PeerId) -> (bool, bool),
+{
+    let mut no_local_entry = None;
+    for &hop in candidates {
+        let (hop_in_peer_map, hop_live) = probe(hop);
+        if hop == my_id || (hop_in_peer_map && hop_live) {
+            return Some(hop);
+        }
+        if !hop_in_peer_map {
+            no_local_entry = no_local_entry.or(Some(hop));
+        }
     }
-    !hop_in_peer_map || hop_live
+    no_local_entry
 }
 
 #[cfg(test)]
-mod next_hop_is_sendable_tests {
-    use super::next_hop_is_sendable;
+mod select_next_hop_tests {
+    use super::select_next_hop;
 
     const ME: u32 = 1;
-    const HOP: u32 = 2;
+    const PRIMARY: u32 = 2;
+    const ALTERNATE: u32 = 3;
+    const REAPED: u32 = 4;
+
+    /// Probe over a `(peer_id, (in_peer_map, live))` table. Peers missing from
+    /// the table answer "no local entry", i.e. the tier-3 ambiguity.
+    fn table(entries: &[(u32, (bool, bool))]) -> impl FnMut(u32) -> (bool, bool) + '_ {
+        move |peer_id| {
+            entries
+                .iter()
+                .find(|(id, _)| *id == peer_id)
+                .map_or((false, false), |(_, flags)| *flags)
+        }
+    }
 
     #[test]
     fn self_is_always_sendable() {
-        assert!(next_hop_is_sendable(ME, ME, true, false));
+        assert_eq!(select_next_hop(ME, &[ME], table(&[])), Some(ME));
     }
 
     #[test]
-    fn live_local_next_hop_is_sendable() {
-        assert!(next_hop_is_sendable(HOP, ME, true, true));
+    fn live_local_next_hop_wins() {
+        let hop = select_next_hop(ME, &[PRIMARY], table(&[(PRIMARY, (true, true))]));
+        assert_eq!(hop, Some(PRIMARY));
     }
 
     #[test]
-    fn dead_local_next_hop_is_rejected() {
-        // The map entry lingers after the last conn dies, so `hop_live` is the
-        // only signal that separates a usable hop from a stale one.
-        assert!(!next_hop_is_sendable(HOP, ME, true, false));
+    fn dead_entry_is_skipped_for_the_next_candidate() {
+        let hop = select_next_hop(
+            ME,
+            &[PRIMARY, ALTERNATE],
+            table(&[(PRIMARY, (true, false)), (ALTERNATE, (true, true))]),
+        );
+        assert_eq!(hop, Some(ALTERNATE));
+    }
+
+    /// Regression: a reaped primary used to be accepted as "sendable" because it
+    /// is absent from the peer map, which shadowed the live alternate and made
+    /// the packet get dropped at send time.
+    #[test]
+    fn reaped_primary_does_not_shadow_a_live_alternate() {
+        let hop = select_next_hop(
+            ME,
+            &[REAPED, ALTERNATE],
+            table(&[(REAPED, (false, false)), (ALTERNATE, (true, true))]),
+        );
+        assert_eq!(hop, Some(ALTERNATE));
     }
 
     #[test]
-    fn foreign_network_gateway_is_accepted_without_a_local_entry() {
-        assert!(next_hop_is_sendable(HOP, ME, false, false));
+    fn reaped_primary_does_not_shadow_a_later_reaped_hop_either() {
+        // Nothing is locally sendable, so tier 3 decides — but it must be the
+        // *first* such candidate, so behaviour matches the pre-change code.
+        let hop = select_next_hop(ME, &[REAPED, ALTERNATE], table(&[]));
+        assert_eq!(hop, Some(REAPED));
     }
 
     #[test]
-    fn unknown_peer_is_left_to_the_send_path() {
-        // Absence is not proof of a dead link; the foreign-network client and
-        // the send path decide. Behaviour must match the pre-change code.
-        assert!(next_hop_is_sendable(HOP, ME, false, false));
+    fn foreign_network_gateway_is_still_returned_as_a_last_resort() {
+        // Absence is not proof of a dead link: the caller confirms it via the
+        // foreign-network client. Keeping this tier preserves foreign routing.
+        let hop = select_next_hop(ME, &[PRIMARY], table(&[]));
+        assert_eq!(hop, Some(PRIMARY));
+    }
+
+    #[test]
+    fn all_dead_entries_yield_none() {
+        let hop = select_next_hop(
+            ME,
+            &[PRIMARY, ALTERNATE],
+            table(&[(PRIMARY, (true, false)), (ALTERNATE, (true, false))]),
+        );
+        assert_eq!(hop, None);
+    }
+
+    #[test]
+    fn empty_candidate_list_yields_none() {
+        assert_eq!(select_next_hop(ME, &[], table(&[])), None);
+    }
+
+    #[test]
+    fn probe_short_circuits_on_the_first_usable_candidate() {
+        // This runs once per forwarded packet, so probing must not be
+        // unconditional (that would cost 2 map lookups per unused candidate).
+        let mut probes = 0;
+        let hop = select_next_hop(ME, &[PRIMARY, ALTERNATE, REAPED], |peer_id| {
+            probes += 1;
+            match peer_id {
+                PRIMARY => (true, true),
+                _ => (true, false),
+            }
+        });
+        assert_eq!(hop, Some(PRIMARY));
+        assert_eq!(probes, 1);
     }
 }
