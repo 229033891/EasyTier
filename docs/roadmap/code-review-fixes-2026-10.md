@@ -452,6 +452,7 @@ socket map 被并发迭代时计数可瞬时为 2 ⇒ panic；且 panic 发生�
 
 | 项 | 原因 |
 |---|---|
+| **`find_interface_index(<dev_name>)` 失败被当作致命错误**（`easytier/src/arch/windows.rs:83-98`） | **2026-10-17 现网发现，尚未修**。实测 `Failed to find interface index for et` 出现 **202 次**、每波约 32 次。失败经 `set_ip_unicast_if` → `setup_socket_for_win`（L157 `?`）→ `setup_socket2_ext`（`tunnel/common.rs:79` `?`）四层逐级上抛，导致那一刻**所有需要把出口网卡钉在该网卡上的隧道 / 打洞 socket 全部创建失败**。函数按硬编码 `dev_name` 匹配 `network_interface` 枚举结果，适配器重建 / 枚举异常时失配。**建议**：① 枚举失败与「名字没找到」分开处理，前者重试、后者降级为「不绑网卡」并告警；② 不要用 `?` 直接把 socket 创建打死。取证与复现见 [`docs/current/packet-loss-investigation-2026-10.md`](../docs/current/packet-loss-investigation-2026-10.md) §6.2 |
 | IPv4 `frag_offset` **单位不合规**（本仓库用字节，规范要求 8 字节） | 通篇自洽，改动涉及收发两侧与互操作，超出「修 bug」范围，建议单独立项 |
 | §1.1 三条被推翻的判断 | 已按实测修正，无需再动 |
 | CR-05/CR-06 的 MIRI 验证 | 当前环境无 nightly |
@@ -532,22 +533,23 @@ $env:CARGO_INCREMENTAL    = '0'
 5. **NAT 打洞**（5-F3）—— `ChangeRequest` 速率限制不应影响真实客户端的映射发现；观察跨 NAT 打洞成功率是否与改前一致。
 6. **打洞服务启停**（5-F1）—— 确认并发打洞时 `stop()` 仍能及时完成（读锁不再被长期占用）。
 7. ~~`easytier` crate 的编译验证（CR-13）~~ —— **2026-10-17 已完成**：`cargo check -p easytier` 通过，`virtual_nic.rs` 随该 crate 一并编译验证。
-8. **`easytier` 集成测试**（`cargo test -p easytier --test tests`，1475 条）—— ⚠️ **2026-10-17 首跑有 1 条失败，尚未定论**：`credential_tests::credential_non_reusable_allows_only_one_peer` 在 `wait_for_condition` 超时（`easytier/src/tunnel/common.rs:557`）。见 §6.1。
+8. **`easytier` 集成测试**（`cargo test -p easytier --test tests`，1475 条）—— ⚠️ **2026-10-17 连续两红**：`credential_tests::credential_non_reusable_allows_only_one_peer` 在 failover `wait_for_condition` 耗尽 20s（`easytier/src/tunnel/common.rs:557`）。见 §6.1。
 
-### 6.1 `easytier` 集成测试失败：待定论，**大概率不是本批改动引入**
+### 6.1 `easytier` 集成测试失败：对照后更像回归，测试本身也会误判
 
-**现象**：`credential_non_reusable_allows_only_one_peer` 超时（约 38s）。同批另有约 13 条 `common::config::compatibility_tests` 失败，形态不同（见下）。
+**现象**：`credential_non_reusable_allows_only_one_peer` 超时（约 38.6s / 38.7s），panic 在 `wait_for_condition`。同文件的双 admin 姊妹用例两次都 **PASS**（约 74–75s）。
 
 **已确认的事实**：
 
 | 项 | 结论 |
 |---|---|
-| 该测试文件是否被本批改动 | **否** —— `credential_tests.rs` 不在提交文件列表内（本批只动了 `easytier/src/tests/three_node.rs`） |
-| CI 是否覆盖这条测试 | **否** —— `.github/workflows/test.yml` 只跑 `cargo test --package easytier-core`，**从不跑 `easytier` 的集成测试**。所以这类失败不会在 CI 拦住 |
-| 是否是已知 flake | **是同类** —— [`credential-pin-preference-failover.md`](./credential-pin-preference-failover.md) §3 记录了姊妹用例 `credential_non_reusable_across_two_admins_allows_only_one_peer` 在 CI #107/#108 连续 TIMEOUT，判定为**竞态 flake**（日志停在 `stable=true samples=2`，差一次采样）。本条是**同一族**的「非复用凭据选举可见性」测试 |
-| 本批是否改过该机制 | 间接：`5-F6` 把 `build_route_info` / `build_conn_peer_list` 的 `break` 改成 `continue`（原逻辑因 `OrderedHashMap` 插入序 ≠ 新鲜度序而不成立）。这**会改变路由信息的传播集合**，理论上可能影响收敛时序，**不能排除关联** |
+| CI 对照 | `3bd7ce83`（[ET Test #38941209150](https://github.com/229033891/EasyTier/actions/runs/38941209150)）**PASS ~30.4s**；`79331629`（[#38993784324](https://github.com/229033891/EasyTier/actions/runs/38993784324)）与 `f2a6a82a`（[#39002029680](https://github.com/229033891/EasyTier/actions/runs/39002029680)）**连续 FAIL ~38.6s**。中间代码差集就是本批 CR（`peer_ospf_route.rs` +367 等），不是 flake 抽签 |
+| 卡在哪一步 | 耗时对得上「前面固定检查 + 最后 20s failover 预算耗尽」。条件是 winner 下线后 loser 进入路由。20s 内一次都没成立，不是差一次采样 |
+| CI 是否本来就跑这条 | **会跑**。`Test (easytier)` 用 nextest `-E 'not test(tests::three_node)'`。先前写「CI 只跑 easytier-core」是错的 |
+| 5-F6（`break`→`continue`） | 只影响 **发给别的节点** 的 OSPF 增量。单 admin 的 `route_snapshots` 看的是本地表，**解释不了这条失败** |
+| 测试自身的洞 | 原逻辑 `sleep(3s)` 后谁在路由里谁就是 winner。第二个节点还没拨上时，表现和「已被选举抑制」一样；随后 drop 掉唯一活节点，再等一个从未进图的 loser。这会把「还没连上」报成 failover 超时 |
 
-**⚠️ 因此结论是「未定论」**：既没有证据说它由本批引入，也没有证据说无关。判定需要**在 `79331629` 的父提交上跑同一测试**做对照 —— 本文档写下时尚未完成该对照。
+**测试侧已改（待下一次 ET Test 验证）**：发凭据后补 `CredentialChanged`；选举必须两边都出现过直连且独占路由连续 3 次才锁定 winner；failover 预算对齐姊妹用例 60s，并打印 `conn` / `routed`。若仍失败，日志能区分「第二个节点从未连上」和「连上了但 winner 行不消失」。
 
 **另外那 13 条 `common::config::compatibility_tests` 失败**：形态与本条不同（不是超时而是断言失败，且集中在设置/读取环境变量的用例）。**高度疑似并发跑测试导致的环境变量互相污染** —— 那批用例要 `set_var`，而本轮曾同时有多个 `cargo test` 在跑（含被我中断的那些）。已清理残留进程后单线程复跑，结果待补。
 
@@ -559,7 +561,7 @@ $env:CARGO_INCREMENTAL    = '0'
 | CR-08 的极端情形 | 若攻击者持续以超限 `version` 上报，每次都会被拒并清空本地记录（自愈但持续扰动）。要彻底解决需要签名 / 单调锚定的版本号，属协议层改动 |
 | CR-14 残余冲突 | `peer_id` 相差整数倍可用地址数的两个节点首次仍可能撞同一地址；区别在于**冲突后会分叉**，不再永久 flapping |
 | MIRI 验证 | CR-05/CR-06 修的是 UB，值得补一次静态验证 |
-| `easytier` crate 集成测试 | **编译**已验证（2026-10-17 `cargo check -p easytier` 通过，`virtual_nic.rs` 随之验证）；`cargo test -p easytier`（含 `three_nodes.rs` 类集成用例）**未跑** |
+| `easytier` crate 集成测试 | **2026-10-17 已跑**（1475 条）。唯一失败是 `credential_non_reusable_allows_only_one_peer`，见 §6.1 |
 | P-AUDIT.* 系列 | 与本清单无关，仍在 [`connection-stability-todo.md`](./connection-stability-todo.md) 跟踪 |
 
 ---
@@ -587,6 +589,7 @@ $env:CARGO_INCREMENTAL    = '0'
 
 | 日期 | 变更 |
 |---|---|
+| 2026-10-17 | **§6.1 对照更新**：`credential_non_reusable_allows_only_one_peer` 在 `3bd7ce83` 绿、`79331629`/`f2a6a82a` 连续红（均 ~38.6s）。测试改为先确认双端直连再选举，failover 预算 60s 并打印诊断。产品根因仍未在代码里钉死。 |
 | 2026-10-17 | **v4（勘误 + 一处代码修复）**：经逐条复核后修正 —— ① 测试数字口径写错（裸 `--lib` 实为 **986**；1150 是叠加 `proxy-smoltcp-stack` 的数字，与 964 非同一口径，原「净增 186」是跨口径比较）；② 「`easytier` 无法构建」是**误判**——工具链本机就有，只是 MSVC 环境变量未备（配方见 §6）；据此 CR-13 现已是**真编译验证通过**，不再只做人工复核；③ CR-01/02/07/09/15 行号统一回「修复前」基准，并补一张「修复后实际位置 + 搜索关键字」对照表（中途曾一度填入与任何基准都对不上的数值，已作废）；④ CR-04 的函数名 `try_handle_nic_packet` 不存在，实为 `try_process_packet_from_nic`；⑤ 删掉 CR-03 中不成立的 `udp/client.rs` 引用注；⑥ **代码**：`bond_member_for_flow` 只是被单测引用却没加 `#[cfg(test)]`（P-AUDIT.9 遗留），导致 `cargo clippy` 在纯 lib 目标上报警告 —— 已加门控，lib 与 lib test 均回到 8 条基线；⑦ `connection-stability-todo.md` P-AUDIT 段标题「未实现」与段内 9 条 `[x]` 打架，改为「部分已落地」。 |
 | 2026-10-17 | **v3**：第二轮。补齐 CR-07 后果链第 4 条（peer-center `report_peers`）与 CR-15 遗留（`reap_joinset_background` 吞 `JoinError`，影响 9 个子系统）；§5 十条附带发现**全部修复**。修复过程中新确认一处事实：`OrderedHashMap` 插入序并非新鲜度序（`insert` 对已有 key 原地保留位置），据此 `build_route_info` / `build_conn_peer_list` 的 `break` 确为缺陷。另发现本仓库 IPv4 `frag_offset` 单位不合规（按字节），已登记未改。测试全绿（默认 features **986** / 叠加 `proxy-smoltcp-stack` **1150**，0 失败）。 |
 | 2026-10-17 | **v3**：第二轮。补齐 CR-07 后果链第 4 条（peer-center `report_peers`）与 CR-15 遗留（`reap_joinset_background` 吞 `JoinError`，影响 9 个子系统）；§5 十条附带发现**全部修复**。修复过程中新确认一处事实：`OrderedHashMap` 插入序并非新鲜度序（`insert` 对已有 key 原地保留位置），据此 `build_route_info` / `build_conn_peer_list` 的 `break` 确为缺陷。另发现本仓库 IPv4 `frag_offset` 单位不合规（按字节），已登记未改。测试全绿（默认 features **986** / 叠加 `proxy-smoltcp-stack` **1150**，0 失败），clippy 见 §6。 |

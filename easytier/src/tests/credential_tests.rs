@@ -2175,6 +2175,10 @@ async fn credential_non_reusable_allows_only_one_peer() {
         false,
     )
     .await;
+    // Same as the two-admin case: publish the new grant before peers dial.
+    admin_inst
+        .get_global_ctx()
+        .issue_event(GlobalCtxEvent::CredentialChanged);
 
     let network_name = admin_inst
         .get_global_ctx()
@@ -2234,13 +2238,60 @@ async fn credential_non_reusable_allows_only_one_peer() {
         .add_connector_url("tcp://10.1.1.1:11010".parse().unwrap());
 
     let cred2_peer_id = cred2_inst.as_ref().unwrap().peer_id();
-    tokio::time::sleep(Duration::from_secs(3)).await;
 
-    // The non-reusable credential owner is elected by lowest peer_id, so either cred1 or cred2
-    // may win. Determine the winner and loser dynamically.
-    let admin_routes = admin_inst.get_core_instance().route_snapshots().await;
+    // Do not crown a winner after a fixed sleep. A peer that has not finished
+    // dialing is absent from the route table for the same reason as a peer the
+    // election suppressed, and dropping the only live peer then waits forever
+    // for a "loser" that was never in the graph.
+    //
+    // Lock the winner only after both peers have been directly connected at
+    // least once and exactly one of them stays in the route table for 3 samples.
+    let election_start = std::time::Instant::now();
+    let mut saw_cred1_conn = false;
+    let mut saw_cred2_conn = false;
+    let mut stable_winner: Option<u32> = None;
+    let mut stable_samples = 0u32;
+    let winner_peer_id = loop {
+        let conns = admin_inst.get_core_instance().connected_peers().await;
+        let admin_routes = admin_inst.get_core_instance().route_snapshots().await;
+        let cred1_conn = conns.contains(&cred1_peer_id);
+        let cred2_conn = conns.contains(&cred2_peer_id);
+        let cred1_routed = admin_routes.iter().any(|r| r.peer_id == cred1_peer_id);
+        let cred2_routed = admin_routes.iter().any(|r| r.peer_id == cred2_peer_id);
+        saw_cred1_conn |= cred1_conn;
+        saw_cred2_conn |= cred2_conn;
+        let exclusive = match (cred1_routed, cred2_routed) {
+            (true, false) => Some(cred1_peer_id),
+            (false, true) => Some(cred2_peer_id),
+            _ => None,
+        };
+        let both_connected = saw_cred1_conn && saw_cred2_conn;
+        println!(
+            "non-reusable election: cred1_conn={cred1_conn} cred2_conn={cred2_conn} cred1_routed={cred1_routed} cred2_routed={cred2_routed} both_seen={both_connected} exclusive={exclusive:?} samples={stable_samples} routes={:?}",
+            admin_routes.iter().map(|r| r.peer_id).collect::<Vec<_>>()
+        );
+        if both_connected && exclusive.is_some() && exclusive == stable_winner {
+            stable_samples += 1;
+        } else if both_connected && exclusive.is_some() {
+            stable_winner = exclusive;
+            stable_samples = 1;
+        } else {
+            stable_winner = None;
+            stable_samples = 0;
+        }
+        if stable_samples >= 3 {
+            break stable_winner.unwrap();
+        }
+        assert!(
+            election_start.elapsed() < Duration::from_secs(30),
+            "timed out waiting for a stable non-reusable owner after {:?}: cred1_conn_seen={saw_cred1_conn} cred2_conn_seen={saw_cred2_conn} cred1_routed={cred1_routed} cred2_routed={cred2_routed} conns={conns:?} routes={:?}",
+            election_start.elapsed(),
+            admin_routes.iter().map(|r| r.peer_id).collect::<Vec<_>>()
+        );
+        tokio::time::sleep(Duration::from_secs(1)).await;
+    };
     let (winner_peer_id, winner_ip, winner_inst, loser_peer_id, loser_ip, loser_inst) =
-        if admin_routes.iter().any(|r| r.peer_id == cred1_peer_id) {
+        if winner_peer_id == cred1_peer_id {
             (
                 cred1_peer_id,
                 "10.144.144.2",
@@ -2248,21 +2299,16 @@ async fn credential_non_reusable_allows_only_one_peer() {
                 cred2_peer_id,
                 "10.144.144.3",
                 &mut cred2_inst,
-            )
-        } else if admin_routes.iter().any(|r| r.peer_id == cred2_peer_id) {
-            (
-                cred2_peer_id,
-                "10.144.144.3",
-                &mut cred2_inst,
-                cred1_peer_id,
-                "10.144.144.2",
-                &mut cred1_inst,
             )
         } else {
-            panic!(
-                "neither credential peer is present in routes: {:?}",
-                admin_routes.iter().map(|r| r.peer_id).collect::<Vec<_>>()
-            );
+            (
+                cred2_peer_id,
+                "10.144.144.3",
+                &mut cred2_inst,
+                cred1_peer_id,
+                "10.144.144.2",
+                &mut cred1_inst,
+            )
         };
 
     for _ in 0..5 {
@@ -2295,15 +2341,31 @@ async fn credential_non_reusable_allows_only_one_peer() {
 
     drop_insts(vec![winner_inst.take().unwrap()]).await;
 
-    wait_for_condition(
-        || async {
-            let routes = admin_inst.get_core_instance().route_snapshots().await;
-            !routes.iter().any(|r| r.peer_id == winner_peer_id)
-                && routes.iter().any(|r| r.peer_id == loser_peer_id)
-        },
-        Duration::from_secs(20),
-    )
-    .await;
+    // Sister case `credential_non_reusable_across_two_admins_allows_only_one_peer`
+    // allows 60s and prints each sample. 20s here expired with no visibility
+    // into whether the winner row was stale or the loser never entered.
+    let failover_start = std::time::Instant::now();
+    loop {
+        let routes = admin_inst.get_core_instance().route_snapshots().await;
+        let conns = admin_inst.get_core_instance().connected_peers().await;
+        let winner_routed = routes.iter().any(|r| r.peer_id == winner_peer_id);
+        let loser_routed = routes.iter().any(|r| r.peer_id == loser_peer_id);
+        let loser_conn = conns.contains(&loser_peer_id);
+        println!(
+            "non-reusable failover: winner_routed={winner_routed} loser_routed={loser_routed} loser_conn={loser_conn} conns={conns:?} routes={:?}",
+            routes.iter().map(|r| r.peer_id).collect::<Vec<_>>()
+        );
+        if !winner_routed && loser_routed {
+            break;
+        }
+        assert!(
+            failover_start.elapsed() < Duration::from_secs(60),
+            "timed out waiting for non-reusable failover after {:?}: winner_routed={winner_routed} loser_routed={loser_routed} loser_conn={loser_conn} conns={conns:?} routes={:?}",
+            failover_start.elapsed(),
+            routes.iter().map(|r| r.peer_id).collect::<Vec<_>>()
+        );
+        tokio::time::sleep(Duration::from_secs(1)).await;
+    }
     wait_ping_reachability("ns_adm", loser_ip, true, Duration::from_secs(20)).await;
 
     drop_insts(vec![admin_inst, loser_inst.take().unwrap()]).await;
