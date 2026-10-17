@@ -97,6 +97,20 @@ impl PeerConnLiveness {
         (probe - 1) as u8
     }
 
+    #[cfg(test)]
+    pub(super) fn has_active_probe(&self) -> bool {
+        self.active_probe().is_some()
+    }
+
+    /// Whether the peer negotiated the liveness-echo feature.
+    ///
+    /// The fast probe (`peer_conn_ping.rs`) is gated on this: probing faster is
+    /// only safe once the far side has agreed to echo, otherwise a slow/old peer
+    /// would be declared dead by our own shortened timeout.
+    pub(super) fn is_enabled(&self) -> bool {
+        self.inner.enabled.load(Ordering::Acquire)
+    }
+
     fn active_probe(&self) -> Option<u8> {
         let probe = self.inner.active_probe.load(Ordering::Acquire);
         (probe != 0).then(|| Self::decode_probe(probe))

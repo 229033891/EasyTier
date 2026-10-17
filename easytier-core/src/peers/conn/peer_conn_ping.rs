@@ -1,7 +1,7 @@
 use std::{
     sync::{
         Arc,
-        atomic::{AtomicU32, Ordering},
+        atomic::{AtomicBool, AtomicU32, Ordering},
     },
     time::{Duration, Instant},
 };
@@ -14,14 +14,67 @@ use tokio::{
 
 use crate::{
     config::PeerId,
-    foundation::time::{Interval, interval, timeout},
+    foundation::time::{Interval, interval, sleep, timeout},
     packet::{PacketType, ZCPacket},
-    peers::{conn::peer_conn_liveness::PeerConnLiveness, context::ArcPeerContext, error::Error},
+    peers::{
+        conn::{peer_conn::PeerConnCloseNotify, peer_conn_liveness::PeerConnLiveness},
+        context::ArcPeerContext,
+        error::Error,
+    },
     tunnel::{
         mpsc::MpscTunnelSender,
         stats::{Throughput, WindowLatency},
     },
 };
+
+/// Wait budget for one ordinary keepalive ping.
+const PING_WAIT_TIMEOUT: Duration = Duration::from_secs(2);
+
+/// Fast liveness probe (roadmap `live-next-hop.md` Phase F — "BFD-style").
+///
+/// This is an *extra* short round trip whose only job is to publish the loss
+/// rate early. It never closes the conn: teardown stays with the ordinary
+/// keepalive and its `ping_fail_close_count`, so the deliberate flap tolerance
+/// around a reconnect (which costs ~30s to rebuild) is unchanged.
+const FAST_PROBE_INTERVAL: Duration = Duration::from_millis(333);
+/// Consecutive misses before the conn is published as degraded (100% loss).
+const FAST_PROBE_MISSES_TO_DEGRADE: u32 = 3;
+/// Per-probe wait budget derived from the measured RTT, clamped to this range.
+const FAST_PROBE_TIMEOUT_MIN: Duration = Duration::from_millis(300);
+const FAST_PROBE_TIMEOUT_MAX: Duration = Duration::from_secs(2);
+const FAST_PROBE_TIMEOUT_RTT_MULT: u32 = 3;
+
+/// Top bit of the ping sequence, reserved for the fast probe.
+///
+/// `ctrl_resp_sender` is a **broadcast**: every subscriber sees every `Pong`,
+/// and a `Pong` is matched by sequence equality alone. Two probe loops on the
+/// same conn would therefore satisfy each other's wait as soon as their counters
+/// line up — a false *success* from the other loop, which would mask exactly the
+/// failure this probe exists to report. Splitting the u32 so the keepalive owns
+/// the low 31 bits and the fast probe owns the top bit makes that impossible.
+const FAST_PROBE_SEQ_BIT: u32 = 1 << 31;
+const SEQ_MASK: u32 = FAST_PROBE_SEQ_BIT - 1;
+
+/// Next sequence for the ordinary keepalive (low 31 bits).
+fn keepalive_seq(next: u32) -> u32 {
+    next & SEQ_MASK
+}
+
+/// Next sequence for the fast probe (top bit set).
+fn fast_probe_seq(next: u32) -> u32 {
+    FAST_PROBE_SEQ_BIT | (next & SEQ_MASK)
+}
+
+/// Wait budget for one fast probe: `max(MIN, MULT × measured RTT)`, capped.
+///
+/// The floor covers a fresh conn with no sample yet (see `get_latency_us`
+/// returning 0), so an unmeasured link is not declared dead on its first probe.
+/// The cap exists because a probe cannot conclude faster than the RTT allows;
+/// on a very high-RTT link detection is slower than the typical case by design.
+fn fast_probe_timeout(rtt_us: u32) -> Duration {
+    let scaled = Duration::from_micros(u64::from(rtt_us) * u64::from(FAST_PROBE_TIMEOUT_RTT_MULT));
+    scaled.clamp(FAST_PROBE_TIMEOUT_MIN, FAST_PROBE_TIMEOUT_MAX)
+}
 
 #[derive(Debug)]
 enum PingResponse {
@@ -134,6 +187,11 @@ pub struct PeerConnPinger {
     context: ArcPeerContext,
     network_name: String,
     liveness: PeerConnLiveness,
+    /// Set while the fast probe sees consecutive misses; published as 100% loss
+    /// through `PeerConn::loss_rate`, which is what raises the OSPF edge cost and
+    /// lets the sender re-route (the conn itself is left alone).
+    fast_probe_degraded: Arc<AtomicBool>,
+    close_notify: Arc<PeerConnCloseNotify>,
     max_interval: Duration,
     /// Consecutive ping failures before closing; default 5.
     fail_close_count: u32,
@@ -161,6 +219,8 @@ impl PeerConnPinger {
         context: ArcPeerContext,
         network_name: String,
         liveness: PeerConnLiveness,
+        fast_probe_degraded: Arc<AtomicBool>,
+        close_notify: Arc<PeerConnCloseNotify>,
         max_interval: Duration,
         fail_close_count: u32,
     ) -> Self {
@@ -175,6 +235,8 @@ impl PeerConnPinger {
             context,
             network_name,
             liveness,
+            fast_probe_degraded,
+            close_notify,
             max_interval,
             fail_close_count: fail_close_count.max(1),
         }
@@ -191,6 +253,7 @@ impl PeerConnPinger {
         receiver: &mut broadcast::Receiver<ZCPacket>,
         seq: u32,
         liveness_token: Option<u8>,
+        wait_timeout: Duration,
     ) -> Result<PingResponse, Error> {
         // should add seq here. so latency can be calculated more accurately
         let req = Self::new_ping_packet(self.my_peer_id, self.peer_id, seq);
@@ -239,7 +302,7 @@ impl PeerConnPinger {
             }
             Ok(())
         };
-        let resp = timeout(Duration::from_secs(2), async {
+        let resp = timeout(wait_timeout, async {
             if let Some(token) = liveness_token {
                 tokio::select! {
                     ret = wait_for_pong => ret.map(|()| PingResponse::Pong(now.elapsed().as_micros())),
@@ -306,9 +369,9 @@ impl PeerConnPinger {
                 .flatten();
             let mut receiver = self.ctrl_sender.subscribe();
             let ret = self
-                .do_pingpong_once(&mut receiver, req_seq, liveness_token)
+                .do_pingpong_once(&mut receiver, req_seq, liveness_token, PING_WAIT_TIMEOUT)
                 .await;
-            req_seq = req_seq.wrapping_add(1);
+            req_seq = keepalive_seq(req_seq.wrapping_add(1));
 
             if let Ok(response) = &ret {
                 if let PingResponse::Pong(lat) = response {
@@ -319,6 +382,11 @@ impl PeerConnPinger {
                 }
                 loss_rate_stats_1.record_latency(0);
                 loss_counter.store(0, Ordering::Relaxed);
+                // Any successful round trip on this conn also clears the fast
+                // probe's degraded reading: the flag must never outlive its
+                // evidence, even if the probe task is gone (it only ever raises
+                // the flag, and this is the independent second opinion).
+                self.fast_probe_degraded.store(false, Ordering::Relaxed);
             } else {
                 loss_rate_stats_1.record_latency(1);
                 loss_counter.fetch_add(1, Ordering::Relaxed);
@@ -356,6 +424,80 @@ impl PeerConnPinger {
                 .store((loss_rate_1 * 100.0) as u32, Ordering::Relaxed);
         }
     }
+
+    /// Fast liveness probe — roadmap `live-next-hop.md` Phase F.
+    ///
+    /// Publishes "degraded" (100% loss) as soon as the link stops round-tripping,
+    /// which flows `loss_rate` → `score_conn` (fused) →
+    /// `ospf_edge_cost_from_score` (+`OSPF_FUSE_COST_BONUS`) → a re-published edge
+    /// cost, so OSPF re-routes on the next SPF. That is what turns §10's
+    /// ~2 minute black hole into a sub-2-second re-route.
+    ///
+    /// Deliberately limited to the *metric*: it never closes the conn, never
+    /// touches `loss_counter`, and therefore does not change the
+    /// `ping_fail_close_count` timing.
+    ///
+    /// Gated on the negotiated `liveness-echo-v1` feature. Failing closed the
+    /// other way round matters: without an echo the far side may legitimately be
+    /// slower than our shortened timeout, so an un-negotiated peer is never
+    /// judged by it.
+    pub async fn fast_probe(&mut self) {
+        let mut seq = 0u32;
+        let mut misses = 0u32;
+        let mut was_degraded = false;
+        loop {
+            sleep(FAST_PROBE_INTERVAL).await;
+
+            if self.close_notify.is_closed() {
+                break;
+            }
+            if !self.liveness.is_enabled() {
+                // Not negotiated (or not yet): stay out of the way and make sure
+                // we never leave a stale degraded reading behind.
+                self.fast_probe_degraded.store(false, Ordering::Relaxed);
+                misses = 0;
+                was_degraded = false;
+                continue;
+            }
+
+            let mut receiver = self.ctrl_sender.subscribe();
+            let rtt_us = self.latency_stats.get_latency_us::<u32>();
+            // No liveness token: the echo slot is single-slot and shared with the
+            // keepalive, and a plain Ping/Pong answers the same question.
+            let ok = self
+                .do_pingpong_once(
+                    &mut receiver,
+                    fast_probe_seq(seq),
+                    None,
+                    fast_probe_timeout(rtt_us),
+                )
+                .await
+                .is_ok();
+            seq = seq.wrapping_add(1);
+
+            misses = if ok { 0 } else { misses + 1 };
+            let degraded = misses >= FAST_PROBE_MISSES_TO_DEGRADE;
+            self.fast_probe_degraded.store(degraded, Ordering::Relaxed);
+
+            // Log the transitions only: at ~3 probes/s a per-probe log would
+            // flood exactly during the incident it is meant to explain.
+            if degraded && !was_degraded {
+                tracing::warn!(
+                    peer_id = self.peer_id,
+                    misses,
+                    rtt_us,
+                    "fast liveness probe: link not round-tripping, publishing degraded loss"
+                );
+            } else if !degraded && was_degraded {
+                tracing::info!(
+                    peer_id = self.peer_id,
+                    rtt_us,
+                    "fast liveness probe: link round-trips again"
+                );
+            }
+            was_degraded = degraded;
+        }
+    }
 }
 
 #[cfg(test)]
@@ -365,7 +507,7 @@ mod tests {
     use super::*;
     use crate::{
         packet::PacketType,
-        peers::conn::peer_conn_liveness::PeerConnLiveness,
+        peers::conn::{peer_conn::PeerConnId, peer_conn_liveness::PeerConnLiveness},
         peers::test_support::NoopPeerContext,
         tunnel::{
             Tunnel, filter::TunnelWithFilter, mpsc::MpscTunnel, ring::create_ring_tunnel_pair,
@@ -444,6 +586,8 @@ mod tests {
             Arc::new(NoopPeerContext::default()),
             "test".to_owned(),
             PeerConnLiveness::new(),
+            Arc::new(AtomicBool::new(false)),
+            Arc::new(PeerConnCloseNotify::new(PeerConnId::new_v4())),
             Duration::from_secs(32),
             5,
         );
@@ -504,6 +648,8 @@ mod tests {
             Arc::new(NoopPeerContext::default()),
             "test".to_owned(),
             local_liveness,
+            Arc::new(AtomicBool::new(false)),
+            Arc::new(PeerConnCloseNotify::new(PeerConnId::new_v4())),
             Duration::from_secs(32),
             5,
         );
@@ -516,5 +662,53 @@ mod tests {
             result.is_err(),
             "matching business-packet echoes did not keep the connection alive"
         );
+    }
+
+    #[test]
+    fn fast_probe_timeout_scales_with_rtt_and_is_clamped() {
+        // No sample yet (fresh conn): the floor, so a link is never declared dead
+        // before it has been measured.
+        assert_eq!(fast_probe_timeout(0), FAST_PROBE_TIMEOUT_MIN);
+        // Sub-millisecond link: still the floor.
+        assert_eq!(fast_probe_timeout(500), FAST_PROBE_TIMEOUT_MIN);
+        // 200ms RTT -> 3x, above the floor and below the cap.
+        assert_eq!(fast_probe_timeout(200_000), Duration::from_millis(600));
+        // Very high RTT: capped, because a probe cannot conclude faster than the
+        // RTT allows.
+        assert_eq!(fast_probe_timeout(2_000_000), FAST_PROBE_TIMEOUT_MAX);
+
+        // Detection budget for the common case stays inside the Phase F target.
+        let worst_miss = FAST_PROBE_INTERVAL + fast_probe_timeout(0);
+        assert!(
+            worst_miss * FAST_PROBE_MISSES_TO_DEGRADE < Duration::from_secs(2),
+            "3 misses should land under 2s: {worst_miss:?} each"
+        );
+    }
+
+    /// The two probe loops share a broadcast channel and match Pongs by sequence
+    /// equality, so their sequence spaces must never intersect.
+    #[test]
+    fn keepalive_and_fast_probe_sequences_never_collide() {
+        let keepalive: Vec<u32> = (0..4).map(keepalive_seq).collect();
+        let fast: Vec<u32> = (0..4).map(fast_probe_seq).collect();
+
+        assert_eq!(keepalive, vec![0, 1, 2, 3]);
+        assert_eq!(
+            fast,
+            vec![
+                FAST_PROBE_SEQ_BIT,
+                FAST_PROBE_SEQ_BIT + 1,
+                FAST_PROBE_SEQ_BIT + 2,
+                FAST_PROBE_SEQ_BIT + 3
+            ]
+        );
+        for k in &keepalive {
+            assert!(fast.iter().all(|f| f != k), "sequence spaces overlapped");
+        }
+
+        // The mask wraps the keepalive well before it could reach the fast
+        // probe's range, and the fast probe wraps within its own half.
+        assert_eq!(keepalive_seq(SEQ_MASK + 1), 0);
+        assert_eq!(fast_probe_seq(SEQ_MASK + 1), FAST_PROBE_SEQ_BIT);
     }
 }

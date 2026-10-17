@@ -1809,6 +1809,65 @@ fn builds_next_hop_and_proxy_lookup_from_snapshot() {
     );
 }
 
+/// Phase B/D: with `DefaultRouteCostCalculator` every edge costs 1, so a
+/// diamond has two equally cheap first hops. Both must be offered, primary
+/// first, so the send path can fall through when one of them stops working.
+#[test]
+fn equal_cost_diamond_offers_every_first_hop() {
+    let snapshot = OspfRouteSnapshot {
+        peer_infos: vec![peer(1), peer(2), peer(3), peer(4)],
+        conn_map: vec![
+            connected(1, [2, 3]),
+            connected(2, [1, 4]),
+            connected(3, [1, 4]),
+            connected(4, [2, 3]),
+        ],
+        suppressed_peer_ids: BTreeSet::new(),
+        version: 1,
+    };
+
+    let table = OspfRouteTable::new();
+    table.build_from_snapshot(
+        1,
+        &snapshot,
+        NextHopPolicy::LeastCost,
+        &DefaultRouteCostCalculator,
+    );
+
+    let hops = table.get_next_hops(4);
+    assert_eq!(hops.len(), 2, "both first hops expected, got {hops:?}");
+    assert!(hops.contains(&2) && hops.contains(&3), "got {hops:?}");
+    assert_eq!(
+        table.get_next_hop(4).unwrap().next_hop_peer_id,
+        hops[0],
+        "the primary must come first"
+    );
+}
+
+/// A single-path topology must not invent an alternate.
+#[test]
+fn single_path_topology_has_no_alternates() {
+    let snapshot = OspfRouteSnapshot {
+        peer_infos: vec![peer(1), peer(2), peer(3)],
+        conn_map: vec![connected(1, [2]), connected(2, [1, 3]), connected(3, [2])],
+        suppressed_peer_ids: BTreeSet::new(),
+        version: 1,
+    };
+
+    let table = OspfRouteTable::new();
+    table.build_from_snapshot(
+        1,
+        &snapshot,
+        NextHopPolicy::LeastHop,
+        &DefaultRouteCostCalculator,
+    );
+
+    assert_eq!(
+        table.get_next_hops(3),
+        super::NextHopCandidates::from_slice(&[2])
+    );
+}
+
 #[test]
 fn default_proxy_cidr_is_excluded_from_specific_lookup() {
     let mut remote_proxy_peer = peer(3);

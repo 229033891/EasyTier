@@ -7,7 +7,7 @@ use std::{
     pin::Pin,
     sync::{
         Arc,
-        atomic::{AtomicU32, Ordering},
+        atomic::{AtomicBool, AtomicU32, Ordering},
     },
 };
 
@@ -240,7 +240,7 @@ pub struct PeerConnCloseNotify {
 }
 
 impl PeerConnCloseNotify {
-    fn new(conn_id: PeerConnId) -> Self {
+    pub(super) fn new(conn_id: PeerConnId) -> Self {
         let (sender, _) = broadcast::channel(1);
         Self {
             conn_id,
@@ -305,6 +305,10 @@ pub struct PeerConn {
     latency_stats: Arc<WindowLatency>,
     throughput: Arc<Throughput>,
     loss_rate_stats: Arc<AtomicU32>,
+    /// Phase F: set by the fast liveness probe while the link stops
+    /// round-tripping. Published as 100% loss by `loss_rate()` so the edge cost
+    /// is inflated and OSPF re-routes, without closing the conn.
+    fast_probe_degraded: Arc<AtomicBool>,
     liveness: PeerConnLiveness,
 
     peer_session_store: Arc<PeerSessionStore>,
@@ -408,6 +412,7 @@ impl PeerConn {
             latency_stats: Arc::new(WindowLatency::new(15)),
             throughput,
             loss_rate_stats: Arc::new(AtomicU32::new(0)),
+            fast_probe_degraded: Arc::new(AtomicBool::new(false)),
             liveness,
 
             peer_session_store,
@@ -1447,6 +1452,28 @@ impl PeerConn {
             self.context.clone(),
             self.get_conn_info().network_name,
             self.liveness.clone(),
+            self.fast_probe_degraded.clone(),
+            self.close_event_notifier.clone(),
+            self.max_ping_interval(),
+            self.ping_fail_close_count(),
+        );
+
+        // Phase F: a second, much faster probe whose only output is the degraded
+        // flag read by `loss_rate()`. Separate instance because `pingpong()` owns
+        // its pinger; the two share only the Arcs (sink, stats, liveness).
+        let mut fast_probe = PeerConnPinger::new(
+            self.my_peer_id,
+            self.get_peer_id(),
+            self.sink.clone(),
+            self.ctrl_resp_sender.clone(),
+            self.latency_stats.clone(),
+            self.loss_rate_stats.clone(),
+            self.throughput.clone(),
+            self.context.clone(),
+            self.get_conn_info().network_name,
+            self.liveness.clone(),
+            self.fast_probe_degraded.clone(),
+            self.close_event_notifier.clone(),
             self.max_ping_interval(),
             self.ping_fail_close_count(),
         );
@@ -1460,6 +1487,11 @@ impl PeerConn {
 
             close_event_notifier.notify_close();
 
+            Ok(())
+        });
+
+        self.tasks.spawn(async move {
+            fast_probe.fast_probe().await;
             Ok(())
         });
     }
@@ -1538,7 +1570,16 @@ impl PeerConn {
     }
 
     /// Ping-derived loss rate in \[0, 1\] (same scale as `PeerConnInfo.loss_rate`).
+    ///
+    /// The fast liveness probe (Phase F) reports 100% loss as soon as the link
+    /// stops round-tripping, well before the keepalive would tear the conn down.
+    /// That is what makes the degradation visible to OSPF in time to re-route —
+    /// and it also means the status surface stops claiming "connected, 0% loss"
+    /// for a conn that is silently black-holing traffic.
     pub fn loss_rate(&self) -> f32 {
+        if self.fast_probe_degraded.load(Ordering::Relaxed) {
+            return 1.0;
+        }
         (f64::from(self.loss_rate_stats.load(Ordering::Relaxed)) / 100.0) as f32
     }
 
@@ -1647,5 +1688,31 @@ mod tests {
         conn.set_ping_max_interval(Some(Duration::from_secs(1)));
         assert!(conn.is_hole_punched());
         assert_eq!(conn.max_ping_interval(), Duration::from_secs(1));
+    }
+
+    /// Phase F: the fast probe's degraded flag is what makes a silently
+    /// black-holing conn visible to OSPF (`loss_rate` -> `score_conn` fused ->
+    /// edge cost bonus) and to the status surface, without closing the conn.
+    #[tokio::test]
+    async fn fast_probe_degraded_flag_drives_reported_loss() {
+        let (tunnel, _remote) = create_ring_tunnel_pair();
+        let conn = PeerConn::new(
+            1,
+            Arc::new(NoopPeerContext::default()),
+            tunnel,
+            Arc::new(PeerSessionStore::new()),
+        );
+
+        assert_eq!(conn.loss_rate(), 0.0);
+        assert!(!conn.is_closed());
+
+        conn.fast_probe_degraded.store(true, Ordering::Relaxed);
+        assert_eq!(conn.loss_rate(), 1.0);
+        // The conn stays live: degradation must not be treated as teardown, or
+        // the flap tolerance of `ping_fail_close_count` would be lost.
+        assert!(!conn.is_closed());
+
+        conn.fast_probe_degraded.store(false, Ordering::Relaxed);
+        assert_eq!(conn.loss_rate(), 0.0);
     }
 }

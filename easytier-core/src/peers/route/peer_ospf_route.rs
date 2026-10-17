@@ -25,6 +25,7 @@ use petgraph::{
 use prefix_trie::PrefixMap;
 use prost::Message;
 use quanta::Instant;
+use smallvec::SmallVec;
 use tokio::{
     select,
     sync::{Mutex, RwLock as AsyncRwLock},
@@ -70,9 +71,10 @@ use crate::{
 };
 
 use super::{
-    DefaultRouteCostCalculator, ForeignNetworkRouteInfoMap, NextHopPolicy, Route,
-    RouteCostCalculator, RouteCostCalculatorInterface, RouteInterfaceBox,
-    graph_algo::dijkstra_with_first_hop,
+    DefaultRouteCostCalculator, ForeignNetworkRouteInfoMap, MAX_ALTERNATE_NEXT_HOPS,
+    NextHopCandidates, NextHopPolicy, Route, RouteCostCalculator, RouteCostCalculatorInterface,
+    RouteInterfaceBox,
+    graph_algo::{dijkstra_with_first_hop, equal_cost_alternates_for_all, tight_edge_parents},
     route_peer_wire::{
         self, RawRoutePeerInfo, extract_route_peer_infos, patch_credential_route_peer_info,
         raw_credential_bytes, raw_route_peer_info,
@@ -292,11 +294,28 @@ pub struct OspfNextHopInfo {
 
 type NextHopMap = DashMap<PeerId, OspfNextHopInfo>;
 
+/// Equal-cost alternate first hops for one destination.
+///
+/// Only **equal-cost** alternates are stored: that is the case with a local
+/// loop-freedom proof (see `graph_algo::equal_cost_first_hops`). Offering a
+/// cheaper-or-within-a-margin alternate would need the neighbour's own distance
+/// to the destination, i.e. the RFC 8402 LFA computation, which is out of scope
+/// (roadmap `live-next-hop.md` §5.2).
+#[derive(Debug, Clone)]
+struct AltNextHopEntry {
+    hops: SmallVec<[PeerId; MAX_ALTERNATE_NEXT_HOPS]>,
+    version: Version,
+}
+
+type AltNextHopMap = DashMap<PeerId, AltNextHopEntry>;
+
 // computed with SyncedRouteInfo snapshot. used to get next hop.
 #[derive(Debug)]
 pub struct OspfRouteTable {
     peer_infos: DashMap<PeerId, RoutePeerInfo>,
     next_hop_map: NextHopMap,
+    /// Equal-cost alternates per destination, versioned with `next_hop_map`.
+    next_hop_alt_map: AltNextHopMap,
     suppressed_peer_ids: DashMap<PeerId, ()>,
     /// Address → owning peer, **rebuilt from scratch every round**.
     ///
@@ -319,6 +338,7 @@ impl OspfRouteTable {
         OspfRouteTable {
             peer_infos: DashMap::new(),
             next_hop_map: DashMap::new(),
+            next_hop_alt_map: DashMap::new(),
             suppressed_peer_ids: DashMap::new(),
             ipv4_peer_id_map: ArcSwap::from_pointee(DashMap::new()),
             ipv6_peer_id_map: ArcSwap::from_pointee(DashMap::new()),
@@ -344,6 +364,30 @@ impl OspfRouteTable {
                 None
             }
         })
+    }
+
+    /// Every locally known next hop for `dst`: the primary first, then
+    /// equal-cost alternates (deterministic order), de-duplicated.
+    ///
+    /// The send path uses this to fall back to another path that is *already*
+    /// established, instead of waiting for the topology to converge after the
+    /// primary's conn dies.
+    pub fn get_next_hops(&self, dst_peer_id: PeerId) -> NextHopCandidates {
+        let mut ret = SmallVec::new();
+        if let Some(primary) = self.get_next_hop(dst_peer_id) {
+            ret.push(primary.next_hop_peer_id);
+        }
+        let cur_version = self.next_hop_map_version.get();
+        if let Some(entry) = self.next_hop_alt_map.get(&dst_peer_id)
+            && entry.version >= cur_version
+        {
+            for hop in entry.hops.iter() {
+                if !ret.contains(hop) {
+                    ret.push(*hop);
+                }
+            }
+        }
+        ret
     }
 
     pub fn peer_reachable(&self, peer_id: PeerId) -> bool {
@@ -467,6 +511,8 @@ impl OspfRouteTable {
             // remove next hop map for peers we cannot reach.
             v.version >= cur_version
         });
+        self.next_hop_alt_map
+            .retain(|_, v| v.version >= cur_version);
         self.peer_infos.retain(|k, _| {
             // remove peer info for peers we cannot forward to.
             self.peer_reachable(*k)
@@ -474,6 +520,7 @@ impl OspfRouteTable {
 
         shrink_dashmap(&self.peer_infos, None);
         shrink_dashmap(&self.next_hop_map, None);
+        shrink_dashmap(&self.next_hop_alt_map, None);
         shrink_dashmap(&self.suppressed_peer_ids, None);
     }
 
@@ -542,7 +589,25 @@ impl OspfRouteTable {
             );
             return;
         }
-        let (costs, next_hops) = dijkstra_with_first_hop(graph, *start_node, |e| *e.weight());
+        let (costs, next_hops) = dijkstra_with_first_hop(
+            graph,
+            *start_node,
+            |e| *e.weight(),
+            // Tie-break key must be the peer id, not the node index: indices are
+            // reassigned on every topology rebuild, so keying on them would let
+            // equal-cost/equal-hop diamonds flip between rebuilds.
+            |n| graph.node_weight(n).copied().unwrap_or_default(),
+        );
+        // Once per rebuild, not once per destination: both steps are linear in
+        // the graph, while a per-destination walk would be O(V) each.
+        let tight_parents = tight_edge_parents(graph, &costs, |e| *e.weight());
+        let alt_hops = equal_cost_alternates_for_all(
+            &costs,
+            &next_hops,
+            &tight_parents,
+            *start_node,
+            MAX_ALTERNATE_NEXT_HOPS,
+        );
 
         for (dst, (next_hop, path_len)) in next_hops.iter() {
             let total_cost = *costs.get(dst).unwrap();
@@ -566,6 +631,38 @@ impl OspfRouteTable {
                     }
                 })
                 .or_insert(info);
+
+            // Equal-cost alternates (roadmap Phase B/D). Only paths whose total
+            // cost ties with the primary's are offered — that is the case we can
+            // prove loop-free from local data (see `equal_cost_alternates_for_all`).
+            let mut alt_peers: SmallVec<[PeerId; MAX_ALTERNATE_NEXT_HOPS]> = alt_hops
+                .get(dst)
+                .into_iter()
+                .flatten()
+                .filter_map(|node| graph.node_weight(*node).copied())
+                .take(MAX_ALTERNATE_NEXT_HOPS)
+                .collect();
+            // The backward walk's order follows graph internals; sort so the
+            // stored list is stable across rebuilds.
+            alt_peers.sort_unstable();
+            alt_peers.dedup();
+
+            if alt_peers.is_empty() {
+                self.next_hop_alt_map.remove(&dst_peer_id);
+            } else {
+                let entry = AltNextHopEntry {
+                    hops: alt_peers,
+                    version,
+                };
+                self.next_hop_alt_map
+                    .entry(dst_peer_id)
+                    .and_modify(|x| {
+                        if x.version < version {
+                            *x = entry.clone();
+                        }
+                    })
+                    .or_insert(entry);
+            }
         }
 
         self.next_hop_map_version.set_if_larger(version);
@@ -4945,6 +5042,19 @@ impl Route for PeerRoute {
         route_table
             .get_next_hop(dst_peer_id)
             .map(|x| x.next_hop_peer_id)
+    }
+
+    async fn get_next_hops_with_policy(
+        &self,
+        dst_peer_id: PeerId,
+        policy: NextHopPolicy,
+    ) -> NextHopCandidates {
+        let route_table = if matches!(policy, NextHopPolicy::LeastCost) {
+            &self.service_impl.route_table_with_cost
+        } else {
+            &self.service_impl.route_table
+        };
+        route_table.get_next_hops(dst_peer_id)
     }
 
     async fn list_routes(&self) -> Vec<CoreRouteInfo> {

@@ -206,10 +206,12 @@ impl PeerMap {
     /// falls through to the next usable path (relay). That is exactly the case
     /// where a relay leg *should* save the packet (P-AUDIT.4 / audit C3+C6).
     ///
-    /// Selection (`get_gateway_peer_id`) intentionally keeps using `has_peer`:
-    /// "who should be the next hop" is a topology question, "can we hand it to
-    /// them" is this one. Conflating them would change routing, not just
-    /// availability.
+    /// `get_gateway_peer_id` applies this in both places where it commits to an
+    /// answer: the LeastHop direct short-circuit, and every candidate the route
+    /// table names (see `next_hop_is_sendable`). A dead entry is therefore
+    /// never selected — but it also never *blocks* a better answer, because the
+    /// route table's equal-cost alternates are still consulted afterwards
+    /// (roadmap §5.3).
     pub fn has_peer_with_live_conn(&self, peer_id: PeerId) -> bool {
         if peer_id == self.my_peer_id {
             return true;
@@ -278,18 +280,44 @@ impl PeerMap {
             return Some(dst_peer_id);
         }
 
-        if self.has_peer(dst_peer_id) && matches!(policy, NextHopPolicy::LeastHop) {
+        // LeastHop short-circuit: a direct conn is the fewest-hop path. It is only
+        // a *usable* answer if we can actually hand the packet over. Returning a
+        // lingering-but-dead entry would shadow the route table **and its
+        // alternates** below, which is the one case where the table could still
+        // offer a live path (roadmap §5.3). For a live dst this is unchanged.
+        if matches!(policy, NextHopPolicy::LeastHop) && self.has_peer_with_live_conn(dst_peer_id) {
             return Some(dst_peer_id);
         }
 
-        // get route info
+        // The candidate list is ordered by the route: primary first, then
+        // equal-cost alternates. Take the first one we can actually hand a
+        // packet to right now, so a dead primary falls through to an
+        // already-established alternate instead of waiting for the topology to
+        // converge (roadmap `live-next-hop.md` Phase B/D).
         for route in self.routes.read().await.iter() {
-            if let Some(gateway_peer_id) = route
-                .get_next_hop_with_policy(dst_peer_id, policy.clone())
-                .await
-            {
+            let candidates = route
+                .get_next_hops_with_policy(dst_peer_id, policy.clone())
+                .await;
+            for gateway_peer_id in candidates.iter() {
                 // NOTIC: for foreign network, gateway_peer_id may not connect to me
-                return Some(gateway_peer_id);
+                let hop_in_peer_map = self.has_peer(*gateway_peer_id);
+                let hop_live = self.has_peer_with_live_conn(*gateway_peer_id);
+                if next_hop_is_sendable(
+                    *gateway_peer_id,
+                    self.my_peer_id,
+                    hop_in_peer_map,
+                    hop_live,
+                ) {
+                    return Some(*gateway_peer_id);
+                }
+                // A stale entry must not win: try the next candidate, and if none
+                // is usable fall through to `None` so the caller fails fast
+                // instead of handing the packet to a dead peer.
+                tracing::debug!(
+                    gateway = *gateway_peer_id,
+                    dst = dst_peer_id,
+                    "route names a next hop with no live conn, skipping it"
+                );
             }
         }
 
@@ -642,4 +670,72 @@ pub(crate) async fn direct_peer_info(peer_maps: &[Arc<PeerMap>]) -> PeerInfoForG
     LAST_OSPF_EDGE_COST.retain(|id, _| ret.direct_peers.contains_key(id));
 
     ret
+}
+
+/// Whether the single next hop named by the route table can take the packet
+/// right now.
+///
+/// Split out of `PeerMap::get_gateway_peer_id` as a pure predicate so the rule
+/// is testable without building a peer map or a route table.
+///
+/// The rule, in order:
+///
+/// 1. `hop == my_id` — the self-send path always works.
+/// 2. `hop_in_peer_map == false` — a *foreign-network* gateway legitimately has
+///    no local entry, and the foreign-network client handles it at send time.
+///    Accepting absence here keeps the pre-existing behaviour for that case
+///    (see the `NOTIC` comment at the call site); an unknown/stale peer is also
+///    accepted and then fails at send time, as before.
+/// 3. Otherwise the entry exists, so require a live PeerConn. `has_peer` is
+///    `contains_key` and outlives the last conn: without this check a route
+///    pointing at a dead entry is selected, the send fails inside
+///    `Peer::send_msg`, and the caller never falls through to another usable
+///    path (P-AUDIT.4 / audit C3+C6).
+///
+/// This deliberately does **not** search for a different next hop: choosing a
+/// next hop that is not on a path to the destination is a misroute (see
+/// `docs/roadmap/live-next-hop.md` P1/P2). Returning `false` makes the caller
+/// fail fast instead.
+fn next_hop_is_sendable(hop: PeerId, my_id: PeerId, hop_in_peer_map: bool, hop_live: bool) -> bool {
+    if hop == my_id {
+        return true;
+    }
+    !hop_in_peer_map || hop_live
+}
+
+#[cfg(test)]
+mod next_hop_is_sendable_tests {
+    use super::next_hop_is_sendable;
+
+    const ME: u32 = 1;
+    const HOP: u32 = 2;
+
+    #[test]
+    fn self_is_always_sendable() {
+        assert!(next_hop_is_sendable(ME, ME, true, false));
+    }
+
+    #[test]
+    fn live_local_next_hop_is_sendable() {
+        assert!(next_hop_is_sendable(HOP, ME, true, true));
+    }
+
+    #[test]
+    fn dead_local_next_hop_is_rejected() {
+        // The map entry lingers after the last conn dies, so `hop_live` is the
+        // only signal that separates a usable hop from a stale one.
+        assert!(!next_hop_is_sendable(HOP, ME, true, false));
+    }
+
+    #[test]
+    fn foreign_network_gateway_is_accepted_without_a_local_entry() {
+        assert!(next_hop_is_sendable(HOP, ME, false, false));
+    }
+
+    #[test]
+    fn unknown_peer_is_left_to_the_send_path() {
+        // Absence is not proof of a dead link; the foreign-network client and
+        // the send path decide. Behaviour must match the pre-change code.
+        assert!(next_hop_is_sendable(HOP, ME, false, false));
+    }
 }

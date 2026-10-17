@@ -1,5 +1,5 @@
 use std::{
-    collections::BTreeSet,
+    collections::BTreeMap,
     sync::{Arc, Weak},
     time::{Duration, Instant},
 };
@@ -29,6 +29,31 @@ use crate::{
 };
 
 use super::{Digest, Error, server::PeerCenterServer};
+
+/// Per-peer link cost as last reported to the peer-center: `peer id -> cost`.
+type ReportedPeerCosts = BTreeMap<PeerId, i32>;
+
+/// Heartbeat: report at least this often even when nothing changed.
+const REPORT_HEARTBEAT: Duration = Duration::from_secs(60);
+
+/// Whether the periodic `report_peers` job may skip this round.
+///
+/// The snapshot **must carry the per-peer cost**, not just the peer set. Link
+/// costs are the only input to `calculate_cost` / OSPF, they live nowhere else
+/// (`RouteCostCalculatorImpl` reads the center's map and nothing else), and the
+/// center recomputes its digest from them. A keys-only comparison therefore
+/// silently drops *every* pure cost change until the heartbeat catches it — up
+/// to 60s — which is exactly the change a fast liveness probe produces. That is
+/// the difference between "detect a dead link in ~2s and re-route" and "detect
+/// in ~2s and wait a minute".
+fn report_can_be_skipped(
+    center_unchanged: bool,
+    since_last_report: Duration,
+    last_reported: &ReportedPeerCosts,
+    current: &ReportedPeerCosts,
+) -> bool {
+    center_unchanged && since_last_report < REPORT_HEARTBEAT && last_reported == current
+}
 
 #[async_trait::async_trait]
 #[auto_impl::auto_impl(&, Arc, Box)]
@@ -305,14 +330,14 @@ impl PeerCenterInstance {
     async fn init_report_peers_job(&self) {
         struct Ctx {
             peer_mgr: Arc<dyn PeerCenterPeerManagerTrait>,
-            last_report_peers: Mutex<BTreeSet<PeerId>>,
+            last_report_peers: Mutex<ReportedPeerCosts>,
 
             last_center_peer: AtomicCell<PeerId>,
             last_report_time: AtomicCell<Instant>,
         }
         let ctx = Arc::new(Ctx {
             peer_mgr: self.peer_mgr.clone(),
-            last_report_peers: Mutex::new(BTreeSet::new()),
+            last_report_peers: Mutex::new(ReportedPeerCosts::new()),
             last_center_peer: AtomicCell::new(PeerId::default()),
             last_report_time: AtomicCell::new(Instant::now()),
         });
@@ -321,17 +346,19 @@ impl PeerCenterInstance {
             .init_periodic_job(ctx, |client, ctx| async move {
                 let my_node_id = ctx.my_peer_id;
                 let peers = ctx.job_ctx.peer_mgr.list_peers().await;
-                let peer_list = peers.direct_peers.keys().copied().collect();
+                let peer_costs: ReportedPeerCosts = peers
+                    .direct_peers
+                    .iter()
+                    .map(|(peer_id, info)| (*peer_id, info.latency_ms))
+                    .collect();
                 let job_ctx = &ctx.job_ctx;
 
-                // only report when:
-                // 1. center peer changed
-                // 2. last report time is more than 60 seconds
-                // 3. peers changed
-                if ctx.center_peer.load() == ctx.job_ctx.last_center_peer.load()
-                    && job_ctx.last_report_time.load().elapsed().as_secs() < 60
-                    && *job_ctx.last_report_peers.lock().await == peer_list
-                {
+                if report_can_be_skipped(
+                    ctx.center_peer.load() == ctx.job_ctx.last_center_peer.load(),
+                    job_ctx.last_report_time.load().elapsed(),
+                    &*job_ctx.last_report_peers.lock().await,
+                    &peer_costs,
+                ) {
                     return Ok(5000);
                 }
 
@@ -347,7 +374,7 @@ impl PeerCenterInstance {
 
                 if ret.is_ok() {
                     ctx.job_ctx.last_center_peer.store(ctx.center_peer.load());
-                    *ctx.job_ctx.last_report_peers.lock().await = peer_list;
+                    *ctx.job_ctx.last_report_peers.lock().await = peer_costs;
                     ctx.job_ctx.last_report_time.store(Instant::now());
                 } else {
                     tracing::error!("report peers to center server got error result: {:?}", ret);
@@ -416,5 +443,74 @@ impl PeerCenterInstance {
             ),
             global_peer_map_update_time: self.global_peer_map_update_time.clone(),
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn costs(entries: &[(PeerId, i32)]) -> ReportedPeerCosts {
+        entries.iter().copied().collect()
+    }
+
+    fn recent() -> Duration {
+        Duration::from_secs(5)
+    }
+
+    #[test]
+    fn skips_when_nothing_changed() {
+        let snapshot = costs(&[(2, 13), (3, 1)]);
+        assert!(report_can_be_skipped(
+            true,
+            recent(),
+            &snapshot,
+            &snapshot.clone()
+        ));
+    }
+
+    /// The regression this predicate exists for: a fast liveness probe only
+    /// changes an edge *cost*, keeping the peer set identical. Comparing keys
+    /// alone would park that change here until the 60s heartbeat.
+    #[test]
+    fn reports_when_only_a_cost_changed() {
+        let before = costs(&[(2, 13), (3, 1)]);
+        let after = costs(&[(2, 10_013), (3, 1)]);
+        assert!(!report_can_be_skipped(true, recent(), &before, &after));
+    }
+
+    #[test]
+    fn reports_when_the_peer_set_changed() {
+        let before = costs(&[(2, 13)]);
+        let after = costs(&[(2, 13), (9, 1)]);
+        assert!(!report_can_be_skipped(true, recent(), &before, &after));
+    }
+
+    #[test]
+    fn reports_on_heartbeat_even_when_unchanged() {
+        let snapshot = costs(&[(2, 13)]);
+        assert!(report_can_be_skipped(
+            true,
+            REPORT_HEARTBEAT - Duration::from_secs(1),
+            &snapshot,
+            &snapshot.clone()
+        ));
+        assert!(!report_can_be_skipped(
+            true,
+            REPORT_HEARTBEAT,
+            &snapshot,
+            &snapshot.clone()
+        ));
+    }
+
+    #[test]
+    fn reports_when_the_center_peer_changed() {
+        let snapshot = costs(&[(2, 13)]);
+        assert!(!report_can_be_skipped(
+            false,
+            recent(),
+            &snapshot,
+            &snapshot.clone()
+        ));
     }
 }

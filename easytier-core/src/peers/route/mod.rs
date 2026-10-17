@@ -10,11 +10,26 @@ use cidr::Ipv6Inet;
 use cidr::{Ipv4Cidr, Ipv6Cidr};
 use dashmap::DashMap;
 use quanta::Instant;
+use smallvec::SmallVec;
 use std::{
     collections::BTreeSet,
     net::{Ipv4Addr, Ipv6Addr},
     sync::Arc,
 };
+
+/// How many **equal-cost alternates** a route may offer in addition to the
+/// primary next hop.
+///
+/// Only equal-cost alternates are offered: that is the case with a local
+/// loop-freedom proof (see `graph_algo::equal_cost_first_hops`). A
+/// cheaper-or-within-a-margin alternate needs the neighbour's own distance to
+/// the destination — the RFC 8402 LFA computation, deliberately not attempted
+/// here (roadmap `live-next-hop.md` §5.2).
+pub const MAX_ALTERNATE_NEXT_HOPS: usize = 2;
+
+/// Next-hop candidates for one destination: the primary first, then alternates.
+/// Inline so the per-packet walk allocates nothing.
+pub type NextHopCandidates = SmallVec<[PeerId; MAX_ALTERNATE_NEXT_HOPS + 1]>;
 
 use crate::{
     config::PeerId,
@@ -97,6 +112,27 @@ pub trait Route {
         _policy: NextHopPolicy,
     ) -> Option<PeerId> {
         self.get_next_hop(peer_id).await
+    }
+
+    /// Every locally known next hop for `peer_id`: the primary first, then
+    /// equal-cost alternates.
+    ///
+    /// The send path walks this in order and takes the first entry it can
+    /// actually hand a packet to right now, so a dead primary can fall through
+    /// to an already-established alternate without waiting for the topology to
+    /// converge.
+    ///
+    /// Defaults to just the single next hop, so implementations that do not
+    /// compute alternates keep working unchanged.
+    async fn get_next_hops_with_policy(
+        &self,
+        peer_id: PeerId,
+        policy: NextHopPolicy,
+    ) -> NextHopCandidates {
+        self.get_next_hop_with_policy(peer_id, policy)
+            .await
+            .into_iter()
+            .collect()
     }
 
     async fn list_routes(&self) -> Vec<CoreRoute>;
