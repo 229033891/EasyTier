@@ -44,7 +44,7 @@
 | `data_compress_algo` | **None** | `toml.rs:133` | ✅ 默认不压缩，无额外延迟 |
 | `default_protocol` | **`"udp,tcp"`** | `toml.rs:114` | UDP 优先（对），但保留了 TCP 回落（S2） |
 | `ping_fail_close_count` | **5** | `toml.rs:159` | 连续 5 次 ping 失败即断连（S1） |
-| `ping_interval_max_sec` | **32** | `toml.rs:160` | 自适应 ping 上限；**丢包时退避重置为 1s** |
+| `ping_interval_max_sec` | **10**（2026-10 起；此前 32） | `toml.rs:132` | 自适应 ping 上限；**丢包时退避重置为 1s**。10 是 NAT 安全值：32s 曾长于 ~30s 的 carrier-NAT UDP 映射，直连隧道空闲即黑洞 |
 | `peer_link_bond_count` | **2** | `toml.rs:171` | 出厂即多路径（S4） |
 | `enable_kcp_proxy` | **false** | `toml.rs:135` | 抗丢包代理默认关 |
 | `enable_quic_proxy` | **false** | `toml.rs:141` | 同上 |

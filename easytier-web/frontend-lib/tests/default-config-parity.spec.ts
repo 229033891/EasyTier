@@ -37,6 +37,18 @@ describe('new-network defaults match the core defaults', () => {
     expect(DEFAULT_NETWORK_CONFIG().mtu).toBe(1300)
   })
 
+  it('keepalive pacing match the core defaults (ping_interval_max_sec 32 / ping_fail_close_count 10)', () => {
+    // Mirrors `gen_default_flags()` (toml.rs: DEFAULT_PING_INTERVAL_MAX_SEC /
+    // DEFAULT_PING_FAIL_CLOSE_COUNT). 10s is the NAT-safe default: 32s used to
+    // outlive a ~30s carrier-NAT UDP mapping on *direct* tunnels and blackhole
+    // them between keepalives (tailscale-gap audit §5) — hole-punched conns
+    // already had a 10s per-conn cap, direct conns were the gap. Set 32
+    // explicitly to restore the old pacing.
+    const config = DEFAULT_NETWORK_CONFIG()
+    expect(config.ping_interval_max_sec).toBe(10)
+    expect(config.ping_fail_close_count).toBe(10)
+  })
+
   it('listeners match the CLI default set', () => {
     // Mirrors `Cli::DEFAULT_LISTENERS` (easytier/src/core.rs). Deliberately NOT
     // the full IpScheme::VARIANTS expansion — the CLI used to open quic/ws/wss/

@@ -576,6 +576,8 @@ $env:CARGO_INCREMENTAL    = '0'
 | **5-F3** | STUN `ChangeRequest` 响应改为按源地址限速（突发 8 / 秒），超限在原 socket 上回复 | 真实客户端只发少量探测，不受影响。极端情况下客户端观察不到源端口变化，但**仍能学到映射**，不影响打洞本身 |
 | **5-F4** | TCP 打洞并发轮次上限 16，超出返回 `ServiceUnavailable` | 正常 mesh（远少于 16 个并发打洞）不受影响；新增错误码 `ServiceUnavailable` |
 | **5-F7** | `ipv4/ipv6_peer_id_map` 每轮重建 | 对端**改过 VIP** 时，旧地址将不再解析到它（改前会一直解析）。这是修正，但会让「改 IP 后旧 IP 仍可达」这种既非预期也非文档化的行为消失 |
+| **CLI 默认监听收窄**（2026-10-17 补登记） | CLI 不带 `-l` 时从「裸 `11010` 展开全部 7 种协议」收窄为 `tcp/udp://0.0.0.0:11010` + `wg://0.0.0.0:11011`（与 GUI 模板一致） | 升级后**不再监听** quic/ws/wss/faketcp 的入站端口；依赖这些协议做入站的部署需显式 `-l` 指定。出站/打洞不受影响 |
+| **保活 ping 默认间隔 32s → 10s**（2026-10-17 补登记） | `DEFAULT_PING_INTERVAL_MAX_SEC` 32→10，直连隧道不再沿全局默认落在 NAT UDP 映射超时之外（打洞隧道此前已由 S1b 单独限 10s/1s）。新增 GUI 表单与 CLI `--ping-interval-max-sec` / `--ping-fail-close-count` 两处配置入口 | 直连隧道的信令 ping 频率约 ×3（每 conn ≤1 包/10s，量级可忽略）；**可观察行为**是「空 idle 一段时间后整段不通的黑洞窗口消失」。恢复旧节奏可显式写 `flags.ping_interval_max_sec = 32`（或 CLI `--ping-interval-max-sec 32`） |
 
 > 与 [`../current/tailscale-gap-and-conflict-audit.md`](../current/tailscale-gap-and-conflict-audit.md) §行为变更清单（`latency_first` 默认、P-AUDIT.4/10、KCP、`ping_fail_close_count`）**互不重叠**，可一并发布。
 

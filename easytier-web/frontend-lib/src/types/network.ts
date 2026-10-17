@@ -56,6 +56,8 @@ export type NetworkConfig = Omit<
   | 'socket_mark'
   | 'peer_link_bond_count'
   | 'peer_link_replica_fill_max'
+  | 'ping_interval_max_sec'
+  | 'ping_fail_close_count'
 > & {
   instance_id: string
   mtu: number | null
@@ -75,6 +77,13 @@ export type NetworkConfig = Omit<
   peer_link_bond_count: number | null
   /** bond 补齐时同多样性类别成员上限。null = 未设置（后端按出厂默认 2 处理）。 */
   peer_link_replica_fill_max: number | null
+  /**
+   * 自适应保活 ping 的最大退避间隔（秒）。null = 未设置（后端按出厂默认 32 处理）。
+   * 直连（非打洞）隧道沿用该全局值；NAT 后节点建议 10，见 help。
+   */
+  ping_interval_max_sec: number | null
+  /** PeerConn 连续保活失败多少次后拆连重建。null = 未设置（后端按出厂默认 10 处理）。 */
+  ping_fail_close_count: number | null
 }
 
 export type NormalizedAclV1 = AclV1 & {
@@ -196,6 +205,14 @@ export function DEFAULT_NETWORK_CONFIG(): NetworkConfig {
     instance_recv_bps_limit: null,
     peer_link_bond_count: 2,
     peer_link_replica_fill_max: 2,
+    // Match core `gen_default_flags()` (toml.rs): ping_interval_max_sec = 10,
+    // ping_fail_close_count = 10. Spelled out like `mtu` so both ends display
+    // and persist the same number. The 10s interval is deliberate: 32s used to
+    // outlive a ~30s carrier-NAT UDP mapping on *direct* tunnels and blackhole
+    // them between keepalives (tailscale-gap audit §5). Set 32 explicitly to
+    // restore the old slower pacing.
+    ping_interval_max_sec: 10,
+    ping_fail_close_count: 10,
     mapped_listeners: [],
     enable_magic_dns: false,
     enable_private_mode: false,
@@ -400,6 +417,8 @@ export function normalizeNetworkConfig(config: NetworkConfig): NetworkConfig {
   normalized.mtu = normalizeNumberForInput(normalized.mtu)
   normalized.peer_link_bond_count = normalizeNumberForInput(normalized.peer_link_bond_count as number | null | undefined)
   normalized.peer_link_replica_fill_max = normalizeNumberForInput(normalized.peer_link_replica_fill_max as number | null | undefined)
+  normalized.ping_interval_max_sec = normalizeNumberForInput(normalized.ping_interval_max_sec as number | null | undefined)
+  normalized.ping_fail_close_count = normalizeNumberForInput(normalized.ping_fail_close_count as number | null | undefined)
   normalized.socket_mark = normalizeNumberForInput(normalized.socket_mark as number | null | undefined)
   // 枚举/算法串归一到 canonical 默认值，避免下拉框显示空白。
   // 0（Invalid）与 1（None）等价、'' 与 'aes-gcm' 等价，所以这么夹不会改变语义。
@@ -452,6 +471,9 @@ export function toBackendNetworkConfig(config: NetworkConfig): NetworkConfig {
   // null 必须转成 undefined（字段缺席），否则后端会把「未设置」当成「设为 0」处理
   backend.peer_link_bond_count = normalizeNumberForInput(config.peer_link_bond_count) ?? undefined
   backend.peer_link_replica_fill_max = normalizeNumberForInput(config.peer_link_replica_fill_max) ?? undefined
+  // 0 会被后端按「未设置」处理（api_input.rs 只接受 >0），留空 → undefined 即可
+  backend.ping_interval_max_sec = normalizeNumberForInput(config.ping_interval_max_sec) ?? undefined
+  backend.ping_fail_close_count = normalizeNumberForInput(config.ping_fail_close_count) ?? undefined
   // null 必须转成 undefined（字段缺席），否则后端会把「未设置」当成「设为 0」处理
   backend.socket_mark = normalizeNumberForInput(config.socket_mark) ?? undefined
   backend.instance_recv_bps_limit = toBackendUint64(config.instance_recv_bps_limit)

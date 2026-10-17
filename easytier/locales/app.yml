@@ -267,6 +267,12 @@ core_clap:
   peer_link_replica_fill_max:
     en: "max bond members sharing the same diversity class (scheme + remote) when filling. factory default 2. egress diversity is a later phase."
     zh-CN: "补齐 bond 集合时，同一多样性类别（协议 + 对端）的成员上限，出厂默认 2。出口多样性属后续阶段。"
+  ping_interval_max_sec:
+    en: "upper bound (seconds) the adaptive keepalive ping may back off to; factory default 10 (was 32 before 2026-10). Direct (non-hole-punched) tunnels use this global value — many carrier NATs expire an idle UDP mapping in 20-30s, so 32s used to blackhole them between keepalives. Set 32 explicitly to restore the old slower pacing. 0 is treated as unset."
+    zh-CN: "自适应保活 ping 的最大退避间隔（秒），出厂默认 10（2026-10 前为 32）。直连（非打洞）隧道沿用该全局值——多数运营商 NAT 会在 20-30 秒内回收空闲 UDP 映射，此前 32 秒会让映射在两次保活之间老化并造成黑洞窗口。恢复旧的慢节奏可显式写 32。0 视为未设置。"
+  ping_fail_close_count:
+    en: "consecutive keepalive ping failures before a PeerConn is closed and rebuilt; factory default 10. Lower values rebuild faster but tear down on brief jitter. 0 is treated as unset."
+    zh-CN: "PeerConn 连续保活失败多少次后拆连重建，出厂默认 10。调小恢复更快，但短暂抖动也会触发拆连。0 视为未设置。"
   tcp_whitelist:
     en: "tcp port whitelist. Supports single ports (80) and ranges (8000-9000)"
     zh-CN: "TCP 端口白名单。支持单个端口（80）和范围（8000-9000）"

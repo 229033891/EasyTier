@@ -116,7 +116,7 @@ message NetworkConfig {
   optional string default_protocol = 75;
   // Consecutive ping failures before closing a PeerConn (default 5).
   optional uint32 ping_fail_close_count = 76;
-  // Adaptive ping max interval in seconds (default 32; TCP hole-punch may still cap to 1).
+  // Adaptive ping max interval in seconds (factory default 10 since 2026-10, was 32; TCP hole-punch may still cap to 1).
   optional uint32 ping_interval_max_sec = 77;
   // Tip-only ConnectionPathTier (removed); never reuse.
   reserved 78;

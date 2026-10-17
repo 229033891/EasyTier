@@ -786,6 +786,28 @@ function removeVpnPortalClient(index: number) {
                     aria-describedby="peer_link_replica_fill_max-help" :format="false" :min="1" fluid
                     :placeholder="t('peer_link_replica_fill_max_placeholder')" />
                 </div>
+
+                <div class="config-compact-field config-compact-field--inline">
+                  <div class="config-compact-label flex items-center gap-1">
+                    <label for="ping_interval_max_sec">{{ t('ping_interval_max_sec') }}</label>
+                    <i class="pi pi-question-circle config-help-tip" tabindex="0"
+                      v-tooltip.top="{ value: t('ping_interval_max_sec_help'), escape: false }" role="img"></i>
+                  </div>
+                  <InputNumber id="ping_interval_max_sec" v-model="curNetwork.ping_interval_max_sec"
+                    aria-describedby="ping_interval_max_sec-help" :format="false" :min="1" :max="3600" fluid
+                    :placeholder="t('ping_interval_max_sec_placeholder')" />
+                </div>
+
+                <div class="config-compact-field config-compact-field--inline">
+                  <div class="config-compact-label flex items-center gap-1">
+                    <label for="ping_fail_close_count">{{ t('ping_fail_close_count') }}</label>
+                    <i class="pi pi-question-circle config-help-tip" tabindex="0"
+                      v-tooltip.top="{ value: t('ping_fail_close_count_help'), escape: false }" role="img"></i>
+                  </div>
+                  <InputNumber id="ping_fail_close_count" v-model="curNetwork.ping_fail_close_count"
+                    aria-describedby="ping_fail_close_count-help" :format="false" :min="1" :max="120" fluid
+                    :placeholder="t('ping_fail_close_count_placeholder')" />
+                </div>
               </div>
 
               <div class="config-compact-grid config-compact-grid--inline-two">

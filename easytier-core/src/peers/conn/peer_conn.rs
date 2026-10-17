@@ -467,7 +467,7 @@ impl PeerConn {
 
     /// Maximum idle gap between control pings.
     ///
-    /// Defaults to `flags.ping_interval_max_sec` (historically 32s = `1 << max_backoff_idx`).
+    /// Defaults to `flags.ping_interval_max_sec` (10s since 2026-10; was 32s before).
     /// Per-conn override (TCP hole-punch → 1s) wins when it is stricter (lower).
     pub(crate) fn max_ping_interval(&self) -> Duration {
         let flags_max = {
@@ -1628,12 +1628,18 @@ mod tests {
             Arc::new(PeerSessionStore::new()),
         );
 
-        assert_eq!(conn.max_ping_interval(), Duration::from_secs(32));
+        assert_eq!(
+            conn.max_ping_interval(),
+            Duration::from_secs(crate::config::toml::DEFAULT_PING_INTERVAL_MAX_SEC as u64)
+        );
         assert!(conn.is_hole_punched());
 
         // Direct / listener / UDP hole-punch keep the default schedule.
         conn.set_is_hole_punched(true);
-        assert_eq!(conn.max_ping_interval(), Duration::from_secs(32));
+        assert_eq!(
+            conn.max_ping_interval(),
+            Duration::from_secs(crate::config::toml::DEFAULT_PING_INTERVAL_MAX_SEC as u64)
+        );
 
         // TCP hole-punch admission sets an explicit 1s cap without expanding
         // PeerConnectionOrigin on this branch.

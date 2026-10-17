@@ -712,6 +712,20 @@ peer_link_replica_fill_max_help: |-
   留空为默认值。
 peer_link_replica_fill_max_placeholder: 留空为默认值2
 
+ping_interval_max_sec: 保活 Ping 最大间隔(秒)
+ping_interval_max_sec_help: |-
+  自适应保活 ping 的最大退避间隔，出厂默认 10 秒（2026-10 起，此前为 32 秒）。直连（非打洞）隧道沿用该全局值；打洞隧道自带更短的内置上限（TCP 1s / UDP 10s）。
+  为什么降到 10：多数运营商 NAT 会在 20–30 秒内回收空闲 UDP 映射，此前 32 秒的直连保活等不到回收前刷新——映射一旦老化，你发的包会被对端 NAT 静默丢弃，进入几十秒的黑洞窗口（连接看上去还在，ping 却不通），直到保活把映射刷回或触发拆连重建。改为 10 秒后映射永远是热的，该窗口直接消失。
+  恢复旧的慢节奏可显式写 32。留空使用出厂默认 10。
+ping_interval_max_sec_placeholder: 留空为默认值10
+
+ping_fail_close_count: 拆连失败阈值(次)
+ping_fail_close_count_help: |-
+  PeerConn 连续保活失败多少次后判定为死链并拆连重建，出厂默认 10。
+  调小恢复更快，但短暂抖动也会触发拆连（重建期间必然丢包）；调大容忍抖动，但黑洞窗口拉长。出厂 10 已在「容忍抖动」与「尽快重建」之间取平衡。
+  留空使用出厂默认 10。
+ping_fail_close_count_placeholder: 留空为默认值10
+
 mapped_listeners: 公网宣告地址
 mapped_listeners_help: |-
   告诉其他节点「用哪个公网地址能连到我」，用于 UPnP / STUN 自动探测不准或不可用的环境。

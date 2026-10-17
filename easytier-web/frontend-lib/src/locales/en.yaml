@@ -716,6 +716,20 @@ peer_link_replica_fill_max_help: |-
   Leave blank for default.
 peer_link_replica_fill_max_placeholder: Leave blank as default 2
 
+ping_interval_max_sec: Keepalive Ping Max Interval (s)
+ping_interval_max_sec_help: |-
+  Upper bound the adaptive keepalive ping may back off to. Factory default 10s (since 2026-10, was 32s). Direct (non-hole-punched) tunnels use this global value; hole-punched tunnels keep their own shorter caps (TCP 1s / UDP 10s).
+  Why 10: most carrier NATs expire an idle UDP mapping in 20-30s, and the old 32s direct-conn keepalive missed that window — once the mapping ages out, packets you send are silently dropped by the peer's NAT and you get a tens-of-seconds black-hole window (the connection looks alive, ping times out) until the keepalive refreshes the mapping or the conn is torn down and rebuilt. At 10s the mapping stays warm and the window disappears.
+  Set 32 explicitly to restore the previous slower pacing. Leave blank for the factory default 10.
+ping_interval_max_sec_placeholder: Leave blank as default 10
+
+ping_fail_close_count: Conn Close Threshold (fails)
+ping_fail_close_count_help: |-
+  Consecutive keepalive failures before a PeerConn is declared dead and torn down for rebuild. Factory default 10.
+  Lower rebuilds faster but tears down on brief jitter; higher tolerates jitter but lengthens the black-hole window. 10 balances the two.
+  Leave blank for the factory default 10.
+ping_fail_close_count_placeholder: Leave blank as default 10
+
 mapped_listeners: Public Advertise Addresses
 mapped_listeners_help: |-
   Tell other nodes which public address reaches this one, for environments where automatic detection (UPnP / STUN) is wrong or unavailable.

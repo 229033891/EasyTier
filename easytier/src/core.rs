@@ -698,6 +698,20 @@ struct NetworkOptions {
     peer_link_replica_fill_max: Option<u32>,
 
     #[arg(
+        long = "ping-interval-max-sec",
+        env = "ET_PING_INTERVAL_MAX_SEC",
+        help = t!("core_clap.ping_interval_max_sec").to_string(),
+    )]
+    ping_interval_max_sec: Option<u32>,
+
+    #[arg(
+        long = "ping-fail-close-count",
+        env = "ET_PING_FAIL_CLOSE_COUNT",
+        help = t!("core_clap.ping_fail_close_count").to_string(),
+    )]
+    ping_fail_close_count: Option<u32>,
+
+    #[arg(
         long,
         value_delimiter = ',',
         help = t!("core_clap.tcp_whitelist").to_string(),
@@ -1398,6 +1412,19 @@ impl NetworkOptions {
         f.peer_link_replica_fill_max = self
             .peer_link_replica_fill_max
             .unwrap_or(f.peer_link_replica_fill_max);
+        // Keepalive pacing: `0` is treated as "unset" everywhere else
+        // (`api_input.rs` does the same), so a bare `--ping-interval-max-sec 0`
+        // cannot disable keepalive entirely.
+        if let Some(v) = self.ping_interval_max_sec
+            && v > 0
+        {
+            f.ping_interval_max_sec = v;
+        }
+        if let Some(v) = self.ping_fail_close_count
+            && v > 0
+        {
+            f.ping_fail_close_count = v;
+        }
         f.multi_thread_count = self.multi_thread_count.unwrap_or(f.multi_thread_count);
         f.disable_relay_kcp = self.disable_relay_kcp.unwrap_or(f.disable_relay_kcp);
         f.disable_relay_quic = self.disable_relay_quic.unwrap_or(f.disable_relay_quic);
@@ -2080,6 +2107,21 @@ mod tests {
                 "default listener must be a valid URL: {listener}"
             );
         }
+
+        // Keepalive pacing: the documented core defaults that the GUI template
+        // asserts in `default-config-parity.spec.ts`. Both stay literal on
+        // purpose so a change has to be made on both sides intentionally. 10s
+        // is the NAT-safe default: 32s outlived a ~30s carrier-NAT UDP mapping
+        // on *direct* tunnels (hole-punched conns already had a 10s cap), so
+        // they blackholed between keepalives. Set 32 to restore old pacing.
+        assert_eq!(
+            easytier_core::config::toml::DEFAULT_PING_INTERVAL_MAX_SEC,
+            10
+        );
+        assert_eq!(
+            easytier_core::config::toml::DEFAULT_PING_FAIL_CLOSE_COUNT,
+            10
+        );
 
         let cases: [(IpSchemeMap, IpSchemeMap); _] = [
             (

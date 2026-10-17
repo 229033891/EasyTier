@@ -126,10 +126,17 @@ pub const DEFAULT_PING_FAIL_CLOSE_COUNT: u32 = 10;
 
 /// Default ceiling for the adaptive control-ping interval.
 ///
-/// 32s = `1 << PingIntervalController::max_backoff_idx`. Must stay above the
-/// per-conn caps applied to hole-punched conns (TCP 1s / UDP 10s), since
-/// `PeerConn::max_ping_interval` returns `min(cap, flags_max)`.
-pub const DEFAULT_PING_INTERVAL_MAX_SEC: u32 = 32;
+/// 10s is the NAT-safe value. 32s (`1 << PingIntervalController::max_backoff_idx`)
+/// used to outlive a ~30s carrier-NAT UDP mapping lifetime on *directly
+/// connected* tunnels — hole-punched conns already had a 10s per-conn cap
+/// (S1b) — so user traffic blackholed between keepalives whenever a direct
+/// conn went idle. Lowering the global default to 10s puts direct conns inside
+/// the same safety envelope without touching the per-conn caps:
+/// `PeerConn::max_ping_interval` returns `min(cap, flags_max)`, so a
+/// hole-punched TCP conn stays at 1s and a UDP hole-punch stays at 10s.
+///
+/// To restore the previous slower pacing, set `flags.ping_interval_max_sec = 32`.
+pub const DEFAULT_PING_INTERVAL_MAX_SEC: u32 = 10;
 
 pub fn gen_default_flags() -> Flags {
     #[allow(deprecated)]

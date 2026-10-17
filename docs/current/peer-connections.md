@@ -70,7 +70,7 @@
 | 机制 | 值 | 说明 |
 |------|-----|------|
 | 底层 tick | 固定 **1s** | `interval(Duration::from_secs(1))`，`PingIntervalController` |
-| 发送间隔 | `2^backoff_idx` 秒，上限 `max_interval` | 稳态**逐步退避**（1→2→4→…），最坏 32s 一轮 |
+| 发送间隔 | `2^backoff_idx` 秒，上限 `max_interval` | 稳态**逐步退避**（1→2→4→…），最坏 10s 一轮（2026-10 起的出厂默认；此前 32s） |
 | 退避归零 | `loss_counter > 0`（丢包）**或** tx 涨而 rx 没涨（单向） | 一旦异常立刻回到 1s |
 | 打洞链路额外收紧 | TCP/FakeTCP **1s**、UDP **10s** | 取 `min(cap, ping_interval_max_sec)` |
 
@@ -198,7 +198,7 @@ pub fn protocol_preference_sort_key(preference: &[String], scheme: &str) -> u32 
 | 项 | 今日 |
 |----|------|
 | **初始节点 URL** | `[[peer]]` / `peer_urls` / `public_server_url`（完整 tunnel URL），全部恒维持连接 |
-| **保活 / 拆连** | `ping_interval_max_sec`（**默认 32s**，自适应退避上限）+ `ping_fail_close_count`（**默认 10**，连续失败多少次才拆 conn）。两个默认值都集中在 `config::toml::DEFAULT_PING_*`，`PeerConn` 的 `0 → 未设置` 回落值也引用同一常量，避免漂移。<br>per-conn 更严的 ping 上限：**TCP/FakeTCP 打洞 1s**（#2632）、**UDP 打洞 10s**（NAT UDP 老化常见 ~30s）；取 `min(cap, ping_interval_max_sec)`，**只收紧不放宽**。<br>**为什么拆连阈值是 10**：拆完要重建（~5s 任务循环 + 2–6s 打洞 + 5s 握手），重建代价远大于故障窗口 ⇒ 短暂抖动就拆-建是亏的。失败后退避重置为 1s，每轮约 3s，10 轮 ≈ 30s 判死。真死链路会晚 ~15s 发现，但两种情况重建都要 ~30s，**总恢复时间几乎不变** |
+| **保活 / 拆连** | `ping_interval_max_sec`（**默认 10s** 2026-10 起、此前 32s，自适应退避上限；GUI 与 CLI 2026-10 起均可配置）+ `ping_fail_close_count`（**默认 10**，连续失败多少次才拆 conn）。两个默认值都集中在 `config::toml::DEFAULT_PING_*`，`PeerConn` 的 `0 → 未设置` 回落值也引用同一常量，避免漂移。<br>per-conn 更严的 ping 上限：**TCP/FakeTCP 打洞 1s**（#2632）、**UDP 打洞 10s**（NAT UDP 老化常见 ~30s）；取 `min(cap, ping_interval_max_sec)`，**只收紧不放宽**。<br>**为什么拆连阈值是 10**：拆完要重建（~5s 任务循环 + 2–6s 打洞 + 5s 握手），重建代价远大于故障窗口 ⇒ 短暂抖动就拆-建是亏的。失败后退避重置为 1s，每轮约 3s，10 轮 ≈ 30s 判死。真死链路会晚 ~15s 发现，但两种情况重建都要 ~30s，**总恢复时间几乎不变** |
 | **可用性闸门** | 转发前校验目标**有 live conn**（`PeerMap::has_peer_with_live_conn`），而非仅在 map 里存在（`has_peer` = `contains_key`，最后一条 conn 断开后条目仍在）。否则一个已死的直连/网关条目会先匹配上分支，包在 `Peer::send_msg` 里失败并**不再落到可用的中继腿**——恰好是「该由中继兜底」的时刻。选路 `get_gateway_peer_id` 仍用 `has_peer`：「下一跳是谁」是拓扑问题，与「能不能交给他」不是一回事 |
 | **硬约束** | `disable_p2p`（不主动直连）/ `p2p_only`（绝不中转）/ 允许中转开关（`disable_relay_data` 取反：**仅 OSPF 避让，不硬丢包**） |
 | **遗留可选** | `prefer_peer_relay`：UI 隐藏；**不**抑制打洞；仅 TOML 可启用 OSPF 对端中继拓扑投影（与质量分正交） |

@@ -281,17 +281,17 @@ conn.set_ping_max_interval(Some(Duration::from_secs(1)));
 
 | conn 类型 | 上限 | 理由 |
 |---|---|---|
-| 直连（非打洞） | `None` → 沿用全局 32s | 公网可达，无 NAT 保活需求 |
+| 直连（非打洞） | `None` → 沿用全局 **10s** | 2026-10 起全局默认也是 10s；此前是 32s，是**直连隧道黑洞**的成因——公网可达≠无 NAT（对端在 NAT 后时本方向映射仍会老化） |
 | TCP / FakeTCP 打洞 | **1s** | #2632，中间设备掐空闲 TCP（不变） |
 | UDP 打洞 | **10s** | NAT 老化 ~30s，留 3× 余量；代价是每 conn 每 10s 一个 9 字节控制包 |
 
-**为什么不做成可配置**：`PeerConn::max_ping_interval()` 返回 `min(cap, flags_max)`，所以运维显式设置 `ping_interval_max_sec` 时：
+> **2026-10-17 更新：打洞专用的 10s 上限已推广到全局默认**（`DEFAULT_PING_INTERVAL_MAX_SEC` 32→10），并新增 GUI 表单与 CLI `--ping-interval-max-sec` 配置入口。运维仍可显式设置：`PeerConn::max_ping_interval()` 返回 `min(cap, flags_max)`，所以：
 - 设得**更严**（如 3s）→ 生效，用户意图保留
 - 设得**更松**（如 60s）→ 被收紧到 10s
 
 NAT 保活是**正确性要求**而非调优旋钮，不允许用大值关掉。
 
-**单测**：`udp_hole_punch_gets_nat_safe_ping_ceiling` 把设计意图固化成可执行断言 —— `10s < 32s`（默认值）**且** `10s × 3 ≤ 30s`（老化余量）；另有 `tcp_like_hole_punch_keeps_aggressive_ceiling`、`directly_connected_conns_keep_the_global_default`、`per_conn_cap_never_relaxes_the_operator_setting`。
+**单测**：`udp_hole_punch_gets_nat_safe_ping_ceiling` 把设计意图固化成可执行断言 —— `10s ≤ 默认值`（同为 10）**且** `10s × 3 ≤ 30s`（老化余量）；另有 `tcp_like_hole_punch_keeps_aggressive_ceiling`、`directly_connected_conns_keep_the_global_default`、`per_conn_cap_never_relaxes_the_operator_setting`。
 
 另：KCP/QUIC proxy **出厂一律不启用**（core `false`，GUI 模板 2026-10-17 由 `true` 对齐为 `false`，见 §11）—— 弱网无自动抗丢包产品化（Roadmap P2.5）。
 

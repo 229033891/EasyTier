@@ -2596,12 +2596,12 @@ const HOLE_PUNCH_TCP_PING_MAX: Duration = Duration::from_secs(1);
 
 /// Control-ping ceiling for a hole-punched **UDP** conn.
 ///
-/// The adaptive ping backs off to `flags.ping_interval_max_sec` (default 32s)
-/// once a link goes idle. NAT UDP state aging is commonly ~30s, so a 32s gap
-/// lets the mapping expire: data blackholes until the *next* ping fails, five
-/// consecutive failures tear the conn down, and recovery needs a full re-punch
-/// plus handshake. 10s keeps 3x margin against a 30s aging timer for the cost
-/// of a few 9-byte control packets per conn.
+/// The adaptive ping backs off to `flags.ping_interval_max_sec` (now also 10s
+/// by default; previously 32s) once a link goes idle. NAT UDP state aging is
+/// commonly ~30s, so a 32s gap let the mapping expire: data blackholed until
+/// the *next* ping failed, five consecutive failures tore the conn down, and
+/// recovery needed a full re-punch plus handshake. 10s keeps 3x margin against
+/// a 30s aging timer for the cost of a few 9-byte control packets per conn.
 ///
 /// `PeerConn::max_ping_interval` returns `min(cap, flags_max)`, so an operator
 /// who configures a stricter `ping_interval_max_sec` still wins; only a laxer
@@ -2662,7 +2662,9 @@ mod hole_punch_ping_policy_tests {
     #[test]
     fn udp_hole_punch_gets_nat_safe_ping_ceiling() {
         // The point of the fix: a 32s ceiling can outlive a ~30s NAT UDP
-        // mapping and blackhole the conn before anything notices.
+        // mapping and blackhole the conn before anything notices. The global
+        // default is now 10s as well, so the UDP ceiling must be no *looser*
+        // than it.
         assert_eq!(
             hole_punch_ping_max(Some("udp"), false),
             Some(HOLE_PUNCH_UDP_PING_MAX)
@@ -2672,8 +2674,9 @@ mod hole_punch_ping_policy_tests {
             Some(HOLE_PUNCH_UDP_PING_MAX)
         );
         assert!(
-            HOLE_PUNCH_UDP_PING_MAX < Duration::from_secs(32),
-            "UDP ceiling must stay below the default ping_interval_max_sec"
+            HOLE_PUNCH_UDP_PING_MAX
+                <= Duration::from_secs(crate::config::toml::DEFAULT_PING_INTERVAL_MAX_SEC as u64),
+            "UDP ceiling must not be looser than the default ping_interval_max_sec"
         );
         // Still far stricter than the ~30s NAT aging timer it protects.
         assert!(HOLE_PUNCH_UDP_PING_MAX * 3 <= Duration::from_secs(30));
@@ -2707,7 +2710,8 @@ mod hole_punch_ping_policy_tests {
     fn per_conn_cap_never_relaxes_the_operator_setting() {
         // `PeerConn::max_ping_interval` = min(cap, flags_max): a stricter
         // operator value must survive, and only a laxer one gets tightened.
-        let flags_max = Duration::from_secs(32);
+        let flags_max =
+            Duration::from_secs(crate::config::toml::DEFAULT_PING_INTERVAL_MAX_SEC as u64);
         assert_eq!(
             HOLE_PUNCH_UDP_PING_MAX.min(flags_max),
             HOLE_PUNCH_UDP_PING_MAX

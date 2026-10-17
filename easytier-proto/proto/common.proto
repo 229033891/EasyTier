@@ -96,7 +96,7 @@ message FlagsInConfig {
 
   // Consecutive ping failures before closing a PeerConn. Default 5; 0 means default.
   uint32 ping_fail_close_count = 46;
-  // Adaptive ping max interval in seconds (default 32). Per-conn caps (e.g. TCP
+  // Adaptive ping max interval in seconds (factory default 10 since 2026-10, was 32). Per-conn caps (e.g. TCP
   // hole-punch 1s) still win when lower. 0 means default.
   uint32 ping_interval_max_sec = 47;
 
