@@ -224,6 +224,9 @@ impl AttachedPeerRuntime {
             peer_manager.clear_resources().await;
             return Err(error);
         }
+        // Must be started before `run()`: `run()` drives the ingress loop and
+        // only returns on shutdown.
+        peer_manager.start_pending_packet_flush().await;
         if let Err(error) = peer_manager.run().await {
             peer_manager.clear_resources().await;
             return Err(error.into());

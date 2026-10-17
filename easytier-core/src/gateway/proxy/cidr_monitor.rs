@@ -293,6 +293,30 @@ pub(crate) struct ProxyCidrMonitor {
     events: Arc<dyn CoreEventSink>,
 }
 
+/// Safety-net reconcile tick for the L2 proxy-CIDR monitor.
+///
+/// The primary trigger is `PeerManagerCore::proxy_cidr_wake` (peer info moved,
+/// i.e. a peer just (re)advertised its routes). This tick stays as the backstop
+/// so that (a) a missed or never-fired signal can never stall L2 route
+/// installation, and (b) config-only changes — which do not bump peer info —
+/// still land within ~1s.
+const RECONCILE_TICK: Duration = Duration::from_secs(1);
+
+/// Wait for the next peer-info wake-up or `RECONCILE_TICK`, whichever comes
+/// first. `None` means this instance has no OSPF service to observe
+/// (`route_algo = none`), so only the tick applies.
+async fn wait_for_wake(wake: Option<&tokio::sync::Notify>) {
+    match wake {
+        Some(wake) => {
+            tokio::select! {
+                _ = wake.notified() => {}
+                _ = crate::foundation::time::sleep(RECONCILE_TICK) => {}
+            }
+        }
+        None => crate::foundation::time::sleep(RECONCILE_TICK).await,
+    }
+}
+
 #[cfg_attr(not(feature = "proxy-cidr-monitor"), allow(dead_code))]
 impl ProxyCidrMonitor {
     pub(crate) fn new(
@@ -322,7 +346,16 @@ impl ProxyCidrMonitor {
             let mut last_local_route_revision = None;
 
             loop {
-                crate::foundation::time::sleep(Duration::from_secs(1)).await;
+                // Grab the wake handle without holding the peer manager across
+                // the wait, so instance shutdown is not delayed by up to a tick.
+                let Some(peer_manager) = self.peer_manager.upgrade() else {
+                    break;
+                };
+                let wake = peer_manager.proxy_cidr_wake();
+                drop(peer_manager);
+
+                wait_for_wake(wake.as_deref()).await;
+
                 let Some(peer_manager) = self.peer_manager.upgrade() else {
                     break;
                 };
@@ -396,6 +429,36 @@ mod tests {
 
     fn cidrs(values: &[&str]) -> BTreeSet<Ipv4Cidr> {
         values.iter().map(|value| value.parse().unwrap()).collect()
+    }
+
+    /// A wake-up that lands *before* the reconciler starts waiting must still be
+    /// observed. This is why the producer uses `notify_one` (which stores a
+    /// permit) rather than `notify_waiters` (which drops it when nobody waits):
+    /// peer info routinely changes while the reconciler is busy diffing, and a
+    /// dropped wake-up would push route installation back to the 1s tick.
+    #[tokio::test]
+    async fn wake_permit_is_observed_before_the_reconcile_tick() {
+        let notify = tokio::sync::Notify::new();
+        notify.notify_one();
+
+        let started = std::time::Instant::now();
+        wait_for_wake(Some(&notify)).await;
+
+        assert!(
+            started.elapsed() < RECONCILE_TICK,
+            "a stored permit must short-circuit the tick, took {:?}",
+            started.elapsed()
+        );
+    }
+
+    /// Without a signal the helper still returns within one tick — the backstop
+    /// that keeps a missed signal from stalling L2 installation forever.
+    #[tokio::test]
+    async fn tick_still_fires_without_a_wake_signal() {
+        let started = std::time::Instant::now();
+        wait_for_wake(None).await;
+
+        assert!(started.elapsed() >= RECONCILE_TICK);
     }
 
     #[test]

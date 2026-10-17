@@ -2746,6 +2746,18 @@ struct PeerRouteServiceImpl {
     last_update_my_foreign_network: AtomicCell<Option<Instant>>,
 
     peer_info_last_update: AtomicCell<Instant>,
+    /// Wakes the L2 proxy-CIDR reconciler as soon as `peer_info_last_update`
+    /// moves, instead of letting it discover the change on its next 1s tick.
+    ///
+    /// This is the "first access to a peer subnet is slow" fix: the OS route to
+    /// a peer-advertised subnet is installed from this reconciler, so every
+    /// second of polling latency is a second where the first packet is dropped
+    /// (`data_plane_no_dst_peer_drops`) and the application retries.
+    ///
+    /// `notify_one` (not `notify_waiters`) so a wake-up that lands while the
+    /// reconciler is busy is still observed by its next `notified()` — the 1s
+    /// tick in the reconciler remains a safety net, never the primary path.
+    peer_info_notify: Arc<tokio::sync::Notify>,
 }
 
 impl Debug for PeerRouteServiceImpl {
@@ -2821,6 +2833,7 @@ impl PeerRouteServiceImpl {
             last_update_my_foreign_network: AtomicCell::new(None),
 
             peer_info_last_update: AtomicCell::new(Instant::now()),
+            peer_info_notify: Arc::new(tokio::sync::Notify::new()),
         }
     }
 
@@ -4093,10 +4106,19 @@ impl PeerRouteServiceImpl {
             Instant::now()
         );
         self.peer_info_last_update.store(Instant::now());
+        // Wake the L2 reconciler now rather than at its next 1s tick. Cheap:
+        // `notify_one` stores at most one permit, so a burst of updates during
+        // convergence coalesces into a single extra pass.
+        self.peer_info_notify.notify_one();
     }
 
     fn get_peer_info_last_update(&self) -> Instant {
         self.peer_info_last_update.load()
+    }
+
+    /// Wake handle for the L2 proxy-CIDR reconciler; see `peer_info_notify`.
+    fn peer_info_wake(&self) -> Arc<tokio::sync::Notify> {
+        self.peer_info_notify.clone()
     }
 
     fn get_peer_groups(&self, peer_id: PeerId) -> Arc<Vec<String>> {
@@ -4909,6 +4931,16 @@ impl PeerRoute {
         matches!(synchronized, Ok(true))
     }
 
+    /// Wake handle for the L2 proxy-CIDR reconciler.
+    ///
+    /// Fires whenever peer info changes (a peer (re)advertises its routes), so
+    /// the host can install the OS route to a newly-learned subnet immediately
+    /// instead of on the reconciler's next 1s tick. The 1s tick is still kept
+    /// as a safety net.
+    pub fn peer_info_wake(&self) -> Arc<tokio::sync::Notify> {
+        self.service_impl.peer_info_wake()
+    }
+
     pub fn new(
         my_peer_id: PeerId,
         context: ArcPeerContext,
@@ -4996,6 +5028,21 @@ impl PeerRoute {
                 Some(ev) = peer_event => {
                     if let Ok(ev_ref) = &ev {
                         service_impl.handle_peer_context_event(ev_ref);
+                        // `maintain_sessions` re-reads the interface peer set
+                        // once per second. A peer appearing/disappearing changes
+                        // that set, so wake it now instead of waiting for the
+                        // tick — this is the "a newly connected peer takes ~1s
+                        // before its route-sync session starts" half of the
+                        // first-packet latency.
+                        //
+                        // Conn-level events are deliberately ignored: they do
+                        // not change the peer set, and bonding churns them.
+                        if matches!(
+                            ev_ref,
+                            PeerContextEvent::PeerAdded(_) | PeerContextEvent::PeerRemoved(_)
+                        ) {
+                            session_mgr.sync_now("peer_set_changed");
+                        }
                     } else {
                         service_impl.mark_interface_peers_dirty();
                         peer_event_receiver = service_impl.context.subscribe_peer_events();

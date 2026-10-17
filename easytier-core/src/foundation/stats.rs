@@ -199,6 +199,9 @@ pub enum MetricName {
 
     /// VIP/L3 lookup found no dst peer (incl. policy Block → empty fanout)
     DataPlaneNoDstPeerDrops,
+    /// VIP/L3 lookup found no dst peer yet, so the packet was parked briefly
+    /// awaiting route installation instead of being dropped (P-AUDIT.12).
+    DataPlaneNoDstPeerBuffered,
     /// Inbound data dropped because the NIC host channel was full
     DataPlaneNicChannelDrops,
     /// Outbound tunnel send hit BufferFull (ring full / silent loss path)
@@ -305,6 +308,9 @@ impl fmt::Display for MetricName {
             MetricName::TcpProxyConnect => write!(f, "tcp_proxy_connect"),
 
             MetricName::DataPlaneNoDstPeerDrops => write!(f, "data_plane_no_dst_peer_drops"),
+            MetricName::DataPlaneNoDstPeerBuffered => {
+                write!(f, "data_plane_no_dst_peer_buffered")
+            }
             MetricName::DataPlaneNicChannelDrops => write!(f, "data_plane_nic_channel_drops"),
             MetricName::DataPlaneTunnelBufferFull => write!(f, "data_plane_tunnel_buffer_full"),
         }

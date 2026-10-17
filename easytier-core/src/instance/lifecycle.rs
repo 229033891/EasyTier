@@ -141,6 +141,10 @@ where
             udp_hole_punch.start().await?;
         }
         self.peer_center.init().await;
+        // Park packets that race route installation instead of dropping them
+        // (P-AUDIT.12). Started here rather than in the constructor because the
+        // flusher needs the manager to already be inside its `Arc`.
+        self.peer_manager.start_pending_packet_flush().await;
         #[cfg(feature = "proxy-cidr-monitor")]
         self.proxy_cidr_monitor
             .start(&self.peer_manager, self.runtime_config.clone())
