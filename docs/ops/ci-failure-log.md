@@ -3,7 +3,7 @@
 ## Status
 
 - Status: **Ops**（追加式日志；提交前必查）
-- 最近审阅：2026-10-15
+- 最近审阅：2026-10-18
 - 索引：[`../README.md`](../README.md)
 - 本地复现：[`../../script/easytier-test-fast.cmd`](../../script/easytier-test-fast.cmd) / [`../../script/test-easytier.ps1`](../../script/test-easytier.ps1)
 - MSVC 环境：[`windows-msvc-local-build.md`](./windows-msvc-local-build.md)
@@ -81,6 +81,7 @@ Agent / 人工均适用：**未完成 §1 不要提交**。
 - [ ] **桌面专用 Tauri 权限勿进共用 capability**：`autostart:*` 等仅 desktop 依赖提供的权限，必须写在带 `platforms: [macOS, windows, linux]` 的 capability；写进 Android 也会加载的 `migrated.json` 会在 ET Android `tauri build` 报 `Permission … not found`。
 - [ ] **proto 注释勿让续行以 `+`/`-`/`*` 开头**：prost 会把字段注释编成 `///`；Markdown 把行首 `+` 当成列表，后续未缩进行触发 clippy `doc_lazy_continuation`（`-D warnings` 直接挂）。改写成逗号并列，或续行缩进两空格。
 - [ ] **`#[cfg(test)]` helper 若无断言引用也算 dead_code**：CI 编 lib test 时 `cfg(test)` 为真，未调用的 `pub(super)`/`fn` 仍触发 `-D dead-code`。helper 写了就要在同文件测试里用，否则删掉。
+- [ ] **OpenWrt LuCI `.htm` 必须 LF**：LuCI 把模板正文塞进 `write("…")` 时只转义 `\n`，不转义 `\r`。Windows 上打出的 CRLF apk 会让状态页报 `unfinished string near '"'`。打包前 `sed -i 's/\r$//'`；`luci-app-easytier` 有 `Build/Prepare` 钩子与 `.gitattributes` `eol=lf`。
 
 ---
 
@@ -107,6 +108,22 @@ Agent / 人工均适用：**未完成 §1 不要提交**。
 ---
 
 ## 5. 失败记录（新 → 旧）
+
+### 2026-10-18 — OpenWrt LuCI：状态页 `unfinished string`（CRLF）
+
+| 项 | 内容 |
+|----|------|
+| 仓库/分支 | `229033891/luci-app-easytier` + EasyTier OpenWrt 包 |
+| Run | 现网装 `ET-openwrt-x86_64-apk.zip` 后 LuCI 状态页 Runtime error |
+| 失败 job | 运行时（非 CI 编译红） |
+| 根因一类 | env / packaging |
+| 状态 | 已修复（路由器 `sed` 去 `\r`；仓库加 `.gitattributes` + Prepare 钩子 + workflow `sed`） |
+
+**摘要**：装上的 `easytier_status.htm` 为 CRLF（`33386` 字节 / MD5 `5c009e7f…`），仓库 LF 版为 `32226` / `af0fed62…`。LuCI `template_parser` 对 TEXT chunk 只转义 `\`/`"`/`\n`，裸 `\r` 落在 `write("…")` 里导致 `unfinished string near '"'`（报在源文件约第 15 行）。
+
+**防再犯**：`*.htm`/`*.lua` 固定 `eol=lf`；OpenWrt `Prepare feed` 与 `Build/Prepare/luci-app-easytier` 打包前去 CR；装包后若再撞可 `sed -i 's/\r$//' /usr/lib/lua/luci/view/easytier/*.htm`。
+
+---
 
 ### 2026-10-17 — lib test：`has_active_probe` dead_code
 

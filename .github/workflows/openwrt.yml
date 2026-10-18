@@ -10,6 +10,8 @@ name: ET OpenWrt
 # 注意: OpenWrt 的 .apk 和 Android 的 easytier-gui.apk 不是同一个东西, 不要混淆.
 # LuCI 界面源码来自 https://github.com/229033891/luci-app-easytier（官方 fork）,
 # easytier 主包里的二进制是本仓库现编译的 (core + cli + web-embed), 不是从旧 Release 下载的.
+# 打包前会去掉 feed 里模板/脚本的 CR。LuCI 编译 .htm 时不转义 \r，CRLF 会让状态页报 unfinished string。
+# 打包前会去掉 feed 里模板/脚本的 CR。LuCI 编译 .htm 时不转义 \r，CRLF 会让状态页报 unfinished string。
 
 on:
   workflow_dispatch:
@@ -170,6 +172,8 @@ jobs:
 
       - name: Prepare feed (版本号 + 本地二进制)
         run: |
+          find feed -type f \( -name '*.htm' -o -name '*.lua' -o -name '*.ut' -o -name '*.mk' -o -name 'Makefile' \) -print0 \
+            | xargs -0 sed -i 's/\r$//'
           python3 - <<'EOF'
           import re, pathlib
           cargo = pathlib.Path("easytier-src/easytier/Cargo.toml").read_text()
