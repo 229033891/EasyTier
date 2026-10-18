@@ -2746,18 +2746,46 @@ struct PeerRouteServiceImpl {
     last_update_my_foreign_network: AtomicCell<Option<Instant>>,
 
     peer_info_last_update: AtomicCell<Instant>,
-    /// Wakes the L2 proxy-CIDR reconciler as soon as `peer_info_last_update`
-    /// moves, instead of letting it discover the change on its next 1s tick.
+    /// Fan-out wakes when `peer_info_last_update` moves.
     ///
-    /// This is the "first access to a peer subnet is slow" fix: the OS route to
-    /// a peer-advertised subnet is installed from this reconciler, so every
-    /// second of polling latency is a second where the first packet is dropped
-    /// (`data_plane_no_dst_peer_drops`) and the application retries.
+    /// Each consumer has its **own** `Notify`. Sharing one `Notify` with
+    /// `notify_one` lets the pending-packet flusher steal the permit from the
+    /// L2 proxy-CIDR reconciler (exactly when first-packet races make the
+    /// flusher most active) and push route install back onto the 1s tick.
     ///
-    /// `notify_one` (not `notify_waiters`) so a wake-up that lands while the
-    /// reconciler is busy is still observed by its next `notified()` — the 1s
-    /// tick in the reconciler remains a safety net, never the primary path.
-    peer_info_notify: Arc<tokio::sync::Notify>,
+    /// Per-consumer `notify_one` still stores a permit when that waiter is
+    /// busy, so a burst of updates coalesces into one extra pass each.
+    peer_info_wakes: PeerInfoWakes,
+}
+
+/// Independent wake handles for peer-info consumers (see `peer_info_wakes`).
+struct PeerInfoWakes {
+    proxy_cidr: Arc<tokio::sync::Notify>,
+    pending_flush: Arc<tokio::sync::Notify>,
+}
+
+impl PeerInfoWakes {
+    fn new() -> Self {
+        Self {
+            proxy_cidr: Arc::new(tokio::sync::Notify::new()),
+            pending_flush: Arc::new(tokio::sync::Notify::new()),
+        }
+    }
+
+    /// Deliver one wake-up to **every** consumer, each through its own
+    /// `Notify`.
+    ///
+    /// Deliberately named after "every consumer" rather than `notify_all`:
+    /// this is *not* `Notify::notify_waiters` broadcast semantics. Each
+    /// `notify_one` below targets a distinct `Notify`, so no consumer can be
+    /// skipped because another one happened to be waiting. Naming it
+    /// `notify_all` invited exactly the wrong reading — that one `Notify` is
+    /// told to wake "all" of its waiters, which would re-introduce the
+    /// permit-stealing bug this struct exists to prevent.
+    fn wake_all_consumers(&self) {
+        self.proxy_cidr.notify_one();
+        self.pending_flush.notify_one();
+    }
 }
 
 impl Debug for PeerRouteServiceImpl {
@@ -2833,7 +2861,7 @@ impl PeerRouteServiceImpl {
             last_update_my_foreign_network: AtomicCell::new(None),
 
             peer_info_last_update: AtomicCell::new(Instant::now()),
-            peer_info_notify: Arc::new(tokio::sync::Notify::new()),
+            peer_info_wakes: PeerInfoWakes::new(),
         }
     }
 
@@ -4106,19 +4134,22 @@ impl PeerRouteServiceImpl {
             Instant::now()
         );
         self.peer_info_last_update.store(Instant::now());
-        // Wake the L2 reconciler now rather than at its next 1s tick. Cheap:
-        // `notify_one` stores at most one permit, so a burst of updates during
-        // convergence coalesces into a single extra pass.
-        self.peer_info_notify.notify_one();
+        // Wake every peer-info consumer now rather than at its next poll tick.
+        self.peer_info_wakes.wake_all_consumers();
     }
 
     fn get_peer_info_last_update(&self) -> Instant {
         self.peer_info_last_update.load()
     }
 
-    /// Wake handle for the L2 proxy-CIDR reconciler; see `peer_info_notify`.
+    /// Wake handle for the L2 proxy-CIDR reconciler only.
     fn peer_info_wake(&self) -> Arc<tokio::sync::Notify> {
-        self.peer_info_notify.clone()
+        self.peer_info_wakes.proxy_cidr.clone()
+    }
+
+    /// Wake handle for the pending-packet flusher only.
+    fn pending_packet_wake(&self) -> Arc<tokio::sync::Notify> {
+        self.peer_info_wakes.pending_flush.clone()
     }
 
     fn get_peer_groups(&self, peer_id: PeerId) -> Arc<Vec<String>> {
@@ -4936,9 +4967,17 @@ impl PeerRoute {
     /// Fires whenever peer info changes (a peer (re)advertises its routes), so
     /// the host can install the OS route to a newly-learned subnet immediately
     /// instead of on the reconciler's next 1s tick. The 1s tick is still kept
-    /// as a safety net.
+    /// as a safety net. Independent of [`Self::pending_packet_wake`].
     pub fn peer_info_wake(&self) -> Arc<tokio::sync::Notify> {
         self.service_impl.peer_info_wake()
+    }
+
+    /// Wake handle for the pending-packet flusher (P-AUDIT.12).
+    ///
+    /// Same producer as [`Self::peer_info_wake`], separate `Notify` so the
+    /// flusher cannot steal the reconciler's permit.
+    pub fn pending_packet_wake(&self) -> Arc<tokio::sync::Notify> {
+        self.service_impl.pending_packet_wake()
     }
 
     pub fn new(

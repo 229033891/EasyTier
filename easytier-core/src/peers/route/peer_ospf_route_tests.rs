@@ -2290,6 +2290,58 @@ fn version_jump_limit_rejects_the_u32_max_freeze() {
     assert!(!version_advance_is_plausible(12_345, u32::MAX));
 }
 
+/// Waker that is never invoked. The probe below only inspects whether a
+/// `Notified` already holds a stored permit, so nothing is ever woken.
+struct NeverWoken;
+
+impl std::task::Wake for NeverWoken {
+    fn wake(self: std::sync::Arc<Self>) {}
+}
+
+/// `true` when `notify` currently holds a permit, consuming it if so.
+///
+/// `Notify` exposes no non-consuming "peek", but a stored permit makes
+/// `notified()` resolve on the very first poll — so one poll with a no-op waker
+/// is an exact, timing-free probe (no spawned task, no sleep, no flake).
+fn take_stored_permit(notify: &Notify) -> bool {
+    let mut notified = std::pin::pin!(notify.notified());
+    let waker = std::task::Waker::from(std::sync::Arc::new(NeverWoken));
+    let mut cx = std::task::Context::from_waker(&waker);
+    std::future::Future::poll(notified.as_mut(), &mut cx).is_ready()
+}
+
+/// Regression test for the shared-`Notify` permit-stealing bug.
+///
+/// `PeerInfoWakes` exists because one `Arc<Notify>` + `notify_one` let the
+/// pending-packet flusher consume the only permit and starve the L2 proxy-CIDR
+/// reconciler — precisely when first-packet races make the flusher busiest,
+/// pushing route installation back onto the 1s tick.
+#[test]
+fn wake_all_consumers_gives_every_consumer_its_own_permit() {
+    let wakes = PeerInfoWakes::new();
+
+    // Nothing has moved yet, so no consumer may start holding a permit.
+    assert!(!take_stored_permit(&wakes.proxy_cidr));
+    assert!(!take_stored_permit(&wakes.pending_flush));
+
+    wakes.wake_all_consumers();
+
+    // A single peer-info change must arm BOTH handles. Were they one shared
+    // `Notify`, the second `notify_one` would be a no-op (the notified bit is
+    // already set with nobody parked), only one permit would exist, and this
+    // second assertion would fail. Asserting on *both* handles is what makes
+    // this a regression test rather than a smoke test.
+    assert!(
+        take_stored_permit(&wakes.proxy_cidr),
+        "the L2 proxy-CIDR reconciler must hold its own permit and never depend \
+         on the pending-packet flusher happening not to be parked"
+    );
+    assert!(
+        take_stored_permit(&wakes.pending_flush),
+        "the pending-packet flusher must hold its own permit too"
+    );
+}
+
 #[test]
 fn version_jump_limit_rejects_stale_and_absurd_advances() {
     // Out-of-order updates were already ignored; keep that behaviour.

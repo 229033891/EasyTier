@@ -124,14 +124,39 @@ impl PendingPackets {
         self.inner.lock().unwrap().total == 0
     }
 
-    /// Park `packet` until `expires_at`.
+    /// Park an already-built packet (tests / callers that already own a clone).
+    ///
+    /// Hot paths should use [`Self::push_with`] so a full queue never pays for
+    /// a discarded `ZCPacket` deep copy.
+    #[cfg(test)]
+    pub(crate) fn push(&self, parked: Parked) -> PushOutcome {
+        self.push_with(
+            parked.dst,
+            parked.expires_at,
+            parked.not_send_to_self,
+            || parked.packet,
+        )
+    }
+
+    /// Reserve a slot, then build the packet only if accepted.
+    ///
+    /// Avoids a deep `ZCPacket` copy when the global cap rejects the push
+    /// (common on mobile without an exit node, where every internet packet
+    /// hits the unroutable path).
     ///
     /// See [`PushOutcome`]: a rejected push leaves `accepted = false`; slot
     /// reclaim / per-dst eviction report how many previously buffered packets
-    /// became real drops.
-    pub(crate) fn push(&self, parked: Parked) -> PushOutcome {
+    /// became real drops. Rejected pushes do not wake the flusher — when the
+    /// queue is non-empty the flusher is already in its inner loop (invariant
+    /// documented on `PeerManagerCore::start_pending_packet_flush`).
+    pub(crate) fn push_with(
+        &self,
+        dst: IpAddr,
+        expires_at: Instant,
+        not_send_to_self: bool,
+        make_packet: impl FnOnce() -> ZCPacket,
+    ) -> PushOutcome {
         let now = Instant::now();
-        let dst = parked.dst;
         let outcome = {
             let mut inner = self.inner.lock().unwrap();
             // Reclaim this destination's expired slots first so a stale queue
@@ -158,10 +183,11 @@ impl PendingPackets {
                     queue.pop_front();
                     evicted = 1;
                 }
+                // Build the packet only after a slot is reserved.
                 queue.push_back(Entry {
-                    packet: parked.packet,
-                    expires_at: parked.expires_at,
-                    not_send_to_self: parked.not_send_to_self,
+                    packet: make_packet(),
+                    expires_at,
+                    not_send_to_self,
                 });
             }
             inner.total = inner.total - evicted + 1;
@@ -320,6 +346,29 @@ mod tests {
             "over the global cap the caller must fall back to a counted drop"
         );
         assert_eq!(rejected.dropped, 0);
+    }
+
+    #[test]
+    fn push_with_does_not_build_the_packet_when_rejected() {
+        let pending = PendingPackets::new();
+        let now = Instant::now();
+        for i in 0..MAX_TOTAL {
+            assert!(
+                pending
+                    .push(parked(ip(i as u8), now + PENDING_TTL))
+                    .accepted
+            );
+        }
+        let mut built = 0;
+        let rejected = pending.push_with(ip(200), now + PENDING_TTL, true, || {
+            built += 1;
+            packet()
+        });
+        assert!(!rejected.accepted);
+        assert_eq!(
+            built, 0,
+            "ZCPacket must not be cloned when the queue is full"
+        );
     }
 
     #[test]

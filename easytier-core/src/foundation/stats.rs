@@ -206,6 +206,15 @@ pub enum MetricName {
     DataPlaneNicChannelDrops,
     /// Outbound tunnel send hit BufferFull (ring full / silent loss path)
     DataPlaneTunnelBufferFull,
+    /// A parked packet's flush attempt returned an error (compress/encrypt, or
+    /// a per-peer send failure) and was abandoned instead of re-parked
+    /// (P-AUDIT.12).
+    ///
+    /// Kept separate from `DataPlaneNoDstPeerDrops` on purpose: that counter is
+    /// the "no route" signal the buffering feature is judged by, and folding
+    /// unrelated send failures into it would blur exactly the metric the
+    /// roadmap tells operators to watch.
+    DataPlanePendingFlushErrors,
 }
 
 impl fmt::Display for MetricName {
@@ -313,6 +322,9 @@ impl fmt::Display for MetricName {
             }
             MetricName::DataPlaneNicChannelDrops => write!(f, "data_plane_nic_channel_drops"),
             MetricName::DataPlaneTunnelBufferFull => write!(f, "data_plane_tunnel_buffer_full"),
+            MetricName::DataPlanePendingFlushErrors => {
+                write!(f, "data_plane_pending_flush_errors")
+            }
         }
     }
 }

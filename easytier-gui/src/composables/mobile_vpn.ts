@@ -665,6 +665,12 @@ function hasReachableExit(routes: Route[] | undefined, exitNodes: string[]): boo
  * new cores expose `allow_peer_default_without_exit` (presence bit) and
  * `desired_proxy_cidrs` — install that set verbatim. Old cores omit the bit
  * and fall back to local assembly from peer `proxy_cidrs` + config routes.
+ *
+ * Presence bit caveat: we reuse `allow_peer_default_without_exit` as the
+ * "new core" marker (proto optional bool #14) because that is what JNI and
+ * `api_manage.proto` already document. If that field is ever removed, hosts
+ * will silently fall back to legacy assembly — prefer a dedicated version /
+ * capability field before deprecating it.
  */
 export function getRoutesForVpn(
   networkInfo: Pick<
@@ -675,7 +681,7 @@ export function getRoutesForVpn(
 ): string[] {
   const ret: string[] = []
 
-  // New-core presence bit (proto optional bool): null/undefined ⇒ legacy path.
+  // New-core presence bit (proto optional bool #14): null/undefined ⇒ legacy.
   if (networkInfo?.allow_peer_default_without_exit != null) {
     for (const raw of normalizeRouteList(networkInfo.desired_proxy_cidrs)) {
       const cidr = toVpnRouteCidr(raw)

@@ -1334,6 +1334,8 @@ impl PeerManagerCore {
         // counter too — see `PeerOutboundPacketRouterCounters`.
         let no_dst_peer_buffered =
             stats_manager.get_counter(MetricName::DataPlaneNoDstPeerBuffered, net_label.clone());
+        let pending_flush_errors =
+            stats_manager.get_counter(MetricName::DataPlanePendingFlushErrors, net_label.clone());
         let self_tx_counters = PeerManagerTrafficCounters {
             self_tx_packets: stats_manager
                 .get_counter(MetricName::TrafficPacketsSelfTx, net_label.clone()),
@@ -1433,6 +1435,7 @@ impl PeerManagerCore {
             self_tx_counters.no_dst_peer_drops.clone(),
             no_dst_peer_buffered,
             self_tx_counters.tunnel_buffer_full.clone(),
+            pending_flush_errors,
         );
 
         Self {
@@ -1850,6 +1853,14 @@ impl PeerManagerCore {
         self.route_algo_inst
             .ospf_route()
             .map(|route| route.peer_info_wake())
+    }
+
+    /// Wake handle for the pending-packet flusher (independent of
+    /// [`Self::proxy_cidr_wake`] so `notify_one` permits are not stolen).
+    pub fn pending_packet_wake(&self) -> Option<Arc<tokio::sync::Notify>> {
+        self.route_algo_inst
+            .ospf_route()
+            .map(|route| route.pending_packet_wake())
     }
 
     pub(crate) async fn withdraw_routes_before_stop(&self) -> bool {
@@ -2295,9 +2306,15 @@ impl PeerManagerCore {
     /// zero: the loop parks on a notify and only ticks while packets are held.
     ///
     /// While the queue is non-empty the flusher also listens for
-    /// `proxy_cidr_wake` (peer-info / route changes) so a newly installed route
-    /// can flush immediately instead of waiting out the 20ms tick. With
-    /// `route_algo = none` there is no wake handle and only the tick applies.
+    /// [`Self::pending_packet_wake`] (peer-info / route changes) so a newly
+    /// installed route can flush immediately instead of waiting out the 20ms
+    /// tick. With `route_algo = none` there is no wake handle and only the tick
+    /// applies.
+    ///
+    /// Invariant: a non-empty queue implies this task is inside the inner loop
+    /// (or about to enter it after `wait_for_work`). Rejected pushes that only
+    /// reclaim expired slots therefore do not need their own wake — the flusher
+    /// is already running and will observe the smaller queue on its next pass.
     ///
     /// The task holds a `Weak` to the manager, so it exits as soon as the
     /// manager is dropped instead of keeping the whole graph alive.
@@ -2312,7 +2329,9 @@ impl PeerManagerCore {
                     let Some(peer_manager) = this.upgrade() else {
                         return;
                     };
-                    let route_wake = peer_manager.proxy_cidr_wake();
+                    // Dedicated wake — not `proxy_cidr_wake` — so this waiter
+                    // cannot steal the L2 reconciler's `notify_one` permit.
+                    let route_wake = peer_manager.pending_packet_wake();
                     // First pass after a new park: give route installation a
                     // short beat, then also react to peer-info wakes.
                     match route_wake.as_deref() {
@@ -3069,6 +3088,10 @@ struct PeerOutboundPacketRouterCounters {
     /// instead of being dropped (route installation was likely in flight).
     no_dst_peer_buffered: CounterHandle,
     tunnel_buffer_full: CounterHandle,
+    /// A parked packet's flush attempt errored and was abandoned rather than
+    /// re-parked. Separate from `no_dst_peer_drops` so the buffering signal
+    /// stays clean.
+    pending_flush_errors: CounterHandle,
 }
 
 pub(crate) struct PeerOutboundPacketRouter {
@@ -3119,6 +3142,7 @@ impl PeerOutboundPacketRouter {
         no_dst_peer_drops: CounterHandle,
         no_dst_peer_buffered: CounterHandle,
         tunnel_buffer_full: CounterHandle,
+        pending_flush_errors: CounterHandle,
     ) -> Self {
         let host_routing = context.host_routing_policy();
         Self {
@@ -3146,6 +3170,7 @@ impl PeerOutboundPacketRouter {
                 no_dst_peer_drops,
                 no_dst_peer_buffered,
                 tunnel_buffer_full,
+                pending_flush_errors,
             },
             pending_packets: Arc::new(PendingPackets::new()),
         }
@@ -3497,6 +3522,7 @@ impl PeerOutboundPacketRouter {
         }
         self.send_msg_by_ip_after_pipeline(msg, ip_addr, not_send_to_self, true)
             .await
+            .map(|_| ())
     }
 
     /// Everything [`Self::send_msg_by_ip`] does once the NIC packet pipeline has
@@ -3505,14 +3531,15 @@ impl PeerOutboundPacketRouter {
     /// `allow_buffer` is `false` for the pending-packet flusher: those packets
     /// already went through the pipeline, so re-running it would double-apply
     /// ACL / DNS filters, and re-buffering a failure would extend the packet's
-    /// life past its TTL.
+    /// life past its TTL. The flusher also needs [`SendByIpStatus::StillUnroutable`]
+    /// (no drop counted) so it can `put_back` without a separate pre-lookup.
     async fn send_msg_by_ip_after_pipeline(
         &self,
         mut msg: ZCPacket,
         ip_addr: IpAddr,
         not_send_to_self: bool,
         allow_buffer: bool,
-    ) -> Result<(), Error> {
+    ) -> Result<SendByIpStatus, Error> {
         tracing::trace!(
             "do send_msg in peer manager, msg: {:?}, ip_addr: {}",
             msg,
@@ -3538,7 +3565,7 @@ impl PeerOutboundPacketRouter {
             if let Err(ref e) = result {
                 note_tunnel_buffer_full(&self.counters.tunnel_buffer_full, e);
             }
-            return result;
+            return result.map(|_| SendByIpStatus::Done);
         }
 
         // P5: reuse the sticky flow key computed above so `select_by = balance`
@@ -3551,13 +3578,18 @@ impl PeerOutboundPacketRouter {
 
         if dst_peers.is_empty() {
             if allow_buffer && self.try_park_unroutable(&msg, ip_addr, not_send_to_self) {
-                return Ok(());
+                return Ok(SendByIpStatus::Done);
+            }
+            if !allow_buffer {
+                // Flusher owns the packet: do not count a drop here — return it
+                // so the caller can put_back until the original TTL.
+                return Ok(SendByIpStatus::StillUnroutable(msg));
             }
             self.counters.no_dst_peer_drops.inc();
             // `debug!` not `warn!` — per-packet, would flood the log. The
             // `data_plane_no_dst_peer_drops` counter is the signal (P-AUDIT.2).
             tracing::debug!(%ip_addr, "no peer id for ip; dropping packet");
-            return Ok(());
+            return Ok(SendByIpStatus::Done);
         }
 
         self.counters
@@ -3635,7 +3667,7 @@ impl PeerOutboundPacketRouter {
         tracing::trace!(?dst_peers, "do send_msg in peer manager done");
 
         if errs.is_empty() {
-            Ok(())
+            Ok(SendByIpStatus::Done)
         } else {
             tracing::error!(?errs, "send_msg has error");
             Err(anyhow::anyhow!("send_msg has error: {:?}", errs).into())
@@ -3645,6 +3677,8 @@ impl PeerOutboundPacketRouter {
     /// Park a packet whose destination has no route yet (P-AUDIT.12).
     ///
     /// Returns `false` when the caller must fall back to a counted drop.
+    /// Uses [`PendingPackets::push_with`] so a full queue never pays for a
+    /// `ZCPacket` deep copy that would then be discarded.
     fn try_park_unroutable(&self, msg: &ZCPacket, ip_addr: IpAddr, not_send_to_self: bool) -> bool {
         // Policy `Block` is a deliberate "drop rather than leak" decision.
         // Parking it would soften that boundary, and re-delivering later could
@@ -3666,12 +3700,10 @@ impl PeerOutboundPacketRouter {
             _ => {}
         }
 
-        let outcome = self.pending_packets.push(Parked {
-            dst: ip_addr,
-            packet: msg.clone(),
-            expires_at: Instant::now() + PENDING_TTL,
-            not_send_to_self,
-        });
+        let expires_at = Instant::now() + PENDING_TTL;
+        let outcome = self
+            .pending_packets
+            .push_with(ip_addr, expires_at, not_send_to_self, || msg.clone());
         if outcome.dropped > 0 {
             self.counters.no_dst_peer_drops.add(outcome.dropped as u64);
         }
@@ -3688,6 +3720,9 @@ impl PeerOutboundPacketRouter {
     /// Retries everything still inside its TTL, re-parks what is *still*
     /// unroutable, and counts what finally expired as a real drop. Driven by
     /// [`PeerManagerCore::start_pending_packet_flush`].
+    ///
+    /// Uses a single route lookup inside `send_msg_by_ip_after_pipeline`
+    /// (`StillUnroutable` → put_back) instead of a pre-check + send.
     async fn flush_pending_once(&self) {
         let taken = self.pending_packets.take_all(Instant::now());
         if taken.expired > 0 {
@@ -3695,26 +3730,46 @@ impl PeerOutboundPacketRouter {
         }
 
         for parked in taken.ready {
-            let flow_key = parked.packet.bond_flow_key();
-            let routable = match parked.dst {
-                IpAddr::V4(ip) => !self.get_msg_dst_peer_ipv4(&ip, flow_key).await.0.is_empty(),
-                IpAddr::V6(ip) => !self.get_msg_dst_peer_ipv6(&ip).await.0.is_empty(),
-            };
-            if !routable {
-                // Still no route — keep it until its original deadline rather
-                // than dropping it or extending its life.
-                if !self.pending_packets.put_back(parked) {
-                    self.counters.no_dst_peer_drops.inc();
-                }
-                continue;
-            }
             let dst = parked.dst;
+            let expires_at = parked.expires_at;
             let not_send_to_self = parked.not_send_to_self;
-            let _ = self
+            match self
                 .send_msg_by_ip_after_pipeline(parked.packet, dst, not_send_to_self, false)
-                .await;
+                .await
+            {
+                Ok(SendByIpStatus::Done) => {}
+                Ok(SendByIpStatus::StillUnroutable(packet)) => {
+                    if !self.pending_packets.put_back(Parked {
+                        dst,
+                        packet,
+                        expires_at,
+                        not_send_to_self,
+                    }) {
+                        self.counters.no_dst_peer_drops.inc();
+                    }
+                }
+                Err(error) => {
+                    // Compress/encrypt failed, or every peer in the fanout
+                    // errored. Neither is transient-with-a-route-pending, so
+                    // re-parking would just burn the TTL and retry a failure.
+                    // Counted separately from `no_dst_peer_drops` so the
+                    // "no route" signal the buffering feature is judged by
+                    // stays clean.
+                    self.counters.pending_flush_errors.inc();
+                    tracing::debug!(%dst, %error, "pending packet flush failed");
+                }
+            }
         }
     }
+}
+
+/// Outcome of [`PeerOutboundPacketRouter::send_msg_by_ip_after_pipeline`].
+enum SendByIpStatus {
+    /// Sent, buffered, or counted as a drop — caller is done with the packet.
+    Done,
+    /// No route and buffering was not allowed; drop was **not** counted. The
+    /// packet is returned so the flusher can put it back until its original TTL.
+    StillUnroutable(ZCPacket),
 }
 
 /// How long the flusher waits before re-testing a parked packet's route.

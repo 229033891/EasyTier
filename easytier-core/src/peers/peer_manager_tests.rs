@@ -312,6 +312,98 @@ async fn unknown_ipv6_has_no_peer_destination() {
     assert!(!is_self);
 }
 
+/// Minimal IPv4+UDP frame aimed at `dst`.
+///
+/// `ZCPacket::new_nic_packet()` on its own allocates no header space, so
+/// `payload_len()` underflows; going through `new_with_payload` produces the
+/// shape the NIC pipeline really hands the router, and keeps
+/// `flow_key_from_payload` on its normal IP-5-tuple path.
+fn nic_packet_to(dst: Ipv4Addr) -> ZCPacket {
+    let mut frame = vec![0u8; 28];
+    frame[0] = 0x45; // IPv4, 20-byte header
+    frame[9] = 6; // UDP
+    frame[12..16].copy_from_slice(&dst.octets());
+    frame[16..20].copy_from_slice(&[10, 0, 0, 1]); // source
+    frame[20..22].copy_from_slice(&40000u16.to_be_bytes()); // src port
+    frame[22..24].copy_from_slice(&53u16.to_be_bytes()); // dst port
+    ZCPacket::new_with_payload(&frame)
+}
+
+/// Counter-conservation guard for the pending-packet flusher (P-AUDIT.12).
+///
+/// The flusher retries a parked packet with `allow_buffer = false`. Were that
+/// attempt to count a drop before handing the packet back for `put_back`, every
+/// retry would inflate `data_plane_no_dst_peer_drops` — and that is precisely
+/// the counter the roadmap tells operators to watch for improvement, so packets
+/// that were in fact buffered would read as pure loss.
+#[tokio::test]
+async fn flusher_retry_is_not_counted_as_a_drop() {
+    let core = build_portable_for_test(portable_runtime_config("flush-net")).unwrap();
+    let router = &core.outbound_packet_router;
+
+    // Nothing in a fresh network advertises this address, so the lookup really
+    // does take the "no route" branch rather than passing by luck.
+    let unroutable: Ipv4Addr = "10.253.0.1".parse().unwrap();
+    assert!(
+        router
+            .get_msg_dst_peer_ipv4(&unroutable, None)
+            .await
+            .0
+            .is_empty(),
+        "precondition: the destination must have no route"
+    );
+
+    let drops_before = router.counters.no_dst_peer_drops.get();
+    let buffered_before = router.counters.no_dst_peer_buffered.get();
+
+    let mut msg = nic_packet_to(unroutable);
+    msg.fill_peer_manager_hdr(router.my_peer_id, 0, PacketType::Data as u8);
+    let status = router
+        .send_msg_by_ip_after_pipeline(msg, IpAddr::V4(unroutable), true, false)
+        .await
+        .expect("an unroutable destination is not a send error");
+
+    assert!(
+        matches!(status, SendByIpStatus::StillUnroutable(_)),
+        "the flusher needs the packet handed back so it can put_back until the \
+         original TTL, not an opaque Done that looks like a successful send"
+    );
+    assert_eq!(
+        router.counters.no_dst_peer_drops.get(),
+        drops_before,
+        "a retry that will be re-parked must not be counted as a drop"
+    );
+    assert_eq!(
+        router.counters.no_dst_peer_buffered.get(),
+        buffered_before,
+        "a flush attempt must never re-enter the buffering path"
+    );
+
+    // Contrasting arm: with buffering allowed the packet is parked instead, so
+    // `buffered` moves and `drops` still does not.
+    let mut msg = nic_packet_to(unroutable);
+    msg.fill_peer_manager_hdr(router.my_peer_id, 0, PacketType::Data as u8);
+    let status = router
+        .send_msg_by_ip_after_pipeline(msg, IpAddr::V4(unroutable), true, true)
+        .await
+        .expect("parking is not a send error");
+
+    assert!(
+        matches!(status, SendByIpStatus::Done),
+        "a parked packet leaves the router's hands"
+    );
+    assert_eq!(
+        router.counters.no_dst_peer_buffered.get(),
+        buffered_before + 1
+    );
+    assert_eq!(router.counters.no_dst_peer_drops.get(), drops_before);
+    assert_eq!(
+        router.pending_packets.take_all(Instant::now()).ready.len(),
+        1,
+        "the packet must actually be parked rather than silently dropped"
+    );
+}
+
 #[tokio::test]
 async fn foreign_network_stop_waits_for_inflight_admission() {
     let core = build_portable_for_test(portable_runtime_config("portable-net")).unwrap();

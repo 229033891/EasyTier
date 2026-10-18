@@ -117,8 +117,10 @@ pub struct RuntimeInstanceState {
     #[serde(skip)]
     pub exit_nodes: Vec<String>,
     /// True when `NetworkInstanceRunningInfo.allow_peer_default_without_exit`
-    /// was present — the new-core marker that unlocks `desired_proxy_cidrs`.
+    /// was present — the new-core marker that unlocks `desired_proxy_cidrs`
+    /// (proto optional bool #14; same fragile convention as Android JNI/GUI).
     /// Must not be inferred from config; an omitted proto field means old core.
+    /// Prefer a dedicated capability field before deprecating #14.
     #[serde(skip)]
     pub core_route_policy_present: bool,
     /// Core-computed L2 desired set; install verbatim when
