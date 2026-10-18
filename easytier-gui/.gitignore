@@ -26,4 +26,7 @@ dist-ssr
 
 vite.config.ts.timestamp*
 
+# vue-tsc --noEmit 的增量缓存（构建产物，勿提交）
+*.tsbuildinfo
+
 local.properties
