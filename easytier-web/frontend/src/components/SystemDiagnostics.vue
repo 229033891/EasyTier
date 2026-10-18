@@ -28,13 +28,9 @@ const load = async () => {
         loadError.value = undefined;
     } catch (e) {
         data.value = undefined;
+        // 失败即 data=undefined，模板的 loadError 分支必然渲染同文案 + detail + 重试，
+        // 所以这里不再叠一条 toast（同一事实的第二次呈现）。
         loadError.value = Utils.formatApiErrorDetail(e, t);
-        toast.add({
-            severity: 'error',
-            summary: t('web.system_diagnostics.load_failed'),
-            detail: loadError.value,
-            life: TOAST_LIFE.error,
-        });
     } finally {
         loading.value = false;
     }

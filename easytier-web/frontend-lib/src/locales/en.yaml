@@ -83,6 +83,7 @@ magisk_status_running: Running
 magisk_status_stopped: Stopped
 magisk_status_restarting: Restarting
 magisk_save_restart: Save and Restart
+magisk_save_restart_confirm: Save the configuration and restart the EasyTier service? Tunnels are briefly interrupted during the restart.
 magisk_command_args_warning: Startup argument mode is active, so the module ignores config.toml. Remove config/command_args before saving configuration here.
 magisk_invalid_module_directory: KernelSU returned an invalid module directory
 magisk_load_failed: 'Failed to load module configuration: {error}'
@@ -137,6 +138,7 @@ hide_dock_icon: Hide Dock Icon
 show_dock_icon: Show Dock Icon
 exit: Exit
 exit_app: Exit App
+exit_stops_service_confirm: Exiting stops the EasyTier service first, so running networks are disconnected immediately. Exit anyway?
 use_latency_first: Quality-First Routing
 show_node_details: Show Node Details
 hide_node_details: Hide Node Details
@@ -876,6 +878,7 @@ web:
     new_password: New password
     reset_success: Password reset
     reset_failed: Failed to reset password
+    reset_confirm: Reset the password of user "{username}"? The old password stops working immediately and the user must sign in with the new one.
     password_required: Please enter a new password
     cancel: Cancel
 
@@ -1081,6 +1084,8 @@ web:
     create_network: Create Network
     discard_changes: Cancel Edit
     discard_changes_tip: Cancel editing and reload the last saved config
+    confirm_discard_changes: Discard the unsaved changes? They will be overwritten by the last saved config and cannot be restored.
+    data_stale: Status data may be out of date (auto-refresh failed)
     unsaved_changes: Unsaved
     config_source_console: Console-managed
     config_source_console_tip: "Console ownership (Web source): the console database is authoritative; the device syncs from it. This does not mean a local draft was pushed successfully."
@@ -1188,6 +1193,8 @@ web:
     refresh: Refresh
     add: Add
     loading: Loading...
+    load_failed: Failed to load
+    retry: Retry
     error: Error
     success: Success
     warning: Warning

@@ -45,6 +45,7 @@ const BOOLEAN_CONFIG_FIELDS = [
 ] as const satisfies readonly (keyof NetworkConfig)[]
 
 const confirmRequire = vi.fn()
+const toastAdd = vi.fn()
 
 vi.mock('vue-i18n', () => ({
   useI18n: () => ({
@@ -131,7 +132,7 @@ vi.mock('primevue', async () => {
     Select: SelectStub,
     Tag: PassThrough,
     useConfirm: () => ({ require: confirmRequire }),
-    useToast: () => ({ add: vi.fn() }),
+    useToast: () => ({ add: toastAdd }),
   }
 })
 
@@ -359,7 +360,14 @@ describe('RemoteManagement config vs run pages', () => {
 
       const discard = wrapper.find('button[data-label="web.device_management.discard_changes"]')
       expect(discard.exists()).toBe(true)
+      confirmRequire.mockClear()
       await discard.trigger('click')
+      await nextTick()
+      // 丢弃草稿不可恢复：现在先弹确认，接受后才真正重载。
+      expect(confirmRequire).toHaveBeenCalled()
+      const discardConfirm = confirmRequire.mock.calls[0][0] as { message: string, accept: () => void }
+      expect(discardConfirm.message).toBe('web.device_management.confirm_discard_changes')
+      discardConfirm.accept()
       await settleRemoteManagement()
 
       expect(api.get_network_config.mock.calls.length).toBeGreaterThan(1)
@@ -483,6 +491,72 @@ describe('RemoteManagement config vs run pages', () => {
 
       expect(api.save_config).toHaveBeenCalledOnce()
       expect(api.update_network_instance_state).not.toHaveBeenCalled()
+    } finally {
+      wrapper.unmount()
+    }
+  })
+})
+
+describe('RemoteManagement config load failure reporting', () => {
+  /**
+   * Config mode + disabled network + a `get_network_config` held open: the
+   * `networkIsDisabled` watch and the `mode/selectedInstanceId/networkIsDisabled`
+   * watch (→ `ensureConfigModeEditing`) both start on the same in-flight attempt,
+   * which is exactly the 2–3 duplicate-toast situation the shared report fixes.
+   */
+  async function mountWithPendingConfigLoad(rejection: unknown) {
+    toastAdd.mockClear()
+    const config = makeFlagConfig()
+    const api = makeApi({ config, disabled: true })
+    const pendings: Array<(reason: unknown) => void> = []
+    let configLoadCalls = 0
+    api.get_network_config = vi.fn(() => {
+      configLoadCalls += 1
+      return new Promise<NetworkConfig>((_, reject) => { pendings.push(reject) })
+    })
+    const wrapper = await mountRemote(api, { mode: 'config' })
+    return {
+      wrapper,
+      configLoadCalls: () => configLoadCalls,
+      reject: () => {
+        for (const pending of pendings) {
+          pending(rejection)
+        }
+      },
+    }
+  }
+
+  /** Toasts that came from the shared config-load report (the caller fallbacks carry no detail). */
+  const configLoadToasts = () => toastAdd.mock.calls
+    .map(([message]) => message as { detail?: string })
+    .filter((message) => (message.detail ?? '').includes('web.device_management.load_config_failed'))
+
+  it('reports a failed shared config load once, not once per joined caller', async () => {
+    const { wrapper, reject, configLoadCalls } = await mountWithPendingConfigLoad(new Error('rpc down'))
+
+    try {
+      // Both watches joined one attempt instead of each fetching on its own.
+      expect(configLoadCalls()).toBe(1)
+
+      reject()
+      await settleRemoteManagement()
+
+      expect(configLoadToasts()).toHaveLength(1)
+    } finally {
+      wrapper.unmount()
+    }
+  })
+
+  it('reports once even when the load rejects with a non-object (no WeakSet identity)', async () => {
+    const { wrapper, reject } = await mountWithPendingConfigLoad('rpc down')
+
+    try {
+      reject()
+      await settleRemoteManagement()
+
+      // Regression: the WeakSet-only de-dupe missed strings, so the shared report
+      // *and* every joiner's fallback toast fired for one failure.
+      expect(configLoadToasts()).toHaveLength(1)
     } finally {
       wrapper.unmount()
     }

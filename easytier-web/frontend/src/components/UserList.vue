@@ -18,6 +18,8 @@ const props = defineProps<{
 }>();
 
 const users = ref<UserInfo[] | undefined>(undefined);
+/** 加载失败时留给列表壳展示的原因（避免只剩「暂无用户」空态误导）。 */
+const loadError = ref<string | undefined>(undefined);
 const creating = ref(false);
 const resettingId = ref<number | null>(null);
 const newUsername = ref('');
@@ -27,7 +29,15 @@ const resetFor = ref<UserInfo | null>(null);
 const resetPassword = ref('');
 
 const loadUsers = async () => {
-    users.value = await props.api.list_users();
+    try {
+        users.value = await props.api.list_users();
+        loadError.value = undefined;
+    } catch (e: any) {
+        // 内联错误态（下方 ListPageShell 的 #error）已持久可见，不再叠一条 toast。
+        // 失败记在这里（而不是调用方的 catch），重试失败才会刷新文案而不是留着上一次的。
+        users.value = [];
+        loadError.value = errorDetail(e);
+    }
 };
 
 const createUser = async () => {
@@ -90,25 +100,43 @@ const submitReset = async () => {
         });
         return;
     }
-    resettingId.value = user.id;
-    try {
-        await props.api.reset_user_password(user.id, resetPassword.value);
-        toast.add({
-            severity: 'success',
-            summary: t('web.users.reset_success'),
-            life: TOAST_LIFE.success,
-        });
-        cancelReset();
-    } catch (e: any) {
-        toast.add({
-            severity: 'error',
-            summary: t('web.users.reset_failed'),
-            detail: errorDetail(e),
-            life: TOAST_LIFE.error,
-        });
-    } finally {
-        resettingId.value = null;
-    }
+    // 不可逆：旧密码立即失效，先二次确认（与删除用户同一套确认范式）。
+    const newPassword = resetPassword.value;
+    confirm.require({
+        message: t('web.users.reset_confirm', { username: user.username }),
+        header: t('web.users.reset_password'),
+        icon: 'pi pi-exclamation-triangle',
+        rejectProps: {
+            label: t('web.common.cancel'),
+            severity: 'secondary',
+            outlined: true,
+        },
+        acceptProps: {
+            label: t('web.users.reset_password'),
+            severity: 'danger',
+        },
+        accept: async () => {
+            resettingId.value = user.id;
+            try {
+                await props.api.reset_user_password(user.id, newPassword);
+                toast.add({
+                    severity: 'success',
+                    summary: t('web.users.reset_success'),
+                    life: TOAST_LIFE.success,
+                });
+                cancelReset();
+            } catch (e: any) {
+                toast.add({
+                    severity: 'error',
+                    summary: t('web.users.reset_failed'),
+                    detail: errorDetail(e),
+                    life: TOAST_LIFE.error,
+                });
+            } finally {
+                resettingId.value = null;
+            }
+        },
+    });
 };
 
 const confirmDelete = (user: UserInfo) => {
@@ -155,18 +183,8 @@ const confirmDelete = (user: UserInfo) => {
     });
 };
 
-onMounted(async () => {
-    try {
-        await loadUsers();
-    } catch (e: any) {
-        toast.add({
-            severity: 'error',
-            summary: t('web.users.load_failed'),
-            detail: errorDetail(e),
-            life: TOAST_LIFE.error,
-        });
-        users.value = [];
-    }
+onMounted(() => {
+    void loadUsers();
 });
 </script>
 
@@ -217,8 +235,21 @@ onMounted(async () => {
             </div>
         </div>
 
-        <ListPageShell :loading="users === undefined" :empty="users?.length === 0">
+        <ListPageShell :loading="users === undefined" :error="!!loadError" :empty="users?.length === 0">
             <template #empty>{{ t('web.users.empty') }}</template>
+            <template #error>
+                <span>{{ t('web.users.load_failed') }}</span>
+                <span v-if="loadError">{{ loadError }}</span>
+            </template>
+            <template #error-actions>
+                <Button
+                    :label="t('web.common.retry')"
+                    icon="pi pi-refresh"
+                    severity="secondary"
+                    size="small"
+                    @click="loadUsers"
+                />
+            </template>
             <thead>
                 <tr class="bg-surface-50 text-left">
                     <th class="px-3 py-2 font-semibold">{{ t('web.users.username') }}</th>

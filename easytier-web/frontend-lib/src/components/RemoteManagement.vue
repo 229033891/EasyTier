@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { Button, Message, Select, Tag, useConfirm, useToast, type VirtualScrollerLazyEvent } from 'primevue';
-import { TOAST_LIFE } from '../modules/toast'
+import { TOAST_LIFE, addThrottledToast, createToastRepeatGate } from '../modules/toast'
 import { computed, onMounted, onUnmounted, ref, toRaw, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import * as Api from '../modules/api';
@@ -28,22 +28,22 @@ const props = defineProps<{
     api: Api.RemoteClient;
     newConfigGenerator?: () => NetworkTypes.NetworkConfig;
     pauseAutoRefresh?: boolean;
-    /** Web Drawer / GUI ???????????????????? */
+    /** Web Drawer / GUI 抽屉关闭；全页模式用页头返回，勿与之重复 */
     drawerClose?: () => void;
-    /** ????????? t('close') */
+    /** 离开按钮文案，默认 t('close') */
     leaveButtonLabel?: string;
-    /** ???????? */
+    /** 离开按钮悬停说明 */
     leaveButtonTooltip?: string;
-    /** ????????? pi-times */
+    /** 离开按钮图标，默认 pi-times */
     leaveButtonIcon?: string;
-    /** Web ????????????????????? */
+    /** Web 独立全页管理（用页头返回，底栏不再放返回） */
     fullPage?: boolean;
     /**
-     * Web ???????status=??/???config=??/???
-     * ????? GUI ????+????????
+     * Web 设备列表分流：status=查看/启停；config=编辑/新建。
+     * 不传则保持 GUI 原「状态+配置」合一行为。
      */
     mode?: 'status' | 'config';
-    /** ??????????????????????? */
+    /** 全页标题，放在网络选择栏内，避免页头再空出一截 */
     pageTitle?: string;
     /** Heartbeat fields for B6 DNS coverage badge (device management page). */
     deviceOsType?: string;
@@ -71,12 +71,12 @@ const props = defineProps<{
 
 const isStatusMode = computed(() => props.mode === 'status')
 const isConfigMode = computed(() => props.mode === 'config')
-/** GUI ???? mode ?????? */
+/** GUI 等未指定 mode 时的兼容模式 */
 const isCombinedMode = computed(() => !props.mode)
 const leaveLabel = computed(() => props.leaveButtonLabel || t('close'))
 const leaveTooltip = computed(() => props.leaveButtonTooltip || leaveLabel.value)
 const leaveIcon = computed(() => props.leaveButtonIcon || 'pi pi-times')
-/** ????????????/????????????????????? */
+/** 有离开回调时底栏显示返回/关闭（全页与抽屉均用底栏，不再用页头箭头） */
 const showLeaveInFooter = computed(() => !!props.drawerClose)
 
 const instanceId = defineModel('instanceId', {
@@ -103,17 +103,19 @@ function forceReloadLatestConfig() {
     if (!managementAlive) {
         return;
     }
-    void loadCurrentNetworkConfig({ force: true }).catch((reloadError) => {
+    void loadCurrentNetworkConfig({ force: true, reportFailure: true }).catch((reloadError) => {
         if (!managementAlive) {
             return;
         }
         console.error(reloadError);
-        toast.add({
-            severity: 'error',
-            summary: t('web.common.error'),
-            detail: t('web.device_management.load_config_failed') + ': ' + errorDetail(reloadError),
-            life: TOAST_LIFE.error,
-        });
+        if (!wasConfigLoadFailureReported(reloadError)) {
+            toast.add({
+                severity: 'error',
+                summary: t('web.common.error'),
+                detail: t('web.device_management.load_config_failed') + ': ' + errorDetail(reloadError),
+                life: TOAST_LIFE.error,
+            });
+        }
     });
 }
 
@@ -675,7 +677,7 @@ watch(instanceList, async (newVal) => {
             }
         });
     }
-    // ?? Drawer ?? instanceId ??????????????????
+    // 打开 Drawer 未带 instanceId 时，优先选中运行中实例，否则选第一个
     const currentExists = !!instanceId.value && newVal?.some(item => item.uuid === instanceId.value);
     if (newVal?.length && (!instanceId.value || !currentExists)) {
         const running = newVal.find(item => isRunning(item.uuid));
@@ -752,7 +754,7 @@ watch(selectedInstanceId, async (newVal, oldVal) => {
         }
         const loads: Array<Promise<unknown>> = []
         if (newVal?.uuid !== oldVal?.uuid && (networkIsDisabled.value || isEditingNetwork.value || isConfigMode.value)) {
-            loads.push(loadCurrentNetworkConfig())
+            loads.push(loadCurrentNetworkConfig({ reportFailure: true }))
         } else {
             loads.push(loadCurrentNetworkInfo())
         }
@@ -763,12 +765,15 @@ watch(selectedInstanceId, async (newVal, oldVal) => {
         await Promise.all(loads)
     } catch (e) {
         console.error('Failed to load selected network', e);
-        toast.add({
-            severity: 'error',
-            summary: t('web.common.error'),
-            detail: errorDetail(e),
-            life: TOAST_LIFE.error,
-        });
+        // 配置加载失败已由共享加载路径播报（同一次尝试只一条）；这里只为其它 loader 兜底。
+        if (!wasConfigLoadFailureReported(e)) {
+            toast.add({
+                severity: 'error',
+                summary: t('web.common.error'),
+                detail: errorDetail(e),
+                life: TOAST_LIFE.error,
+            });
+        }
     }
 });
 
@@ -840,24 +845,90 @@ watch(
 watch(networkIsDisabled, async (newVal, oldVal) => {
     if (newVal !== oldVal && newVal === true) {
         try {
-            await loadCurrentNetworkConfig();
+            await loadCurrentNetworkConfig({ reportFailure: true });
         } catch (e) {
             console.error('Failed to load disabled network config', e);
-            toast.add({
-                severity: 'error',
-                summary: t('web.common.error'),
-                detail: errorDetail(e),
-                life: TOAST_LIFE.error,
-            });
+            if (!wasConfigLoadFailureReported(e)) {
+                toast.add({
+                    severity: 'error',
+                    summary: t('web.common.error'),
+                    detail: errorDetail(e),
+                    life: TOAST_LIFE.error,
+                });
+            }
         }
     }
 });
 
-let currentConfigLoad: { instanceId: string; promise: Promise<void> } | undefined;
+/** One shared config-load attempt; every caller for the same instance joins it. */
+interface ConfigLoadAttempt {
+    instanceId: string
+    promise: Promise<void>
+    /** Set by any joined caller that wants the failure surfaced to the user. */
+    reportFailure: boolean
+    /** Set when the attempt settles, so a caller joining late can still report. */
+    settled: boolean
+    rejection: unknown
+    /** Guards the once-per-attempt report (shared path vs. late joiner). */
+    reported: boolean
+}
+
+let currentConfigLoad: ConfigLoadAttempt | undefined;
 /** Bumped on every load (incl. force) so in-flight older responses cannot apply. */
 let configLoadGeneration = 0;
 
-const loadCurrentNetworkConfig = async (opts?: { force?: boolean }) => {
+/** Sentinel: a rejection value can legitimately be `undefined`, so it cannot mean "never reported". */
+const NO_CONFIG_LOAD_ERROR_REPORTED = Symbol('none')
+/**
+ * Errors already surfaced by {@link reportConfigLoadFailure}.
+ *
+ * Object identity covers the normal case; {@link lastReportedConfigLoadError} covers
+ * thrown strings/`null`, which have no identity a WeakSet could hold.
+ */
+const reportedConfigLoadErrors = new WeakSet<object>();
+let lastReportedConfigLoadError: unknown = NO_CONFIG_LOAD_ERROR_REPORTED;
+
+/**
+ * Surface a failed config load — at most once per attempt, and only when an
+ * interactive caller asked for it (`reportFailure`): the selected-instance watch,
+ * the networkIsDisabled watch, `ensureConfigModeEditing`, forced reload and
+ * discard all await the *same* shared attempt, so reporting per call site produced
+ * 2–3 identical toasts. Poll-driven loads stay quiet — they are covered by the
+ * stale indicator instead of a toast on every tick.
+ */
+const reportConfigLoadFailure = (attempt: ConfigLoadAttempt) => {
+    if (attempt.reported) {
+        return;
+    }
+    // Set `reported` only once this attempt actually reports: a poll-driven attempt
+    // (reportFailure: false) must not consume the budget, or the interactive caller
+    // joining later would be silenced by the guard it just tripped.
+    if (!attempt.reportFailure || !managementAlive) {
+        return;
+    }
+    attempt.reported = true;
+    lastReportedConfigLoadError = attempt.rejection;
+    if (attempt.rejection && typeof attempt.rejection === 'object') {
+        reportedConfigLoadErrors.add(attempt.rejection);
+    }
+    toast.add({
+        severity: 'error',
+        summary: t('web.common.error'),
+        detail: t('web.device_management.load_config_failed') + ': ' + errorDetail(attempt.rejection),
+        life: TOAST_LIFE.error,
+    });
+};
+
+/**
+ * True when the same rejection was already reported by the shared config load.
+ * Lets callers that wrap *several* loaders (e.g. `Promise.all`) keep their own
+ * toast for the other loaders without repeating the config-load one.
+ */
+const wasConfigLoadFailureReported = (error: unknown): boolean =>
+    error === lastReportedConfigLoadError
+    || (!!error && typeof error === 'object' && reportedConfigLoadErrors.has(error));
+
+const loadCurrentNetworkConfig = async (opts?: { force?: boolean, reportFailure?: boolean }) => {
     const selected = selectedInstanceId.value?.uuid;
     if (!selected) {
         clearNetworkConfigDraft();
@@ -865,7 +936,16 @@ const loadCurrentNetworkConfig = async (opts?: { force?: boolean }) => {
     }
 
     if (!opts?.force && currentConfigLoad?.instanceId === selected) {
-        return currentConfigLoad.promise;
+        // One shared attempt; report once if any joined caller wants the failure surfaced.
+        const joined = currentConfigLoad;
+        joined.reportFailure = joined.reportFailure || !!opts?.reportFailure;
+        // A late joiner can arrive after the attempt rejected but before the entry is
+        // cleared (that happens one microtask later), so its failure request would land
+        // after the shared report already ran. Report here instead of staying silent.
+        if (joined.settled) {
+            reportConfigLoadFailure(joined);
+        }
+        return joined.promise;
     }
 
     const loadGeneration = ++configLoadGeneration;
@@ -910,11 +990,26 @@ const loadCurrentNetworkConfig = async (opts?: { force?: boolean }) => {
         }
         applyLoadedNetworkConfig(ret);
     })();
-    currentConfigLoad = { instanceId: selected, promise };
+    const attempt: ConfigLoadAttempt = {
+        instanceId: selected,
+        promise,
+        reportFailure: !!opts?.reportFailure,
+        settled: false,
+        rejection: undefined,
+        reported: false,
+    };
+    currentConfigLoad = attempt;
+    // Interactive failures are reported here (once per attempt) instead of in each
+    // caller's catch; `void` because the rejection is still propagated to callers.
+    void promise.catch((e) => {
+        attempt.settled = true;
+        attempt.rejection = e;
+        reportConfigLoadFailure(attempt);
+    });
     try {
         await promise;
     } finally {
-        if (currentConfigLoad?.promise === promise) {
+        if (currentConfigLoad === attempt) {
             currentConfigLoad = undefined;
         }
     }
@@ -1006,18 +1101,20 @@ const ensureConfigModeEditing = async () => {
         return
     }
     try {
-        await loadCurrentNetworkConfig();
+        await loadCurrentNetworkConfig({ reportFailure: true });
         if (currentNetworkConfig.value?.instance_id === selected) {
             isEditingNetwork.value = true;
         }
     } catch (e: any) {
         console.error(e);
-        toast.add({
-            severity: 'error',
-            summary: t('web.common.error'),
-            detail: t('web.device_management.load_config_failed') + ': ' + errorDetail(e),
-            life: TOAST_LIFE.error,
-        });
+        if (!wasConfigLoadFailureReported(e)) {
+            toast.add({
+                severity: 'error',
+                summary: t('web.common.error'),
+                detail: t('web.device_management.load_config_failed') + ': ' + errorDetail(e),
+                life: TOAST_LIFE.error,
+            });
+        }
     }
 }
 
@@ -1153,31 +1250,6 @@ const saveAndRunNewNetwork = async (config?: NetworkTypes.NetworkConfig) => {
         } else {
             await props.api.run_network(cfg, currentNetworkControl.remoteSave.value);
         }
-
-        // Reload meta, then re-apply saved name so a still-running instance
-        // (runtime identity lag) cannot leave the Select on the old label.
-        delete networkMetaCache.value[cfg.instance_id];
-        await loadNetworkMetas([cfg.instance_id]);
-        patchMetaNetworkName(cfg.instance_id, cfg.network_name);
-
-        setSelectedInstanceId(cfg.instance_id);
-        await loadNetworkInstanceIds();
-        await loadCurrentNetworkInfo();
-
-        // Windows may write back auto-assigned wintun `dev_name` during post_run.
-        // Refresh so a subsequent Save does not push a stale empty value.
-        // Guard instance_id: a concurrent selectedInstanceId watch load may race.
-        try {
-            const refreshed = await props.api.get_network_config(cfg.instance_id);
-            if (instanceId.value === cfg.instance_id) {
-                applyLoadedNetworkConfig(refreshed);
-            }
-        } catch (refreshError) {
-            console.warn('failed to refresh network config after start', refreshError);
-            if (instanceId.value === cfg.instance_id) {
-                applyLoadedNetworkConfig(cfg);
-            }
-        }
     } catch (e: any) {
         console.error(e);
         if (!offerReloadOnRevisionConflict(e)) {
@@ -1189,6 +1261,42 @@ const saveAndRunNewNetwork = async (config?: NetworkTypes.NetworkConfig) => {
             });
         }
         return;
+    }
+
+    // 到这里启动/保存已经成功：下面的刷新只影响展示，失败不能再报成「启动网络失败」
+    // （否则用户会重复点击 Run，导致实例被反复重建）。
+    try {
+        // Reload meta, then re-apply saved name so a still-running instance
+        // (runtime identity lag) cannot leave the Select on the old label.
+        delete networkMetaCache.value[cfg.instance_id];
+        await loadNetworkMetas([cfg.instance_id]);
+        patchMetaNetworkName(cfg.instance_id, cfg.network_name);
+
+        setSelectedInstanceId(cfg.instance_id);
+        await loadNetworkInstanceIds();
+        await loadCurrentNetworkInfo();
+    } catch (refreshError) {
+        console.warn('post-start refresh failed (network is running)', refreshError);
+        // 刷新失败也必须选中刚启动的网络，否则用户看不到它、界面上毫无提示。
+        // 放在 catch 而非提前到 try 之前：提前赋值会让 selectedInstanceId watcher 在
+        // loadNetworkMetas 的 await 期间 flush，而那时 meta 缓存刚被 delete，
+        // 来源徽标 / takeover 判断这些 meta 驱动的 computed 会短暂读到空值。
+        setSelectedInstanceId(cfg.instance_id);
+    }
+
+    // Windows may write back auto-assigned wintun `dev_name` during post_run.
+    // Refresh so a subsequent Save does not push a stale empty value.
+    // Guard instance_id: a concurrent selectedInstanceId watch load may race.
+    try {
+        const refreshed = await props.api.get_network_config(cfg.instance_id);
+        if (instanceId.value === cfg.instance_id) {
+            applyLoadedNetworkConfig(refreshed);
+        }
+    } catch (refreshError) {
+        console.warn('failed to refresh network config after start', refreshError);
+        if (instanceId.value === cfg.instance_id) {
+            applyLoadedNetworkConfig(cfg);
+        }
     }
 
     emits('update');
@@ -1315,10 +1423,16 @@ const doSaveNetworkConfig = async () => {
         const result = await props.api.save_config(currentNetworkConfig.value);
         const savedName = currentNetworkConfig.value.network_name;
 
-        delete networkMetaCache.value[savedId];
-        await loadNetworkMetas([savedId]);
-        patchMetaNetworkName(savedId, savedName);
-        await loadNetworkInstanceIds();
+        // 保存已经成功：下面的刷新只影响展示，失败不能再报成「保存失败」
+        // （否则用户会以为没存上而重复保存）。
+        try {
+            delete networkMetaCache.value[savedId];
+            await loadNetworkMetas([savedId]);
+            patchMetaNetworkName(savedId, savedName);
+            await loadNetworkInstanceIds();
+        } catch (refreshError) {
+            console.warn('post-save refresh failed (config was saved)', refreshError);
+        }
 
         let alignedStart = false;
         if (shouldAutoStartAfterDisabledSave(result, wasRunning)) {
@@ -1331,10 +1445,10 @@ const doSaveNetworkConfig = async () => {
                 console.error(alignErr);
                 toast.add({
                     severity: 'warn',
-                    summary: t('web.common.success'),
+                    summary: t('web.common.warning'),
                     detail: t('web.device_management.save_ok_pending_disabled_still_running')
                         + ': ' + errorDetail(alignErr),
-                    life: TOAST_LIFE.error,
+                    life: TOAST_LIFE.warn,
                 });
                 applyLoadedNetworkConfig(currentNetworkConfig.value);
                 return;
@@ -1411,21 +1525,45 @@ const newNetwork = async () => {
     }
 }
 
+/** 「放弃修改」会丢弃草稿且不可恢复（只能靠重新加载找回来）——先确认。 */
+const confirmDiscardConfigChanges = () => {
+    if (!isConfigDirty.value) {
+        return;
+    }
+    confirm.require({
+        message: t('web.device_management.confirm_discard_changes'),
+        header: t('web.device_management.discard_changes'),
+        icon: 'pi pi-exclamation-triangle',
+        rejectProps: {
+            label: t('web.common.cancel'),
+            severity: 'secondary',
+            outlined: true,
+        },
+        acceptProps: {
+            label: t('web.device_management.discard_changes'),
+            severity: 'danger',
+        },
+        accept: () => { void discardConfigChanges() },
+    });
+};
+
 /** Discard unsaved draft by reloading last saved config. */
 const discardConfigChanges = async () => {
     if (!isConfigDirty.value) {
         return;
     }
     try {
-        await loadCurrentNetworkConfig({ force: true });
+        await loadCurrentNetworkConfig({ force: true, reportFailure: true });
     } catch (e: any) {
         console.error(e);
-        toast.add({
-            severity: 'error',
-            summary: t('web.common.error'),
-            detail: t('web.device_management.load_config_failed') + ': ' + errorDetail(e),
-            life: TOAST_LIFE.error,
-        });
+        if (!wasConfigLoadFailureReported(e)) {
+            toast.add({
+                severity: 'error',
+                summary: t('web.common.error'),
+                detail: t('web.device_management.load_config_failed') + ': ' + errorDetail(e),
+                life: TOAST_LIFE.error,
+            });
+        }
     }
 }
 
@@ -1453,7 +1591,8 @@ const editNetwork = async () => {
         isEditingNetwork.value = true;
     } catch (e: any) {
         console.error(e);
-        toast.add({ severity: 'error', summary: t('web.common.error'), detail: t('web.device_management.save_failed') + ': ' + errorDetail(e), life: TOAST_LIFE.error });
+        // 这里是「进入编辑前读取配置」失败，不是保存失败（原复用 save_failed 文案误导）。
+        toast.add({ severity: 'error', summary: t('web.common.error'), detail: t('web.device_management.load_config_failed') + ': ' + errorDetail(e), life: TOAST_LIFE.error });
         return;
     }
 }
@@ -1694,7 +1833,14 @@ const showStickyFooter = computed(() =>
     showLeaveInFooter.value || stickyFooterPrimary.value !== 'none' || isCombinedMode.value || showLoggingSettings.value
 );
 
-let periodFunc = new Utils.PeriodicTask(async () => {
+/**
+ * 轮询失败：置位内联「数据可能已过期」常驻提示，并按 30s 窗口最多补一条 warn toast；
+ * 任一轮成功即清除。避免「面板继续显示旧数据但用户以为是最新」。
+ */
+const pollStale = ref(false)
+const pollToastGate = createToastRepeatGate()
+
+const pollOnce = async () => {
     if (props.pauseAutoRefresh) {
         return;
     }
@@ -1727,10 +1873,23 @@ let periodFunc = new Utils.PeriodicTask(async () => {
         if (jobs.length) {
             await Promise.all(jobs)
         }
+        pollStale.value = false
     } catch (e) {
         console.debug(e);
+        pollStale.value = true
+        addThrottledToast(toast, pollToastGate, 'poll:remote-management', {
+            severity: 'warn',
+            summary: t('web.common.warning'),
+            detail: t('web.device_management.data_stale'),
+            life: TOAST_LIFE.warn,
+        })
     }
-}, STATUS_POLL_MS);
+}
+
+/** 内联「数据可能已过期」条上的重试入口。 */
+const retryPoll = () => { void pollOnce() }
+
+let periodFunc = new Utils.PeriodicTask(pollOnce, STATUS_POLL_MS);
 
 /** GUI host: console overwrite/hot-patch wrote localStorage —refresh open editor. */
 const onManagedConfigSyncedOverwrite = (event: Event) => {
@@ -1779,11 +1938,25 @@ onUnmounted(() => {
     <div class="device-management" :class="{ 'device-management--page': fullPage || !!drawerClose }">
         <input type="file" @change="handleFileUpload" class="hidden" accept="application/toml" ref="configFile" />
 
-        <!-- ????????????????????? -->
+        <!-- 网络选择和操作按钮始终在同一行（顶栏固定） -->
+        <!-- 轮询失败：常驻提示（toast 会消失，这里不会），成功自动清除 -->
+        <div v-if="pollStale" class="et-meta flex flex-row items-center gap-2 py-1 network-stale" role="status">
+            <i class="pi pi-exclamation-triangle" aria-hidden="true"></i>
+            <span>{{ t('web.device_management.data_stale') }}</span>
+            <Button
+                :label="t('web.common.retry')"
+                icon="pi pi-refresh"
+                severity="secondary"
+                size="small"
+                text
+                @click="retryPoll"
+            />
+        </div>
+
         <div class="network-header">
             <h1 v-if="pageTitle" class="et-page-title network-page-title">{{ pageTitle }}</h1>
             <div class="network-header-main flex flex-row justify-between items-center gap-2">
-                <!-- ?????? -->
+                <!-- 网络选择下拉 -->
                 <div class="flex-1 min-w-0">
                     <Select :modelValue="selectedInstanceId" :options="instanceList" optionLabel="uuid"
                         class="w-full network-instance-select"
@@ -1905,7 +2078,7 @@ onUnmounted(() => {
             </div>
         </Message>
 
-        <!-- ?????/????? -->
+        <!-- 仅中间表单/状态区滚动 -->
         <div class="network-content">
             <template v-if="showStatusDisabledPanel">
                 <Config
@@ -2016,7 +2189,7 @@ onUnmounted(() => {
                     v-tooltip.top="t('web.device_management.switch_to_status_tip')" />
                 <Button v-if="showDiscardChanges" severity="secondary"
                     :label="t('web.device_management.discard_changes')"
-                    class="network-footer-btn network-footer-btn--muted" @click="discardConfigChanges"
+                    class="network-footer-btn network-footer-btn--muted" @click="confirmDiscardConfigChanges"
                     v-tooltip.top="t('web.device_management.discard_changes_tip')" />
                 <Button v-if="showSaveInFooter" severity="success"
                     :label="t('web.device_management.save_config')"
@@ -2295,7 +2468,7 @@ onUnmounted(() => {
     border-color: color-mix(in srgb, var(--primary-color, #0ea5e9) 40%, var(--et-border-color, #e2e8f0)) !important;
 }
 
-/* ?????????=???????=??? */
+/* 实例状态配色：运行中绿色，已停止红色 */
 :deep(.network-instance-select--running.p-select),
 :deep(.network-instance-select.network-instance-select--running) {
     background: #10b981 !important;
@@ -2440,17 +2613,17 @@ onUnmounted(() => {
 }
 
 /*
- * ?????640px??????????????????????????????
+ * 移动端（≤640px）：一行一个按钮太浪费纵向空间，改成「每组一行铺满」的网格。
  *
- * ???????????? `?????`?5 ???????
- *   ?????? ? ?? ? 45px?et-main-content 0.75rem?2 + ?? 0.6rem?2 + ???
- *   360px ? ? ? 315px ??
- *   ? ????5?14(?) + 16(??) + 8(??) + 16(???) ? 110px ? 315/110 = 2.9????? 2~3 ?
- *   ? ??? + 13px ??5?13 + 8(???) ? 73px ? 315/73 = 4.3?????? 4 ?
- * ?????????????? 0.8125rem????? 4 ??
+ * 一行能放几个，由最长文案 `编辑为文件`（5 个汉字）决定：
+ *   手机内容区宽 ≈ 屏宽 − 45px（et-main-content 0.75rem×2 + 卡片 0.6rem×2 + 边框）
+ *   360px 屏 → 约 315px 可用
+ *   · 带图标：5×14(字) + 16(图标) + 8(间距) + 16(内边距) ≈ 110px → 315/110 = 2.9，一行最多 2~3 个
+ *   · 去图标 + 13px 字：5×13 + 8(内边距) ≈ 73px → 315/73 = 4.3，一行放得下 4 个
+ * 所以移动端去掉图标、字号降到 0.8125rem，换取一行 4 个。
  *
- * ???????????? 3~4 ? ? ???????? 1~2 ? ? ??????? 3 ? ? ?? 3 ??
- * ? auto-fit + minmax(0, 1fr) ????????????????????????? 3+1 ?????
+ * 分组后的行数：配置文件组 3~4 个 → 一行放完；网络组 1~2 个 → 一行放完；底栏 3 个 → 一行 3 个。
+ * 用 auto-fit + minmax(0, 1fr) 让每组把整行等分，宽度不受文案长短影响，也不会出现 3+1 的残缺行。
  */
 @media (max-width: 640px) {
     .toolbar-zone,
@@ -2522,13 +2695,13 @@ onUnmounted(() => {
     }
 }
 
-/* ???? */
+/* 按钮样式 */
 .button-container {
     gap: 0.5rem;
     align-items: center;
 }
 
-/* ?????? */
+/* 菜单样式定制 */
 :deep(.p-menu) {
     min-width: 12rem;
     box-shadow: 0 0.5rem 1rem rgba(0, 0, 0, 0.15);
@@ -2548,13 +2721,13 @@ onUnmounted(() => {
     margin-right: 0.75rem;
 }
 
-/* ???????????????????? */
+/* 仅顶栏纯图标按钮，避免覆盖底栏带文字按钮 */
 :deep(.header-action-btn.p-button-icon-only .p-button-icon) {
     font-size: 1rem;
     margin: 0;
 }
 
-/* ???????? */
+/* 网络选择相关样式 */
 :deep(.network-select-container) {
     max-width: 100%;
 }
@@ -2595,9 +2768,9 @@ onUnmounted(() => {
 }
 
 /*
- * ?? / ????641?768px????????? 8.5rem??????????????????
- * ????? 4 ???????
- * ???? min-width: 641px ?? ????? ?640px ???????????? min-width: 0 ???
+ * 平板 / 窄窗口（641–768px）：按钮统一收窄到 8.5rem，刚好容纳最长文案「返回设备列表」，
+ * 一行能放下 4 个工具栏按钮。
+ * 必须限定 min-width: 641px —— 否则它会在 ≤640px 也命中，把下面网格布局的 min-width: 0 盖掉。
  */
 @media (min-width: 641px) and (max-width: 768px) {
     .network-header {

@@ -1114,3 +1114,31 @@
   color: var(--et-warning, #b45309);
   cursor: help;
 }
+
+/**
+ * RemoteManagement 轮询失败的常驻提示条（模板里的 `pollStale`）。
+ *
+ * 模板上的 Tailwind 工具类只负责排版；警示配色放在这里，GUI 端（不加载
+ * web 控制台的 .et-meta）才不至于把它显示成一条普通说明文字。
+ *
+ * 选择器额外带上 `.et-meta`：web 控制台 `main.ts` 先加载本文件、后加载自己的
+ * `style.css`，其中 `.et-meta { color: …secondary }` 与本规则同权重且更晚，
+ * 不加这一级就会被盖成普通灰字（GUI 端没有 .et-meta 规则，多这一级无副作用）。
+ * 文字用更深的 `--et-warning`(#b45309，白底 ≈5:1 达 AA)；`--et-warn`(#f59e0b)
+ * 太亮，只留给图标 —— 与 `.config-help-tip--warning` 的既有写法一致。
+ * 深色下 #b45309 只有 ≈3.6:1，故单独给一个 amber-400（≈10:1）。
+ */
+.network-stale.et-meta {
+  font-size: var(--et-fs-meta, 0.75rem);
+  color: var(--et-warning, #b45309);
+}
+
+.network-stale i {
+  color: var(--et-warn, #f59e0b);
+}
+
+@media (prefers-color-scheme: dark) {
+  .network-stale.et-meta {
+    color: #fbbf24;
+  }
+}

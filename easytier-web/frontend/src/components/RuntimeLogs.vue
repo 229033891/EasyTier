@@ -135,6 +135,8 @@ const load = async (silent = false) => {
         loading.value = true;
     }
     const stickToBottom = isAtBottom();
+    /** 内联错误块只在 lines.length === 0 时渲染（模板 v-else-if）；它看不见时才值得弹 toast。 */
+    const inlineErrorVisible = () => lines.value.length === 0;
     try {
         const n =
             source.value === 'realtime'
@@ -170,12 +172,16 @@ const load = async (silent = false) => {
                 if (!logsAlive || seq !== loadSeq) {
                     return;
                 }
-                loadError.value = t('web.runtime_logs.invalid_datetime');
-                if (!silent) {
+                const invalidDatetime = t('web.runtime_logs.invalid_datetime');
+                const canShowInline = inlineErrorVisible();
+                if (canShowInline) {
+                    loadError.value = invalidDatetime;
+                }
+                if (!silent && !canShowInline) {
                     toast.add({
                         severity: 'warn',
                         summary: t('web.runtime_logs.load_failed'),
-                        detail: t('web.runtime_logs.invalid_datetime'),
+                        detail: invalidDatetime,
                         life: TOAST_LIFE.warn,
                     });
                 }
@@ -208,10 +214,11 @@ const load = async (silent = false) => {
             return;
         }
         const detail = Utils.formatApiErrorDetail(e, t);
-        if (!silent || lines.value.length === 0) {
+        const canShowInline = inlineErrorVisible();
+        if (canShowInline) {
             loadError.value = detail;
         }
-        if (!silent) {
+        if (!silent && !canShowInline) {
             toast.add({
                 severity: 'error',
                 summary: t('web.runtime_logs.load_failed'),

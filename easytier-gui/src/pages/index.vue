@@ -494,6 +494,13 @@ async function openModeDialog() {
   modeDialogVisible.value = true
 }
 
+/**
+ * `initWithMode` 已经弹出过带上下文的 RPC 失败提示（`mode.rpc_connection_failed`）时置位，
+ * 供 `onModeSave` 的兜底 catch 判断是否重复报同一事实（文案口径还不同）。
+ * 兜底 catch 会消费并复位它。
+ */
+let initFailureReported = false
+
 async function onModeSave() {
   if (isModeSaving.value) {
     return
@@ -510,6 +517,7 @@ async function onModeSave() {
 
   const doSave = async () => {
     isModeSaving.value = true
+    initFailureReported = false
     try {
       await beginTrayConnecting()
       await initWithMode(next)
@@ -532,7 +540,7 @@ async function onModeSave() {
           editingMode.value = next
           toast.add({
             severity: 'error',
-            summary: t('error'),
+            summary: t('web.common.error'),
             detail,
             life: TOAST_LIFE.severe,
           })
@@ -551,7 +559,7 @@ async function onModeSave() {
           editingMode.value = next
           toast.add({
             severity: 'error',
-            summary: t('error'),
+            summary: t('web.common.error'),
             detail: prevEndpoint.url
               ? `${detail} (${t('config-server.reverted')})`
               : detail,
@@ -564,12 +572,18 @@ async function onModeSave() {
       modeDialogVisible.value = false
     }
     catch (e: any) {
-      toast.add({
-        severity: 'error',
-        summary: t('error'),
-        detail: Utils.formatApiErrorDetail(e, t),
-        life: TOAST_LIFE.severe,
-      })
+      // `initWithMode` 已经带上下文报过这次 RPC 失败（mode.rpc_connection_failed）时不再重复报，
+      // 但仍继续走下面的回滚逻辑。其它 throw（beginTrayConnecting / bounceService 等）照常兜底。
+      const alreadyReported = initFailureReported
+      initFailureReported = false
+      if (!alreadyReported) {
+        toast.add({
+          severity: 'error',
+          summary: t('web.common.error'),
+          detail: Utils.formatApiErrorDetail(e, t),
+          life: TOAST_LIFE.severe,
+        })
+      }
       console.error('Error switching mode', e, prev, next)
       try {
         await initWithMode(prev)
@@ -727,7 +741,7 @@ async function onStartService() {
   catch (e: any) {
     toast.add({
       severity: 'error',
-      summary: t('error'),
+      summary: t('web.common.error'),
       detail: Utils.formatApiErrorDetail(e, t),
       life: TOAST_LIFE.severe,
     })
@@ -782,7 +796,7 @@ async function onRestartService() {
       catch (e: any) {
         toast.add({
           severity: 'error',
-          summary: t('error'),
+          summary: t('web.common.error'),
           detail: Utils.formatApiErrorDetail(e, t),
           life: TOAST_LIFE.severe,
         })
@@ -838,7 +852,7 @@ async function onUninstallService() {
       catch (e: any) {
         toast.add({
           severity: 'error',
-          summary: t('error'),
+          summary: t('web.common.error'),
           detail: Utils.formatApiErrorDetail(e, t),
           life: TOAST_LIFE.severe,
         })
@@ -859,6 +873,35 @@ async function onUninstallService() {
   })
 }
 
+/**
+ * service 模式退出会先停止服务 —— 正在运行的组网立即断开，先确认。
+ * 托盘退出时窗口可能是隐藏的，确认前先把窗口显示出来，否则用户看不到对话框。
+ */
+async function confirmExitServiceMode(): Promise<boolean> {
+  await showMainWindow()
+  return new Promise((resolve) => {
+    confirm.require({
+      message: t('exit_stops_service_confirm'),
+      header: t('exit_app'),
+      icon: 'pi pi-exclamation-triangle',
+      rejectProps: {
+        label: t('web.common.cancel'),
+        severity: 'secondary',
+        outlined: true,
+      },
+      acceptProps: {
+        label: t('exit_app'),
+        severity: 'danger',
+      },
+      accept: () => resolve(true),
+      reject: () => resolve(false),
+      // 右上角 X / Esc 只触发 ConfirmDialog.onHide()（见 primevue/confirmdialog），
+      // 不落定的话 exitApp() 会永久挂起：窗口已被唤起，点了「退出」却毫无反应。
+      onHide: () => resolve(false),
+    })
+  })
+}
+
 async function exitApp() {
   if (isModeSaving.value) {
     notifyOperationInProgress()
@@ -866,6 +909,9 @@ async function exitApp() {
     return
   }
   if (currentMode.value.mode === 'service') {
+    if (!(await confirmExitServiceMode())) {
+      return
+    }
     try {
       const status = await getServiceStatus()
       if (status === 'Running') {
@@ -882,7 +928,7 @@ async function exitApp() {
       console.error('Failed to stop service before exit', e)
       toast.add({
         severity: 'error',
-        summary: t('error'),
+        summary: t('web.common.error'),
         detail: Utils.formatApiErrorDetail(e, t),
         life: TOAST_LIFE.severe,
       })
@@ -946,7 +992,7 @@ async function onStopService() {
       catch (e: any) {
         toast.add({
           severity: 'error',
-          summary: t('error'),
+          summary: t('web.common.error'),
           detail: Utils.formatApiErrorDetail(e, t),
           life: TOAST_LIFE.severe,
         })
@@ -1036,7 +1082,7 @@ async function initWithMode(mode: Mode) {
   switch (mode.mode) {
     case 'remote':
       if (!mode.remote_rpc_address) {
-        toast.add({ severity: 'error', summary: t('error'), detail: t('mode.remote_rpc_address_empty'), life: TOAST_LIFE.severe })
+        toast.add({ severity: 'error', summary: t('web.common.error'), detail: t('mode.remote_rpc_address_empty'), life: TOAST_LIFE.severe })
         return initWithMode({ ...mode, mode: 'normal' })
       }
       url = mode.remote_rpc_address
@@ -1051,7 +1097,7 @@ async function initWithMode(mode: Mode) {
       const preferredLogLevel = loadFileLogLevel()
       const logLevelChanged = mode.file_log_level !== preferredLogLevel
       if (!mode.config_dir || !mode.file_log_dir || !mode.rpc_portal) {
-        toast.add({ severity: 'error', summary: t('error'), detail: t('mode.service_config_empty'), life: TOAST_LIFE.severe })
+        toast.add({ severity: 'error', summary: t('web.common.error'), detail: t('mode.service_config_empty'), life: TOAST_LIFE.severe })
         return initWithMode({ ...mode, mode: 'normal' })
       }
       let serviceStatus = await getServiceStatus()
@@ -1095,9 +1141,10 @@ async function initWithMode(mode: Mode) {
         await connectRpcWithRetries(false, url, retrys)
       }
       catch (e2) {
+        initFailureReported = true
         toast.add({
           severity: 'error',
-          summary: t('error'),
+          summary: t('web.common.error'),
           detail: t('mode.rpc_connection_failed', { error: Utils.formatApiErrorDetail(e2, t) }),
           life: TOAST_LIFE.severe,
         })
@@ -1105,9 +1152,10 @@ async function initWithMode(mode: Mode) {
       }
     }
     else {
+      initFailureReported = true
       toast.add({
         severity: 'error',
-        summary: t('error'),
+        summary: t('web.common.error'),
         detail: t('mode.rpc_connection_failed', { error: Utils.formatApiErrorDetail(e, t) }),
         life: TOAST_LIFE.severe,
       })
@@ -1284,7 +1332,7 @@ async function handleMobileVpnTileAction(action: 'start' | 'stop') {
     console.error('VPN tile action failed', action, error)
     toast.add({
       severity: 'error',
-      summary: t('error'),
+      summary: t('web.common.error'),
       detail: t('vpn_tile_action_failed', { error: Utils.formatApiErrorDetail(error, t) }),
       life: TOAST_LIFE.severe,
     })

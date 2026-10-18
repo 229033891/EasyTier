@@ -1,5 +1,5 @@
 import { onMounted, onUnmounted, ref, shallowRef } from 'vue';
-import { TOAST_LIFE, Utils } from 'easytier-frontend-lib';
+import { TOAST_LIFE, Utils, addThrottledToast, createToastRepeatGate } from 'easytier-frontend-lib';
 import { useToast } from 'primevue';
 import { useI18n } from 'vue-i18n';
 
@@ -11,8 +11,6 @@ export interface PollingListOptions<T> {
     /** 失败时 toast 的标题文案 key，默认 web.device.load_list_failed */
     errorSummaryKey?: string;
 }
-
-const ERROR_TOAST_INTERVAL_MS = 30_000;
 
 /**
  * 列表页通用轮询：负责 PeriodicTask 生命周期 + 失败 toast + loading 判定。
@@ -31,16 +29,12 @@ export function usePollingList<T>(options: PollingListOptions<T>) {
     const loading = ref(true);
     const reloading = ref(false);
     const error = ref<unknown>(null);
-    let lastErrorToastAt = 0;
+    // 同一个列表的失败 toast 每窗口最多一条（与 deviceArchive 共用同一门控实现）。
+    const errorToastGate = createToastRepeatGate();
     let reloadInFlight: Promise<void> | undefined;
 
     const maybeToast = (e: unknown) => {
-        const now = Date.now();
-        if (now - lastErrorToastAt < ERROR_TOAST_INTERVAL_MS) {
-            return;
-        }
-        lastErrorToastAt = now;
-        toast.add({
+        addThrottledToast(toast, errorToastGate, 'poll:list-error', {
             severity: 'error',
             summary: t(errorSummaryKey),
             detail: Utils.formatApiErrorDetail(e, t),

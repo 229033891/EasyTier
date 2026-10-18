@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { NetworkTypes, Utils, Api, RemoteManagement, TOAST_LIFE } from 'easytier-frontend-lib';
+import { NetworkTypes, Utils, Api, RemoteManagement, TOAST_LIFE, addThrottledToast, createToastRepeatGate } from 'easytier-frontend-lib';
 import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { ProgressSpinner, useToast } from 'primevue';
@@ -102,11 +102,14 @@ const loadDevices = async () => {
     deviceList.value = await loadMergedDevices(props.api, { toast, t });
 };
 
+// 5s 轮询失败：首错即刻提示，持续失败按 30s 窗口合并（递归进入该页时不再叠条）。
+const errorToastGate = createToastRepeatGate();
+
 const periodFunc = new Utils.PeriodicTask(async () => {
     try {
         await loadDevices();
     } catch (e) {
-        toast.add({
+        addThrottledToast(toast, errorToastGate, 'poll:device-list', {
             severity: 'error',
             summary: t('web.device.load_list_failed'),
             detail: Utils.formatApiErrorDetail(e, t),

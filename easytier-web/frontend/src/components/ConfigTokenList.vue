@@ -19,6 +19,8 @@ const props = defineProps<{
 
 const tokens = ref<ConfigTokenInfo[] | undefined>(undefined);
 const users = ref<UserInfo[]>([]);
+/** 首次加载失败时留给列表壳展示的原因（避免只剩「暂无接入密钥」空态误导）。 */
+const loadError = ref<string | undefined>(undefined);
 const creating = ref(false);
 const savingId = ref<number | null>(null);
 
@@ -38,17 +40,14 @@ const load = async () => {
         ]);
         tokens.value = tokenList;
         users.value = userList;
+        loadError.value = undefined;
         if (newUserId.value == null && userList.length > 0) {
             newUserId.value = userList[0].id;
         }
     } catch (e: any) {
+        // 内联错误态（下方 ListPageShell 的 #error）已持久可见，不再叠一条 toast。
         tokens.value = [];
-        toast.add({
-            severity: 'error',
-            summary: t('web.common.error'),
-            detail: errorDetail(e),
-            life: TOAST_LIFE.error,
-        });
+        loadError.value = errorDetail(e);
     }
 };
 
@@ -223,8 +222,21 @@ onMounted(load);
             </div>
         </div>
 
-        <ListPageShell :loading="tokens === undefined" :empty="!!tokens && tokens.length === 0">
+        <ListPageShell :loading="tokens === undefined" :error="!!loadError" :empty="!!tokens && tokens.length === 0">
             <template #empty>{{ t('web.config_tokens.empty') }}</template>
+            <template #error>
+                <span>{{ t('web.common.load_failed') }}</span>
+                <span v-if="loadError">{{ loadError }}</span>
+            </template>
+            <template #error-actions>
+                <Button
+                    :label="t('web.common.retry')"
+                    icon="pi pi-refresh"
+                    severity="secondary"
+                    size="small"
+                    @click="load"
+                />
+            </template>
             <thead>
                 <tr>
                     <th>{{ t('web.config_tokens.user') }}</th>

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { Card, useToast } from 'primevue';
-import { TOAST_LIFE } from 'easytier-frontend-lib'
+import { TOAST_LIFE, addThrottledToast, createToastRepeatGate } from 'easytier-frontend-lib'
 import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { Utils } from 'easytier-frontend-lib';
 import { useI18n } from 'vue-i18n';
@@ -15,6 +15,9 @@ const toast = useToast();
 
 const summary = ref<Summary | undefined>(undefined);
 
+// 5s 轮询失败：首个失败照常提示，持续失败按 30s 窗口合并（否则每 5s 刷一条）。
+const errorToastGate = createToastRepeatGate();
+
 const loadSummary = async () => {
     const resp = await props.api?.get_summary();
     summary.value = resp;
@@ -24,7 +27,7 @@ const periodFunc = new Utils.PeriodicTask(async () => {
     try {
         await loadSummary();
     } catch (e) {
-        toast.add({
+        addThrottledToast(toast, errorToastGate, 'poll:dashboard-summary', {
             severity: 'error',
             summary: t('web.dashboard.load_failed'),
             detail: Utils.formatApiErrorDetail(e, t),

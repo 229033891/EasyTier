@@ -24,10 +24,26 @@ async function toggleVisibility() {
   }
 }
 
+/**
+ * Bring the main window to the front.
+ *
+ * Tray-driven flows call this right before a `confirm.require` / toast: the window
+ * is usually hidden then, so without it the user never sees the dialog.
+ *
+ * Best-effort on purpose — this is a *presentation* step, not part of the action.
+ * Letting a window-API failure reject would turn a tray click into an unhandled
+ * rejection and make the action look like it did nothing (e.g. "退出" after the
+ * window was already destroyed), so it warns and continues.
+ */
 export async function showMainWindow() {
-  const win = getCurrentWindow()
-  await win.show()
-  await win.setFocus()
+  try {
+    const win = getCurrentWindow()
+    await win.show()
+    await win.setFocus()
+  }
+  catch (e) {
+    console.warn('Failed to show main window', e)
+  }
 }
 
 /**

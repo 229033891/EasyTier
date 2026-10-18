@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { exec, moduleInfo } from 'kernelsu'
 import { Config, I18nUtils, NetworkTypes, TOAST_LIFE } from 'easytier-frontend-lib'
-import { Button, ConfirmDialog, SelectButton, Textarea, Toast, useToast } from 'primevue'
+import { Button, ConfirmDialog, SelectButton, Textarea, Toast, useConfirm, useToast } from 'primevue'
 import { computed, onMounted, ref, watch } from 'vue'
 import initConfigWasm, {
   generate_config as generateTomlConfig,
@@ -36,6 +36,35 @@ const tomlConfig = ref('')
 const originalTomlConfig = ref('')
 const configCopied = ref(false)
 const toast = useToast()
+const confirm = useConfirm()
+
+/**
+ * `save-and-restart` 会重启 EasyTier 服务（短时断流）。
+ * `<ConfirmDialog>` 与 `ConfirmationService` 早已挂载，之前却没有二次确认。
+ */
+function confirmSaveAndRestart(): Promise<boolean> {
+  return new Promise((resolve) => {
+    confirm.require({
+      message: t('magisk_save_restart_confirm'),
+      header: t('magisk_save_restart'),
+      icon: 'pi pi-exclamation-triangle',
+      rejectProps: {
+        label: t('web.common.cancel'),
+        severity: 'secondary',
+        outlined: true,
+      },
+      acceptProps: {
+        label: t('magisk_save_restart'),
+        severity: 'danger',
+      },
+      accept: () => resolve(true),
+      reject: () => resolve(false),
+      // 右上角 X / Esc 走 Dialog.close() → ConfirmDialog.onHide()，**不会**调用 reject，
+      // 缺这一条 await 会永久挂起（重启静默不发生）。Promise 忽略二次 resolve，故与上面并存安全。
+      onHide: () => resolve(false),
+    })
+  })
+}
 
 function t(key: string, params: Record<string, unknown> = {}): string {
   return I18nUtils.i18n.global.t(key, params)
@@ -161,6 +190,9 @@ function setLanguage(language: Language): void {
 }
 
 async function generateConfig(config: NetworkTypes.NetworkConfig): Promise<void> {
+  if (isModuleWebUi && !(await confirmSaveAndRestart())) {
+    return
+  }
   try {
     configCopied.value = false
     isSaving.value = isModuleWebUi

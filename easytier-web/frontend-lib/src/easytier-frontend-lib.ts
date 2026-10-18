@@ -21,7 +21,12 @@ import {
     collectNetworkInfoSingleFlightForKeys,
     isAnyCollectNetworkInfoInFlight,
 } from './modules/collectNetworkInfoSingleFlight';
-import { TOAST_LIFE } from './modules/toast';
+import {
+    TOAST_LIFE,
+    TOAST_REPEAT_COOLDOWN_MS,
+    addThrottledToast,
+    createToastRepeatGate,
+} from './modules/toast';
 import { normalizeLoggerLevel, loggerLevelToRpc } from './modules/logging';
 
 export default {
@@ -77,6 +82,9 @@ export {
     collectNetworkInfoSingleFlightForKeys,
     isAnyCollectNetworkInfoInFlight,
     TOAST_LIFE,
+    TOAST_REPEAT_COOLDOWN_MS,
+    addThrottledToast,
+    createToastRepeatGate,
     normalizeLoggerLevel,
     loggerLevelToRpc,
     tooltipDirective,
@@ -88,3 +96,4 @@ export {
 };
 
 export type { LogFileInfo, LoggerLevelState, LoggingSettingsApi } from './modules/logging';
+export type { ToastLifeKind, ToastRepeatGate } from './modules/toast';

@@ -1,4 +1,4 @@
-import { TOAST_LIFE, Utils } from 'easytier-frontend-lib';
+import { TOAST_LIFE, Utils, addThrottledToast, createToastRepeatGate } from 'easytier-frontend-lib';
 import type { useToast } from 'primevue';
 import type ApiClient from './api';
 
@@ -6,8 +6,7 @@ type Toast = ReturnType<typeof useToast>;
 
 /** Last successful `/devices` snapshot so a transient failure does not drop aliases. */
 let lastArchive: Utils.DeviceArchiveRow[] = [];
-let lastArchiveWarnAt = 0;
-const ARCHIVE_WARN_INTERVAL_MS = 30_000;
+const archiveToastGate = createToastRepeatGate();
 
 /**
  * Fetch device archive rows. On failure, reuse the last good snapshot and
@@ -29,10 +28,8 @@ export async function fetchDeviceArchive(
         return lastArchive;
     } catch (e) {
         console.warn('failed to load device archive; keeping last snapshot', e);
-        const now = Date.now();
-        if (opts?.toast && opts?.t && now - lastArchiveWarnAt >= ARCHIVE_WARN_INTERVAL_MS) {
-            lastArchiveWarnAt = now;
-            opts.toast.add({
+        if (opts?.toast && opts?.t) {
+            addThrottledToast(opts.toast, archiveToastGate, 'device-archive-error', {
                 severity: 'warn',
                 summary: opts.t('web.device.archive_load_failed'),
                 life: TOAST_LIFE.warn,
@@ -64,5 +61,5 @@ export async function loadMergedDevices(
 /** Test helper: reset module cache. */
 export function resetDeviceArchiveCacheForTests() {
     lastArchive = [];
-    lastArchiveWarnAt = 0;
+    archiveToastGate.reset();
 }

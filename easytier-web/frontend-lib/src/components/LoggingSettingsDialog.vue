@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { useToast } from 'primevue'
+import { useToast, useConfirm } from 'primevue'
 import Button from 'primevue/button'
 import Dialog from 'primevue/dialog'
 import InputText from 'primevue/inputtext'
@@ -19,6 +19,7 @@ const visible = defineModel<boolean>('visible', { default: false })
 
 const { t } = useI18n()
 const toast = useToast()
+const confirm = useConfirm()
 
 const loggingLevel = ref('warn')
 const loggingLevelLive = ref(true)
@@ -89,7 +90,7 @@ async function loadLoggingContent(fileName?: string) {
     console.error('Failed to load logs', e)
     toast.add({
       severity: 'error',
-      summary: t('error'),
+      summary: t('web.common.error'),
       detail: t('logging_load_failed'),
       life: TOAST_LIFE.severe,
     })
@@ -146,7 +147,7 @@ async function onSave() {
     console.error('Error saving logging level', e)
     toast.add({
       severity: 'error',
-      summary: t('error'),
+      summary: t('web.common.error'),
       detail: String(e),
       life: TOAST_LIFE.severe,
     })
@@ -166,7 +167,7 @@ async function openLoggingDir() {
   catch (e) {
     toast.add({
       severity: 'error',
-      summary: t('error'),
+      summary: t('web.common.error'),
       detail: String(e),
       life: TOAST_LIFE.severe,
     })
@@ -184,7 +185,7 @@ async function copyLoggingDir() {
   catch (e) {
     toast.add({
       severity: 'error',
-      summary: t('error'),
+      summary: t('web.common.error'),
       detail: String(e),
       life: TOAST_LIFE.severe,
     })
@@ -236,7 +237,7 @@ async function onCopyRecentLogs() {
     console.error('Failed to copy recent logs', e)
     toast.add({
       severity: 'error',
-      summary: t('error'),
+      summary: t('web.common.error'),
       detail: `${t('logging_copy_recent_failed')}: ${formatApiErrorDetail(e, t)}`,
       life: TOAST_LIFE.severe,
     })
@@ -246,63 +247,91 @@ async function onCopyRecentLogs() {
   }
 }
 
-async function onClearLogs() {
+/**
+ * Destructive: clears the active log and deletes rotated files (service mode
+ * clears the service log directory too). Ask first — the button is
+ * `severity="danger"` and there is no undo.
+ *
+ * 该守卫只覆盖确认前的窗口：`ConfirmationService.require` 是「替换」而非「入队」，
+ * 连点两次不会叠加确认框，因此 runClearLogs 不会被重复触发。
+ */
+function onClearLogs() {
   if (!canClearLogs.value || isClearing.value || isSaving.value) {
     return
   }
+  confirm.require({
+    message: t('logging_clear_confirm'),
+    header: t('logging_clear'),
+    icon: 'pi pi-exclamation-triangle',
+    rejectProps: {
+      label: t('web.common.cancel'),
+      severity: 'secondary',
+      outlined: true,
+    },
+    acceptProps: {
+      label: t('logging_clear'),
+      severity: 'danger',
+    },
+    accept: () => {
+      void runClearLogs()
+    },
+  })
+}
+
+async function runClearLogs() {
   isClearing.value = true
   try {
-        const raw = await props.api.clearLogFiles!()
-        const result: ClearLogFilesResult = typeof raw === 'number'
-          ? { cleared: raw, errors: [], dirs: [] }
-          : raw
-        selectedLogFile.value = ''
-        await loadLoggingContent()
-        if (result.errors.length > 0) {
-          const errorDetail = result.errors.join('; ')
-          if (result.cleared > 0) {
-            toast.add({
-              severity: 'warn',
-              summary: t('logging_clear'),
-              detail: t('logging_clear_partial', {
-                count: result.cleared,
-                error: errorDetail,
-              }),
-              life: TOAST_LIFE.severe,
-            })
-          }
-          else {
-            toast.add({
-              severity: 'error',
-              summary: t('error'),
-              detail: `${t('logging_clear_failed')}: ${errorDetail}`,
-              life: TOAST_LIFE.severe,
-            })
-          }
-        }
-        else {
-          toast.add({
-            severity: result.cleared > 0 ? 'success' : 'info',
-            summary: result.cleared > 0 ? t('web.common.success') : t('logging_clear'),
-            detail: result.cleared > 0
-              ? t('logging_clear_success', { count: result.cleared })
-              : t('logging_clear_empty'),
-            life: TOAST_LIFE.success,
-          })
-        }
-      }
-      catch (e) {
-        console.error('Failed to clear logs', e)
+    const raw = await props.api.clearLogFiles!()
+    const result: ClearLogFilesResult = typeof raw === 'number'
+      ? { cleared: raw, errors: [], dirs: [] }
+      : raw
+    selectedLogFile.value = ''
+    await loadLoggingContent()
+    if (result.errors.length > 0) {
+      const errorDetail = result.errors.join('; ')
+      if (result.cleared > 0) {
         toast.add({
-          severity: 'error',
-          summary: t('error'),
-          detail: `${t('logging_clear_failed')}: ${formatApiErrorDetail(e, t)}`,
+          severity: 'warn',
+          summary: t('logging_clear'),
+          detail: t('logging_clear_partial', {
+            count: result.cleared,
+            error: errorDetail,
+          }),
           life: TOAST_LIFE.severe,
         })
       }
-      finally {
-        isClearing.value = false
+      else {
+        toast.add({
+          severity: 'error',
+          summary: t('web.common.error'),
+          detail: `${t('logging_clear_failed')}: ${errorDetail}`,
+          life: TOAST_LIFE.severe,
+        })
       }
+    }
+    else {
+      toast.add({
+        severity: result.cleared > 0 ? 'success' : 'info',
+        summary: result.cleared > 0 ? t('web.common.success') : t('logging_clear'),
+        detail: result.cleared > 0
+          ? t('logging_clear_success', { count: result.cleared })
+          : t('logging_clear_empty'),
+        life: TOAST_LIFE.success,
+      })
+    }
+  }
+  catch (e) {
+    console.error('Failed to clear logs', e)
+    toast.add({
+      severity: 'error',
+      summary: t('web.common.error'),
+      detail: `${t('logging_clear_failed')}: ${formatApiErrorDetail(e, t)}`,
+      life: TOAST_LIFE.severe,
+    })
+  }
+  finally {
+    isClearing.value = false
+  }
 }
 </script>
 

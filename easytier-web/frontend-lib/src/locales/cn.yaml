@@ -83,6 +83,7 @@ magisk_status_running: 运行中
 magisk_status_stopped: 已停止
 magisk_status_restarting: 正在重启
 magisk_save_restart: 保存并重启
+magisk_save_restart_confirm: 保存配置并重启 EasyTier 服务？重启期间隧道会短暂中断。
 magisk_command_args_warning: 当前启用了启动参数模式，模块会忽略 config.toml。请先删除 config/command_args，才能在此保存配置。
 magisk_invalid_module_directory: KernelSU 返回了无效的模块目录
 magisk_load_failed: '加载模块配置失败：{error}'
@@ -137,6 +138,7 @@ hide_dock_icon: 隐藏 Dock 图标
 show_dock_icon: 显示 Dock 图标
 exit: 退出
 exit_app: 退出程序
+exit_stops_service_confirm: 退出会先停止 EasyTier 服务，正在运行的组网会立即断开。确定退出？
 chips_placeholder: 例如： {0}，回车、逗号或点别处添加
 chips_placeholder_typeahead: 例如： {0}，回车或逗号添加
 show_node_details: 显示节点详细信息
@@ -872,6 +874,7 @@ web:
     new_password: 新密码
     reset_success: 密码已重置
     reset_failed: 重置密码失败
+    reset_confirm: 确定重置用户「{username}」的密码？重置后旧密码立即失效，该用户需用新密码登录。
     password_required: 请填写新密码
     cancel: 取消
 
@@ -1077,6 +1080,8 @@ web:
     create_network: 创建网络
     discard_changes: 取消编辑
     discard_changes_tip: 取消当前编辑，恢复为上次已保存的配置
+    confirm_discard_changes: 放弃当前未保存的修改？未保存的内容会被上次已保存的配置覆盖，无法撤销。
+    data_stale: 状态数据可能已过期（自动刷新失败）
     unsaved_changes: 未保存
     config_source_console: 控制台托管
     config_source_console_tip: 所有权在控制台（Web 源）：权威配置在控制台数据库；设备会按控制台同步。不代表本机草稿已推送成功。
@@ -1184,6 +1189,8 @@ web:
     refresh: 刷新
     add: 添加
     loading: 加载中...
+    load_failed: 加载失败
+    retry: 重试
     error: 错误
     success: 成功
     warning: 警告
