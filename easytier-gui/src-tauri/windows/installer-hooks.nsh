@@ -114,6 +114,40 @@
   Pop $0
 !macroend
 
+!macro ET_TryDeleteBak FILEPATH
+  ; Delete a stale ".bak" without ever setting NSIS's reboot flag.
+  ;
+  ; Why not Delete /REBOOTOK: NSIS semantics are "if the file cannot be deleted
+  ; then it is deleted when the system reboots -- and the reboot flag will be
+  ; set". A .bak left over from an unlock-by-rename is pure garbage, but the
+  ; mapped image can keep it locked for a few seconds after the owning process
+  ; exits (Stop-Process returns before the kernel drops the section). Marking
+  ; the whole install as "restart required" for a leftover temp file is the
+  ; exact cause of the Win11-vs-Server reboot prompt, so it must not happen.
+  ;
+  ; Instead: retry a bounded number of times (covers the release delay), then
+  ; give up silently. A surviving .bak is harmless: it is not loaded by the app,
+  ; and ET_PurgeStaleBackups sweeps it at the start of the next install.
+  ;
+  ; Labels use __LINE__ so the macro can be inserted many times in one function.
+  !define ET_TRYDEL_ID ${__LINE__}
+  StrCpy $R9 0
+  et_trydel_loop_${ET_TRYDEL_ID}:
+    IfFileExists "${FILEPATH}" 0 et_trydel_done_${ET_TRYDEL_ID}
+    ClearErrors
+    Delete "${FILEPATH}"
+    IfFileExists "${FILEPATH}" 0 et_trydel_done_${ET_TRYDEL_ID}
+    IntOp $R9 $R9 + 1
+    IntCmp $R9 6 et_trydel_give_up_${ET_TRYDEL_ID} 0 et_trydel_give_up_${ET_TRYDEL_ID}
+    Sleep 400
+    Goto et_trydel_loop_${ET_TRYDEL_ID}
+  et_trydel_give_up_${ET_TRYDEL_ID}:
+    DetailPrint "Warning: $R9 retries could not remove ${FILEPATH}; leaving it for the next install."
+  et_trydel_done_${ET_TRYDEL_ID}:
+  ClearErrors
+  !undef ET_TRYDEL_ID
+!macroend
+
 !macro ET_UnlockOneInstallExe EXEBASE
   ; Move one main-binary candidate aside so Tauri's post-uninstall FileExists
   ; check cannot false-fail. Prefer Rename (atomic unlock) over Delete /REBOOTOK,
@@ -138,7 +172,8 @@
         IfFileExists "$INSTDIR\${EXEBASE}.exe" 0 et_unlock_renamed_${ET_UNLOCK_ID}
           Goto et_unlock_done_${ET_UNLOCK_ID}
     et_unlock_renamed_${ET_UNLOCK_ID}:
-    Delete /REBOOTOK "$INSTDIR\${EXEBASE}.exe.bak"
+    ; Never Delete /REBOOTOK here: a leftover .bak must not force a reboot.
+    !insertmacro ET_TryDeleteBak "$INSTDIR\${EXEBASE}.exe.bak"
   et_unlock_done_${ET_UNLOCK_ID}:
   !undef ET_UNLOCK_ID
 !macroend
@@ -167,17 +202,17 @@
   ; locked for the entire process lifetime. wintun.dll is LoadLibrary'd while a
   ; TUN adapter exists, and WinDivert*.sys is mapped by the kernel driver.
   ;
-  ; ET_UnlockInstallExe above only renames the main binary aside, so ANY surviving
-  ; process still locks these files and the resource copy fails with
-  ;   Error opening file for writing: $INSTDIR\Packet.dll
-  ; The usual survivor is the SYSTEM-owned ET-Gui service: a per-user install
-  ; cannot stop it (sc.exe stop -> access denied), so kill/service-stop silently
-  ; fails and the install hard-errors on the DLL instead of the exe.
-  ;
   ; Renaming the old file aside releases the path without needing the owner to
   ; exit (mapped image sections can be renamed, which is why the exe trick works).
-  ; It also clears a read-only attribute left by an earlier install, and the
-  ; /REBOOTOK delete covers a .bak that is still mapped.
+  ; It also clears a read-only attribute left by an earlier install.
+  ;
+  ; NOTE: the installer is now perMachine (elevated), so the SYSTEM service CAN
+  ; be stopped directly and this rename path is a fallback for the residual
+  ; case (a stray process surviving the sweep, or an elevation-declined run).
+  ;
+  ; The post-rename cleanup goes through ET_TryDeleteBak, NOT Delete /REBOOTOK:
+  ; a still-mapped .bak would otherwise set the reboot flag for a leftover temp
+  ; file (see ET_TryDeleteBak for the full rationale).
   ;
   ; Used by BOTH hooks: PREINSTALL (as the fallback when the elevated service
   ; stop was declined, so the resource copy can still overwrite) and
@@ -189,29 +224,29 @@
   ; duplicate labels would break makensis if it is ever inserted twice.
   DetailPrint "Unlocking third-party binaries in $INSTDIR ..."
 
-  Delete /REBOOTOK "$INSTDIR\Packet.dll.bak"
+  !insertmacro ET_TryDeleteBak "$INSTDIR\Packet.dll.bak"
   Rename "$INSTDIR\Packet.dll" "$INSTDIR\Packet.dll.bak"
   nsExec::ExecToLog 'cmd /c if exist "$INSTDIR\Packet.dll" move /Y "$INSTDIR\Packet.dll" "$INSTDIR\Packet.dll.bak"'
   Pop $0
-  Delete /REBOOTOK "$INSTDIR\Packet.dll.bak"
+  !insertmacro ET_TryDeleteBak "$INSTDIR\Packet.dll.bak"
 
-  Delete /REBOOTOK "$INSTDIR\wintun.dll.bak"
+  !insertmacro ET_TryDeleteBak "$INSTDIR\wintun.dll.bak"
   Rename "$INSTDIR\wintun.dll" "$INSTDIR\wintun.dll.bak"
   nsExec::ExecToLog 'cmd /c if exist "$INSTDIR\wintun.dll" move /Y "$INSTDIR\wintun.dll" "$INSTDIR\wintun.dll.bak"'
   Pop $0
-  Delete /REBOOTOK "$INSTDIR\wintun.dll.bak"
+  !insertmacro ET_TryDeleteBak "$INSTDIR\wintun.dll.bak"
 
-  Delete /REBOOTOK "$INSTDIR\WinDivert64.sys.bak"
+  !insertmacro ET_TryDeleteBak "$INSTDIR\WinDivert64.sys.bak"
   Rename "$INSTDIR\WinDivert64.sys" "$INSTDIR\WinDivert64.sys.bak"
   nsExec::ExecToLog 'cmd /c if exist "$INSTDIR\WinDivert64.sys" move /Y "$INSTDIR\WinDivert64.sys" "$INSTDIR\WinDivert64.sys.bak"'
   Pop $0
-  Delete /REBOOTOK "$INSTDIR\WinDivert64.sys.bak"
+  !insertmacro ET_TryDeleteBak "$INSTDIR\WinDivert64.sys.bak"
 
-  Delete /REBOOTOK "$INSTDIR\WinDivert32.sys.bak"
+  !insertmacro ET_TryDeleteBak "$INSTDIR\WinDivert32.sys.bak"
   Rename "$INSTDIR\WinDivert32.sys" "$INSTDIR\WinDivert32.sys.bak"
   nsExec::ExecToLog 'cmd /c if exist "$INSTDIR\WinDivert32.sys" move /Y "$INSTDIR\WinDivert32.sys" "$INSTDIR\WinDivert32.sys.bak"'
   Pop $0
-  Delete /REBOOTOK "$INSTDIR\WinDivert32.sys.bak"
+  !insertmacro ET_TryDeleteBak "$INSTDIR\WinDivert32.sys.bak"
 
   ; Leave the error flag clean: the template continues with File/IfErrors.
   ClearErrors
@@ -259,12 +294,17 @@
 !macro ET_ElevateServiceStopForInstall
   ; Install-side counterpart of ET_DeleteGuiService.
   ;
-  ; A per-user install runs with RequestExecutionLevel user, so ET_StopGuiService
-  ; cannot stop the SYSTEM-owned ET-Gui service: every later step (kill, wait,
-  ; file copy) would then be fighting a live process and fall back to
-  ; unlock-by-rename, leaving a .bak plus a pending reboot delete. Stop it
-  ; elevated instead - but ONLY when a service is actually still running, so a
-  ; plain install without service mode never sees a UAC prompt.
+  ; HISTORICAL: this existed because a per-user install (RequestExecutionLevel
+  ; user) could not stop the SYSTEM-owned ET-Gui service, so every later step
+  ; fought a live process, fell back to unlock-by-rename, and left a .bak plus a
+  ; pending reboot delete.
+  ;
+  ; The installer is now perMachine (RequestExecutionLevel admin), so the
+  ; current process can already control the service and the `runas` branch
+  ; below is normally a no-op. It is KEPT because it stays correct in the two
+  ; cases where we are not elevated: a `/P` passive run started by a
+  ; non-admin, and any legacy per-user uninstaller path. Elevating when already
+  ; elevated is a cheap ShellExecute that just succeeds - no second UAC prompt.
   ;
   ; If elevation is declined we just continue: ET_UnlockInstallExe and
   ; ET_UnlockThirdPartyBinaries still make the copy succeed.
@@ -287,7 +327,75 @@
   ClearErrors
 !macroend
 
+!macro ET_MigratePerUserInstall
+  ; Machine-wide (perMachine) installer taking over an older PER-USER install.
+  ;
+  ; The old tree lives in %LOCALAPPDATA%\ET and is registered under HKCU, so a
+  ; HKLM-based install would otherwise leave it behind entirely: two App/Remove
+  ; entries, an ET-Gui service still pointing at the old exe, and files silently
+  ; diverging. RestorePreviousInstallLocation (installer.nsi) fills
+  ; $LegacyUserDir when it detects that case; empty means nothing to migrate.
+  ;
+  ; Order matters: stop + delete the old service BEFORE the new Section Install
+  ; writes binaries, because the old service keeps the old exe mapped. The
+  ; service is re-registered by the app itself (service.rs) pointing at the new
+  ; path, so deleting is correct - retargeting a service whose exe is about to
+  ; disappear would only defer the breakage.
+  ;
+  ; Runs elevated (RequestExecutionLevel admin), so sc.exe needs no extra UAC.
+  StrCmp $LegacyUserDir "" et_migrate_done
+
+  DetailPrint "Migrating per-user install $LegacyUserDir -> $INSTDIR ..."
+
+  ; Retire the legacy service and its SCM registration.
+  nsExec::ExecToLog 'sc.exe failure ET-Gui reset= 0 actions= //'
+  Pop $0
+  nsExec::ExecToLog 'sc.exe stop ET-Gui'
+  Pop $0
+  nsExec::ExecToLog 'sc.exe delete ET-Gui'
+  Pop $0
+  nsExec::ExecToLog 'sc.exe failure easytier-gui reset= 0 actions= //'
+  Pop $0
+  nsExec::ExecToLog 'sc.exe stop easytier-gui'
+  Pop $0
+  nsExec::ExecToLog 'sc.exe delete easytier-gui'
+  Pop $0
+
+  ; Terminate anything still running from the old tree.
+  System::Call 'Kernel32::SetEnvironmentVariable(t "INSTDIR_FOR_SWEEP", t "$LegacyUserDir")'
+  !insertmacro ET_SweepInstdirProcesses
+
+  ; Drop the legacy uninstall registration so Programs and Features shows one
+  ; entry (the HKLM one written by this install), then the user-level keys.
+  DeleteRegKey HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\${PRODUCTNAME}"
+  DeleteRegKey HKCU "${MANUKEY}\${PRODUCTNAME}"
+  DeleteRegKey /ifempty HKCU "${MANUKEY}"
+
+  ; Remove the old payload. The service is already stopped and the processes
+  ; killed above, so a plain recursive delete is normally enough. RMDir does not
+  ; set the NSIS reboot flag, so a stubborn leftover can never force a reboot;
+  ; anything that survives is just orphaned bytes in %LOCALAPPDATA%\ET (harmless,
+  ; and never loaded again because the registration is gone).
+  RMDir /r "$LegacyUserDir"
+
+  ; Verify and report rather than silently pretending the migration was clean.
+  IfFileExists "$LegacyUserDir\ET.exe" 0 et_migrate_clean
+    DetailPrint "Note: $LegacyUserDir is still in use; its remaining files were left behind."
+  et_migrate_clean:
+
+  ; User config/data under %APPDATA% / %LOCALAPPDATA% is intentionally KEPT:
+  ; the same bundle id is used machine-wide, so the migrated install picks the
+  ; existing profiles up unchanged.
+
+  ClearErrors
+  et_migrate_done:
+!macroend
+
 !macro NSIS_HOOK_PREINSTALL
+  ; Sweep .bak files left by a previous install BEFORE creating new ones.
+  !insertmacro ET_PurgeStaleBackups
+  ; Take over an older per-user install (no-op unless one was detected).
+  !insertmacro ET_MigratePerUserInstall
   ; First: get the SYSTEM service out of the way with one UAC prompt, so the
   ; stop/kill/wait below and the file copy run against a quiet $INSTDIR.
   !insertmacro ET_ElevateServiceStopForInstall
@@ -324,14 +432,33 @@
     nsExec::ExecToLog 'cmd /c copy /Y "$INSTDIR\ET.exe" "$INSTDIR\easytier-gui.exe"'
     Pop $0
   et_postinstall_shim_done:
-  Delete /REBOOTOK "$INSTDIR\easytier-gui.exe.bak"
+  ; Leftover from an older unlock-by-rename; a stale .bak must not force a reboot.
+  !insertmacro ET_TryDeleteBak "$INSTDIR\easytier-gui.exe.bak"
+!macroend
+
+!macro ET_PurgeStaleBackups
+  ; Front-load cleanup of .bak files that a PREVIOUS install could not delete
+  ; (because the mapped image was still held). ET_TryDeleteBak now gives up
+  ; instead of scheduling a reboot, so these can survive one install cycle.
+  ;
+  ; Runs FIRST in PREINSTALL, before anything is renamed: at this point no new
+  ; .bak exists yet, so whatever is found here is genuinely stale and its owner
+  ; has almost certainly exited since the last run. Safe to leave behind if it
+  ; is still locked - the retry loop just logs and moves on.
+  DetailPrint "Purging stale .bak files from a previous install..."
+  !insertmacro ET_TryDeleteBak "$INSTDIR\ET.exe.bak"
+  !insertmacro ET_TryDeleteBak "$INSTDIR\easytier-gui.exe.bak"
+  !insertmacro ET_TryDeleteBak "$INSTDIR\Packet.dll.bak"
+  !insertmacro ET_TryDeleteBak "$INSTDIR\wintun.dll.bak"
+  !insertmacro ET_TryDeleteBak "$INSTDIR\WinDivert64.sys.bak"
+  !insertmacro ET_TryDeleteBak "$INSTDIR\WinDivert32.sys.bak"
 !macroend
 
 !macro NSIS_HOOK_PREUNINSTALL
   !insertmacro ET_EnsureGuiStopped
   ; Locked third-party binaries would make the template's Delete fail and leave
-  ; $INSTDIR behind; rename them aside so those deletes succeed (the .bak is
-  ; removed at reboot while it is still mapped).
+  ; $INSTDIR behind; rename them aside so those deletes succeed. The .bak is
+  ; then removed by ET_TryDeleteBak (best effort, never schedules a reboot).
   !insertmacro ET_UnlockThirdPartyBinaries
   ; Before the template deletes the exe: a surviving registration would keep
   ; pointing at a removed binary and fail at boot.

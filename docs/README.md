@@ -46,6 +46,7 @@ crate 内设计稿（非本索引）：`easytier/docs/`（凭据计划已标 Arc
 | [magic-dns-manual-wiring.md](./current/magic-dns-manual-wiring.md) | Linux 非 systemd / OpenWrt MagicDNS 手工接线 |
 | [dns-policy-audit.md](./current/dns-policy-audit.md) | **域名策略（DnsConfig）审查**（逐行核对全链路；3 处 BUG / 4 处冲突 / 9 项优化；静态核查未复现） |
 | [windows-wintun-interface-missing.md](./current/windows-wintun-interface-missing.md) | **Windows WinTun 网卡「找不到」**：`find_interface_index` 失配被当致命错误 → 打死绑网卡的 socket 创建 + ERROR 海啸；根因与修复（P1–P3b 已修，P4 记录在案 / 已登记 P-WIN.1） |
+| [windows-installer-reboot-audit.md](./current/windows-installer-reboot-audit.md) | **Windows 安装器重启提示**：Server 不提示 / Win11 提示的根因（NSIS `/REBOOTOK` + `.bak` 残留）；实测推翻「提权不足」旧结论；修复分 A 止血 / B 机器级安装 / C 合规 |
 | [message-popup-audit.md](./current/message-popup-audit.md) | **消息弹窗审查**：约 180 个 toast/confirm；冗余（同一事实两处播报 / 5s 轮询无节流 / `t('error')` 键缺失）与缺失（重置密码、清空日志无确认；轮询失败静默）；第一批 10 项已收敛，余项 P1–P4 待决策 |
 
 ## Roadmap — 待实现
@@ -72,6 +73,7 @@ crate 内设计稿（非本索引）：`easytier/docs/`（凭据计划已标 Arc
 | [web-console-log-persistence.md](./roadmap/web-console-log-persistence.md) | 控制台**日志本地留存**：默认 `./logs`+warn 滚动（可写性预检降级）+ 运行日志页读文件筛选（A/B/C 已落地，待验收） |
 | [client-web-console-interaction.md](./roadmap/client-web-console-interaction.md) | 客户端 ↔ 控制台交互：超时 / Start 覆盖 / 会话抖动 / 协议降级（P0–P2）+ 交互性能审查（§9；优先 S4/S5） |
 | [poll-to-push-roi.md](./roadmap/poll-to-push-roi.md) | **轮询→推送 ROI**：P0 GUI 1s 事件化；P1 状态页混合；§4.4 desired 下发另立；心跳/安卓纯推不做 |
+| [tray-run-state.md](./roadmap/tray-run-state.md) | **托盘运行态语义**：判据从「客户端已连接」改为按实例聚合（灰=无网在跑 / 黄=启动中 / 绿=在网 / 红=需介入）；代码已落地，**待真机验收** |
 | [config-delete-authority.md](./roadmap/config-delete-authority.md) | 配置删除权：bound+Web 仅控制台；客户端删门与停用保留 |
 | [local-config-residue.md](./roadmap/local-config-residue.md) | 控制台删除后本地/GUI 残留：分层收敛（P0–P2 代码已落地；待人工回归） |
 | [config-sync-per-end.md](./roadmap/config-sync-per-end.md) | 配置同步**各端一致性核验**：删除权 / W 权威 / 残留 UI 覆盖矩阵（有意不统一；gui 含 Android 已闭环） |

@@ -30,6 +30,7 @@ declare global {
   const defineComponent: typeof import('vue')['defineComponent']
   const defineStore: typeof import('pinia')['defineStore']
   const deleteNetworkInstance: typeof import('./composables/backend')['deleteNetworkInstance']
+  const deriveTrayRunState: typeof import('./composables/tray_run_state')['deriveTrayRunState']
   const dropStoredConfigsByIds: typeof import('./composables/former_web_ghosts')['dropStoredConfigsByIds']
   const effectScope: typeof import('vue')['effectScope']
   const endTrayConnecting: typeof import('./composables/tray')['endTrayConnecting']
@@ -65,6 +66,7 @@ declare global {
   const isReactive: typeof import('vue')['isReactive']
   const isReadonly: typeof import('vue')['isReadonly']
   const isRef: typeof import('vue')['isRef']
+  const isRunFault: typeof import('./composables/tray_run_state')['isRunFault']
   const isValidVpnRouteCidr: typeof import('./composables/mobile_vpn')['isValidVpnRouteCidr']
   const isWebClientConnected: typeof import('./composables/backend')['isWebClientConnected']
   const listLogFiles: typeof import('./composables/backend')['listLogFiles']
@@ -113,7 +115,9 @@ declare global {
   const readonly: typeof import('vue')['readonly']
   const ref: typeof import('vue')['ref']
   const registerTrayExitHandler: typeof import('./composables/tray')['registerTrayExitHandler']
+  const registerTrayRunStateRefresher: typeof import('./composables/tray_run_state')['registerTrayRunStateRefresher']
   const removeVpnPortalClient: typeof import('./composables/backend')['removeVpnPortalClient']
+  const requestTrayRunStateRefresh: typeof import('./composables/tray_run_state')['requestTrayRunStateRefresh']
   const resolveComponent: typeof import('vue')['resolveComponent']
   const runNetworkInstance: typeof import('./composables/backend')['runNetworkInstance']
   const saveFileLogLevel: typeof import('./composables/mode')['saveFileLogLevel']
@@ -199,6 +203,7 @@ declare module 'vue' {
     readonly defineComponent: UnwrapRef<typeof import('vue')['defineComponent']>
     readonly defineStore: UnwrapRef<typeof import('pinia')['defineStore']>
     readonly deleteNetworkInstance: UnwrapRef<typeof import('./composables/backend')['deleteNetworkInstance']>
+    readonly deriveTrayRunState: UnwrapRef<typeof import('./composables/tray_run_state')['deriveTrayRunState']>
     readonly dropStoredConfigsByIds: UnwrapRef<typeof import('./composables/former_web_ghosts')['dropStoredConfigsByIds']>
     readonly effectScope: UnwrapRef<typeof import('vue')['effectScope']>
     readonly endTrayConnecting: UnwrapRef<typeof import('./composables/tray')['endTrayConnecting']>
@@ -234,6 +239,7 @@ declare module 'vue' {
     readonly isReactive: UnwrapRef<typeof import('vue')['isReactive']>
     readonly isReadonly: UnwrapRef<typeof import('vue')['isReadonly']>
     readonly isRef: UnwrapRef<typeof import('vue')['isRef']>
+    readonly isRunFault: UnwrapRef<typeof import('./composables/tray_run_state')['isRunFault']>
     readonly isValidVpnRouteCidr: UnwrapRef<typeof import('./composables/mobile_vpn')['isValidVpnRouteCidr']>
     readonly isWebClientConnected: UnwrapRef<typeof import('./composables/backend')['isWebClientConnected']>
     readonly listLogFiles: UnwrapRef<typeof import('./composables/backend')['listLogFiles']>
@@ -282,7 +288,9 @@ declare module 'vue' {
     readonly readonly: UnwrapRef<typeof import('vue')['readonly']>
     readonly ref: UnwrapRef<typeof import('vue')['ref']>
     readonly registerTrayExitHandler: UnwrapRef<typeof import('./composables/tray')['registerTrayExitHandler']>
+    readonly registerTrayRunStateRefresher: UnwrapRef<typeof import('./composables/tray_run_state')['registerTrayRunStateRefresher']>
     readonly removeVpnPortalClient: UnwrapRef<typeof import('./composables/backend')['removeVpnPortalClient']>
+    readonly requestTrayRunStateRefresh: UnwrapRef<typeof import('./composables/tray_run_state')['requestTrayRunStateRefresh']>
     readonly resolveComponent: UnwrapRef<typeof import('vue')['resolveComponent']>
     readonly runNetworkInstance: UnwrapRef<typeof import('./composables/backend')['runNetworkInstance']>
     readonly saveFileLogLevel: UnwrapRef<typeof import('./composables/mode')['saveFileLogLevel']>

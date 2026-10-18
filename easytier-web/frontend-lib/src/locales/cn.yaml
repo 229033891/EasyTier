@@ -765,6 +765,12 @@ tray:
   restart_service: 重启服务
   uninstall_service: 卸载服务
   service_status: "服务状态：{status}"
+  # 托盘图标 tooltip（GUI 专用）：颜色表达「此刻是否在网」，不是「进程是否活着」
+  state_idle: 未运行网络
+  state_connecting: 正在启动 / 重连
+  state_running: "已联网：{count} 个网络在运行"
+  state_core_unreachable: 无法连接内核，请检查运行模式 / 服务状态
+  state_instance_failed: "{count} 个网络启动失败"
 
 about:
   title: 关于

@@ -17,7 +17,8 @@
     "resources": [
       "icons/tray-idle.ico",
       "icons/tray-connecting.ico",
-      "icons/tray-running.ico"
+      "icons/tray-running.ico",
+      "icons/tray-error.ico"
     ],
     "createUpdaterArtifacts": false,
     "windows": {

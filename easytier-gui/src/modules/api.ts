@@ -3,6 +3,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { type } from '@tauri-apps/plugin-os'
 import * as backend from '~/composables/backend'
 import { annotateNetworkInfoFromVpnService } from '~/composables/mobile_vpn'
+import { requestTrayRunStateRefresh } from '~/composables/tray_run_state'
 
 export class GUIRemoteClient implements Api.RemoteClient {
   async validate_config(config: NetworkTypes.NetworkConfig): Promise<Api.ValidateConfigResponse> {
@@ -11,6 +12,9 @@ export class GUIRemoteClient implements Api.RemoteClient {
 
   async run_network(config: NetworkTypes.NetworkConfig, save: boolean): Promise<undefined> {
     await backend.runNetworkInstance(config, save)
+    // Starting a network changes what the tray icon means; push a refresh now
+    // instead of waiting up to 30s for the fallback poll.
+    requestTrayRunStateRefresh()
   }
 
   async get_network_info(inst_id: string): Promise<NetworkTypes.NetworkInstanceRunningInfo | undefined> {
@@ -45,10 +49,12 @@ export class GUIRemoteClient implements Api.RemoteClient {
 
   async delete_network(inst_id: string): Promise<undefined> {
     await backend.deleteNetworkInstance(inst_id)
+    requestTrayRunStateRefresh()
   }
 
   async update_network_instance_state(inst_id: string, disabled: boolean): Promise<undefined> {
     await backend.updateNetworkConfigState(inst_id, disabled)
+    requestTrayRunStateRefresh()
   }
 
   async save_config(config: NetworkTypes.NetworkConfig): Promise<Api.SaveNetworkConfigResponse> {

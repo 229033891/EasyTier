@@ -769,6 +769,13 @@ tray:
   restart_service: Restart Service
   uninstall_service: Uninstall Service
   service_status: "Service Status: {status}"
+  # Tray icon tooltip (GUI only): colour answers "am I on a network now?", not
+  # "is the process alive".
+  state_idle: No network running
+  state_connecting: Starting / reconnecting
+  state_running: "Connected: {count} network(s) running"
+  state_core_unreachable: Core unreachable — check the runtime mode / service
+  state_instance_failed: "{count} network(s) failed to start"
 
 about:
   title: About

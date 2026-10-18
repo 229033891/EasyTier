@@ -1,3 +1,4 @@
+import type { TrayRunState } from './tray_run_state'
 import type { ServiceStatus } from '~/composables/backend'
 import { Menu, MenuItem, PredefinedMenuItem } from '@tauri-apps/api/menu'
 import { resolveResource } from '@tauri-apps/api/path'
@@ -228,24 +229,26 @@ export async function setTrayMenu(items: (MenuItem | PredefinedMenuItem)[] | und
   tray.setMenu(menu)
 }
 
-/** OpenVPN-like tray chrome: grey idle / yellow connecting / green running. */
-export type TrayRunState = 'idle' | 'connecting' | 'running'
+/**
+ * OpenVPN-like tray chrome: grey idle / yellow connecting / green running /
+ * red needs attention. The state itself is derived in `tray_run_state.ts` from
+ * the device's instances — `clientRunning` only enters as one input, so an app
+ * that is up with no network running shows grey, not green.
+ */
+export type { TrayRunState }
 
 const TRAY_ICONS: Record<TrayRunState, string> = {
   idle: 'icons/tray-idle.ico',
   connecting: 'icons/tray-connecting.ico',
   running: 'icons/tray-running.ico',
+  error: 'icons/tray-error.ico',
 }
 
 let appliedTrayState: TrayRunState | null = null
 /** Nested begin/end so 1s poll / clientRunning watch cannot wipe yellow mid-connect. */
 let trayConnectingHold = 0
-
-function resolveTrayRunState(state: TrayRunState | boolean): TrayRunState {
-  if (typeof state === 'boolean')
-    return state ? 'running' : 'idle'
-  return state
-}
+/** Newest settled state + tooltip; applied as soon as no connecting hold is left. */
+let pendingTrayState: { state: TrayRunState, tooltip?: string } | undefined
 
 async function resolveTrayIconPath(state: TrayRunState): Promise<string> {
   const relative = TRAY_ICONS[state]
@@ -269,23 +272,36 @@ async function applyTrayIcon(state: TrayRunState) {
   appliedTrayState = state
 }
 
-/**
- * Update tray icon. Pass boolean for idle/running, or `'connecting'` while
- * starting / reconnecting. Settled updates are ignored while a
- * {@link beginTrayConnecting} hold is active.
- */
-export async function setTrayRunState(state: TrayRunState | boolean = false) {
-  const resolved = resolveTrayRunState(state)
-  if (trayConnectingHold > 0 && resolved !== 'connecting')
+async function applyPendingTrayState() {
+  if (!pendingTrayState)
     return
-  await applyTrayIcon(resolved)
+  await applyTrayIcon(pendingTrayState.state)
+  if (pendingTrayState.tooltip)
+    await setTrayTooltip(pendingTrayState.tooltip)
 }
 
-/** Show yellow connecting icon until matching {@link endTrayConnecting}. */
-export async function beginTrayConnecting() {
+/**
+ * Update the tray icon (and optional tooltip). Rejects booleans on purpose: the
+ * state is a network judgement, so callers must go through the aggregator in
+ * `tray_run_state.ts` instead of passing "the client is up" as a run state.
+ * Settled updates are deferred while a {@link beginTrayConnecting} hold is active.
+ */
+export async function setTrayRunState(state: TrayRunState, tooltip?: string) {
+  pendingTrayState = { state, tooltip }
+  if (trayConnectingHold > 0)
+    return
+  await applyPendingTrayState()
+}
+
+/**
+ * Show yellow connecting icon until matching {@link endTrayConnecting}.
+ * `tooltip` describes the transition, since the settled text is stale meanwhile.
+ */
+export async function beginTrayConnecting(tooltip?: string) {
   trayConnectingHold++
   try {
     await applyTrayIcon('connecting')
+    await setTrayTooltip(tooltip ?? pendingTrayState?.tooltip ?? '')
   }
   catch (e) {
     trayConnectingHold = Math.max(0, trayConnectingHold - 1)
@@ -293,20 +309,29 @@ export async function beginTrayConnecting() {
   }
 }
 
-/** Drop one connecting hold; when none remain, apply idle/running. */
-export async function endTrayConnecting(running: boolean) {
+/**
+ * Drop one connecting hold; when none remain, apply the newest settled state
+ * (or `state`, when the caller refreshed while the hold was active).
+ */
+export async function endTrayConnecting(state?: TrayRunState) {
   trayConnectingHold = Math.max(0, trayConnectingHold - 1)
   if (trayConnectingHold > 0)
     return
-  await applyTrayIcon(running ? 'running' : 'idle')
+  if (state)
+    pendingTrayState = { state, tooltip: pendingTrayState?.tooltip }
+  await applyPendingTrayState()
 }
 
+let appliedTooltip: string | undefined
+
 export async function setTrayTooltip(tooltip: string) {
-  if (tooltip) {
-    const tray = await useTray()
-    if (!tray)
-      return
-    tray.setTooltip(`ET\n${pkg.version}\n${tooltip}`)
-    tray.setTitle(`ET\n${pkg.version}\n${tooltip}`)
-  }
+  if (!tooltip || tooltip === appliedTooltip)
+    return
+  const tray = await useTray()
+  if (!tray)
+    return
+  const text = `ET\n${pkg.version}\n${tooltip}`
+  tray.setTooltip(text)
+  tray.setTitle(text)
+  appliedTooltip = tooltip
 }

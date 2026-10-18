@@ -36,7 +36,21 @@ ${StrLoc}
 !define VERSION "{{version}}"
 !define VERSIONWITHBUILD "{{version_with_build}}"
 !define HOMEPAGE "{{homepage}}"
-!define INSTALLMODE "{{install_mode}}"
+; ET forces a MACHINE-WIDE install (perMachine) instead of Tauri's default
+; `currentUser`. Rationale + migration notes: docs/current/windows-installer-reboot-audit.md.
+;
+; Why: the app registers the SYSTEM-owned `ET-Gui` service. With a per-user
+; (unelevated) installer, stopping/replacing that service raced the SCM and left
+; .bak files locked, which used to surface as a spurious "restart required"
+; prompt. A perMachine install runs elevated, so service stop + file replace
+; happen in one clean, admin context and no reboot is ever needed.
+;
+; This overrides {{install_mode}} deliberately: Tauri 2 has no public
+; `installMode` bundle option, so the fork is the only place to pin it.
+; LEGACYINSTALLMODE keeps the template's per-user branches reachable for the
+; migration path (see ET_MigratePerUserInstall).
+!define LEGACYINSTALLMODE "{{install_mode}}"
+!define INSTALLMODE "perMachine"
 !define LICENSE "{{license}}"
 !define INSTALLERICON "{{installer_icon}}"
 !define SIDEBARIMAGE "{{sidebar_image}}"
@@ -67,6 +81,8 @@ Var UpdateMode
 Var NoShortcutMode
 Var WixMode
 Var OldMainBinaryName
+; Legacy per-user install root detected during migration (see RestorePreviousInstallLocation).
+Var LegacyUserDir
 
 Name "${PRODUCTNAME}"
 BrandingText "${COPYRIGHT}"
@@ -479,6 +495,7 @@ FunctionEnd
 {{/each}}
 
 Function .onInit
+ StrCpy $LegacyUserDir ""
  ${GetOptions} $CMDLINE "/P" $PassiveMode
  ${IfNot} ${Errors}
  StrCpy $PassiveMode 1
@@ -896,9 +913,31 @@ Section Uninstall
 SectionEnd
 
 Function RestorePreviousInstallLocation
+ ; Normal case: reuse the location recorded under the current install context.
  ReadRegStr $4 SHCTX "${MANUPRODUCTKEY}" ""
+ StrCmp $4 "" 0 et_prev_restore
+ ; Machine-wide install taking over an older PER-USER install (<= 2.7.x):
+ ; that path lives under HKCU, which SHCTX (HKLM) cannot see. Without this the
+ ; new installer would silently land in Program Files while the old
+ ; %LOCALAPPDATA%\ET tree + its ET-Gui service kept pointing at the old exe.
+ !if "${INSTALLMODE}" == "perMachine"
+ !if "${LEGACYINSTALLMODE}" == "currentUser"
+ ReadRegStr $4 HKCU "${MANUPRODUCTKEY}" ""
+ StrCmp $4 "" 0 et_prev_user_found
+ Goto et_prev_restore
+ !endif
+ !endif
+ Goto et_prev_restore
+ et_prev_user_found:
+ ; Record the legacy tree so PREINSTALL can migrate (uninstall the old
+ ; registration, retarget its service) before the new files are copied.
+ StrCpy $LegacyUserDir "$4"
+ DetailPrint "Detected previous per-user install at $LegacyUserDir (will migrate)."
+ Goto et_prev_done
+ et_prev_restore:
  StrCmp $4 "" +2 0
  StrCpy $INSTDIR $4
+ et_prev_done:
 FunctionEnd
 
 Function Skip

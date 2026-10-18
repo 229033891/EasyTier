@@ -53,6 +53,14 @@ import {
   showMainWindow,
   useTray,
 } from '~/composables/tray'
+import {
+  deriveTrayRunState,
+  isRunFault,
+  registerTrayRunStateRefresher,
+  type TrayInstanceSnapshot,
+  type TrayRunState,
+  type TrayRunStateResult,
+} from '~/composables/tray_run_state'
 import { GUIRemoteClient } from '~/modules/api'
 
 const { t, locale } = useI18n()
@@ -86,6 +94,136 @@ const configServerOwnerDown = ref(false)
 let lastPrunedConsoleWebOwnedKey: string | undefined
 /** Device-known instance ids after last successful RPC connect (running ∪ disabled). */
 const knownDeviceInstanceIds = ref<string[]>([])
+
+/**
+ * Tray run state — what the icon means.
+ *
+ * The icon answers "am I on a network?", never "is the client process alive"
+ * (the icon existing already says that). `clientRunning` is one input of the
+ * aggregate in `tray_run_state.ts`, so an ET that is up with zero running
+ * instances shows the grey idle icon instead of the old always-green.
+ */
+const trayServiceStatus = ref<ServiceStatus | undefined>(undefined)
+/** Newest settled state: reused when a probe fails, and applied when a hold ends. */
+let lastTrayState: TrayRunState = 'idle'
+/** One in-flight probe set; extra callers set a dirty bit instead of fanning out. */
+let trayRefreshInFlight: Promise<TrayRunState> | undefined
+let trayRefreshDirty = false
+/** The tray only needs a yes/no; do not inventory a 50-instance device every poll. */
+const TRAY_PROBE_MAX = 8
+
+/**
+ * Per-instance snapshots for the tray aggregate.
+ *
+ * `running_inst_ids` is the manager's live map, which also holds instances that
+ * failed to start (the heartbeat subtracts those before calling them running —
+ * `running_instances_for_heartbeat` in web_client.rs), so each id is probed for
+ * `running` / `error_msg` rather than counted blindly. Probes run only when the
+ * list is non-empty, so an idle device costs nothing beyond the list call.
+ */
+async function collectTrayInstances(): Promise<TrayInstanceSnapshot[] | undefined> {
+  const listed = await remoteClient.value.list_network_instance_ids().catch(() => undefined)
+  if (!listed)
+    return undefined
+  const runningIds = (listed.running_inst_ids ?? []).map(Utils.UuidToStr)
+  return await Promise.all(runningIds.slice(0, TRAY_PROBE_MAX).map(async (instanceId) => {
+    try {
+      const info = await remoteClient.value.get_network_info(instanceId)
+      return { instanceId, running: info?.running, errorMsg: info?.error_msg ?? '' }
+    }
+    catch (e) {
+      // Unknown, not stopped: never turn a probe failure into a grey "not running".
+      console.warn('Failed to probe instance for tray state', instanceId, e)
+      return { instanceId }
+    }
+  }))
+}
+
+function trayStateTooltip(result: TrayRunStateResult): string {
+  if (result.state === 'error') {
+    return result.errorKind === 'instance'
+      ? t('tray.state_instance_failed', { count: result.failedCount })
+      : t('tray.state_core_unreachable')
+  }
+  if (result.state === 'running')
+    return t('tray.state_running', { count: result.runningCount })
+  return t('tray.state_idle')
+}
+
+async function refreshTrayRunStateInner(): Promise<TrayRunState> {
+  try {
+    if (type() === 'android') {
+      // No tray surface on mobile; skip the probe RPCs entirely.
+      return lastTrayState
+    }
+    // Read the service status here rather than relying on the caller: a start
+    // that never reaches the RPC (service Running, portal dead) must still be
+    // judged against "the service is supposed to be up" and show red.
+    if (currentMode.value.mode === 'service') {
+      try {
+        trayServiceStatus.value = await getServiceStatus()
+      }
+      catch (e) {
+        console.warn('Failed to read service status for tray state', e)
+      }
+    }
+    const instances = clientRunning.value ? await collectTrayInstances() : undefined
+    // List unavailable: keep the previous icon rather than inventing a grey one.
+    if (clientRunning.value && instances === undefined)
+      return lastTrayState
+    const result = deriveTrayRunState({
+      clientRunning: clientRunning.value,
+      clientFailureIsFault: isRunFault(currentMode.value.mode, trayServiceStatus.value),
+      instances,
+    })
+    lastTrayState = result.state
+    await setTrayRunState(result.state, trayStateTooltip(result))
+    return result.state
+  }
+  catch (e) {
+    console.warn('Failed to refresh tray run state', e)
+    return lastTrayState
+  }
+}
+
+/**
+ * Recompute the tray icon from the device's instances. Never rejects, because
+ * callers sit in `finally` blocks.
+ */
+async function refreshTrayRunState(): Promise<TrayRunState> {
+  if (trayRefreshInFlight) {
+    trayRefreshDirty = true
+    return trayRefreshInFlight
+  }
+  const run = (async () => {
+    let state = lastTrayState
+    do {
+      trayRefreshDirty = false
+      state = await refreshTrayRunStateInner()
+    } while (trayRefreshDirty)
+    // Cleared before resolving: no await sits between the drain check and the
+    // clear, so a late caller starts a fresh run instead of losing its dirty bit.
+    trayRefreshInFlight = undefined
+    return state
+  })()
+  trayRefreshInFlight = run
+  return run
+}
+
+/** Delay so a start/stop API call is settled in core before the tray probes it. */
+const TRAY_REFRESH_DEBOUNCE_MS = 500
+let trayRefreshTimer: number | undefined
+
+function scheduleTrayRunStateRefresh() {
+  if (type() === 'android')
+    return
+  if (trayRefreshTimer !== undefined)
+    window.clearTimeout(trayRefreshTimer)
+  trayRefreshTimer = window.setTimeout(() => {
+    trayRefreshTimer = undefined
+    void refreshTrayRunState()
+  }, TRAY_REFRESH_DEBOUNCE_MS)
+}
 
 const showAutostartHint = ref(false)
 
@@ -519,7 +657,7 @@ async function onModeSave() {
     isModeSaving.value = true
     initFailureReported = false
     try {
-      await beginTrayConnecting()
+      await beginTrayConnecting(t('tray.state_connecting'))
       await initWithMode(next)
 
       // Validate config-server dial only when Normal mode activates/changes the endpoint.
@@ -596,7 +734,7 @@ async function onModeSave() {
     finally {
       isModeSaving.value = false
       try {
-        await endTrayConnecting(clientRunning.value)
+        await endTrayConnecting(await refreshTrayRunState())
       }
       catch (e) {
         console.warn('Failed to settle tray icon after mode save', e)
@@ -713,8 +851,7 @@ async function reconnectServiceRpc() {
     return
   const url = normalizeServiceRpcUrl(currentMode.value.rpc_portal)
   await connectRpcWithRetries(false, url, 5)
-  clientRunning.value = await isClientRunning().catch(() => false)
-  await setTrayRunState(clientRunning.value ? 'running' : 'idle')
+  await refreshClientRunningAndTray()
   await refreshConfigServerConnection()
 }
 
@@ -727,7 +864,7 @@ async function onStartService() {
   }
   isModeSaving.value = true
   try {
-    await beginTrayConnecting()
+    await beginTrayConnecting(t('tray.state_connecting'))
     await setServiceStatus(true)
     await waitForServiceStatus('Running')
     await reconnectServiceRpc()
@@ -750,7 +887,7 @@ async function onStartService() {
   finally {
     isModeSaving.value = false
     try {
-      await endTrayConnecting(clientRunning.value)
+      await endTrayConnecting(await refreshTrayRunState())
     }
     catch (e) {
       console.warn('Failed to settle tray icon after start service', e)
@@ -783,7 +920,7 @@ async function onRestartService() {
     accept: async () => {
       isModeSaving.value = true
       try {
-        await beginTrayConnecting()
+        await beginTrayConnecting(t('tray.state_connecting'))
         await bounceService()
         await reconnectServiceRpc()
         toast.add({
@@ -805,7 +942,7 @@ async function onRestartService() {
       finally {
         isModeSaving.value = false
         try {
-          await endTrayConnecting(clientRunning.value)
+          await endTrayConnecting(await refreshTrayRunState())
         }
         catch (e) {
           console.warn('Failed to settle tray icon after restart service', e)
@@ -838,7 +975,7 @@ async function onUninstallService() {
     accept: async () => {
       isModeSaving.value = true
       try {
-        await beginTrayConnecting()
+        await beginTrayConnecting(t('tray.state_connecting'))
         await initWithMode({ ...currentMode.value, mode: 'normal' })
         await initService(undefined)
         toast.add({
@@ -861,7 +998,7 @@ async function onUninstallService() {
       finally {
         isModeSaving.value = false
         try {
-          await endTrayConnecting(clientRunning.value)
+          await endTrayConnecting(await refreshTrayRunState())
         }
         catch (e) {
           console.warn('Failed to settle tray icon after uninstall', e)
@@ -980,8 +1117,10 @@ async function onStopService() {
       try {
         await setServiceStatus(false)
         await waitForServiceStatus('Stopped')
+        // Deliberate stop: service mode + Stopped is idle, not a fault.
+        trayServiceStatus.value = 'Stopped'
         clientRunning.value = false
-        await setTrayRunState('idle')
+        await refreshTrayRunState()
         toast.add({
           severity: 'success',
           summary: t('web.common.success'),
@@ -1218,7 +1357,7 @@ async function initWithMode(mode: Mode) {
   currentMode.value = mode
   saveMode(mode)
   clientRunning.value = await isClientRunning()
-  await setTrayRunState(clientRunning.value ? 'running' : 'idle')
+  await refreshTrayRunState()
   await refreshTrayMenu()
 }
 
@@ -1252,12 +1391,12 @@ onMounted(async () => {
   })
   currentMode.value = loadMode()
   try {
-    await beginTrayConnecting()
+    await beginTrayConnecting(t('tray.state_connecting'))
     await initWithMode(currentMode.value)
   }
   finally {
     try {
-      await endTrayConnecting(clientRunning.value)
+      await endTrayConnecting(await refreshTrayRunState())
     }
     catch (e) {
       console.warn('Failed to settle tray icon after startup init', e)
@@ -1346,7 +1485,7 @@ watch(instanceId, (newVal) => {
 })
 
 watch(clientRunning, async (newVal, oldVal) => {
-  await setTrayRunState(newVal ? 'running' : 'idle')
+  await refreshTrayRunState()
   if (!newVal && oldVal) {
     if (manualDisconnect.value) {
       manualDisconnect.value = false
@@ -1381,6 +1520,8 @@ async function refreshClientRunningAndTray() {
   if (currentMode.value.mode === 'service' && !isModeSaving.value) {
     try {
       const status = await getServiceStatus()
+      // Feeds the tray's fault/idle split: a stopped service is idle, not red.
+      trayServiceStatus.value = status
       if (status !== lastTrayServiceStatus)
         await refreshTrayMenu(status)
     }
@@ -1388,11 +1529,13 @@ async function refreshClientRunningAndTray() {
       console.error('Error checking service status for tray', e)
     }
   }
+  await refreshTrayRunState()
 }
 
 onMounted(async () => {
+  // Probe the client only: this hook runs before the mode-save flow picks the
+  // icon up, so applying a state here would read the default (normal) mode.
   clientRunning.value = await isClientRunning().catch(() => false)
-  await setTrayRunState(clientRunning.value ? 'running' : 'idle')
   // Event-driven on RPC tunnel up/down; 30s fallback for missed events / service bounce.
   const timer = setInterval(() => {
     void refreshClientRunningAndTray()
@@ -1410,9 +1553,13 @@ onMounted(async () => {
   window.addEventListener(WINDOW_EVENTS.CLIENT_RPC_STATE_CHANGED, onClientRpcStateChanged)
   window.addEventListener(WINDOW_EVENTS.POST_RUN_NETWORK_INSTANCE, onPostRun)
   window.addEventListener(WINDOW_EVENTS.VPN_SERVICE_STOP, onVpnStop)
+  registerTrayRunStateRefresher(scheduleTrayRunStateRefresh)
 
   onUnmounted(() => {
     clearInterval(timer)
+    registerTrayRunStateRefresher(null)
+    if (trayRefreshTimer !== undefined)
+      window.clearTimeout(trayRefreshTimer)
     window.removeEventListener(WINDOW_EVENTS.CLIENT_RPC_STATE_CHANGED, onClientRpcStateChanged)
     window.removeEventListener(WINDOW_EVENTS.POST_RUN_NETWORK_INSTANCE, onPostRun)
     window.removeEventListener(WINDOW_EVENTS.VPN_SERVICE_STOP, onVpnStop)
