@@ -715,3 +715,58 @@ describe('RemoteManagement delete authority', () => {
     }
   })
 })
+
+describe('RemoteManagement User→Web takeover confirm', () => {
+  it('gui-client: User source saves without the takeover confirm', async () => {
+    confirmRequire.mockClear()
+    const config = makeFlagConfig()
+    const api = makeApi({ config, source: 1 })
+    const wrapper = await mountRemote(api, { hostSurface: 'gui-client' })
+
+    try {
+      await enterCombinedConfig(wrapper)
+      networkConfigRef(wrapper).network_name = 'local-edit'
+      await nextTick()
+      await flushPromises()
+
+      await wrapper.find('button[data-label="web.device_management.save_config"]').trigger('click')
+      await settleRemoteManagement()
+
+      // The GUI writes through the device: it cannot flip ownership, so the
+      // "console will take over" confirm would be a promise it cannot keep.
+      expect(confirmRequire).not.toHaveBeenCalled()
+      expect(api.save_config).toHaveBeenCalledOnce()
+    } finally {
+      wrapper.unmount()
+    }
+  })
+
+  it('web-console: User source confirms takeover before writing', async () => {
+    confirmRequire.mockClear()
+    const config = makeFlagConfig()
+    const api = makeApi({ config, source: 1 })
+    const wrapper = await mountRemote(api, { hostSurface: 'web-console' })
+
+    try {
+      await enterCombinedConfig(wrapper)
+      networkConfigRef(wrapper).network_name = 'takeover'
+      await nextTick()
+      await flushPromises()
+
+      await wrapper.find('button[data-label="web.device_management.save_config"]').trigger('click')
+      await flushPromises()
+
+      expect(confirmRequire).toHaveBeenCalledOnce()
+      const arg = confirmRequire.mock.calls[0][0] as { message: string, accept: () => void }
+      expect(arg.message).toBe('web.device_management.confirm_save_takeover_user_source')
+      // Nothing is written until the user accepts the ownership change.
+      expect(api.save_config).not.toHaveBeenCalled()
+
+      arg.accept()
+      await settleRemoteManagement()
+      expect(api.save_config).toHaveBeenCalledOnce()
+    } finally {
+      wrapper.unmount()
+    }
+  })
+})

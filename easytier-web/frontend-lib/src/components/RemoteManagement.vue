@@ -1321,7 +1321,7 @@ const confirmRunNetwork = (config?: NetworkTypes.NetworkConfig | Event) => {
         return;
     }
     // §8.1.5: User-source Run that Save→Web must confirm takeover (same as Save).
-    if (isUserSourceConfig.value) {
+    if (shouldConfirmTakeover.value) {
         confirm.require({
             message: t('web.device_management.confirm_save_takeover_user_source'),
             header: t('run_network'),
@@ -1412,6 +1412,21 @@ const isUserSourceConfig = computed(() => {
     return source === undefined || source === Api.ConfigSource.User;
 });
 
+/**
+ * Whether Save/Run must first confirm the User→Web takeover.
+ *
+ * Only the **web console** can actually take ownership: its `save_config` is a
+ * REST upsert that unconditionally writes `source = web`. The desktop GUI saves
+ * through the device (`save_network_config`) and never reports a User-source
+ * config — the console would reject it as `OwnershipConflict` anyway — so the
+ * confirmation there promises the opposite of what the same surface's own badge
+ * tip states ("未接管前不会自动写入控制台数据库"). Unknown hosts keep the
+ * confirm: we can only prove it is redundant for `gui-client`.
+ */
+const shouldConfirmTakeover = computed(() =>
+    props.hostSurface !== 'gui-client' && isUserSourceConfig.value,
+);
+
 const doSaveNetworkConfig = async () => {
     if (!currentNetworkConfig.value || savingConfig.value || !canSaveConfig.value) {
         return;
@@ -1479,12 +1494,12 @@ const doSaveNetworkConfig = async () => {
     }
 };
 
-/** User-source rows: confirm console takeover before Save writes Web ownership. */
+/** User-source rows on the web console: confirm takeover before Save writes Web ownership. */
 const saveNetworkConfig = async () => {
     if (!currentNetworkConfig.value || savingConfig.value || !canSaveConfig.value) {
         return;
     }
-    if (isUserSourceConfig.value) {
+    if (shouldConfirmTakeover.value) {
         confirm.require({
             message: t('web.device_management.confirm_save_takeover_user_source'),
             header: t('web.device_management.save_config'),
