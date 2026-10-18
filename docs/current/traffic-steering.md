@@ -3,7 +3,7 @@
 ## Status
 
 - Status: **Current**
-- 最近审阅：2026-10-16（修正 `manual_routes` 语义：仅覆盖**学习集合**，append 模式仍自动装 exit `/0`、policy 显式 `/0` 两种模式均生效；Android JNI 逃生阀改由 `NetworkInstanceRunningInfo` 下发；标明 Android/OHOS 未接 `[[policy_routes]]` L2；补对端 `/0` 兜底需 `enable_exit_node`）
+- 最近审阅：2026-10-18（Android GUI / OHOS 与 JNI 对齐：新 core 吃 `desired_proxy_cidrs`，旧 core 回退本地拼装）；2026-10-16（修正 `manual_routes` 语义：仅覆盖**学习集合**，append 模式仍自动装 exit `/0`、policy 显式 `/0` 两种模式均生效；Android JNI 逃生阀改由 `NetworkInstanceRunningInfo` 下发；补对端 `/0` 兜底需 `enable_exit_node`）
 - 范围：`exit_nodes` / `enable_exit_node` / `proxy_cidrs` / `manual_routes` / `manual_routes_append` / `[[policy_routes]]` / TUN 系统路由同步 / `allow_peer_default_without_exit`
 - 规划中的改动见：[`../roadmap/traffic-steering-vNext.md`](../roadmap/traffic-steering-vNext.md)、[`../roadmap/domain-proxy.md`](../roadmap/domain-proxy.md)；默认路由 Phase 2：[`../roadmap/default-route-and-underlay-excludes.md`](../roadmap/default-route-and-underlay-excludes.md)（论证全文 [`../archive/default-route-and-underlay-excludes-2026-10.md`](../archive/default-route-and-underlay-excludes-2026-10.md)）
 - DNS：[`magic-dns.md`](./magic-dns.md)
@@ -17,7 +17,7 @@
 
 | 层 | 管什么 | 相关配置 |
 |----|--------|----------|
-| **L2 入口** | 包会不会进 TUN（OS 路由表） | 对端通告的 `proxy_cidrs`（**IPv4**；见 §3 平台说明，IPv6 proxy CIDR 不装）；本机 `exit_nodes` 安装的默认路由（须无 override 模式 `manual_routes`）；`manual_routes`；本机 `[[policy_routes]]` 中 `Stable`/`Failover` 规则的 CIDR（**桌面**与 L3 **同源**；Android/OHOS 未接，见 §3 / §5.2） |
+| **L2 入口** | 包会不会进 TUN（OS 路由表） | 对端通告的 `proxy_cidrs`（**IPv4**；见 §3 平台说明，IPv6 proxy CIDR 不装）；本机 `exit_nodes` 安装的默认路由（须无 override 模式 `manual_routes`）；`manual_routes`；本机 `[[policy_routes]]` 中 `Stable`/`Failover` 规则的 CIDR（桌面与 L3 **同源**；Android/OHOS **新 core** 经 `desired_proxy_cidrs` 同源安装，见 §3 / §5.2） |
 | **L3 选路** | 进 TUN 后交给哪个 peer | VIP、proxy CIDR LPM（不含 `/0`）、**`[[policy_routes]]`（次序 3.5）**、`exit_nodes`、`enable_exit_node` |
 
 出口机 **不会** 因为 `enable_exit_node` 向 OSPF 通告 `0.0.0.0/0`。默认路由由**选用出口的客户端本机**安装。
@@ -79,7 +79,7 @@ IPv6：VIP / 非 `/0` 的 proxy LPM → `exit_nodes`（同样要求下一跳）�
   - GUI 侧 `easytier-gui/.../manager.rs::persist_runtime_dev_name`：实例启动后读回名字落盘。`run_network_instance` **不等** `start()` 完成，所以 `pre_run_network_instance_hook` 存下的仍是空 `dev_name`；该函数只在「存储里 `dev_name` 为空且非 web 归属」时才轮询，成功一次后后续运行直接跳过
   - web 归属配置不动：console 侧 reconciler 用 `is_automatic_windows_dev_name` 主动忽略自动名，写回会把自动名当成用户配置  
 - ACL / KCP / QUIC / wrapped-TCP 等旁路通过 `get_peer_id_by_ip_allowing_default_proxy` 仍可解析对端通告的 `/0`  
-- **`[[policy_routes]]` 的 L2 贡献（P2 起，桌面路径）**：`cidr_monitor` → `resolve_proxy_cidrs` 期望集合额外并入本机路由表中 `Stable` / `Failover` 规则的 CIDR，取自 **L3 热路径同一份 `ArcSwap` 快照**（L2 与 L3 同源，避免「装了路由但 L3 查不到」的黑洞）。**`Degraded` 规则不贡献 L2**。含显式 `/0` 规则时等价于「本节点声明全隧道」，可触发本机默认路由安装（仍受 `no_tun` 抑制）。**Android / OHOS 宿主装路由路径未读该快照**（见 §3 平台表与 §5.2）
+- **`[[policy_routes]]` 的 L2 贡献（P2 起）**：`cidr_monitor` → `resolve_proxy_cidrs` 期望集合额外并入本机路由表中 `Stable` / `Failover` 规则的 CIDR，取自 **L3 热路径同一份 `ArcSwap` 快照**（L2 与 L3 同源，避免「装了路由但 L3 查不到」的黑洞）。**`Degraded` 规则不贡献 L2**。含显式 `/0` 规则时等价于「本节点声明全隧道」，可触发本机默认路由安装（仍受 `no_tun` 抑制）。桌面直接装该期望集；**Android / OHOS 新 core** 经 `desired_proxy_cidrs` 下发后由宿主原样安装（旧 core 仍本地拼装，见 §3 / §5.2）
 - `manual_routes` 只覆盖**学习集合**（对端 proxy CIDR — 含对端 `/0` — 与 policy `local_routes` 中的**非 `/0`** 条目）；**不覆盖本机自己的默认路由意图**：
   - **用户手写在 `manual_routes` 里的 `/0`**：两种模式下都保留（与 policy 显式 `/0` 同为「本机声明全隧道」；`no_tun` 除外）
   - `manual_routes_append = true`：手动列表与「对端 proxy CIDR + policy `local_routes`」**叠加**，且 `exit_nodes` 仍自动装 `/0`（低度量）
@@ -97,9 +97,9 @@ IPv6：VIP / 非 `/0` 的 proxy LPM → `exit_nodes`（同样要求下一跳）�
 | 平台 | 路由安装方 | 对端通告的 `/0` 会怎样 | `[[policy_routes]]` L2（CIDR / 域名 `/32`） |
 |------|-----------|----------------------|---------------------------------------------|
 | Windows / Linux / macOS（非 NE）/ FreeBSD | 本进程 `apply_route_changes`（`resolve_proxy_cidrs`） | **默认不装**；仅 `allow_peer_default_without_exit` 或本机 exit（且 `manual_routes` 非 override 模式）时进入期望集合 | ✅ 与 L3 同源快照 |
-| Android（GUI / Web） | `VpnService.Builder.addRoute`，由 GUI `getRoutesForVpn` 汇总 | 无**可达** exit 且未开逃生阀时**过滤**对端 `/0`；exit VIP 出现在路由表且有下一跳时显式加 `/0` | ❌ 只汇 peer `proxy_cidrs` + 配置 `routes` + exit `/0`，**不读** `l2_contributing_cidrs` |
+| Android（GUI / Web） | `VpnService.Builder.addRoute`，由 GUI `getRoutesForVpn` 汇总 | 新 core：期望集合已含过滤；老 core：无**可达** exit 且未开逃生阀时**过滤**对端 `/0`，可达 exit 时显式加 `/0` | ✅ 新 core（`allow_peer_default_without_exit` presence → 装 `desired_proxy_cidrs` + MagicDNS `/32`）；老 core ❌ 本地拼装 |
 | Android（`easytier-android-jni`） | 新 core 下发的 `desired_proxy_cidrs`（#16）原样安装；老 core 回退为 Kotlin 拼装 | 新 core：期望集合已做过滤（含 exit `/0` / 逃生阀 `/0` / 手写路由 / policy CIDR），每 3 秒刷新；老 core 同上行 | ✅ 新 core（含 policy CIDR / 观测 `/32`）；老 core ❌ |
-| OHOS | `aggregate_tun_routes` | 无可达 exit 且未开逃生阀时过滤对端 `/0`；可达时插入 `/0`（再 `simplify`） | ❌ 只汇虚拟网段 + `manual_routes` + peer `proxy_cidrs` + exit `/0` |
+| OHOS | `aggregate_tun_routes` | 新 core：期望集合已含过滤；老 core：无可达 exit 且未开逃生阀时过滤对端 `/0`，可达时插入 `/0`（再 `simplify`） | ✅ 新 core（`core_route_policy_present` → `desired_proxy_cidrs` + MagicDNS `/32`）；老 core ❌ 虚拟网段 + `manual_routes` + peer `proxy_cidrs` + exit `/0` |
 | iOS / macOS NE | 宿主 App / NE `includedRoutes` | 本仓库无法约束 | ❌ 本仓库无法约束 |
 
 补充：对端宣告的 **IPv6 proxy CIDR 目前不写入任何 OS 路由**（`::/0` 只在本机出口时装）。
@@ -178,9 +178,9 @@ if_all_unavailable = "open"       # open = 回退物理网关；closed = 丢包�
 | 平台 | 域名 / `policy_routes` 导流 | 原因 |
 |------|-----------------------------|------|
 | Windows / macOS（非 NE）/ Linux（systemd）/ OpenWrt（手工） | ✅ | 本进程 `resolve_proxy_cidrs` + MagicDNS 自动接线；观测 `/32` 进 OS |
-| Android（Tauri） | ⚠️ **仅全隧道近似** | L3 / MagicDNS（`fake_ip`）可运行，但 `getRoutesForVpn` **不装** policy CIDR / 观测 `/32`；无可达 exit（或未手写进 `routes`）时，域名目标**不会**进 VpnService |
+| Android（Tauri） | ✅ 新 core；老 core ⚠️ | 新 core：`getRoutesForVpn` 装 `desired_proxy_cidrs`（含 policy CIDR / 观测 `/32`）；老 core 仍只拼 peer `proxy_cidrs` + 配置 `routes`（仅全隧道近似） |
 | Android（JNI） | ✅ 新 core；老 core ⚠️ | 新 core 下发期望集合（含 policy CIDR / 观测 `/32`）直接装进 VpnService；老 core 同上（仅全隧道近似）。两种关 DNS 都回落运营商 DNS |
-| OHOS | ⚠️ **仅全隧道近似** | 同 Android：`aggregate_tun_routes` 未读 `l2_contributing_cidrs` |
+| OHOS | ✅ 新 core；老 core ⚠️ | 新 core：`aggregate_tun_routes` 装 `desired_proxy_cidrs`；老 core 仍本地拼装（未读 `l2_contributing_cidrs`） |
 | **iOS / macOS NE** | ❌ | OS 不走 EasyTier DNS，拿不到解析结果 |
 | **`no_tun`** | ❌ | MagicDNS Runner 不启动，无观测来源 |
 

@@ -15,6 +15,14 @@
 //! and retried by the flusher until the route appears. Once it does, the
 //! original first packet goes out and the connection starts immediately.
 //!
+//! ## Not the same as relay handshake buffering
+//!
+//! [`crate::peers::relay_peer_map::RelayPeerMap`] keeps
+//! `handshake_pending_packets` while a relay Noise session is still opening —
+//! keyed by `PeerId`, flushed on handshake success. That buffer knows the
+//! destination peer already; this one covers the earlier "no peer for this IP
+//! yet" race. Do not merge the two.
+//!
 //! ## Boundaries (deliberate)
 //!
 //! - **Bounded**: at most [`MAX_PER_DST`] per destination and [`MAX_TOTAL`]
@@ -88,6 +96,17 @@ pub(crate) struct Taken {
     pub expired: usize,
 }
 
+/// Result of [`PendingPackets::push`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct PushOutcome {
+    /// `false` when the global cap rejected the new packet (caller counts a drop).
+    pub accepted: bool,
+    /// Packets discarded while admitting this one (per-dst eviction and/or
+    /// reclaiming already-expired slots). Caller counts these as
+    /// `no_dst_peer_drops` so buffered→drop accounting stays conserved.
+    pub dropped: usize,
+}
+
 pub(crate) struct PendingPackets {
     inner: Mutex<Inner>,
     wake: Notify,
@@ -107,13 +126,13 @@ impl PendingPackets {
 
     /// Park `packet` until `expires_at`.
     ///
-    /// Returns `false` when the queue is full; the caller then counts a real
-    /// drop, so the existing `data_plane_no_dst_peer_drops` signal keeps its
-    /// meaning.
-    pub(crate) fn push(&self, parked: Parked) -> bool {
+    /// See [`PushOutcome`]: a rejected push leaves `accepted = false`; slot
+    /// reclaim / per-dst eviction report how many previously buffered packets
+    /// became real drops.
+    pub(crate) fn push(&self, parked: Parked) -> PushOutcome {
         let now = Instant::now();
         let dst = parked.dst;
-        {
+        let outcome = {
             let mut inner = self.inner.lock().unwrap();
             // Reclaim this destination's expired slots first so a stale queue
             // can never block a fresh packet.
@@ -125,7 +144,10 @@ impl PendingPackets {
             }
             inner.total -= reclaimed;
             if inner.total >= MAX_TOTAL {
-                return false;
+                return PushOutcome {
+                    accepted: false,
+                    dropped: reclaimed,
+                };
             }
             let mut evicted = 0;
             {
@@ -143,11 +165,17 @@ impl PendingPackets {
                 });
             }
             inner.total = inner.total - evicted + 1;
-        }
+            PushOutcome {
+                accepted: true,
+                dropped: reclaimed + evicted,
+            }
+        };
         // `notify_one` stores a permit when the flusher is not waiting, so a
         // push that races with the flusher's idle wait is never lost.
-        self.wake.notify_one();
-        true
+        if outcome.accepted {
+            self.wake.notify_one();
+        }
+        outcome
     }
 
     /// Remove everything, splitting out entries whose TTL has elapsed.
@@ -234,7 +262,9 @@ mod tests {
     fn push_then_take_returns_the_packet() {
         let pending = PendingPackets::new();
         let now = Instant::now();
-        assert!(pending.push(parked(ip(1), now + PENDING_TTL)));
+        let outcome = pending.push(parked(ip(1), now + PENDING_TTL));
+        assert!(outcome.accepted);
+        assert_eq!(outcome.dropped, 0);
         assert!(!pending.is_empty());
 
         let taken = pending.take_all(now);
@@ -260,9 +290,13 @@ mod tests {
     fn per_destination_cap_keeps_the_newest_packets() {
         let pending = PendingPackets::new();
         let now = Instant::now();
+        let mut total_dropped = 0;
         for _ in 0..MAX_PER_DST + 3 {
-            assert!(pending.push(parked(ip(1), now + PENDING_TTL)));
+            let outcome = pending.push(parked(ip(1), now + PENDING_TTL));
+            assert!(outcome.accepted);
+            total_dropped += outcome.dropped;
         }
+        assert_eq!(total_dropped, 3, "three oldest packets were evicted");
 
         let taken = pending.take_all(now);
         assert_eq!(taken.ready.len(), MAX_PER_DST);
@@ -274,12 +308,18 @@ mod tests {
         let now = Instant::now();
         for i in 0..MAX_TOTAL {
             // One destination per packet so the per-destination cap never binds.
-            assert!(pending.push(parked(ip(i as u8), now + PENDING_TTL)));
+            assert!(
+                pending
+                    .push(parked(ip(i as u8), now + PENDING_TTL))
+                    .accepted
+            );
         }
+        let rejected = pending.push(parked(ip(200), now + PENDING_TTL));
         assert!(
-            !pending.push(parked(ip(200), now + PENDING_TTL)),
+            !rejected.accepted,
             "over the global cap the caller must fall back to a counted drop"
         );
+        assert_eq!(rejected.dropped, 0);
     }
 
     #[test]
@@ -307,10 +347,18 @@ mod tests {
         let pending = PendingPackets::new();
         let now = Instant::now();
         let stale = now - PENDING_TTL - Duration::from_millis(1);
+        // Each push on the same dst reclaims the previous already-expired
+        // entry, so only one stale slot remains when the fresh packet arrives.
         for _ in 0..MAX_PER_DST {
             pending.push(parked(ip(1), stale));
         }
-        assert!(pending.push(parked(ip(1), now + PENDING_TTL)));
+        let outcome = pending.push(parked(ip(1), now + PENDING_TTL));
+        assert!(outcome.accepted);
+        assert_eq!(
+            outcome.dropped, 1,
+            "the remaining expired slot must count as a drop"
+        );
+        assert_eq!(pending.take_all(now).ready.len(), 1);
     }
 
     #[test]

@@ -536,6 +536,19 @@ export interface NetworkInstanceRunningInfo {
   error_msg?: string
   /** Desktop L2 sync summary: desired vs installed proxy CIDRs. */
   proxy_cidr_route_sync?: string
+  /**
+   * Presence bit for "new core" route-policy fields (proto optional bool).
+   * Hosts treat `!= null/undefined` as new-core and install `desired_proxy_cidrs`
+   * verbatim; absent ⇒ fall back to legacy local assembly (Android JNI / GUI / OHOS).
+   */
+  allow_peer_default_without_exit?: boolean | null
+  /** Configured exit VIPs mirrored for host-side aggregators. */
+  exit_nodes?: string[]
+  /**
+   * Core-computed L2 desired proxy-CIDR set. Empty arrays may be omitted on the
+   * JSON wire; combine with `allow_peer_default_without_exit` presence.
+   */
+  desired_proxy_cidrs?: string[]
 }
 
 export interface Ipv4Addr {

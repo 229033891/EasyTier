@@ -619,3 +619,55 @@ describe('mobile VPN underlay network change (A9)', () => {
     expect(mocks.notifyUnderlayNetworkChanged).toHaveBeenCalledWith(2)
   })
 })
+
+describe('getRoutesForVpn desired_proxy_cidrs', () => {
+  it('uses desired_proxy_cidrs when allow_peer_default_without_exit is present (new core)', async () => {
+    const { getRoutesForVpn } = await import('./mobile_vpn')
+    const routes = getRoutesForVpn(
+      {
+        routes: [{ proxy_cidrs: ['10.0.0.0/8'], next_hop_peer_id: 1 } as never],
+        allow_peer_default_without_exit: false,
+        desired_proxy_cidrs: ['192.168.8.0/22', '10.1.0.0/16'],
+      },
+      {
+        routes: ['172.16.0.0/12'],
+        enable_magic_dns: false,
+        exit_nodes: [],
+      } as never,
+    )
+    expect(routes).toEqual(['10.1.0.0/16', '192.168.8.0/22'])
+  })
+
+  it('adds MagicDNS /32 on top of desired set when enabled', async () => {
+    const { getRoutesForVpn } = await import('./mobile_vpn')
+    const routes = getRoutesForVpn(
+      {
+        routes: [],
+        allow_peer_default_without_exit: true,
+        desired_proxy_cidrs: ['10.20.0.0/16'],
+      },
+      {
+        routes: [],
+        enable_magic_dns: true,
+        exit_nodes: [],
+      } as never,
+    )
+    expect(routes).toEqual(['10.20.0.0/16', '10.255.255.254/32'])
+  })
+
+  it('falls back to legacy assembly when presence bit is absent (old core)', async () => {
+    const { getRoutesForVpn } = await import('./mobile_vpn')
+    const routes = getRoutesForVpn(
+      {
+        routes: [{ proxy_cidrs: ['192.168.8.0/22'], next_hop_peer_id: 1 } as never],
+      },
+      {
+        routes: ['172.16.0.0/12'],
+        enable_magic_dns: false,
+        exit_nodes: [],
+        allow_peer_default_without_exit: false,
+      } as never,
+    )
+    expect(routes).toEqual(['172.16.0.0/12', '192.168.8.0/22'])
+  })
+})

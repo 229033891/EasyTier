@@ -58,7 +58,10 @@ pub struct RelayPeerMap {
     states: DashMap<PeerId, RelayPeerState>,
     pending_handshakes: DashMap<PeerId, oneshot::Sender<ZCPacket>>,
     handshake_locks: DashMap<PeerId, Arc<Mutex<()>>>,
-    pub(crate) pending_packets: DashMap<PeerId, Vec<(ZCPacket, NextHopPolicy)>>,
+    /// Packets held while a relay Noise handshake is in flight (keyed by
+    /// destination peer). Distinct from [`crate::peers::pending_packets`]
+    /// which parks packets that have no route/peer yet — do not merge.
+    pub(crate) handshake_pending_packets: DashMap<PeerId, Vec<(ZCPacket, NextHopPolicy)>>,
 
     is_secure_mode_enabled: bool,
 }
@@ -149,7 +152,7 @@ impl RelayPeerMap {
             states: DashMap::new(),
             pending_handshakes: DashMap::new(),
             handshake_locks: DashMap::new(),
-            pending_packets: DashMap::new(),
+            handshake_pending_packets: DashMap::new(),
             is_secure_mode_enabled,
         })
     }
@@ -262,7 +265,10 @@ impl RelayPeerMap {
     }
 
     fn buffer_pending_packet(&self, dst_peer_id: PeerId, pkt: ZCPacket, policy: NextHopPolicy) {
-        let mut entry = self.pending_packets.entry(dst_peer_id).or_default();
+        let mut entry = self
+            .handshake_pending_packets
+            .entry(dst_peer_id)
+            .or_default();
         if entry.len() < MAX_PENDING_PACKETS_PER_PEER {
             entry.push((pkt, policy));
         }
@@ -270,7 +276,10 @@ impl RelayPeerMap {
     }
 
     async fn flush_pending_packets(&self, dst_peer_id: PeerId, session: Arc<PeerSession>) {
-        let packets = self.pending_packets.remove(&dst_peer_id).map(|(_, v)| v);
+        let packets = self
+            .handshake_pending_packets
+            .remove(&dst_peer_id)
+            .map(|(_, v)| v);
         let Some(packets) = packets else { return };
         if packets.is_empty() {
             return;
@@ -344,7 +353,7 @@ impl RelayPeerMap {
         if let Some(next_retry_at) = self.states.get(&dst_peer_id).and_then(|v| v.next_retry_at)
             && Instant::now() < next_retry_at
         {
-            self.pending_packets.remove(&dst_peer_id);
+            self.handshake_pending_packets.remove(&dst_peer_id);
             return Err(Error::RouteError(Some(
                 "relay handshake backoff".to_string(),
             )));
@@ -373,7 +382,7 @@ impl RelayPeerMap {
         }
 
         // All attempts failed, drop buffered packets
-        self.pending_packets.remove(&dst_peer_id);
+        self.handshake_pending_packets.remove(&dst_peer_id);
 
         Err(last_err
             .unwrap_or_else(|| Error::RouteError(Some("relay handshake failed".to_string()))))
@@ -733,12 +742,12 @@ impl RelayPeerMap {
             self.states.remove(&peer_id);
             self.pending_handshakes.remove(&peer_id);
             self.handshake_locks.remove(&peer_id);
-            self.pending_packets.remove(&peer_id);
+            self.handshake_pending_packets.remove(&peer_id);
         }
         shrink_dashmap(&self.states, None);
         shrink_dashmap(&self.pending_handshakes, None);
         shrink_dashmap(&self.handshake_locks, None);
-        shrink_dashmap(&self.pending_packets, None);
+        shrink_dashmap(&self.handshake_pending_packets, None);
     }
 
     pub fn has_state(&self, peer_id: PeerId) -> bool {
@@ -754,11 +763,11 @@ impl RelayPeerMap {
         self.states.remove(&peer_id);
         self.pending_handshakes.remove(&peer_id);
         self.handshake_locks.remove(&peer_id);
-        self.pending_packets.remove(&peer_id);
+        self.handshake_pending_packets.remove(&peer_id);
         shrink_dashmap(&self.states, None);
         shrink_dashmap(&self.pending_handshakes, None);
         shrink_dashmap(&self.handshake_locks, None);
-        shrink_dashmap(&self.pending_packets, None);
+        shrink_dashmap(&self.handshake_pending_packets, None);
 
         tracing::debug!(?peer_id, "RelayPeerMap removed peer relay state");
     }

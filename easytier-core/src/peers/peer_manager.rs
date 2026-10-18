@@ -2294,6 +2294,11 @@ impl PeerManagerCore {
     /// Must be called once, after this manager is inside its `Arc`. Idle cost is
     /// zero: the loop parks on a notify and only ticks while packets are held.
     ///
+    /// While the queue is non-empty the flusher also listens for
+    /// `proxy_cidr_wake` (peer-info / route changes) so a newly installed route
+    /// can flush immediately instead of waiting out the 20ms tick. With
+    /// `route_algo = none` there is no wake handle and only the tick applies.
+    ///
     /// The task holds a `Weak` to the manager, so it exits as soon as the
     /// manager is dropped instead of keeping the whole graph alive.
     pub(crate) async fn start_pending_packet_flush(self: &Arc<Self>) {
@@ -2302,18 +2307,34 @@ impl PeerManagerCore {
         self.tasks.lock().await.spawn(async move {
             loop {
                 pending.wait_for_work().await;
-                // Give route installation a beat. The wake-up says "a packet
-                // needs a route", not "the OS route exists", so retrying
-                // immediately would just fail again.
-                crate::foundation::time::sleep(PENDING_FLUSH_INTERVAL).await;
 
-                let Some(peer_manager) = this.upgrade() else {
-                    break;
-                };
-                peer_manager
-                    .outbound_packet_router
-                    .flush_pending_once()
-                    .await;
+                loop {
+                    let Some(peer_manager) = this.upgrade() else {
+                        return;
+                    };
+                    let route_wake = peer_manager.proxy_cidr_wake();
+                    // First pass after a new park: give route installation a
+                    // short beat, then also react to peer-info wakes.
+                    match route_wake.as_deref() {
+                        Some(wake) => {
+                            tokio::select! {
+                                _ = wake.notified() => {}
+                                _ = crate::foundation::time::sleep(PENDING_FLUSH_INTERVAL) => {}
+                            }
+                        }
+                        None => {
+                            crate::foundation::time::sleep(PENDING_FLUSH_INTERVAL).await;
+                        }
+                    }
+                    peer_manager
+                        .outbound_packet_router
+                        .flush_pending_once()
+                        .await;
+                    drop(peer_manager);
+                    if pending.is_empty() {
+                        break;
+                    }
+                }
             }
         });
     }
@@ -3645,12 +3666,16 @@ impl PeerOutboundPacketRouter {
             _ => {}
         }
 
-        if self.pending_packets.push(Parked {
+        let outcome = self.pending_packets.push(Parked {
             dst: ip_addr,
             packet: msg.clone(),
             expires_at: Instant::now() + PENDING_TTL,
             not_send_to_self,
-        }) {
+        });
+        if outcome.dropped > 0 {
+            self.counters.no_dst_peer_drops.add(outcome.dropped as u64);
+        }
+        if outcome.accepted {
             self.counters.no_dst_peer_buffered.inc();
             true
         } else {

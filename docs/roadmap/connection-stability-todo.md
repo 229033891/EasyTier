@@ -4,7 +4,7 @@
 
 - Status: **Roadmap**（Checklist；P-UX + P0.1–P0.4 + P1.1–P1.3/P1.6–P1.8 + P2.1–P2.3 + P-AUTO.L1 已落地；下一步 P0.5 / P1.5 / **P-AUDIT.***）
 - 日期：2026-10-06
-- 最近审阅：2026-10-18（**P-AUDIT.11 + .12 已落地**：路由安装/会话启动改事件驱动，1s tick 降为兜底；无路由的包改 500ms 短暂暂存后重发；.5b/.6/.8b/.10b 明确不做，理由见 Current §11）；2026-10-17（**P-AUDIT.1–.5/.7/.9/.10 + S1b + `latency_first` 默认统一 + `ping_fail_close_count` 5→10 + KCP 对齐 已落地，待现网**）
+- 最近审阅：2026-10-18（**.12 打磨**：flusher 挂 `peer_info` 唤醒 + 挤出/过期 reclaim 计入 drops + relay `handshake_pending_packets` 命名互指；Android GUI / OHOS L2 对齐 `desired_proxy_cidrs`；**收益仍待现网**）；2026-10-18（**P-AUDIT.11 + .12 已落地**：路由安装/会话启动改事件驱动，1s tick 降为兜底；无路由的包改 500ms 短暂暂存后重发；.5b/.6/.8b/.10b 明确不做，理由见 Current §11）；2026-10-17（**P-AUDIT.1–.5/.7/.9/.10 + S1b + `latency_first` 默认统一 + `ping_fail_close_count` 5→10 + KCP 对齐 已落地，待现网**）
 - 背景：对照 OpenVPN / IPsec 的「固定隧道 + 强保活」模型，梳理 EasyTier Mesh（多 PeerConn + 打洞 + 中继）的稳定性差距与可落地项；**另纳入 2026-10-06 用户反馈：高级选项互斥缺校验、长表单占空间、单协议配置失败后无智能回落**；**2026-10-16**：对照 Tailscale 的延迟/卡顿/偶发不通代码审查见 [`../current/tailscale-gap-and-conflict-audit.md`](../current/tailscale-gap-and-conflict-audit.md)
 - 相关 Current：[`../current/peer-connections.md`](../current/peer-connections.md)、[`../current/tunnels-and-transport.md`](../current/tunnels-and-transport.md)、[`../current/tailscale-gap-and-conflict-audit.md`](../current/tailscale-gap-and-conflict-audit.md)、[`../current/p2p-direct-stability-audit.md`](../current/p2p-direct-stability-audit.md)
 - 相关 Roadmap：[`traffic-camouflage.md`](./traffic-camouflage.md)、[`multi-link-bonding.md`](./multi-link-bonding.md)（Phase 2a/2b 已合入；Phase 3 待做）、[`market-comparison-2026-10.md`](./market-comparison-2026-10.md)
@@ -176,7 +176,7 @@ score = w_lat * norm(rtt)
 - [x] **KCP** GUI `enable_kcp_proxy` `true` → `false`，与 core 一致（拍板「KCP 模式不开启」）
 - [x] **S1b** UDP 打洞 conn NAT 保活上限：32s → **10s**（TCP 打洞 1s 不变）；`hole_punch_ping_max` 纯函数，`min(cap, ping_interval_max_sec)` 只收紧不放宽
 - [x] **P-AUDIT.11** 首包等待：L2 路由安装与 route-sync 会话启动改**事件驱动**（`peer_info_notify` + `notify_one` → `ProxyCidrMonitor::select!`；`PeerAdded/Removed` → `session_mgr.sync_now("peer_set_changed")`）。1s tick 保留为漏信号兜底；conn 级事件刻意不触发（bonding 高频 churn）。目标：把「已连接 → 首包可通」从 1~3s 压到百毫秒级。**收益待现网验**（看 `data_plane_no_dst_peer_drops` 是否下降）
-- [x] **P-AUDIT.12** 首包兜底：查不到路由的包**短暂暂存后重发**（`peers/pending_packets.rs`，TTL 500ms / 每目标 4 包 / 全局 64 包），超限退回原计数丢弃；新增指标 `data_plane_no_dst_peer_buffered`。策略 `Block`、广播/组播、已过期三类**不暂存**；`not_send_to_self` 随包保存；重发不重跑 NIC 流水线（拆出 `send_msg_by_ip_after_pipeline(..., allow_buffer)`）。**收益待现网验**（`no_dst_peer_buffered` 上升 + `no_dst_peer_drops` 下降）
+- [x] **P-AUDIT.12** 首包兜底：查不到路由的包**短暂暂存后重发**（`peers/pending_packets.rs`，TTL 500ms / 每目标 4 包 / 全局 64 包），超限退回原计数丢弃；新增指标 `data_plane_no_dst_peer_buffered`。策略 `Block`、广播/组播、已过期三类**不暂存**；`not_send_to_self` 随包保存；重发不重跑 NIC 流水线（拆出 `send_msg_by_ip_after_pipeline(..., allow_buffer)`）。**打磨**：flusher 在有包时 `select!(peer_info_wake, 20ms tick)`；per-dst 挤出 / 过期 reclaim 计入 `no_dst_peer_drops`（指标守恒）；与 relay `handshake_pending_packets` 命名互指。**收益待现网验**（`no_dst_peer_buffered` 上升 + `no_dst_peer_drops` 下降）
 - [x] **DEF** `latency_first` 出厂默认 core `false` → `true`，与 GUI 模板统一为质量优先；此前 LeastHop 下有直连即短路返回，中继腿永不参与竞争（§2.2 原则未落地）。⚠️ **行为变更**
 - [x] **P1.7** `select_conn` 改为 **综合质量分**（延迟 + 丢包 + 抖动），含丢包熔断阈值与切换 hysteresis；默认丢包权重大于纯 RTT（`peers/conn/conn_select.rs`）
   - 默认：`w_lat=1` / `w_loss=4` / `w_jitter=1`；loss fuse 20%；switch margin 10% + abs 0.005 × 3 窗口（约 15s）

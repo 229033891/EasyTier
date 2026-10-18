@@ -224,6 +224,8 @@ pub(crate) fn collect_runtime_state() -> RuntimeAggregateState {
                 need_exit_node: false,
                 allow_peer_default_without_exit: false,
                 exit_nodes: Vec::new(),
+                core_route_policy_present: false,
+                desired_proxy_cidrs: Vec::new(),
                 error_message: None,
                 my_node_info: None,
                 events: Vec::new(),

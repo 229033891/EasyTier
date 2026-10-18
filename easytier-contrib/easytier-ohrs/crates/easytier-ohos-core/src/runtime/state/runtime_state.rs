@@ -110,12 +110,21 @@ pub struct RuntimeInstanceState {
     pub tun_attached: bool,
     pub magic_dns_enabled: bool,
     pub need_exit_node: bool,
-    /// Opt-in: keep peer-advertised `/0` without local exit_nodes.
+    /// Opt-in: keep peer-advertised `/0` without local exit_nodes (legacy path).
     #[serde(skip)]
     pub allow_peer_default_without_exit: bool,
-    /// Configured exit VIPs; used with live routes to decide TUN `/0`.
+    /// Configured exit VIPs; used with live routes to decide TUN `/0` (legacy).
     #[serde(skip)]
     pub exit_nodes: Vec<String>,
+    /// True when `NetworkInstanceRunningInfo.allow_peer_default_without_exit`
+    /// was present — the new-core marker that unlocks `desired_proxy_cidrs`.
+    /// Must not be inferred from config; an omitted proto field means old core.
+    #[serde(skip)]
+    pub core_route_policy_present: bool,
+    /// Core-computed L2 desired set; install verbatim when
+    /// `core_route_policy_present` is true.
+    #[serde(skip)]
+    pub desired_proxy_cidrs: Vec<String>,
     pub error_message: Option<String>,
     pub my_node_info: Option<MyNodeInfo>,
     pub events: Vec<String>,
@@ -413,18 +422,29 @@ pub fn runtime_instance_from_running_info(
     let need_exit_node = config
         .as_ref()
         .is_some_and(|config| !config.exit_nodes.is_empty());
-    let allow_peer_default_without_exit = config
-        .as_ref()
-        .and_then(|config| config.allow_peer_default_without_exit)
+    // Presence bit from running info (new core), not from config.
+    let core_route_policy_present = info.allow_peer_default_without_exit.is_some();
+    let allow_peer_default_without_exit = info
+        .allow_peer_default_without_exit
+        .or_else(|| {
+            config
+                .as_ref()
+                .and_then(|config| config.allow_peer_default_without_exit)
+        })
         .unwrap_or(false);
-    let exit_nodes = config
-        .as_ref()
-        .map(|config| config.exit_nodes.clone())
-        .unwrap_or_default();
+    let exit_nodes = if !info.exit_nodes.is_empty() {
+        info.exit_nodes.clone()
+    } else {
+        config
+            .as_ref()
+            .map(|config| config.exit_nodes.clone())
+            .unwrap_or_default()
+    };
     let manual_routes = config
         .as_ref()
         .map(|config| config.routes.clone())
         .unwrap_or_default();
+    let desired_proxy_cidrs = info.desired_proxy_cidrs.clone();
 
     RuntimeInstanceState {
         config_id: config_id.clone(),
@@ -437,6 +457,8 @@ pub fn runtime_instance_from_running_info(
         need_exit_node,
         allow_peer_default_without_exit,
         exit_nodes,
+        core_route_policy_present,
+        desired_proxy_cidrs,
         error_message: info.error_msg,
         my_node_info: info.my_node_info.map(my_node_info_to_view),
         events: info.events,
@@ -481,6 +503,9 @@ pub fn runtime_instance_from_config_snapshot(
         need_exit_node: !config.exit_nodes.is_empty(),
         allow_peer_default_without_exit: config.allow_peer_default_without_exit.unwrap_or(false),
         exit_nodes: config.exit_nodes.clone(),
+        // Config-only snapshots have no running-info presence bit.
+        core_route_policy_present: false,
+        desired_proxy_cidrs: Vec::new(),
         error_message: None,
         my_node_info: Some(my_node_info),
         events: Vec::new(),

@@ -49,6 +49,7 @@ declare global {
   const getMobileVpnInstalledRoutes: typeof import('./composables/mobile_vpn')['getMobileVpnInstalledRoutes']
   const getMobileVpnPushedDns: typeof import('./composables/mobile_vpn')['getMobileVpnPushedDns']
   const getNetworkMetas: typeof import('./composables/backend')['getNetworkMetas']
+  const getRoutesForVpn: typeof import('./composables/mobile_vpn')['getRoutesForVpn']
   const getServiceStatus: typeof import('./composables/backend')['getServiceStatus']
   const getVpnPortalInfo: typeof import('./composables/backend')['getVpnPortalInfo']
   const h: typeof import('vue')['h']
@@ -216,6 +217,7 @@ declare module 'vue' {
     readonly getMobileVpnInstalledRoutes: UnwrapRef<typeof import('./composables/mobile_vpn')['getMobileVpnInstalledRoutes']>
     readonly getMobileVpnPushedDns: UnwrapRef<typeof import('./composables/mobile_vpn')['getMobileVpnPushedDns']>
     readonly getNetworkMetas: UnwrapRef<typeof import('./composables/backend')['getNetworkMetas']>
+    readonly getRoutesForVpn: UnwrapRef<typeof import('./composables/mobile_vpn')['getRoutesForVpn']>
     readonly getServiceStatus: UnwrapRef<typeof import('./composables/backend')['getServiceStatus']>
     readonly getVpnPortalInfo: UnwrapRef<typeof import('./composables/backend')['getVpnPortalInfo']>
     readonly h: UnwrapRef<typeof import('vue')['h']>

@@ -660,39 +660,62 @@ function hasReachableExit(routes: Route[] | undefined, exitNodes: string[]): boo
   return false
 }
 
-function getRoutesForVpn(routes: Route[] | undefined, node_config: NetworkTypes.NetworkConfig): string[] {
-  const ret = []
-  const exitNodes = node_config.exit_nodes ?? []
-  const localExitDefault = hasReachableExit(routes, exitNodes)
-  const allowPeerDefault = node_config.allow_peer_default_without_exit === true
+/**
+ * Build VpnService routes. Mirrors Android JNI (`EasyTierManager.kt`):
+ * new cores expose `allow_peer_default_without_exit` (presence bit) and
+ * `desired_proxy_cidrs` — install that set verbatim. Old cores omit the bit
+ * and fall back to local assembly from peer `proxy_cidrs` + config routes.
+ */
+export function getRoutesForVpn(
+  networkInfo: Pick<
+    NetworkTypes.NetworkInstanceRunningInfo,
+    'routes' | 'allow_peer_default_without_exit' | 'desired_proxy_cidrs'
+  > | undefined,
+  node_config: NetworkTypes.NetworkConfig,
+): string[] {
+  const ret: string[] = []
 
-  for (const r of routes ?? []) {
-    for (const raw of normalizeRouteList(r.proxy_cidrs)) {
+  // New-core presence bit (proto optional bool): null/undefined ⇒ legacy path.
+  if (networkInfo?.allow_peer_default_without_exit != null) {
+    for (const raw of normalizeRouteList(networkInfo.desired_proxy_cidrs)) {
       const cidr = toVpnRouteCidr(raw)
-      if (!cidr)
-        continue
-      if (!localExitDefault && !allowPeerDefault && isDefaultIpv4Route(cidr)) {
-        continue
-      }
-      ret.push(cidr)
+      if (cidr)
+        ret.push(cidr)
     }
   }
+  else {
+    const routes = networkInfo?.routes
+    const exitNodes = node_config.exit_nodes ?? []
+    const localExitDefault = hasReachableExit(routes, exitNodes)
+    const allowPeerDefault = node_config.allow_peer_default_without_exit === true
 
-  for (const raw of normalizeRouteList(node_config.routes)) {
-    const cidr = toVpnRouteCidr(raw)
-    if (cidr)
-      ret.push(cidr)
-  }
+    for (const r of routes ?? []) {
+      for (const raw of normalizeRouteList(r.proxy_cidrs)) {
+        const cidr = toVpnRouteCidr(raw)
+        if (!cidr)
+          continue
+        if (!localExitDefault && !allowPeerDefault && isDefaultIpv4Route(cidr)) {
+          continue
+        }
+        ret.push(cidr)
+      }
+    }
 
-  if (localExitDefault) {
-    ret.push('0.0.0.0/0')
+    for (const raw of normalizeRouteList(node_config.routes)) {
+      const cidr = toVpnRouteCidr(raw)
+      if (cidr)
+        ret.push(cidr)
+    }
+
+    if (localExitDefault) {
+      ret.push('0.0.0.0/0')
+    }
   }
 
   if (node_config.enable_magic_dns) {
     ret.push('10.255.255.254/32')
   }
 
-  // sort and dedup
   return Array.from(new Set(ret)).sort()
 }
 
@@ -785,7 +808,7 @@ async function reconcileNetworkInstance(instanceId: string, generation: number) 
     network_length = 24
   }
 
-  const routes = getRoutesForVpn(curNetworkInfo?.routes, config)
+  const routes = getRoutesForVpn(curNetworkInfo, config)
 
   const dns = config.enable_magic_dns ? '10.255.255.254' : undefined
   const virtualIpv6WithPrefix = formatVirtualIpv6ForVpn(curNetworkInfo.my_node_info?.virtual_ipv6)

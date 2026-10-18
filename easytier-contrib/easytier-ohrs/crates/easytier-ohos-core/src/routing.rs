@@ -90,9 +90,11 @@ fn local_exit_default(instance: &RuntimeInstanceState) -> bool {
 
 /// Aggregate TUN routes for an instance.
 ///
-/// D+ Phase 1b: peer-advertised `0.0.0.0/0` is dropped unless a configured
-/// exit VIP is reachable in live routes, or
-/// `allow_peer_default_without_exit` is set. Manual routes are kept as-is.
+/// New cores (`core_route_policy_present`): install `desired_proxy_cidrs`
+/// verbatim (plus local VIP + MagicDNS fake IP). Old cores: peer-advertised
+/// `0.0.0.0/0` is dropped unless a configured exit VIP is reachable in live
+/// routes, or `allow_peer_default_without_exit` is set. Manual routes are kept
+/// as-is on the legacy path.
 pub fn aggregate_tun_routes(instance: &RuntimeInstanceState) -> Vec<String> {
     aggregate_tun_routes_with_policy(
         instance,
@@ -110,6 +112,21 @@ pub fn aggregate_tun_routes_with_policy(
         .my_node_info
         .as_ref()
         .and_then(|info| info.virtual_ipv4_cidr.clone());
+    let mut raw_routes = Vec::new();
+
+    if let Some(cidr) = virtual_ipv4_cidr.clone() {
+        raw_routes.push(cidr);
+    }
+
+    if instance.core_route_policy_present {
+        // Core already applied manual_routes / policy / exit / escape-hatch.
+        raw_routes.extend(instance.desired_proxy_cidrs.iter().cloned());
+        if instance.magic_dns_enabled {
+            raw_routes.push("10.255.255.254/32".to_string());
+        }
+        return simplify_routes(raw_routes);
+    }
+
     let runtime_proxy_cidrs = instance
         .routes
         .iter()
@@ -118,11 +135,6 @@ pub fn aggregate_tun_routes_with_policy(
             local_exit_default || allow_peer_default_without_exit || !is_default_ipv4_route(cidr)
         })
         .collect::<Vec<_>>();
-    let mut raw_routes = Vec::new();
-
-    if let Some(cidr) = virtual_ipv4_cidr.clone() {
-        raw_routes.push(cidr);
-    }
 
     raw_routes.extend(instance.manual_routes.iter().cloned());
     // Local proxy CIDRs are advertisements for networks reached through this
@@ -309,5 +321,85 @@ mod tests {
         let routes = aggregate_tun_routes(&instance);
         assert!(routes.contains(&"10.20.0.0/16".to_string()));
         assert!(!routes.iter().any(|r| r == "0.0.0.0/0"));
+    }
+
+    #[test]
+    fn desired_proxy_cidrs_used_when_core_route_policy_present() {
+        let mut instance = runtime_instance_from_config_snapshot(
+            "routing-desired".to_string(),
+            "test".to_string(),
+            NetworkConfig {
+                virtual_ipv4: Some("10.144.144.1".to_string()),
+                network_length: Some(24),
+                routes: vec!["172.16.0.0/16".to_string()],
+                enable_magic_dns: Some(true),
+                ..Default::default()
+            },
+            true,
+        );
+        // Peer routes that must be ignored once desired is authoritative.
+        instance.routes.push(RouteView {
+            peer_id: 2,
+            hostname: None,
+            ipv4: Some("10.144.144.2".to_string()),
+            ipv4_cidr: Some("10.144.144.2/24".to_string()),
+            ipv6_cidr: None,
+            proxy_cidrs: vec!["10.0.0.0/8".to_string()],
+            next_hop_peer_id: Some(2),
+            cost: Some(1),
+            path_latency: None,
+            udp_nat_type: None,
+            tcp_nat_type: None,
+            inst_id: None,
+            version: None,
+            is_public_server: None,
+        });
+        instance.core_route_policy_present = true;
+        instance.desired_proxy_cidrs =
+            vec!["192.168.8.0/22".to_string(), "10.1.0.0/16".to_string()];
+
+        let routes = aggregate_tun_routes(&instance);
+        assert!(routes.contains(&"10.144.144.0/24".to_string()));
+        assert!(routes.contains(&"192.168.8.0/22".to_string()));
+        assert!(routes.contains(&"10.1.0.0/16".to_string()));
+        assert!(routes.contains(&"10.255.255.254/32".to_string()));
+        assert!(!routes.contains(&"10.0.0.0/8".to_string()));
+        assert!(!routes.contains(&"172.16.0.0/16".to_string()));
+    }
+
+    #[test]
+    fn legacy_assembly_when_core_route_policy_absent() {
+        let mut instance = runtime_instance_from_config_snapshot(
+            "routing-legacy".to_string(),
+            "test".to_string(),
+            NetworkConfig {
+                virtual_ipv4: Some("10.144.144.1".to_string()),
+                network_length: Some(24),
+                routes: vec!["172.16.0.0/16".to_string()],
+                ..Default::default()
+            },
+            true,
+        );
+        assert!(!instance.core_route_policy_present);
+        instance.routes.push(RouteView {
+            peer_id: 2,
+            hostname: None,
+            ipv4: Some("10.144.144.2".to_string()),
+            ipv4_cidr: Some("10.144.144.2/24".to_string()),
+            ipv6_cidr: None,
+            proxy_cidrs: vec!["192.168.8.0/22".to_string()],
+            next_hop_peer_id: Some(2),
+            cost: Some(1),
+            path_latency: None,
+            udp_nat_type: None,
+            tcp_nat_type: None,
+            inst_id: None,
+            version: None,
+            is_public_server: None,
+        });
+
+        let routes = aggregate_tun_routes(&instance);
+        assert!(routes.contains(&"172.16.0.0/16".to_string()));
+        assert!(routes.contains(&"192.168.8.0/22".to_string()));
     }
 }
