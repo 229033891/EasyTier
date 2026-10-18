@@ -3,7 +3,7 @@
 ## Status
 
 - Status: **Current**
-- 最近审阅：2026-10-11（桌面 GUI 主程序改为 `ET`/`ET.exe`；Win 安装器保留旧名 shim）
+- 最近审阅：2026-10-18（Win 安装器改为**条件式**旧名 shim：服务 `PathName` 迁移成功则删除旧名副本，仅迁移失败时保留）；2026-10-11（桌面 GUI 主程序改为 `ET`/`ET.exe`）
 - 状态说明：帮助理解 monorepo 内各产品/组件职责与关系
 - 范围：仓库内主要 crate、前端包与贡献组件
 - 索引：[`../README.md`](../README.md)
@@ -25,7 +25,7 @@
 |----------|--------|----------|
 | **节点 / `easytier-core`（二进制）** | 真正组网的进程 | 含糊的 “easytier code” 等（易与 crate 名混淆时写全） |
 | **`easytier-gui`** | 本机图形客户端（仓库 crate / 包名） | 仅说 “客户端” 时尽量写全名 |
-| **`ET` / `ET.exe`** | 桌面 GUI 主程序文件名（Win/macOS/Linux；`mainBinaryName` + cargo `[[bin]]`）。Android APK 不用此名 | 旧桌面文件名 `easytier-gui` / `easytier-gui.exe`（Windows 安装器已做双名兼容） |
+| **`ET` / `ET.exe`** | 桌面 GUI 主程序文件名（Win/macOS/Linux；`mainBinaryName` + cargo `[[bin]]`）。Android APK 不用此名 | 旧桌面文件名 `easytier-gui` / `easytier-gui.exe`（Windows 安装器**仅当服务 `PathName` 迁移失败时**才补旧名副本，见 §1 说明） |
 | **`ET` / `ET Gui Service`** | Windows 任务管理器常见显示名：前台窗口 / 后台服务 | 勿与节点二进制 `easytier-core` 混淆 |
 | **`ET-Gui`** | 桌面后台服务的 sc / 内部服务名（`--daemon`） | 旧名 `easytier-gui` 服务 |
 | **`easytier-web`** | 配置服务器 + REST API + 浏览器 UI | **controller**、控制面产品名、其它自造英文名 |
@@ -36,6 +36,7 @@
 2. 口语里说「网页控制台 / 配置后台」可以，书面与代码、Issue、PR、发布说明一律写 **`easytier-web`**。
 3. 下文若出现「控制台」，仅指 `easytier-web` 提供的 UI/管理体验，**不是**另一个叫 controller 的产品。
 4. 桌面 **Normal / Service** 双进程与 config-server 回写路径见 [`desktop-gui-and-config-server.md`](./desktop-gui-and-config-server.md)。
+5. **旧名 `easytier-gui.exe` 副本是条件式的**（2026-10-18 起）：安装器先把服务 `PathName` 从 `easytier-gui.exe` 改写成 `ET.exe`，若改写成功则**删除**磁盘上的旧名副本（安装目录收敛为单个 `ET.exe`）；仅当改写失败（典型是按用户安装、无权限执行 `sc config`）才补一份同字节副本，否则服务下次启动会找不到目标。因此在新装机器上正常只会看到 `ET.exe`；历史机器可运行 [`../../script/cleanup-legacy-gui.ps1`](../../script/cleanup-legacy-gui.ps1) 清理残留。
 
 ### 1.1 用户视角三分法（推荐心智模型）
 

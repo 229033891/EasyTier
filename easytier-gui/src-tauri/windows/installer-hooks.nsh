@@ -407,11 +407,24 @@
 
 !macro ET_MigrateGuiServiceBinPath
   ; Service binPath embeds the absolute exe path at install time. After renaming
-  ; the main binary to ET.exe, leave PathName pointing at easytier-gui.exe would
-  ; break Service mode once the legacy file is removed.
+  ; the main binary to ET.exe, leaving PathName pointing at easytier-gui.exe
+  ; would break Service mode once the legacy file is removed.
+  ;
+  ; Pushes 0 on success (no service still references the legacy name), pushes 1
+  ; when at least one service could not be migrated (typically a per-user
+  ; install without elevation to run `sc config`). The caller uses that result
+  ; to decide whether the legacy shim is genuinely required.
   DetailPrint "Migrating ET Gui service PathName easytier-gui.exe -> ET.exe if needed..."
-  nsExec::ExecToLog '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "foreach ($$n in @(''ET-Gui'',''easytier-gui'')) { $$s = Get-CimInstance Win32_Service -Filter (\"Name=''$$n''\") -ErrorAction SilentlyContinue; if (-not $$s -or -not $$s.PathName) { continue }; if ($$s.PathName -notmatch ''(?i)easytier-gui\.exe'') { continue }; $$np = [regex]::Replace($$s.PathName, ''easytier-gui\.exe'', ''ET.exe'', ''IgnoreCase''); if ($$np -eq $$s.PathName) { continue }; & sc.exe config $$n binPath= $$np | Out-Null }"'
+  nsExec::ExecToLog '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "$$left = 0; foreach ($$n in @(''ET-Gui'',''easytier-gui'')) { $$s = Get-CimInstance Win32_Service -Filter (\"Name=''$$n''\") -ErrorAction SilentlyContinue; if (-not $$s -or -not $$s.PathName) { continue }; if ($$s.PathName -notmatch ''(?i)easytier-gui\.exe'') { continue }; $$np = [regex]::Replace($$s.PathName, ''easytier-gui\.exe'', ''ET.exe'', ''IgnoreCase''); & sc.exe config $$n binPath= $$np | Out-Null; $$re = Get-CimInstance Win32_Service -Filter (\"Name=''$$n''\") -ErrorAction SilentlyContinue; if (-not $$re -or $$re.PathName -match ''(?i)easytier-gui\.exe'') { $$left++ } }; exit $$left"'
   Pop $0
+  ; nsExec pushes the child exit code; non-zero means a service still points at
+  ; easytier-gui.exe, so removing the shim would break Service mode at boot.
+  StrCmp $0 "0" et_migrate_binpath_ok
+    Push 1
+    Goto et_migrate_binpath_done
+  et_migrate_binpath_ok:
+    Push 0
+  et_migrate_binpath_done:
 !macroend
 
 !macro NSIS_HOOK_POSTINSTALL
@@ -423,14 +436,29 @@
   nsExec::ExecToLog 'sc.exe config easytier-gui start= auto'
   Pop $0
   !insertmacro ET_MigrateGuiServiceBinPath
-  ; Keep a same-bytes legacy shim: per-user installs often cannot elevate
-  ; `sc config binPath=`, so ET-Gui may still point at easytier-gui.exe.
-  ; Also covers old shortcuts. Safe to remove in a later release once migration
-  ; has baked in.
+  Pop $R2
+  ; The legacy shim (easytier-gui.exe = byte copy of ET.exe) only exists so a
+  ; service whose PathName still says easytier-gui.exe keeps working after this
+  ; install. When the migration above succeeded, nothing references the old
+  ; name any more, so writing the shim would only resurrect the duplicate that
+  ; users notice in Task Manager. Skipping it there is safe: every remaining
+  ; reference (service PathName, shortcuts) was retargeted to ET.exe.
+  ;
+  ; The shim is still created when migration failed - typically a per-user
+  ; install that could not elevate to run `sc config`. Dropping it in that case
+  ; would break Service mode on the next boot.
+  StrCmp $R2 "0" et_postinstall_shim_skip
   IfFileExists "$INSTDIR\ET.exe" 0 et_postinstall_shim_done
-    DetailPrint "Writing legacy shim $INSTDIR\easytier-gui.exe (= ET.exe)..."
+    DetailPrint "Service still references easytier-gui.exe; keeping legacy shim $INSTDIR\easytier-gui.exe (= ET.exe)..."
     nsExec::ExecToLog 'cmd /c copy /Y "$INSTDIR\ET.exe" "$INSTDIR\easytier-gui.exe"'
     Pop $0
+    Goto et_postinstall_shim_done
+  et_postinstall_shim_skip:
+    ; Migration succeeded: remove a shim left by an earlier version so the
+    ; install directory converges on the single ET.exe.
+    IfFileExists "$INSTDIR\easytier-gui.exe" 0 et_postinstall_shim_done
+      DetailPrint "Removing obsolete legacy shim $INSTDIR\easytier-gui.exe (service already points at ET.exe)..."
+      Delete "$INSTDIR\easytier-gui.exe"
   et_postinstall_shim_done:
   ; Leftover from an older unlock-by-rename; a stale .bak must not force a reboot.
   !insertmacro ET_TryDeleteBak "$INSTDIR\easytier-gui.exe.bak"
