@@ -17,6 +17,14 @@ const EVENTS = Object.freeze({
   POST_RUN_NETWORK_INSTANCE: 'post_run_network_instance',
   /** Console overwrite applied over a local/runtime instance (§6.2 tip). */
   MANAGED_CONFIG_SYNCED_OVERWRITE: 'managed_config_synced_overwrite',
+  /** Same-process config-server status / W list changed (P0); frontend re-fetches. */
+  CONFIG_SERVER_STATUS_CHANGED: 'config_server_status_changed',
+  /**
+   * RPC (re)bind: emitted right before a rebind drops the old client and again
+   * once the new tunnel is up. A tunnel that dies on its own emits nothing —
+   * the frontend's 30s fallback poll covers that case.
+   */
+  CLIENT_RPC_STATE_CHANGED: 'client_rpc_state_changed',
   VPN_SERVICE_STOP: 'vpn_service_stop',
   DHCP_IP_CHANGED: 'dhcp_ip_changed',
   PROXY_CIDRS_UPDATED: 'proxy_cidrs_updated',
@@ -74,6 +82,9 @@ async function onPreRunNetworkInstance(event: Event<unknown>) {
 async function onPostRunNetworkInstance(event: Event<unknown>) {
   const instanceId = normalizeInstanceIdPayload(event.payload)
   console.log(`Received event '${EVENTS.POST_RUN_NETWORK_INSTANCE}', raw payload:`, event.payload, 'normalized:', instanceId)
+  window.dispatchEvent(new CustomEvent(EVENTS.POST_RUN_NETWORK_INSTANCE, {
+    detail: { instanceId },
+  }))
   if (type() === 'android') {
     await onNetworkInstanceChange(instanceId)
   }
@@ -91,8 +102,17 @@ function onManagedConfigSyncedOverwrite(event: Event<unknown>) {
   }))
 }
 
+function onConfigServerStatusChanged(_event: Event<unknown>) {
+  window.dispatchEvent(new CustomEvent(EVENTS.CONFIG_SERVER_STATUS_CHANGED))
+}
+
+function onClientRpcStateChanged(_event: Event<unknown>) {
+  window.dispatchEvent(new CustomEvent(EVENTS.CLIENT_RPC_STATE_CHANGED))
+}
+
 async function onVpnServiceStop(event: Event<unknown>) {
   console.log(`Received event '${EVENTS.VPN_SERVICE_STOP}', raw payload:`, event.payload)
+  window.dispatchEvent(new CustomEvent(EVENTS.VPN_SERVICE_STOP))
   // VpnService 只存在于移动端。桌面禁用最后一个网络时也会收到这个事件（后端统一
   // 发出），若不加判断会走到 syncMobileVpnService，去 invoke 桌面未注册的
   // plugin:vpnservice|get_vpn_status，抛未捕获的 Promise 错误。
@@ -153,6 +173,8 @@ export async function listenGlobalEvents() {
     await listen(EVENTS.PRE_RUN_NETWORK_INSTANCE, onPreRunNetworkInstance),
     await listen(EVENTS.POST_RUN_NETWORK_INSTANCE, onPostRunNetworkInstance),
     await listen(EVENTS.MANAGED_CONFIG_SYNCED_OVERWRITE, onManagedConfigSyncedOverwrite),
+    await listen(EVENTS.CONFIG_SERVER_STATUS_CHANGED, onConfigServerStatusChanged),
+    await listen(EVENTS.CLIENT_RPC_STATE_CHANGED, onClientRpcStateChanged),
     await listen(EVENTS.VPN_SERVICE_STOP, onVpnServiceStop),
     await listen(EVENTS.DHCP_IP_CHANGED, onDhcpIpChanged),
     await listen(EVENTS.PROXY_CIDRS_UPDATED, onProxyCidrsUpdated),
@@ -165,3 +187,6 @@ export async function listenGlobalEvents() {
     unlisteners.forEach(unlisten => unlisten())
   }
 }
+
+/** Window CustomEvent names bridged from Tauri (same strings as `EVENTS`). */
+export const WINDOW_EVENTS = EVENTS

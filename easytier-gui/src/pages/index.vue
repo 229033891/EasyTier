@@ -21,6 +21,7 @@ import {
   setLoggingLevel,
 } from '~/composables/backend'
 import { clearLastNetworkInstanceId, loadLastNetworkInstanceId, saveLastNetworkInstanceId } from '~/composables/config'
+import { WINDOW_EVENTS } from '~/composables/event'
 import {
   dropStoredConfigsByIds,
   filterProvenFormerWebGhosts,
@@ -304,7 +305,45 @@ async function maybePruneWebConfigsFromConsoleW(status: {
   }
 }
 
-async function refreshConfigServerConnection() {
+/**
+ * Coalesce concurrent refreshes into one in-flight run, then re-run if another
+ * caller arrived while that run was in flight (dirty bit).
+ *
+ * The 1s poll used to serialise callers implicitly. Now that
+ * `config_server_status_changed` (P0 poll-to-push) fires a `void`-style refresh
+ * on every core status bump, a single dial (`mark_enabled` →
+ * `mark_connecting_detail` ×2 → `mark_connected`) can start several overlapping
+ * runs, and those can additionally overlap `waitForConfigServerOutcome`'s
+ * awaited loop. Sharing one run keeps the S9 non-overlap reasoning intact for
+ * `configServerIdleProbeTick` and avoids duplicate status RPCs.
+ *
+ * Without the dirty re-run, a late `mark_connected` that joins an in-flight
+ * probe which already sampled "connecting" would leave the UI stale until the
+ * 30s fallback — missing the <200ms event-path acceptance.
+ */
+let refreshConfigServerInFlight: Promise<void> | undefined
+let refreshConfigServerDirty = false
+
+async function refreshConfigServerConnection(): Promise<void> {
+  if (refreshConfigServerInFlight) {
+    refreshConfigServerDirty = true
+    return refreshConfigServerInFlight
+  }
+  // One owner runs the dirty loop; coalesced callers await the whole chain
+  // (not only the first probe) so waitForConfigServerOutcome sees the latest.
+  // Never rejects: the body handles and logs its own errors.
+  refreshConfigServerInFlight = (async () => {
+    do {
+      refreshConfigServerDirty = false
+      await refreshConfigServerConnectionInner()
+    } while (refreshConfigServerDirty)
+  })().finally(() => {
+    refreshConfigServerInFlight = undefined
+  })
+  return refreshConfigServerInFlight
+}
+
+async function refreshConfigServerConnectionInner() {
   try {
     const mode = currentMode.value
     const hostMode = mode.mode === 'normal' || mode.mode === 'service'
@@ -316,7 +355,9 @@ async function refreshConfigServerConnection() {
       ? !!mode.config_server_url?.trim()
       : false
     // Idle tick only: requires !hasUrl. waitForConfigServerOutcome (has URL)
-    // never increments this counter — paths do not race (S9).
+    // never increments this counter — paths do not race (S9). The single-flight
+    // wrapper above now *enforces* that: overlapping callers share one run, so
+    // the read-modify-write on `configServerIdleProbeTick` below cannot interleave.
     const idlePoll = hostMode
       && !hasUrl
       && !configServerEnabled.value
@@ -1189,10 +1230,20 @@ onMounted(async () => {
     }
   }
 
+  // Event-driven in normal mode (config_server_status_changed); 30s safety net
+  // covers service mode (WebClient lives in another process) and missed wakes.
   const configServerTimer = window.setInterval(() => {
     void refreshConfigServerConnection()
-  }, 1000)
+  }, 30_000)
   cleanupFns.push(() => clearInterval(configServerTimer))
+
+  const onConfigServerStatusChanged = () => {
+    void refreshConfigServerConnection()
+  }
+  window.addEventListener(WINDOW_EVENTS.CONFIG_SERVER_STATUS_CHANGED, onConfigServerStatusChanged)
+  cleanupFns.push(() => {
+    window.removeEventListener(WINDOW_EVENTS.CONFIG_SERVER_STATUS_CHANGED, onConfigServerStatusChanged)
+  })
 
   onUnmounted(() => {
     cleanupFns.forEach(unlisten => unlisten())
@@ -1271,31 +1322,52 @@ watch(clientRunning, async (newVal, oldVal) => {
   }
 })
 
+async function refreshClientRunningAndTray() {
+  try {
+    clientRunning.value = await isClientRunning()
+  }
+  catch (e) {
+    clientRunning.value = false
+    console.error('Error checking client running status', e)
+  }
+  if (currentMode.value.mode === 'service' && !isModeSaving.value) {
+    try {
+      const status = await getServiceStatus()
+      if (status !== lastTrayServiceStatus)
+        await refreshTrayMenu(status)
+    }
+    catch (e) {
+      console.error('Error checking service status for tray', e)
+    }
+  }
+}
+
 onMounted(async () => {
   clientRunning.value = await isClientRunning().catch(() => false)
   await setTrayRunState(clientRunning.value ? 'running' : 'idle')
-  const timer = setInterval(async () => {
-    try {
-      clientRunning.value = await isClientRunning()
-    }
-    catch (e) {
-      clientRunning.value = false
-      console.error('Error checking client running status', e)
-    }
-    if (currentMode.value.mode === 'service' && !isModeSaving.value) {
-      try {
-        const status = await getServiceStatus()
-        if (status !== lastTrayServiceStatus)
-          await refreshTrayMenu(status)
-      }
-      catch (e) {
-        console.error('Error checking service status for tray', e)
-      }
-    }
-  }, 1000)
+  // Event-driven on RPC tunnel up/down; 30s fallback for missed events / service bounce.
+  const timer = setInterval(() => {
+    void refreshClientRunningAndTray()
+  }, 30_000)
+
+  const onClientRpcStateChanged = () => {
+    void refreshClientRunningAndTray()
+  }
+  const onPostRun = () => {
+    void refreshClientRunningAndTray()
+  }
+  const onVpnStop = () => {
+    void refreshClientRunningAndTray()
+  }
+  window.addEventListener(WINDOW_EVENTS.CLIENT_RPC_STATE_CHANGED, onClientRpcStateChanged)
+  window.addEventListener(WINDOW_EVENTS.POST_RUN_NETWORK_INSTANCE, onPostRun)
+  window.addEventListener(WINDOW_EVENTS.VPN_SERVICE_STOP, onVpnStop)
 
   onUnmounted(() => {
     clearInterval(timer)
+    window.removeEventListener(WINDOW_EVENTS.CLIENT_RPC_STATE_CHANGED, onClientRpcStateChanged)
+    window.removeEventListener(WINDOW_EVENTS.POST_RUN_NETWORK_INSTANCE, onPostRun)
+    window.removeEventListener(WINDOW_EVENTS.VPN_SERVICE_STOP, onVpnStop)
   })
 })
 async function reconnectClient() {

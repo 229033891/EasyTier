@@ -388,6 +388,7 @@ NAT 保活是**正确性要求**而非调优旋钮，不允许用大值关掉。
 5. **`find_interface_index(<dev_name>)` 失败会让 socket 创建直接失败**（**已证实的代码缺陷，不是环境问题**）。实测 `easytier::arch::windows: Failed to find interface index for et` 出现 **202 次**，每波约 32 次；失败经 `set_ip_unicast_if` → `setup_socket_for_win` → `setup_socket2_ext` 逐层 `?` 上抛，导致那一刻所有需要把出口网卡钉在该网卡上的隧道 / 打洞 socket **全部创建失败**。
    - 判定：`Select-String 'Failed to find interface index' <日志>`，观察计数是否持续增长。
    - 根因是按硬编码 `dev_name` 匹配 `network_interface` 枚举结果，适配器重建 / 枚举异常时失配，且**被当作致命错误**。
+   - **2026-10-18 已修**（P1 / P2a / P2b / P3a / P3b，真机待验）：见 [`windows-wintun-interface-missing.md`](./windows-wintun-interface-missing.md)。
 
 6. 状态页 **2s** 轮询：短暂黑洞与秒级尖峰均可能未截获，**排障必须用 `ping` + 日志时间对齐，不能只看状态页**。
 

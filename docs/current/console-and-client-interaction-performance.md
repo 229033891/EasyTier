@@ -7,7 +7,7 @@
 - 范围：**控制台 / 客户端 UI 的交互延迟**（不含数据面转发性能）
 - 覆盖：ET Web 控制台（`easytier-web` + 前端）、桌面 / 安卓 GUI（`easytier-gui`）、节点侧管理 RPC（`easytier-core`）
 - OpenWrt LuCI 另见：[`../../luci-app-easytier/docs/web-console-performance-audit.md`](../../luci-app-easytier/docs/web-console-performance-audit.md)（该文 P1–P3 已于 2026-10-16 修复，待真机复测）
-- 相关：[`peer-connections.md`](./peer-connections.md)、[`p2p-direct-stability-audit.md`](./p2p-direct-stability-audit.md)、[`../roadmap/client-web-console-interaction.md`](../roadmap/client-web-console-interaction.md)（§9 S1–S9；阶段 G S10–S13）
+- 相关：[`peer-connections.md`](./peer-connections.md)、[`p2p-direct-stability-audit.md`](./p2p-direct-stability-audit.md)、[`../roadmap/client-web-console-interaction.md`](../roadmap/client-web-console-interaction.md)（§9 S1–S9；阶段 G S10–S13）、[`../roadmap/poll-to-push-roi.md`](../roadmap/poll-to-push-roi.md)（轮询→推送选型；**P0 已落地，待 GUI 验收**）
 - 索引：[`../README.md`](../README.md)
 
 > 本文区分 **[已核实]**（逐行读过代码）与 **[审查报告]**（委托审查产出、带行号锚点，其中抽样复核过）。**未做真机 profiling 与抓包。**

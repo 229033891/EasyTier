@@ -51,7 +51,7 @@ use std::sync::{Arc, LazyLock};
 use tokio::sync::{Mutex, RwLock, RwLockReadGuard};
 use uuid::Uuid;
 
-use tauri::{AppHandle, Manager as _};
+use tauri::{AppHandle, Emitter, Manager as _};
 
 #[cfg(not(target_os = "android"))]
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
@@ -919,9 +919,24 @@ async fn bind_ring_tunnel_with_retry(
     Err(last_error.unwrap_or_else(|| "failed to bind ring RPC tunnel".to_string()))
 }
 
+fn emit_client_rpc_state_changed(app: &AppHandle) {
+    let _ = app.emit("client_rpc_state_changed", ());
+}
+
+fn spawn_config_server_status_watch(app: AppHandle) {
+    tauri::async_runtime::spawn(async move {
+        let mut status_gen = easytier_core::management::config_server_status_generation();
+        loop {
+            status_gen =
+                easytier_core::management::wait_config_server_status_changed(status_gen).await;
+            let _ = app.emit("config_server_status_changed", ());
+        }
+    });
+}
+
 #[tauri::command]
 async fn init_rpc_connection(
-    _app: AppHandle,
+    app: AppHandle,
     is_normal_mode: bool,
     url: Option<String>,
 ) -> Result<(), String> {
@@ -974,6 +989,7 @@ async fn init_rpc_connection(
             *rpc_server_guard = None;
             // Drop the dead client before rebinding so the old tunnel is gone.
             *client_manager_guard = None;
+            emit_client_rpc_state_changed(&app);
 
             let tunnel: BoxedTunnelListener = match desired_kind {
                 RpcServerKind::Ring => {
@@ -1039,6 +1055,7 @@ async fn init_rpc_connection(
     .with_context(|| format!("Failed to connect remote rpc {dial_target}"))
     .map_err(|e| format!("{:#}", e))?;
     *client_manager_guard = Some(client_manager);
+    emit_client_rpc_state_changed(&app);
 
     if !is_normal_mode {
         drop(WEB_CLIENT.write().await.take());
@@ -1600,6 +1617,10 @@ pub fn run_gui() -> std::process::ExitCode {
 
             #[cfg(target_os = "android")]
             android_vpn_watchdog::start(app.handle().clone());
+
+            // Same-process config-server status → UI (normal mode). Service mode
+            // still relies on the frontend 30s fallback poll (P0 poll-to-push).
+            spawn_config_server_status_watch(app.handle().clone());
 
             Ok(())
         })

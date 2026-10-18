@@ -452,7 +452,7 @@ socket map 被并发迭代时计数可瞬时为 2 ⇒ panic；且 panic 发生�
 
 | 项 | 原因 |
 |---|---|
-| **`find_interface_index(<dev_name>)` 失败被当作致命错误**（`easytier/src/arch/windows.rs:83-98`） | **2026-10-17 现网发现，尚未修**。实测 `Failed to find interface index for et` 出现 **202 次**、每波约 32 次。失败经 `set_ip_unicast_if` → `setup_socket_for_win`（L157 `?`）→ `setup_socket2_ext`（`tunnel/common.rs:79` `?`）四层逐级上抛，导致那一刻**所有需要把出口网卡钉在该网卡上的隧道 / 打洞 socket 全部创建失败**。函数按硬编码 `dev_name` 匹配 `network_interface` 枚举结果，适配器重建 / 枚举异常时失配。**建议**：① 枚举失败与「名字没找到」分开处理，前者重试、后者降级为「不绑网卡」并告警；② 不要用 `?` 直接把 socket 创建打死。取证与复现见 [`docs/current/packet-loss-investigation-2026-10.md`](../docs/current/packet-loss-investigation-2026-10.md) §6.2 |
+| **`find_interface_index(<dev_name>)` 失败被当作致命错误**（`easytier/src/arch/windows.rs:83-98`） | **2026-10-17 现网发现；2026-10-18 已修**（P1 / P2a / P2b / P3a / P3b，见 [`windows-wintun-interface-missing.md`](../current/windows-wintun-interface-missing.md)；真机待验）。实测 `Failed to find interface index for et` 出现 **202 次**、每波约 32 次。失败经 `set_ip_unicast_if` → `setup_socket_for_win`（L157 `?`）→ `setup_socket2_ext`（`tunnel/common.rs:79` `?`）四层逐级上抛，导致那一刻**所有需要把出口网卡钉在该网卡上的隧道 / 打洞 socket 全部创建失败**。函数按硬编码 `dev_name` 匹配 `network_interface` 枚举结果，适配器重建 / 枚举异常时失配。**建议**：① 枚举失败与「名字没找到」分开处理，前者重试、后者降级为「不绑网卡」并告警；② 不要用 `?` 直接把 socket 创建打死。取证与复现见 [`packet-loss-investigation-2026-10.md`](../current/packet-loss-investigation-2026-10.md) §6.2 |
 | IPv4 `frag_offset` **单位不合规**（本仓库用字节，规范要求 8 字节） | 通篇自洽，改动涉及收发两侧与互操作，超出「修 bug」范围，建议单独立项 |
 | §1.1 三条被推翻的判断 | 已按实测修正，无需再动 |
 | CR-05/CR-06 的 MIRI 验证 | 当前环境无 nightly |

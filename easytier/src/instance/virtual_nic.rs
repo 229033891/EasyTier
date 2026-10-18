@@ -1221,6 +1221,31 @@ impl NicCtx {
         removed: Vec<cidr::Ipv4Cidr>,
     ) {
         let restore_public_ipv6_default = packet_plane.public_ipv6_addr().await.is_some();
+
+        // Gate the whole batch on the interface actually being enumerable (P3b).
+        //
+        // Windows does not expose a freshly created WinTun adapter through
+        // `GetAdaptersAddresses` synchronously, and an instance stop tears it
+        // down while this task is still alive. Without the gate the batch
+        // degenerates into one `NotFound` per CIDR (~32 per burst) and
+        // `installed` never converges. Skipping wholesale leaves `installed`
+        // untouched, so the next tick retries as soon as the adapter is back.
+        if !ifcfg.interface_present(ifname) {
+            tracing::warn!(
+                ifname,
+                added = added.len(),
+                removed = removed.len(),
+                "interface is not enumerable; skipping this route reconcile batch"
+            );
+            packet_plane.report_proxy_cidr_route_sync(
+                desired,
+                installed,
+                local_exit_default,
+                Some(format!("interface {ifname} is not enumerable yet")),
+            );
+            return;
+        }
+
         let will_have_tun_default = {
             let mut next = installed.clone();
             for cidr in &removed {

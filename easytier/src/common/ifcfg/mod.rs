@@ -235,6 +235,19 @@ pub trait IfConfiguerTrait: Send + Sync {
         Ok(())
     }
 
+    /// Cheap, side-effect-free readiness probe used to gate a whole route
+    /// reconcile batch (P3b).
+    ///
+    /// Default `true`: platforms whose interface lookup is reliable keep the
+    /// existing per-route error handling. Windows overrides this because its
+    /// adapter can be momentarily unenumerable, where a per-route failure turns
+    /// one transient into N log lines and never converges.
+    ///
+    /// Implementations must be **quiet** — this runs on a periodic path.
+    fn interface_present(&self, _name: &str) -> bool {
+        true
+    }
+
     /// Metric used for non-exit (more-specific or peer-advertised `/0`) routes.
     fn specific_route_metric(&self) -> i32 {
         9000

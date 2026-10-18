@@ -7,6 +7,7 @@
 - 归属：[`web-evolution.md`](./web-evolution.md) 阶段 B（控制台体验 / REST）+ 客户端连接可靠性
 - 相关 Current：[`../current/desktop-gui-and-config-server.md`](../current/desktop-gui-and-config-server.md)、[`../current/web-managed-config.md`](../current/web-managed-config.md)、[`../current/console-and-client-interaction-performance.md`](../current/console-and-client-interaction-performance.md)
 - 相关运维诊断：[`web-console-runtime-diagnostics.md`](./web-console-runtime-diagnostics.md)（控制台侧预定 vs 实际；**不替代**本文客户端交互项）
+- 相关选型：[`poll-to-push-roi.md`](./poll-to-push-roi.md)（下一轮「减空转 + 事件补延迟」；与本文阶段 G 放宽间隔互补）
 - 索引：[`../README.md`](../README.md)
 
 ---

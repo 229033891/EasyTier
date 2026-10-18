@@ -221,6 +221,8 @@ tunnel/common.rs:68  setup_socket2_ext()               → TunnelError  (L79 `?`
 **后果**：`find_interface_index` 失败的那一刻，**所有需要把出口网卡钉在 `et` 上的隧道/打洞 socket 全部创建失败**。
 `find_interface_index` 用 `network_interface::NetworkInterface::show()` 按名字匹配硬编码的 `dev_name`，在适配器被重建/枚举异常时会失配，且**失配被当作致命错误**。
 
+> **2026-10-18 已修**：P1（绑定失败降级为「不绑网卡」+ WARN）/ P2a·P2b（该路径日志 ERROR→WARN）/ P3a（`wait_interface_show` 加 30s 超时）/ P3b（路由 reconcile 整批就绪门控，不再逐个失败 32 次）。根因、修复与待验证项见 [`windows-wintun-interface-missing.md`](./windows-wintun-interface-missing.md)（真机复现仍待做）。
+
 ### 6.3 黑洞期 ET 无法自愈，只能等拆连链（既有结论，此处补证据）
 
 PingInfoView 报告中 `12:57:22–12:58:30` 连续 27 次失败（~71s），DEV 日志在 **`12:57:43`** 出现

@@ -9,6 +9,7 @@ declare global {
   const EffectScope: typeof import('vue')['EffectScope']
   const MenuItemExit: typeof import('./composables/tray')['MenuItemExit']
   const MenuItemShow: typeof import('./composables/tray')['MenuItemShow']
+  const WINDOW_EVENTS: typeof import('./composables/event')['WINDOW_EVENTS']
   const acceptHMRUpdate: typeof import('pinia')['acceptHMRUpdate']
   const addVpnPortalClient: typeof import('./composables/backend')['addVpnPortalClient']
   const annotateNetworkInfoFromVpnService: typeof import('./composables/mobile_vpn')['annotateNetworkInfoFromVpnService']
@@ -177,6 +178,7 @@ declare module 'vue' {
     readonly EffectScope: UnwrapRef<typeof import('vue')['EffectScope']>
     readonly MenuItemExit: UnwrapRef<typeof import('./composables/tray')['MenuItemExit']>
     readonly MenuItemShow: UnwrapRef<typeof import('./composables/tray')['MenuItemShow']>
+    readonly WINDOW_EVENTS: UnwrapRef<typeof import('./composables/event')['WINDOW_EVENTS']>
     readonly acceptHMRUpdate: UnwrapRef<typeof import('pinia')['acceptHMRUpdate']>
     readonly addVpnPortalClient: UnwrapRef<typeof import('./composables/backend')['addVpnPortalClient']>
     readonly annotateNetworkInfoFromVpnService: UnwrapRef<typeof import('./composables/mobile_vpn')['annotateNetworkInfoFromVpnService']>

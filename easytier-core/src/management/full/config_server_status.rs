@@ -6,11 +6,15 @@ use std::{
     future::Future,
     net::IpAddr,
     pin::Pin,
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
     time::{Duration, Instant},
 };
 
 use parking_lot::RwLock;
+use tokio::sync::Notify;
 use url::Url;
 
 use crate::proto::common::{TunnelInfo, Url as ProtoUrl};
@@ -84,6 +88,46 @@ static STATUS: RwLock<Status> = RwLock::new(Status {
     stale_exclude_ips: BTreeSet::new(),
 });
 
+/// Bumped on UI-visible status / W-list changes so local watchers can wake.
+static GENERATION: AtomicU64 = AtomicU64::new(0);
+static CHANGED: Notify = Notify::const_new();
+
+fn bump() {
+    GENERATION.fetch_add(1, Ordering::AcqRel);
+    CHANGED.notify_waiters();
+}
+
+/// Current UI-watch generation (monotonic).
+pub fn generation() -> u64 {
+    GENERATION.load(Ordering::Acquire)
+}
+
+/// Wait until `generation()` is strictly greater than `prev`, then return it.
+///
+/// If the generation already advanced, returns immediately.
+pub async fn wait_changed(prev: u64) -> u64 {
+    loop {
+        let notified = CHANGED.notified();
+        tokio::pin!(notified);
+        // Register the waiter *before* reading the generation. `notify_waiters`
+        // does not retain permits, so a bump landing between the read and the
+        // await would otherwise be dropped and the watcher would sleep until
+        // the *next* bump (same pattern as
+        // `instance::manager::InstanceStateChanges::wait_for_change`).
+        notified.as_mut().enable();
+        let current = generation();
+        if current != prev {
+            return current;
+        }
+        notified.await;
+    }
+}
+
+/// Wake UI watchers without mutating the connection snapshot (e.g. W list).
+pub fn notify_ui() {
+    bump();
+}
+
 pub fn snapshot() -> ConfigServerStatusSnapshot {
     STATUS.read().snapshot.clone()
 }
@@ -94,6 +138,8 @@ pub fn mark_enabled() {
     status.snapshot.connected = false;
     status.snapshot.last_error = None;
     status.snapshot.connecting_detail = None;
+    drop(status);
+    bump();
 }
 
 /// Remember the config-server connect URL so exit-node default routing can
@@ -101,7 +147,8 @@ pub fn mark_enabled() {
 pub fn set_endpoint_url(url: &Url) {
     let mut status = STATUS.write();
     let host = url.host_str().map(|host| host.to_string());
-    if status.snapshot.endpoint_host.as_ref() != host.as_ref() {
+    let host_changed = status.snapshot.endpoint_host.as_ref() != host.as_ref();
+    if host_changed {
         // Preserve previous excludes as a short-lived fallback until the new
         // host resolves; otherwise TUN `/0` can swallow management traffic in
         // the DNS/connect gap after a URL change.
@@ -116,6 +163,10 @@ pub fn set_endpoint_url(url: &Url) {
         status.resolved_ips.insert(ip);
         // Literal IP is immediately usable — drop stale previous host.
         status.stale_exclude_ips.clear();
+    }
+    drop(status);
+    if host_changed {
+        bump();
     }
 }
 
@@ -142,6 +193,8 @@ pub fn mark_connected() {
     status.snapshot.connected = true;
     status.snapshot.last_error = None;
     status.snapshot.connecting_detail = None;
+    drop(status);
+    bump();
 }
 
 pub fn mark_disconnected() {
@@ -150,6 +203,8 @@ pub fn mark_disconnected() {
         status.snapshot.connected = false;
     }
     status.snapshot.connecting_detail = None;
+    drop(status);
+    bump();
 }
 
 /// Progress detail while still connecting (feature probe / secure upgrade).
@@ -164,6 +219,8 @@ pub fn mark_connecting_detail(detail: impl Into<String>) {
     status.snapshot.connected = false;
     status.snapshot.last_error = None;
     status.snapshot.connecting_detail = Some(detail.into());
+    drop(status);
+    bump();
 }
 
 pub fn mark_error(error: impl Into<String>) {
@@ -172,12 +229,15 @@ pub fn mark_error(error: impl Into<String>) {
     status.snapshot.connected = false;
     status.snapshot.connecting_detail = None;
     status.snapshot.last_error = Some(error.into());
+    drop(status);
+    bump();
 }
 
 pub fn clear() {
     // Only reset config-server status. The process-wide host DNS lookup hook is
     // installed once by the native runtime and must survive WebClient teardown.
     *STATUS.write() = Status::default();
+    bump();
 }
 
 /// Extend `ips` with the last usable underlay destinations, preferring the DNS cache
@@ -366,6 +426,36 @@ mod tests {
                 endpoint_host: None,
             }
         );
+        clear();
+    }
+
+    #[tokio::test]
+    async fn wait_changed_observes_mark_bump() {
+        let _guard = lock_status().await;
+        clear();
+        let prev = generation();
+        let waiter = tokio::spawn(async move { wait_changed(prev).await });
+        // Yield so the waiter parks on Notify before we bump.
+        tokio::task::yield_now().await;
+        mark_enabled();
+        let next = tokio::time::timeout(Duration::from_secs(1), waiter)
+            .await
+            .expect("wait_changed timed out")
+            .expect("waiter join");
+        assert!(next > prev);
+        clear();
+    }
+
+    #[tokio::test]
+    async fn wait_changed_returns_immediately_if_already_advanced() {
+        let _guard = lock_status().await;
+        clear();
+        let prev = generation();
+        mark_connected();
+        let next = tokio::time::timeout(Duration::from_millis(50), wait_changed(prev))
+            .await
+            .expect("should not block when generation already advanced");
+        assert!(next > prev);
         clear();
     }
 

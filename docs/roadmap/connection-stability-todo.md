@@ -232,6 +232,7 @@ score = w_lat * norm(rtt)
 - [ ] **P3.2** 深度指纹 / pluggable transport（不承诺对抗主动探测）
 - [ ] **P3.3** 与出口导流（轨道 T）联动时的 underlay 排除：保底 URL 的 host:port 必须可加入排除列表（端口自定义）
 - [ ] **P3.4** 业务感知权重（如实时流提高抖动权重）——仅在有明确产品需求时再做
+- [ ] **P-WIN.1**（未定性，需单独取证）**Windows start/stop churn 的触发器**：现网日志出现同一 `instance_id` **连续两次** `core instance start cancelled`（中间夹 `shutdown withdrawal`），导致 WinTun 适配器被反复拆除/重建，进而放大「网卡暂时不在」窗口。`cancel` 的置位点是 `CoreInstance::drop` / `stop` 分支，**触发者未查明**（GUI 重复 start？stop 未完成即 start？托盘/安卓式 watchdog？）。取证与已修部分见 [`../current/windows-wintun-interface-missing.md`](../current/windows-wintun-interface-missing.md) §4.1 / §6（P4）
 
 ---
 

@@ -45,8 +45,11 @@ pub use config_server_client::{
     persist_active_managed_config_revision, report_via_process_client,
 };
 pub use config_server_status::{
-    ConfigServerStatusSnapshot, clear as clear_config_server_status, set_host_dns_lookup,
-    snapshot as config_server_status, underlay_exclude_candidate_ips as config_server_underlay_ips,
+    ConfigServerStatusSnapshot, clear as clear_config_server_status,
+    generation as config_server_status_generation, notify_ui as notify_config_server_status_ui,
+    set_host_dns_lookup, snapshot as config_server_status,
+    underlay_exclude_candidate_ips as config_server_underlay_ips,
+    wait_changed as wait_config_server_status_changed,
 };
 pub use instance_info::network_instance_running_info;
 #[cfg(feature = "management")]

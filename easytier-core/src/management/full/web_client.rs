@@ -579,12 +579,15 @@ impl WebClientController {
             return;
         }
         *lock_mutex(&self.web_owned_instance_ids) = Some(ids.into_iter().collect());
+        // W is UI-visible (prune) even when connected stays true.
+        config_server_status::notify_ui();
     }
 
     /// Drop cached W so reconnect cannot prune from a prior session's list
     /// (config-server / token switch, or deletes while offline).
     fn clear_web_owned_instance_ids(&self) {
         *lock_mutex(&self.web_owned_instance_ids) = None;
+        config_server_status::notify_ui();
     }
 
     fn cached_web_owned_instance_ids(&self) -> Option<Vec<String>> {

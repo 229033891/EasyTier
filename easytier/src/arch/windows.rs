@@ -90,7 +90,15 @@ pub fn find_interface_index(iface_name: &str) -> io::Result<u32> {
     if let Some(iface) = ifaces.iter().find(|iface| iface.name == iface_name) {
         return Ok(iface.index);
     }
-    tracing::error!("Failed to find interface index for {}", iface_name);
+    // WARN, not ERROR: "the adapter is not enumerable right now" is a normal
+    // transient while WinTun is being (re)created or an instance stop is in
+    // flight. It used to be ERROR and fired once per failed route in a batch
+    // (~32 lines per burst), drowning the log. The error value is unchanged so
+    // callers keep their existing handling.
+    tracing::warn!(
+        iface_name,
+        "interface not found in the current enumeration (adapter missing or not yet visible)"
+    );
     Err(io::Error::new(
         io::ErrorKind::NotFound,
         iface_name.to_string(),
@@ -98,7 +106,36 @@ pub fn find_interface_index(iface_name: &str) -> io::Result<u32> {
 }
 
 pub fn set_ip_unicast_if(socket: SOCKET, addr: &SocketAddr, iface: &str) -> io::Result<()> {
-    let if_index = find_interface_index(iface)?;
+    // A missing adapter is a *recoverable* state: Windows does not expose a
+    // freshly created WinTun adapter through `GetAdaptersAddresses`
+    // synchronously, and an instance stop tears it down while unrelated tasks
+    // (tunnel setup, hole punch) may still be creating sockets.
+    //
+    // Pinning the egress NIC is an optimisation, not a correctness requirement
+    // — leaving routing to the OS still yields a working socket. Propagating
+    // this error (it used to be `?`) killed *every* tunnel / hole-punch socket
+    // that binds a device, turning a transient condition into a hard failure.
+    //
+    // Note the socket then has *no* `IP_UNICAST_IF` / `IPV6_UNICAST_IF` at all:
+    // the OS picks the egress interface. That is fine while the interface is
+    // coming back, but it also means a permanently wrong `bind_dev` / `dev_name`
+    // only surfaces as this WARN — hence the `present` field below, which
+    // separates "adapter is not in the list" (`Some(false)`) from "enumeration
+    // itself failed" (`None`).
+    let if_index = match find_interface_index(iface) {
+        Ok(index) => index,
+        Err(error) => {
+            let present = interface_exists(iface);
+            tracing::warn!(
+                iface,
+                %error,
+                ?present,
+                "interface not enumerable; leaving this socket unbound from the device \
+                 (routing falls back to the OS)"
+            );
+            return Ok(());
+        }
+    };
 
     unsafe {
         // https://docs.microsoft.com/en-us/windows/win32/winsock/ipproto-ip-socket-options

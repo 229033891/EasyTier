@@ -45,6 +45,7 @@ crate 内设计稿（非本索引）：`easytier/docs/`（凭据计划已标 Arc
 | [magic-dns.md](./current/magic-dns.md) | MagicDNS / DnsConfig / OS 接线与覆盖信号（现状 SoT） |
 | [magic-dns-manual-wiring.md](./current/magic-dns-manual-wiring.md) | Linux 非 systemd / OpenWrt MagicDNS 手工接线 |
 | [dns-policy-audit.md](./current/dns-policy-audit.md) | **域名策略（DnsConfig）审查**（逐行核对全链路；3 处 BUG / 4 处冲突 / 9 项优化；静态核查未复现） |
+| [windows-wintun-interface-missing.md](./current/windows-wintun-interface-missing.md) | **Windows WinTun 网卡「找不到」**：`find_interface_index` 失配被当致命错误 → 打死绑网卡的 socket 创建 + ERROR 海啸；根因与修复（P1–P3b 已修，P4 记录在案 / 已登记 P-WIN.1） |
 
 ## Roadmap — 待实现
 
@@ -69,6 +70,7 @@ crate 内设计稿（非本索引）：`easytier/docs/`（凭据计划已标 Arc
 | [web-console-runtime-diagnostics.md](./roadmap/web-console-runtime-diagnostics.md) | 控制台侧栏：**系统诊断** + **运行日志**（预定 vs 实际 / ring buffer；MVP 已实现待验收） |
 | [web-console-log-persistence.md](./roadmap/web-console-log-persistence.md) | 控制台**日志本地留存**：默认 `./logs`+warn 滚动（可写性预检降级）+ 运行日志页读文件筛选（A/B/C 已落地，待验收） |
 | [client-web-console-interaction.md](./roadmap/client-web-console-interaction.md) | 客户端 ↔ 控制台交互：超时 / Start 覆盖 / 会话抖动 / 协议降级（P0–P2）+ 交互性能审查（§9；优先 S4/S5） |
+| [poll-to-push-roi.md](./roadmap/poll-to-push-roi.md) | **轮询→推送 ROI**：P0 GUI 1s 事件化；P1 状态页混合；§4.4 desired 下发另立；心跳/安卓纯推不做 |
 | [config-delete-authority.md](./roadmap/config-delete-authority.md) | 配置删除权：bound+Web 仅控制台；客户端删门与停用保留 |
 | [local-config-residue.md](./roadmap/local-config-residue.md) | 控制台删除后本地/GUI 残留：分层收敛（P0–P2 代码已落地；待人工回归） |
 | [config-sync-per-end.md](./roadmap/config-sync-per-end.md) | 配置同步**各端一致性核验**：删除权 / W 权威 / 残留 UI 覆盖矩阵（有意不统一；gui 含 Android 已闭环） |

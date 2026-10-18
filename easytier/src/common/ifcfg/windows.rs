@@ -25,6 +25,21 @@ use winreg::{
 use super::{Error, IfConfiguerTrait};
 pub struct WindowsIfConfiger {}
 
+/// How long to wait for a freshly created interface to become enumerable.
+///
+/// Generous enough for a slow WinTun adapter creation, short enough that a
+/// silent creation failure surfaces as a clear error instead of an instance
+/// that never leaves `Starting`.
+const WAIT_INTERFACE_SHOW_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
+// Every helper below that resolves the adapter by name is annotated
+// `#[tracing::instrument(err(level = WARN), ret)]` rather than plain `err`:
+// they all return `Error::NotFound` whenever the adapter is momentarily
+// unenumerable (WinTun being (re)created, an instance stop in flight). The
+// default `err` level is ERROR, which duplicated the `arch::windows` line for
+// the same fact and made one transient look like two failures. Callers retry,
+// so WARN is the honest level.
+
 fn format_win_error(error: WIN32_ERROR) -> String {
     let code = error.0;
     // use FormatMessageW to get the error message
@@ -48,7 +63,7 @@ impl WindowsIfConfiger {
         crate::arch::windows::find_interface_index(name).ok()
     }
 
-    #[tracing::instrument(err, ret)]
+    #[tracing::instrument(err(level = tracing::Level::WARN), ret)]
     async fn add_ip_address(name: &str, addr: Ipv4Inet) -> Result<(), Error> {
         let if_index = Self::get_interface_index(name).ok_or(Error::NotFound)?;
         let luid = InterfaceLuid::luid_from_index(if_index).map_err(|e| {
@@ -59,7 +74,7 @@ impl WindowsIfConfiger {
         Ok(())
     }
 
-    #[tracing::instrument(err, ret)]
+    #[tracing::instrument(err(level = tracing::Level::WARN), ret)]
     async fn remove_ip_address(name: &str, addr: Option<Ipv4Inet>) -> Result<(), Error> {
         let Some(if_index) = Self::get_interface_index(name) else {
             return Err(Error::NotFound);
@@ -79,7 +94,7 @@ impl WindowsIfConfiger {
         Ok(())
     }
 
-    #[tracing::instrument(err, ret)]
+    #[tracing::instrument(err(level = tracing::Level::WARN), ret)]
     async fn set_interface_status(name: &str, up: bool) -> Result<(), Error> {
         let Some(if_index) = Self::get_interface_index(name) else {
             return Err(Error::NotFound);
@@ -125,7 +140,7 @@ impl WindowsIfConfiger {
         }
     }
 
-    #[tracing::instrument(err, ret)]
+    #[tracing::instrument(err(level = tracing::Level::WARN), ret)]
     async fn set_interface_mtu(name: &str, mtu: u32) -> Result<(), Error> {
         let Some(if_index) = Self::get_interface_index(name) else {
             return Err(Error::NotFound);
@@ -139,7 +154,7 @@ impl WindowsIfConfiger {
         Ok(())
     }
 
-    #[tracing::instrument(err, ret)]
+    #[tracing::instrument(err(level = tracing::Level::WARN), ret)]
     async fn add_ipv6_address(name: &str, addr: Ipv6Inet) -> Result<(), Error> {
         let Some(if_index) = Self::get_interface_index(name) else {
             return Err(Error::NotFound);
@@ -152,7 +167,7 @@ impl WindowsIfConfiger {
         Ok(())
     }
 
-    #[tracing::instrument(err, ret)]
+    #[tracing::instrument(err(level = tracing::Level::WARN), ret)]
     async fn remove_ipv6_address(name: &str, addr: Option<Ipv6Inet>) -> Result<(), Error> {
         let Some(if_index) = Self::get_interface_index(name) else {
             return Err(Error::NotFound);
@@ -242,10 +257,36 @@ impl IfConfiguerTrait for WindowsIfConfiger {
     }
 
     async fn wait_interface_show(&self, name: &str) -> Result<(), Error> {
+        // Windows does not expose a newly created WinTun adapter through
+        // `GetAdaptersAddresses` synchronously, so a short poll is required.
+        // But an unbounded wait turns "adapter creation silently failed" into an
+        // instance stuck in `Starting` until something cancels it — observed as
+        // `core instance start cancelled` with no root-cause error. Cap it and
+        // report a clear failure instead.
+        //
+        // Poll with the *quiet* existence probe: `get_interface_index` goes
+        // through `find_interface_index`, which logs a WARN per miss — 10/s for
+        // the whole 30s cap, i.e. the same log burst this batch of fixes set out
+        // to remove. The index is resolved once the adapter is actually there
+        // (a hit logs nothing).
+        let deadline = std::time::Instant::now() + WAIT_INTERFACE_SHOW_TIMEOUT;
         loop {
-            if let Some(idx) = Self::get_interface_index(name) {
-                tracing::info!(?name, ?idx, "Interface found");
-                return Ok(());
+            if crate::arch::windows::interface_exists(name) == Some(true) {
+                // Quiet hit. The indexed lookup logs nothing on a hit; a miss
+                // here just means the adapter raced away — fall through and keep
+                // waiting until the deadline.
+                if let Some(idx) = Self::get_interface_index(name) {
+                    tracing::info!(?name, ?idx, "Interface found");
+                    return Ok(());
+                }
+            }
+            if std::time::Instant::now() >= deadline {
+                tracing::error!(
+                    ?name,
+                    timeout = ?WAIT_INTERFACE_SHOW_TIMEOUT,
+                    "interface did not appear before the deadline; giving up"
+                );
+                return Err(Error::NotFound);
             }
             tokio::time::sleep(std::time::Duration::from_millis(100)).await;
         }
@@ -253,6 +294,16 @@ impl IfConfiguerTrait for WindowsIfConfiger {
 
     async fn set_mtu(&self, name: &str, mtu: u32) -> Result<(), Error> {
         Self::set_interface_mtu(name, mtu).await
+    }
+
+    fn interface_present(&self, name: &str) -> bool {
+        // Quiet probe: reuse the same helper as the pre-create check so a
+        // per-tick readiness gate does not re-introduce the log noise it
+        // removes (calling `get_interface_index` here would log a WARN on every
+        // miss). `None` means enumeration itself failed — treat that as
+        // "present" so an unrelated enumeration hiccup cannot silently stop
+        // route reconciliation.
+        crate::arch::windows::interface_exists(name).unwrap_or(true)
     }
 
     async fn add_ipv6_ip(
