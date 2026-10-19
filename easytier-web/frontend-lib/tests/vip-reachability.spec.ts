@@ -205,6 +205,11 @@ describe('vipReachabilityScore (per link)', () => {
     expect(vipReachabilityScore(undefined)).toEqual({ reachable: 0, total: 0, hasData: false, anyUnknown: false })
   })
 
+  it('reports hasData=false for an empty list (no round yet)', () => {
+    // Same as omitted: do not treat [] as "prober ran", or every row becomes 未探测.
+    expect(vipReachabilityScore([])).toEqual({ reachable: 0, total: 0, hasData: false, anyUnknown: false })
+  })
+
   it('counts probing / unknown links in the denominator but not as reachable', () => {
     const score = vipReachabilityScore([
       link(1, 'conn-a', VipState.Probing),
@@ -229,10 +234,6 @@ describe('vipReachabilityScore (per link)', () => {
       link(1, 'conn-b', VipState.Unknown),
     ])
     expect(disabled).toEqual({ reachable: 0, total: 2, hasData: true, anyUnknown: true })
-  })
-
-  it('handles an empty link set', () => {
-    expect(vipReachabilityScore([])).toEqual({ reachable: 0, total: 0, hasData: true, anyUnknown: false })
   })
 
   it('counts pbjson string states correctly (Tauri wire form)', () => {
@@ -299,6 +300,9 @@ describe('vipReachabilityIndex (per-link)', () => {
     const noData = vipReachabilityIndex(undefined)
     expect(noData.hasData).toBe(false)
     expect(noData.wasProbed(1, 'conn-a')).toBe(false)
+
+    // Empty list (before the first round) is the same as "no data".
+    expect(vipReachabilityIndex([]).hasData).toBe(false)
 
     // Prober ran, but this row's conn is outside its enumeration ⇒ 「未探测」,
     // not 「未知」: the badge's N never included it.

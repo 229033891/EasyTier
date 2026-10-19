@@ -326,9 +326,9 @@ function vipBadgeFor(instanceId: string): {
     if (!info || info.instance_id !== instanceId || !info.detail)
         return undefined
     const score = vipReachabilityScore(info.detail.peer_vip_reachability)
-    // `hasData === false` means the core did not send the field at all, so N is
-    // unknown too — there is no `[?/N]` to show. "Probing disabled" reaches here
-    // as explicit `UNKNOWN + reason` rows instead, rendered `[0/N]` in gray.
+    // `hasData === false` means no probe records (field absent or empty), so N
+    // is unknown too — there is no `[?/N]` to show. "Probing disabled" reaches
+    // here as explicit `UNKNOWN + reason` rows instead, rendered `[0/N]` in gray.
     if (!score.hasData || score.total === 0)
         return undefined
     const text = `[${score.reachable}/${score.total}]`

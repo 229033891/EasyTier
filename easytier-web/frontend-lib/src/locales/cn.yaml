@@ -749,7 +749,7 @@ status:
   route_path_ellipsis: "…(+{count})"
   route_path_incomplete_tip: "协议仅提供下一跳与跳数，无法枚举全部中间节点名称"
   # VIP 数据面可达（已连接 ≠ 可达；见 docs/roadmap/gui-connected-vs-reachable.md）
-  vip_state_col: VIP
+  vip_state_col: VIP可达
   vip_state_unknown: 未知
   vip_state_probing: 探测中
   vip_state_reachable: 可达

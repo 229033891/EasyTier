@@ -516,7 +516,7 @@ const vipScore = computed(() =>
  * 「未探测」 in the table, which is what makes e.g. `[0/18]` beside 19 rows read
  * as "one link was not in scope" rather than as a contradiction.
  *
- * `hasData === false` (old core: field absent) means nothing was measured, so
+ * `hasData === false` (field absent or empty) means nothing was measured, so
  * there is no denominator worth printing; the badge is hidden in that case.
  */
 const vipBadgeText = computed(() =>

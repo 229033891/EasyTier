@@ -839,15 +839,18 @@ export function vipReachabilityIndex(reachability: PeerVipReachabilityInfo[] | u
    * Whether the prober actually enumerated this link.
    *
    * Distinguishes the two ways a row can end up with no record:
-   * - the backend sent **no** reachability field at all (old core) → nothing is
-   *   probed, so every row is 「未知」;
+   * - the backend sent **no** reachability field, or an empty list (old core /
+   *   no round yet) → nothing is probed, so every row is 「未知」;
    * - the backend sent records, but none for this row → the row is outside the
    *   prober's link enumeration and was never attempted → 「未探测」.
    *
    * Without this the second case is indistinguishable from a failed probe, which
    * is what made `[0/18]` next to a 19-row table look like a bug.
+   *
+   * Empty `[]` must not count as "has data": otherwise every unmatched row
+   * becomes 「未探测」 before the first probe round has written anything.
    */
-  const hasData = reachability !== undefined
+  const hasData = Array.isArray(reachability) && reachability.length > 0
   const wasProbed = (peerId: number, connId?: string): boolean => {
     const list = byPeer.get(Number(peerId))
     if (!list)
@@ -906,8 +909,9 @@ export function vipLinkTotal(_rowCount: number, recordCount: number): number {
  *   peer is never silently absent — an all-relay mesh must not read as `[0/0]`
  *   ("no data") when every relay actually answers.
  *
- * `hasData: false` means the backend sent no reachability field at all (old
- * core): callers must hide the badge rather than show `[0/0]` or `[?/0]`.
+ * `hasData: false` means there are no probe records yet (old core omitted the
+ * field, or a new core sent `[]` before the first round): callers must hide the
+ * badge rather than show `[0/0]` or `[?/0]`, and must not label rows 「未探测」.
  * `anyUnknown` is true when at least one link is still `probing`/`unknown`, i.e.
  * nothing definitive was measured — callers render that neutrally instead of
  * green/amber.
@@ -915,7 +919,7 @@ export function vipLinkTotal(_rowCount: number, recordCount: number): number {
 export function vipReachabilityScore(
   reachability: PeerVipReachabilityInfo[] | undefined,
 ): { reachable: number, total: number, hasData: boolean, anyUnknown: boolean } {
-  if (!reachability)
+  if (!reachability || reachability.length === 0)
     return { reachable: 0, total: 0, hasData: false, anyUnknown: false }
   let reachable = 0
   let anyUnknown = false
