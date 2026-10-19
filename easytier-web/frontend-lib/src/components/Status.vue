@@ -22,6 +22,8 @@ import {
   udpNatTypeName,
   vipReachabilityIndex,
   vipReachabilityScore,
+  vipLinkTotal,
+  vipReasonLabels,
   vipStateKey,
   vipStateLabel,
   vipStateSeverity,
@@ -468,11 +470,20 @@ function shouldAvoidRelayData(info: PeerRoutePair): boolean {
   return info.route?.feature_flag?.avoid_relay_data ?? false
 }
 
-const peerCount = computed(() => peerRouteInfos.value?.length ?? 0)
 /**
  * Detail-table row count: one row per PeerConn, so a peer with several tunnels
  * appears several times. That is intentional — each row carries its own
  * latency / loss / quality.
+ *
+ * **Not** the `N` of the VIP `[M/N]` badge: that denominator is the probe record
+ * count (`vipLinkTotal` deliberately ignores the row count), because `M` can
+ * only come from records. The two counts can differ — `collect_links` walks the
+ * route table, so a peer with no enumerable PeerConn yields one node-level
+ * record while the table still renders a row per conn — and such rows are
+ * labelled 「未探测」 in the table rather than being folded into `N`.
+ *
+ * No longer rendered as its own badge either: a second, unlabelled figure next
+ * to the VIP badge only raised the question of why the two disagreed.
  */
 const peerRowCount = computed(() => peerConnRows.value.length)
 
@@ -497,16 +508,26 @@ const vipScore = computed(() =>
   vipReachabilityScore(props.curNetworkInst?.detail?.peer_vip_reachability))
 
 /**
- * Badge text.
+ * Badge text: `[M/N]` over the links the prober actually probed.
  *
- * `hasData === false` (old core, field absent) yields `total === 0`, and the
- * badge is hidden in that case — there is no `[?/N]` state to render, because
- * the absence of the field also means N is unknown. The backend now reports
- * "probing off" as explicit `UNKNOWN + reason=disabled` rows, which land here as
- * `[0/N]` with the `secondary` severity below.
+ * `N` is the record count, not the table row count: `M` can only ever come from
+ * records, so a row with no record must stay outside `N` — otherwise the badge
+ * could never reach `[N/N]` however healthy the mesh is. Such rows are labelled
+ * 「未探测」 in the table, which is what makes e.g. `[0/18]` beside 19 rows read
+ * as "one link was not in scope" rather than as a contradiction.
+ *
+ * `hasData === false` (old core: field absent) means nothing was measured, so
+ * there is no denominator worth printing; the badge is hidden in that case.
  */
 const vipBadgeText = computed(() =>
-  `[${vipScore.value.reachable}/${vipScore.value.total}]`)
+  `[${vipScore.value.reachable}/${vipLinkTotalCount.value}]`)
+
+/**
+ * Denominator for the badge: the number of links the prober actually probed
+ * (see `vipLinkTotal` for why this is preferred over the table row count).
+ */
+const vipLinkTotalCount = computed(() =>
+  vipLinkTotal(peerRowCount.value, vipScore.value.total))
 
 /**
  * Badge colour for `[M/N]`.
@@ -517,7 +538,8 @@ const vipBadgeText = computed(() =>
  * the normal look of a mesh whose peers block ICMP).
  */
 const vipBadgeSeverity = computed<'success' | 'warn' | 'secondary' | undefined>(() => {
-  const { reachable, total, hasData, anyUnknown } = vipScore.value
+  const { reachable, hasData, anyUnknown } = vipScore.value
+  const total = vipLinkTotalCount.value
   if (total === 0)
     return undefined
   if (!hasData)
@@ -529,10 +551,19 @@ const vipBadgeSeverity = computed<'success' | 'warn' | 'secondary' | undefined>(
   return reachable === total ? 'success' : 'warn'
 })
 
+/**
+ * Badge tooltip: one sentence, one number.
+ *
+ * Deliberately does **not** mention the table row count: the badge's `N` is the
+ * probe record count, and printing a second, possibly different total in the
+ * tooltip is what made the pair look contradictory. Rows the prober never saw
+ * are labelled 「未探测」 in the table itself, so the difference needs no
+ * explanation here.
+ */
 function vipBadgeTip() {
   return t('status.vip_reachability_badge_tip', {
     m: vipScore.value.reachable,
-    n: vipScore.value.total,
+    n: vipLinkTotalCount.value,
   })
 }
 
@@ -543,33 +574,83 @@ function vipBadgeTip() {
  * lookup keys on the row's own conn id — that is what makes "primary dead,
  * standby fine" visible instead of averaged away.
  */
+function rowVipPeerId(row: PeerConnTableRow): number | undefined {
+  const raw = row.pair.peer?.peer_id ?? row.pair.route?.peer_id
+  if (raw === undefined || raw === null)
+    return undefined
+  const peerId = Number(raw)
+  return Number.isFinite(peerId) ? peerId : undefined
+}
+
 function rowVipInfo(row: PeerConnTableRow): PeerVipReachabilityInfo | undefined {
-  const peerId = row.pair.peer?.peer_id ?? row.pair.route?.peer_id
+  const peerId = rowVipPeerId(row)
   if (peerId === undefined)
     return undefined
   return vipIndex.value.forConn(peerId, row.conn?.conn_id)
 }
 
+/**
+ * Whether the prober enumerated this row's link. `false` means the row sits
+ * outside the badge's `N` (see `vipLinkTotal`) and must read 「未探测」, not
+ * 「未知」 — otherwise `[0/18]` beside a 19-row table looks like a bug rather
+ * than a link the prober never attempted.
+ */
+function rowVipWasProbed(row: PeerConnTableRow): boolean {
+  const peerId = rowVipPeerId(row)
+  if (peerId === undefined)
+    return false
+  return vipIndex.value.wasProbed(peerId, row.conn?.conn_id)
+}
+
+/**
+ * Reason strings for the VIP Tag (roadmap §3.4). Passed to both the label and
+ * the tooltip so "未知" is never shown without saying *why*.
+ */
+const vipReasons = computed(() => vipReasonLabels({
+  disabled: t('status.vip_reason_disabled'),
+  noVip: t('status.vip_reason_no_vip'),
+  noTun: t('status.vip_reason_no_tun'),
+  timeout: t('status.vip_reason_timeout'),
+  sendFailed: t('status.vip_reason_send_failed'),
+}))
+
 function rowVipKey(row: PeerConnTableRow): VipStateKey {
+  // Records exist but none for this row, and it is not a "no data at all"
+  // snapshot → the link was never probed.
+  if (vipIndex.value.hasData && !rowVipWasProbed(row))
+    return 'not_probed'
   return vipStateKey(rowVipInfo(row))
 }
 
 function rowVipLabel(row: PeerConnTableRow): string {
+  const key = rowVipKey(row)
+  if (key === 'not_probed')
+    return t('status.vip_state_not_probed')
   return vipStateLabel(rowVipInfo(row), {
     unknown: t('status.vip_state_unknown'),
     probing: t('status.vip_state_probing'),
     reachable: t('status.vip_state_reachable'),
     unreachable: t('status.vip_state_unreachable'),
-  })
+  }, vipReasons.value)
 }
 
 function rowVipTip(row: PeerConnTableRow) {
   const value = vipStateTip(rowVipInfo(row), {
     boundary: t('status.vip_boundary_tip'),
     probeFailed: t('status.vip_probe_failed'),
+    reason: t('status.vip_no_result'),
   })
+  // A never-probed row has no record to derive a tooltip from, so explain the
+  // gap explicitly rather than leaving the Tag unexplained.
+  const lines = value ? [value] : []
+  if (rowVipKey(row) === 'not_probed') {
+    lines.push(t('status.vip_not_probed_tip')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;'))
+  }
   // `vipStateTip` returns escaped HTML with <br> separators.
-  return value ? { value, escape: false } : undefined
+  return lines.length ? { value: lines.join('<br>'), escape: false } : undefined
 }
 
 // calculate tx/rx rate every 2 seconds
@@ -821,11 +902,6 @@ const eventLogContent = computed(() => {
                 class="text-xs font-semibold px-2 py-0.5 rounded-full"
                 v-tooltip.top="vipBadgeTip()"
               />
-              <Badge :value="peerRowCount" severity="info"
-                class="text-xs font-semibold px-2 py-0.5 rounded-full"
-                v-tooltip.top="peerRowCount !== peerCount
-                  ? t('peer_info_rows_tip', { peers: peerCount, links: peerRowCount })
-                  : undefined" />
             </div>
           </template>
           <div class="peer-table-scroll status-panel-body">

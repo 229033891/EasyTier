@@ -642,12 +642,59 @@ export const VipState = {
   Unreachable: 3,
 } as const
 
-export type VipStateKey = 'unknown' | 'probing' | 'reachable' | 'unreachable'
+export type VipStateKey
+  = | 'unknown'
+    | 'probing'
+    | 'reachable'
+    | 'unreachable'
+    /** The prober never produced a record for this link (see `vipLinkTotal`). */
+    | 'not_probed'
+
+/**
+ * Normalize `PeerVipReachability.state` from the Tauri / pbjson wire form.
+ *
+ * pbjson serializes the enum as a string (`"PEER_VIP_STATE_REACHABLE"`) and
+ * **omits** the field entirely when the value is 0 (Unknown). Comparing the
+ * raw value to numeric `VipState.*` therefore classified every link as
+ * unknown and kept the badge at `[0/N]` even when probes answered.
+ */
+export function normalizeVipState(state: unknown): number {
+  if (typeof state === 'number' && Number.isFinite(state))
+    return state
+  if (typeof state === 'string') {
+    const trimmed = state.trim()
+    switch (trimmed) {
+      case 'PEER_VIP_STATE_UNKNOWN':
+      case 'Unknown':
+      case 'unknown':
+        return VipState.Unknown
+      case 'PEER_VIP_STATE_PROBING':
+      case 'Probing':
+      case 'probing':
+        return VipState.Probing
+      case 'PEER_VIP_STATE_REACHABLE':
+      case 'Reachable':
+      case 'reachable':
+        return VipState.Reachable
+      case 'PEER_VIP_STATE_UNREACHABLE':
+      case 'Unreachable':
+      case 'unreachable':
+        return VipState.Unreachable
+      default: {
+        const asNum = Number(trimmed)
+        if (Number.isFinite(asNum))
+          return asNum
+      }
+    }
+  }
+  // Field absent (pbjson skips default 0) ⇒ Unknown.
+  return VipState.Unknown
+}
 
 export function vipStateKey(info?: PeerVipReachabilityInfo): VipStateKey {
   if (!info)
     return 'unknown'
-  switch (info.state) {
+  switch (normalizeVipState(info.state)) {
     case VipState.Reachable: return 'reachable'
     case VipState.Unreachable: return 'unreachable'
     case VipState.Probing: return 'probing'
@@ -666,23 +713,68 @@ export function vipStateKey(info?: PeerVipReachabilityInfo): VipStateKey {
 export function vipStateSeverity(key: VipStateKey): 'success' | 'warn' | 'secondary' {
   if (key === 'reachable') return 'success'
   if (key === 'unreachable') return 'warn'
+  // `not_probed` is deliberately `secondary` (gray), same as unknown: the link
+  // was never attempted, which is not evidence of a fault.
   return 'secondary'
 }
 
-/** Per-row VIP Tag label: state, with rtt when reachable. */
+/**
+ * Per-row VIP Tag label: the bare rtt when reachable, and a reason suffix when
+ * the state is a non-result (`未知 · 探测已关闭`).
+ *
+ * Reachable deliberately prints **only** the round-trip time (`7ms`) instead of
+ * `可达 7ms`: the number is itself the proof that the dataplane answered, so the
+ * word adds width without adding information. The Tag's colour still carries the
+ * verdict, and the column header says 「VIP」. When the backend reports
+ * reachable without an rtt, the state word is kept rather than printing nothing.
+ *
+ * The reason belongs inline, not only in the tooltip: a table full of bare
+ * "未知" tells the operator nothing about whether probing is off, the node has
+ * no VIP yet, or the peer never answered.
+ */
 export function vipStateLabel(
   info?: PeerVipReachabilityInfo,
-  labels?: Record<VipStateKey, string>,
+  labels?: Partial<Record<VipStateKey, string>>,
+  reasons?: Record<string, string>,
 ): string {
   const key = vipStateKey(info)
   const base = labels?.[key] ?? key
+  // Only the measurement, no state word: a time can only come from a reply.
   if (key === 'reachable' && info?.rtt_ms !== undefined)
-    return `${base} ${info.rtt_ms}ms`
+    return `${info.rtt_ms}ms`
+  if (key === 'unknown' && info?.error) {
+    const reason = reasons?.[info.error]
+    // Old core / absent field: no error string, so the bare state is all there is.
+    if (reason)
+      return `${base} · ${reason}`
+  }
   return base
+}
+
+/** Reason strings for `PeerVipReachability.error`, for tooltips and labels. */
+export function vipReasonLabels(i18n: {
+  disabled: string
+  noVip: string
+  noTun: string
+  timeout: string
+  sendFailed: string
+}): Record<string, string> {
+  return {
+    disabled: i18n.disabled,
+    no_vip: i18n.noVip,
+    no_tun: i18n.noTun,
+    timeout: i18n.timeout,
+    send_failed: i18n.sendFailed,
+  }
 }
 
 /**
  * Tooltip for a row's VIP Tag: state plus failure reason / boundary note.
+ *
+ * The backend `error` field explains *any* non-result state, not just failures:
+ * `disabled` (probing off), `no_vip` (no local VIP yet), `no_tun`, `timeout`,
+ * `send_failed`. Showing it only for `unreachable` is what made a screen full of
+ * "未知" unexplainable — the reason was there and got dropped here.
  *
  * Returns HTML (PrimeVue `v-tooltip` does not honour `\n`), so every part is
  * escaped here — the backend `error` string is machine-generated but is still
@@ -690,7 +782,7 @@ export function vipStateLabel(
  */
 export function vipStateTip(
   info: PeerVipReachabilityInfo | undefined,
-  i18n?: { boundary?: string, probeFailed?: string },
+  i18n?: { boundary?: string, probeFailed?: string, reason?: string },
 ): string | undefined {
   const escapeHtml = (text: string) => text
     .replace(/&/g, '&amp;')
@@ -698,10 +790,11 @@ export function vipStateTip(
     .replace(/>/g, '&gt;')
   const key = vipStateKey(info)
   const lines: string[] = []
-  if (key === 'unreachable' && info?.error) {
-    lines.push(escapeHtml(i18n?.probeFailed
-      ? `${i18n.probeFailed} (${info.error})`
-      : `probe failed (${info.error})`))
+  if (info?.error) {
+    const prefix = key === 'unreachable'
+      ? (i18n?.probeFailed ?? 'probe failed')
+      : (i18n?.reason ?? 'no result')
+    lines.push(escapeHtml(`${prefix} (${info.error})`))
   }
   if (i18n?.boundary)
     lines.push(escapeHtml(i18n.boundary))
@@ -717,16 +810,21 @@ export function vipStateTip(
 export function vipReachabilityIndex(reachability: PeerVipReachabilityInfo[] | undefined) {
   const byPeer = new Map<number, PeerVipReachabilityInfo[]>()
   for (const record of reachability || []) {
-    const list = byPeer.get(record.peer_id)
+    // Coerce: protobuf JSON / Tauri may deliver peer_id as a string; Map keys
+    // are compared with SameValueZero, so `"12" !== 12` would look like 未探测.
+    const peerId = Number(record.peer_id)
+    if (!Number.isFinite(peerId))
+      continue
+    const list = byPeer.get(peerId)
     if (list)
       list.push(record)
     else
-      byPeer.set(record.peer_id, [record])
+      byPeer.set(peerId, [record])
   }
 
   /** The record for one specific link, or the peer-level fallback (`conn_id === ''`). */
   const forConn = (peerId: number, connId?: string): PeerVipReachabilityInfo | undefined => {
-    const list = byPeer.get(peerId)
+    const list = byPeer.get(Number(peerId))
     if (!list)
       return undefined
     if (connId) {
@@ -738,16 +836,61 @@ export function vipReachabilityIndex(reachability: PeerVipReachabilityInfo[] | u
   }
 
   /**
+   * Whether the prober actually enumerated this link.
+   *
+   * Distinguishes the two ways a row can end up with no record:
+   * - the backend sent **no** reachability field at all (old core) → nothing is
+   *   probed, so every row is 「未知」;
+   * - the backend sent records, but none for this row → the row is outside the
+   *   prober's link enumeration and was never attempted → 「未探测」.
+   *
+   * Without this the second case is indistinguishable from a failed probe, which
+   * is what made `[0/18]` next to a 19-row table look like a bug.
+   */
+  const hasData = reachability !== undefined
+  const wasProbed = (peerId: number, connId?: string): boolean => {
+    const list = byPeer.get(Number(peerId))
+    if (!list)
+      return false
+    if (!connId)
+      return list.some(r => !r.conn_id)
+    return list.some(r => r.conn_id === connId || !r.conn_id)
+  }
+
+  /**
    * True when at least one record is not a definitive verdict (i.e. still
    * `probing`, or `unknown` with a reason such as "probing disabled"). Callers
    * use it to avoid painting a summary green/amber when nothing is measuring.
    */
-  const anyUnknown = (reachability || []).some(r =>
-    r.state === VipState.Probing || r.state === VipState.Unknown)
+  const anyUnknown = (reachability || []).some((r) => {
+    const state = normalizeVipState(r.state)
+    return state === VipState.Probing || state === VipState.Unknown
+  })
 
-  return { byPeer, forConn, anyUnknown }
+  return { byPeer, forConn, wasProbed, hasData, anyUnknown }
 }
 
+/**
+ * Denominator for the `[M/N]` badge: the number of links the prober actually
+ * probed (`peer_vip_reachability.length`).
+ *
+ * Chosen over the table row count because `M` and `N` must come from the same
+ * measurement: putting rows in the denominator would let a row that has no probe
+ * record sit inside `N` while being unable to contribute to `M`, so the badge
+ * could never reach `[N/N]` even on a perfectly healthy mesh.
+ *
+ * The counts can legitimately differ (`collect_links` enumerates the route
+ * table, and a peer with no enumerable PeerConn collapses into a single
+ * node-level record). Rows the prober never saw are labelled **「未探测」**
+ * rather than 「未知」 — that is what keeps e.g. `18` and `19` from reading as a
+ * contradiction: the table itself marks which row is outside `N`.
+ */
+export function vipLinkTotal(_rowCount: number, recordCount: number): number {
+  // The row count is intentionally ignored — see the note above on why rows must
+  // not enter the denominator. It stays in the signature so the call site has to
+  // name both figures and the trade-off stays visible.
+  return recordCount
+}
 /**
  * The `[M/N]` score, counted **per link**: M = links whose probe answered,
  * N = links probed.
@@ -777,9 +920,10 @@ export function vipReachabilityScore(
   let reachable = 0
   let anyUnknown = false
   for (const record of reachability) {
-    if (record.state === VipState.Reachable)
+    const state = normalizeVipState(record.state)
+    if (state === VipState.Reachable)
       reachable += 1
-    else if (record.state !== VipState.Unreachable)
+    else if (state !== VipState.Unreachable)
       anyUnknown = true
   }
   return { reachable, total: reachability.length, hasData: true, anyUnknown }

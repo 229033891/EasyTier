@@ -188,7 +188,6 @@ vpn_portal_state_error: Error
 show_event_log: Show Event Log
 event_log: Event Log
 peer_info: Peer Info
-peer_info_rows_tip: '{peers} peers · {links} links'
 local_addr: Local Address
 peer_conn_history: Peer Connection History
 history_select_peer: Select peer
@@ -759,9 +758,17 @@ status:
   vip_state_probing: Probing
   vip_state_reachable: Reachable
   vip_state_unreachable: Unreachable
-  vip_reachability_badge_tip: "VIP reachable links {m} / {n} (counted per link, same unit as the per-row VIP tags; independent of control-plane latency/loss)"
+  vip_state_not_probed: Not probed
+  vip_not_probed_tip: "This link was outside the prober's enumeration, so it is not counted in the N of [M/N]"
+  vip_reachability_badge_tip: "VIP reachable links {m} / {n} (both counted over the links the prober actually probed; independent of control-plane latency/loss)"
   vip_boundary_tip: "VIP dataplane probe result, not control-plane connectivity; failure may also mean the peer blocks ping"
   vip_probe_failed: "probe failed"
+  vip_no_result: "no result"
+  vip_reason_disabled: "probing is disabled"
+  vip_reason_no_vip: "no virtual IP assigned to this node yet"
+  vip_reason_no_tun: "probing unsupported in no_tun mode"
+  vip_reason_timeout: "probe timed out"
+  vip_reason_send_failed: "probe send failed"
 
 run_network: Run Network
 run_network_tip: Save the current config and start or apply this network

@@ -189,7 +189,6 @@ vpn_portal_state_error: 错误
 show_event_log: 显示事件日志
 event_log: 事件日志
 peer_info: 节点信息
-peer_info_rows_tip: '{peers} 个节点 · {links} 条链路'
 local_addr: 本端地址
 peer_conn_history: 对端连接历史
 history_select_peer: 选择对端
@@ -755,9 +754,17 @@ status:
   vip_state_probing: 探测中
   vip_state_reachable: 可达
   vip_state_unreachable: 不可达
-  vip_reachability_badge_tip: "VIP 可达链路 {m} / 链路总数 {n}（按线路统计，与每行 VIP 标记同一口径；与控制面延迟/丢包无关）"
+  vip_state_not_probed: 未探测
+  vip_not_probed_tip: "该链路未被纳入本轮探测范围，不计入 [M/N] 的 N"
+  vip_reachability_badge_tip: "VIP 可达链路 {m} / 链路总数 {n}（分子分母都只统计探测器实际探测过的链路；与控制面延迟/丢包无关）"
   vip_boundary_tip: "VIP 数据面探测结果，≠ 控制面连通性；探测失败也可能是对端禁 ping"
   vip_probe_failed: "探测失败"
+  vip_no_result: "暂无结果"
+  vip_reason_disabled: "探测已关闭"
+  vip_reason_no_vip: "本机尚未分配虚拟 IP"
+  vip_reason_no_tun: "no_tun 模式不支持探测"
+  vip_reason_timeout: "探测超时"
+  vip_reason_send_failed: "探测包发送失败"
 
 run_network: 运行网络
 run_network_tip: 保存当前配置并启动或应用该网络

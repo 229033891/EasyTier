@@ -306,8 +306,12 @@ const disabledInstanceIds = computed(() => new Set(
 const isRunning = (instanceId: string) => runningInstanceIds.value.has(instanceId);
 
 /**
- * Roadmap §2.3「最上方（实例态旁）」的 VIP 可达 `[M/N]`，与 Status 页同一口径
- * （按链路统计，见 `vipReachabilityScore`）。
+ * Roadmap §2.3「最上方（实例态旁）」的 VIP 可达 `[M/N]`。
+ *
+ * Same denominator as the Status page: the number of links the prober actually
+ * probed (`peer_vip_reachability.length`). This view renders no peer table, so
+ * there is no row count to compare against — which is why the two disagreeing
+ * numbers that motivated the Status-page design never arise here.
  *
  * Only the selected instance has a live `detail` (that is `curNetworkInfo`), so
  * the other rows have no probe data and get no badge — showing `[?/N]` for

@@ -566,11 +566,16 @@ export interface NetworkInstanceRunningInfo {
  * when the row's own conn has no entry.
  */
 export interface PeerVipReachabilityInfo {
-  peer_id: number
+  peer_id: number | string
   /** The PeerConn this result belongs to; empty for a peer-level entry. */
   conn_id?: string
-  /** 0 unknown / 1 probing / 2 reachable / 3 unreachable */
-  state: number
+  /**
+   * PeerVipState on the wire:
+   * - numeric 0–3 from some paths, or
+   * - pbjson string `"PEER_VIP_STATE_*"` from Tauri serde (and omitted when 0).
+   * Normalize with `normalizeVipState` before comparing.
+   */
+  state?: number | string
   rtt_ms?: number
   checked_at_unix_ms?: string | number
   error?: string

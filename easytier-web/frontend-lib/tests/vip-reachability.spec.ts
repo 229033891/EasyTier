@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import {
   VipState,
+  normalizeVipState,
   vipReachabilityIndex,
   vipReachabilityScore,
+  vipLinkTotal,
   vipStateKey,
   vipStateLabel,
   vipStateSeverity,
@@ -30,6 +32,27 @@ const LABELS = {
   unreachable: '不可达',
 }
 
+describe('normalizeVipState', () => {
+  it('accepts the pbjson string form Tauri actually emits', () => {
+    // Regression: comparing raw `"PEER_VIP_STATE_REACHABLE"` to numeric 2 left
+    // every row as 「未知」 and the badge stuck at `[0/N]`.
+    expect(normalizeVipState('PEER_VIP_STATE_UNKNOWN')).toBe(VipState.Unknown)
+    expect(normalizeVipState('PEER_VIP_STATE_PROBING')).toBe(VipState.Probing)
+    expect(normalizeVipState('PEER_VIP_STATE_REACHABLE')).toBe(VipState.Reachable)
+    expect(normalizeVipState('PEER_VIP_STATE_UNREACHABLE')).toBe(VipState.Unreachable)
+  })
+
+  it('treats a missing state as Unknown (pbjson omits default 0)', () => {
+    expect(normalizeVipState(undefined)).toBe(VipState.Unknown)
+    expect(normalizeVipState(null)).toBe(VipState.Unknown)
+  })
+
+  it('keeps numeric values unchanged', () => {
+    expect(normalizeVipState(VipState.Reachable)).toBe(VipState.Reachable)
+    expect(normalizeVipState(VipState.Unreachable)).toBe(VipState.Unreachable)
+  })
+})
+
 describe('vipStateKey', () => {
   it('maps every backend state to a key', () => {
     expect(vipStateKey(undefined)).toBe('unknown')
@@ -37,6 +60,12 @@ describe('vipStateKey', () => {
     expect(vipStateKey(record(1, VipState.Probing))).toBe('probing')
     expect(vipStateKey(record(1, VipState.Reachable))).toBe('reachable')
     expect(vipStateKey(record(1, VipState.Unreachable))).toBe('unreachable')
+  })
+
+  it('maps pbjson string states the same way as numbers', () => {
+    expect(vipStateKey(record(1, 'PEER_VIP_STATE_REACHABLE' as unknown as number))).toBe('reachable')
+    expect(vipStateKey(record(1, 'PEER_VIP_STATE_UNREACHABLE' as unknown as number))).toBe('unreachable')
+    expect(vipStateKey({ peer_id: 1, state: undefined })).toBe('unknown')
   })
 
   it('treats an unrecognised state as unknown rather than guessing', () => {
@@ -55,9 +84,12 @@ describe('vipStateSeverity', () => {
 })
 
 describe('vipStateLabel', () => {
-  it('appends rtt only when reachable', () => {
+  it('shows the bare rtt when reachable, no state word', () => {
+    // The number IS the proof that the dataplane answered; the Tag colour and
+    // the 「VIP」 column header carry the verdict instead.
     expect(vipStateLabel(record(1, VipState.Reachable, { rtt_ms: 12 }), LABELS))
-      .toBe('可达 12ms')
+      .toBe('12ms')
+    // Reachable but no rtt on the wire: keep the state word rather than nothing.
     expect(vipStateLabel(record(1, VipState.Reachable), LABELS)).toBe('可达')
     expect(vipStateLabel(record(1, VipState.Unreachable, { rtt_ms: 9 }), LABELS))
       .toBe('不可达')
@@ -67,7 +99,7 @@ describe('vipStateLabel', () => {
   it('renders a 0ms rtt instead of dropping it', () => {
     // Sub-millisecond round trips are reported as 0 by the core.
     expect(vipStateLabel(record(1, VipState.Reachable, { rtt_ms: 0 }), LABELS))
-      .toBe('可达 0ms')
+      .toBe('0ms')
   })
 })
 
@@ -91,6 +123,42 @@ describe('vipStateTip', () => {
       { probeFailed: 'probe failed' },
     )
     expect(tip).toBe('probe failed (&lt;img src=x&gt;)')
+  })
+
+  it('explains an unknown state instead of showing a bare 未知', () => {
+    // Regression: the reason used to be shown only for UNREACHABLE, so a screen
+    // of "未知" gave the operator nothing to act on.
+    const tip = vipStateTip(
+      record(1, VipState.Unknown, { error: 'no_vip' }),
+      { reason: '暂无结果' },
+    )
+    expect(tip).toBe('暂无结果 (no_vip)')
+  })
+})
+
+describe('vipStateLabel reasons', () => {
+  const REASONS = {
+    disabled: '探测已关闭',
+    no_vip: '本机尚未分配虚拟 IP',
+    no_tun: 'no_tun 模式不支持探测',
+    timeout: '探测超时',
+    send_failed: '探测包发送失败',
+  }
+
+  it('appends the reason to an unknown row', () => {
+    expect(vipStateLabel(record(1, VipState.Unknown, { error: 'disabled' }), LABELS, REASONS))
+      .toBe('未知 · 探测已关闭')
+  })
+
+  it('keeps the bare state when the core sent no reason (old core)', () => {
+    expect(vipStateLabel(record(1, VipState.Unknown), LABELS, REASONS)).toBe('未知')
+  })
+
+  it('does not append a reason to definitive states', () => {
+    expect(vipStateLabel(record(1, VipState.Reachable, { rtt_ms: 3 }), LABELS, REASONS))
+      .toBe('3ms')
+    expect(vipStateLabel(record(1, VipState.Unreachable, { error: 'timeout' }), LABELS, REASONS))
+      .toBe('不可达')
   })
 })
 
@@ -166,6 +234,31 @@ describe('vipReachabilityScore (per link)', () => {
   it('handles an empty link set', () => {
     expect(vipReachabilityScore([])).toEqual({ reachable: 0, total: 0, hasData: true, anyUnknown: false })
   })
+
+  it('counts pbjson string states correctly (Tauri wire form)', () => {
+    const score = vipReachabilityScore([
+      link(1, 'conn-a', 'PEER_VIP_STATE_REACHABLE' as unknown as number),
+      link(1, 'conn-b', 'PEER_VIP_STATE_UNREACHABLE' as unknown as number),
+      // Unknown is omitted on the wire ⇒ `state` is undefined.
+      { peer_id: 2, conn_id: 'conn-c' } as PeerVipReachabilityInfo,
+    ])
+    expect(score).toEqual({ reachable: 1, total: 3, hasData: true, anyUnknown: true })
+  })
+})
+
+describe('vipLinkTotal', () => {
+  it('is the number of links the prober actually probed', () => {
+    // 19 table rows but only 18 probe records: the denominator follows the
+    // records, because M can only come from records. The 19th row is rendered
+    // as 「未探测」, so the two numbers no longer contradict each other.
+    expect(vipLinkTotal(19, 18)).toBe(18)
+    expect(vipLinkTotal(19, 16)).toBe(16)
+  })
+
+  it('is 0 only when nothing was probed', () => {
+    expect(vipLinkTotal(0, 0)).toBe(0)
+    expect(vipLinkTotal(19, 0)).toBe(0)
+  })
 })
 
 describe('vipReachabilityIndex (per-link)', () => {
@@ -199,5 +292,34 @@ describe('vipReachabilityIndex (per-link)', () => {
     expect(index.forConn(1, 'conn-a')?.state).toBe(VipState.Reachable)
     // Unknown conn ⇒ peer-level entry.
     expect(index.forConn(1, 'conn-zzz')?.state).toBe(VipState.Unreachable)
+  })
+
+  it('tells "never probed" apart from "no probe data at all"', () => {
+    // Old core: no field ⇒ nothing is in scope, every row is merely unknown.
+    const noData = vipReachabilityIndex(undefined)
+    expect(noData.hasData).toBe(false)
+    expect(noData.wasProbed(1, 'conn-a')).toBe(false)
+
+    // Prober ran, but this row's conn is outside its enumeration ⇒ 「未探测」,
+    // not 「未知」: the badge's N never included it.
+    const partial = vipReachabilityIndex([link(1, 'conn-a', VipState.Reachable)])
+    expect(partial.hasData).toBe(true)
+    expect(partial.wasProbed(1, 'conn-a')).toBe(true)
+    expect(partial.wasProbed(2, 'conn-b')).toBe(false)
+  })
+
+  it('counts a peer-level record as covering that peer', () => {
+    const index = vipReachabilityIndex([record(2, VipState.Reachable)])
+    expect(index.wasProbed(2)).toBe(true)
+    expect(index.wasProbed(2, 'conn-x')).toBe(true)
+  })
+
+  it('joins when peer_id arrives as a string', () => {
+    // SameValueZero Map lookup: `"7" !== 7` would otherwise mark every row 未探测.
+    const index = vipReachabilityIndex([
+      { peer_id: '7', conn_id: 'conn-a', state: VipState.Reachable },
+    ])
+    expect(index.wasProbed(7, 'conn-a')).toBe(true)
+    expect(index.forConn(7, 'conn-a')?.state).toBe(VipState.Reachable)
   })
 })
