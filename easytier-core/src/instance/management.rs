@@ -89,6 +89,47 @@ where
         self.instance_runtime.management_events()
     }
 
+    /// Starts the VIP reachability prober for this instance start.
+    ///
+    /// Idempotent per start: an already-running task is left alone. The task
+    /// observes the instance `cancel` token and is also aborted by
+    /// [`Self::stop_vip_probe`], so it can never outlive its instance.
+    pub(crate) async fn start_vip_probe(self: &Arc<Self>) {
+        let mut slot = self.vip_probe_task.lock().await;
+        if slot.as_ref().is_some_and(|task| !task.is_finished()) {
+            return;
+        }
+        if let Some(finished) = slot.take() {
+            // Reap the old handle so its resources are released promptly.
+            drop(finished);
+        }
+        let peer_manager = self.peer_manager.clone();
+        let state = self.vip_probe_state.clone();
+        let cancel = self.cancel.clone();
+        *slot = Some(tokio::spawn(async move {
+            super::vip_probe::run_prober(peer_manager, state, cancel).await;
+        }));
+    }
+
+    /// Stops the prober and waits for it, so `clear_resources` can safely drop
+    /// the pipeline the filter sits in.
+    pub(crate) async fn stop_vip_probe(&self) {
+        let task = self.vip_probe_task.lock().await.take();
+        if let Some(task) = task {
+            task.abort();
+            // `abort` is not synchronous; awaiting the handle guarantees the
+            // task is gone before we return.
+            let _ = task.await;
+        }
+    }
+
+    /// `flags.disable_vip_reachability_probe`. Probing is display-only, so a
+    /// deployment may switch it off; peers then read "unknown", never
+    /// "unreachable".
+    pub(crate) fn vip_probe_disabled(&self) -> bool {
+        self.peer_manager.vip_probe_disabled()
+    }
+
     pub fn global_peer_map_snapshot(&self) -> crate::proto::peer_rpc::GetGlobalPeerMapResponse {
         self.peer_center.global_peer_map_snapshot()
     }

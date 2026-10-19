@@ -749,6 +749,15 @@ status:
   route_path: "{path}"
   route_path_ellipsis: "…(+{count})"
   route_path_incomplete_tip: "协议仅提供下一跳与跳数，无法枚举全部中间节点名称"
+  # VIP 数据面可达（已连接 ≠ 可达；见 docs/roadmap/gui-connected-vs-reachable.md）
+  vip_state_col: VIP
+  vip_state_unknown: 未知
+  vip_state_probing: 探测中
+  vip_state_reachable: 可达
+  vip_state_unreachable: 不可达
+  vip_reachability_badge_tip: "VIP 可达链路 {m} / 链路总数 {n}（按线路统计，与每行 VIP 标记同一口径；与控制面延迟/丢包无关）"
+  vip_boundary_tip: "VIP 数据面探测结果，≠ 控制面连通性；探测失败也可能是对端禁 ping"
+  vip_probe_failed: "探测失败"
 
 run_network: 运行网络
 run_network_tip: 保存当前配置并启动或应用该网络

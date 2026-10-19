@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { NetworkInstance, VpnPortalClientState, type TunnelInfo, type NodeInfo, type PeerInfo, type PeerRoutePair, type VpnPortalClientInfo, type VpnPortalInfo } from '../types/network'
+import { NetworkInstance, VpnPortalClientState, type TunnelInfo, type NodeInfo, type PeerInfo, type PeerRoutePair, type PeerVipReachabilityInfo, type VpnPortalClientInfo, type VpnPortalInfo } from '../types/network'
 import type { RemoteClient } from '../modules/api'
 import { useI18n } from 'vue-i18n';
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue';
@@ -20,8 +20,15 @@ import {
   resolvePeerRemoteAddr,
   resolveRoutePath,
   udpNatTypeName,
+  vipReachabilityIndex,
+  vipReachabilityScore,
+  vipStateKey,
+  vipStateLabel,
+  vipStateSeverity,
+  vipStateTip,
   type PeerConnTableRow,
   type RoutePeerLabel,
+  type VipStateKey,
 } from '../modules/statusDisplay';
 import { Badge, DataTable, Column, Tag, Button, ScrollPanel, Card, Panel, } from 'primevue';
 import NetworkChart from './NetworkChart.vue';
@@ -462,8 +469,108 @@ function shouldAvoidRelayData(info: PeerRoutePair): boolean {
 }
 
 const peerCount = computed(() => peerRouteInfos.value?.length ?? 0)
-/** Rows after flattening multi-conn peers (badge); may exceed peerCount. */
+/**
+ * Detail-table row count: one row per PeerConn, so a peer with several tunnels
+ * appears several times. That is intentional — each row carries its own
+ * latency / loss / quality.
+ */
 const peerRowCount = computed(() => peerConnRows.value.length)
+
+// --- VIP dataplane reachability (docs/roadmap/gui-connected-vs-reachable.md) ---
+
+/**
+ * Per-link reachability index (old cores: undefined ⇒ every row unknown).
+ *
+ * The backend emits one record per PeerConn, so a row looks up its own
+ * `conn_id` first and only then falls back to the peer-level entry — a dead
+ * primary must not inherit its standby's "reachable".
+ */
+const vipIndex = computed(() =>
+  vipReachabilityIndex(props.curNetworkInst?.detail?.peer_vip_reachability))
+
+/**
+ * Summary score, counted per **link** (roadmap §2.2), matching the unit of the
+ * per-row Tags next to it: a peer with a dead primary and a live standby shows
+ * as `[1/2]`, not as one reachable node.
+ */
+const vipScore = computed(() =>
+  vipReachabilityScore(props.curNetworkInst?.detail?.peer_vip_reachability))
+
+/**
+ * Badge text.
+ *
+ * `hasData === false` (old core, field absent) yields `total === 0`, and the
+ * badge is hidden in that case — there is no `[?/N]` state to render, because
+ * the absence of the field also means N is unknown. The backend now reports
+ * "probing off" as explicit `UNKNOWN + reason=disabled` rows, which land here as
+ * `[0/N]` with the `secondary` severity below.
+ */
+const vipBadgeText = computed(() =>
+  `[${vipScore.value.reachable}/${vipScore.value.total}]`)
+
+/**
+ * Badge colour for `[M/N]`.
+ *
+ * Gray is reserved for "we are not measuring" (probing disabled / no TUN / no
+ * VIP), so it never reads as a result. Everything else splits on whether every
+ * link answered: all reachable ⇒ green, otherwise amber (including M=0, which is
+ * the normal look of a mesh whose peers block ICMP).
+ */
+const vipBadgeSeverity = computed<'success' | 'warn' | 'secondary' | undefined>(() => {
+  const { reachable, total, hasData, anyUnknown } = vipScore.value
+  if (total === 0)
+    return undefined
+  if (!hasData)
+    return 'secondary'
+  // "Nothing is probing" is a state, not a reachability result: if no link
+  // reported a definitive verdict, do not paint the badge green or amber.
+  if (reachable === 0 && anyUnknown)
+    return 'secondary'
+  return reachable === total ? 'success' : 'warn'
+})
+
+function vipBadgeTip() {
+  return t('status.vip_reachability_badge_tip', {
+    m: vipScore.value.reachable,
+    n: vipScore.value.total,
+  })
+}
+
+/**
+ * The reachability record for one table row.
+ *
+ * A row is one PeerConn (or a relay-only peer with no conn at all), so the
+ * lookup keys on the row's own conn id — that is what makes "primary dead,
+ * standby fine" visible instead of averaged away.
+ */
+function rowVipInfo(row: PeerConnTableRow): PeerVipReachabilityInfo | undefined {
+  const peerId = row.pair.peer?.peer_id ?? row.pair.route?.peer_id
+  if (peerId === undefined)
+    return undefined
+  return vipIndex.value.forConn(peerId, row.conn?.conn_id)
+}
+
+function rowVipKey(row: PeerConnTableRow): VipStateKey {
+  return vipStateKey(rowVipInfo(row))
+}
+
+function rowVipLabel(row: PeerConnTableRow): string {
+  return vipStateLabel(rowVipInfo(row), {
+    unknown: t('status.vip_state_unknown'),
+    probing: t('status.vip_state_probing'),
+    reachable: t('status.vip_state_reachable'),
+    unreachable: t('status.vip_state_unreachable'),
+  })
+}
+
+function rowVipTip(row: PeerConnTableRow) {
+  const value = vipStateTip(rowVipInfo(row), {
+    boundary: t('status.vip_boundary_tip'),
+    probeFailed: t('status.vip_probe_failed'),
+  })
+  // `vipStateTip` returns escaped HTML with <br> separators.
+  return value ? { value, escape: false } : undefined
+}
 
 // calculate tx/rx rate every 2 seconds
 let rateIntervalId = 0
@@ -707,6 +814,13 @@ const eventLogContent = computed(() => {
           <template #header>
             <div class="flex items-center gap-2">
               <span>{{ t('peer_info') }}</span>
+              <Badge
+                v-if="vipBadgeSeverity"
+                :value="vipBadgeText"
+                :severity="vipBadgeSeverity"
+                class="text-xs font-semibold px-2 py-0.5 rounded-full"
+                v-tooltip.top="vipBadgeTip()"
+              />
               <Badge :value="peerRowCount" severity="info"
                 class="text-xs font-semibold px-2 py-0.5 rounded-full"
                 v-tooltip.top="peerRowCount !== peerCount
@@ -723,6 +837,15 @@ const eventLogContent = computed(() => {
             :rowClass="peerConnRowClass"
           >
             <Column :field="rowIpFormat" :header="t('virtual_ipv4')" />
+            <Column :header="t('status.vip_state_col')" body-class="peer-col-secondary">
+              <template #body="slotProps">
+                <Tag
+                  :severity="vipStateSeverity(rowVipKey(slotProps.data))"
+                  :value="rowVipLabel(slotProps.data)"
+                  v-tooltip.top="rowVipTip(slotProps.data)"
+                />
+              </template>
+            </Column>
             <Column :header="t('hostname')">
               <template #body="slotProps">
                 <div class="space-x-1">

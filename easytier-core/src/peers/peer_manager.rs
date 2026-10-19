@@ -1045,6 +1045,31 @@ fn note_tunnel_buffer_full(counter: &CounterHandle, err: &Error) {
     }
 }
 
+/// Whether a packet must carry `not_send_to_tun` + `no_proxy`.
+///
+/// Both flags exist purely to stop a **self-delivered** packet from looping:
+/// with them set, the local `NicPacketProcessor` skips the TUN and the ICMP
+/// proxy declines to answer, so a packet that the proxy re-injected for its own
+/// node is not bounced back into the host stack.
+///
+/// They must therefore be gated on `to_peer_id == my_peer_id`. Applying them to
+/// a packet bound for *another* node suppresses that node's two reply sources,
+/// which silently turns every per-link VIP probe into "unreachable" — exactly the
+/// bug this helper was extracted to prevent. It is shared by the user path and
+/// the prober paths so the three sites cannot drift apart again.
+fn needs_self_delivery_guard(
+    local_exit_node_fallback: bool,
+    not_send_to_self: bool,
+    to_peer_id: PeerId,
+    my_peer_id: PeerId,
+    is_local_virtual_ip: bool,
+) -> bool {
+    !local_exit_node_fallback
+        && not_send_to_self
+        && to_peer_id == my_peer_id
+        && !is_local_virtual_ip
+}
+
 pub struct PeerManagerCore {
     my_peer_id: PeerId,
     tasks: Mutex<JoinSet<()>>,
@@ -2124,6 +2149,99 @@ impl PeerManagerCore {
         self.outbound_packet_router
             .send_msg_by_ip(msg, ip_addr, not_send_to_self)
             .await
+    }
+
+    /// Display-only send used by the VIP reachability prober. See
+    /// [`PeerOutboundPacketRouter::send_probe_msg_by_ip`].
+    pub async fn send_probe_msg_by_ip(
+        &self,
+        msg: ZCPacket,
+        ip_addr: IpAddr,
+        not_send_to_self: bool,
+    ) -> Result<(), Error> {
+        self.outbound_packet_router
+            .send_probe_msg_by_ip(msg, ip_addr, not_send_to_self)
+            .await
+    }
+
+    /// Per-link variant: send a probe **on one named PeerConn** instead of
+    /// letting OSPF/`select_conn` pick a path.
+    ///
+    /// `dst_ip` is still used for the loop-prevention header flags, so a probe
+    /// aimed at a local VIP behaves exactly like data addressed to it — only
+    /// the egress conn is forced.
+    ///
+    /// Those flags must stay gated on `peer_id == my_peer_id`, exactly like the
+    /// user path in [`Self::send_msg_by_ip_after_pipeline`]. Setting
+    /// `not_send_to_tun` + `no_proxy` on a packet aimed at a **remote** peer
+    /// disables both remote reply sources at once (the peer's `NicPacketProcessor`
+    /// skips `!is_not_send_to_tun()` and its ICMP proxy passes `is_no_proxy`),
+    /// so every per-link probe would time out and report "unreachable".
+    ///
+    /// Like [`Self::send_probe_msg_by_ip`] this is display-only: no
+    /// `mark_recent_traffic`, no user-traffic accounting, no parking.
+    pub async fn send_probe_msg_on_conn(
+        &self,
+        mut msg: ZCPacket,
+        conn_id: &PeerConnId,
+        dst_ip: IpAddr,
+        peer_id: PeerId,
+    ) -> Result<(), Error> {
+        msg.fill_peer_manager_hdr(self.my_peer_id, 0, PacketType::Data as u8);
+        let Some(peer) = self.peers.get_peer_by_id(peer_id) else {
+            return Err(Error::NotFound);
+        };
+
+        try_compress_and_encrypt(
+            self.data_compress_algo,
+            &self.encryptor,
+            &mut msg,
+            self.is_secure_mode_enabled,
+        )
+        .await?;
+
+        let packet_policy = self.context.packet_policy();
+        let host_routing = self.context.host_routing_policy();
+        let hdr = msg.mut_peer_manager_header().unwrap();
+        hdr.to_peer_id.set(peer_id);
+        hdr.set_latency_first(packet_policy.latency_first);
+        if needs_self_delivery_guard(
+            host_routing.local_exit_node_fallback,
+            // A probe is "not sent to self" by definition: the only useful
+            // destination is the remote peer, whose reply the prober awaits.
+            true,
+            peer_id,
+            self.my_peer_id,
+            self.context.is_ip_local_virtual_ip(&dst_ip),
+        ) {
+            // Loop prevention for self-delivery only. A per-link probe is
+            // normally aimed at *another* node, where these flags would
+            // suppress the ICMP reply we are waiting for (see the doc comment).
+            hdr.set_not_send_to_tun(true);
+            hdr.set_no_proxy(true);
+        }
+
+        peer.send_msg_on_conn(conn_id, msg).await
+    }
+
+    /// Live PeerConn ids for one peer (used by the per-link prober).
+    pub fn peer_live_conn_ids(&self, peer_id: PeerId) -> Vec<PeerConnId> {
+        self.peers
+            .get_peer_by_id(peer_id)
+            .map(|peer| peer.live_conn_ids())
+            .unwrap_or_default()
+    }
+
+    /// `flags.disable_vip_reachability_probe`: probing is a display feature and
+    /// may be turned off for compliance / weak devices (roadmap §3.2).
+    pub fn vip_probe_disabled(&self) -> bool {
+        self.context.flags().disable_vip_reachability_probe
+    }
+
+    /// TUN-less transports change what an ICMP probe means, so the roadmap
+    /// (§3.2 / §7) makes them report "unknown + reason" instead of guessing.
+    pub fn vip_probe_no_tun(&self) -> bool {
+        self.context.flags().no_tun
     }
 
     pub async fn check_allow_kcp_to_dst(&self, dst_ip: &IpAddr) -> bool {
@@ -3525,6 +3643,102 @@ impl PeerOutboundPacketRouter {
             .map(|_| ())
     }
 
+    /// Display-only sibling of [`Self::send_msg_by_ip`] for VIP reachability
+    /// probes.
+    ///
+    /// Same route lookup and same tunnel send, but deliberately **not** the
+    /// user-traffic path: no `mark_recent_traffic` (that is the P2P / lazy-p2p
+    /// control-plane signal), no `self_tx_packets` / `compress_tx_bytes`
+    /// accounting, no parking of unroutable packets, and no ACL pipeline.
+    ///
+    /// The roadmap contract (§2.4 / §3.3) says a probe is "display only": it must
+    /// not influence routing, must not count as user traffic, and must not be
+    /// buffered past its own lifetime. Keeping a separate entry point is how that
+    /// stays obvious at the call site instead of being a boolean argument nobody
+    /// remembers.
+    pub async fn send_probe_msg_by_ip(
+        &self,
+        mut msg: ZCPacket,
+        ip_addr: IpAddr,
+        not_send_to_self: bool,
+    ) -> Result<(), Error> {
+        msg.fill_peer_manager_hdr(self.my_peer_id, 0, PacketType::Data as u8);
+
+        // Unlike the user path there is no NIC pipeline here — no ACL, no DNS
+        // interception, no proxy filters. Those all act on *host* traffic; a
+        // prober packet is not, and running it through them would either drop it
+        // for unrelated reasons or make proxying side effects visible.
+
+        let flow_key = msg.bond_flow_key();
+        let (dst_peers, is_exit_node) = match ip_addr {
+            IpAddr::V4(ipv4_addr) => self.get_msg_dst_peer_ipv4(&ipv4_addr, flow_key).await,
+            IpAddr::V6(ipv6_addr) => self.get_msg_dst_peer_ipv6(&ipv6_addr).await,
+        };
+        if dst_peers.is_empty() {
+            // Not parked and not counted: the prober turns this into
+            // `send_failed`, and the packet must never outlive the probe.
+            return Err(Error::RouteError(None));
+        }
+
+        try_compress_and_encrypt(
+            self.data_compress_algo,
+            &self.encryptor,
+            &mut msg,
+            self.is_secure_mode_enabled,
+        )
+        .await?;
+
+        let packet_policy = self.context.packet_policy();
+        msg.mut_peer_manager_header()
+            .unwrap()
+            .set_latency_first(packet_policy.latency_first)
+            .set_exit_node(is_exit_node);
+
+        let mut errs: Vec<Error> = Vec::new();
+        let mut msg = Some(msg);
+        let total = dst_peers.len();
+        for (i, peer_id) in dst_peers.iter().enumerate() {
+            let mut msg = if i == total - 1 {
+                msg.take().expect("last packet")
+            } else {
+                msg.clone().expect("fanout packet")
+            };
+            let hdr = msg.mut_peer_manager_header().unwrap();
+            hdr.to_peer_id.set(*peer_id);
+            if needs_self_delivery_guard(
+                self.host_routing.local_exit_node_fallback,
+                not_send_to_self,
+                *peer_id,
+                self.my_peer_id,
+                self.context.is_ip_local_virtual_ip(&ip_addr),
+            ) {
+                hdr.set_not_send_to_tun(true);
+                hdr.set_no_proxy(true);
+            }
+
+            // `direct_tx_metrics: None` — probe bytes are not user traffic.
+            if let Err(e) = send_msg_internal(
+                self.peers.as_ref(),
+                &self.foreign_network_client,
+                &self.relay_peer_map,
+                None,
+                msg,
+                *peer_id,
+            )
+            .await
+            {
+                note_tunnel_buffer_full(&self.counters.tunnel_buffer_full, &e);
+                errs.push(e);
+            }
+        }
+
+        if errs.is_empty() {
+            Ok(())
+        } else {
+            Err(Error::RouteError(None))
+        }
+    }
+
     /// Everything [`Self::send_msg_by_ip`] does once the NIC packet pipeline has
     /// run.
     ///
@@ -3635,11 +3849,13 @@ impl PeerOutboundPacketRouter {
             let hdr = msg.mut_peer_manager_header().unwrap();
             hdr.to_peer_id.set(*peer_id);
 
-            if !self.host_routing.local_exit_node_fallback
-                && not_send_to_self
-                && *peer_id == self.my_peer_id
-                && !self.context.is_ip_local_virtual_ip(&ip_addr)
-            {
+            if needs_self_delivery_guard(
+                self.host_routing.local_exit_node_fallback,
+                not_send_to_self,
+                *peer_id,
+                self.my_peer_id,
+                self.context.is_ip_local_virtual_ip(&ip_addr),
+            ) {
                 // Keep the loop-prevention flags for proxy-induced self-delivery where
                 // the destination is not this node's own EasyTier-managed IP.
                 hdr.set_not_send_to_tun(true);

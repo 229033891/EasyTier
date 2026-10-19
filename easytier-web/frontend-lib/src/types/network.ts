@@ -549,6 +549,31 @@ export interface NetworkInstanceRunningInfo {
    * JSON wire; combine with `allow_peer_default_without_exit` presence.
    */
   desired_proxy_cidrs?: string[]
+  /**
+   * VIP dataplane reachability, **one entry per PeerConn**. A peer with several
+   * tunnels therefore has several entries, each probed on its own conn.
+   * Absent on old cores ⇒ all rows "unknown", never "unreachable".
+   */
+  peer_vip_reachability?: PeerVipReachabilityInfo[]
+}
+
+/**
+ * Mirrors api.instance.PeerVipReachability (see generated proto for enum values).
+ *
+ * Joining rules: match `peer_id`, then `conn_id` for a specific link.
+ * `conn_id === ''` marks a peer-level entry, i.e. a peer reached over a path we
+ * cannot attribute to one of its conns (relay-only); per-row Tags fall back to it
+ * when the row's own conn has no entry.
+ */
+export interface PeerVipReachabilityInfo {
+  peer_id: number
+  /** The PeerConn this result belongs to; empty for a peer-level entry. */
+  conn_id?: string
+  /** 0 unknown / 1 probing / 2 reachable / 3 unreachable */
+  state: number
+  rtt_ms?: number
+  checked_at_unix_ms?: string | number
+  error?: string
 }
 
 export interface Ipv4Addr {

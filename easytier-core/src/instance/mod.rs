@@ -16,6 +16,7 @@ mod packet_plane;
 mod packet_proxy_extension;
 #[cfg(feature = "public-ipv6-provider")]
 mod public_ipv6_extension;
+pub mod vip_probe;
 #[cfg(feature = "vpn-portal")]
 mod vpn_portal_extension;
 
@@ -434,6 +435,11 @@ where
     pub(super) packet_egress: Arc<dyn PacketEgressHost>,
     pub(super) packet_receiver: Mutex<Option<HostPacketReceiver>>,
     pub(super) peer_center: Arc<PeerCenterInstance>,
+    /// VIP dataplane reachability prober state (display-only; see vip_probe).
+    pub(crate) vip_probe_state: Arc<vip_probe::VipProbeState>,
+    /// Prober task handle. Aborted in `stop_components`, so an instance restart
+    /// cannot leave a prober running against the previous `PeerManagerCore`.
+    pub(super) vip_probe_task: Mutex<Option<tokio::task::JoinHandle<()>>>,
     #[cfg(feature = "public-ipv6-provider")]
     public_ipv6_provider: PublicIpv6ProviderRuntime,
     #[cfg(feature = "vpn-portal")]
@@ -882,6 +888,8 @@ where
             packet_egress,
             packet_receiver: Mutex::new(Some(packet_rx)),
             peer_center,
+            vip_probe_state: Arc::new(vip_probe::VipProbeState::default()),
+            vip_probe_task: Mutex::new(None),
             #[cfg(feature = "public-ipv6-provider")]
             public_ipv6_provider,
             #[cfg(feature = "vpn-portal")]

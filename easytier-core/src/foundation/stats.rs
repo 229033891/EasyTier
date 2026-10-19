@@ -215,6 +215,17 @@ pub enum MetricName {
     /// unrelated send failures into it would blur exactly the metric the
     /// roadmap tells operators to watch.
     DataPlanePendingFlushErrors,
+
+    /// VIP reachability probes sent to the data plane (GUI "connected vs
+    /// reachable"). One increment per peer per probe round.
+    VipReachabilityProbesSent,
+    /// VIP reachability probes that produced a successful echo round trip.
+    VipReachabilityProbesReached,
+    /// VIP reachability probes that timed out within the probe window.
+    VipReachabilityProbesTimedOut,
+    /// VIP reachability probes whose send path failed outright (no route /
+    /// tunnel refused) — distinct from a timeout, which means "sent, no reply".
+    VipReachabilityProbesSendFailed,
 }
 
 impl fmt::Display for MetricName {
@@ -324,6 +335,18 @@ impl fmt::Display for MetricName {
             MetricName::DataPlaneTunnelBufferFull => write!(f, "data_plane_tunnel_buffer_full"),
             MetricName::DataPlanePendingFlushErrors => {
                 write!(f, "data_plane_pending_flush_errors")
+            }
+            MetricName::VipReachabilityProbesSent => {
+                write!(f, "vip_reachability_probes_sent")
+            }
+            MetricName::VipReachabilityProbesReached => {
+                write!(f, "vip_reachability_probes_reached")
+            }
+            MetricName::VipReachabilityProbesTimedOut => {
+                write!(f, "vip_reachability_probes_timed_out")
+            }
+            MetricName::VipReachabilityProbesSendFailed => {
+                write!(f, "vip_reachability_probes_send_failed")
             }
         }
     }

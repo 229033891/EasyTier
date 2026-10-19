@@ -864,6 +864,48 @@ fn recent_traffic_fanout_policy_only_marks_single_peer() {
     assert!(!should_mark_recent_traffic_for_fanout(2));
 }
 
+// ---------------------------------------------------------------------------
+// Self-delivery guard for `not_send_to_tun` / `no_proxy`.
+//
+// Regression for the P0 where `send_probe_msg_on_conn` set both flags on a
+// packet bound for a *remote* peer. On the far side that makes
+// `NicPacketProcessor` skip the TUN (`!is_not_send_to_tun()` is false) and
+// `IcmpProxyEngine::handle_peer_packet` pass on `is_no_proxy`, so no Echo Reply
+// is ever produced and every per-link VIP probe reports "unreachable".
+// ---------------------------------------------------------------------------
+
+const MY_ID: PeerId = 1;
+const REMOTE_ID: PeerId = 2;
+
+#[test]
+fn self_delivery_guard_is_not_applied_to_a_remote_peer() {
+    // The P0: destination is another node, so a probe must reach its TUN / ICMP
+    // proxy and be answered.
+    assert!(!needs_self_delivery_guard(
+        false, true, REMOTE_ID, MY_ID, false
+    ));
+}
+
+#[test]
+fn self_delivery_guard_is_applied_to_self_delivery() {
+    // Proxy-induced self-delivery to a non-local address: keep the loop guard.
+    // Args: (local_exit_node_fallback, not_send_to_self, to, my, is_local_vip)
+    assert!(needs_self_delivery_guard(false, true, MY_ID, MY_ID, false));
+}
+
+#[test]
+fn self_delivery_guard_respects_local_vip_and_exit_fallback() {
+    // A local VIP is delivered to the host stack on purpose.
+    assert!(!needs_self_delivery_guard(false, true, MY_ID, MY_ID, true));
+    // `local_exit_node_fallback` disables the guard wholesale.
+    assert!(!needs_self_delivery_guard(true, true, MY_ID, MY_ID, false));
+    // A caller that does want self-delivery (`not_send_to_self == false`)
+    // never gets the flags.
+    assert!(!needs_self_delivery_guard(
+        false, false, MY_ID, MY_ID, false
+    ));
+}
+
 fn resolved_remote_addr_from_url(addr: Option<&str>) -> Option<ProtoUrl> {
     addr.map(|addr| Url::parse(addr).unwrap().into())
 }

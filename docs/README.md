@@ -74,6 +74,7 @@ crate 内设计稿（非本索引）：`easytier/docs/`（凭据计划已标 Arc
 | [client-web-console-interaction.md](./roadmap/client-web-console-interaction.md) | 客户端 ↔ 控制台交互：超时 / Start 覆盖 / 会话抖动 / 协议降级（P0–P2）+ 交互性能审查（§9；优先 S4/S5） |
 | [poll-to-push-roi.md](./roadmap/poll-to-push-roi.md) | **轮询→推送 ROI**：P0 GUI 1s 事件化；P1 状态页混合；§4.4 desired 下发另立；心跳/安卓纯推不做 |
 | [tray-run-state.md](./roadmap/tray-run-state.md) | **托盘运行态语义**：判据从「客户端已连接」改为按实例聚合（灰=无网在跑 / 黄=启动中 / 绿=在网 / 红=需介入）；代码已落地，**待真机验收** |
+| [gui-connected-vs-reachable.md](./roadmap/gui-connected-vs-reachable.md) | **已连接 vs VIP 可达**：**按链路**数据面 ICMP 探测（每条 PeerConn 各测），行级 Tag 按链路、`[M/N]` 按节点；代码已落地，**待现网验收**（GUI/`frontend-lib` 一期；LuCI 二期） |
 | [config-delete-authority.md](./roadmap/config-delete-authority.md) | 配置删除权：bound+Web 仅控制台；客户端删门与停用保留 |
 | [local-config-residue.md](./roadmap/local-config-residue.md) | 控制台删除后本地/GUI 残留：分层收敛（P0–P2 代码已落地；待人工回归） |
 | [config-sync-per-end.md](./roadmap/config-sync-per-end.md) | 配置同步**各端一致性核验**：删除权 / W 权威 / 残留 UI 覆盖矩阵（有意不统一；gui 含 Android 已闭环） |

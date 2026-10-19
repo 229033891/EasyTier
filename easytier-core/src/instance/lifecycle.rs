@@ -173,6 +173,9 @@ where
             );
         }
 
+        // Stop the prober before touching peer-manager resources: its filter
+        // lives in the peer packet pipeline and its task holds the manager.
+        self.stop_vip_probe().await;
         #[cfg(feature = "vpn-portal")]
         self.vpn_portal.stop().await;
         #[cfg(feature = "public-ipv6-provider")]
@@ -240,6 +243,10 @@ where
         let result = match result {
             Ok(()) => {
                 self.set_state(CoreInstanceState::Running);
+                // Prober needs the instance inside its Arc (its task holds a
+                // clone of the peer manager). Started here rather than in
+                // `start_components` because that path only has `&self`.
+                self.start_vip_probe().await;
                 if self.cancel.is_cancelled() {
                     Err(anyhow::anyhow!("core instance start cancelled"))
                 } else {

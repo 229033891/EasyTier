@@ -268,6 +268,12 @@ message NetworkInstanceRunningInfo {
   // empty, and detect old cores (which never send it) via the
   // `allow_peer_default_without_exit` presence bit.
   repeated string desired_proxy_cidrs = 16;
+  // VIP dataplane reachability per connected peer, from the local VIP-echo
+  // prober. Independent of the control-plane keepalive: a peer can be
+  // "connected" (PeerRoutePair present) yet "unreachable" (no VIP echo
+  // round-trip). Old cores never send it, so frontends treat absence as all
+  // "unknown" rather than "unreachable".
+  repeated api.instance.PeerVipReachability peer_vip_reachability = 17;
 }
 
 message NetworkInstanceRunningInfoMap {

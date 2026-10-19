@@ -3,6 +3,7 @@ import {
   type PeerConnInfo,
   type PeerInfo,
   type PeerRoutePair,
+  type PeerVipReachabilityInfo,
   type StunInfo,
 } from '../types/network'
 
@@ -623,4 +624,163 @@ export function connPathQualityTip(conn?: PeerConnInfo, isDefault = false): stri
     fused: !!conn.quality_fused,
     bondSuffix: bondTipSuffix(!!conn.in_bond_set, conn.bond_class?.trim() || undefined),
   })
+}
+
+// ---------------------------------------------------------------------------
+// VIP dataplane reachability (docs/roadmap/gui-connected-vs-reachable.md).
+//
+// Independent of the control-plane keepalive: a peer can be "connected" while
+// its VIP dataplane probe fails. Old cores never send `peer_vip_reachability`,
+// so absence means "unknown" for every row — never "unreachable".
+// ---------------------------------------------------------------------------
+
+/** PeerVipState numeric values (api.instance.PeerVipState). */
+export const VipState = {
+  Unknown: 0,
+  Probing: 1,
+  Reachable: 2,
+  Unreachable: 3,
+} as const
+
+export type VipStateKey = 'unknown' | 'probing' | 'reachable' | 'unreachable'
+
+export function vipStateKey(info?: PeerVipReachabilityInfo): VipStateKey {
+  if (!info)
+    return 'unknown'
+  switch (info.state) {
+    case VipState.Reachable: return 'reachable'
+    case VipState.Unreachable: return 'unreachable'
+    case VipState.Probing: return 'probing'
+    default: return 'unknown'
+  }
+}
+
+/**
+ * Presentation severity per VIP state.
+ *
+ * Unreachable is deliberately **warn (amber)**, not danger (red): a peer that
+ * merely blocks ping looks identical to one whose dataplane is broken, so
+ * escalating it to red on the whole row would cry wolf. The row-level Tag is
+ * the only place this severity is used.
+ */
+export function vipStateSeverity(key: VipStateKey): 'success' | 'warn' | 'secondary' {
+  if (key === 'reachable') return 'success'
+  if (key === 'unreachable') return 'warn'
+  return 'secondary'
+}
+
+/** Per-row VIP Tag label: state, with rtt when reachable. */
+export function vipStateLabel(
+  info?: PeerVipReachabilityInfo,
+  labels?: Record<VipStateKey, string>,
+): string {
+  const key = vipStateKey(info)
+  const base = labels?.[key] ?? key
+  if (key === 'reachable' && info?.rtt_ms !== undefined)
+    return `${base} ${info.rtt_ms}ms`
+  return base
+}
+
+/**
+ * Tooltip for a row's VIP Tag: state plus failure reason / boundary note.
+ *
+ * Returns HTML (PrimeVue `v-tooltip` does not honour `\n`), so every part is
+ * escaped here — the backend `error` string is machine-generated but is still
+ * treated as untrusted text.
+ */
+export function vipStateTip(
+  info: PeerVipReachabilityInfo | undefined,
+  i18n?: { boundary?: string, probeFailed?: string },
+): string | undefined {
+  const escapeHtml = (text: string) => text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+  const key = vipStateKey(info)
+  const lines: string[] = []
+  if (key === 'unreachable' && info?.error) {
+    lines.push(escapeHtml(i18n?.probeFailed
+      ? `${i18n.probeFailed} (${info.error})`
+      : `probe failed (${info.error})`))
+  }
+  if (i18n?.boundary)
+    lines.push(escapeHtml(i18n.boundary))
+  return lines.length ? lines.join('<br>') : undefined
+}
+
+/**
+ * Index the per-link reachability records by peer, then by conn.
+ *
+ * Rebuilt on every snapshot so lookups stay O(1) per row: the detail table can
+ * have many rows and each one asks twice (Tag + tooltip).
+ */
+export function vipReachabilityIndex(reachability: PeerVipReachabilityInfo[] | undefined) {
+  const byPeer = new Map<number, PeerVipReachabilityInfo[]>()
+  for (const record of reachability || []) {
+    const list = byPeer.get(record.peer_id)
+    if (list)
+      list.push(record)
+    else
+      byPeer.set(record.peer_id, [record])
+  }
+
+  /** The record for one specific link, or the peer-level fallback (`conn_id === ''`). */
+  const forConn = (peerId: number, connId?: string): PeerVipReachabilityInfo | undefined => {
+    const list = byPeer.get(peerId)
+    if (!list)
+      return undefined
+    if (connId) {
+      const exact = list.find(r => r.conn_id === connId)
+      if (exact)
+        return exact
+    }
+    return list.find(r => !r.conn_id)
+  }
+
+  /**
+   * True when at least one record is not a definitive verdict (i.e. still
+   * `probing`, or `unknown` with a reason such as "probing disabled"). Callers
+   * use it to avoid painting a summary green/amber when nothing is measuring.
+   */
+  const anyUnknown = (reachability || []).some(r =>
+    r.state === VipState.Probing || r.state === VipState.Unknown)
+
+  return { byPeer, forConn, anyUnknown }
+}
+
+/**
+ * The `[M/N]` score, counted **per link**: M = links whose probe answered,
+ * N = links probed.
+ *
+ * Rationale: the row-level Tags next to this badge are also per link, so the
+ * summary and the table now speak the same unit — "primary dead, standby fine"
+ * shows as `[1/2]` instead of being rounded up to a node-level "reachable".
+ *
+ * What counts as one link:
+ * - one live **PeerConn** (the normal case), and
+ * - the **node-level entry** the backend emits for peers with no enumerable
+ *   conn (relay-only peers, `conn_id === ''`). It counts as one link so such a
+ *   peer is never silently absent — an all-relay mesh must not read as `[0/0]`
+ *   ("no data") when every relay actually answers.
+ *
+ * `hasData: false` means the backend sent no reachability field at all (old
+ * core): callers must hide the badge rather than show `[0/0]` or `[?/0]`.
+ * `anyUnknown` is true when at least one link is still `probing`/`unknown`, i.e.
+ * nothing definitive was measured — callers render that neutrally instead of
+ * green/amber.
+ */
+export function vipReachabilityScore(
+  reachability: PeerVipReachabilityInfo[] | undefined,
+): { reachable: number, total: number, hasData: boolean, anyUnknown: boolean } {
+  if (!reachability)
+    return { reachable: 0, total: 0, hasData: false, anyUnknown: false }
+  let reachable = 0
+  let anyUnknown = false
+  for (const record of reachability) {
+    if (record.state === VipState.Reachable)
+      reachable += 1
+    else if (record.state !== VipState.Unreachable)
+      anyUnknown = true
+  }
+  return { reachable, total: reachability.length, hasData: true, anyUnknown }
 }

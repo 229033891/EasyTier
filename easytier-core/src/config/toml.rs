@@ -219,6 +219,8 @@ pub fn gen_default_flags() -> Flags {
         // Bonding: factory default enables a small multi-path set (cap 5).
         peer_link_bond_count: 2,
         peer_link_replica_fill_max: 2,
+        // VIP reachability probe on by default (GUI "connected vs reachable").
+        disable_vip_reachability_probe: false,
     }
 }
 
@@ -325,6 +327,7 @@ define_flags_diff! {
         conn_select_switch_windows,
         peer_link_bond_count,
         peer_link_replica_fill_max,
+        disable_vip_reachability_probe,
     ],
     u64s: [foreign_relay_bps_limit, instance_recv_bps_limit],
     enums: [data_compress_algo]

@@ -51,6 +51,15 @@ where
         .map(Into::into)
         .collect::<Vec<_>>();
     let peer_route_pairs = list_peer_route_pair(peers.clone(), routes.clone());
+    // Compute before `peers` moves into the snapshot struct. The disabled case
+    // is forwarded to `snapshot_reachability` (not short-circuited to an empty
+    // vec) so the API says "unknown + reason=disabled" per roadmap §5 instead of
+    // the frontend silently hiding the badge as if the core were too old.
+    let peer_vip_reachability = crate::instance::vip_probe::snapshot_reachability(
+        instance.vip_probe_state.as_ref(),
+        peers.iter().map(|p| p.peer_id),
+        instance.vip_probe_disabled(),
+    );
     let dev_name = instance
         .toml_config()
         .map(|config| config.get_flags().dev_name)
@@ -107,5 +116,8 @@ where
         // (manual_routes / policy CIDRs included). Computed on demand from
         // live snapshots, so managed pushes are reflected on the next poll.
         desired_proxy_cidrs: instance.packet_plane().proxy_cidr_desired().await,
+        // VIP dataplane reachability per connected peer (GUI "connected vs
+        // reachable"). Display-only; independent of control-plane keepalive.
+        peer_vip_reachability,
     })
 }

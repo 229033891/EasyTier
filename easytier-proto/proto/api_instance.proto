@@ -105,6 +105,35 @@ message PeerRoutePair {
   PeerInfo peer = 2;
 }
 
+// VIP dataplane reachability for ONE peer link (GUI "connected vs reachable").
+//
+// Emitted per PeerConn, not per peer: a peer with several tunnels gets several
+// entries, each probed on its own conn, so a dead primary stays visible while a
+// standby still carries traffic. Frontends join by peer_id (and conn_id for the
+// per-row Tag inside the peer table).
+message PeerVipReachability {
+  uint32 peer_id = 1;
+  // The PeerConn this result belongs to, matching PeerConnInfo.conn_id.
+  // Empty when the probe could not be attributed to a link.
+  string conn_id = 2;
+  // Probing has not produced a terminal result yet (or probe disabled / no VIP).
+  PeerVipState state = 3;
+  // Round-trip time of the last successful echo, milliseconds.
+  optional uint32 rtt_ms = 4;
+  // Unix milliseconds of the last state transition.
+  uint64 checked_at_unix_ms = 5;
+  // Short machine-readable failure reason, e.g. "timeout" / "no_vip" /
+  // "disabled" / "send_failed" / "no_tun". Empty when reachable.
+  string error = 6;
+}
+
+enum PeerVipState {
+  PEER_VIP_STATE_UNKNOWN = 0;
+  PEER_VIP_STATE_PROBING = 1;
+  PEER_VIP_STATE_REACHABLE = 2;
+  PEER_VIP_STATE_UNREACHABLE = 3;
+}
+
 message NodeInfo {
   uint32 peer_id = 1;
   string ipv4_addr = 2;

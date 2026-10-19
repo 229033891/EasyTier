@@ -18,6 +18,7 @@ import {
 } from '../modules/config-residual';
 import * as Utils from '../modules/utils';
 import { collectNetworkInfoSingleFlight } from '../modules/collectNetworkInfoSingleFlight';
+import { vipReachabilityScore } from '../modules/statusDisplay';
 import * as NetworkTypes from '../types/network';
 import LoggingSettingsDialog from './LoggingSettingsDialog.vue';
 import type { LoggingSettingsApi } from '../modules/logging';
@@ -303,6 +304,37 @@ const disabledInstanceIds = computed(() => new Set(
 ));
 
 const isRunning = (instanceId: string) => runningInstanceIds.value.has(instanceId);
+
+/**
+ * Roadmap §2.3「最上方（实例态旁）」的 VIP 可达 `[M/N]`，与 Status 页同一口径
+ * （按链路统计，见 `vipReachabilityScore`）。
+ *
+ * Only the selected instance has a live `detail` (that is `curNetworkInfo`), so
+ * the other rows have no probe data and get no badge — showing `[?/N]` for
+ * every unselected instance would be noise, not information.
+ */
+function vipBadgeFor(instanceId: string): {
+    text: string
+    severity: 'success' | 'warn' | 'secondary'
+    tip: string
+} | undefined {
+    const info = curNetworkInfo.value
+    if (!info || info.instance_id !== instanceId || !info.detail)
+        return undefined
+    const score = vipReachabilityScore(info.detail.peer_vip_reachability)
+    // `hasData === false` means the core did not send the field at all, so N is
+    // unknown too — there is no `[?/N]` to show. "Probing disabled" reaches here
+    // as explicit `UNKNOWN + reason` rows instead, rendered `[0/N]` in gray.
+    if (!score.hasData || score.total === 0)
+        return undefined
+    const text = `[${score.reachable}/${score.total}]`
+    const severity: 'success' | 'warn' | 'secondary' = (
+        score.reachable === 0 && score.anyUnknown)
+        ? 'secondary'
+        : (score.reachable === score.total ? 'success' : 'warn')
+    const tip = t('status.vip_reachability_badge_tip', { m: score.reachable, n: score.total })
+    return { text, severity, tip }
+}
 
 /** Residual badges only on console when list carries DB id sets (P1). */
 const residualDetectReady = computed(() =>
@@ -2021,6 +2053,12 @@ onUnmounted(() => {
                                     <Tag class="network-status-tag leading-3 shrink-0"
                                         :severity="isRunning(slotProps.value.uuid) ? 'success' : 'danger'"
                                         :value="t(isRunning(slotProps.value.uuid) ? 'network_running' : 'network_stopped')" />
+                                    <!-- Roadmap §2.3「最上方（实例态旁）」：VIP 可达 [M/N]，与实例运行态并排 -->
+                                    <Tag v-if="vipBadgeFor(slotProps.value.uuid)?.text"
+                                        class="vip-reachability-tag leading-3 shrink-0"
+                                        :severity="vipBadgeFor(slotProps.value.uuid)?.severity"
+                                        :value="vipBadgeFor(slotProps.value.uuid)?.text"
+                                        v-tooltip.top="vipBadgeFor(slotProps.value.uuid)?.tip" />
                                 </div>
                                 <span v-else class="network-select-placeholder">{{ slotProps.placeholder }}</span>
                             </template>

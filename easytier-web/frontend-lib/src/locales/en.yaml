@@ -753,6 +753,15 @@ status:
   route_path: "{path}"
   route_path_ellipsis: "…(+{count})"
   route_path_incomplete_tip: "Only next-hop and hop count are available; intermediate node names cannot be listed"
+  # VIP dataplane reachability (connected ≠ reachable; see gui-connected-vs-reachable.md)
+  vip_state_col: VIP
+  vip_state_unknown: Unknown
+  vip_state_probing: Probing
+  vip_state_reachable: Reachable
+  vip_state_unreachable: Unreachable
+  vip_reachability_badge_tip: "VIP reachable links {m} / {n} (counted per link, same unit as the per-row VIP tags; independent of control-plane latency/loss)"
+  vip_boundary_tip: "VIP dataplane probe result, not control-plane connectivity; failure may also mean the peer blocks ping"
+  vip_probe_failed: "probe failed"
 
 run_network: Run Network
 run_network_tip: Save the current config and start or apply this network

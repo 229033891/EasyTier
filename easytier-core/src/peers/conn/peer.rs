@@ -340,6 +340,35 @@ impl Peer {
         Ok(())
     }
 
+    /// Sends on one **specific** PeerConn instead of letting `send_msg` pick
+    /// (bond hash / `select_conn`).
+    ///
+    /// Needed by per-link diagnostics such as the VIP reachability prober: to
+    /// answer "is *this* tunnel usable" you must not let conn selection quietly
+    /// substitute a healthy path — that would make a dead link look healthy
+    /// whenever a standby exists.
+    ///
+    /// Deliberately bypasses `default_conn` caching and bond fan-out: the caller
+    /// named the link, so there is nothing to select.
+    pub async fn send_msg_on_conn(&self, conn_id: &PeerConnId, msg: ZCPacket) -> Result<(), Error> {
+        let Some(conn) = self.conns.get(conn_id).map(|entry| entry.value().clone()) else {
+            return Err(Error::NotFound);
+        };
+        if conn.is_closed() {
+            return Err(Error::NotFound);
+        }
+        conn.send_msg(msg).await
+    }
+
+    /// Live (non-closed) PeerConn ids, for callers that need to enumerate links.
+    pub fn live_conn_ids(&self) -> Vec<PeerConnId> {
+        self.conns
+            .iter()
+            .filter(|entry| !entry.value().is_closed())
+            .map(|entry| *entry.key())
+            .collect()
+    }
+
     fn conn_select_metrics(conn: &PeerConn) -> ConnMetrics {
         let stats = conn.get_stats();
         ConnMetrics {

@@ -123,6 +123,12 @@ message FlagsInConfig {
   uint32 peer_link_bond_count = 56;
   // Max same diversity-class replicas when filling bond set (default 5; range often 3–5).
   uint32 peer_link_replica_fill_max = 57;
+
+  // Turn off the GUI "VIP reachable" dataplane prober. Probing is display-only
+  // (it never reroutes or tears down conns), so deployments that forbid probe
+  // traffic on the mesh can switch it off here; every peer then reports
+  // "unknown" with reason disabled rather than "unreachable".
+  bool disable_vip_reachability_probe = 58;
 }
 
 message RpcDescriptor {

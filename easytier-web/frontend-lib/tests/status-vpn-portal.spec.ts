@@ -28,9 +28,11 @@ vi.mock('primevue', () => {
       return () => h('section', [
         h('button', {
           type: 'button',
+          // #header slot (with badge chips) takes precedence; fall back to
+          // the `header` prop for panels that don't customize the title row.
           'data-label': props.header,
           onClick: () => emit('update:collapsed', false),
-        }, props.header),
+        }, slots.header?.() ?? props.header),
         props.collapsed ? null : slots.default?.(),
       ])
     },
@@ -198,7 +200,14 @@ describe('Status proxy CIDR route sync row', () => {
   /** 「节点详情」面板默认折叠，分组内容要展开后才渲染。 */
   async function mountStatusWithDetailsOpen(inst: NetworkInstance) {
     const wrapper = mountStatus(inst)
-    await wrapper.find('button[data-label="node_info_details"]').trigger('click')
+    // node_info_details 的标题行带 [M/N] 徽章（#header slot），data-label 退化为
+    // undefined；按标题文本定位折叠按钮。
+    const toggle = wrapper
+      .findAll('button')
+      .find(b => b.text().includes('node_info_details'))
+    if (!toggle)
+      throw new Error('node_info_details toggle button not found')
+    await toggle.trigger('click')
     await flushPromises()
     return wrapper
   }
