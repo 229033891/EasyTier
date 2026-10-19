@@ -274,6 +274,15 @@ fn build_echo_request(my_vip: Ipv4Addr, peer_vip: Ipv4Addr, ident: u16, seq: u16
     packet
 }
 
+/// `batch_len = reached + timed_out + send_failed`. Send failures are removed
+/// from the in-flight table before the reply window closes, so they must not be
+/// counted as "reached" via `batch_len - timed_out`.
+fn count_reached(batch_len: usize, timed_out: usize, send_failed: usize) -> usize {
+    batch_len
+        .saturating_sub(timed_out)
+        .saturating_sub(send_failed)
+}
+
 /// True when this peer-packet is an echo reply answered by **the peer we probed**
 /// for a still-pending identifier. Runs inside the peer packet pipeline; must be
 /// cheap and match narrowly.
@@ -286,11 +295,17 @@ fn try_match_probe_reply(sent: &Mutex<InFlight>, packet: &ZCPacket) -> Option<(L
     if payload.len() < IPV4_HEADER_LEN + ICMP_ECHO_HEADER_LEN + PROBE_MAGIC.len() + 2 {
         return None;
     }
-    // IPv4 header: version/IHL, protocol at [9].
+    // IPv4 header: version/IHL, protocol at fixed offset [9].
     if payload[0] >> 4 != 4 || payload[9] != 1 {
         return None;
     }
-    let icmp = &payload[IPV4_HEADER_LEN..];
+    // Honour IHL: a reply with IP options still carries ICMP after the full
+    // header. Assuming 20 bytes would miss a valid echo and report timeout.
+    let ihl = ((payload[0] & 0x0F) as usize).saturating_mul(4);
+    if ihl < IPV4_HEADER_LEN || payload.len() < ihl + ICMP_ECHO_HEADER_LEN + PROBE_MAGIC.len() + 2 {
+        return None;
+    }
+    let icmp = &payload[ihl..];
     if icmp[0] != 0 {
         return None; // not an Echo Reply
     }
@@ -368,12 +383,11 @@ async fn collect_links(peer_manager: &PeerManagerCore) -> Vec<(LinkKey, Ipv4Addr
 
 /// One prober task per running instance. Stops when `cancel` fires.
 ///
-/// Registering the reply filter is intentionally **not** undone here: the entry
-/// is a `permanent_peer_pipeline_entry` (see `PeerManagerCore::
-/// add_packet_process_pipeline`), which cannot be unregistered — the whole
-/// pipeline is dropped by `PeerManagerCore::clear_resources` when the instance
-/// stops, and the filter is inert once `sent` is empty, so a stopped prober is
-/// simply "a filter that never matches".
+/// The reply filter is a **managed** peer-pipeline entry: the registration
+/// guard is held for the life of this task and unregisters on return / abort /
+/// cancel. That way a restart cannot stack a second filter on the same
+/// `PeerManagerCore` (permanent entries cannot be removed without
+/// `clear_resources`).
 pub async fn run_prober(
     peer_manager: Arc<PeerManagerCore>,
     state: Arc<VipProbeState>,
@@ -386,8 +400,9 @@ pub async fn run_prober(
         state: state.clone(),
         sent: state.sent.clone(),
     };
-    peer_manager
-        .add_packet_process_pipeline(Box::new(filter))
+    // Kept until this future drops (normal exit, cancel, or task.abort()).
+    let _pipeline_guard = peer_manager
+        .add_managed_packet_process_pipeline(Box::new(filter))
         .await;
 
     let stats = peer_manager.stats_manager();
@@ -472,6 +487,7 @@ pub async fn run_prober(
                     idents
                 };
 
+                let mut send_failed = 0usize;
                 for (ident, key, peer_vip, seq) in round {
                     let packet = build_echo_request(my_vip, peer_vip, ident, seq);
                     let dst = std::net::IpAddr::V4(peer_vip);
@@ -493,6 +509,7 @@ pub async fn run_prober(
                             conn = %key.conn_id_str(),
                             "vip probe send failed"
                         );
+                        send_failed += 1;
                         send_failed_counter.inc();
                         state.sent.lock().remove(&ident);
                         state.record(
@@ -510,8 +527,9 @@ pub async fn run_prober(
                     _ = cancel.cancelled() => return,
                 }
                 let mut sent = state.sent.lock();
-                let reached = batch.len().saturating_sub(sent.len());
                 let timed_out = sent.len();
+                // Send failures already left `sent`; do not count them as reached.
+                let reached = count_reached(batch.len(), timed_out, send_failed);
                 state.settle_round(&mut sent);
                 drop(sent);
                 for _ in 0..reached {
@@ -637,6 +655,15 @@ mod tests {
     }
 
     #[test]
+    fn count_reached_excludes_send_failures() {
+        // Regression: `batch - timed_out` alone treated send_failed as reached.
+        assert_eq!(count_reached(3, 1, 1), 1);
+        assert_eq!(count_reached(3, 0, 3), 0);
+        assert_eq!(count_reached(3, 3, 0), 0);
+        assert_eq!(count_reached(3, 0, 0), 3);
+    }
+
+    #[test]
     fn echo_request_wire_format_is_valid_icmp() {
         let packet = echo_request("10.144.144.1", "10.144.144.2", PROBE_IDENT_BASE, 7);
         let payload = packet.payload();
@@ -652,6 +679,39 @@ mod tests {
         assert_eq!(u16::from_be_bytes([icmp[4], icmp[5]]), PROBE_IDENT_BASE);
         assert_eq!(u16::from_be_bytes([icmp[6], icmp[7]]), 7);
         assert_eq!(icmp_checksum(icmp), 0, "checksum must verify to zero");
+    }
+
+    #[test]
+    fn reply_with_ip_options_is_still_claimed() {
+        // A peer that echoes with IHL>5 must not look like a timeout.
+        let state = VipProbeState::default();
+        let ident = state.claim_ident();
+        let key = link(202, 1);
+        let seq = 3;
+        state.sent.lock().insert(
+            ident,
+            InFlightProbe {
+                key: key.clone(),
+                seq,
+                sent_at: std::time::Instant::now(),
+            },
+        );
+        let request = echo_request("10.144.144.2", "10.144.144.1", ident, seq);
+        let mut reply = echo_reply_of(&request, "10.144.144.1", "10.144.144.2");
+        // Insert 4 bytes of IP options (IHL 6) between the base header and ICMP.
+        let mut bytes = reply.payload().to_vec();
+        bytes.splice(IPV4_HEADER_LEN..IPV4_HEADER_LEN, [0u8; 4]);
+        bytes[0] = 0x46; // v4, IHL=6
+        let total = bytes.len() as u16;
+        bytes[2..4].copy_from_slice(&total.to_be_bytes());
+        bytes[10..12].copy_from_slice(&[0, 0]);
+        let ip_cksum = icmp_checksum(&bytes[..24]);
+        bytes[10..12].copy_from_slice(&ip_cksum.to_be_bytes());
+        reply = ZCPacket::new_with_payload(&bytes);
+        reply.fill_peer_manager_hdr(202, 101, PacketType::Data as u8);
+
+        let (got, _rtt) = try_match_probe_reply(&state.sent, &reply).expect("must match");
+        assert_eq!(got, key);
     }
 
     #[test]

@@ -173,8 +173,9 @@ where
             );
         }
 
-        // Stop the prober before touching peer-manager resources: its filter
-        // lives in the peer packet pipeline and its task holds the manager.
+        // Stop the prober before clearing peer-manager resources: awaiting the
+        // task drops its managed pipeline guard (unregisters the reply filter)
+        // and releases the cloned PeerManager handle.
         self.stop_vip_probe().await;
         #[cfg(feature = "vpn-portal")]
         self.vpn_portal.stop().await;

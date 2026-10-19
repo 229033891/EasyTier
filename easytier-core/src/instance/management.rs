@@ -111,14 +111,15 @@ where
         }));
     }
 
-    /// Stops the prober and waits for it, so `clear_resources` can safely drop
-    /// the pipeline the filter sits in.
+    /// Stops the prober and waits for it. Awaiting the join handle also drops
+    /// the managed pipeline guard inside `run_prober`, so the reply filter is
+    /// unregistered before `clear_resources` runs.
     pub(crate) async fn stop_vip_probe(&self) {
         let task = self.vip_probe_task.lock().await.take();
         if let Some(task) = task {
             task.abort();
             // `abort` is not synchronous; awaiting the handle guarantees the
-            // task is gone before we return.
+            // task (and its pipeline guard) are gone before we return.
             let _ = task.await;
         }
     }
