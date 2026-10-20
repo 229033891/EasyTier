@@ -210,7 +210,10 @@ pub fn gen_default_flags() -> Flags {
         // PeerConn quality select (P1.7). Canonical values for TOML diff.
         // Runtime: all-zero block → code defaults; else literal (0 weight allowed).
         conn_select_w_lat: 100,
-        conn_select_w_loss: 400,
+        // 0.4 — see `ConnSelectConfig::default`: with a 100-sample loss window
+        // one dropped keepalive probe is a 1% loss rate, and 4.0 turned that
+        // into 40 cost units (more than the publisher dead band).
+        conn_select_w_loss: 40,
         conn_select_w_jitter: 100,
         conn_select_loss_fuse_pct: 20,
         conn_select_switch_margin_pct: 10,

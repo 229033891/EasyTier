@@ -147,6 +147,28 @@ pub trait Route {
             .collect()
     }
 
+    /// Accumulated cost of the path to `peer_id` (lower = better), or `None`
+    /// when the peer is not reachable.
+    ///
+    /// This is the **whole path** cost, relay hops included — not just the cost
+    /// of a direct link. It is what a consumer needs when it has to compare
+    /// two peers it can reach over paths of different lengths: a peer that is
+    /// only reachable through a relay still has a price.
+    ///
+    /// The unit is the same "cost unit" the edge weights use (millisecond
+    /// equivalent), so it is comparable with the numbers published as
+    /// `DirectConnectedPeerInfo.latency_ms`.
+    ///
+    /// `None` by default: implementations that do not track path costs keep
+    /// working unchanged.
+    async fn get_path_cost_with_policy(
+        &self,
+        _peer_id: PeerId,
+        _policy: NextHopPolicy,
+    ) -> Option<i32> {
+        None
+    }
+
     async fn list_routes(&self) -> Vec<CoreRoute>;
 
     // TODO: rewrite route management, remove this

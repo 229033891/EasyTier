@@ -1,7 +1,7 @@
 use std::{
     collections::{BTreeSet, HashMap, HashSet},
     net::{IpAddr, Ipv4Addr, Ipv6Addr},
-    sync::{Arc, LazyLock},
+    sync::Arc,
 };
 
 use anyhow::Context;
@@ -28,7 +28,8 @@ use crate::{
 
 use super::{
     conn_select::{
-        OSPF_EDGE_COST_MIN_DELTA, apply_ospf_cost_hysteresis, ospf_edge_cost_from_score,
+        OSPF_EDGE_COST_MIN_DELTA, OSPF_EDGE_COST_UNMEASURED, apply_ospf_cost_hysteresis,
+        ospf_edge_cost_from_score,
     },
     peer::Peer,
     peer_conn::{PeerConn, PeerConnId},
@@ -37,9 +38,6 @@ use crate::peers::{
     PacketRecvChan,
     route::{ArcRoute, NextHopPolicy},
 };
-
-/// Last published OSPF edge cost per peer (publisher hysteresis / anti-flap).
-static LAST_OSPF_EDGE_COST: LazyLock<DashMap<PeerId, i32>> = LazyLock::new(DashMap::new);
 
 pub struct PeerMap {
     context: ArcPeerContext,
@@ -55,6 +53,15 @@ pub struct PeerMap {
     /// that as a leak and delete the peer out from under the connection being
     /// established, so this set tells it to leave those alone.
     connecting_peers: DashSet<PeerId>,
+    /// Last published OSPF edge cost per peer (publisher hysteresis /
+    /// anti-flap).
+    ///
+    /// **Per peer map, not per process.** The main instance and every foreign
+    /// network run their own `PeerMap`, and their peer id sets are disjoint. A
+    /// process-wide baseline made one map's `retain` wipe the other's entries
+    /// — every foreign-network report therefore cleared the main instance's
+    /// baseline, and the anti-flap debounce silently stopped working there.
+    ospf_edge_cost_baseline: DashMap<PeerId, i32>,
 }
 
 impl PeerMap {
@@ -71,6 +78,7 @@ impl PeerMap {
             routes: RwLock::new(Vec::new()),
             alive_client_urls: Arc::new(Mutex::new(HashMap::new())),
             connecting_peers: DashSet::new(),
+            ospf_edge_cost_baseline: DashMap::new(),
         }
     }
 
@@ -433,12 +441,57 @@ impl PeerMap {
     /// P4: best composite edge cost for `peer_id`, or `None` when it has no
     /// usable connection.
     ///
+    /// This is the cost of a **direct** link only. A peer that is reachable
+    /// solely through a relay has no direct connection at all, so this returns
+    /// `None` for it — use [`Self::peer_path_cost`] when the whole path has to
+    /// be priced.
+    ///
     /// No publish hysteresis here — the caller keeps its own baseline (the
     /// reconcile loop stores the previous costs in `peer_quality` and applies
     /// `apply_ospf_cost_hysteresis` itself, so OSPF's publisher state is
     /// untouched).
     pub(crate) async fn peer_edge_cost(&self, peer_id: PeerId) -> Option<i32> {
         best_edge_cost(self.list_peer_conns(peer_id).await)
+    }
+
+    /// P4: accumulated cost of the cheapest path to `peer_id`, relay hops
+    /// included, or `None` when the route table has no path to it yet.
+    ///
+    /// This is the price a consumer needs when it compares two candidates it
+    /// can reach over paths of different lengths: a peer that is only
+    /// reachable through a relay still has a price, and it is the price of
+    /// the path that will actually be used.
+    ///
+    /// `None` means "the topology does not know this peer yet" — the caller
+    /// may fall back to the direct-link cost for that window.
+    pub(crate) async fn peer_path_cost(&self, peer_id: PeerId) -> Option<i32> {
+        for route in self.routes.read().await.iter() {
+            if let Some(cost) = route
+                .get_path_cost_with_policy(peer_id, NextHopPolicy::LeastCost)
+                .await
+            {
+                return Some(cost);
+            }
+        }
+        None
+    }
+
+    /// Apply the publisher hysteresis for `peer` and record what was published.
+    ///
+    /// The baseline lives on this peer map, so a peer map that never sees a
+    /// peer cannot clear another one's baseline.
+    pub(crate) fn ospf_edge_cost_with_hysteresis(&self, peer: PeerId, raw_cost: i32) -> i32 {
+        let last = self.ospf_edge_cost_baseline.get(&peer).map(|v| *v);
+        let cost = apply_ospf_cost_hysteresis(raw_cost, last, OSPF_EDGE_COST_MIN_DELTA);
+        self.ospf_edge_cost_baseline.insert(peer, cost);
+        cost
+    }
+
+    /// Drop the hysteresis baseline for the peers this map no longer
+    /// advertises. Only this map's baseline is touched.
+    pub(crate) fn retain_ospf_edge_cost_baseline(&self, advertised: &BTreeSet<PeerId>) {
+        self.ospf_edge_cost_baseline
+            .retain(|peer_id, _| advertised.contains(peer_id));
     }
 
     pub async fn get_route_peer_info(&self, peer_id: PeerId) -> Option<RoutePeerInfo> {
@@ -652,7 +705,19 @@ fn best_edge_cost(conns: Option<Vec<PeerConnInfo>>) -> Option<i32> {
         .into_iter()
         .flatten()
         .filter(|conn| !conn.unverified_hole_punch)
-        .map(|conn| ospf_edge_cost_from_score(f64::from(conn.quality_score), conn.quality_fused))
+        .map(|conn| {
+            // A connection that has not completed a single ping round trip has
+            // a quality score of exactly zero — that means "not measured",
+            // not "perfect". The score can only be 0.0 when `latency_us` is 0
+            // (the smallest measured RTT is 1µs, i.e. a score of 1e-6), so this
+            // cannot swallow a real measurement. The `is_finite` arm also
+            // catches a NaN score.
+            if !conn.quality_score.is_finite() || conn.quality_score <= 0.0 {
+                OSPF_EDGE_COST_UNMEASURED
+            } else {
+                ospf_edge_cost_from_score(f64::from(conn.quality_score), conn.quality_fused)
+            }
+        })
         .min()
 }
 
@@ -664,39 +729,35 @@ fn best_edge_cost(conns: Option<Vec<PeerConnInfo>>) -> Option<i32> {
 /// a fuse bonus and publisher hysteresis so OSPF / `latency_first` does not
 /// flap on noise. The field remains named `latency_ms` for wire compatibility.
 pub(crate) async fn direct_peer_info(peer_maps: &[Arc<PeerMap>]) -> PeerInfoForGlobalMap {
-    let mut peers = BTreeSet::new();
-    for peer_map in peer_maps {
-        peers.extend(peer_map.list_peers());
-    }
-
     let mut ret = PeerInfoForGlobalMap::default();
-    for peer in peers {
-        let mut conns = None;
-        for peer_map in peer_maps {
-            if let Some(found) = peer_map.list_peer_conns(peer).await {
-                conns = Some(found);
-                break;
+    for peer_map in peer_maps {
+        // The hysteresis baseline is per peer map, so each map applies and
+        // prunes its own. `advertised` is what this map contributes; the
+        // baseline of every *other* map is left alone.
+        let mut advertised = BTreeSet::new();
+        for peer in peer_map.list_peers() {
+            // The first peer map that can reach a peer owns its edge cost, so
+            // the reported value does not depend on the order of `peer_maps`.
+            if ret.direct_peers.contains_key(&peer) {
+                continue;
             }
+            let conns = peer_map.list_peer_conns(peer).await;
+            // `list_peer_conns` attaches `quality_score` / `quality_fused` from the
+            // same formula as select_conn; take the cheapest usable edge.
+            // Exclude unverified hole-punch connections (latency 0) — they are not
+            // eligible for default_conn in select_conn and should not be advertised
+            // as the best edge for OSPF either.
+            let Some(raw_cost) = best_edge_cost(conns) else {
+                continue;
+            };
+            let cost = peer_map.ospf_edge_cost_with_hysteresis(peer, raw_cost);
+            advertised.insert(peer);
+            ret.direct_peers
+                .insert(peer, DirectConnectedPeerInfo { latency_ms: cost });
         }
-        // `list_peer_conns` attaches `quality_score` / `quality_fused` from the
-        // same formula as select_conn; take the cheapest usable edge.
-        // Exclude unverified hole-punch connections (latency 0) — they are not
-        // eligible for default_conn in select_conn and should not be advertised
-        // as the best edge for OSPF either.
-        let Some(raw_cost) = best_edge_cost(conns) else {
-            continue;
-        };
-
-        let last = LAST_OSPF_EDGE_COST.get(&peer).map(|v| *v);
-        let cost = apply_ospf_cost_hysteresis(raw_cost, last, OSPF_EDGE_COST_MIN_DELTA);
-        LAST_OSPF_EDGE_COST.insert(peer, cost);
-
-        ret.direct_peers
-            .insert(peer, DirectConnectedPeerInfo { latency_ms: cost });
+        // Drop hysteresis state for peers this map no longer advertises.
+        peer_map.retain_ospf_edge_cost_baseline(&advertised);
     }
-
-    // Drop hysteresis state for peers we no longer advertise.
-    LAST_OSPF_EDGE_COST.retain(|id, _| ret.direct_peers.contains_key(id));
 
     ret
 }

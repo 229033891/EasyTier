@@ -597,6 +597,9 @@ policy_routes_peers_help: |-
 policy_routes_select_by: Selection
 policy_routes_select_by_help: |-
   How to pick among multiple gateway peers: list order / best quality / spread by flow.
+  "Spread by flow" distributes flows across the candidates by inner-flow 5-tuple hash, **evenly** — not weighted by link quality or capacity. One flow always keeps one gateway.
+  "Best link quality" compares the cost of the **whole path** to a candidate (relay hops included), so a candidate reachable only through a relay is ranked correctly.
+  With "never" fail over only the first candidate is kept, so it can only be paired with "In list order"; the other modes are rejected by config validation.
 policy_routes_select_by_priority: In list order
 policy_routes_select_by_quality: Best link quality
 policy_routes_select_by_balance: Spread by flow

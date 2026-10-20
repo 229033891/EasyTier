@@ -29,7 +29,21 @@ impl Default for ConnSelectConfig {
     fn default() -> Self {
         Self {
             w_lat: 1.0,
-            w_loss: 4.0,
+            // Loss weight. The loss rate is measured over a fixed 100-sample
+            // window, so **one** lost keepalive probe already shows up as a
+            // 1% loss rate. At the old weight of 4.0 that was 40 cost units
+            // (the RTT term is 1 unit per millisecond) — more than the whole
+            // publisher dead band (`OSPF_EDGE_COST_MIN_DELTA` = 20) and eight
+            // times the bond quality band, so a single lost control packet
+            // re-priced the edge for the whole network and could evict the
+            // conn from its bond for as long as the window took to drain
+            // (up to ~17 minutes at the idle ping interval).
+            //
+            // 0.4 keeps the loss term meaningful (20% loss still costs 80
+            // units, and the loss fuse at 20% is untouched) while putting a
+            // single dropped probe at 4 units — inside the dead band and
+            // inside the bond band.
+            w_loss: 0.4,
             w_jitter: 1.0,
             loss_fuse: 0.20,
             switch_margin: 0.10,
@@ -47,7 +61,7 @@ impl ConnSelectConfig {
     /// - All select fields `0` (prost / unset Default) → built-in defaults.
     /// - Otherwise values are taken literally so TOML can set a weight to `0`
     ///   (runtime flags are merged from `gen_default_flags`, so absent keys
-    ///   become 100/400/… rather than 0).
+    ///   become 100/40/… rather than 0 — see `ConnSelectConfig::default`).
     ///
     /// Weights are hundredths (`100` = 1.0). Fuse / relative margin are percents.
     /// Absolute margin is milli-units (`5` = 0.005).
@@ -111,6 +125,16 @@ pub fn conn_quality_score(
 /// remains distinct: a value in this range is a *measured* quality edge, anything
 /// above it carries the relay-policy penalty.
 pub const OSPF_EDGE_COST_MAX: i32 = 1_000_000;
+/// Cost published for a connection that has not completed a single ping round
+/// trip yet.
+///
+/// "Not measured" is not "perfect". Encoding it as the floor (1) made an
+/// unmeasured connection the cheapest edge in the whole graph, so the network
+/// routed through a link nobody had measured — for as long as the peer-center
+/// publishing window lasted. This value is deliberately *optimistic but not
+/// best*: the link is assumed to work, it just does not get to outrank the
+/// connections we actually measured.
+pub const OSPF_EDGE_COST_UNMEASURED: i32 = 500;
 /// Extra cost when the path is loss-fused (discourages multi-hop via bad links).
 pub const OSPF_FUSE_COST_BONUS: i32 = 10_000;
 /// Publisher hysteresis: ignore cost wobble smaller than this (ms-equivalent units).
@@ -293,6 +317,42 @@ mod tests {
         assert!(
             low_loss < high_loss,
             "low-loss edge should be cheaper for OSPF: high_loss={high_loss} low_loss={low_loss}"
+        );
+    }
+
+    /// A single dropped keepalive probe must stay inside the publisher dead
+    /// band.
+    ///
+    /// The loss rate is measured over a fixed 100-sample window, so one lost
+    /// probe is already a 1% loss rate. At the old loss weight of 4.0 that
+    /// was 40 cost units — more than the whole dead band
+    /// (`OSPF_EDGE_COST_MIN_DELTA` = 20), so one lost control packet
+    /// re-priced the edge for the entire network and could evict the conn
+    /// from its bond for as long as the window took to drain.
+    #[test]
+    fn a_single_lost_probe_stays_inside_the_publish_deadband() {
+        let cfg = ConnSelectConfig::default();
+        let clean = ospf_edge_cost_ms(10_000, 0.0, 0, false, cfg);
+        let one_lost = ospf_edge_cost_ms(10_000, 0.01, 0, false, cfg);
+        assert!(
+            one_lost - clean < OSPF_EDGE_COST_MIN_DELTA,
+            "one lost probe moved the edge cost by {} units, the dead band is {OSPF_EDGE_COST_MIN_DELTA}",
+            one_lost - clean
+        );
+    }
+
+    /// The loss term must still separate a lossy link from a clean one.
+    ///
+    /// Guards the weight reduction above: a lower loss weight is only safe
+    /// while a genuinely lossy path still costs more than a slow clean one.
+    #[test]
+    fn a_lossy_link_still_costs_more_than_a_slow_clean_one() {
+        let cfg = ConnSelectConfig::default();
+        let lossy = ospf_edge_cost_ms(5_000, 0.30, 0, false, cfg);
+        let slow_but_clean = ospf_edge_cost_ms(25_000, 0.01, 0, false, cfg);
+        assert!(
+            slow_but_clean < lossy,
+            "slow_but_clean={slow_but_clean} lossy={lossy}"
         );
     }
 

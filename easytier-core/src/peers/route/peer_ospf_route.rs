@@ -37,7 +37,7 @@ use crate::{
     config::peers::PeerGroupIdentity,
     peers::{
         PeerPacketFilter,
-        conn::conn_select::OSPF_FUSE_COST_BONUS,
+        conn::conn_select::{OSPF_EDGE_COST_MAX, OSPF_FUSE_COST_BONUS},
         context::{
             ArcPeerContext, NetworkIdentity as CoreNetworkIdentity, PeerContext, PeerContextEvent,
             TrustedKeyMetadata, TrustedKeySource,
@@ -127,6 +127,18 @@ fn edge_cost_from_i32(cost: i32) -> usize {
     match u32::try_from(cost) {
         Ok(v) => usize::try_from(v)
             .unwrap_or(AVOID_RELAY_COST)
+            // Clamp to the *measured* range. A peer-reported cost above
+            // `OSPF_EDGE_COST_MAX` is not a quality signal any more — it is
+            // either a bug or an attempt to make the edge unusable. Without
+            // this ceiling a real edge weight could reach `AVOID_RELAY_COST`
+            // and be misread as "this edge carries the relay-policy penalty",
+            // which `normalize_edge_cost` then maps into its own range. That
+            // gave one weight two different meanings in the two tables.
+            //
+            // The policy penalty is added *after* this function
+            // (`cost.saturating_add(AVOID_RELAY_COST)`), so clamping here
+            // cannot touch it.
+            .min(OSPF_EDGE_COST_MAX as usize)
             .max(MIN_EDGE_COST),
         Err(_) => MIN_EDGE_COST,
     }
@@ -383,6 +395,13 @@ impl OspfRouteTable {
             && entry.version >= cur_version
         {
             for hop in entry.hops.iter() {
+                // A suppressed peer must not be reachable through the alternate
+                // hops either: `get_next_hop` filters the primary, so the
+                // alternates have to follow the same rule or a suppressed peer
+                // still gets picked as a fallback first hop.
+                if self.suppressed_peer_ids.contains_key(hop) {
+                    continue;
+                }
                 if !ret.contains(hop) {
                     ret.push(*hop);
                 }
@@ -664,7 +683,12 @@ impl OspfRouteTable {
             alt_peers.dedup();
 
             if alt_peers.is_empty() {
-                self.next_hop_alt_map.remove(&dst_peer_id);
+                // Only drop **our own** record. A concurrent rebuild at a newer
+                // version may have written alternates for this destination
+                // already, and removing them would silently take away the
+                // equal-cost fallback of an already established path.
+                self.next_hop_alt_map
+                    .remove_if(&dst_peer_id, |_, entry| entry.version <= version);
             } else {
                 let entry = AltNextHopEntry {
                     hops: alt_peers,
@@ -787,7 +811,27 @@ impl OspfRouteTable {
                 continue;
             };
 
-            self.peer_infos.insert(*peer_id, info.clone());
+            // Never let a stale rebuild overwrite a newer record.
+            //
+            // `RoutePeerInfo.version` is the **peer's own** counter, so it
+            // orders two records of the same peer — but it restarts from
+            // scratch when the peer process restarts, so a *lower* version is
+            // not necessarily older data. Compare the instance id first (it
+            // changes on every restart) and only use the version to order two
+            // records of the same instance.
+            //
+            // Without the guard a slow rebuild could replace a fresh
+            // `RoutePeerInfo` with an older one, and the stale IP / proxy CIDR
+            // / feature flags would be republished until the next rebuild.
+            self.peer_infos
+                .entry(*peer_id)
+                .and_modify(|x| {
+                    let same_instance = route_peer_inst_id(x) == route_peer_inst_id(&info);
+                    if !same_instance || info.version > x.version {
+                        *x = info.clone();
+                    }
+                })
+                .or_insert(info.clone());
 
             let peer_id_and_version = PeerIdVersion {
                 peer_id: *peer_id,
@@ -803,23 +847,44 @@ impl OspfRouteTable {
                 }
                 let old_next_hop = self.get_next_hop(old_peer.peer_id);
                 let new_next_hop = item.value();
-                let better = match old_next_hop {
-                    None => true,
-                    Some(old) => {
-                        old.path_len != new_next_hop.path_len
-                            && old.path_len > new_next_hop.path_len
-                    }
+                // Ownership arbitration uses the same lexicographic rule as the
+                // next-hop table (see `docs/roadmap/live-next-hop.md` §1.2):
+                // **accumulated cost first, hop count second, peer id last**.
+                //
+                // The cost has to be the primary key. Two peers claiming the
+                // same address are not equally good owners, and the one we can
+                // reach more cheaply is the one whose copy of the traffic we
+                // should prefer. Comparing hop count only made the owner
+                // independent of the edge cost: with two one-hop-away
+                // candidates the winner was whichever the `DashMap` iteration
+                // reached first, so swapping the costs changed nothing.
+                //
+                // The peer id is the last key so the map stays deterministic
+                // when two peers are exactly equidistant — the same
+                // determinism the previous fix intended, but it was placed
+                // behind a `return false` that made it unreachable for the
+                // case it was written for.
+                let Some(old) = old_next_hop else {
+                    // The incumbent is no longer reachable: the newcomer takes
+                    // over the address.
+                    return true;
                 };
-                if !better {
-                    return false;
+                if old.path_latency != new_next_hop.path_latency {
+                    return new_next_hop.path_latency < old.path_latency;
+                }
+                if old.path_len != new_next_hop.path_len {
+                    return new_next_hop.path_len < old.path_len;
                 }
                 // CRITICAL (determinism): when two peers claim the same address
                 // and sit at the *same* distance, the winner used to be whichever
-                // `DashMap` happened to be iterated first — which varies between
-                // rebuilds. That silently flipped address ownership from run to
-                // run. Break the tie on the peer id, so the same inputs always
-                // produce the same map. (Credential ownership nearby already
-                // uses a `BTreeSet` for exactly this reason.)
+                // `DashMap` happened to be iterated first. The iteration order
+                // comes from the hash seed fixed when this table was created,
+                // so the owner was stable within one table but **arbitrary and
+                // different on every node** — two nodes of the same network
+                // could hand the same address to different peers. Break the tie
+                // on the peer id, so the same inputs always produce the same
+                // map everywhere. (Credential ownership nearby already uses a
+                // `BTreeSet` for exactly this reason.)
                 old_peer.peer_id > peer_id_and_version.peer_id
             };
 
@@ -1629,6 +1694,14 @@ impl SyncedRouteInfo {
             .unwrap_or_default()
     }
 
+    /// Outcome of the duplicate-peer-id check for one received `RoutePeerInfo`.
+    ///
+    /// * `Ok(true)` — accept the entry.
+    /// * `Ok(false)` — the entry is a stale copy of the **sender's own**
+    ///   record (it restarted, so its route id changed and its version
+    ///   counter went backwards). Skip **this** entry, but keep processing
+    ///   the rest of the batch.
+    /// * `Err` — abort the whole batch.
     fn check_duplicate_peer_id(
         &self,
         my_peer_id: PeerId,
@@ -1636,7 +1709,7 @@ impl SyncedRouteInfo {
         dst_peer_id: PeerId,
         dst_peer_route_id: Option<u64>,
         info: &RoutePeerInfo,
-    ) -> Result<(), Error> {
+    ) -> Result<bool, Error> {
         // 1. check if we are duplicated.
         if info.peer_id == my_peer_id {
             if info.peer_route_id != my_peer_route_id
@@ -1664,18 +1737,40 @@ impl SyncedRouteInfo {
             }
         } else if info.peer_id == dst_peer_id {
             let Some(dst_peer_route_id) = dst_peer_route_id else {
-                return Ok(());
+                return Ok(true);
             };
 
             if dst_peer_route_id != info.peer_route_id
                 && info.version < self.get_peer_info_version_with_default(info.peer_id)
             {
-                // if dst peer send to us with lower version info of dst peer, dst peer id is duplicated
-                return Err(Error::DuplicatePeerId);
+                // The sender is telling us about **itself**, with a route id we
+                // have never seen and a version lower than the one we stored.
+                //
+                // That is exactly what a **restart** looks like: `peer_route_id`
+                // is random per process, and the version counter restarts at 1.
+                // It is also exactly what "somebody else is using the sender's
+                // peer id" looks like — the two are indistinguishable on these
+                // two fields alone.
+                //
+                // Skip **this** entry instead of aborting the whole batch. The
+                // batch also carries the routes of every other peer the sender
+                // knows, and dropping those turns a single restarting node into
+                // a network-wide routing hole. The sender's own record stays
+                // frozen until the expiry sweep clears it — that part still
+                // needs a restart-aware check, see the audit doc (B2).
+                tracing::debug!(
+                    peer_id = info.peer_id,
+                    stored_route_id = dst_peer_route_id,
+                    claimed_route_id = info.peer_route_id,
+                    claimed_version = info.version,
+                    "skipping the sender's stale self record (restart-like); \
+                     the rest of the batch is still processed",
+                );
+                return Ok(false);
             }
         }
 
-        Ok(())
+        Ok(true)
     }
 
     fn update_peer_infos(
@@ -1690,7 +1785,7 @@ impl SyncedRouteInfo {
         for (idx, route_info) in peer_infos.iter().enumerate() {
             let mut route_info = route_info.clone();
             let raw_route_info = &raw_peer_infos[idx];
-            self.check_duplicate_peer_id(
+            if !self.check_duplicate_peer_id(
                 my_peer_id,
                 my_peer_route_id,
                 dst_peer_id,
@@ -1703,7 +1798,13 @@ impl SyncedRouteInfo {
                     None
                 },
                 &route_info,
-            )?;
+            )? {
+                // Stale copy of the sender's own record — skip just this one.
+                // The rest of the batch (every other peer the sender knows)
+                // must still land, otherwise one restarting node would take
+                // the whole network's routes down with it.
+                continue;
+            }
 
             let mut guard = self.peer_infos.write();
             // time between peers may not be synchronized, so update last_update to local now.
@@ -5253,6 +5354,24 @@ impl Route for PeerRoute {
             &self.service_impl.route_table
         };
         route_table.get_next_hops(dst_peer_id)
+    }
+
+    async fn get_path_cost_with_policy(
+        &self,
+        dst_peer_id: PeerId,
+        policy: NextHopPolicy,
+    ) -> Option<i32> {
+        let route_table = if matches!(policy, NextHopPolicy::LeastCost) {
+            &self.service_impl.route_table_with_cost
+        } else {
+            &self.service_impl.route_table
+        };
+        // `path_latency` is the accumulated cost of the whole path, relay hops
+        // included. It also carries the relay-policy penalty, so a path that
+        // would go through a peer refusing relay duty is priced accordingly.
+        route_table
+            .get_next_hop(dst_peer_id)
+            .map(|x| x.path_latency)
     }
 
     async fn list_routes(&self) -> Vec<CoreRouteInfo> {

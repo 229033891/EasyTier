@@ -72,7 +72,7 @@ EasyTier 优势（保持）：多 scheme、STUN/打洞、OSPF 选路、自适应
 
 ```text
 score = w_lat * norm(rtt)
-      + w_loss * norm(loss_rate)      // 丢包权重要高于「略差一点的 RTT」
+      + w_loss * norm(loss_rate)      // 丢包按比例计入（权重 0.4，见下）
       + w_jitter * norm(jitter)
 ```
 
@@ -178,8 +178,9 @@ score = w_lat * norm(rtt)
 - [x] **P-AUDIT.11** 首包等待：L2 路由安装与 route-sync 会话启动改**事件驱动**（`PeerInfoWakes`：`proxy_cidr` / `pending_flush` **各一份** `Notify`，生产端 `notify_all`，避免 flusher 抢走 reconciler 的 `notify_one` permit；`PeerAdded/Removed` → `session_mgr.sync_now("peer_set_changed")`）。1s tick 保留为漏信号兜底；conn 级事件刻意不触发（bonding 高频 churn）。目标：把「已连接 → 首包可通」从 1~3s 压到百毫秒级。**收益待现网验**（看 `data_plane_no_dst_peer_drops` 是否下降）
 - [x] **P-AUDIT.12** 首包兜底：查不到路由的包**短暂暂存后重发**（`peers/pending_packets.rs`，TTL 500ms / 每目标 4 包 / 全局 64 包），超限退回原计数丢弃；新增指标 `data_plane_no_dst_peer_buffered`。策略 `Block`、广播/组播、已过期三类**不暂存**；`not_send_to_self` 随包保存；重发不重跑 NIC 流水线（`SendByIpStatus::StillUnroutable` 单次查路由）；`push_with` 先占槽再 clone。**打磨**：flusher 挂独立 `pending_packet_wake` + 20ms tick；挤出/过期 reclaim 计入 drops。**修复**：① `PeerInfoWakes` 拆分（`proxy_cidr` / `pending_flush` 各一份 `Notify`，生产端 `wake_all_consumers`）——修 flusher 抢走 reconciler 的 `notify_one` permit，把 L2 路由安装退回 1s tick；② `push_with` 先占槽再 clone，满队不白拷 MTU；③ `SendByIpStatus::StillUnroutable` 单次查路由，顺带修掉「重试前先记一次 drop」的指标重复计数；④ 重发失败计入**新指标** `data_plane_pending_flush_errors`（不并入 `no_dst_peer_drops`，以免污染判据）；⑤ 补两条回归测试（每消费者独立 permit、重试不计数）。**收益待现网验**：桌面看 `buffered` 上升 + `drops` 下降；**无 exit 的 Android/移动端** 上网流量会大量命中无路由分支 ⇒ `buffered` 暴涨与「首包竞态收益」无关，勿用同一判据
 - [x] **DEF** `latency_first` 出厂默认 core `false` → `true`，与 GUI 模板统一为质量优先；此前 LeastHop 下有直连即短路返回，中继腿永不参与竞争（§2.2 原则未落地）。⚠️ **行为变更**
-- [x] **P1.7** `select_conn` 改为 **综合质量分**（延迟 + 丢包 + 抖动），含丢包熔断阈值与切换 hysteresis；默认丢包权重大于纯 RTT（`peers/conn/conn_select.rs`）
-  - 默认：`w_lat=1` / `w_loss=4` / `w_jitter=1`；loss fuse 20%；switch margin 10% + abs 0.005 × 3 窗口（约 15s）
+- [x] **P1.7** `select_conn` 改为 **综合质量分**（延迟 + 丢包 + 抖动），含丢包熔断阈值与切换 hysteresis；丢包按**比例**计入综合分（`peers/conn/conn_select.rs`）
+  - 默认：`w_lat=1` / `w_loss=0.4` / `w_jitter=1`；loss fuse 20%；switch margin 10% + abs 0.005 × 3 窗口（约 15s）
+  - ⚠️ **2026-10-20 调整**：`w_loss` 默认由 `4.0` 降为 `0.4`。丢包率取自 **100 样本固定窗口**，丢 1 个保活包即 1% 丢包率；旧权重下相当于 **+40 代价单位**（RTT 项每毫秒才 1 个单位），会一次性击穿发布死区（20）并把 conn 踢出 bond。详见 [`../current/routing-bug-audit-2026-10.md`](../current/routing-bug-audit-2026-10.md) B9。显式配置 `conn_select_w_loss = 400` 的用户行为不变
   - Flags 透参：`conn_select_w_*`（百分制权重）、`conn_select_loss_fuse_pct`、`conn_select_switch_*`（全 0 = 内置默认，否则按字面值，允许权重为 0）；TOML / NetworkConfig / `ConnSelectConfig::from_flags`
   - 非目标（P1.7 当时）：未改 OSPF 代价（后由 P2.3 落地）；未做 GUI 调权
 - [x] **P1.8** 单元验收（代码级）：「低 RTT + 高丢包」选后者；hysteresis 单窗口不切（`conn_select` 单测）

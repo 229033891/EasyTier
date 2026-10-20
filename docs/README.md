@@ -36,6 +36,8 @@ crate 内设计稿（非本索引）：`easytier/docs/`（凭据计划已标 Arc
 | [desktop-gui-and-config-server.md](./current/desktop-gui-and-config-server.md) | 桌面 GUI / `ET-Gui` 进程模型与 config-server 回写路径 |
 | [socket-protection.md](./current/socket-protection.md) | Host VPN-bypass / `need_protect` 契约 |
 | [peer-connections.md](./current/peer-connections.md) | 节点间多 PeerConn 与单 `default_conn` 发送路径 |
+| [latency-measurement-and-display-audit.md](./current/latency-measurement-and-display-audit.md) | **延迟测量与展示审查**（2 个真实测量点 + 派生链；「延迟」列双口径等 5 处缺陷 + 重构顺序；出口端到端探测已撤回；**待验收**） |
+| [routing-bug-audit-2026-10.md](./current/routing-bug-audit-2026-10.md) | **节点间选路审查**（净确认 **19** 条 + 4 存疑；修复**工作区待合入 / 待验收**：已落地 11 条 —— **B1**/**B5**/**B6**/**B7**/**B8**/**B9**/**B11**/**B13**/**B18**/**B19**/**B20**；部分修 **B2**/**B10**；B3/B4/B17/B12/B15/B16 待决；B14 撤回；见文内 §1e/§1f 与 §5.1 的行为变更/迁移提示） |
 | [p2p-direct-throughput-audit.md](./current/p2p-direct-throughput-audit.md) | **P2P 直连吞吐瓶颈审查**（逐行核实出站通路；3 处瓶颈 / 3 处已排除；未压测） |
 | [p2p-direct-stability-audit.md](./current/p2p-direct-stability-audit.md) | **P2P 直连稳定性审查**（RDP 卡顿五机制 + 配置层缓解清单；混淆因素待排除） |
 | [tailscale-gap-and-conflict-audit.md](./current/tailscale-gap-and-conflict-audit.md) | **vs Tailscale 代码层审查**（Bug/冲突 C1–C6 vs 设计 S1–S5；UI 已连≠VIP；P-AUDIT 修复清单未落地） |

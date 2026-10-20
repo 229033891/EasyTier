@@ -316,7 +316,7 @@ pub fn conn_quality_score(
 | 维度 | 配置项 | 默认值 | 归一化权重 |
 |---|---|---|---|
 | 延迟 RTT | `conn_select_w_lat` | 100 | 1.0 |
-| **丢包 loss** | `conn_select_w_loss` | 400 | **4.0** |
+| **丢包 loss** | `conn_select_w_loss` | 40 | **0.4**（原 400/4.0；见 [`routing-bug-audit-2026-10.md`](../current/routing-bug-audit-2026-10.md) B9：100-sample 窗口下丢 1 包=1% loss，旧权重会破发布死区） |
 | 抖动 jitter | `conn_select_w_jitter` | 100 | 1.0 |
 
 设计意图（`conn_select.rs:3`）：
@@ -488,7 +488,7 @@ pub(crate) async fn direct_peer_info(peer_maps: &[Arc<PeerMap>]) -> PeerInfoForG
 cost = round(score × 1000)，clamp 到 [1, 1_000_000]
 score = w_lat×rtt_秒 + w_loss×loss率 + w_jitter×jitter_秒
 
-默认权重下：cost ≈ rtt_ms + 4000×loss率 + jitter_ms
+默认权重下：cost ≈ rtt_ms + 400×loss率 + jitter_ms
 ```
 
 **不可逆分解** —— 拿不到独立的 RTT / loss / jitter。
@@ -657,7 +657,7 @@ RouteRule {
 |---|---|---|
 | `priority` | 按 `peers` 列表顺序，取第一个可达 | ✅ **已存在**（`peer_map.rs:285`） |
 | `quality` | 取 `conn_quality_score` 最优的可达节点 | ⚠️ 需接线（模型已有 `conn_select.rs:97`） |
-| `balance` | 按内层 IP 五元组哈希分散 | ⚠️ 原语已有（`conn_bond.rs:340`） |
+| `balance` | 按内层 IP 五元组哈希分散（**等概率**，不按链路质量/带宽能力加权） | ⚠️ 原语已有（`conn_bond.rs:340`） |
 
 #### `failover_when` —— 何时切到下一个 peer（互斥三选一，必填）
 
@@ -683,7 +683,7 @@ RouteRule {
 | `priority` | `unreachable` | 固定用第一个，断了才切 | 合规（确定性出口） |
 | `priority` | `degraded` | 优先第一个，质量差就退 | 「优先 B，B 差就退」 |
 | `quality` | `unreachable` | 选最优，断了重选 | 通用加速 |
-| `balance` | 任意 | 按流分散 | 带宽分摊 |
+| `balance` | 任意 | 按流分散 | 多出口并发占用（**等概率**，非按带宽加权） |
 
 **第 2 行是单字段模型表达不了的。**
 
@@ -1705,7 +1705,7 @@ if local_route_snapshot.is_empty() {
 | **P2** | L2 接线 + 状态机 + 合规阻断 | **1.5 周** | **完整 CIDR 能力** | ✅ **已落地**（Linux blackhole / 集成测试待做） |
 | **P3** | 域名观测（resolve 订阅 + 消歧） | **1.5 周** | **域名分流（尽力）** | ✅ **已落地**（文档/UI + 验收场景待做） |
 | **P4** | `quality` 策略 | **1 周** | 链路质量优选 | ✅ **已落地**（验收场景 8 / 压测待做） |
-| **P5** | `balance` 策略 | **1 周** | 带宽分摊 | ✅ **已落地**（验收场景 9 待做） |
+| **P5** | `balance` 策略 | **1 周** | 按流等概率分摊（**不按带宽能力加权**） | ✅ **已落地**（验收场景 9 待做） |
 | **P6** | GUI/Web + 文档 + CI 门禁 | **1 周** | 生产就绪 | ✅ **已落地**（跨平台验证待做，需真实环境） |
 | | **合计** | **7.5 周** | | |
 

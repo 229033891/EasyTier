@@ -35,6 +35,17 @@ check.log
 check_core.log
 .dsh_*.log
 
+# local debug scratch files (build/test transcripts and helper scripts)
+# These are produced by ad-hoc local runs; they must never reach a commit.
+/dsh-restart*.log
+/dsh-restart*.ps1
+/dt.err
+/dt.out
+/zentest.err
+/zentest.out
+/zt*.err
+/zt*.out
+
 # local sqlite (easytier-web)
 /et.db
 /et.db-*

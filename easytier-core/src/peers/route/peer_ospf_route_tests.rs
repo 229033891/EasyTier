@@ -3,7 +3,7 @@
 use super::*;
 use crate::packet::ZCPacket;
 use crate::peers::peer_rpc::PeerRpcManagerTransport;
-use crate::peers::route::{DefaultRouteCostCalculator, RouteInterface};
+use crate::peers::route::{DefaultRouteCostCalculator, Route, RouteInterface};
 use crate::peers::test_support::NoopPeerContext;
 use parking_lot::Mutex;
 use tokio::sync::Notify;
@@ -2355,4 +2355,431 @@ fn version_jump_limit_rejects_stale_and_absurd_advances() {
         u32::MAX - MAX_VERSION_JUMP,
         u32::MAX
     ));
+}
+
+// ---------------------------------------------------------------------------
+// Direct-vs-relay selection, and exit-node ownership (2026-10-19).
+//
+// Edge cost == measured RTT in ms (see `conn_select::ospf_edge_cost_from_score`).
+// `FixedEdgeCosts` leaves every unlisted edge at `UNLISTED`, so a path that
+// "somehow" avoids the edges under test cannot win by accident.
+// ---------------------------------------------------------------------------
+
+/// A--B 100ms, A--C 50ms, B--C 100ms.
+///
+/// The direct edge costs 100ms; the relay through C costs 50 + 100 = 150ms.
+/// A must therefore talk to B **directly** (1 hop, 100ms).
+#[test]
+fn direct_edge_wins_when_the_relay_is_more_expensive() {
+    let costs = FixedEdgeCosts::new(&[
+        (1, 2, 100),
+        (1, 3, 50),
+        (2, 1, 100),
+        (2, 3, 100),
+        (3, 1, 50),
+        (3, 2, 100),
+    ]);
+    let snapshot = OspfRouteSnapshot {
+        peer_infos: vec![peer(1), peer(2), peer(3)],
+        conn_map: vec![
+            connected(1, [2, 3]),
+            connected(2, [1, 3]),
+            connected(3, [1, 2]),
+        ],
+        suppressed_peer_ids: BTreeSet::new(),
+        version: 1,
+    };
+
+    let table = OspfRouteTable::new();
+    table.build_from_snapshot(1, &snapshot, NextHopPolicy::LeastCost, &costs);
+
+    let next_hop = table.get_next_hop(2).expect("B is reachable");
+    assert_eq!(next_hop.next_hop_peer_id, 2, "the direct edge is cheaper");
+    assert_eq!(next_hop.path_len, 1);
+    assert_eq!(next_hop.path_latency, 100);
+}
+
+/// A--B 100ms, A--C 50ms, B--C 20ms.
+///
+/// The relay through C costs 50 + 20 = 70ms, the direct edge 100ms, so A must
+/// reach B **through C** (2 hops, 70ms).
+///
+/// This is the executable form of the contract in
+/// `docs/roadmap/live-next-hop.md` §5.2 ("a 13ms direct edge vs a two-hop relay
+/// of <0.5ms per hop must pick the relay"). Keep it green: it is what stops a
+/// "direct is always better" change from being merged.
+#[test]
+fn cheaper_multi_hop_relay_wins_over_the_direct_edge() {
+    let costs = FixedEdgeCosts::new(&[
+        (1, 2, 100),
+        (1, 3, 50),
+        (2, 1, 100),
+        (2, 3, 20),
+        (3, 1, 50),
+        (3, 2, 20),
+    ]);
+    let snapshot = OspfRouteSnapshot {
+        peer_infos: vec![peer(1), peer(2), peer(3)],
+        conn_map: vec![
+            connected(1, [2, 3]),
+            connected(2, [1, 3]),
+            connected(3, [1, 2]),
+        ],
+        suppressed_peer_ids: BTreeSet::new(),
+        version: 1,
+    };
+
+    let table = OspfRouteTable::new();
+    table.build_from_snapshot(1, &snapshot, NextHopPolicy::LeastCost, &costs);
+
+    let next_hop = table.get_next_hop(2).expect("B is reachable");
+    assert_eq!(
+        next_hop.next_hop_peer_id, 3,
+        "the relay through C is cheaper"
+    );
+    assert_eq!(next_hop.path_len, 2);
+    assert_eq!(next_hop.path_latency, 70);
+}
+
+/// A peer that restarts gets a new instance id and a **reset** version
+/// counter. The `peer_infos` write guard must not read that reset as "older
+/// data" and keep the stale record forever.
+#[test]
+fn a_restarted_peer_refreshes_its_record() {
+    let mut first = peer(3);
+    first.info.inst_id = Some(uuid::Uuid::from_u128(1).into());
+    first.info.version = 10;
+
+    let mut after_restart = peer(3);
+    after_restart.info.inst_id = Some(uuid::Uuid::from_u128(2).into());
+    after_restart.info.version = 1; // the peer's own counter restarted
+
+    let costs = FixedEdgeCosts::new(&[(1, 3, 100), (3, 1, 100)]);
+    let table = OspfRouteTable::new();
+
+    let build = |peer_info: OspfPeerInfo, version: u32| OspfRouteSnapshot {
+        peer_infos: vec![peer(1), peer_info],
+        conn_map: vec![connected(1, [3]), connected(3, [1])],
+        suppressed_peer_ids: BTreeSet::new(),
+        version,
+    };
+
+    table.build_from_snapshot(1, &build(first, 1), NextHopPolicy::LeastCost, &costs);
+    let stored = table.peer_infos.get(&3).unwrap().clone();
+    assert_eq!(stored.version, 10);
+    assert_eq!(
+        route_peer_inst_id(&stored).map(|u| u.as_u128()),
+        Some(1),
+        "sanity: the first build stored the record"
+    );
+
+    table.build_from_snapshot(
+        1,
+        &build(after_restart, 2),
+        NextHopPolicy::LeastCost,
+        &costs,
+    );
+    let stored = table.peer_infos.get(&3).unwrap().clone();
+    assert_eq!(
+        stored.version, 1,
+        "the restarted peer's record must be refreshed, not kept as the old one"
+    );
+    assert_eq!(
+        route_peer_inst_id(&stored).map(|u| u.as_u128()),
+        Some(2),
+        "the record must belong to the new instance"
+    );
+}
+
+/// A peer that restarts must not take the whole batch down with it.
+///
+/// After a restart the sender's own record looks exactly like "somebody else
+/// is using the sender's peer id": a new random `peer_route_id` plus a version
+/// counter that went back to 1. Aborting the batch on that would drop the
+/// routes of **every other** peer the sender knows — one restarting node would
+/// become a network-wide routing hole.
+///
+/// The sender's own record stays frozen (that part still needs a
+/// restart-aware check — see the audit doc, B2), but the rest of the batch
+/// must land.
+#[test]
+fn a_restarting_sender_only_skips_its_own_stale_record() {
+    let service_impl = test_service_impl(1);
+    let synced = &service_impl.synced_route_info;
+
+    // What we already knew about the sender: an older instance of it.
+    let old_sender = RoutePeerInfo {
+        peer_id: 2,
+        peer_route_id: 200,
+        version: 50,
+        ..Default::default()
+    };
+    synced
+        .update_peer_infos(
+            1,
+            111,
+            2,
+            std::slice::from_ref(&old_sender),
+            &[raw_route_peer_info(&old_sender)],
+        )
+        .expect("the first batch is accepted");
+
+    // The sender restarted: new random route id, version counter back at 1.
+    let restarted_sender = RoutePeerInfo {
+        peer_id: 2,
+        peer_route_id: 201,
+        version: 1,
+        ..Default::default()
+    };
+    // … and in the same batch it told us about a third peer, which has
+    // nothing to do with the restart.
+    let third_peer = RoutePeerInfo {
+        peer_id: 3,
+        peer_route_id: 300,
+        version: 7,
+        ..Default::default()
+    };
+
+    synced
+        .update_peer_infos(
+            1,
+            111,
+            2,
+            &[restarted_sender.clone(), third_peer.clone()],
+            &[
+                raw_route_peer_info(&restarted_sender),
+                raw_route_peer_info(&third_peer),
+            ],
+        )
+        .expect("the batch must not be aborted by the sender's stale self record");
+
+    let third = synced
+        .peer_infos
+        .read()
+        .get(&3)
+        .cloned()
+        .expect("the unrelated peer must be accepted");
+    assert_eq!(third.version, 7);
+    assert_eq!(third.peer_route_id, 300);
+
+    let sender = synced
+        .peer_infos
+        .read()
+        .get(&2)
+        .cloned()
+        .expect("the sender stays known");
+    assert_eq!(
+        sender.version, 50,
+        "the sender's stale self record must be skipped, not applied"
+    );
+    assert_eq!(sender.peer_route_id, 200);
+}
+
+/// A peer that advertises **our** peer id with a different route id is a real
+/// duplicate and must still abort the batch — that branch is the CR-07/CR-08
+/// hardening and must not be weakened by the restart tolerance.
+#[test]
+fn a_peer_advertising_our_own_id_still_aborts_the_batch() {
+    let service_impl = test_service_impl(1);
+    let synced = &service_impl.synced_route_info;
+
+    // Somebody claims to be us, with a different route id and a higher
+    // version than the one we have on file.
+    let impostor = RoutePeerInfo {
+        peer_id: 1,
+        peer_route_id: 999,
+        version: 7,
+        ..Default::default()
+    };
+    let other_peer = RoutePeerInfo {
+        peer_id: 3,
+        peer_route_id: 300,
+        version: 7,
+        ..Default::default()
+    };
+
+    let err = synced
+        .update_peer_infos(
+            1,
+            111,
+            2,
+            &[impostor.clone(), other_peer.clone()],
+            &[
+                raw_route_peer_info(&impostor),
+                raw_route_peer_info(&other_peer),
+            ],
+        )
+        .expect_err("a duplicated peer id must abort the batch");
+    assert!(
+        matches!(err, Error::DuplicatePeerId),
+        "unexpected error: {err:?}"
+    );
+    assert!(
+        synced.peer_infos.read().get(&3).is_none(),
+        "the batch must not have been partially applied"
+    );
+}
+
+/// The path cost the policy layer sees must be the cost of the **whole path**,
+/// relay hops included — not the direct link, and not the hop count.
+///
+/// The policy layer (`select_by = quality`) has to be able to compare two
+/// candidates it reaches over paths of different lengths. Pricing only the
+/// direct link made a candidate that is reachable solely through a relay look
+/// unreachable, so it always ranked last.
+#[tokio::test]
+async fn path_cost_covers_the_whole_path_including_relay_hops() {
+    let route = PeerRoute::new(
+        1,
+        Arc::new(NoopPeerContext::default()),
+        Arc::new(TestPublicIpv6Runtime),
+        Arc::new(PeerRpcManager::new(TestPeerRpcTransport)),
+    );
+
+    // A --1--> C --1--> B   (reaching B through C costs 2ms in two hops)
+    // A --1000--> B         (the direct edge is 500x more expensive)
+    let costs = FixedEdgeCosts::new(&[
+        (1, 2, 1000),
+        (1, 3, 1),
+        (2, 1, 1000),
+        (2, 3, 1),
+        (3, 1, 1),
+        (3, 2, 1),
+    ]);
+    let snapshot = OspfRouteSnapshot {
+        peer_infos: vec![peer(1), peer(2), peer(3)],
+        conn_map: vec![
+            connected(1, [2, 3]),
+            connected(2, [1, 3]),
+            connected(3, [1, 2]),
+        ],
+        suppressed_peer_ids: BTreeSet::new(),
+        version: 1,
+    };
+    route
+        .service_impl
+        .route_table_with_cost
+        .build_from_snapshot(1, &snapshot, NextHopPolicy::LeastCost, &costs);
+
+    assert_eq!(
+        route
+            .get_path_cost_with_policy(2, NextHopPolicy::LeastCost)
+            .await,
+        Some(2),
+        "the path to B goes through C and costs 2ms, not the 1000ms direct edge"
+    );
+    assert_eq!(
+        route
+            .get_path_cost_with_policy(3, NextHopPolicy::LeastCost)
+            .await,
+        Some(1)
+    );
+    assert_eq!(
+        route
+            .get_path_cost_with_policy(9, NextHopPolicy::LeastCost)
+            .await,
+        None,
+        "an unknown peer has no path"
+    );
+}
+
+/// Exit ownership: which peer A hands its "internet" traffic to.
+///
+/// B and C both advertise the default route, so A has to pick one. The
+/// arbitration is `is_new_peer_better` (`peer_ospf_route.rs`), and it follows
+/// the same lexicographic rule as the next-hop table: accumulated cost first,
+/// hop count second, peer id last.
+///
+/// Both candidates are one hop away here, so hop count cannot separate them —
+/// only the cost can. Before the arbitration became cost-aware the owner was
+/// whichever the `DashMap` iteration reached first, i.e. it did not follow the
+/// cost at all.
+#[test]
+fn exit_ownership_follows_the_edge_cost() {
+    let mut b = peer(2);
+    b.info.proxy_cidrs.push("0.0.0.0/0".into());
+    let mut c = peer(3);
+    c.info.proxy_cidrs.push("0.0.0.0/0".into());
+
+    let snapshot = OspfRouteSnapshot {
+        peer_infos: vec![peer(1), b, c],
+        conn_map: vec![
+            connected(1, [2, 3]),
+            connected(2, [1, 3]),
+            connected(3, [1, 2]),
+        ],
+        suppressed_peer_ids: BTreeSet::new(),
+        version: 1,
+    };
+
+    let table = OspfRouteTable::new();
+    let owner_for = |a_to_b: i32, a_to_c: i32, version: u32| {
+        let costs = FixedEdgeCosts::new(&[
+            (1, 2, a_to_b),
+            (1, 3, a_to_c),
+            (2, 1, a_to_b),
+            (2, 3, 20),
+            (3, 1, a_to_c),
+            (3, 2, 20),
+        ]);
+        let mut snap = OspfRouteSnapshot {
+            peer_infos: snapshot.peer_infos.clone(),
+            conn_map: snapshot.conn_map.clone(),
+            suppressed_peer_ids: BTreeSet::new(),
+            version,
+        };
+        snap.version = version;
+        table.build_from_snapshot(1, &snap, NextHopPolicy::LeastCost, &costs);
+        table.get_peer_id_for_default_route_proxy(&"203.0.113.5".parse::<IpAddr>().unwrap())
+    };
+
+    assert_eq!(owner_for(100, 50, 1), Some(3), "C is the cheaper exit");
+    assert_eq!(owner_for(50, 100, 2), Some(2), "B is the cheaper exit");
+}
+
+/// An expensive *direct* peer must not keep the default route just because it
+/// is one hop away.
+///
+/// A--B is a 1000ms direct edge. A--C is 1ms, and C--B is 1ms, so reaching B
+/// **through** C costs 2ms in two hops. The cost is the primary key, so C
+/// must own the default route even though B is a direct neighbour.
+#[test]
+fn an_expensive_direct_peer_does_not_keep_the_default_route() {
+    let mut b = peer(2);
+    b.info.proxy_cidrs.push("0.0.0.0/0".into());
+    let mut c = peer(3);
+    c.info.proxy_cidrs.push("0.0.0.0/0".into());
+
+    let costs = FixedEdgeCosts::new(&[
+        (1, 2, 1000),
+        (1, 3, 1),
+        (2, 1, 1000),
+        (2, 3, 1),
+        (3, 1, 1),
+        (3, 2, 1),
+    ]);
+    let snapshot = OspfRouteSnapshot {
+        peer_infos: vec![peer(1), b, c],
+        conn_map: vec![
+            connected(1, [2, 3]),
+            connected(2, [1, 3]),
+            connected(3, [1, 2]),
+        ],
+        suppressed_peer_ids: BTreeSet::new(),
+        version: 1,
+    };
+
+    let table = OspfRouteTable::new();
+    table.build_from_snapshot(1, &snapshot, NextHopPolicy::LeastCost, &costs);
+
+    // The next-hop table already prefers the relay: reaching B through C
+    // costs 2ms, the direct edge costs 1000ms.
+    let to_b = table.get_next_hop(2).unwrap();
+    assert_eq!(to_b.next_hop_peer_id, 3);
+    assert_eq!(to_b.path_latency, 2);
+    assert_eq!(
+        table.get_peer_id_for_default_route_proxy(&"203.0.113.5".parse::<IpAddr>().unwrap()),
+        Some(3),
+        "reaching B through C costs 2ms, not 1000ms"
+    );
 }

@@ -2,8 +2,8 @@
 
 ## Status
 
-- Status: **Current**
-- 最近审阅：2026-10-18（Android GUI / OHOS 与 JNI 对齐：新 core 吃 `desired_proxy_cidrs`，旧 core 回退本地拼装）；2026-10-16（修正 `manual_routes` 语义：仅覆盖**学习集合**，append 模式仍自动装 exit `/0`、policy 显式 `/0` 两种模式均生效；Android JNI 逃生阀改由 `NetworkInstanceRunningInfo` 下发；补对端 `/0` 兜底需 `enable_exit_node`）
+- Status: **Current**（⚠️ **待验收**：下文 §2 / §5 中标注「待验收」的段落描述的是工作区未合入修复，合入并验收前勿当可依赖现状）
+- 最近审阅：2026-10-20（复核修补：合并后重校验 / dataplane flow key；§2·§5 待验收标注）；2026-10-18（Android GUI / OHOS 与 JNI 对齐：新 core 吃 `desired_proxy_cidrs`，旧 core 回退本地拼装）；2026-10-16（修正 `manual_routes` 语义：仅覆盖**学习集合**，append 模式仍自动装 exit `/0`、policy 显式 `/0` 两种模式均生效；Android JNI 逃生阀改由 `NetworkInstanceRunningInfo` 下发；补对端 `/0` 兜底需 `enable_exit_node`）
 - 范围：`exit_nodes` / `enable_exit_node` / `proxy_cidrs` / `manual_routes` / `manual_routes_append` / `[[policy_routes]]` / TUN 系统路由同步 / `allow_peer_default_without_exit`
 - 规划中的改动见：[`../roadmap/traffic-steering-vNext.md`](../roadmap/traffic-steering-vNext.md)、[`../roadmap/domain-proxy.md`](../roadmap/domain-proxy.md)；默认路由 Phase 2：[`../roadmap/default-route-and-underlay-excludes.md`](../roadmap/default-route-and-underlay-excludes.md)（论证全文 [`../archive/default-route-and-underlay-excludes-2026-10.md`](../archive/default-route-and-underlay-excludes-2026-10.md)）
 - DNS：[`magic-dns.md`](./magic-dns.md)
@@ -48,6 +48,9 @@ IPv6：VIP / 非 `/0` 的 proxy LPM → `exit_nodes`（同样要求下一跳）�
 - 更具体的子网代理 CIDR **永远优先于** `exit_nodes`  
 - 配置了可解析的 `exit_nodes` 时，公网走出口路径并带 `exit_node` 标志，不会被对端 `/0` 抢走  
 - **`[[policy_routes]]` 命中优先于 `exit_nodes`**（次序 3.5 在 4 之前）；只对「规则显式覆盖」的目标生效，其余仍走原逻辑
+- ⚠️ **待验收**：在 `[[policy_routes]]` 表内部，`exit_nodes` 与**默认路由**规则**合并成同一条规则**（候选顺序 = 显式在前、`exit_nodes` 在后），不是二选一。之前它们是两条 `/0` 规则，而 LPM 索引每个 `(前缀, 网段)` 只保留一条 ⇒ **`exit_nodes` 被整条丢弃**（配了显式 `/0` 规则时 `exit_nodes` 完全不生效）。
+  - 合并在**对账期**完成（每轮用**活**的 `exit_nodes` 生成候选）⇒ **热补丁 ≤1s 生效**（`config_patch` → `update_exit_nodes` 不必重建表）。**显式 `/0` 与 sugar `/0` 两条路径都如此**。
+  - 合并后候选数超过 16、合并导致 `closed`+多 peer 未 `require_confirmed`、显式 `/0` 规则同时带 `domains`、或显式 `/0` 规则用 `failover_when = "never"`，均**加载失败并报错**（不静默截断、不静默失效）。见 [`routing-bug-audit-2026-10.md`](./routing-bug-audit-2026-10.md) B7
 
 出口机侧：
 
@@ -140,7 +143,7 @@ IPv6：VIP / 非 `/0` 的 proxy LPM → `exit_nodes`（同样要求下一跳）�
 cidr      = "10.0.0.0/24"        # 与 domains 至少填一个，可同时填
 domains   = ["*.atlassian.net"]  # 通配父 zone 须 ≥2 标签；`*.com` 之类被拒
 peers     = ["10.144.0.9"]       # 候选网关，按序
-select_by         = "priority"   # priority（按序）| quality（按链路质量）| balance（按流哈希分摊）
+select_by         = "priority"   # priority（按序）| quality（按整条路径的代价，含中转段）| balance（按流哈希等概率分摊）
 failover_when     = "unreachable" # unreachable | degraded | never
 if_all_unavailable = "open"       # open = 回退物理网关；closed = 丢包（多 peer 时需 require_confirmed）
 # quality_degraded_cost = 500     # 仅 failover_when = "degraded" 时必填：复合成本超此值视为劣化
@@ -151,13 +154,16 @@ if_all_unavailable = "open"       # open = 回退物理网关；closed = 丢包�
 - **L3**：`get_msg_dst_peer_ipv4` 在 VIP / 子网代理之后、`exit_nodes` 之前插入**次序 3.5**（§2），命中即交给该规则选出的 peer。热路径只读快照，无锁 / 无 await / 无分配。
 - **`select_by` 三种模式**（对账循环约每秒重算；**启动时先跑一轮再 sleep**，避免首秒 `Degraded` 窗口）：
   - `priority` —— 按 `peers` 列表顺序，取第一个可达的；优选恢复后**立即切回**（不用切换带）。
-  - `quality` —— 按**复合链路成本**（RTT + loss + jitter 同族编码）取最低的。成本是**复合分**，不能按单一维度解读。
-  - `balance` —— 把候选列表交给热路径，按**内层流 5-tuple 哈希取模**分摊：同一条 TCP 流恒定走同一个 peer，不同流可能走不同 peer → **出口 IP 不唯一**。
+  - `quality` —— **待验收**：按**到该候选的整条路径的复合代价**（RTT + loss + jitter 同族编码，各边代价累加，**中转段计入**）取最低的。代价是**复合分**，不能按单一维度解读。路径代价取自 OSPF least-cost 表的 `path_latency`（`Route::get_path_cost_with_policy`），所以**只靠中转可达的候选也能被正确比较**；直连边代价仅作为路由表尚未收敛时的兜底。
+  - `balance` —— 把候选列表交给热路径，按**内层流 5-tuple 哈希取模**分摊：同一条 TCP 流恒定走同一个 peer，不同流可能走不同 peer → **出口 IP 不唯一**。⚠️ 分摊是**等概率**的，**不按链路质量或带宽能力加权** ⇒ 一条 10ms 候选和一条 500ms 候选仍各承担约一半流量。
+- **⚠️ 待验收：`select_by` 依赖 `failover_when` 提供多个候选**：`failover_when = "never"` 时候选集只剩 `peers` 的**第 1 个**（"从不切换"语义），`quality` / `balance` 就**没有东西可选**了。⇒ **配置校验会直接报错**（`failover_when = "never"` 只能配 `select_by = "priority"`），不再静默退化。
 - **规则 = 出口（重要）**：`[[policy_routes]]` 命中后**一律置 `exit_node` 标志**，即被指向的 peer **必须开启**「允许此节点成为出口节点」（`enable_exit_node`），否则该 peer 会**丢弃**这些包（不会静默回退到其它路径）。网关侧仍**优先查自己的 `proxy_cidrs`**：命中即按子网代理转发，没命中才 NAT 出网。
 - **切换防抖（仅 `quality`）**：发布侧沿用 `MIN_DELTA=20`；`select_by = quality` 时，相对 10% / 绝对 5 cost 单位带内不动，带外还需**连续 3 个 tick** 才切。`priority` **不**走切换带（否则成本恒 0，优选永远切不回来）。
 - **L2（桌面）**：`cidr_monitor` 从**同一份快照**取 `Stable` / `Failover` 规则的 CIDR 作为本机代理路由（§3）；override 模式下非 `/0` 的 policy CIDR 被 `manual_routes` 覆盖，但显式 `/0` 规则不受影响。Android / OHOS **未接线**（§5.2）。
 - **域名 → IP（桌面）**：订阅 MagicDNS `resolve()` 的**实际应答**（全代码库唯一能看到应用实际解析结果的位置），学到 `/32` 后**原子**更新 L2 + L3；旧 IP 保留，超上限 FIFO 淘汰（**不**淘汰规则上显式配置的 `/32`）。移动端即便 L3 表有观测结果，宿主也**不会**把这些 `/32` 装进 VpnService / TUN 路由表。
-- **配置校验硬失败**：缺 `select_by` / `failover_when` / `if_all_unavailable`、`closed` + 多 peer 未 `require_confirmed`、`quality_degraded_cost` 与 `failover_when = degraded` 未成对、`domains` 落在 `et.net.` 内 —— 均**加载失败并报错**，不静默取默认。通配规则与 Split forwarder 同后缀**共存合法**（2026-10-16 起）：policy 规则经 ObservingDnsResolver 观测真实应答学 IP（含 Split 应答），不抢占 Catalog zone；「Split 赢」仅对静态 hosts **通配**条目成立（`static_host_skip_reason`）。
+- **配置校验硬失败**：缺 `select_by` / `failover_when` / `if_all_unavailable`、`closed` + 多 peer 未 `require_confirmed`、`quality_degraded_cost` 与 `failover_when = degraded` 未成对、`domains` 落在 `et.net.` 内 —— 均**加载失败并报错**，不静默取默认。**待验收**：`failover_when = "never"` + `select_by ≠ "priority"` 也**加载失败并报错**（候选只剩第一个，两种模式都无从选择）。
+
+通配规则与 Split forwarder 同后缀**共存合法**（2026-10-16 起）：policy 规则经 ObservingDnsResolver 观测真实应答学 IP（含 Split 应答），不抢占 Catalog zone；「Split 赢」仅对静态 hosts **通配**条目成立（`static_host_skip_reason`）。
 
 ### 5.1 ⚠️ 泄漏面（产品必须明示）
 
@@ -166,7 +172,7 @@ if_all_unavailable = "open"       # open = 回退物理网关；closed = 丢包�
 | **DNS 查询本身不走指定出口** | MagicDNS 上游强制绑**物理网卡**。域名路由只保证「连接」走指定出口，**不保证「解析」**。 |
 | **首包最长 1 秒直连窗口** | 域名 IP 靠观测学习：L3 同步就绪，但 L2 的 OS 路由受 **1 秒对账循环**约束 → 首次访问的连接包有**最长 1 秒**从物理网关直连出去。 |
 | **切换不迁移已建立连接** | 目标节点掉线时新流切换 ≤2 秒；已建立的 TCP 流需重连。 |
-| **`balance` 下出口 IP 不唯一** | P5 语义固有。 |
+| **`balance` 下出口 IP 不唯一** | P5 语义固有。分摊是**等概率**的，不按链路质量或带宽能力加权。 |
 | **`quality` 阈值是复合分** | P4，不能按 RTT / loss 维度分解。 |
 
 > **本设计不保证零泄漏。** 缩小首包窗口可配合 `DnsConfig.hosts` 静态绑定 IP 使 DNS 与路由时序对齐；真正零泄漏需另立项。

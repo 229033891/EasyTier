@@ -156,7 +156,13 @@ message PolicyRouteConfig {
   repeated string domains = 2;
   // Candidate gateway peers (virtual IPs), in preference order.
   repeated string peers = 3;
-  // "priority" | "quality" | "balance".
+  // "priority" (list order) | "quality" (best link cost) | "balance" (spread
+  // flows across the candidates by inner-flow 5-tuple hash -- evenly, NOT
+  // weighted by link quality or capacity).
+  //
+  // NOTE: `select_by` needs more than one candidate to choose from.
+  // `failover_when = "never"` keeps only the first candidate, so it may only
+  // be combined with "priority" — the config validator rejects the rest.
   optional string select_by = 4;
   // "unreachable" | "degraded" | "never".
   optional string failover_when = 5;

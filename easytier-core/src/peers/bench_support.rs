@@ -53,6 +53,7 @@ pub fn local_route_table_with_rules(count: usize) -> LocalRouteTable {
                     (i >> 8) as u8,
                     (i & 0xff) as u8,
                 ))],
+                merge_exit_nodes: false,
                 select_by: SelectBy::Priority,
                 failover_when: FailoverWhen::Unreachable,
                 if_all_unavailable: AllUnavailable::Open,

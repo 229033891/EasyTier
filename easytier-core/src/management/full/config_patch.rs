@@ -15,6 +15,7 @@ use crate::{
     },
     instance::{CoreInstance, CoreInstanceConfig, CoreInstanceHost, CoreInstanceState},
     peers::credential_manager::CredentialManager,
+    peers::route::local_route_table::validate_config_loader_policy_routes,
 };
 
 use super::config_server_client;
@@ -266,6 +267,19 @@ where
     H: CoreInstanceHost,
 {
     let normalized = CoreInstanceConfig::from_toml_with_host(candidate, instance.host_config())?;
+    // `[[policy_routes]]` must be validated on the hot-patch path too.
+    //
+    // The run / validate / persist paths go through
+    // `validate_config_loader_policy_routes`, but this one did not — so an
+    // invalid combination (e.g. `failover_when = "never"` with
+    // `select_by = "quality"`, which the reconcile loop then degrades to
+    // `priority` without a word) could be saved through the GUI or an RPC and
+    // only then show up as "my config does not do what it says".
+    //
+    // This runs before the candidate is persisted and before
+    // `update_exit_nodes` is applied, so an invalid patch never reaches the
+    // running instance.
+    validate_config_loader_policy_routes(candidate)?;
     let runtime = runtime_config_from_normalized(&normalized);
     runtime.services.public_ipv6_provider.validate()?;
     instance.validate_runtime_config_capabilities(&runtime)?;

@@ -450,8 +450,13 @@ impl PeerConnPinger {
                 break;
             }
 
-            self.loss_rate_stats
-                .store((loss_rate_1 * 100.0) as u32, Ordering::Relaxed);
+            // Percent, rounded — `as u32` truncated, so 29.9% was published as
+            // 29% and the same for 57.9% / 58.9%. The loss term is weighted
+            // heavily, so a systematic 1-point under-report is not noise.
+            self.loss_rate_stats.store(
+                (loss_rate_1 * 100.0).clamp(0.0, 100.0).round() as u32,
+                Ordering::Relaxed,
+            );
         }
     }
 

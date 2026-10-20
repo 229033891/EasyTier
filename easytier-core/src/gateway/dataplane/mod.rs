@@ -43,6 +43,7 @@ use crate::{
     packet::{PacketType, ZCPacket},
     peers::{
         PeerPacketFilter,
+        conn::conn_bond::flow_key_from_ipv4_tuple,
         peer_manager::{PeerManagerCore, PipelineRegistrationGuard},
     },
     socket::{
@@ -619,12 +620,35 @@ where
         } else {
             false
         };
+        // A `balance` policy rule picks the peer by the inner flow's 5-tuple.
+        // Gateway KCP connects know both endpoints via `source_hint`; without
+        // that we must pass `None` so the checker refuses rather than answering
+        // for slot 0 while the flow hashes elsewhere.
+        //
+        // Only a `balance` rule needs the key, and deriving it costs a hash per
+        // connection — skip it entirely when no such rule exists.
+        let flow_key = if peer_manager.has_balance_policy_rules() {
+            match (options.source_hint, dst_addr) {
+                (Some(SocketAddr::V4(src)), SocketAddr::V4(dst)) => Some(flow_key_from_ipv4_tuple(
+                    u8::from(IpProtocol::Tcp),
+                    *src.ip(),
+                    *dst.ip(),
+                    src.port(),
+                    dst.port(),
+                )),
+                _ => None,
+            }
+        } else {
+            None
+        };
         let kcp_allowed = if prefer_kcp && kcp_ready {
             options
                 .deadline
                 .run(async {
                     Ok::<_, DataPlaneError>(
-                        peer_manager.check_allow_kcp_to_dst(&dst_addr.ip()).await,
+                        peer_manager
+                            .check_allow_kcp_to_dst_with_flow(&dst_addr.ip(), flow_key)
+                            .await,
                     )
                 })
                 .await?

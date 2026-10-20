@@ -81,8 +81,8 @@ use super::{
         ArcRoute, DisabledRoute, ForeignNetworkRouteInfoMap, NextHopPolicy, Route, RouteInterface,
         local_route_table::{
             FailoverWhen, LocalRouteTable, PolicyRouteConfig, RouteLookup, RuleState, RuleUpdate,
-            SelectBy, build_snapshot, is_degraded_cost, validate_and_build_policy_rules,
-            within_switch_band,
+            SelectBy, build_snapshot, is_degraded_cost, merged_candidates,
+            validate_and_build_policy_rules, within_switch_band,
         },
         peer_ospf_route::PeerRoute,
     },
@@ -371,6 +371,7 @@ async fn reconcile_local_routes_once(
     peers: &PeerMap,
     table: &LocalRouteTable,
     conn_select: ConnSelectConfig,
+    exit_nodes: &[IpAddr],
 ) {
     let snap = table.load_full();
     if snap.rules.is_empty() {
@@ -389,9 +390,23 @@ async fn reconcile_local_routes_once(
     let mut updates: Vec<RuleUpdate> = Vec::new();
 
     for (idx, r) in snap.rules.iter().enumerate() {
-        let candidates: &[IpAddr] = match r.rule.failover_when {
-            FailoverWhen::Never => r.rule.peers.get(..1).unwrap_or(&[]),
-            FailoverWhen::Unreachable | FailoverWhen::Degraded => &r.rule.peers,
+        // B7: a default-route rule may merge in the **live** `exit_nodes`.
+        //
+        // The merge happens here — at reconcile time — and not when the rule
+        // was built, so a hot-patched `exit_nodes` (`config_patch` →
+        // `update_exit_nodes`) reaches the candidate list on the next tick.
+        // Baking the exit nodes into `rule.peers` at construction time would
+        // freeze them for the lifetime of the instance.
+        let merged_storage: Option<Vec<IpAddr>> = if r.rule.merge_exit_nodes {
+            Some(merged_candidates(&r.rule, exit_nodes))
+        } else {
+            None
+        };
+        let candidates: &[IpAddr] = match (r.rule.failover_when, &merged_storage) {
+            (FailoverWhen::Never, Some(merged)) => merged.get(..1).unwrap_or(&[]),
+            (FailoverWhen::Never, None) => r.rule.peers.get(..1).unwrap_or(&[]),
+            (_, Some(merged)) => merged,
+            (_, None) => &r.rule.peers,
         };
         let mut reachable = Vec::with_capacity(candidates.len());
         for ip in candidates {
@@ -416,10 +431,27 @@ async fn reconcile_local_routes_once(
             let cost = match quality.get(&peer_id) {
                 Some(cost) => *cost,
                 None if needs_quality => {
-                    let raw = peers.peer_edge_cost(peer_id).await.unwrap_or(i32::MAX);
+                    // Price the candidate by the **whole path** to it, relay
+                    // hops included. Scoring only the direct link made a
+                    // candidate that is reachable solely through a relay look
+                    // unreachable (cost `i32::MAX`), so it always ranked last
+                    // and `failover_when = degraded` dropped it outright —
+                    // even when it was the best exit we had.
+                    //
+                    // The direct-link cost stays as the fallback for the
+                    // window before the route table knows the peer at all.
+                    //
+                    // It must not be computed unconditionally: `Option::or`
+                    // evaluates its argument eagerly, so `.or(...)` would run
+                    // the extra `list_peer_conns` even when the path cost is
+                    // already known.
+                    let raw = match peers.peer_path_cost(peer_id).await {
+                        Some(cost) => cost,
+                        None => peers.peer_edge_cost(peer_id).await.unwrap_or(i32::MAX),
+                    };
                     // Publish debounce: the same MIN_DELTA rule OSPF uses, but
-                    // against our own baseline so OSPF's publisher state (and its
-                    // `LAST_OSPF_EDGE_COST`) is left untouched.
+                    // against our own baseline so OSPF's per-peer-map publisher
+                    // state (`PeerMap::ospf_edge_cost_baseline`) is left untouched.
                     let cost = apply_ospf_cost_hysteresis(
                         raw,
                         snap.peer_quality.get(&peer_id).copied(),
@@ -2250,9 +2282,31 @@ impl PeerManagerCore {
             .await
     }
 
+    /// See [`OutboundPacketRouter::check_allow_kcp_to_dst_with_flow`].
+    pub async fn check_allow_kcp_to_dst_with_flow(
+        &self,
+        dst_ip: &IpAddr,
+        flow_key: Option<u64>,
+    ) -> bool {
+        self.outbound_packet_router
+            .check_allow_kcp_to_dst_with_flow(dst_ip, flow_key)
+            .await
+    }
+
     pub async fn check_allow_quic_to_dst(&self, dst_ip: &IpAddr) -> bool {
         self.outbound_packet_router
             .check_allow_quic_to_dst(dst_ip)
+            .await
+    }
+
+    /// See [`OutboundPacketRouter::check_allow_quic_to_dst_with_flow`].
+    pub async fn check_allow_quic_to_dst_with_flow(
+        &self,
+        dst_ip: &IpAddr,
+        flow_key: Option<u64>,
+    ) -> bool {
+        self.outbound_packet_router
+            .check_allow_quic_to_dst_with_flow(dst_ip, flow_key)
             .await
     }
 
@@ -2262,6 +2316,14 @@ impl PeerManagerCore {
 
     pub async fn configured_exit_nodes(&self) -> Vec<IpAddr> {
         self.exit_nodes.read().await.clone()
+    }
+
+    /// `true` when a `[[policy_routes]]` rule uses `select_by = balance`.
+    ///
+    /// Only such a rule picks its peer by the flow key, so a caller that would
+    /// have to derive a flow key can skip that work when this is `false`.
+    pub fn has_balance_policy_rules(&self) -> bool {
+        self.local_route_table.has_balance_rules()
     }
 
     /// Unified routing table. The L2 proxy-CIDR reconciler reads its
@@ -2401,13 +2463,23 @@ impl PeerManagerCore {
             let peers = self.peers.clone();
             let table = self.local_route_table.clone();
             let conn_select = ConnSelectConfig::from_flags(&self.context.flags());
+            // B7: the exit nodes are read fresh on every tick so a hot-patched
+            // list reaches the default-route rule's candidates.
+            let exit_nodes = self.exit_nodes.clone();
             self.tasks.lock().await.spawn(async move {
                 // Run once immediately so a `closed` rule with already-reachable
                 // peers becomes Stable (and installs L2 routes) without waiting
                 // a full second — otherwise OS traffic can leak out the physical
                 // NIC for the first tick while the table is still Degraded.
                 loop {
-                    reconcile_local_routes_once(peers.as_ref(), table.as_ref(), conn_select).await;
+                    let live_exit_nodes = exit_nodes.read().await.clone();
+                    reconcile_local_routes_once(
+                        peers.as_ref(),
+                        table.as_ref(),
+                        conn_select,
+                        &live_exit_nodes,
+                    )
+                    .await;
                     crate::foundation::time::sleep(std::time::Duration::from_secs(1)).await;
                 }
             });
@@ -3351,6 +3423,7 @@ impl PeerOutboundPacketRouter {
     async fn check_allow_wrapped_proxy_to_dst(
         &self,
         dst_ip: &IpAddr,
+        flow_key: Option<u64>,
         dst_allows_input: impl Fn(crate::proto::common::PeerFeatureFlag) -> bool,
         next_hop_disables_relay: impl Fn(crate::proto::common::PeerFeatureFlag) -> bool,
     ) -> bool {
@@ -3358,13 +3431,25 @@ impl PeerOutboundPacketRouter {
         // cannot see the local policy table, so without this the KCP / QUIC /
         // wrapped-TCP optimizations would be disabled for those flows (C9).
         let owner = match dst_ip {
-            IpAddr::V4(v4) => match self.local_route_table.lookup(v4, None) {
-                RouteLookup::Hit { peer } => Some(peer),
-                // A blocked rule must not fall back to the route layer either —
-                // that could silently re-enable the bypass it just refused.
-                RouteLookup::Block => return false,
-                RouteLookup::Miss => None,
-            },
+            IpAddr::V4(v4) => {
+                // A `balance` rule picks the peer by the flow key. Without a
+                // flow key we cannot know which candidate will carry the flow,
+                // and `lookup` would fall back to slot 0 — answering for a peer
+                // that may not be the one. Refuse the bypass rather than judge
+                // the wrong peer: wrongly allowing it would hand the flow to a
+                // peer that forbids it, while wrongly refusing it only costs
+                // the optimization.
+                if flow_key.is_none() && self.local_route_table.is_balance_ambiguous(v4) {
+                    return false;
+                }
+                match self.local_route_table.lookup(v4, flow_key) {
+                    RouteLookup::Hit { peer } => Some(peer),
+                    // A blocked rule must not fall back to the route layer either —
+                    // that could silently re-enable the bypass it just refused.
+                    RouteLookup::Block => return false,
+                    RouteLookup::Miss => None,
+                }
+            }
             IpAddr::V6(_) => None, // P1: IPv4 only
         };
         let owner = match owner {
@@ -3414,8 +3499,24 @@ impl PeerOutboundPacketRouter {
     }
 
     pub async fn check_allow_kcp_to_dst(&self, dst_ip: &IpAddr) -> bool {
+        self.check_allow_kcp_to_dst_with_flow(dst_ip, None).await
+    }
+
+    /// Same as [`Self::check_allow_kcp_to_dst`], but with the flow key of the
+    /// packet that is about to be sent.
+    ///
+    /// A `balance` rule picks the peer by the flow key, so a caller that knows
+    /// the flow is judged against the peer that will really carry it. A caller
+    /// that does not know the flow gets the conservative answer (see
+    /// `check_allow_wrapped_proxy_to_dst`).
+    pub async fn check_allow_kcp_to_dst_with_flow(
+        &self,
+        dst_ip: &IpAddr,
+        flow_key: Option<u64>,
+    ) -> bool {
         self.check_allow_wrapped_proxy_to_dst(
             dst_ip,
+            flow_key,
             |feature_flag| feature_flag.kcp_input,
             |feature_flag| feature_flag.no_relay_kcp,
         )
@@ -3423,8 +3524,18 @@ impl PeerOutboundPacketRouter {
     }
 
     pub async fn check_allow_quic_to_dst(&self, dst_ip: &IpAddr) -> bool {
+        self.check_allow_quic_to_dst_with_flow(dst_ip, None).await
+    }
+
+    /// See [`Self::check_allow_kcp_to_dst_with_flow`].
+    pub async fn check_allow_quic_to_dst_with_flow(
+        &self,
+        dst_ip: &IpAddr,
+        flow_key: Option<u64>,
+    ) -> bool {
         self.check_allow_wrapped_proxy_to_dst(
             dst_ip,
+            flow_key,
             |feature_flag| feature_flag.quic_input,
             |feature_flag| feature_flag.no_relay_quic,
         )

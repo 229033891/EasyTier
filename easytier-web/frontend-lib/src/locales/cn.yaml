@@ -593,6 +593,9 @@ policy_routes_peers_help: |-
 policy_routes_select_by: 选路方式
 policy_routes_select_by_help: |-
   多个网关候选时如何挑选：按列表顺序 / 按链路质量 / 按流分摊。
+  「按流分摊」按内层流 5-tuple 哈希在候选间**等概率**分配，不按链路质量或带宽能力加权；同一条流恒定走同一个网关。
+  「按链路质量」比较到该候选的**整条路径**的代价（中转段计入），只靠中转可达的候选也能正确参与比较。
+  「从不切换」时候选只剩列表第一个，此时只能配「按列表顺序」，其它方式会被配置校验拒绝。
 policy_routes_select_by_priority: 按列表顺序
 policy_routes_select_by_quality: 按链路质量
 policy_routes_select_by_balance: 按流分摊

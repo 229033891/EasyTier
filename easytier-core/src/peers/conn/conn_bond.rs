@@ -5,6 +5,8 @@
 
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
+#[cfg(any(feature = "proxy-smoltcp-stack", test))]
+use std::net::Ipv4Addr;
 
 use easytier_proto::common::FlagsInConfig;
 
@@ -404,6 +406,31 @@ pub fn flow_key_from_payload(payload: &[u8]) -> u64 {
     hasher.finish()
 }
 
+/// Same hash as [`flow_key_from_payload`] for a known IPv4 5-tuple.
+///
+/// Used when the caller has socket endpoints but not a serialized IP packet
+/// yet (e.g. data-plane TCP connect before the first segment is built). Must
+/// stay bit-identical to the key derived from an IPv4 packet with the same
+/// fields — otherwise a `balance` rule would judge the bypass against one peer
+/// and then send the flow to another.
+#[cfg(any(feature = "proxy-smoltcp-stack", test))]
+pub fn flow_key_from_ipv4_tuple(
+    proto: u8,
+    src: Ipv4Addr,
+    dst: Ipv4Addr,
+    src_port: u16,
+    dst_port: u16,
+) -> u64 {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    let mut src_b = [0u8; 16];
+    let mut dst_b = [0u8; 16];
+    src_b[12..16].copy_from_slice(&src.octets());
+    dst_b[12..16].copy_from_slice(&dst.octets());
+    let key: IpFlowKey = (proto, src_b, dst_b, src_port, dst_port);
+    key.hash(&mut hasher);
+    hasher.finish()
+}
+
 type IpFlowKey = (u8, [u8; 16], [u8; 16], u16, u16);
 
 fn parse_ip_flow_key(payload: &[u8]) -> Option<IpFlowKey> {
@@ -607,6 +634,17 @@ mod tests {
         let k2 = flow_key_from_payload(&pkt);
         assert_eq!(k1, k2);
         assert_eq!(bond_member_index(k1, 3), bond_member_index(k2, 3));
+        // The tuple helper must produce the same key as the packet parser.
+        assert_eq!(
+            k1,
+            flow_key_from_ipv4_tuple(
+                6,
+                Ipv4Addr::new(10, 0, 0, 1),
+                Ipv4Addr::new(10, 0, 0, 2),
+                443,
+                0x15b3,
+            )
+        );
 
         pkt[20] = 0x02; // change src port
         let k3 = flow_key_from_payload(&pkt);

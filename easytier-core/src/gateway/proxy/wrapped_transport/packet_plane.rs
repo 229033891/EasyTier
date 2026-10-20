@@ -26,7 +26,10 @@ use crate::{
     },
     listener::RunningListenerRegistry,
     packet::ZCPacket,
-    peers::peer_manager::{PeerManagerCore, PipelineRegistrationGuard},
+    peers::{
+        conn::conn_bond::flow_key_from_payload,
+        peer_manager::{PeerManagerCore, PipelineRegistrationGuard},
+    },
     process_runtime::ProtectedTcpPortRegistry,
     socket::SocketContext,
 };
@@ -249,6 +252,21 @@ where
         let connection_engine = engine.clone();
         let peer_manager = self.peer_manager.clone();
         let transport = self.transport;
+        // A `balance` policy rule picks the peer by the inner flow's 5-tuple,
+        // so the bypass check has to be told which flow this is — otherwise it
+        // would answer for slot 0 while the flow actually goes elsewhere.
+        // `zc_packet.payload()` is the inner IPv4 packet, so the key can be
+        // derived here; it has to be computed before the callback, because the
+        // callee borrows the packet mutably and the closure cannot capture it.
+        //
+        // Only a `balance` rule needs the key, and deriving it means parsing
+        // the inner IP header and hashing it — per packet. Skip it entirely
+        // when no such rule exists, so the common case keeps its old cost.
+        let flow_key = if peer_manager.has_balance_policy_rules() {
+            Some(flow_key_from_payload(packet.payload()))
+        } else {
+            None
+        };
         try_process_wrapped_tcp_packet_from_nic(
             packet,
             WrappedTcpProxyNicContext {
@@ -265,12 +283,12 @@ where
                 match transport {
                     WrappedTransportKind::Kcp => {
                         peer_manager
-                            .check_allow_kcp_to_dst(&IpAddr::V4(dst_ip))
+                            .check_allow_kcp_to_dst_with_flow(&IpAddr::V4(dst_ip), flow_key)
                             .await
                     }
                     WrappedTransportKind::Quic => {
                         peer_manager
-                            .check_allow_quic_to_dst(&IpAddr::V4(dst_ip))
+                            .check_allow_quic_to_dst_with_flow(&IpAddr::V4(dst_ip), flow_key)
                             .await
                     }
                 }
