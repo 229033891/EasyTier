@@ -80,9 +80,10 @@ use super::{
     route::{
         ArcRoute, DisabledRoute, ForeignNetworkRouteInfoMap, NextHopPolicy, Route, RouteInterface,
         local_route_table::{
-            FailoverWhen, LocalRouteTable, PolicyRouteConfig, RouteLookup, RuleState, RuleUpdate,
-            SelectBy, build_snapshot, is_degraded_cost, merged_candidates,
-            validate_and_build_policy_rules, within_switch_band,
+            AllUnavailable, FailoverWhen, LocalRouteTable, MAX_PEERS_PER_RULE, PolicyRouteConfig,
+            RouteLookup, RuleState, RuleUpdate, SelectBy, build_snapshot, is_degraded_cost,
+            merged_candidate_count, merged_candidates, validate_and_build_policy_rules,
+            within_switch_band,
         },
         peer_ospf_route::PeerRoute,
     },
@@ -408,7 +409,7 @@ async fn reconcile_local_routes_once(
             (_, Some(merged)) => merged,
             (_, None) => &r.rule.peers,
         };
-        let mut reachable = Vec::with_capacity(candidates.len());
+        let mut reachable: Vec<PeerId> = Vec::with_capacity(candidates.len());
         for ip in candidates {
             let peer_id = match reachable_by_ip.get(ip) {
                 Some(cached) => *cached,
@@ -421,7 +422,13 @@ async fn reconcile_local_routes_once(
                     peer_id
                 }
             };
-            if let Some(peer_id) = peer_id {
+            if let Some(peer_id) = peer_id
+                // Two different addresses (a v4 and its v4-mapped v6, say)
+                // can resolve to the **same** peer. Keeping it twice would give
+                // that peer two slots in the `balance` distribution and make
+                // the spread wrong.
+                && !reachable.contains(&peer_id)
+            {
                 reachable.push(peer_id);
             }
         }
@@ -2311,7 +2318,55 @@ impl PeerManagerCore {
     }
 
     pub async fn update_exit_nodes(&self, exit_nodes: Vec<IpAddr>) {
+        // The strategy table is **not** rebuilt on a hot patch, so its rules
+        // keep the candidate list they were built with and the new exit nodes
+        // are merged in at reconcile time. A new exit node therefore has to
+        // satisfy the same invariants the constructor enforced — otherwise a
+        // hot patch could slip past the `closed` + multi-candidate
+        // confirmation (the multi-exit black-hole guard) or the candidate
+        // limit.
+        //
+        // The `config_patch` path already validates this (the candidate is
+        // checked before it is applied), so this is the second line of
+        // defence for the programmatic entry points.
+        if let Err(reason) = self.exit_nodes_are_acceptable(&exit_nodes) {
+            tracing::warn!(
+                ?exit_nodes,
+                reason,
+                "rejecting the exit node update: it would break a policy route invariant"
+            );
+            return;
+        }
         *self.exit_nodes.write().await = exit_nodes;
+    }
+
+    /// Check a proposed `exit_nodes` list against the invariants the policy
+    /// table's rules were built with.
+    fn exit_nodes_are_acceptable(&self, exit_nodes: &[IpAddr]) -> Result<(), String> {
+        let snap = self.local_route_table.load_full();
+        for rule in &snap.rules {
+            if !rule.rule.merge_exit_nodes {
+                continue;
+            }
+            let merged = merged_candidate_count(&rule.rule, exit_nodes);
+            if merged > MAX_PEERS_PER_RULE {
+                return Err(format!(
+                    "policy route {}: {merged} candidates exceed the peer limit {MAX_PEERS_PER_RULE}",
+                    rule.rule.id
+                ));
+            }
+            if merged > 1
+                && rule.rule.if_all_unavailable == AllUnavailable::Closed
+                && !rule.rule.require_confirmed
+            {
+                return Err(format!(
+                    "policy route {}: if_all_unavailable=closed with {merged} peers requires \
+                     require_confirmed=true",
+                    rule.rule.id
+                ));
+            }
+        }
+        Ok(())
     }
 
     pub async fn configured_exit_nodes(&self) -> Vec<IpAddr> {

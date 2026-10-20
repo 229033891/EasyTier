@@ -5,7 +5,7 @@
 - Status: **Current**（审查结论 + 首批修复代码在工作区；⚠️ **待合入 / 待验收**后方可当可依赖现状；其余条目待决）
 - 最近审阅：2026-10-20（复核修补：**B7 合并改为对账期**（热更新不再被冻结）、**B7 合并的 `never` / `domains` 硬失败**、**B19 补上热更新路径的校验**、**B20 dataplane 传 flow key**、过期注释与文档待验收标注）；2026-10-19（**第三轮：实施修复 + 实测复核 + 策略路由层核查**。首轮静态审查：OSPF 路由表 / 连接选择 / 数据面出口三路并行；补审：中转 vs 直连，新增 B14–B16；二次复核：B14 撤回、B15 更正；**本轮：按 §5 顺序实施修复（B1/B2 部分/B5/B6/B7/B8/B9/B11/B13/B18/B19/B20 + B10 部分），用实测逐条复核，修正了本文档里三处经不起复核的说法，并核查了 `select_by` 三种策略路由模式的实现**，见 §1e、§1f 与各条的「修复」栏）
 - 范围：节点间选路的三个层次 —— **OSPF 路由表**（下一跳计算）、**连接选择**（同一 peer 的多条 PeerConn 怎么选）、**数据面出口**（包交给哪个 peer / 哪个出口节点）
-- 方法：**静态代码审查 + 针对性实测**。凡「确认」条目均已逐行核对到具体逻辑行；无法用代码定性的降级为「存疑」；**可复现的行为差异一律写成回归用例跑过**（本轮新增 24 条用例，见 §6）
+- 方法：**静态代码审查 + 针对性实测**。凡「确认」条目均已逐行核对到具体逻辑行；无法用代码定性的降级为「存疑」；**可复现的行为差异一律写成回归用例跑过**（本轮新增 26 条用例，见 §6）
 - 审查时基线：`git HEAD = 51ef4424`；修复代码仍在工作区未合入；前端 `vitest` 28 文件 / 241 用例全过
 - 关联：[`peer-connections.md`](./peer-connections.md)（default_conn 与多链路）、[`traffic-steering.md`](./traffic-steering.md)（出口与子网代理）、[`../roadmap/code-review-fixes-2026-10.md`](../roadmap/code-review-fixes-2026-10.md)（CR-01…CR-15）、[`../roadmap/unified-routing-design.md`](../roadmap/unified-routing-design.md)（统一路由模型）、[`../roadmap/live-next-hop.md`](../roadmap/live-next-hop.md)（比较规则契约）
 - 索引：[`../README.md`](../README.md)
@@ -378,6 +378,10 @@ for (len, network, _strict, cidr, idx) in entries {
 > ⚠️ **sugar 路径同样必须走对账期**（第二轮复核补上）。原先 sugar 规则是 `peers: exit_nodes.to_vec()`（**构造期烤进去**）+ `merge_exit_nodes: false` ⇒ **热更新仍被冻结**：`update_exit_nodes` 只换活列表、不重建表，而 L3 次序 3.5 会先命中这条 sugar `/0` ⇒ 活列表（次序 4）**根本轮不到** ⇒ 热改出口列表对策略表完全无效。
 > ⇒ 现在 sugar 与显式 `/0` **走同一套机制**，两条路径的热更新都 ≤1s 生效。
 > ⇒ 为此 `validate_route_rule` 的"至少一个 peer"检查对 `merge_exit_nodes` 的规则**放宽**（显式规则在标记该标志**之前**就已通过校验，因此不受影响）。
+
+> ⚠️ **标志也必须无条件**（第三轮复核补上）。前两轮只把**候选列表**变成活的，`merge_exit_nodes` **标志**却仍按"构造期 `exit_nodes` 非空"决定 ⇒ **实例启动时没有出口、之后用 `config_patch` 加上出口** ⇒ 标志永远是 `false` ⇒ 策略表（**构造一次、之后不重建**）永远看不到那个出口。
+> ⇒ 现在标志**无条件**置位（显式 `/0` 与 sugar 都一样），候选列表每轮从**活** `exit_nodes` 生成 ⇒ 启动时没有出口、之后热补丁加上，也能在下个 tick（≤1s）生效。
+> ⇒ 代价：`failover_when = "never"` 的默认路由规则**现在总是被拒**（即使当前没有 `exit_nodes`）—— 因为出口可能稍后被加上，那时合并会静默失效。
 
 **配置期的硬失败**（全部按"合并后"的候选数判定）：
 
@@ -1019,6 +1023,30 @@ let raw = peers.peer_edge_cost(peer_id).await.unwrap_or(i32::MAX);
 
 ---
 
+## 1g. 复核发现的遗留项（**本轮未修**，供后续处理）
+
+> 2026-10-20 第四轮：对 `exit_nodes` 对账期合并这组改动做了一次**只读边界审查**（逐条核对到代码行）。下面 6 项**确实存在**，本轮**没有修**——多数是设计取舍或影响面超出本轮范围。每条给出触发条件与后果，方便排期。
+
+| # | 遗留项 | 触发条件 | 后果 | 为何本轮不修 |
+|---|---|---|---|---|
+| **L1** | **balance 规则的分摊范围被 `exit_nodes` 静默扩大** | `select_by = balance` + 默认路由规则 + `exit_nodes` | `resolved_peers`（balance 的分摊列表）用的是**同一条 merged 列表** ⇒ 出口节点会一起参与 `flow_key % N` 均摊。行为符合字段注释，但**配置里看不出来** | 属**产品语义**：要么文档写明，要么让 balance 排除 exit_nodes。需产品拍板 |
+| **L2** | **量纲混用** | `select_by = quality` | `peer_path_cost`（**OSPF 公布边权的累加**）与 `peer_edge_cost`（**本地实测 quality 分**）被放进**同一个** `scored` 向量用 `min_by_key` 比较，只有量纲近似一致、**没有归一化** | 两族数值都是"代价单位"（`ospf_edge_cost_from_score` 用的就是同一公式），但来源不同 ⇒ 需要确认这是否**有意为之** |
+| **L3** | **`never` 的语义空洞** | `failover_when = never` + 唯一候选不可达 | `never` 的语义是"钉死第一个候选"，但该候选不可达时 `reachable` 为空 ⇒ 规则整体 `Degraded`（`closed` 时直接黑洞），而不是"钉住已失效的 incumbent" | 属 `never` 的**语义定义**问题，要先定"钉死一个死掉的 peer 该怎么办" |
+| **L4** | **balance 的 `lookup` 完全忽略 `active_peer`** | `select_by = balance` | `lookup` 只读 `r.resolved_peers`；`ResolvedRule.active_peer` 的注释写着 "informational only"。当前对账**总是成对写入**两者，所以不可达；但这是**脆弱耦合** —— 将来任何让二者分叉的改动都会让 balance 规则静默变成 `Miss`/`Block` | 当前不可达 ⇒ 加注释与断言即可，不必改逻辑 |
+| **L5** | **`route_algo = none` 时纯中转可达的出口拿不到分** | `route_algo = none` + 出口只能经中转到达 | `DisabledRoute` 没有实现 `Route::get_path_cost_with_policy` ⇒ `peer_path_cost` 返回 `None` ⇒ 回退到直连边代价（也没有）⇒ `i32::MAX` ⇒ `failover_when = degraded` 的规则会**丢弃该出口** | `route_algo = none` 本来就没有路由表 ⇒ 严格说"不可评估" ⇒ 保守丢弃是安全方向；但要不要让 `none` 模式直接禁用 `quality` 策略，需要产品确认 |
+| **L6** | **管理面看不到合并后的有效候选** | 任何 | `policy_route_to_proto` 导出的是**配置层**的 `PolicyRouteConfig.peers`；sugar 规则根本不在配置层 ⇒ **合并后的实际候选列表在 GUI / CLI 上完全不可见**（用户看到"我只配了 A，出口却是 B"） | 需要在状态面/管理面补一个"生效候选"的视图，属**可观测性**工作，不是选路 bug |
+
+**已在本轮一并修掉的**（审查里发现、且改动足够小）：
+
+| 审查发现 | 修法 |
+|---|---|
+| 候选按 **IP** 解析、不按 `PeerId` 去重 ⇒ 一个 v4 与一个 v4-mapped-v6 可能解析到同一 peer ⇒ 该 peer 在 balance 分摊里占两个槽 | 对账期对 `reachable` 按 `PeerId` 去重 |
+| `is_balance_ambiguous` 用**观测态**（`resolved_peers`）回答**配置态**问题（这条规则是不是多候选）⇒ 首轮对账前会漏判 | 空列表也**视为可能歧义**（`len() != 1`）⇒ 保守方向 |
+| `never` + `select_by ≠ priority` 的不变量只在 `PolicyRouteConfig::validate`，`ValidatedPolicyRoute` 字段全 `pub` ⇒ 可被绕过 | 同一不变量也放进 `validate_route_rule`（**防御纵深**） |
+| `update_exit_nodes` 运行期**无校验** ⇒ 可绕过 `MAX_PEERS_PER_RULE` 与 `closed`+`require_confirmed` 确认（多出口黑洞保护） | `update_exit_nodes` 里按**当前规则**校验，违反则**拒绝更新 + warn**（`config_patch` 路径本已校验 ⇒ 这是第二道防线） |
+
+---
+
 ## 2. 存疑项（需端到端复现才能定性）
 | 编号 | 位置 | 可疑点 |
 |---|---|---|
@@ -1102,7 +1130,7 @@ let raw = peers.peer_edge_cost(peer_id).await.unwrap_or(i32::MAX);
 | 13 | **B7** | `exit_nodes` 的候选**并入**显式 `/0` 规则（显式在前），不再作为会被索引丢弃的第二条规则 | `exit_nodes_merge_into_an_explicit_default_route_rule` 等 4 条 |
 | — | **B14** | **不做** —— 建议的修法会打破守卫测试 `graph_algo.rs:377` 与 `live-next-hop.md:443/484` 的验收契约；§1e.2 已用实测再次确认网内选路正确 | — |
 
-**验证**：`cargo test -p easytier-core --lib` → **1070 passed / 0 failed / 1 ignored**；`cargo check -p easytier-core --all-targets` 通过；`cargo fmt --all -- --check` 通过。
+**验证**：`cargo test -p easytier-core --lib` → **1072 passed / 0 failed / 1 ignored**；`cargo check -p easytier-core --all-targets` 通过；`cargo fmt --all -- --check` 通过。
 
 #### ⚠️ 行为变更（升级即生效，仓库无 CHANGELOG ⇒ 记在这里）
 
@@ -1117,6 +1145,8 @@ let raw = peers.peer_edge_cost(peer_id).await.unwrap_or(i32::MAX);
 | 5 | 显式 `/0` 规则**同时带 `domains`** + `exit_nodes` ⇒ **加载失败** | 原本能加载的配置现在报错 | 拆成两条规则（一条纯 `/0`、一条纯 `domains`） |
 | 6 | 显式 `/0` 规则 `failover_when = "never"` + `exit_nodes` ⇒ **加载失败** | 原本能加载的配置现在报错 | 改成 `failover_when = "unreachable"` |
 | 7 | `exit_nodes` 与显式 `/0` 规则合并后候选数 > 16 ⇒ **加载失败** | 原本能加载的配置现在报错 | 减少候选或拆分规则 |
+| 8 | **显式 `/0` 规则 + `failover_when = "never"` ⇒ 现在总是加载失败**（即使当前没有 `exit_nodes`） | 原本合法的配置现在报错 | 改成 `failover_when = "unreachable"`。**原因**：出口节点可能稍后被热补丁加上，那时合并会静默失效（`never` 只保留第一个候选） |
+| 9 | 运行期 `exit_nodes` 变更若违反候选数上限 / `closed`+多 peer 未确认 ⇒ **被拒绝**（记 warn，不更新） | 原本静默生效的非法变更现在不生效 | 这是第二道防线（`config_patch` 路径本来就拦）；库嵌入方直接调 `update_exit_nodes` 时会收到 warn 日志 |
 
 **升级建议**：先在测试环境跑一遍 `easytier-cli` 的配置校验（加载即校验），把 2 / 5 / 6 / 7 这几类"启动失败"提前暴露出来；1 / 3 / 4 属于运行期口径变化，需要观察一轮 SPF 收敛。
 
@@ -1143,7 +1173,7 @@ let raw = peers.peer_edge_cost(peer_id).await.unwrap_or(i32::MAX);
 
 ## 6. 复核方法
 
-本文结论为**静态审查 + 针对性实测**产出。凡标「确认」者，均已逐行核对到具体逻辑行；**可复现的行为差异一律写成回归用例跑过**（本轮新增 24 条）。复核入口一律用**符号名**给出（绝对行号会随改动漂移，只在必要时附注）：
+本文结论为**静态审查 + 针对性实测**产出。凡标「确认」者，均已逐行核对到具体逻辑行；**可复现的行为差异一律写成回归用例跑过**（本轮新增 26 条）。复核入口一律用**符号名**给出（绝对行号会随改动漂移，只在必要时附注）：
 
 | 条目 | 复核点（符号名） |
 |---|---|
@@ -1170,7 +1200,7 @@ let raw = peers.peer_edge_cost(peer_id).await.unwrap_or(i32::MAX);
 
 **本轮（第三轮：实施修复 + 实测复核）基点**：`git HEAD = 51ef4424`；工作区含 5 个文档（`docs/README.md`、本文件、`docs/current/latency-measurement-and-display-audit.md`、`docs/current/traffic-steering.md`、`docs/roadmap/unified-routing-design.md`）与 **16 个源文件**的改动（13 个 `.rs`：`peers/route/peer_ospf_route.rs`、`peers/route/peer_ospf_route_tests.rs`、`peers/route/local_route_table.rs`、`peers/route/mod.rs`、`peers/conn/peer_map.rs`、`peers/conn/conn_select.rs`、`peers/conn/peer_conn_ping.rs`、`peers/conn/conn_bond.rs`、`peers/peer_manager.rs`、`peers/bench_support.rs`、`gateway/proxy/wrapped_transport/packet_plane.rs`、`gateway/dataplane/mod.rs`、`config/toml.rs`；1 个 `.proto`；2 个 locale）。
 
-**验证**：`cargo test -p easytier-core --lib` → **1070 passed / 0 failed / 1 ignored**；`cargo check -p easytier-core --all-targets` 通过；`cargo fmt --all -- --check` 通过。
+**验证**：`cargo test -p easytier-core --lib` → **1072 passed / 0 failed / 1 ignored**；`cargo check -p easytier-core --all-targets` 通过；`cargo fmt --all -- --check` 通过。
 
 **本轮新增的回归用例**（全部可单独跑）：
 
@@ -1200,6 +1230,8 @@ let raw = peers.peer_edge_cost(peer_id).await.unwrap_or(i32::MAX);
 | `a_default_route_rule_with_domains_cannot_be_combined_with_exit_nodes` | 同上 | B7：带 `domains` 的默认路由规则 + `exit_nodes` ⇒ 硬失败 |
 | `merging_exit_nodes_into_a_never_rule_is_rejected` | 同上 | B7：`failover_when = "never"` 的默认路由规则不能合并 `exit_nodes` |
 | `a_confirmed_closed_rule_still_loads_with_the_exit_nodes_merged_in` | 同上 | B7：确认后的 closed 规则仍能加载 |
+| `the_default_route_takes_exit_nodes_even_when_there_are_none_yet` | 同上 | B7：`merge_exit_nodes` 标志必须**无条件**置位，否则"启动时无出口、之后热补丁加上"的出口永远不可见 |
+| `a_never_default_route_is_rejected_even_without_exit_nodes` | 同上 | B7：`never` + 默认路由规则**总是**被拒（出口可能稍后被加上） |
 | `a_toml_config_with_an_illegal_policy_route_is_rejected` | 同上 | B19：`TomlConfig` 形态（**热更新路径用的就是它**）的非法组合同样被拒 |
 
 **未做**：端到端复现、真机压测、抓包取证。B15/B16、B2 剩余部分、B4、B17 仍为**纯静态代码核对**。除 B14（撤回，依据仓库内已有测试与文档，不依赖本次跑测）外，本文档的"确认"结论要么有上述用例支撑，要么有逐行核对支撑 —— **两者都未做到端到端复现**。

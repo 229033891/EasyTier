@@ -304,7 +304,17 @@ impl LocalRouteTable {
         let Some(r) = snap.rules.get(idx) else {
             return false;
         };
-        r.rule.select_by == SelectBy::Balance && r.resolved_peers.len() > 1
+        if r.rule.select_by != SelectBy::Balance {
+            return false;
+        }
+        // `resolved_peers` is an **observed** state: it is empty until the
+        // reconcile loop has resolved the candidates (and stays empty while
+        // none of them is reachable). Answering "not ambiguous" from an empty
+        // list would be answering a configuration question with an
+        // observation — a balance rule that has not been reconciled yet may
+        // well have several candidates. So an empty list counts as
+        // *possibly* ambiguous, which makes the caller refuse the bypass.
+        r.resolved_peers.len() != 1
     }
 
     /// `true` when at least one rule uses `select_by = balance`.
@@ -749,9 +759,33 @@ pub fn validate_route_rule(rule: &RouteRule) -> Result<(), PolicyRouteError> {
         // A rule that takes the **live** `exit_nodes` may legitimately have an
         // empty candidate list of its own — the reconcile loop fills it from
         // the live list on every tick. Every other rule must name its peers.
+        //
+        // In practice this exemption only reaches the generated `exit_nodes`
+        // sugar rule: an *explicit* rule is validated before it is marked, so
+        // it always has to name its peers.
         return Err(PolicyRouteError::Invalid(
             "policy route needs at least one peer".into(),
         ));
+    }
+    // `never` keeps only the first candidate, so `quality` / `balance` have
+    // nothing to choose from and would silently behave like `priority`.
+    //
+    // Enforced here as well as in `PolicyRouteConfig::validate`: the
+    // `ValidatedPolicyRoute` fields are public, so a caller can hand a
+    // hand-built value to `build_rules_from_config` and bypass the config
+    // layer's check.
+    if rule.failover_when == FailoverWhen::Never && rule.select_by != SelectBy::Priority {
+        return Err(PolicyRouteError::Invalid(format!(
+            "policy route {}: failover_when=never keeps only the first candidate, so \
+             select_by={} cannot take effect; use failover_when=unreachable (or \
+             select_by=priority)",
+            rule.id,
+            match rule.select_by {
+                SelectBy::Priority => "priority",
+                SelectBy::Quality => "quality",
+                SelectBy::Balance => "balance",
+            }
+        )));
     }
     if rule.domains.len() > MAX_DOMAINS_PER_RULE {
         return Err(PolicyRouteError::Invalid(format!(
@@ -817,107 +851,116 @@ pub fn build_rules_from_config(
         validate_route_rule(&rule)?;
         rules.push(rule);
     }
-    if !exit_nodes.is_empty() {
-        let default_cidr = ipv4_default_cidr();
-        // An explicit default-route rule and `exit_nodes` describe the same
-        // thing — "who carries my default route" — so they have to end up in
-        // **one** candidate list, explicit candidates first.
-        //
-        // The LPM index keeps exactly one entry per (prefix, network) and
-        // drops the later rule, so a second `/0` rule never reached the lookup
-        // path and `exit_nodes` was silently inert whenever an explicit `/0`
-        // rule existed.
-        //
-        // The merge is **not** baked into `peers`: the rule only records that
-        // it wants the exit nodes, and the reconcile loop appends the *live*
-        // `exit_nodes` on every tick. Baking them in would freeze a
-        // hot-patched exit node for the lifetime of the instance — exactly
-        // what `build_local_route_table` warns about.
-        let explicit_default = rules
-            .iter_mut()
-            .find(|rule| rule.cidr == Some(default_cidr));
-        if let Some(rule) = explicit_default {
-            if !rule.domains.is_empty() {
-                // A rule that also carries `domains` would hand the exit nodes
-                // to the **domain** candidates as well, silently widening what
-                // the rule means. Refuse it instead of guessing.
-                return Err(PolicyRouteError::Invalid(
-                    "a default-route rule with `domains` cannot be combined with exit_nodes: \
-                     the exit nodes would become domain candidates too. Use a separate \
-                     default-route rule without `domains`."
-                        .into(),
-                ));
-            }
-            rule.merge_exit_nodes = true;
-            // "never" keeps only the **first** candidate, so the merged exit
-            // nodes would never be selected — the same "configured but
-            // silently ineffective" shape that B19 rejects for `select_by`.
-            // A rule that takes the exit nodes must be able to fail over to
-            // them.
-            if rule.failover_when == FailoverWhen::Never {
-                return Err(PolicyRouteError::Invalid(
-                    "a default-route rule with failover_when=\"never\" cannot take the \
-                     exit nodes: \"never\" keeps only the first candidate, so the exit \
-                     nodes would never be used. Use failover_when=\"unreachable\" instead."
-                        .into(),
-                ));
-            }
-            // Validate against the candidate list the rule will actually use.
-            let merged = merged_candidate_count(rule, exit_nodes);
-            if merged > MAX_PEERS_PER_RULE {
-                return Err(PolicyRouteError::Invalid(format!(
-                    "the explicit default-route rule and exit_nodes together exceed the \
-                     peer limit {MAX_PEERS_PER_RULE} ({merged} candidates after the merge); \
-                     drop some candidates or split the rule"
-                )));
-            }
-            // `closed` with more than one candidate needs the explicit
-            // confirmation — a single-candidate closed rule was legal before
-            // the merge and would become illegal after it.
-            if merged > 1
-                && rule.if_all_unavailable == AllUnavailable::Closed
-                && !rule.require_confirmed
-            {
-                return Err(PolicyRouteError::Invalid(format!(
-                    "policy route {}: if_all_unavailable=closed with {merged} peers \
-                     (explicit candidates + exit_nodes) requires require_confirmed=true",
-                    rule.id
-                )));
-            }
-        } else {
-            // No explicit default-route rule: the exit nodes get their own
-            // `/0` rule — but with an **empty** candidate list.
-            //
-            // Baking the exit nodes into `peers` here would freeze them for
-            // the lifetime of the instance: `update_exit_nodes` only replaces
-            // the live list, it does not rebuild the table, and the L3 lookup
-            // hits this rule (step 3.5) before it ever reaches the live list
-            // (step 4). A hot-patched exit peer would then never be used.
-            //
-            // So the rule only records that it wants the exit nodes, and the
-            // reconcile loop fills the candidates from the **live** list on
-            // every tick — the same mechanism the explicit `/0` rule uses.
-            let sugar = RouteRule {
-                id: u32::MAX,
-                cidr: Some(default_cidr),
-                domains: Vec::new(),
-                peers: Vec::new(),
-                merge_exit_nodes: true,
-                select_by: SelectBy::Priority,
-                failover_when: FailoverWhen::Unreachable,
-                if_all_unavailable: AllUnavailable::Open,
-                require_confirmed: false,
-                quality_degraded_cost: None,
-            };
-            if exit_nodes.len() > MAX_PEERS_PER_RULE {
-                return Err(PolicyRouteError::Invalid(format!(
-                    "exit_nodes exceed the peer limit {MAX_PEERS_PER_RULE} ({} candidates)",
-                    exit_nodes.len()
-                )));
-            }
-            validate_route_rule(&sugar)?;
-            rules.push(sugar);
+    // The default route takes the **live** `exit_nodes` — unconditionally.
+    //
+    // The flag must not depend on whether `exit_nodes` happens to be non-empty
+    // *right now*: the strategy table is built once and never rebuilt, so a
+    // flag decided at construction time can never pick up an exit node that a
+    // later `config_patch` adds. The candidate list is live (the reconcile
+    // loop appends the current `exit_nodes` on every tick), the flag has to
+    // be unconditional for that to reach the rule.
+    let default_cidr = ipv4_default_cidr();
+    // An explicit default-route rule and `exit_nodes` describe the same
+    // thing — "who carries my default route" — so they have to end up in
+    // **one** candidate list, explicit candidates first.
+    //
+    // The LPM index keeps exactly one entry per (prefix, network) and
+    // drops the later rule, so a second `/0` rule never reached the lookup
+    // path and `exit_nodes` was silently inert whenever an explicit `/0`
+    // rule existed.
+    //
+    // The merge is **not** baked into `peers`: the rule only records that
+    // it wants the exit nodes, and the reconcile loop appends the *live*
+    // `exit_nodes` on every tick. Baking them in would freeze a
+    // hot-patched exit node for the lifetime of the instance — exactly
+    // what `build_local_route_table` warns about.
+    let explicit_default = rules
+        .iter_mut()
+        .find(|rule| rule.cidr == Some(default_cidr));
+    if let Some(rule) = explicit_default {
+        if !rule.domains.is_empty() {
+            // A rule that also carries `domains` would hand the exit nodes
+            // to the **domain** candidates as well, silently widening what
+            // the rule means. Refuse it instead of guessing.
+            return Err(PolicyRouteError::Invalid(
+                "a default-route rule with `domains` cannot be combined with exit_nodes: \
+                 the exit nodes would become domain candidates too. Use a separate \
+                 default-route rule without `domains`."
+                    .into(),
+            ));
         }
+        rule.merge_exit_nodes = true;
+        // "never" keeps only the **first** candidate, so the merged exit
+        // nodes would never be selected — the same "configured but
+        // silently ineffective" shape that B19 rejects for `select_by`.
+        // A rule that takes the exit nodes must be able to fail over to
+        // them.
+        //
+        // Checked unconditionally: `exit_nodes` may be added by a later
+        // `config_patch`, and then the merge would silently stop working.
+        if rule.failover_when == FailoverWhen::Never {
+            return Err(PolicyRouteError::Invalid(
+                "a default-route rule with failover_when=\"never\" cannot take the \
+                 exit nodes: \"never\" keeps only the first candidate, so the exit \
+                 nodes would never be used. Use failover_when=\"unreachable\" instead."
+                    .into(),
+            ));
+        }
+        // Validate against the candidate list the rule will actually use.
+        let merged = merged_candidate_count(rule, exit_nodes);
+        if merged > MAX_PEERS_PER_RULE {
+            return Err(PolicyRouteError::Invalid(format!(
+                "the explicit default-route rule and exit_nodes together exceed the \
+                 peer limit {MAX_PEERS_PER_RULE} ({merged} candidates after the merge); \
+                 drop some candidates or split the rule"
+            )));
+        }
+        // `closed` with more than one candidate needs the explicit
+        // confirmation — a single-candidate closed rule was legal before
+        // the merge and would become illegal after it.
+        if merged > 1
+            && rule.if_all_unavailable == AllUnavailable::Closed
+            && !rule.require_confirmed
+        {
+            return Err(PolicyRouteError::Invalid(format!(
+                "policy route {}: if_all_unavailable=closed with {merged} peers \
+                 (explicit candidates + exit_nodes) requires require_confirmed=true",
+                rule.id
+            )));
+        }
+    } else {
+        // No explicit default-route rule: the exit nodes get their own
+        // `/0` rule — but with an **empty** candidate list.
+        //
+        // Baking the exit nodes into `peers` here would freeze them for
+        // the lifetime of the instance: `update_exit_nodes` only replaces
+        // the live list, it does not rebuild the table, and the L3 lookup
+        // hits this rule (step 3.5) before it ever reaches the live list
+        // (step 4). A hot-patched exit peer would then never be used.
+        //
+        // So the rule only records that it wants the exit nodes, and the
+        // reconcile loop fills the candidates from the **live** list on
+        // every tick — the same mechanism the explicit `/0` rule uses.
+        let sugar = RouteRule {
+            id: u32::MAX,
+            cidr: Some(default_cidr),
+            domains: Vec::new(),
+            peers: Vec::new(),
+            merge_exit_nodes: true,
+            select_by: SelectBy::Priority,
+            failover_when: FailoverWhen::Unreachable,
+            if_all_unavailable: AllUnavailable::Open,
+            require_confirmed: false,
+            quality_degraded_cost: None,
+        };
+        if exit_nodes.len() > MAX_PEERS_PER_RULE {
+            return Err(PolicyRouteError::Invalid(format!(
+                "exit_nodes exceed the peer limit {MAX_PEERS_PER_RULE} ({} candidates)",
+                exit_nodes.len()
+            )));
+        }
+        validate_route_rule(&sugar)?;
+        rules.push(sugar);
     }
     Ok(rules)
 }
@@ -1990,6 +2033,50 @@ mod tests {
         let err = build_rules_from_config(&[policy], &exit_nodes).expect_err(
             "\"never\" keeps only the first candidate, so the exit nodes would never be used",
         );
+        assert!(err.to_string().contains("never"), "unexpected error: {err}");
+    }
+
+    /// The strategy table is built **once** and never rebuilt, so the
+    /// "take the exit nodes" flag must not depend on whether `exit_nodes`
+    /// happens to be non-empty at construction time.
+    ///
+    /// Otherwise an instance that starts without an exit node and gets one
+    /// through `config_patch` would never route through it: the rule would
+    /// not be marked, and the live list (step 4) is never reached because the
+    /// default-route rule (step 3.5) answers first.
+    #[test]
+    fn the_default_route_takes_exit_nodes_even_when_there_are_none_yet() {
+        let policy = vec![validated_policy(Some("10.0.0.0/8"), &["10.144.0.9"])];
+        let rules = build_rules_from_config(&policy, &[]).expect("rules");
+
+        let sugar = rules
+            .iter()
+            .find(|r| r.cidr == Some(ipv4_default_cidr()))
+            .expect("the default route must exist even without exit nodes");
+        assert!(
+            sugar.merge_exit_nodes,
+            "the flag must be set unconditionally, or a later exit node is invisible"
+        );
+        // A rule that already has an explicit default route is marked too.
+        let policy = vec![validated_policy(Some("0.0.0.0/0"), &["10.144.0.9"])];
+        let rules = build_rules_from_config(&policy, &[]).expect("rules");
+        assert_eq!(rules.len(), 1);
+        assert!(
+            rules[0].merge_exit_nodes,
+            "an explicit default route must take exit nodes added later"
+        );
+    }
+
+    /// `never` keeps only the first candidate, so a rule that takes the exit
+    /// nodes could never fail over to them. Checked **unconditionally** — the
+    /// exit nodes may be added by a later `config_patch`, and then the merge
+    /// would silently stop working.
+    #[test]
+    fn a_never_default_route_is_rejected_even_without_exit_nodes() {
+        let mut policy = validated_policy(Some("0.0.0.0/0"), &["10.144.0.9"]);
+        policy.failover_when = FailoverWhen::Never;
+        let err = build_rules_from_config(&[policy], &[])
+            .expect_err("never + a default route that takes exit nodes must be rejected");
         assert!(err.to_string().contains("never"), "unexpected error: {err}");
     }
 
