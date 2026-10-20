@@ -176,6 +176,7 @@ where
         // Stop the prober before clearing peer-manager resources: awaiting the
         // task drops its managed pipeline guard (unregisters the reply filter)
         // and releases the cloned PeerManager handle.
+        #[cfg(feature = "web-client")]
         self.stop_vip_probe().await;
         #[cfg(feature = "vpn-portal")]
         self.vpn_portal.stop().await;
@@ -247,6 +248,7 @@ where
                 // Prober needs the instance inside its Arc (its task holds a
                 // clone of the peer manager). Started here rather than in
                 // `start_components` because that path only has `&self`.
+                #[cfg(feature = "web-client")]
                 self.start_vip_probe().await;
                 if self.cancel.is_cancelled() {
                     Err(anyhow::anyhow!("core instance start cancelled"))

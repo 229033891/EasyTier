@@ -94,6 +94,7 @@ where
     /// Idempotent per start: an already-running task is left alone. The task
     /// observes the instance `cancel` token and is also aborted by
     /// [`Self::stop_vip_probe`], so it can never outlive its instance.
+    #[cfg(feature = "web-client")]
     pub(crate) async fn start_vip_probe(self: &Arc<Self>) {
         let mut slot = self.vip_probe_task.lock().await;
         if slot.as_ref().is_some_and(|task| !task.is_finished()) {
@@ -114,6 +115,7 @@ where
     /// Stops the prober and waits for it. Awaiting the join handle also drops
     /// the managed pipeline guard inside `run_prober`, so the reply filter is
     /// unregistered before `clear_resources` runs.
+    #[cfg(feature = "web-client")]
     pub(crate) async fn stop_vip_probe(&self) {
         let task = self.vip_probe_task.lock().await.take();
         if let Some(task) = task {
@@ -127,6 +129,7 @@ where
     /// `flags.disable_vip_reachability_probe`. Probing is display-only, so a
     /// deployment may switch it off; peers then read "unknown", never
     /// "unreachable".
+    #[cfg(feature = "web-client")]
     pub(crate) fn vip_probe_disabled(&self) -> bool {
         self.peer_manager.vip_probe_disabled()
     }
