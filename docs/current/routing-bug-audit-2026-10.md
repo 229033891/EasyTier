@@ -1036,6 +1036,14 @@ let raw = peers.peer_edge_cost(peer_id).await.unwrap_or(i32::MAX);
 | **L5** | **`route_algo = none` 时纯中转可达的出口拿不到分** | `route_algo = none` + 出口只能经中转到达 | `DisabledRoute` 没有实现 `Route::get_path_cost_with_policy` ⇒ `peer_path_cost` 返回 `None` ⇒ 回退到直连边代价（也没有）⇒ `i32::MAX` ⇒ `failover_when = degraded` 的规则会**丢弃该出口** | `route_algo = none` 本来就没有路由表 ⇒ 严格说"不可评估" ⇒ 保守丢弃是安全方向；但要不要让 `none` 模式直接禁用 `quality` 策略，需要产品确认 |
 | **L6** | **管理面看不到合并后的有效候选** | 任何 | `policy_route_to_proto` 导出的是**配置层**的 `PolicyRouteConfig.peers`；sugar 规则根本不在配置层 ⇒ **合并后的实际候选列表在 GUI / CLI 上完全不可见**（用户看到"我只配了 A，出口却是 B"） | 需要在状态面/管理面补一个"生效候选"的视图，属**可观测性**工作，不是选路 bug |
 
+**排期建议**（2026-10-20 讨论拍板）：
+
+| 档次 | 项 | 理由 |
+|---|---|---|
+| **近期** | **L1、L6** | L1 是静默行为扩大（配置上看不见却改了 balance 分摊面）；L6 是可观测性缺口——补上"生效候选"视图后，L1 的产品拍板（文档写明 vs 排除 exit_nodes）也更好做 |
+| **中期** | **L3、L5、L4** | L3 / L5 都要先定产品语义再动代码；L4 当前不可达，加注释与断言即可，不必改逻辑 |
+| **长期** | **L2** | 两族代价都走同一 `ospf_edge_cost_from_score` 公式，量纲近似同源；短期风险被高估。真要归一化属于算法设计，不是热修 |
+
 **已在本轮一并修掉的**（审查里发现、且改动足够小）：
 
 | 审查发现 | 修法 |
