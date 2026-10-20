@@ -1259,16 +1259,96 @@ fn never_keeps_a_keyed_pin_across_the_zombie_window_after_last_conn_drops() {
     );
 }
 
-/// A keyed pin against a **live** keyless occupant of the same id is still a
-/// stranger / mode mismatch: drop. (`Some(None)` is only legitimate when the
-/// id still has a live conn that carries no key.)
+/// A keyed pin against a **live** keyless occupant is a mode mismatch
+/// (`OccupantUnverifiable`), not a stranger — keep the pin. A true stranger
+/// presents a **different** static key (`DifferentNode`).
 #[test]
-fn never_drops_a_keyed_pin_when_a_live_plaintext_peer_holds_the_id() {
+fn never_keeps_a_keyed_pin_when_a_live_plaintext_peer_holds_the_id() {
     let pin = PinnedPeer::new(7, Some(key(1)));
-    assert!(
-        decide_pinned_peer(Some(&pin), Some(None), &[]).is_none(),
-        "live keyless occupant of the pinned id must not keep a keyed pin"
+    assert_eq!(
+        decide_pinned_peer(Some(&pin), Some(None), &[]),
+        Some(pin),
+        "keyless occupant of the pinned id is mode change, not proof of a stranger"
     );
+}
+
+/// A keyless (plaintext) pin against an occupant that later presents a key is
+/// `PinUnverifiable`: there was never a verifiable identity to revoke. Keep
+/// the pin; restart follow-along still uses case 3 when the id leaves the map.
+#[test]
+fn never_keeps_a_keyless_pin_when_the_occupant_later_presents_a_key() {
+    let pin = PinnedPeer::new(7, None);
+    assert_eq!(
+        decide_pinned_peer(Some(&pin), Some(Some(key(1))), &[]),
+        Some(pin),
+        "plaintext pin must not reset just because the occupant gained a key"
+    );
+}
+
+/// The classification behind the log wording: "a different node took the id"
+/// and "the identity cannot be verified" are **different facts** — and they
+/// must drive **different actions** (drop vs keep), not just different warn
+/// strings on the same restart path.
+#[test]
+fn pin_classification_separates_a_stranger_from_an_unverifiable_identity() {
+    use crate::peers::route::local_route_table::PinMatch;
+
+    let keyed = PinnedPeer::new(7, Some(key(1)));
+    let keyless = PinnedPeer::new(7, None);
+
+    // Steady state: the same node, same id, same key.
+    assert_eq!(keyed.classify(7, Some(&key(1))), PinMatch::Same);
+    // Plaintext steady state: the id is the only handle there is.
+    assert_eq!(keyless.classify(7, None), PinMatch::Same);
+
+    // Both sides keyed, keys differ ⇒ **a different node** holds the id.
+    assert_eq!(keyed.classify(7, Some(&key(2))), PinMatch::DifferentNode);
+
+    // The pin is keyed but the occupant is not ⇒ the occupant cannot be
+    // verified (plaintext conn, or encryption was switched on the far side).
+    assert_eq!(
+        keyed.classify(7, None),
+        PinMatch::OccupantUnverifiable,
+        "a keyed pin against a keyless occupant is not the same fact as a stranger"
+    );
+
+    // The pin is keyless but the occupant is keyed ⇒ there was never a
+    // verifiable identity to compare.
+    assert_eq!(
+        keyless.classify(7, Some(&key(1))),
+        PinMatch::PinUnverifiable
+    );
+
+    // An empty key is "no key" on either side, exactly like the normalised
+    // `None` — the B1 defect must not come back through the classifier.
+    assert_eq!(keyed.classify(7, Some(&[])), PinMatch::OccupantUnverifiable);
+    assert_eq!(keyless.classify(99, Some(&[])), PinMatch::PinUnverifiable);
+}
+
+/// `matches` is the boolean view of `classify` and must stay exactly that —
+/// the two must never drift apart.
+#[test]
+fn pin_matches_is_the_boolean_view_of_classify() {
+    use crate::peers::route::local_route_table::PinMatch;
+
+    let keyed = PinnedPeer::new(7, Some(key(1)));
+    let keyless = PinnedPeer::new(7, None);
+
+    for (pin, peer_id, key) in [
+        (&keyed, 7u32, Some(key(1))),
+        (&keyed, 7, Some(key(2))),
+        (&keyed, 7, None),
+        (&keyed, 99, Some(key(1))),
+        (&keyless, 7, None),
+        (&keyless, 99, None),
+        (&keyless, 7, Some(key(1))),
+    ] {
+        assert_eq!(
+            pin.matches(peer_id, key.as_deref()),
+            pin.classify(peer_id, key.as_deref()) == PinMatch::Same,
+            "matches and classify disagree for pin={pin:?} id={peer_id} key={key:?}"
+        );
+    }
 }
 
 /// B1: two plaintext peers must never compare equal by "empty key == empty

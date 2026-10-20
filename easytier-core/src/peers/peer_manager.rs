@@ -81,10 +81,10 @@ use super::{
         ArcRoute, DisabledRoute, ForeignNetworkRouteInfoMap, NextHopPolicy, Route, RouteInterface,
         local_route_table::{
             AllUnavailable, CostSource, CostedPeer, FailoverWhen, LocalRouteTable,
-            MAX_PEERS_PER_RULE, PinnedPeer, PolicyRouteConfig, RouteLookup, RuleState, RuleUpdate,
-            SelectBy, build_snapshot, is_degraded_cost, merged_candidate_count, merged_candidates,
-            validate_and_build_policy_rules, validate_route_algo_can_price_candidates,
-            within_switch_band,
+            MAX_PEERS_PER_RULE, PinMatch, PinnedPeer, PolicyRouteConfig, RouteLookup, RuleState,
+            RuleUpdate, SelectBy, build_snapshot, is_degraded_cost, merged_candidate_count,
+            merged_candidates, validate_and_build_policy_rules,
+            validate_route_algo_can_price_candidates, within_switch_band,
         },
         peer_ospf_route::PeerRoute,
     },
@@ -751,12 +751,33 @@ async fn resolve_pinned_peer(
     decide_pinned_peer(current, pinned_id_live, &keys)
 }
 
+/// Start the pin over from the first reachable candidate.
+///
+/// Used **only** after [`PinMatch::DifferentNode`] — a stranger with a
+/// different static key took the id. Mode-mismatch / unverifiable cases keep
+/// the existing pin (see the 2b / 2c arms in [`decide_pinned_peer`]). With a
+/// reachable candidate the rule re-pins onto it; without one it stays
+/// **unpinned** and falls back to `if_all_unavailable` (`open` → physical
+/// gateway, `closed` → drop).
+fn restart_pin_from_first_candidate(reachable: &[(PeerId, Option<Vec<u8>>)]) -> Option<PinnedPeer> {
+    reachable
+        .first()
+        .map(|(peer_id, key)| PinnedPeer::new(*peer_id, key.clone()))
+}
+
 /// The pure pin decision; see [`resolve_pinned_peer`] for the input contract.
 ///
 /// * `pinned_id_live` — `Some(key)` when the pinned **id** still has a **live
 ///   conn** (key may itself be `None` for keyless / plaintext conns), `None`
 ///   when the id is gone *or* the map entry is a zombie with no live conn.
 /// * `reachable` — this tick's candidates with their keys, in config order.
+///
+/// Only [`PinMatch::DifferentNode`] drops the pin. `OccupantUnverifiable` /
+/// `PinUnverifiable` are mode / configuration facts (encryption toggled, or
+/// the pin was always keyless) — they keep waiting on the same id. Folding
+/// them into the stranger path would reset plaintext pins whenever a peer
+/// later presents a key, and would treat "peer turned encryption off" as
+/// "a stranger took the id".
 fn decide_pinned_peer(
     current: Option<&PinnedPeer>,
     pinned_id_live: Option<Option<Vec<u8>>>,
@@ -770,23 +791,50 @@ fn decide_pinned_peer(
 
     // 1 / 2: what does the pinned id point at *now*?
     if let Some(key_now) = pinned_id_live {
-        return if current.matches(current.peer_id, key_now.as_deref()) {
-            // 1: same node, same id.
-            Some(current.clone())
-        } else {
-            // 2: the id was reused by a different node. Never route to a
-            // stranger: drop the pin. With a reachable candidate we start over
-            // from it; without one the rule simply stays unpinned (and falls
-            // back to its configured `if_all_unavailable` behaviour) rather
-            // than black-holing traffic into a stranger.
-            tracing::warn!(
-                pinned_peer_id = current.peer_id,
-                "failover_when = never: the pinned peer id now belongs to a different node; \
-                 dropping the pin"
-            );
-            reachable
-                .first()
-                .map(|(peer_id, key)| PinnedPeer::new(*peer_id, key.clone()))
+        // The pinned id still has a **live** connection, so its key is
+        // meaningful and the identity can be judged.
+        return match current.classify(current.peer_id, key_now.as_deref()) {
+            PinMatch::Same => {
+                // 1: same node, same id.
+                Some(current.clone())
+            }
+            PinMatch::DifferentNode => {
+                // 2a: both sides carry a key and they differ — a **different
+                // node** holds the id. Never route to a stranger: drop the pin.
+                tracing::warn!(
+                    pinned_peer_id = current.peer_id,
+                    "failover_when = never: the pinned peer id now belongs to a different node \
+                     (its static key changed); dropping the pin"
+                );
+                restart_pin_from_first_candidate(reachable)
+            }
+            PinMatch::OccupantUnverifiable => {
+                // 2b: the pin carries a key, the occupant does not. Nothing
+                // proves a stranger (that would be 2a with another key) — more
+                // often the far side turned encryption off. Keep the pin; a
+                // true stranger in encrypted mode presents a *different* key.
+                tracing::warn!(
+                    pinned_peer_id = current.peer_id,
+                    "failover_when = never: the pinned id is live but has no static key \
+                     (plaintext / encryption toggled off); keeping the pin — only a different \
+                     static key would prove a stranger"
+                );
+                Some(current.clone())
+            }
+            PinMatch::PinUnverifiable => {
+                // 2c: the pin itself has no key (plaintext mode). There was
+                // never a verifiable identity; the occupant presenting one is
+                // a mode change, not proof the id was stolen. Keep waiting —
+                // restart follow-along still happens in case 3 when the id
+                // leaves the map.
+                tracing::warn!(
+                    pinned_peer_id = current.peer_id,
+                    "failover_when = never: keyless pin (plaintext) against an occupant that \
+                     now has a static key; keeping the pin — plaintext never had a verifiable \
+                     identity to revoke"
+                );
+                Some(current.clone())
+            }
         };
     }
 

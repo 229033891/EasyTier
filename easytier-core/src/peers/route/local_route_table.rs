@@ -221,6 +221,18 @@ impl PinnedPeer {
     ///    rejects, or a pin left over from before encryption was toggled).
     ///    There is no basis for an identity claim, so refuse to match.
     pub fn matches(&self, peer_id: PeerId, public_key: Option<&[u8]>) -> bool {
+        self.classify(peer_id, public_key) == PinMatch::Same
+    }
+
+    /// Classify `candidate` against this pin.
+    ///
+    /// [`Self::matches`] collapses every outcome to a bool. Callers that choose
+    /// an **action** need the full verdict: the non-`Same` variants are
+    /// different **facts** with different exits —
+    /// [`PinMatch::DifferentNode`] drops the pin; unverifiable / mode-mismatch
+    /// variants keep it. One function supplies both the action and the log
+    /// wording so they cannot drift apart.
+    pub fn classify(&self, peer_id: PeerId, public_key: Option<&[u8]>) -> PinMatch {
         // An empty key is "no key", whichever field it arrived in. `Some(&[])`
         // is what a plaintext conn's `noise_remote_static_pubkey` looks like
         // before it is normalised, and `&[] == &[]` would otherwise read as a
@@ -230,15 +242,52 @@ impl PinnedPeer {
             self.public_key.as_deref().filter(|k| !k.is_empty()),
             public_key.filter(|k| !k.is_empty()),
         ) {
-            (Some(pinned), Some(current)) => pinned == current,
+            (Some(pinned), Some(current)) => {
+                if pinned == current {
+                    PinMatch::Same
+                } else {
+                    PinMatch::DifferentNode
+                }
+            }
             // Case 2, written out rather than folded into a `_` arm: this is
             // the one place where "no identity" is allowed to count as a match,
             // and that deserves to be visible next to the reason above.
-            (None, None) => self.peer_id == peer_id,
+            (None, None) => {
+                if self.peer_id == peer_id {
+                    PinMatch::Same
+                } else {
+                    PinMatch::PinUnverifiable
+                }
+            }
             // Case 3: one end verified, the other cannot be. Never a match.
-            (Some(_), None) | (None, Some(_)) => false,
+            (Some(_), None) => PinMatch::OccupantUnverifiable,
+            (None, Some(_)) => PinMatch::PinUnverifiable,
         }
     }
+}
+
+/// Why a candidate does (or does not) match a [`PinnedPeer`].
+///
+/// The negative variants are separate because they are separate **facts** with
+/// **separate actions** at the call site: a stranger taking the id
+/// ([`Self::DifferentNode`]) drops the pin; the network no longer offering a
+/// verifiable identity ([`Self::OccupantUnverifiable`] /
+/// [`Self::PinUnverifiable`]) keeps it. Folding those into one exit would make
+/// the four-way split pointless.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PinMatch {
+    /// The candidate is the same node the pin names.
+    Same,
+    /// Both sides carry a static key and they **differ** ⇒ a different node
+    /// holds the id. **Only this variant drops the pin.**
+    DifferentNode,
+    /// The pin carries a key but the candidate does not ⇒ the candidate cannot
+    /// be verified (a plaintext / no-noise connection, or encryption was
+    /// switched on the far side after the pin was taken). Keep the pin.
+    OccupantUnverifiable,
+    /// The **pin** carries no key ⇒ there was never a verifiable identity to
+    /// compare, so no claim can be made either way. Keep the pin.
+    PinUnverifiable,
 }
 
 #[derive(Debug, Clone)]
