@@ -1242,36 +1242,37 @@ fn never_without_keys_falls_back_to_id_matching() {
     assert_eq!(decide_pinned_peer(Some(&pin), None, &[]), Some(pin));
 }
 
-/// TEMP-PROBE: what happens to a **keyed** pin when the pinned peer's last
-/// connection drops.
+/// After the last conn drops, the call site must feed `None` (not `Some(None)`).
 ///
-/// `Peer::get_peer_public_key()` is cleared to `None` when a peer's **last**
-/// conn is removed (`peer.rs`: `if conns_copy.is_empty() { *peer_public_key.write() = None }`),
-/// and the peer entry then survives for up to ~3s (`clean_peer_without_conn`).
-/// So `pinned_id_live == Some(None)` means "the entry is still there, but it has
-/// no live conn right now" — **not** "a stranger took the id".
+/// `Peer` clears `peer_public_key` when its last conn goes away, while the map
+/// entry survives ~3s. If `resolve_pinned_peer` used `has_peer`, that window
+/// became `pinned_id_live = Some(None)` and a keyed pin was dropped as a
+/// "stranger". With `has_peer_with_live_conn` the zombie maps to `None`, and
+/// case 4 keeps waiting — matching traffic-steering §5 "节点只是掉线 ⇒ 锁定保留".
 #[test]
-fn temp_probe_keyed_pin_when_target_drops_its_last_conn() {
+fn never_keeps_a_keyed_pin_across_the_zombie_window_after_last_conn_drops() {
     let pin = PinnedPeer::new(7, Some(key(1)));
-
-    // The id is still in the peer map, but it has no live conn => no key.
-    let decided = decide_pinned_peer(Some(&pin), Some(None), &[]);
-    assert!(
-        decided.is_none(),
-        "PROBE: the pin is DROPPED when the target merely loses its last conn \
-         (and a 'stranger took the id' warning is emitted)"
+    assert_eq!(
+        decide_pinned_peer(Some(&pin), None, &[]),
+        Some(pin),
+        "zombie entry (no live conn) must look like 'id gone', not 'stranger'"
     );
 }
 
-/// TEMP-PROBE: the same, but the peer is keyless because it is in plaintext
-/// mode (permanent), not because it is reconnecting.
+/// A keyed pin against a **live** keyless occupant of the same id is still a
+/// stranger / mode mismatch: drop. (`Some(None)` is only legitimate when the
+/// id still has a live conn that carries no key.)
 #[test]
-fn temp_probe_keyed_pin_against_a_plaintext_peer() {
+fn never_drops_a_keyed_pin_when_a_live_plaintext_peer_holds_the_id() {
     let pin = PinnedPeer::new(7, Some(key(1)));
-    let decided = decide_pinned_peer(Some(&pin), Some(None), &[]);
-    assert!(decided.is_none(), "PROBE: same outcome for the permanent case");
+    assert!(
+        decide_pinned_peer(Some(&pin), Some(None), &[]).is_none(),
+        "live keyless occupant of the pinned id must not keep a keyed pin"
+    );
 }
 
+/// B1: two plaintext peers must never compare equal by "empty key == empty
+/// key".
 ///
 /// `noise_remote_static_pubkey` is an empty `Vec` — not a missing one — for a
 /// plaintext conn, and `Peer::add_conn` stores it verbatim. Before the keys were

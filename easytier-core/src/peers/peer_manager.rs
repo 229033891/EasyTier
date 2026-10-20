@@ -733,8 +733,16 @@ async fn resolve_pinned_peer(
 ) -> Option<PinnedPeer> {
     // Snapshot the two facts the decision needs, so the rule itself is a pure
     // function that can be tested without building a PeerMap.
+    //
+    // Must use live-conn, not mere map presence: when the last PeerConn drops,
+    // `Peer` clears its public key while the map entry survives ~3s
+    // (`clean_peer_without_conn`). `has_peer` would then feed
+    // `pinned_id_live = Some(None)` into the pure decision, which a keyed pin
+    // treats as "stranger took the id" and **drops** the pin — contradicting
+    // "node merely offline ⇒ keep waiting". `has_peer_with_live_conn` maps that
+    // zombie window to `None` so case 4 keeps the pin.
     let pinned_id_live = current
-        .filter(|pin| peers.has_peer(pin.peer_id))
+        .filter(|pin| peers.has_peer_with_live_conn(pin.peer_id))
         .map(|pin| peers.peer_public_key(pin.peer_id));
     let keys: Vec<(PeerId, Option<Vec<u8>>)> = reachable
         .iter()
@@ -745,9 +753,9 @@ async fn resolve_pinned_peer(
 
 /// The pure pin decision; see [`resolve_pinned_peer`] for the input contract.
 ///
-/// * `pinned_id_live` — `Some(key)` when the pinned **id** is still in the peer
-///   map (key may itself be `None` for keyless conns), `None` when the id is
-///   gone.
+/// * `pinned_id_live` — `Some(key)` when the pinned **id** still has a **live
+///   conn** (key may itself be `None` for keyless / plaintext conns), `None`
+///   when the id is gone *or* the map entry is a zombie with no live conn.
 /// * `reachable` — this tick's candidates with their keys, in config order.
 fn decide_pinned_peer(
     current: Option<&PinnedPeer>,
