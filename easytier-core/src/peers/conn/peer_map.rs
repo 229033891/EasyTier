@@ -200,8 +200,17 @@ impl PeerMap {
     /// one — `Peer::add_conn` already refuses two conns for one id whose keys
     /// disagree — so callers that must remember "this exact node" (the
     /// `failover_when = never` pin) key on this.
+    ///
+    /// An **empty** key normalises to `None`. `Peer::add_conn` stores whatever
+    /// `noise_remote_static_pubkey` held, and for a plaintext conn that is an
+    /// empty `Vec` rather than an absent one — the same thing the rest of the
+    /// repo treats as "no key" via `!…is_empty()`. Passing the empty `Vec` on
+    /// would be worse than returning `None`: two different plaintext peers
+    /// would compare **equal** by key.
     pub fn peer_public_key(&self, peer_id: PeerId) -> Option<Vec<u8>> {
-        self.get_peer_by_id(peer_id)?.get_peer_public_key()
+        self.get_peer_by_id(peer_id)?
+            .get_peer_public_key()
+            .filter(|key| !key.is_empty())
     }
 
     pub fn get_directly_connections_by_peer_id(&self, peer_id: PeerId) -> DashSet<uuid::Uuid> {

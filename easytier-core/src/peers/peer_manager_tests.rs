@@ -1226,8 +1226,11 @@ fn never_keeps_the_pin_when_id_and_key_both_match() {
     );
 }
 
-/// Without keys (plaintext / no-noise) the pin degrades to id matching, which
-/// is exactly what it did before — no regression for those setups.
+/// Without keys (plaintext / no-noise) a pin whose id is still live stays put.
+///
+/// This covers the "same id, still there" case only; what happens once the id
+/// is *gone* is the separate question answered by
+/// [`never_without_keys_follows_a_restarted_candidate`].
 #[test]
 fn never_without_keys_falls_back_to_id_matching() {
     let pin = PinnedPeer::new(7, None);
@@ -1239,40 +1242,162 @@ fn never_without_keys_falls_back_to_id_matching() {
     assert_eq!(decide_pinned_peer(Some(&pin), None, &[]), Some(pin));
 }
 
+/// TEMP-PROBE: what happens to a **keyed** pin when the pinned peer's last
+/// connection drops.
+///
+/// `Peer::get_peer_public_key()` is cleared to `None` when a peer's **last**
+/// conn is removed (`peer.rs`: `if conns_copy.is_empty() { *peer_public_key.write() = None }`),
+/// and the peer entry then survives for up to ~3s (`clean_peer_without_conn`).
+/// So `pinned_id_live == Some(None)` means "the entry is still there, but it has
+/// no live conn right now" — **not** "a stranger took the id".
+#[test]
+fn temp_probe_keyed_pin_when_target_drops_its_last_conn() {
+    let pin = PinnedPeer::new(7, Some(key(1)));
+
+    // The id is still in the peer map, but it has no live conn => no key.
+    let decided = decide_pinned_peer(Some(&pin), Some(None), &[]);
+    assert!(
+        decided.is_none(),
+        "PROBE: the pin is DROPPED when the target merely loses its last conn \
+         (and a 'stranger took the id' warning is emitted)"
+    );
+}
+
+/// TEMP-PROBE: the same, but the peer is keyless because it is in plaintext
+/// mode (permanent), not because it is reconnecting.
+#[test]
+fn temp_probe_keyed_pin_against_a_plaintext_peer() {
+    let pin = PinnedPeer::new(7, Some(key(1)));
+    let decided = decide_pinned_peer(Some(&pin), Some(None), &[]);
+    assert!(decided.is_none(), "PROBE: same outcome for the permanent case");
+}
+
+///
+/// `noise_remote_static_pubkey` is an empty `Vec` — not a missing one — for a
+/// plaintext conn, and `Peer::add_conn` stores it verbatim. Before the keys were
+/// normalised, a keyless pin carried `Some(vec![])`, every other plaintext peer
+/// also presented `Some(vec![])`, and the two compared **equal**: a stranger
+/// claiming the pinned id was accepted as the same node.
+#[test]
+fn an_empty_public_key_is_not_a_shared_identity() {
+    // A keyless pin (normalised: `None`) matches only on the id.
+    let pin = PinnedPeer::new(7, None);
+    assert!(
+        pin.matches(7, None),
+        "the pinned id itself still matches the keyless pin"
+    );
+    assert!(
+        !pin.matches(99, None),
+        "a different id must not match just because both sides are keyless"
+    );
+
+    // The verification also holds for the value the wire actually produces:
+    // if a caller ever hands us the raw empty `Vec`, it must not read as an
+    // identity either. `Some([]) == Some([])` is the trap.
+    let raw = PinnedPeer::new(7, Some(Vec::new()));
+    assert!(
+        !raw.matches(99, Some(&[])),
+        "an empty key must not make unrelated plaintext peers equal"
+    );
+
+    // One side verified, the other not: never a match (mode disagreement).
+    let keyed = PinnedPeer::new(7, Some(key(1)));
+    assert!(!keyed.matches(7, None));
+    assert!(!pin.matches(7, Some(&key(1))));
+}
+
+/// B2: in plaintext mode the pin must still **follow a restart**.
+///
+/// There is no verifiable identity here, so "the pinned node came back under a
+/// new id" and "a stranger took the old id" look identical from the outside.
+/// The choice (2026-10-20) is to follow the first reachable candidate: it keeps
+/// restart survival, which is an everyday operation, instead of black-holing the
+/// route forever on an unverifiable maybe-attack.
+///
+/// This must survive the empty-key normalisation: it is asserted directly, not
+/// as a side effect of `[] == []`.
+#[test]
+fn never_without_keys_follows_a_restarted_candidate() {
+    let pin = PinnedPeer::new(7, None);
+    // The pinned id is gone; a candidate is reachable under a new one.
+    assert_eq!(
+        decide_pinned_peer(Some(&pin), None, &[(99u32, None)]),
+        Some(PinnedPeer::new(99, None)),
+        "a keyless pin follows the candidate rather than black-holing"
+    );
+    // Nothing reachable: still wait.
+    assert_eq!(decide_pinned_peer(Some(&pin), None, &[]), Some(pin));
+}
+
+/// B1/B2 together: with real keys, the stranger is still refused — the strong
+/// protection the keyed path always had must not be weakened by the keyless
+/// branch above.
+#[test]
+fn never_with_keys_still_refuses_a_stranger_on_the_pinned_id() {
+    let pin = PinnedPeer::new(7, Some(key(1)));
+    assert!(
+        decide_pinned_peer(Some(&pin), Some(Some(key(2))), &[]).is_none(),
+        "a different key on the pinned id must drop the pin, not follow it"
+    );
+}
+
 /// R4: which rules consult a cost — and therefore which rules may record one.
 ///
 /// The cost memo is shared across rules, so `ResolvedRule::costed_peers` is
 /// only meaningful if it records "this rule read a cost", not "a number existed
-/// for this peer". Both the per-tick `needs_quality` gate and the recording
-/// decision go through `rule_reads_cost`, and this table is what they must
-/// agree on.
+/// for this peer". This exercises **`rule_reads_cost` itself**, the function the
+/// reconcile loop calls; there is no test-only stand-in that could drift from it.
 #[test]
 fn rule_reads_cost_covers_every_select_by_and_failover_when() {
-    use crate::peers::route::local_route_table::PolicyRouteConfig;
+    use crate::peers::route::local_route_table::{
+        AllUnavailable, FailoverWhen, RouteRule, SelectBy,
+    };
 
-    let rule = |select_by: &str, failover_when: &str| PolicyRouteConfig {
+    // Build the compiled rule directly from its public fields: this is the
+    // exact shape the reconcile loop sees, and the test calls `rule_reads_cost`
+    // on it — no test-only twin that could drift from the production function.
+    let rule = |select_by: SelectBy, failover_when: FailoverWhen| RouteRule {
+        id: 0,
         cidr: Some("10.0.0.0/24".parse().unwrap()),
         domains: Vec::new(),
         peers: vec!["10.144.0.9".parse().unwrap()],
-        select_by: select_by.to_owned(),
-        failover_when: failover_when.to_owned(),
-        if_all_unavailable: "open".to_owned(),
+        merge_exit_nodes: false,
+        select_by,
+        failover_when,
+        if_all_unavailable: AllUnavailable::Open,
         require_confirmed: false,
         quality_degraded_cost: Some(100),
     };
 
     // `quality` ranks by cost whatever the failover policy is.
-    assert!(config_reads_cost(&rule("quality", "unreachable")));
-    assert!(config_reads_cost(&rule("quality", "never")));
+    assert!(rule_reads_cost(&rule(
+        SelectBy::Quality,
+        FailoverWhen::Unreachable
+    )));
+    assert!(rule_reads_cost(&rule(
+        SelectBy::Quality,
+        FailoverWhen::Degraded
+    )));
     // `degraded` needs a cost to compare against the ceiling, whatever selects.
-    assert!(config_reads_cost(&rule("priority", "degraded")));
-    assert!(config_reads_cost(&rule("balance", "degraded")));
+    assert!(rule_reads_cost(&rule(
+        SelectBy::Priority,
+        FailoverWhen::Degraded
+    )));
+    assert!(rule_reads_cost(&rule(
+        SelectBy::Balance,
+        FailoverWhen::Degraded
+    )));
     // Everything else decides by reachability / list order alone.
-    assert!(!config_reads_cost(&rule("priority", "unreachable")));
-    assert!(!config_reads_cost(&rule("priority", "never")));
-    assert!(!config_reads_cost(&rule("balance", "unreachable")));
-    // An unparseable value cannot mean "reads a cost": validation rejects it
-    // first, and the gate must stay on the conservative side.
-    assert!(!config_reads_cost(&rule("nonsense", "unreachable")));
-    assert!(!config_reads_cost(&rule("priority", "nonsense")));
+    assert!(!rule_reads_cost(&rule(
+        SelectBy::Priority,
+        FailoverWhen::Unreachable
+    )));
+    assert!(!rule_reads_cost(&rule(
+        SelectBy::Priority,
+        FailoverWhen::Never
+    )));
+    assert!(!rule_reads_cost(&rule(
+        SelectBy::Balance,
+        FailoverWhen::Unreachable
+    )));
 }

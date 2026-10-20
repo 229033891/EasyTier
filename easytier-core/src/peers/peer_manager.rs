@@ -316,38 +316,20 @@ fn build_local_route_table(
 /// candidates whose cost exceeds the ceiling; every other combination decides
 /// by reachability / list order alone.
 ///
-/// This is the one place that answers the question, because two decisions
-/// depend on it and they must not drift apart:
+/// This is the one place that answers the question. It is asked **per rule**, on
+/// the reconcile loop's own hot path, and it decides whether that rule records
+/// its candidate in `ResolvedRule::costed_peers`. The cost memo is shared across
+/// rules, so a `priority` rule can see a number another rule measured; recording
+/// it anyway would put a cost on the status page that the rule never ranked by
+/// (R4).
 ///
-/// - the per-tick `needs_quality` gate (skip `list_peer_conns` entirely when
-///   nothing in the config reads a cost), and
-/// - whether a rule records its candidate in `ResolvedRule::costed_peers`. The
-///   cost memo is shared across rules, so a `priority` rule can see a number
-///   another rule measured; recording it anyway would put a cost on the status
-///   page that the rule never ranked by (R4).
+/// It is deliberately *not* a whole-table pre-pass any more: a config that mixes
+/// one `quality` rule with several `priority` ones only pays for the candidates
+/// the `quality` rule actually reached.
 fn rule_reads_cost(rule: &super::route::local_route_table::RouteRule) -> bool {
     // Both fields are already parsed on `RouteRule` (an unparseable string was
     // rejected at load time), so there is nothing to re-parse here.
     rule.select_by == SelectBy::Quality || rule.failover_when == FailoverWhen::Degraded
-}
-
-/// The same question for a raw (not yet validated) config entry.
-///
-/// Used by tests and by callers that reason about a candidate config before it
-/// has been compiled. An unparseable value means the rule was already rejected
-/// elsewhere; it is reported as "does not read a cost" so the gate stays on the
-/// conservative side instead of masking the real validation error.
-#[cfg(test)]
-fn config_reads_cost(rule: &PolicyRouteConfig) -> bool {
-    use super::route::local_route_table::{parse_failover_when, parse_select_by};
-
-    let Ok(select_by) = parse_select_by(&rule.select_by) else {
-        return false;
-    };
-    let Ok(failover_when) = parse_failover_when(&rule.failover_when) else {
-        return false;
-    };
-    select_by == SelectBy::Quality || failover_when == FailoverWhen::Degraded
 }
 
 /// Pick the next `(active_peer, challenger)` for a non-`balance` rule.
@@ -801,9 +783,38 @@ fn decide_pinned_peer(
     }
 
     // 3: the same node may be back under a new id after a restart.
-    for (peer_id, key) in reachable {
-        if current.matches(*peer_id, key.as_deref()) {
-            return Some(PinnedPeer::new(*peer_id, current.public_key.clone()));
+    if current.public_key.is_some() {
+        // Keyed pin: the same key under another id is the same node.
+        for (peer_id, key) in reachable {
+            if current.matches(*peer_id, key.as_deref()) {
+                return Some(PinnedPeer::new(*peer_id, current.public_key.clone()));
+            }
+        }
+    } else {
+        // Keyless pin (plaintext / no-noise). `matches` would only ever compare
+        // ids here, so it cannot find the node under a *new* id — every
+        // plaintext candidate it sees has no key, and "no key equals no key"
+        // says nothing about identity. Relying on that equality is exactly the
+        // trap this branch exists to avoid: once empty keys are normalised to
+        // `None`, case 3 stops matching on its own and a restarted exit node
+        // black-holes forever.
+        //
+        // So the intent is stated outright: with no verifiable identity, a
+        // pinned node that vanished while another candidate is available is
+        // treated as "the same node came back under a new id" and the pin
+        // follows the candidate. This deliberately gives up a promise the
+        // plaintext mode cannot keep anyway — it has no way to tell the
+        // restarted node from a stranger holding its old id — in exchange for
+        // restart survival, which is an everyday operation. See
+        // `PinnedPeer::matches` case 2.
+        if let Some((peer_id, key)) = reachable.first() {
+            tracing::info!(
+                pinned_peer_id = current.peer_id,
+                new_peer_id = *peer_id,
+                "failover_when = never: no verifiable peer identity (plaintext mode); \
+                 following the first reachable candidate"
+            );
+            return Some(PinnedPeer::new(*peer_id, key.clone()));
         }
     }
 

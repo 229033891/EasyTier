@@ -724,17 +724,19 @@ mod tests {
     /// `i32::MAX` and behave like an unranked list.
     #[test]
     fn a_hot_patch_is_validated_against_the_instances_own_route_algo() {
-        let mut config = TomlConfig::default();
-        config.set_policy_routes(vec![crate::peers::route::local_route_table::PolicyRouteConfig {
-            cidr: Some("10.0.0.0/24".parse().unwrap()),
-            domains: Vec::new(),
-            peers: vec!["10.144.0.9".parse().unwrap()],
-            select_by: "quality".to_owned(),
-            failover_when: "unreachable".to_owned(),
-            if_all_unavailable: "open".to_owned(),
-            require_confirmed: false,
-            quality_degraded_cost: None,
-        }]);
+        let config = TomlConfig::default();
+        config.set_policy_routes(vec![
+            crate::peers::route::local_route_table::PolicyRouteConfig {
+                cidr: Some("10.0.0.0/24".parse().unwrap()),
+                domains: Vec::new(),
+                peers: vec!["10.144.0.9".parse().unwrap()],
+                select_by: "quality".to_owned(),
+                failover_when: "unreachable".to_owned(),
+                if_all_unavailable: "open".to_owned(),
+                require_confirmed: false,
+                quality_degraded_cost: None,
+            },
+        ]);
 
         // An instance with a route table may rank by cost…
         assert!(validate_config_loader_policy_routes_for_algo(&config, true).is_ok());

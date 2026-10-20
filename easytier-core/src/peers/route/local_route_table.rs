@@ -174,9 +174,21 @@ pub struct PinnedPeer {
     /// Peer id at pin time. Used to find the entry; refreshed when the same
     /// key reappears under a new id after a restart.
     pub peer_id: PeerId,
-    /// The remote static public key. `None` when the conn carried no key
-    /// (plaintext / no-noise mode), in which case the pin degrades to the
-    /// id-only behaviour it had before.
+    /// The remote static public key, or `None` when the connection carried no
+    /// usable key (plaintext / no-noise mode).
+    ///
+    /// **`None` is a "no verifiable identity" answer, not "the key is empty".**
+    /// Plaintext conns report `noise_remote_static_pubkey` as an **empty `Vec`**
+    /// (`peer_conn::get_conn_info` → `unwrap_or_default`), and the repo reads
+    /// that as "no key" (`!…is_empty()`). Normalising it here keeps the two
+    /// concepts apart: an empty key is not an identity two nodes can share, and
+    /// treating `Some([]) == Some([])` as "same node" made every plaintext peer
+    /// equal to every other one.
+    ///
+    /// **Consequence, and it is a real limit:** in plaintext mode there is no
+    /// verifiable identity, so a `failover_when = never` pin can only follow the
+    /// id. If an unrelated node later claims that id, the pin cannot tell — it
+    /// will keep using the id. See [`PinnedPeer::matches`] case 2.
     pub public_key: Option<Vec<u8>>,
 }
 
@@ -190,14 +202,41 @@ impl PinnedPeer {
 
     /// `true` when `candidate` is the same node this pin names.
     ///
-    /// With a key on both sides the key decides; the id is only a hint. Without
-    /// a key we can only compare ids, which is exactly the weak check — but it
-    /// is no weaker than the pin had before, and it keeps `noise`-less setups
-    /// working.
+    /// Three distinct cases, and they must stay distinct — folding any two of
+    /// them together silently reverses a safety property:
+    ///
+    /// 1. **Both sides carry a static key** — the key decides and the id is
+    ///    irrelevant. This is the strong case: a restart under a new id is
+    ///    still the same node, and a reused id that belongs to someone else is
+    ///    not.
+    /// 2. **Neither side carries a key** (plaintext / no-noise). There is no
+    ///    verifiable identity at all, so the id is the only handle there is —
+    ///    and an id is *not* an identity: it is a random number the remote picks
+    ///    at start-up, so it changes across a restart and can be reused by an
+    ///    unrelated node. We match on it because there is nothing better to do,
+    ///    **not** because it proves anything. See the note on `public_key`
+    ///    about where this leaves the "never send to a stranger" promise.
+    /// 3. **Only one side carries a key** — the two ends disagree about whether
+    ///    this is a secure network (a mode mismatch that the handshake normally
+    ///    rejects, or a pin left over from before encryption was toggled).
+    ///    There is no basis for an identity claim, so refuse to match.
     pub fn matches(&self, peer_id: PeerId, public_key: Option<&[u8]>) -> bool {
-        match (self.public_key.as_deref(), public_key) {
+        // An empty key is "no key", whichever field it arrived in. `Some(&[])`
+        // is what a plaintext conn's `noise_remote_static_pubkey` looks like
+        // before it is normalised, and `&[] == &[]` would otherwise read as a
+        // shared identity — the B1 defect. Treat it as the keyless case rather
+        // than trusting callers to have normalised it.
+        match (
+            self.public_key.as_deref().filter(|k| !k.is_empty()),
+            public_key.filter(|k| !k.is_empty()),
+        ) {
             (Some(pinned), Some(current)) => pinned == current,
-            _ => self.peer_id == peer_id,
+            // Case 2, written out rather than folded into a `_` arm: this is
+            // the one place where "no identity" is allowed to count as a match,
+            // and that deserves to be visible next to the reason above.
+            (None, None) => self.peer_id == peer_id,
+            // Case 3: one end verified, the other cannot be. Never a match.
+            (Some(_), None) | (None, Some(_)) => false,
         }
     }
 }
