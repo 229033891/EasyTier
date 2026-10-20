@@ -80,9 +80,9 @@ use super::{
     route::{
         ArcRoute, DisabledRoute, ForeignNetworkRouteInfoMap, NextHopPolicy, Route, RouteInterface,
         local_route_table::{
-            AllUnavailable, CostSource, FailoverWhen, LocalRouteTable, MAX_PEERS_PER_RULE,
-            PolicyRouteConfig, RouteLookup, RuleState, RuleUpdate, SelectBy, build_snapshot,
-            is_degraded_cost, merged_candidate_count, merged_candidates,
+            AllUnavailable, CostSource, CostedPeer, FailoverWhen, LocalRouteTable,
+            MAX_PEERS_PER_RULE, PinnedPeer, PolicyRouteConfig, RouteLookup, RuleState, RuleUpdate,
+            SelectBy, build_snapshot, is_degraded_cost, merged_candidate_count, merged_candidates,
             validate_and_build_policy_rules, validate_route_algo_can_price_candidates,
             within_switch_band,
         },
@@ -310,6 +310,46 @@ fn build_local_route_table(
     Ok(table)
 }
 
+/// Whether a rule consults a candidate's **cost** when it ranks them.
+///
+/// `select_by = quality` ranks by cost, and `failover_when = degraded` drops
+/// candidates whose cost exceeds the ceiling; every other combination decides
+/// by reachability / list order alone.
+///
+/// This is the one place that answers the question, because two decisions
+/// depend on it and they must not drift apart:
+///
+/// - the per-tick `needs_quality` gate (skip `list_peer_conns` entirely when
+///   nothing in the config reads a cost), and
+/// - whether a rule records its candidate in `ResolvedRule::costed_peers`. The
+///   cost memo is shared across rules, so a `priority` rule can see a number
+///   another rule measured; recording it anyway would put a cost on the status
+///   page that the rule never ranked by (R4).
+fn rule_reads_cost(rule: &super::route::local_route_table::RouteRule) -> bool {
+    // Both fields are already parsed on `RouteRule` (an unparseable string was
+    // rejected at load time), so there is nothing to re-parse here.
+    rule.select_by == SelectBy::Quality || rule.failover_when == FailoverWhen::Degraded
+}
+
+/// The same question for a raw (not yet validated) config entry.
+///
+/// Used by tests and by callers that reason about a candidate config before it
+/// has been compiled. An unparseable value means the rule was already rejected
+/// elsewhere; it is reported as "does not read a cost" so the gate stays on the
+/// conservative side instead of masking the real validation error.
+#[cfg(test)]
+fn config_reads_cost(rule: &PolicyRouteConfig) -> bool {
+    use super::route::local_route_table::{parse_failover_when, parse_select_by};
+
+    let Ok(select_by) = parse_select_by(&rule.select_by) else {
+        return false;
+    };
+    let Ok(failover_when) = parse_failover_when(&rule.failover_when) else {
+        return false;
+    };
+    select_by == SelectBy::Quality || failover_when == FailoverWhen::Degraded
+}
+
 /// Pick the next `(active_peer, challenger)` for a non-`balance` rule.
 ///
 /// Stages:
@@ -389,11 +429,6 @@ async fn reconcile_local_routes_once(
     if snap.rules.is_empty() {
         return;
     }
-    // Costs are only read for `quality` / `degraded` rules; a priority-only
-    // config never touches `list_peer_conns`.
-    let needs_quality = snap.rules.iter().any(|r| {
-        r.rule.select_by == SelectBy::Quality || r.rule.failover_when == FailoverWhen::Degraded
-    });
     // Composite cost per candidate peer, memoised across rules for this tick.
     let mut quality: HashMap<PeerId, i32> = HashMap::new();
     // L2: which of the two cost families produced each `quality` entry. Both are
@@ -450,20 +485,40 @@ async fn reconcile_local_routes_once(
         }
 
         let mut scored: Vec<(PeerId, i32)> = Vec::with_capacity(reachable.len());
-        // L2: the peers **this rule** priced, so the status page can show this
-        // rule's costs instead of every cost in the shared memo (see
+        // L2/R4: the peers **this rule** priced, with the numbers and families
+        // it saw, so the status page can show this rule's costs instead of
+        // whatever the shared memo happens to hold for those peers (see
         // `ResolvedRule::costed_peers`).
-        let mut costed_peers: Vec<PeerId> = Vec::new();
+        let mut costed_peers: Vec<CostedPeer> = Vec::new();
         for peer_id in &reachable {
             let peer_id = *peer_id;
+            // Whether **this** rule reads a cost for this peer. Both branches
+            // below share the memo, and a memo hit means some other rule priced
+            // this peer earlier in the tick. What is remembered per rule must
+            // still be "this rule consulted a cost", not "a cost exists in the
+            // map" — otherwise a `priority` rule whose candidate is also a
+            // `quality` rule's candidate would report and display a cost it
+            // never ranked by, decided by rule order alone (R4).
+            let uses_cost = rule_reads_cost(&r.rule);
             let cost = match quality.get(&peer_id) {
                 // Measured earlier in this tick by another rule: real, so it
-                // counts for this rule too.
-                Some(cost) => {
-                    costed_peers.push(peer_id);
+                // counts for this rule too. The number and its family are the
+                // ones from this tick's memo, which is what this rule is
+                // ranking against.
+                Some(cost) if uses_cost => {
+                    costed_peers.push(CostedPeer {
+                        peer_id,
+                        cost: *cost,
+                        source: cost_source
+                            .get(&peer_id)
+                            .copied()
+                            // A memo entry always comes with its source; the
+                            // `Path` default only exists so this cannot panic.
+                            .unwrap_or_default(),
+                    });
                     *cost
                 }
-                None if needs_quality => {
+                None if uses_cost => {
                     // Price the candidate by the **whole path** to it, relay
                     // hops included. Scoring only the direct link made a
                     // candidate that is reachable solely through a relay look
@@ -518,7 +573,11 @@ async fn reconcile_local_routes_once(
                     let cost = apply_ospf_cost_hysteresis(raw, previous, OSPF_EDGE_COST_MIN_DELTA);
                     quality.insert(peer_id, cost);
                     cost_source.insert(peer_id, source);
-                    costed_peers.push(peer_id);
+                    costed_peers.push(CostedPeer {
+                        peer_id,
+                        cost,
+                        source,
+                    });
                     cost
                 }
                 // Priority + unreachable/never: costs are never consulted.
@@ -529,7 +588,13 @@ async fn reconcile_local_routes_once(
                 // whole point; seeding it with a `0` that nobody measured would
                 // make a `quality` rule rank that peer first and put a
                 // misleading `0` on the status page.
-                None => 0,
+                //
+                // This also covers "the memo already had a real number, but
+                // *this* rule does not read costs": the number is reused as this
+                // rule's ranking placeholder (all candidates tie, list order
+                // decides) but is deliberately **not** recorded in
+                // `costed_peers`, so it never reaches the status page (R4).
+                _ => 0,
             };
             scored.push((peer_id, cost));
         }
@@ -544,20 +609,29 @@ async fn reconcile_local_routes_once(
         // traffic, not about whether the rule exists: dropping the rule to
         // `Degraded` when that one peer goes away would hand the flow to the
         // physical gateway (or a peer `/0`) — the very egress the user ruled
-        // out. Pinning also means the target does not silently change when the
-        // same VIP later resolves to a different `PeerId` (peers can come back
-        // with a new id after a restart of the same node), which a
-        // reachability-follows-policy rule would otherwise do unnoticed.
+        // out.
         //
-        // Only set while the pinned peer still exists in the peer map: once it
-        // is gone for good there is nothing left to pin, and holding a stale id
-        // forever would keep a dead rule alive. Clearing it also means the rule
-        // re-pins from the first reachable candidate if it ever comes back.
+        // The pin is anchored on the peer's **static public key**, not on the
+        // `PeerId` alone. `PeerId` is a random `u32` chosen at the remote's
+        // start-up and reported by it in the handshake, so it is neither stable
+        // across a restart nor unique over time. Two ways an id-only pin breaks:
+        //
+        //   - the exit node restarts, comes back with a new id ⇒ an id-only pin
+        //     black-holes the route forever for no reason;
+        //   - an unrelated node is handed the old id ⇒ an id-only pin sends the
+        //     traffic to the wrong node, which is worse than a black hole.
+        //
+        // Resolution order on every pass:
+        //   1. the pinned id still resolves to the pinned key   → keep pinning
+        //   2. the pinned id resolves to a *different* key      → drop the pin
+        //      (the id was reused; never route to a stranger)
+        //   3. the pinned key is now reachable under a new id   → re-pin to it
+        //      (the same node after a restart)
+        //   4. neither                                            → keep the old
+        //      pin: the node is simply down, and `never` says to keep waiting
+        //      for *it*, not to fall through to another egress
         let pinned_peer = if r.rule.failover_when == FailoverWhen::Never {
-            match r.pinned_peer {
-                Some(pinned) if peers.has_peer(pinned) => Some(pinned),
-                _ => reachable.first().copied(),
-            }
+            resolve_pinned_peer(peers, r.pinned_peer.as_ref(), &reachable).await
         } else {
             None
         };
@@ -662,6 +736,80 @@ async fn reconcile_local_routes_once(
     }
 
     table.apply_peer_updates(&quality, &cost_source, &updates);
+}
+
+/// L3: work out what a `failover_when = never` rule should be pinned to now.
+///
+/// See the call site for why the pin is keyed on the static public key rather
+/// than the `PeerId`. `reachable` is this rule's resolved candidate list for the
+/// current tick (already in config order); an empty list means the pinned node
+/// is currently down.
+async fn resolve_pinned_peer(
+    peers: &PeerMap,
+    current: Option<&PinnedPeer>,
+    reachable: &[PeerId],
+) -> Option<PinnedPeer> {
+    // Snapshot the two facts the decision needs, so the rule itself is a pure
+    // function that can be tested without building a PeerMap.
+    let pinned_id_live = current
+        .filter(|pin| peers.has_peer(pin.peer_id))
+        .map(|pin| peers.peer_public_key(pin.peer_id));
+    let keys: Vec<(PeerId, Option<Vec<u8>>)> = reachable
+        .iter()
+        .map(|peer_id| (*peer_id, peers.peer_public_key(*peer_id)))
+        .collect();
+    decide_pinned_peer(current, pinned_id_live, &keys)
+}
+
+/// The pure pin decision; see [`resolve_pinned_peer`] for the input contract.
+///
+/// * `pinned_id_live` — `Some(key)` when the pinned **id** is still in the peer
+///   map (key may itself be `None` for keyless conns), `None` when the id is
+///   gone.
+/// * `reachable` — this tick's candidates with their keys, in config order.
+fn decide_pinned_peer(
+    current: Option<&PinnedPeer>,
+    pinned_id_live: Option<Option<Vec<u8>>>,
+    reachable: &[(PeerId, Option<Vec<u8>>)],
+) -> Option<PinnedPeer> {
+    let Some(current) = current else {
+        // First resolution: pin whatever candidate came first.
+        let (peer_id, key) = reachable.first()?;
+        return Some(PinnedPeer::new(*peer_id, key.clone()));
+    };
+
+    // 1 / 2: what does the pinned id point at *now*?
+    if let Some(key_now) = pinned_id_live {
+        return if current.matches(current.peer_id, key_now.as_deref()) {
+            // 1: same node, same id.
+            Some(current.clone())
+        } else {
+            // 2: the id was reused by a different node. Never route to a
+            // stranger: drop the pin. With a reachable candidate we start over
+            // from it; without one the rule simply stays unpinned (and falls
+            // back to its configured `if_all_unavailable` behaviour) rather
+            // than black-holing traffic into a stranger.
+            tracing::warn!(
+                pinned_peer_id = current.peer_id,
+                "failover_when = never: the pinned peer id now belongs to a different node; \
+                 dropping the pin"
+            );
+            reachable
+                .first()
+                .map(|(peer_id, key)| PinnedPeer::new(*peer_id, key.clone()))
+        };
+    }
+
+    // 3: the same node may be back under a new id after a restart.
+    for (peer_id, key) in reachable {
+        if current.matches(*peer_id, key.as_deref()) {
+            return Some(PinnedPeer::new(*peer_id, current.public_key.clone()));
+        }
+    }
+
+    // 4: the pinned node is down (or unreachable). Keep waiting for it — that is
+    // what "never fail over" asks for.
+    Some(current.clone())
 }
 
 fn matching_group_memberships(
@@ -2007,6 +2155,19 @@ impl PeerManagerCore {
 
     pub fn traffic_metrics(&self) -> Arc<TrafficMetricRecorder> {
         self.traffic_metrics.clone()
+    }
+
+    /// Whether this instance prices candidates through a route table.
+    ///
+    /// `route_algo` is a construction-time choice that never changes for the
+    /// life of an instance, so this is a plain read. Callers that validate a
+    /// candidate `[[policy_routes]]` table (hot patch, GUI save) must pass this
+    /// into `validate_config_loader_policy_routes_for_algo` instead of assuming
+    /// a route table exists: a `quality` / `degraded` rule cannot be priced
+    /// without one, and silently accepting it would make the saved config do
+    /// something other than what it says (L5).
+    pub fn has_route_table(&self) -> bool {
+        self.route_algo_inst.ospf_route().is_some()
     }
 
     pub fn get_route(&self) -> ArcRoute {

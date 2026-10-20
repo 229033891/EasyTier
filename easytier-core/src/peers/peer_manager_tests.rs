@@ -1141,3 +1141,138 @@ fn quality_switch_band_still_holds_incumbent() {
     );
     assert_eq!((chosen, challenger), (Some(1), None));
 }
+
+// ---------------------------------------------------------------------------
+// L3: `failover_when = never` pin resolution
+//
+// `PeerId` is a random u32 reported by the peer itself, so it is neither
+// stable across a restart nor unique over time. The pin therefore carries the
+// remote static public key, and these tests pin down every branch of the
+// decision — including the two that an id-only pin got wrong.
+// ---------------------------------------------------------------------------
+
+fn key(tag: u8) -> Vec<u8> {
+    vec![tag; 32]
+}
+
+/// First pass: pin the first candidate and remember its key.
+#[test]
+fn never_pins_the_first_candidate_with_its_key() {
+    let reachable = vec![(7u32, Some(key(1)))];
+    assert_eq!(
+        decide_pinned_peer(None, None, &reachable),
+        Some(PinnedPeer::new(7, Some(key(1))))
+    );
+    // No candidate yet ⇒ nothing to pin.
+    assert_eq!(decide_pinned_peer(None, None, &[]), None);
+}
+
+/// The node is down: the id is gone from the peer map and no candidate
+/// resolves. The pin must **survive** — this is the whole point of `never`.
+///
+/// Before this fix the pin was dropped as soon as `has_peer` went false (about
+/// three seconds after the disconnect), so the rule fell back to the physical
+/// gateway within seconds.
+#[test]
+fn never_keeps_the_pin_while_the_node_is_down() {
+    let pin = PinnedPeer::new(7, Some(key(1)));
+    assert_eq!(
+        decide_pinned_peer(Some(&pin), None, &[]),
+        Some(pin.clone()),
+        "a `never` rule must keep waiting for its peer, not fall through"
+    );
+}
+
+/// The exit node restarted and came back with a new id but the same key: follow
+/// it instead of black-holing the route forever.
+#[test]
+fn never_follows_the_same_node_under_a_new_id() {
+    let pin = PinnedPeer::new(7, Some(key(1)));
+    let reachable = vec![(99u32, Some(key(1)))];
+    assert_eq!(
+        decide_pinned_peer(Some(&pin), None, &reachable),
+        Some(PinnedPeer::new(99, Some(key(1)))),
+        "the same key under a new id is the same node"
+    );
+}
+
+/// A different node claimed the old id: never route to a stranger.
+#[test]
+fn never_drops_the_pin_when_its_id_is_reused_by_another_node() {
+    let pin = PinnedPeer::new(7, Some(key(1)));
+    // Id 7 is live but now belongs to key 2; nothing else is reachable.
+    let decided = decide_pinned_peer(Some(&pin), Some(Some(key(2))), &[]);
+    assert_eq!(
+        decided, None,
+        "routing to whoever took the id would leak traffic to the wrong node"
+    );
+
+    // If a real candidate exists, the rule starts over from it.
+    let reachable = vec![(42u32, Some(key(3)))];
+    assert_eq!(
+        decide_pinned_peer(Some(&pin), Some(Some(key(2))), &reachable),
+        Some(PinnedPeer::new(42, Some(key(3))))
+    );
+}
+
+/// Same id, same key: steady state, nothing changes.
+#[test]
+fn never_keeps_the_pin_when_id_and_key_both_match() {
+    let pin = PinnedPeer::new(7, Some(key(1)));
+    let reachable = vec![(7u32, Some(key(1)))];
+    assert_eq!(
+        decide_pinned_peer(Some(&pin), Some(Some(key(1))), &reachable),
+        Some(pin)
+    );
+}
+
+/// Without keys (plaintext / no-noise) the pin degrades to id matching, which
+/// is exactly what it did before — no regression for those setups.
+#[test]
+fn never_without_keys_falls_back_to_id_matching() {
+    let pin = PinnedPeer::new(7, None);
+    assert_eq!(
+        decide_pinned_peer(Some(&pin), Some(None), &[]),
+        Some(pin.clone())
+    );
+    // Down, no key: still pinned.
+    assert_eq!(decide_pinned_peer(Some(&pin), None, &[]), Some(pin));
+}
+
+/// R4: which rules consult a cost — and therefore which rules may record one.
+///
+/// The cost memo is shared across rules, so `ResolvedRule::costed_peers` is
+/// only meaningful if it records "this rule read a cost", not "a number existed
+/// for this peer". Both the per-tick `needs_quality` gate and the recording
+/// decision go through `rule_reads_cost`, and this table is what they must
+/// agree on.
+#[test]
+fn rule_reads_cost_covers_every_select_by_and_failover_when() {
+    use crate::peers::route::local_route_table::PolicyRouteConfig;
+
+    let rule = |select_by: &str, failover_when: &str| PolicyRouteConfig {
+        cidr: Some("10.0.0.0/24".parse().unwrap()),
+        domains: Vec::new(),
+        peers: vec!["10.144.0.9".parse().unwrap()],
+        select_by: select_by.to_owned(),
+        failover_when: failover_when.to_owned(),
+        if_all_unavailable: "open".to_owned(),
+        require_confirmed: false,
+        quality_degraded_cost: Some(100),
+    };
+
+    // `quality` ranks by cost whatever the failover policy is.
+    assert!(config_reads_cost(&rule("quality", "unreachable")));
+    assert!(config_reads_cost(&rule("quality", "never")));
+    // `degraded` needs a cost to compare against the ceiling, whatever selects.
+    assert!(config_reads_cost(&rule("priority", "degraded")));
+    assert!(config_reads_cost(&rule("balance", "degraded")));
+    // Everything else decides by reachability / list order alone.
+    assert!(!config_reads_cost(&rule("priority", "unreachable")));
+    assert!(!config_reads_cost(&rule("priority", "never")));
+    assert!(!config_reads_cost(&rule("balance", "unreachable")));
+    // An unparseable value cannot mean "reads a cost": validation rejects it
+    // first, and the gate must stay on the conservative side.
+    assert!(!config_reads_cost(&rule("nonsense", "unreachable")));
+    assert!(!config_reads_cost(&rule("priority", "nonsense")));
+}

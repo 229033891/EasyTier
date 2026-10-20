@@ -167,6 +167,15 @@ where
         self.peer_manager.effective_policy_routes().await
     }
 
+    /// Whether this instance can price policy-route candidates (L5).
+    ///
+    /// Lets a hot-patch / save gate validate a new `[[policy_routes]]` table
+    /// against the route table this instance *actually* has, instead of
+    /// assuming the default `route_algo = ospf`.
+    pub fn has_route_table(&self) -> bool {
+        self.peer_manager.has_route_table()
+    }
+
     pub async fn local_public_ipv6_info(
         &self,
     ) -> crate::proto::core_peer::peer::ListPublicIpv6InfoResponse {

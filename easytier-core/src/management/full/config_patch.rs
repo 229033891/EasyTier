@@ -15,7 +15,7 @@ use crate::{
     },
     instance::{CoreInstance, CoreInstanceConfig, CoreInstanceHost, CoreInstanceState},
     peers::credential_manager::CredentialManager,
-    peers::route::local_route_table::validate_config_loader_policy_routes,
+    peers::route::local_route_table::validate_config_loader_policy_routes_for_algo,
 };
 
 use super::config_server_client;
@@ -279,7 +279,12 @@ where
     // This runs before the candidate is persisted and before
     // `update_exit_nodes` is applied, so an invalid patch never reaches the
     // running instance.
-    validate_config_loader_policy_routes(candidate)?;
+    //
+    // L5: the route-table question is answered by the **running instance**, not
+    // assumed. A hot patch is applied to an instance that already exists, so its
+    // `route_algo` is known here; validating against an assumed `ospf` would let
+    // an unpriced `quality` rule through on an instance that has no route table.
+    validate_config_loader_policy_routes_for_algo(candidate, instance.has_route_table())?;
     let runtime = runtime_config_from_normalized(&normalized);
     runtime.services.public_ipv6_provider.validate()?;
     instance.validate_runtime_config_capabilities(&runtime)?;
@@ -706,6 +711,38 @@ mod tests {
             error
                 .to_string()
                 .contains("invalid VPN portal client virtual CIDR")
+        );
+    }
+
+    /// L5: the hot-patch gate must ask the **instance** whether it has a route
+    /// table instead of assuming the default.
+    ///
+    /// `route_algo` is a construction-time choice that never appears in TOML, so
+    /// the config alone cannot answer it. Before the fix this gate always said
+    /// "yes", which let a `quality` rule be saved onto an instance that has no
+    /// way to price its candidates — the rule would then run with every cost at
+    /// `i32::MAX` and behave like an unranked list.
+    #[test]
+    fn a_hot_patch_is_validated_against_the_instances_own_route_algo() {
+        let mut config = TomlConfig::default();
+        config.set_policy_routes(vec![crate::peers::route::local_route_table::PolicyRouteConfig {
+            cidr: Some("10.0.0.0/24".parse().unwrap()),
+            domains: Vec::new(),
+            peers: vec!["10.144.0.9".parse().unwrap()],
+            select_by: "quality".to_owned(),
+            failover_when: "unreachable".to_owned(),
+            if_all_unavailable: "open".to_owned(),
+            require_confirmed: false,
+            quality_degraded_cost: None,
+        }]);
+
+        // An instance with a route table may rank by cost…
+        assert!(validate_config_loader_policy_routes_for_algo(&config, true).is_ok());
+        // …one without it may not, and the error has to say so.
+        let error = validate_config_loader_policy_routes_for_algo(&config, false).unwrap_err();
+        assert!(
+            error.to_string().contains("route_algo = none"),
+            "the rejection must name the actual cause, got: {error}"
         );
     }
 }

@@ -191,6 +191,19 @@ impl PeerMap {
         self.peer_map.get(&peer_id).map(|v| v.clone())
     }
 
+    /// Remote static public key of `peer_id`, or `None` when the peer is gone
+    /// or its conns carried no key (plaintext / no-noise).
+    ///
+    /// `PeerId` is a random `u32` reported by the peer itself, so it is
+    /// **not** a stable identity: it changes when the node restarts and the
+    /// number can be reused by an unrelated node. The static key is the stable
+    /// one — `Peer::add_conn` already refuses two conns for one id whose keys
+    /// disagree — so callers that must remember "this exact node" (the
+    /// `failover_when = never` pin) key on this.
+    pub fn peer_public_key(&self, peer_id: PeerId) -> Option<Vec<u8>> {
+        self.get_peer_by_id(peer_id)?.get_peer_public_key()
+    }
+
     pub fn get_directly_connections_by_peer_id(&self, peer_id: PeerId) -> DashSet<uuid::Uuid> {
         if let Some(peer) = self.get_peer_by_id(peer_id) {
             return peer.get_directly_connections();

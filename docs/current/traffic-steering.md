@@ -3,7 +3,7 @@
 ## Status
 
 - Status: **Current**（⚠️ **待验收**：下文 §2 / §5 中标注「待验收」的段落描述的是工作区未合入修复，合入并验收前勿当可依赖现状）
-- 最近审阅：2026-10-20（策略路由六项加固：§5 的 L1 确认护栏 / L2 代价来源 / L3 `never` 真钉死 / L5 无路由表拒绝；新增 **§5.3 升级影响**；复核修补：合并后重校验 / dataplane flow key；§2·§5 待验收标注）；2026-10-18（Android GUI / OHOS 与 JNI 对齐：新 core 吃 `desired_proxy_cidrs`，旧 core 回退本地拼装）；2026-10-16（修正 `manual_routes` 语义：仅覆盖**学习集合**，append 模式仍自动装 exit `/0`、policy 显式 `/0` 两种模式均生效；Android JNI 逃生阀改由 `NetworkInstanceRunningInfo` 下发；补对端 `/0` 兜底需 `enable_exit_node`）
+- 最近审阅：2026-10-20（策略路由六项加固：§5 的 L1 确认护栏 / L2 代价来源 / L3 `never` 真钉死 / L5 无路由表拒绝；复核修补：R4 每规则代价归因 / R5 热补丁按实例自身路由算法校验；新增 **§5.0.1 热生效边界**、**§5.3 升级影响**；§2·§5 待验收标注）；2026-10-18（Android GUI / OHOS 与 JNI 对齐：新 core 吃 `desired_proxy_cidrs`，旧 core 回退本地拼装）；2026-10-16（修正 `manual_routes` 语义：仅覆盖**学习集合**，append 模式仍自动装 exit `/0`、policy 显式 `/0` 两种模式均生效；Android JNI 逃生阀改由 `NetworkInstanceRunningInfo` 下发；补对端 `/0` 兜底需 `enable_exit_node`）
 - 范围：`exit_nodes` / `enable_exit_node` / `proxy_cidrs` / `manual_routes` / `manual_routes_append` / `[[policy_routes]]` / TUN 系统路由同步 / `allow_peer_default_without_exit`
 - 规划中的改动见：[`../roadmap/traffic-steering-vNext.md`](../roadmap/traffic-steering-vNext.md)、[`../roadmap/domain-proxy.md`](../roadmap/domain-proxy.md)；默认路由 Phase 2：[`../roadmap/default-route-and-underlay-excludes.md`](../roadmap/default-route-and-underlay-excludes.md)（论证全文 [`../archive/default-route-and-underlay-excludes-2026-10.md`](../archive/default-route-and-underlay-excludes-2026-10.md)）
 - DNS：[`magic-dns.md`](./magic-dns.md)
@@ -154,7 +154,7 @@ if_all_unavailable = "open"       # open = 回退物理网关；closed = 丢包�
 - **L3**：`get_msg_dst_peer_ipv4` 在 VIP / 子网代理之后、`exit_nodes` 之前插入**次序 3.5**（§2），命中即交给该规则选出的 peer。热路径只读快照，无锁 / 无 await / 无分配。
 - **`select_by` 三种模式**（对账循环约每秒重算；**启动时先跑一轮再 sleep**，避免首秒 `Degraded` 窗口）：
   - `priority` —— 按 `peers` 列表顺序，取第一个可达的；优选恢复后**立即切回**（不用切换带）。
-  - `quality` —— **待验收**：按**到该候选的整条路径的复合代价**（RTT + loss + jitter 同族编码，各边代价累加，**中转段计入**）取最低的。代价是**复合分**，不能按单一维度解读。路径代价取自 OSPF least-cost 表的 `path_latency`（`Route::get_path_cost_with_policy`），所以**只靠中转可达的候选也能被正确比较**；直连边代价仅作为路由表尚未收敛时的兜底。**代价来源（L2）**：两种代价**单位相同但来源不同** —— `path` 是各跳**公布**边权的累加（含中转惩罚），`edge` 是**本地首跳直连实测**。两者**不做归一化**（同公式编码，属设计取舍）；来源会随代价一起发布到状态面「代价（来源）」列 / `easytier-cli route policy` 的 `costs=[id:cost(source)]`，供排障时判断阈值比较的到底是哪一个。**来源切换时滞回基线会被重置**——否则路由表短暂遗忘再记起该 peer 时，`path`/`edge` 会互相当成基线，把发布代价钉在一个没人量过的数值上。⚠️ **`route_algo = none` 时 `quality` / `degraded` 会加载失败**（没有路由表就没有代价可算，与其静默把所有候选判成不可测，不如报错，并提示改用 `priority` + `unreachable`）。注意该项**只对嵌入方有意义**：`route_algo` 不是 TOML 字段，常规配置无法表达 `none`，所以产品路径上不会触发。
+  - `quality` —— **待验收**：按**到该候选的整条路径的复合代价**（RTT + loss + jitter 同族编码，各边代价累加，**中转段计入**）取最低的。代价是**复合分**，不能按单一维度解读。路径代价取自 OSPF least-cost 表的 `path_latency`（`Route::get_path_cost_with_policy`），所以**只靠中转可达的候选也能被正确比较**；直连边代价仅作为路由表尚未收敛时的兜底。**代价来源（L2）**：两种代价**单位相同但来源不同** —— `path` 是各跳**公布**边权的累加（含中转惩罚），`edge` 是**本地首跳直连实测**。两者**不做归一化**（同公式编码，属设计取舍）；来源会随代价一起发布到状态面「代价（来源）」列 / `easytier-cli route policy` 的 `costs=[id:cost(source)]`，供排障时判断阈值比较的到底是哪一个。**只列本规则真的据以排序/判定的候选**：只有 `quality` 或 `failover_when = degraded` 的规则才会读出代价，`priority` / `balance` + `unreachable` 的规则代价列恒为空 —— 即使它的某个候选恰好也被同表另一条 `quality` 规则测过，也不会"继承"显示那个数字（否则显示内容会随规则先后顺序变化）。**来源切换时滞回基线会被重置**——否则路由表短暂遗忘再记起该 peer 时，`path`/`edge` 会互相当成基线，把发布代价钉在一个没人量过的数值上。⚠️ **`route_algo = none` 时 `quality` / `degraded` 会加载失败**（没有路由表就没有代价可算，与其静默把所有候选判成不可测，不如报错，并提示改用 `priority` + `unreachable`）。注意该项**只对嵌入方有意义**：`route_algo` 不是 TOML 字段，常规配置无法表达 `none`，所以产品路径上不会触发。
   - `balance` —— 把候选列表交给热路径，按**内层流 5-tuple 哈希取模**分摊：同一条 TCP 流恒定走同一个 peer，不同流可能走不同 peer → **出口 IP 不唯一**。⚠️ 分摊是**等概率**的，**不按链路质量或带宽能力加权** ⇒ 一条 10ms 候选和一条 500ms 候选仍各承担约一半流量。⚠️ **待验收（L1）**：默认路由规则若合并了 `exit_nodes`，分摊池用的是**合并后的生效候选**（显式 `peers` 在前、`exit_nodes` 在后），不是配置里单独写的 `peers` 列 —— 出口节点会一起参与 `flow_key % N`。状态面 / `easytier-cli route policy` 展示「生效候选」可核对。
 - **`if_all_unavailable = "closed"` 的确认按「生效候选」判定（所有 `select_by` 一视同仁）**：只要**合并后（去重）**的候选多于一个，就必须显式 `require_confirmed = true`，否则**加载失败**。这条**不分** `priority` / `quality` / `balance`：
   - `balance` 下每个出口都是**独立黑洞**（该出口掉线时，哈希到它的那条流直接丢包）；
@@ -162,12 +162,15 @@ if_all_unavailable = "open"       # open = 回退物理网关；closed = 丢包�
   - **口径（2026-10-20 拍板，取严）**：以前能存的「单 peer + 出口、未勾确认」配置，现在会**加载失败**，必须勾选后才能保存。代价是老配置要重新确认一次；换来的是“配置写什么就是什么”。
   - `exit_nodes` 热补丁（`config_patch` / `update_exit_nodes`）走同一判定，违反则**拒绝更新并告警**，原有出口列表保持不变。
 - **⚠️ 待验收：`select_by` 依赖 `failover_when` 提供多个候选**：`failover_when = "never"` 时候选集只剩 `peers` 的**第 1 个**（"从不切换"语义），`quality` / `balance` 就**没有东西可选**了。⇒ **配置校验会直接报错**（`failover_when = "never"` 只能配 `select_by = "priority"`），不再静默退化。
-- **`failover_when = "never"` = 钉死那个 peer**（L3，2026-10-20）：`never` 约束的是**流量交给谁**，不是"规则还在不在"。所以第一个解析成功的 peer 会被**锁定**（`pinned_peer`），之后
-  - **该 peer 不可达时规则照常路由到它** —— 不再翻成 `Degraded` 后落到物理网关（`open`）或丢包（`closed`），那正是用户明确排除的出口；
+- **`failover_when = "never"` = 钉死那个 peer**（L3，2026-10-20）：`never` 约束的是**流量交给谁**，不是"规则还在不在"。第一个解析成功的 peer 会被**锁定**（`pinned_peer`），之后：
+  - **该 peer 不可达时规则照常路由到它** —— 不再翻成 `Degraded` 后落到物理网关（`open`）或丢包（`closed`），那正是用户明确排除的出口。**该状态持续到配置变更**，不存在"某秒之后自动解除"；
   - L2 **继续**把该规则的 CIDR 装进路由表（否则包根本进不了 TUN，锁定无从谈起）；
-  - 锁定目标**不会**因为同一个 VIP 后来解析出另一个 `PeerId` 而静默漂移。
-  
-  状态面新增「锁定 peer」列 / `easytier-cli route policy` 的 `pinned=` 字段可核对。**边界**：peer 从 peer map 上彻底消失（`has_peer` 为假）时锁定被清除，回归普通 `Degraded` 行为，下次有可达候选再重新锁定 —— 不存在「永远钉着一个已经不存在的 id」。**该 peer 长时间不可达时，包会持续进入隧道并在此处丢弃**（属预期：这是"锁死"的代价）。
+  - 锁定**按远端静态公钥识别节点，不按 `PeerId`**。`PeerId` 是节点启动时随机取的 `u32`、由对端在握手里自报 ⇒ 重启就变、数值还会被别的节点重新用到。所以：
+    - 出口节点**重启换了新 `PeerId`、公钥不变** ⇒ 自动跟随到新 id，**不会**永久黑洞；
+    - 旧 `PeerId` 被**另一个节点**占用 ⇒ 公钥不符，**解除锁定**，绝不把流量发给陌生节点；
+    - 节点只是**掉线**（从 peer map 被回收、可能长达数分钟） ⇒ 锁定**保留**，继续等它。
+
+  状态面「锁定 peer」列 / `easytier-cli route policy` 的 `pinned=` 字段可核对。**代价（必须知道）**：在节点回来之前，该网段**一直不通** —— 包会进入隧道并在隧道层丢弃。这是"只用这个出口"的直接含义，不是缺陷。
 - **规则 = 出口（重要）**：`[[policy_routes]]` 命中后**一律置 `exit_node` 标志**，即被指向的 peer **必须开启**「允许此节点成为出口节点」（`enable_exit_node`），否则该 peer 会**丢弃**这些包（不会静默回退到其它路径）。网关侧仍**优先查自己的 `proxy_cidrs`**：命中即按子网代理转发，没命中才 NAT 出网。
 - **切换防抖（仅 `quality`）**：发布侧沿用 `MIN_DELTA=20`；`select_by = quality` 时，相对 10% / 绝对 5 cost 单位带内不动，带外还需**连续 3 个 tick** 才切。`priority` **不**走切换带（否则成本恒 0，优选永远切不回来）。
 - **L2（桌面）**：`cidr_monitor` 从**同一份快照**取 `Stable` / `Failover` 规则的 CIDR 作为本机代理路由（§3）；override 模式下非 `/0` 的 policy CIDR 被 `manual_routes` 覆盖，但显式 `/0` 规则不受影响。Android / OHOS **未接线**（§5.2）。
@@ -175,6 +178,25 @@ if_all_unavailable = "open"       # open = 回退物理网关；closed = 丢包�
 - **配置校验硬失败**：缺 `select_by` / `failover_when` / `if_all_unavailable`、`closed` + 多 peer 未 `require_confirmed`、`quality_degraded_cost` 与 `failover_when = degraded` 未成对、`domains` 落在 `et.net.` 内 —— 均**加载失败并报错**，不静默取默认。**待验收**：`failover_when = "never"` + `select_by ≠ "priority"` 也**加载失败并报错**（候选只剩第一个，两种模式都无从选择）。
 
 通配规则与 Split forwarder 同后缀**共存合法**（2026-10-16 起）：policy 规则经 ObservingDnsResolver 观测真实应答学 IP（含 Split 应答），不抢占 Catalog zone；「Split 赢」仅对静态 hosts **通配**条目成立（`static_host_skip_reason`）。
+
+### 5.0.1 哪些改动能热生效，哪些必须重启
+
+策略路由表**只在实例启动时构建一次**。下表是运维前提，务必按此预期操作：
+
+| 改动 | 是否热生效 | 说明 |
+|---|---|---|
+| `exit_nodes` 列表 | ✅ **≤1 秒** | `config_patch` → `update_exit_nodes`，对账循环每轮用**当前**的出口列表重新合并候选，不重建规则。新增出口同样受 §5 的不变量约束（候选上限、`closed` 确认），违反则整条更新被拒绝并告警，旧列表保持不变 |
+| **`[[policy_routes]]` 规则本身**（增 / 删 / 改 `cidr`、`domains`、`peers`、`select_by`、`failover_when`、`if_all_unavailable`、`quality_degraded_cost`） | ❌ **必须重启实例** | 见下 |
+
+**为什么改规则必须重启**：实例级热补丁接口 `InstanceConfigPatch` 中**没有** `policy_routes` 字段 —— 这不是实现遗漏，而是当前协议层面的约束。可行的路径只有整实例覆盖（`RunNetworkInstance` + `overwrite`），它会销毁并重建 `PeerManagerCore`。
+
+**整实例覆盖的副作用（必须知道）**：
+
+- 所有隧道断开重连、TUN 网卡重建、OSPF 重新收敛 ⇒ **流量中断数十秒**，不是"配置一存就生效"；
+- 重建瞬间所有规则回到 `Degraded`，L2 不再往里装代理路由。对账循环的首轮**不等待 1 秒 tick 立刻跑**，所以这个窗口很短，但**不是零** —— 窗口内按规则 CIDR 的 OS 流量会走物理网关（`open` 规则），而不是被拦住。
+- **DNS 学到的 `/32` 全部丢失** —— 域名规则的地址是运行时观测来的，重建后要从下一次 DNS 应答开始重新积累。期间该域名规则没有可用地址，行为等同未命中规则。
+
+**对运维的建议**：把 `[[policy_routes]]` 当**部署期配置**看待，随实例重启一起发布；运行期只调 `exit_nodes`（这也是唯一被支持的热操作）。
 
 ### 5.1 ⚠️ 泄漏面（产品必须明示）
 
@@ -210,9 +232,9 @@ if_all_unavailable = "open"       # open = 回退物理网关；closed = 丢包�
 | # | 变更 | 升级后表现 | 需要做什么 |
 |---|---|---|---|
 | **E1** | **`if_all_unavailable = "closed"` 的确认按「合并后候选数」判定**（原先只看配置里的 `peers`，出口节点在其后才并入，可绕过确认） | 若配置是「1 个 `peers` + 有 `exit_nodes` + `closed` + 未勾 `require_confirmed`」，**升级后加载失败并报错**，点名 `require_confirmed=true` | 在配置里显式勾选「我接受丢包风险」（`require_confirmed = true`），或去掉 `exit_nodes` / 改用 `if_all_unavailable = "open"` |
-| **E2** | **`failover_when = "never"` 改为真正钉死目标 peer**（原先该 peer 掉线后规则整体变 `Degraded`，`open` 时退回物理网关、`closed` 时丢包） | 目标 peer 掉线后，流量**继续交给它**并在隧道层丢弃，**不再**自动退回物理网络或其他出口；L2 路由也继续保持 | ① 若确实想「只用这个出口，它挂了就不通」——无需改动，这正是新语义；② 若原本**依赖**它掉线时自动兜底——改用 `failover_when = "unreachable"` 并配置备用 `peers`，或改用 `open` |
+| **E2** | **`failover_when = "never"` 改为真正钉死目标 peer**（原先该 peer 掉线后规则整体变 `Degraded`，`open` 时退回物理网关、`closed` 时丢包） | 目标 peer 掉线后，流量**持续**只交给它（隧道层丢弃），**不再**自动退回物理网络或其他出口；L2 路由也继续保持。**持续到配置变更**，不是几秒的窗口 | ① 若确实想「只用这个出口，它挂了就不通」——无需改动，这正是新语义；② 若原本**依赖**它掉线时自动兜底——改用 `failover_when = "unreachable"` 并配置备用 `peers`，或改用 `open` |
 
-**补充说明（E2）**：钉住的目标不会因为同一个 VIP 后来解析出另一个 `PeerId` 而漂移；只有当该 peer 从 peer map 上**彻底消失**时才解除钉住并回到普通 `Degraded`。状态面「锁定 peer」列 / `easytier-cli route policy` 的 `pinned=` 可核对。
+**补充说明（E2）**：钉住的是**节点身份（远端静态公钥）**，不是 `PeerId` —— 后者是随机的、重启会变、数值还可能被别的节点重用。因此：出口节点**重启后自动跟随**（不黑洞）；旧 `PeerId` 若被**别的节点**占用则**解除锁定**（不误发）。状态面「锁定 peer」列 / `easytier-cli route policy` 的 `pinned=` 可核对。
 
 **新增可观测字段**（不影响行为）：生效候选、锁定 peer、每个候选的代价及其**来源**（`path` = 整条路径累加 / `edge` = 本地首跳实测）。
 

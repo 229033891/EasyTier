@@ -156,6 +156,52 @@ impl RuleState {
     }
 }
 
+/// The stable identity a `failover_when = never` rule is pinned to.
+///
+/// A raw `PeerId` is **not** a stable identity in EasyTier: it is a random
+/// `u32` picked at instance start (`random_peer_id`) and reported by the peer
+/// itself in the handshake, so it changes on every restart and the number is
+/// free to be reused by an unrelated node. Pinning the number alone would
+/// therefore either (a) send traffic to whoever later claims that number, or
+/// (b) black-hole the route forever after the exit node merely restarts.
+///
+/// The peer's static public key is the identity that survives a restart
+/// (`Peer::add_conn` even refuses two conns for one `PeerId` whose keys
+/// disagree), so the pin carries both: the key says *who*, the id says *which
+/// of my current entries is that who*.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PinnedPeer {
+    /// Peer id at pin time. Used to find the entry; refreshed when the same
+    /// key reappears under a new id after a restart.
+    pub peer_id: PeerId,
+    /// The remote static public key. `None` when the conn carried no key
+    /// (plaintext / no-noise mode), in which case the pin degrades to the
+    /// id-only behaviour it had before.
+    pub public_key: Option<Vec<u8>>,
+}
+
+impl PinnedPeer {
+    pub fn new(peer_id: PeerId, public_key: Option<Vec<u8>>) -> Self {
+        Self {
+            peer_id,
+            public_key,
+        }
+    }
+
+    /// `true` when `candidate` is the same node this pin names.
+    ///
+    /// With a key on both sides the key decides; the id is only a hint. Without
+    /// a key we can only compare ids, which is exactly the weak check — but it
+    /// is no weaker than the pin had before, and it keeps `noise`-less setups
+    /// working.
+    pub fn matches(&self, peer_id: PeerId, public_key: Option<&[u8]>) -> bool {
+        match (self.public_key.as_deref(), public_key) {
+            (Some(pinned), Some(current)) => pinned == current,
+            _ => self.peer_id == peer_id,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct ResolvedRule {
     pub rule: RouteRule,
@@ -183,25 +229,26 @@ pub struct ResolvedRule {
     /// `never` takes only `peers[0]` (which `validate_route_rule` restricts to
     /// `select_by = priority`), and its meaning is "never move to another
     /// candidate **of this rule**" — not "the rule evaporates once that peer
-    /// drops". So the resolved `PeerId` is remembered here when the reconcile
-    /// loop first sees it, and `lookup` keeps handing packets to it while it is
-    /// unreachable. The packets then go down the ordinary peer-map path, which
-    /// holds / re-establishes the tunnel instead of the rule flipping to
-    /// `Degraded` and falling through to a different egress.
+    /// drops". So the identity of that peer is remembered here when the
+    /// reconcile loop first sees it, and `lookup` keeps handing packets to it
+    /// while it is unreachable. The packets then go down the ordinary peer-map
+    /// path, which holds / re-establishes the tunnel instead of the rule
+    /// flipping to `Degraded` and falling through to a different egress.
     ///
     /// `None` for every other `failover_when`: they are free to pick a
     /// different candidate and must follow reachability.
-    pub pinned_peer: Option<PeerId>,
-    /// L2: the peers **this rule** actually priced on the last reconcile pass,
-    /// in candidate order.
+    pub pinned_peer: Option<PinnedPeer>,
+    /// L2/R4: the peers **this rule** actually priced on the last reconcile
+    /// pass, in candidate order, each with its own cost and source.
     ///
-    /// The snapshot's `peer_quality` is shared by every rule, and a peer that
-    /// another rule reached first is already memoised in it — sometimes with a
-    /// `priority` placeholder of `0` that was never measured. Reporting costs
-    /// per rule therefore cannot read the map directly: it has to know which
-    /// entries this rule caused. Empty when the rule reads no cost at all
-    /// (`priority` + `unreachable` / `never`).
-    pub costed_peers: Vec<PeerId>,
+    /// The snapshot's `peer_quality` is shared by every rule and is a memo, not
+    /// a per-rule record: a peer another rule reached first is already in it.
+    /// Reading the map by peer id would show a `priority` rule a number it
+    /// never consulted (or a never-measured placeholder) depending on the order
+    /// the rules happen to be reconciled in. Recording the numbers here keeps
+    /// the report a property of the rule. Empty when the rule reads no cost at
+    /// all (`priority` + `unreachable` / `never`).
+    pub costed_peers: Vec<CostedPeer>,
 }
 
 /// Management-plane view of one rule after live `exit_nodes` merge + reconcile.
@@ -275,26 +322,18 @@ pub fn collect_effective_policy_routes(
                 state: r.state.as_str(),
                 active_peer_id: r.active_peer,
                 resolved_peer_ids: r.resolved_peers.clone(),
-                pinned_peer_id: r.pinned_peer,
-                // Only the peers **this rule** priced. Reading the whole
-                // `peer_quality` map would show another rule's candidates and,
-                // worse, a `priority` placeholder `0` that was never measured.
+                pinned_peer_id: r.pinned_peer.as_ref().map(|pin| pin.peer_id),
+                // Only the peers **this rule** priced, with the numbers it saw at
+                // that moment. Reading the shared `peer_quality` map instead
+                // would show another rule's candidates and, worse, a cost this
+                // rule never consulted (R4).
                 peer_costs: r
                     .costed_peers
                     .iter()
-                    .filter_map(|peer_id| {
-                        // A peer with no cost entry means the reconcile memo was
-                        // written by a rule that never measured it; skip rather
-                        // than report a placeholder as a cost.
-                        let (cost, source) = snap
-                            .peer_quality
-                            .get(peer_id)
-                            .zip(snap.peer_cost_source.get(peer_id))?;
-                        Some(PeerCostInfo {
-                            peer_id: *peer_id,
-                            cost: *cost,
-                            source: *source,
-                        })
+                    .map(|costed| PeerCostInfo {
+                        peer_id: costed.peer_id,
+                        cost: costed.cost,
+                        source: costed.source,
                     })
                     .collect(),
                 sugar,
@@ -332,6 +371,21 @@ impl CostSource {
             Self::Edge => "edge",
         }
     }
+}
+
+/// R4: one candidate this rule actually priced, together with the number and
+/// the family it was measured in.
+///
+/// The per-rule list has to carry the numbers itself instead of naming peers
+/// that the shared `peer_quality` memo is then read for. A `priority` rule that
+/// shares a candidate with a `quality` rule hits the memo and would otherwise
+/// inherit — and display — a cost it never consulted, decided purely by which
+/// rule the reconcile loop happened to visit first.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CostedPeer {
+    pub peer_id: PeerId,
+    pub cost: i32,
+    pub source: CostSource,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -379,10 +433,10 @@ pub struct RuleUpdate {
     pub resolved_peers: Vec<PeerId>,
     /// L3: sticky target of a `failover_when = never` rule (see
     /// [`ResolvedRule::pinned_peer`]). `None` for every other rule.
-    pub pinned_peer: Option<PeerId>,
-    /// L2: peers this rule priced on this pass (see
-    /// [`ResolvedRule::costed_peers`]).
-    pub costed_peers: Vec<PeerId>,
+    pub pinned_peer: Option<PinnedPeer>,
+    /// L2/R4: peers this rule priced on this pass, with their cost and source
+    /// (see [`ResolvedRule::costed_peers`]).
+    pub costed_peers: Vec<CostedPeer>,
 }
 
 /// Outcome of a hot-path lookup. `Miss` must fall through to the original L3
@@ -480,9 +534,19 @@ impl LocalRouteTable {
             // The pinned peer may be gone from the peer map; the ordinary send
             // path then holds or re-establishes the tunnel. That is the same
             // place a stale-but-live peer ends up, so no new failure mode.
+            //
+            // Identity is verified at **reconcile** time, not here: the hot
+            // path is lock-free and cannot read another peer's public key. The
+            // reconcile loop is the only writer of `pinned_peer`, and it never
+            // publishes a pin whose key no longer matches the entry behind that
+            // id (a reused id gets its pin dropped — see
+            // `PeerMap::peer_public_key`), so a `Hit` here always names the
+            // node the user pinned.
             RuleState::Degraded => {
-                if let Some(pinned) = r.pinned_peer {
-                    return RouteLookup::Hit { peer: pinned };
+                if let Some(pinned) = r.pinned_peer.as_ref() {
+                    return RouteLookup::Hit {
+                        peer: pinned.peer_id,
+                    };
                 }
                 match r.rule.if_all_unavailable {
                     AllUnavailable::Closed => RouteLookup::Block,
@@ -715,7 +779,7 @@ impl LocalRouteTable {
                 r.state = update.state;
                 r.challenger = update.challenger;
                 r.resolved_peers.clone_from(&update.resolved_peers);
-                r.pinned_peer = update.pinned_peer;
+                r.pinned_peer.clone_from(&update.pinned_peer);
                 r.costed_peers.clone_from(&update.costed_peers);
             }
             Arc::new(new)
@@ -1380,6 +1444,14 @@ pub fn validate_and_build_policy_rules(
 }
 
 /// Persist / run gate: no-op when there are no `[[policy_routes]]`.
+///
+/// `route_algo` is **not** a TOML field, so a config-layer gate cannot know it.
+/// This variant therefore assumes the default (`ospf`, hence a route table),
+/// which is right for the paths that *create* an instance from a config
+/// (`ValidateConfig` / `RunNetworkInstance` / the wasm config helpers).
+/// A gate that runs against an **existing** instance must call
+/// [`validate_config_loader_policy_routes_for_algo`] with
+/// `CoreInstance::has_route_table()` instead — see `config_patch`.
 pub fn validate_config_loader_policy_routes(
     config: &impl crate::config::toml::ConfigLoader,
 ) -> Result<(), anyhow::Error> {
@@ -1390,10 +1462,22 @@ pub fn validate_config_loader_policy_routes(
 ///
 /// `route_algo` is **not** a TOML field — the config layer cannot express it, so
 /// a plain [`validate_config_loader_policy_routes`] has to assume the default
-/// (`ospf`, and therefore a route table). An embedder that builds
-/// `PortablePeerManagerConfig` with `RouteAlgoType::None` must call this
-/// variant instead, so a `quality` / `degraded` rule is rejected at
-/// save / patch time rather than only when the manager is constructed (L5).
+/// (`ospf`, and therefore a route table). Two kinds of caller answer differently:
+///
+/// - **gates that run against an existing instance** (the config hot patch) know
+///   the answer and must pass `CoreInstance::has_route_table()`, otherwise an
+///   unpriced `quality` / `degraded` rule slips through onto an instance that
+///   cannot rank by cost (L5);
+/// - **gates that only have a config** (the wasm helpers and the
+///   `ValidateConfig` / `RunNetworkInstance` RPCs) have nothing else to go on,
+///   because an instance created from a `TomlConfig` always runs
+///   `RouteAlgoType::Ospf`.
+///
+/// An embedder that builds `PortablePeerManagerConfig` with
+/// `RouteAlgoType::None` is outside both: it only has the plain config gate, so
+/// it must call this variant itself. The construction path is the backstop —
+/// `build_local_route_table` refuses the same combination, so such a config
+/// fails to start rather than running unpriced.
 pub fn validate_config_loader_policy_routes_for_algo(
     config: &impl crate::config::toml::ConfigLoader,
     has_route_table: bool,
@@ -2224,7 +2308,7 @@ mod tests {
                 state: RuleState::Stable,
                 challenger: None,
                 resolved_peers: Vec::new(),
-                pinned_peer: Some(10),
+                pinned_peer: Some(PinnedPeer::new(10, None)),
                 costed_peers: Vec::new(),
             }],
         );
@@ -2241,7 +2325,7 @@ mod tests {
                 state: RuleState::Degraded,
                 challenger: None,
                 resolved_peers: Vec::new(),
-                pinned_peer: Some(10),
+                pinned_peer: Some(PinnedPeer::new(10, None)),
                 costed_peers: Vec::new(),
             }],
         );
@@ -2856,7 +2940,18 @@ mod tests {
                 challenger: None,
                 resolved_peers: Vec::new(),
                 pinned_peer: None,
-                costed_peers: vec![10, 20],
+                costed_peers: vec![
+                    CostedPeer {
+                        peer_id: 10,
+                        cost: 120,
+                        source: CostSource::Path,
+                    },
+                    CostedPeer {
+                        peer_id: 20,
+                        cost: 340,
+                        source: CostSource::Edge,
+                    },
+                ],
             }],
         );
 
@@ -2940,7 +3035,11 @@ mod tests {
                     challenger: None,
                     resolved_peers: Vec::new(),
                     pinned_peer: None,
-                    costed_peers: vec![10],
+                    costed_peers: vec![CostedPeer {
+                        peer_id: 10,
+                        cost: 120,
+                        source: CostSource::Path,
+                    }],
                 },
                 RuleUpdate {
                     idx: 1,
@@ -2949,7 +3048,11 @@ mod tests {
                     challenger: None,
                     resolved_peers: Vec::new(),
                     pinned_peer: None,
-                    costed_peers: vec![20],
+                    costed_peers: vec![CostedPeer {
+                        peer_id: 20,
+                        cost: 340,
+                        source: CostSource::Path,
+                    }],
                 },
             ],
         );
@@ -2981,21 +3084,26 @@ mod tests {
         );
     }
 
-    /// A peer listed as costed but absent from the memo (or with no recorded
-    /// source) is skipped rather than reported with a default source.
+    /// A peer a rule did not price is not reported by that rule — even when the
+    /// shared memo holds a real number for it (R4).
+    ///
+    /// This is the ordering-dependent leak: `apply_peer_updates` rewrites the
+    /// whole memo on every pass, so any peer another rule priced this tick is
+    /// present in `peer_quality`. Resolving `costed_peers` against the map at
+    /// view time cannot tell "this rule priced it" from "somebody priced it".
+    /// The reconcile loop therefore records the numbers per rule, and a rule
+    /// that reads no cost leaves its list empty.
     #[test]
-    fn a_costed_peer_without_a_measurement_is_skipped() {
-        let mut r = rule_cidr(0, "10.0.0.0/24", &["10.144.0.1", "10.144.0.2"]);
-        r.select_by = SelectBy::Quality;
+    fn a_rule_does_not_inherit_a_cost_another_rule_measured() {
+        let r = rule_cidr(0, "10.0.0.0/24", &["10.144.0.1"]);
+        assert_eq!(r.select_by, SelectBy::Priority);
         let table = LocalRouteTable::empty();
         table.store(build_snapshot(vec![r]));
-
-        // 10 was measured; 20 never got an entry; 30 has a number but no source.
-        let quality = HashMap::from([(10, 120), (30, 500)]);
-        let sources = HashMap::from([(10, CostSource::Path)]);
         table.apply_peer_updates(
-            &quality,
-            &sources,
+            // Peer 10 **was** measured this tick by a `quality` rule elsewhere,
+            // so the shared memo really holds 120 from `path`.
+            &HashMap::from([(10, 120)]),
+            &HashMap::from([(10, CostSource::Path)]),
             &[RuleUpdate {
                 idx: 0,
                 active_peer: Some(10),
@@ -3003,8 +3111,48 @@ mod tests {
                 challenger: None,
                 resolved_peers: Vec::new(),
                 pinned_peer: None,
-                costed_peers: vec![10, 20, 30],
+                // …but this `priority` rule consulted no cost.
+                costed_peers: Vec::new(),
             }],
+        );
+
+        let views = collect_effective_policy_routes(&table.load_full(), &[]);
+        assert!(
+            views[0].peer_costs.is_empty(),
+            "a rule that reads no cost must not display one, however the memo was filled"
+        );
+    }
+
+    /// The reported number is the one the rule saw, not whatever the shared memo
+    /// holds by the time the status page reads it (R4).
+    #[test]
+    fn peer_costs_report_the_number_the_rule_priced_with() {
+        let mut r = rule_cidr(0, "10.0.0.0/24", &["10.144.0.1"]);
+        r.select_by = SelectBy::Quality;
+        let table = LocalRouteTable::empty();
+        table.store(build_snapshot(vec![r]));
+        table.apply_peer_updates(
+            &HashMap::from([(10, 120)]),
+            &HashMap::from([(10, CostSource::Path)]),
+            &[RuleUpdate {
+                idx: 0,
+                active_peer: Some(10),
+                state: RuleState::Stable,
+                challenger: None,
+                resolved_peers: Vec::new(),
+                pinned_peer: None,
+                costed_peers: vec![CostedPeer {
+                    peer_id: 10,
+                    cost: 120,
+                    source: CostSource::Path,
+                }],
+            }],
+        );
+        // A later tick re-baselines the memo (source switch + new number).
+        table.apply_peer_updates(
+            &HashMap::from([(10, 900)]),
+            &HashMap::from([(10, CostSource::Edge)]),
+            &[],
         );
 
         let views = collect_effective_policy_routes(&table.load_full(), &[]);
@@ -3015,7 +3163,7 @@ mod tests {
                 cost: 120,
                 source: CostSource::Path
             }],
-            "only peers with both a number and a source count as priced"
+            "the per-rule record must survive a memo-only update"
         );
     }
 
