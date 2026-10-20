@@ -455,6 +455,8 @@ enable_magic_dns_help: |-
   启用魔法 DNS：可以直接用「主机名.et.net」访问其他节点（例如 node1.et.net），无需记虚拟 IP。
   适合经常按主机名访问节点的场景。
   注意：会修改本机的 DNS 设置（需要相应权限）；域名后缀默认 et.net，可在 easytier-core 侧用 tld-dns-zone 调整。
+  关闭时：域名策略仍会保存在本网络配置中，但需开启「启用魔法 DNS」后才会接线生效；下方三块 DNS 编辑器会保持不可编辑。
+  无 TUN 模式（no_tun）下 Magic DNS 通常不会自动接线。
 
 enable_private_mode: 启用私有模式
 enable_private_mode_help: |-
@@ -491,7 +493,6 @@ no_tun_dev_mtu_conflict_help: |-
   无 TUN 模式下 TUN 名称与 MTU 不生效。配置不会被自动改写。
 no_tun_dev_mtu_hint: 无 TUN 模式下此项无效。
 no_tun_exit_nodes_hint: 无 TUN 时出口节点默认路由通常无法装入系统路由表。
-no_tun_magic_dns_hint: 无 TUN 模式下 Magic DNS 通常不会自动接线。
 disable_encryption_algo_conflict_help: |-
   已禁用加密时，加密算法下拉无效。配置不会被自动改写。
 disable_encryption_algo_hint: 已禁用加密，算法设置无效。
@@ -594,20 +595,37 @@ policy_routes_select_by: 选路方式
 policy_routes_select_by_help: |-
   多个网关候选时如何挑选：按列表顺序 / 按链路质量 / 按流分摊。
   「按流分摊」按内层流 5-tuple 哈希在候选间**等概率**分配，不按链路质量或带宽能力加权；同一条流恒定走同一个网关。
+  若默认路由规则合并了出口节点列表，分摊用的是**合并后的生效候选**（不只是本行 peers 列）。可在状态页「生效策略路由」核对。
   「按链路质量」比较到该候选的**整条路径**的代价（中转段计入），只靠中转可达的候选也能正确参与比较。
   「从不切换」时候选只剩列表第一个，此时只能配「按列表顺序」，其它方式会被配置校验拒绝。
+policy_routes_effective: 生效策略路由
+policy_routes_effective_help: |-
+  运行时视图：默认路由规则已与出口节点列表合并。仅看配置层 peers 看不到 sugar /0 与真正的分摊池。
+policy_routes_effective_cidr: 匹配
+policy_routes_effective_candidates: 生效候选
+policy_routes_effective_config_peers: 配置 peers
+policy_routes_effective_select: 挑选
+policy_routes_effective_state: 状态
+policy_routes_effective_pinned: 锁定 peer
+policy_routes_effective_pinned_help: |-
+  「从不切换」会把规则钉死在一个 peer 上：即使该 peer 不可达，流量仍继续交给它，而不是退回其它网关或物理网络。此列显示被钉住的那个 peer。
+policy_routes_effective_costs: 代价（来源）
+policy_routes_effective_costs_help: |-
+  每个候选的复合链路代价及其来源。两种来源单位相同，但「path」是整条路径的累加权重（含中转段与中转惩罚），「edge」是仅第一跳的本地直连实测（路由表尚未认识该 peer 时的兜底）。劣化阈值比较的就是当前生效的那一个。
+policy_routes_effective_sugar: sugar /0
 policy_routes_select_by_priority: 按列表顺序
 policy_routes_select_by_quality: 按链路质量
 policy_routes_select_by_balance: 按流分摊
 policy_routes_failover_when: 何时切换
 policy_routes_failover_when_help: |-
   当前选中的网关在何种条件下换到下一个候选：不可达时 / 质量劣化时 / 从不切换。
+  「从不切换」会把该规则**钉死**在第一个候选上：即使它不可达，流量也继续交给它，不会退回其它网关或物理网络。若想要掉线后自动兜底，请改选「候选不可达时」。
 policy_routes_failover_unreachable: 候选不可达时
 policy_routes_failover_degraded: 质量劣化时
 policy_routes_failover_never: 从不切换
 policy_routes_if_all_unavailable: 全部不可用时
 policy_routes_if_all_unavailable_help: |-
-  所有网关候选都不可用时：回退本机物理默认网关，或直接丢包（不回退）。选「丢包」且有多个候选时需确认风险。
+  所有网关候选都不可用时：回退本机物理默认网关，或直接丢包（不回退）。选「丢包」时，只要规则可能拥有多于一个候选（配置的 peers + 默认路由合并进来的出口节点），就必须确认风险。
 policy_routes_all_unavailable_open: 回退物理网关
 policy_routes_all_unavailable_closed: 丢包（不回退）
 policy_routes_require_confirmed: 我已确认丢包风险
@@ -618,7 +636,6 @@ policy_routes_target_required: 网段与域名至少填一个。
 
 dns:
   title: 域名策略
-  magic_dns_off_hint: 域名策略会保存在本网络配置中；需开启「启用魔法 DNS」后才会接线生效。开启前，下方三块编辑器不可编辑。
   hosts:
     title: 静态主机
     editor_help: 最高优先级。静态条目在 MagicDNS 上为权威记录，优先于路由 hostname。可用 *.suffix（语法仅最左单标签 *，父域至少两级，如 corp.example，*.com 会被拒绝；匹配按 RFC 4592 多级，如 *.corp.example → foo.corp.example 与 a.b.corp.example）。未命中时再看分流 DNS / 上游 DNS。

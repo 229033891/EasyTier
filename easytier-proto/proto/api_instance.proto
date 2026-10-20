@@ -177,6 +177,58 @@ message DumpRouteRequest { InstanceIdentifier instance = 1; }
 
 message DumpRouteResponse { string result = 1; }
 
+// One `[[policy_routes]]` rule as the data plane sees it: config peers + live
+// `exit_nodes` merge + reconcile outcome. `rule_id = 0xFFFFFFFF` marks the
+// synthetic sugar `/0`.
+message EffectivePolicyRoute {
+  uint32 rule_id = 1;
+  optional string cidr = 2;
+  repeated string domains = 3;
+  // Configured peers only (empty for a sugar `/0` rule).
+  repeated string config_peers = 4;
+  // Live candidate IPs after merging `exit_nodes` (explicit first, exits after).
+  // For `select_by = balance` this is also the hash-spread pool.
+  repeated string effective_candidates = 5;
+  bool merge_exit_nodes = 6;
+  // "priority" | "quality" | "balance"
+  string select_by = 7;
+  // "unreachable" | "degraded" | "never"
+  string failover_when = 8;
+  // "open" | "closed"
+  string if_all_unavailable = 9;
+  // "stable" | "failover" | "degraded"
+  string state = 10;
+  optional uint32 active_peer_id = 11;
+  // Reachable PeerIds used by `balance` (empty for priority/quality).
+  repeated uint32 resolved_peer_ids = 12;
+  // True when this is the synthetic sugar `/0` (`rule_id = 0xFFFFFFFF`).
+  bool sugar = 13;
+  // L3: the peer this `failover_when = never` rule is pinned to. Unlike
+  // `active_peer_id`, it stays set (and the rule keeps routing to it) while
+  // the peer is unreachable — "never" forbids leaving this peer, not routing
+  // at all. Empty for every other `failover_when`.
+  optional uint32 pinned_peer_id = 14;
+  // L2: per-candidate composite cost and its source, for `select_by = quality`
+  // / `failover_when = degraded` rules (empty otherwise). Same unit for both
+  // sources, but "path" is an accumulated published weight and "edge" is a
+  // local first-hop measurement — a `quality_degraded_cost` threshold only
+  // means what it says when the reader knows which one it is.
+  repeated PeerCost peer_costs = 15;
+}
+
+message PeerCost {
+  uint32 peer_id = 1;
+  int32 cost = 2;
+  // "path" (OSPF accumulated, relay hops included) | "edge" (local direct link)
+  string source = 3;
+}
+
+message ListEffectivePolicyRoutesRequest { InstanceIdentifier instance = 1; }
+
+message ListEffectivePolicyRoutesResponse {
+  repeated EffectivePolicyRoute routes = 1;
+}
+
 message ListForeignNetworkRequest {
   InstanceIdentifier instance = 1;
   bool include_trusted_keys = 2;
@@ -234,6 +286,8 @@ service PeerManageRpc {
       returns (ListPublicIpv6InfoResponse);
   rpc ListRoute(ListRouteRequest) returns (ListRouteResponse);
   rpc DumpRoute(DumpRouteRequest) returns (DumpRouteResponse);
+  rpc ListEffectivePolicyRoutes(ListEffectivePolicyRoutesRequest)
+      returns (ListEffectivePolicyRoutesResponse);
   rpc ListForeignNetwork(ListForeignNetworkRequest)
       returns (ListForeignNetworkResponse);
   rpc ListGlobalForeignNetwork(ListGlobalForeignNetworkRequest)

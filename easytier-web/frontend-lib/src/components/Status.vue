@@ -667,9 +667,15 @@ const panelCollapsed = reactive({
   nodeDetails: true,
   peer: true,
   peerHistory: true,
+  policyRoutes: true,
   vpnPortal: true,
   eventLog: true,
 })
+
+/** Runtime policy-route view after exit_nodes merge; absent on old cores. */
+const effectivePolicyRoutes = computed(
+  () => props.curNetworkInst?.detail?.policy_routes_effective ?? [],
+)
 
 /** 节点详情不再分组折叠：所有条目一次铺开，长内容允许换行，避免撑出横向滚动条。 */
 
@@ -886,6 +892,78 @@ const eventLogContent = computed(() => {
                 v-tooltip.top="t('node_info_copy_group')" @click="copyGroupChips(group)" />
             </div>
           </div>
+        </Panel>
+
+        <Panel
+          v-if="effectivePolicyRoutes.length"
+          v-model:collapsed="panelCollapsed.policyRoutes"
+          toggleable
+          class="status-panel"
+          :class="{ 'status-panel--expanded': !panelCollapsed.policyRoutes }"
+          :pt="panelHeaderPt('policyRoutes')">
+          <template #header>
+            <div class="flex items-center gap-2">
+              <span>{{ t('policy_routes_effective') }}</span>
+              <i
+                class="pi pi-question-circle text-sm opacity-70"
+                v-tooltip.top="{ value: t('policy_routes_effective_help'), escape: false }"
+                :aria-label="t('policy_routes_effective_help')"
+                role="img"></i>
+              <Badge :value="String(effectivePolicyRoutes.length)" severity="secondary" />
+            </div>
+          </template>
+          <DataTable
+            :value="effectivePolicyRoutes"
+            size="small"
+            class="status-panel-body text-sm"
+            :pt="{ table: { style: 'min-width: 100%' } }">
+            <Column :header="t('policy_routes_effective_cidr')">
+              <template #body="{ data }">
+                <span v-if="data.sugar">{{ t('policy_routes_effective_sugar') }}</span>
+                <span v-else>{{ data.cidr || (data.domains || []).join(', ') || '-' }}</span>
+              </template>
+            </Column>
+            <Column :header="t('policy_routes_effective_config_peers')">
+              <template #body="{ data }">
+                {{ (data.config_peers || []).join(', ') || '-' }}
+              </template>
+            </Column>
+            <Column :header="t('policy_routes_effective_candidates')">
+              <template #body="{ data }">
+                {{ (data.effective_candidates || []).join(', ') || '-' }}
+              </template>
+            </Column>
+            <Column field="select_by" :header="t('policy_routes_effective_select')" />
+            <Column field="state" :header="t('policy_routes_effective_state')" />
+            <Column :header="t('policy_routes_effective_pinned')">
+              <template #body="{ data }">
+                <template v-if="data.pinned_peer_id != null">
+                  <Tag
+                    :value="String(data.pinned_peer_id)"
+                    severity="warn"
+                    v-tooltip.top="{ value: t('policy_routes_effective_pinned_help'), escape: false }" />
+                </template>
+                <span v-else>-</span>
+              </template>
+            </Column>
+            <Column :header="t('policy_routes_effective_costs')">
+              <template #body="{ data }">
+                <template v-if="(data.peer_costs || []).length">
+                  <div
+                    v-for="cost in data.peer_costs"
+                    :key="String(cost.peer_id)"
+                    class="whitespace-nowrap">
+                    {{ cost.peer_id }}:
+                    <Tag
+                      :value="`${cost.cost} · ${cost.source || '-'}`"
+                      :severity="cost.source === 'edge' ? 'secondary' : 'info'"
+                      v-tooltip.top="{ value: t('policy_routes_effective_costs_help'), escape: false }" />
+                  </div>
+                </template>
+                <span v-else>-</span>
+              </template>
+            </Column>
+          </DataTable>
         </Panel>
 
         <Panel v-model:collapsed="panelCollapsed.peer" toggleable

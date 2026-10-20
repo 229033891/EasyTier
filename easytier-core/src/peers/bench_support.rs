@@ -72,9 +72,11 @@ pub fn local_route_table_with_rules(count: usize) -> LocalRouteTable {
             state: RuleState::Stable,
             challenger: None,
             resolved_peers: Vec::new(),
+            pinned_peer: None,
+            costed_peers: Vec::new(),
         })
         .collect();
-    table.apply_peer_updates(&HashMap::new(), &updates);
+    table.apply_peer_updates(&HashMap::new(), &HashMap::new(), &updates);
     table
 }
 

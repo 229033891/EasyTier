@@ -90,3 +90,6 @@ easytier-gui/tauri.ci.conf.json
 
 # contrib
 go.sum
+
+# tooling scratch (tgrep index / logs)
+.tgrep/

@@ -555,6 +555,47 @@ export interface NetworkInstanceRunningInfo {
    * Absent on old cores ⇒ all rows "unknown", never "unreachable".
    */
   peer_vip_reachability?: PeerVipReachabilityInfo[]
+  /**
+   * Runtime `[[policy_routes]]` after live exit_nodes merge (L6).
+   * Absent on old cores ⇒ hide the status panel (do not show an empty table).
+   */
+  policy_routes_effective?: EffectivePolicyRouteInfo[]
+}
+
+/** Mirrors api.instance.EffectivePolicyRoute. */
+export interface EffectivePolicyRouteInfo {
+  rule_id: number | string
+  cidr?: string | null
+  domains?: string[]
+  config_peers?: string[]
+  effective_candidates?: string[]
+  merge_exit_nodes?: boolean
+  select_by?: string
+  failover_when?: string
+  if_all_unavailable?: string
+  state?: string
+  active_peer_id?: number | string | null
+  resolved_peer_ids?: Array<number | string>
+  /**
+   * L3: peer a `failover_when = never` rule is pinned to. Stays set (and the
+   * rule keeps routing to it) while that peer is unreachable.
+   */
+  pinned_peer_id?: number | string | null
+  /**
+   * L2: per-candidate composite cost + source for `quality` / `degraded` rules.
+   * Same unit for both sources, but "path" is accumulated from published edge
+   * weights and "edge" is a local first-hop measurement.
+   */
+  peer_costs?: PeerCostInfo[]
+  sugar?: boolean
+}
+
+/** Mirrors api.instance.PeerCost. */
+export interface PeerCostInfo {
+  peer_id: number | string
+  cost: number
+  /** "path" | "edge" */
+  source?: string
 }
 
 /**

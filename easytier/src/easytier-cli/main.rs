@@ -50,7 +50,8 @@ use easytier::{
                 GenerateCredentialRequest, GetAclStatsRequest, GetPrometheusStatsRequest,
                 GetStatsRequest, GetVpnPortalInfoRequest, GetWhitelistRequest,
                 GetWhitelistResponse, InstanceIdentifier, ListConnectorRequest,
-                ListCredentialsRequest, ListCredentialsResponse, ListForeignNetworkRequest,
+                ListCredentialsRequest, ListCredentialsResponse, ListEffectivePolicyRoutesRequest,
+                ListEffectivePolicyRoutesResponse, ListForeignNetworkRequest,
                 ListGlobalForeignNetworkRequest, ListMappedListenerRequest, ListPeerRequest,
                 ListPeerResponse, ListPortForwardRequest, ListPortForwardResponse,
                 ListPublicIpv6InfoRequest, ListPublicIpv6InfoResponse, ListRouteRequest,
@@ -219,6 +220,8 @@ enum RouteSubCommand {
     List,
     /// Dump routes in CIDR format
     Dump,
+    /// Show effective `[[policy_routes]]` candidates after exit_nodes merge
+    Policy,
 }
 
 #[derive(Args, Debug)]
@@ -1183,6 +1186,21 @@ impl<'a> CommandHandler<'a> {
             .result)
     }
 
+    async fn fetch_effective_policy_routes(
+        &self,
+    ) -> Result<ListEffectivePolicyRoutesResponse, Error> {
+        Ok(self
+            .get_peer_manager_client()
+            .await?
+            .list_effective_policy_routes(
+                BaseController::default(),
+                ListEffectivePolicyRoutesRequest {
+                    instance: Some(self.instance_selector.clone()),
+                },
+            )
+            .await?)
+    }
+
     async fn fetch_foreign_networks(
         &self,
         include_trusted_keys: bool,
@@ -1832,6 +1850,83 @@ impl<'a> CommandHandler<'a> {
         }
         self.print_results(&results, |result| {
             println!("response: {}", result);
+            Ok(())
+        })
+    }
+
+    async fn handle_route_policy(&self) -> Result<(), Error> {
+        let results = self
+            .collect_instance_results(|handler| Box::pin(handler.fetch_effective_policy_routes()))
+            .await?;
+        if self.verbose || *self.output_format == OutputFormat::Json {
+            return self.print_json_results(results);
+        }
+        self.print_results(&results, |response| {
+            if response.routes.is_empty() {
+                println!("(no policy routes)");
+                return Ok(());
+            }
+            for route in &response.routes {
+                let id = if route.sugar {
+                    "sugar".to_string()
+                } else {
+                    route.rule_id.to_string()
+                };
+                let cidr = route.cidr.as_deref().unwrap_or("-");
+                let domains = if route.domains.is_empty() {
+                    "-".to_string()
+                } else {
+                    route.domains.join(",")
+                };
+                let config_peers = if route.config_peers.is_empty() {
+                    "-".to_string()
+                } else {
+                    route.config_peers.join(",")
+                };
+                let effective = if route.effective_candidates.is_empty() {
+                    "-".to_string()
+                } else {
+                    route.effective_candidates.join(",")
+                };
+                let active = route
+                    .active_peer_id
+                    .map(|p| p.to_string())
+                    .unwrap_or_else(|| "-".to_string());
+                let resolved = if route.resolved_peer_ids.is_empty() {
+                    "-".to_string()
+                } else {
+                    route
+                        .resolved_peer_ids
+                        .iter()
+                        .map(ToString::to_string)
+                        .collect::<Vec<_>>()
+                        .join(",")
+                };
+                // L3: `never` keeps routing to this peer even while it is
+                // unreachable, so show it separately from `active_peer`.
+                let pinned = route
+                    .pinned_peer_id
+                    .map(|p| p.to_string())
+                    .unwrap_or_else(|| "-".to_string());
+                // L2: same unit, different measurements — print which family
+                // each number came from.
+                let costs = if route.peer_costs.is_empty() {
+                    "-".to_string()
+                } else {
+                    route
+                        .peer_costs
+                        .iter()
+                        .map(|cost| format!("{}:{}({})", cost.peer_id, cost.cost, cost.source))
+                        .collect::<Vec<_>>()
+                        .join(",")
+                };
+                println!(
+                    "id={id} cidr={cidr} domains={domains} select_by={} failover={} state={} \
+                     merge_exit={} config_peers=[{config_peers}] effective=[{effective}] \
+                     active_peer={active} resolved=[{resolved}] pinned={pinned} costs=[{costs}]",
+                    route.select_by, route.failover_when, route.state, route.merge_exit_nodes,
+                );
+            }
             Ok(())
         })
     }
@@ -3203,6 +3298,7 @@ async fn main() -> Result<(), Error> {
         SubCommand::Route(route_args) => match route_args.sub_command {
             Some(RouteSubCommand::List) | None => handler.handle_route_list().await?,
             Some(RouteSubCommand::Dump) => handler.handle_route_dump().await?,
+            Some(RouteSubCommand::Policy) => handler.handle_route_policy().await?,
         },
         SubCommand::Stun => {
             timeout(Duration::from_secs(25), async move {

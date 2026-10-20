@@ -457,6 +457,8 @@ enable_magic_dns_help: |-
   Enable magic DNS: reach other nodes as <hostname>.et.net (e.g. node1.et.net) without remembering virtual IPs.
   Useful if you often address nodes by hostname.
   Note: it modifies this host's DNS settings (needs the corresponding privileges). The default zone is et.net; change it with tld-dns-zone on the easytier-core side.
+  When off: domain policies are still saved in this network config, but they only take effect once Magic DNS is enabled, and the three DNS editors below stay read-only until then.
+  In no-TUN mode, Magic DNS usually does not auto-wire into the OS resolver.
 
 enable_private_mode: Enable Private Mode
 enable_private_mode_help: |-
@@ -495,7 +497,6 @@ no_tun_dev_mtu_conflict_help: |-
   In no-TUN mode, TUN name and MTU have no effect. Values are not rewritten.
 no_tun_dev_mtu_hint: Ignored in no-TUN mode.
 no_tun_exit_nodes_hint: Without a TUN device, exit-node default routes usually cannot be installed into the system routing table.
-no_tun_magic_dns_hint: In no-TUN mode, Magic DNS usually does not auto-wire into the OS resolver.
 disable_encryption_algo_conflict_help: |-
   Encryption algorithm has no effect while encryption is disabled. Values are not rewritten.
 disable_encryption_algo_hint: Encryption is disabled; algorithm selection is ignored.
@@ -598,20 +599,37 @@ policy_routes_select_by: Selection
 policy_routes_select_by_help: |-
   How to pick among multiple gateway peers: list order / best quality / spread by flow.
   "Spread by flow" distributes flows across the candidates by inner-flow 5-tuple hash, **evenly** — not weighted by link quality or capacity. One flow always keeps one gateway.
+  When a default-route rule merges the exit-node list, that merged candidate pool is what "Spread by flow" hashes over — not only the peers column on this row. Check Status → Effective policy routes to see the live list.
   "Best link quality" compares the cost of the **whole path** to a candidate (relay hops included), so a candidate reachable only through a relay is ranked correctly.
   With "never" fail over only the first candidate is kept, so it can only be paired with "In list order"; the other modes are rejected by config validation.
+policy_routes_effective: Effective policy routes
+policy_routes_effective_help: |-
+  Runtime view after merging exit nodes into default-route rules. Config peers alone cannot show sugar /0 rules or the live candidate pool.
+policy_routes_effective_cidr: Match
+policy_routes_effective_candidates: Effective candidates
+policy_routes_effective_config_peers: Config peers
+policy_routes_effective_select: Selection
+policy_routes_effective_state: State
+policy_routes_effective_pinned: Pinned peer
+policy_routes_effective_pinned_help: |-
+  "Never" fail over pins the rule to one peer: traffic keeps going to it even while it is unreachable, instead of falling back to another gateway or to the physical network. This column shows that peer.
+policy_routes_effective_costs: Cost (source)
+policy_routes_effective_costs_help: |-
+  Composite link cost per candidate, with where the number came from. Both sources use the same unit, but "path" is the accumulated weight of the whole path (relay hops and relay penalties included) and "edge" is a local measurement of the direct link only — shown while the route table does not know the peer yet. The degraded threshold is compared against whichever one applies.
+policy_routes_effective_sugar: sugar /0
 policy_routes_select_by_priority: In list order
 policy_routes_select_by_quality: Best link quality
 policy_routes_select_by_balance: Spread by flow
 policy_routes_failover_when: Fail over
 policy_routes_failover_when_help: |-
   When to move to the next candidate: unreachable / quality degraded / never.
+  "Never" pins the rule to the first candidate: traffic keeps going to it even while it is unreachable, instead of falling back to another gateway or to the physical network. Use "When a candidate is unreachable" if you want an automatic fallback instead.
 policy_routes_failover_unreachable: When a candidate is unreachable
 policy_routes_failover_degraded: When quality degrades
 policy_routes_failover_never: Never
 policy_routes_if_all_unavailable: When all candidates are down
 policy_routes_if_all_unavailable_help: |-
-  If every gateway candidate is down: fall back to the physical default gateway, or drop (no fallback). Drop with multiple peers requires confirming the risk.
+  If every gateway candidate is down: fall back to the physical default gateway, or drop (no fallback). Drop requires confirming the risk as soon as the rule can end up with more than one candidate — its peers plus any exit nodes merged into a default route.
 policy_routes_all_unavailable_open: Fall back to the physical gateway
 policy_routes_all_unavailable_closed: Drop (no fallback)
 policy_routes_require_confirmed: I accept the packet-drop risk
@@ -622,7 +640,6 @@ policy_routes_target_required: Set at least one of CIDR / domains.
 
 dns:
   title: Domain Policy
-  magic_dns_off_hint: Domain policy is stored in this network config. Enable Magic DNS for MagicDNS wiring to take effect. The three editors below stay disabled until then.
   hosts:
     title: Static Hosts
     editor_help: "Highest priority. Static entries are authoritative on MagicDNS and override route hostnames. Use *.suffix (syntax: leftmost single-label * only, parent needs at least two labels so *.com is rejected; matching is RFC 4592 multi-label, e.g. *.corp.example → foo.corp.example and a.b.corp.example). Unmatched names fall through to split DNS / upstream DNS."

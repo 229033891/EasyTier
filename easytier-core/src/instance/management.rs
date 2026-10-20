@@ -160,6 +160,13 @@ where
         self.peer_manager.dump_route().await
     }
 
+    /// Runtime view of `[[policy_routes]]` after live `exit_nodes` merge (L6).
+    pub async fn effective_policy_routes(
+        &self,
+    ) -> Vec<crate::peers::route::local_route_table::EffectivePolicyRouteInfo> {
+        self.peer_manager.effective_policy_routes().await
+    }
+
     pub async fn local_public_ipv6_info(
         &self,
     ) -> crate::proto::core_peer::peer::ListPublicIpv6InfoResponse {

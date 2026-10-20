@@ -3,9 +3,10 @@ use std::sync::Arc;
 use easytier_proto::{
     api::instance::{
         Connector, ConnectorManageRpc, ConnectorStatus, DumpRouteRequest, DumpRouteResponse,
-        ForeignNetworkEntryPb, GetForeignNetworkSummaryRequest, GetForeignNetworkSummaryResponse,
-        ListConnectorRequest, ListConnectorResponse, ListForeignNetworkRequest,
-        ListForeignNetworkResponse, ListGlobalForeignNetworkRequest,
+        EffectivePolicyRoute, ForeignNetworkEntryPb, GetForeignNetworkSummaryRequest,
+        GetForeignNetworkSummaryResponse, ListConnectorRequest, ListConnectorResponse,
+        ListEffectivePolicyRoutesRequest, ListEffectivePolicyRoutesResponse,
+        ListForeignNetworkRequest, ListForeignNetworkResponse, ListGlobalForeignNetworkRequest,
         ListGlobalForeignNetworkResponse, ListPeerRequest, ListPeerResponse,
         ListPublicIpv6InfoRequest, ListPublicIpv6InfoResponse, ListRouteRequest, ListRouteResponse,
         NodeInfo, PeerInfo, PeerManageRpc, ShowNodeInfoRequest, ShowNodeInfoResponse,
@@ -24,7 +25,10 @@ use crate::{
         CoreInstance, CoreInstanceHost,
         manager::{InstanceFactory, InstanceManager},
     },
-    peers::{context::TrustedKeySource, foreign_network::ForeignNetworkEntryInfo},
+    peers::{
+        context::TrustedKeySource, foreign_network::ForeignNetworkEntryInfo,
+        route::local_route_table::EffectivePolicyRouteInfo,
+    },
 };
 
 use super::resolve_instance;
@@ -517,6 +521,22 @@ where
         })
     }
 
+    async fn list_effective_policy_routes(
+        &self,
+        _: BaseController,
+        request: ListEffectivePolicyRoutesRequest,
+    ) -> rpc_types::error::Result<ListEffectivePolicyRoutesResponse> {
+        Ok(ListEffectivePolicyRoutesResponse {
+            routes: self
+                .instance(request.instance.as_ref())?
+                .effective_policy_routes()
+                .await
+                .into_iter()
+                .map(effective_policy_route_to_proto)
+                .collect(),
+        })
+    }
+
     async fn list_foreign_network(
         &self,
         _: BaseController,
@@ -637,6 +657,36 @@ where
         Ok(ListConnectorResponse {
             connectors: connector_snapshots_to_api(instance.list_connectors()),
         })
+    }
+}
+
+pub(crate) fn effective_policy_route_to_proto(
+    info: EffectivePolicyRouteInfo,
+) -> EffectivePolicyRoute {
+    EffectivePolicyRoute {
+        rule_id: info.rule_id,
+        cidr: info.cidr,
+        domains: info.domains,
+        config_peers: info.config_peers,
+        effective_candidates: info.effective_candidates,
+        merge_exit_nodes: info.merge_exit_nodes,
+        select_by: info.select_by.to_string(),
+        failover_when: info.failover_when.to_string(),
+        if_all_unavailable: info.if_all_unavailable.to_string(),
+        state: info.state.to_string(),
+        active_peer_id: info.active_peer_id,
+        resolved_peer_ids: info.resolved_peer_ids,
+        pinned_peer_id: info.pinned_peer_id,
+        peer_costs: info
+            .peer_costs
+            .into_iter()
+            .map(|cost| easytier_proto::api::instance::PeerCost {
+                peer_id: cost.peer_id,
+                cost: cost.cost,
+                source: cost.source.as_str().to_string(),
+            })
+            .collect(),
+        sugar: info.sugar,
     }
 }
 

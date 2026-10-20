@@ -1029,20 +1029,19 @@ let raw = peers.peer_edge_cost(peer_id).await.unwrap_or(i32::MAX);
 
 | # | 遗留项 | 触发条件 | 后果 | 为何本轮不修 |
 |---|---|---|---|---|
-| **L1** | **balance 规则的分摊范围被 `exit_nodes` 静默扩大** | `select_by = balance` + 默认路由规则 + `exit_nodes` | `resolved_peers`（balance 的分摊列表）用的是**同一条 merged 列表** ⇒ 出口节点会一起参与 `flow_key % N` 均摊。行为符合字段注释，但**配置里看不出来** | 属**产品语义**：要么文档写明，要么让 balance 排除 exit_nodes。需产品拍板 |
-| **L2** | **量纲混用** | `select_by = quality` | `peer_path_cost`（**OSPF 公布边权的累加**）与 `peer_edge_cost`（**本地实测 quality 分**）被放进**同一个** `scored` 向量用 `min_by_key` 比较，只有量纲近似一致、**没有归一化** | 两族数值都是"代价单位"（`ospf_edge_cost_from_score` 用的就是同一公式），但来源不同 ⇒ 需要确认这是否**有意为之** |
-| **L3** | **`never` 的语义空洞** | `failover_when = never` + 唯一候选不可达 | `never` 的语义是"钉死第一个候选"，但该候选不可达时 `reachable` 为空 ⇒ 规则整体 `Degraded`（`closed` 时直接黑洞），而不是"钉住已失效的 incumbent" | 属 `never` 的**语义定义**问题，要先定"钉死一个死掉的 peer 该怎么办" |
-| **L4** | **balance 的 `lookup` 完全忽略 `active_peer`** | `select_by = balance` | `lookup` 只读 `r.resolved_peers`；`ResolvedRule.active_peer` 的注释写着 "informational only"。当前对账**总是成对写入**两者，所以不可达；但这是**脆弱耦合** —— 将来任何让二者分叉的改动都会让 balance 规则静默变成 `Miss`/`Block` | 当前不可达 ⇒ 加注释与断言即可，不必改逻辑 |
-| **L5** | **`route_algo = none` 时纯中转可达的出口拿不到分** | `route_algo = none` + 出口只能经中转到达 | `DisabledRoute` 没有实现 `Route::get_path_cost_with_policy` ⇒ `peer_path_cost` 返回 `None` ⇒ 回退到直连边代价（也没有）⇒ `i32::MAX` ⇒ `failover_when = degraded` 的规则会**丢弃该出口** | `route_algo = none` 本来就没有路由表 ⇒ 严格说"不可评估" ⇒ 保守丢弃是安全方向；但要不要让 `none` 模式直接禁用 `quality` 策略，需要产品确认 |
-| **L6** | **管理面看不到合并后的有效候选** | 任何 | `policy_route_to_proto` 导出的是**配置层**的 `PolicyRouteConfig.peers`；sugar 规则根本不在配置层 ⇒ **合并后的实际候选列表在 GUI / CLI 上完全不可见**（用户看到"我只配了 A，出口却是 B"） | 需要在状态面/管理面补一个"生效候选"的视图，属**可观测性**工作，不是选路 bug |
+| **L1** | **balance 规则的分摊范围被 `exit_nodes` 静默扩大** | `select_by = balance` + 默认路由规则 + `exit_nodes` | `resolved_peers`（balance 的分摊列表）用的是**同一条 merged 列表** ⇒ 出口节点会一起参与 `flow_key % N` 均摊 | **① 分摊语义保留（不改）**，已文档化：`traffic-steering.md` + GUI 帮助 + 状态页生效候选。**② 确认护栏已补（2026-10-20 拍板：取严，A 方案）**：合并发生在 `validate_route_rule` **之后**，原先的 `closed` 确认只看配置 `peers` ⇒ 单 peer `closed` 默认路由 + 出口节点未经 `require_confirmed` 即加载。现按**合并后去重候选数**校验（`build_rules_from_config`），**`priority` / `quality` / `balance` 一视同仁**（主备链的备用也是“配置没说过的第二出口”），热补丁经 `update_exit_nodes` 重放同一判定。**代价**：老配置「单 peer + 出口、未勾确认」现在加载失败，需重新确认。**待验收** |
+| **L2** | **量纲混用** | `select_by = quality` | `peer_path_cost`（**OSPF 公布边权的累加**）与 `peer_edge_cost`（**本地实测 quality 分**）被放进**同一个** `scored` 向量用 `min_by_key` 比较 | ✅ **已收紧（2026-10-20，方案 B）**：两族同单位（`ospf_edge_cost_from_score`）**非量纲问题**，故**不改选路结果**；真正风险是**同一 peer 在两 tick 间从 path 切到 edge** 时，旧值被当作滞回基线 ⇒ 发布代价被钉在一个没人量过的数上。现在 `CostSource{Path,Edge}` 随 `peer_quality` 一起落快照，**来源不同则不复用基线**（重置滞回），并 `debug!` 记录切换。管理面新增 `peer_costs{peer_id,cost,source}`（proto #15、CLI `costs=[id:cost(source)]`、状态页「代价（来源）」列）。**待验收**；归一化（方案 C）仍不做，除非出现“更快却选错”的实证。**⚠️ 复核发现，未修**：`costed_peers` 的语义是"本 tick **已知**代价的候选"，不是"本规则**自己测过**的候选" —— `reconcile_local_routes_once` 的共享 `quality` 备忘里若已有该 peer（被**先跑的另一条规则**测过），本规则会走 `Some(cost)` 分支并把它记进 `costed_peers` ⇒ 一条 `priority` 规则也可能显示自己并不用于排序的代价，且**显示内容依赖规则在表里的先后顺序**（同一条 `priority` 规则排在 `quality` 规则前/后，显示结果不同）。`ResolvedRule::costed_peers` 的字段注释写的是"this rule actually priced"，与实现不一致 |
+| **L3** | **`never` 的语义空洞** | `failover_when = never` + 唯一候选不可达 | `never` 的语义是"钉死第一个候选"，但该候选不可达时 `reachable` 为空 ⇒ 规则整体 `Degraded`（`closed` 时直接黑洞），而不是"钉住已失效的 incumbent" | ✅ **已修（2026-10-20，方案②「真钉死」）**：`ResolvedRule.pinned_peer` 记录首次解析成功的 peer，`lookup` 在 `Degraded` 时优先返回它 ⇒ 规则继续路由到该 peer，不再落到物理网关 / 丢包；`l2_contributing_cidrs` 对带 pin 的规则**即使 Degraded 也继续贡献**（否则包进不了 TUN）；peer 从 peer map 彻底消失时清 pin 并回归普通 Degraded。管理面新增 `pinned_peer_id`（proto #14、`easytier-cli route policy` 的 `pinned=`、状态页「锁定 peer」列）。**待验收**；代价：目标 peer 长时间不可达时包会持续进隧道后在隧道层丢弃。**⚠️ 钉住时长受限（复核发现，未修）**：`PeerMap::clean_peer_without_conn()` 每 **3 秒**把"无存活连接"的 peer 从 map 里 `close_peer` 掉（`peer_map.remove`），而 `has_peer` 就是 `contains_key` ⇒ 目标 peer 断线约 3 秒后条目被回收 ⇒ reconcile 的 `has_peer` 判定为假 ⇒ **pin 被清除**、规则退回普通 `Degraded`（`open` 回物理网关 / `closed` 丢包）。⇒ 上面写的"不再落到物理网关"目前**只在断线后的约 3 秒窗口内成立**，不是持续语义 |
+| **L4** | **balance 的 `lookup` 完全忽略 `active_peer`** | `select_by = balance` | `lookup` 只读 `r.resolved_peers`；`ResolvedRule.active_peer` 的注释写着 "informational only"。当前对账**总是成对写入**两者，所以不可达；但这是**脆弱耦合** —— 将来任何让二者分叉的改动都会让 balance 规则静默变成 `Miss`/`Block` | ✅ **已加固**：字段注释 + `lookup` 内 `debug_assert`（`active_peer` 须为 `resolved_peers[0]`）。热路径逻辑未改 |
+| **L5** | **`route_algo = none` 时纯中转可达的出口拿不到分** | `route_algo = none` + 出口只能经中转到达 | `DisabledRoute` 没有实现 `Route::get_path_cost_with_policy` ⇒ `peer_path_cost` 返回 `None` ⇒ 回退到直连边代价（也没有）⇒ `i32::MAX` ⇒ `failover_when = degraded` 的规则会**丢弃该出口** | ✅ **已修（2026-10-20，取「配置报错」）**：无路由表时 `quality` / `degraded` 无代价可算 ⇒ `validate_route_algo_can_price_candidates` 在**构造期**直接拒绝（`build_local_route_table`，先于建规则，报错点名 `route_algo = none` 与替代写法）。`priority` / `unreachable` 不读代价，仍合法。无法解析的 `select_by` 留给 `PolicyRouteConfig::validate` 报**更具体**的错，不被此检查掩盖。**⚠️ 触达面有限（如实记录）**：`route_algo` **不是 TOML 字段**，配置层无法表达，产品路径几乎总是 `Ospf` ⇒ 本项实际只约束**嵌入方**（FFI / WASM / OHOS）自己传 `None`。为消除「校验过、构造炸」的不一致，另提供 `validate_config_loader_policy_routes_for_algo(config, has_route_table)`：**传 `None` 的嵌入方必须在保存 / `config_patch` 时也用它**，否则 GUI 仍能存进去、到实例构造才失败。**⚠️ 复核发现，未修**：`validate_config_loader_policy_routes_for_algo` **目前没有任何内部调用点**（全仓只有它自己的定义与 `validate_config_loader_policy_routes` 的委托）⇒ 那句"嵌入方必须用它"目前**只能靠嵌入方自己改代码**才能落实，管理面 / `config_patch` 路径仍走 `validate_config_loader_policy_routes`（= 假设有路由表）。另注：策略表 `local_route_table` **只在构造期建一次**（全仓唯一赋值点 `peer_manager.rs` 的 `PeerManagerCore::new`），`config_patch` 只换 `exit_nodes` 活列表、**不重建规则** ⇒ 热补丁改 `[[policy_routes]]` 本身（增/删/改规则）校验通过但数据面毫无变化 |
+| **L6** | **管理面看不到合并后的有效候选** | 任何 | `policy_route_to_proto` 导出的是**配置层**的 `PolicyRouteConfig.peers`；sugar 规则根本不在配置层 ⇒ **合并后的实际候选列表在 GUI / CLI 上完全不可见**（用户看到"我只配了 A，出口却是 B"） | ⚠️ **待验收：已落地** —— `NetworkInstanceRunningInfo.policy_routes_effective` + `PeerManageRpc.ListEffectivePolicyRoutes` + `easytier-cli route policy` + 状态页面板 |
 
-**排期建议**（2026-10-20 讨论拍板）：
+**排期建议**（2026-10-20 讨论拍板；同日已处理 L1 确认护栏 / L2 来源标记 / L3 真钉死 / L4 加固 / L5 配置拒绝 / L6 生效视图）：
 
 | 档次 | 项 | 理由 |
 |---|---|---|
-| **近期** | **L1、L6** | L1 是静默行为扩大（配置上看不见却改了 balance 分摊面）；L6 是可观测性缺口——补上"生效候选"视图后，L1 的产品拍板（文档写明 vs 排除 exit_nodes）也更好做 |
-| **中期** | **L3、L5、L4** | L3 / L5 都要先定产品语义再动代码；L4 当前不可达，加注释与断言即可，不必改逻辑 |
-| **长期** | **L2** | 两族代价都走同一 `ospf_edge_cost_from_score` 公式，量纲近似同源；短期风险被高估。真要归一化属于算法设计，不是热修 |
+| **已落地（待验收）** | **L1、L2、L3、L4、L5、L6** | 六项均已按当日拍板落地，`easytier-core` lib 1087 passed / 0 failed；前端 241 passed；CLI 编译通过。逐条验证以表格「为何本轮不修」列为准 |
+| **仍留待** | L2 归一化（方案 C） | 只有在现网出现“明明更快却选了别家”的实证时才立项；否则纯属算法设计，不是热修 |
 
 **已在本轮一并修掉的**（审查里发现、且改动足够小）：
 
@@ -1052,6 +1051,7 @@ let raw = peers.peer_edge_cost(peer_id).await.unwrap_or(i32::MAX);
 | `is_balance_ambiguous` 用**观测态**（`resolved_peers`）回答**配置态**问题（这条规则是不是多候选）⇒ 首轮对账前会漏判 | 空列表也**视为可能歧义**（`len() != 1`）⇒ 保守方向 |
 | `never` + `select_by ≠ priority` 的不变量只在 `PolicyRouteConfig::validate`，`ValidatedPolicyRoute` 字段全 `pub` ⇒ 可被绕过 | 同一不变量也放进 `validate_route_rule`（**防御纵深**） |
 | `update_exit_nodes` 运行期**无校验** ⇒ 可绕过 `MAX_PEERS_PER_RULE` 与 `closed`+`require_confirmed` 确认（多出口黑洞保护） | `update_exit_nodes` 里按**当前规则**校验，违反则**拒绝更新 + warn**（`config_patch` 路径本已校验 ⇒ 这是第二道防线） |
+| **L1 的确认缺口**：`closed` 确认只在合并**之前**按配置 `peers` 检查 ⇒ 单 peer `closed` 默认路由 + 出口节点绕过 `require_confirmed`（balance 下每个出口都是独立黑洞） | `build_rules_from_config` 改为按**合并后去重候选数**校验，**所有 `select_by` 同一口径**（A 方案：主备链的备用也算第二出口）；`update_exit_nodes` 热补丁走同一判定；回归用例 `a_balance_closed_rule_cannot_gain_exit_nodes_without_confirmation` + `a_priority_closed_rule_also_needs_confirmation_once_it_takes_exit_nodes` + `a_closed_rule_whose_exit_node_is_already_a_configured_peer_stays_single`（防过度拒绝） |
 
 ---
 
@@ -1138,7 +1138,7 @@ let raw = peers.peer_edge_cost(peer_id).await.unwrap_or(i32::MAX);
 | 13 | **B7** | `exit_nodes` 的候选**并入**显式 `/0` 规则（显式在前），不再作为会被索引丢弃的第二条规则 | `exit_nodes_merge_into_an_explicit_default_route_rule` 等 4 条 |
 | — | **B14** | **不做** —— 建议的修法会打破守卫测试 `graph_algo.rs:377` 与 `live-next-hop.md:443/484` 的验收契约；§1e.2 已用实测再次确认网内选路正确 | — |
 
-**验证**：`cargo test -p easytier-core --lib` → **1072 passed / 0 failed / 1 ignored**；`cargo check -p easytier-core --all-targets` 通过；`cargo fmt --all -- --check` 通过。
+**验证**：`cargo test -p easytier-core --lib` → **1087 passed / 0 failed / 1 ignored**；`cargo check -p easytier-core --all-targets` 通过；`cargo fmt --all -- --check` 通过。
 
 #### ⚠️ 行为变更（升级即生效，仓库无 CHANGELOG ⇒ 记在这里）
 
@@ -1155,6 +1155,8 @@ let raw = peers.peer_edge_cost(peer_id).await.unwrap_or(i32::MAX);
 | 7 | `exit_nodes` 与显式 `/0` 规则合并后候选数 > 16 ⇒ **加载失败** | 原本能加载的配置现在报错 | 减少候选或拆分规则 |
 | 8 | **显式 `/0` 规则 + `failover_when = "never"` ⇒ 现在总是加载失败**（即使当前没有 `exit_nodes`） | 原本合法的配置现在报错 | 改成 `failover_when = "unreachable"`。**原因**：出口节点可能稍后被热补丁加上，那时合并会静默失效（`never` 只保留第一个候选） |
 | 9 | 运行期 `exit_nodes` 变更若违反候选数上限 / `closed`+多 peer 未确认 ⇒ **被拒绝**（记 warn，不更新） | 原本静默生效的非法变更现在不生效 | 这是第二道防线（`config_patch` 路径本来就拦）；库嵌入方直接调 `update_exit_nodes` 时会收到 warn 日志 |
+| 10 | **`if_all_unavailable = "closed"` 的确认改按「合并后（去重）候选数」判定，且**不**分 `select_by`** | 「1 个 `peers` + 有 `exit_nodes` + `closed` + 未勾 `require_confirmed`」的旧配置**加载失败**（`priority` / `quality` 的主备链备用也算"第二出口"） | 勾上 `require_confirmed = true`（"我接受丢包风险"），或去掉 `exit_nodes`，或改 `if_all_unavailable = "open"` |
+| 11 | **`failover_when = "never"` 改为「真钉死」**：目标 peer 不可达时流量**继续交给它**（在隧道层丢弃），**不再**回退物理网关（`open`）/本地丢包（`closed`）；L2 路由也继续保留 | 原本依赖"目标 peer 挂了自动兜底"的用户会**持续断网**（该网段不再回物理网关） | 想要自动兜底就改用 `failover_when = "unreachable"` 并配备用 `peers`；想要"只用这个出口"则无需改动。**⚠️ 见 §1g L3 的钉住时长限制** |
 
 **升级建议**：先在测试环境跑一遍 `easytier-cli` 的配置校验（加载即校验），把 2 / 5 / 6 / 7 这几类"启动失败"提前暴露出来；1 / 3 / 4 属于运行期口径变化，需要观察一轮 SPF 收敛。
 
@@ -1208,7 +1210,7 @@ let raw = peers.peer_edge_cost(peer_id).await.unwrap_or(i32::MAX);
 
 **本轮（第三轮：实施修复 + 实测复核）基点**：`git HEAD = 51ef4424`；工作区含 5 个文档（`docs/README.md`、本文件、`docs/current/latency-measurement-and-display-audit.md`、`docs/current/traffic-steering.md`、`docs/roadmap/unified-routing-design.md`）与 **16 个源文件**的改动（13 个 `.rs`：`peers/route/peer_ospf_route.rs`、`peers/route/peer_ospf_route_tests.rs`、`peers/route/local_route_table.rs`、`peers/route/mod.rs`、`peers/conn/peer_map.rs`、`peers/conn/conn_select.rs`、`peers/conn/peer_conn_ping.rs`、`peers/conn/conn_bond.rs`、`peers/peer_manager.rs`、`peers/bench_support.rs`、`gateway/proxy/wrapped_transport/packet_plane.rs`、`gateway/dataplane/mod.rs`、`config/toml.rs`；1 个 `.proto`；2 个 locale）。
 
-**验证**：`cargo test -p easytier-core --lib` → **1072 passed / 0 failed / 1 ignored**；`cargo check -p easytier-core --all-targets` 通过；`cargo fmt --all -- --check` 通过。
+**验证**：`cargo test -p easytier-core --lib` → **1087 passed / 0 failed / 1 ignored**；`cargo check -p easytier-core --all-targets` 通过；`cargo fmt --all -- --check` 通过。
 
 **本轮新增的回归用例**（全部可单独跑）：
 

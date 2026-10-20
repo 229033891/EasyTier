@@ -8,6 +8,8 @@ use crate::{
     instance::{CoreInstance, CoreInstanceHost, CoreInstanceState},
 };
 
+use super::super::instance_rpc::effective_policy_route_to_proto;
+
 /// Builds the process-level running snapshot directly from one core Instance.
 #[allow(deprecated)]
 pub async fn network_instance_running_info<H>(
@@ -60,6 +62,12 @@ where
         peers.iter().map(|p| p.peer_id),
         instance.vip_probe_disabled(),
     );
+    let policy_routes_effective = instance
+        .effective_policy_routes()
+        .await
+        .into_iter()
+        .map(effective_policy_route_to_proto)
+        .collect();
     let dev_name = instance
         .toml_config()
         .map(|config| config.get_flags().dev_name)
@@ -119,5 +127,7 @@ where
         // VIP dataplane reachability per connected peer (GUI "connected vs
         // reachable"). Display-only; independent of control-plane keepalive.
         peer_vip_reachability,
+        // Runtime policy-route view after live exit_nodes merge (L6).
+        policy_routes_effective,
     })
 }

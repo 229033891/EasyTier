@@ -58,6 +58,16 @@ pub enum SelectBy {
     Balance,
 }
 
+impl SelectBy {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Priority => "priority",
+            Self::Quality => "quality",
+            Self::Balance => "balance",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum FailoverWhen {
     Unreachable,
@@ -65,10 +75,29 @@ pub enum FailoverWhen {
     Never,
 }
 
+impl FailoverWhen {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Unreachable => "unreachable",
+            Self::Degraded => "degraded",
+            Self::Never => "never",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum AllUnavailable {
     Open,
     Closed,
+}
+
+impl AllUnavailable {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Open => "open",
+            Self::Closed => "closed",
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -117,6 +146,16 @@ pub enum RuleState {
     Degraded,
 }
 
+impl RuleState {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Stable => "stable",
+            Self::Failover => "failover",
+            Self::Degraded => "degraded",
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct ResolvedRule {
     pub rule: RouteRule,
@@ -129,11 +168,170 @@ pub struct ResolvedRule {
     /// spread flows by `flow_key`. Empty for every other mode.
     pub resolved_peers: Vec<PeerId>,
     pub state: RuleState,
+    /// Selected egress peer for `priority` / `quality`. For `balance` this is
+    /// **informational only** (always the first entry of `resolved_peers`);
+    /// the hot-path `lookup` ignores it and hashes into `resolved_peers`.
+    /// Reconcile always writes the pair together; `lookup` asserts that in debug.
     pub active_peer: Option<PeerId>,
     /// P4: consecutive reconcile ticks the challenger has beaten the incumbent
     /// by more than the switch band. Switch only once it reaches
     /// `ConnSelectConfig::switch_windows`; reset whenever the incumbent holds.
     pub challenger: Option<(PeerId, u32)>,
+    /// L3: the peer a `failover_when = never` rule pinned to, chosen from the
+    /// **first** candidate that ever resolved.
+    ///
+    /// `never` takes only `peers[0]` (which `validate_route_rule` restricts to
+    /// `select_by = priority`), and its meaning is "never move to another
+    /// candidate **of this rule**" — not "the rule evaporates once that peer
+    /// drops". So the resolved `PeerId` is remembered here when the reconcile
+    /// loop first sees it, and `lookup` keeps handing packets to it while it is
+    /// unreachable. The packets then go down the ordinary peer-map path, which
+    /// holds / re-establishes the tunnel instead of the rule flipping to
+    /// `Degraded` and falling through to a different egress.
+    ///
+    /// `None` for every other `failover_when`: they are free to pick a
+    /// different candidate and must follow reachability.
+    pub pinned_peer: Option<PeerId>,
+    /// L2: the peers **this rule** actually priced on the last reconcile pass,
+    /// in candidate order.
+    ///
+    /// The snapshot's `peer_quality` is shared by every rule, and a peer that
+    /// another rule reached first is already memoised in it — sometimes with a
+    /// `priority` placeholder of `0` that was never measured. Reporting costs
+    /// per rule therefore cannot read the map directly: it has to know which
+    /// entries this rule caused. Empty when the rule reads no cost at all
+    /// (`priority` + `unreachable` / `never`).
+    pub costed_peers: Vec<PeerId>,
+}
+
+/// Management-plane view of one rule after live `exit_nodes` merge + reconcile.
+///
+/// Config-layer `PolicyRouteConfig` alone cannot show sugar `/0` rules or the
+/// candidate list the data plane actually uses (L6).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EffectivePolicyRouteInfo {
+    pub rule_id: u32,
+    pub cidr: Option<String>,
+    pub domains: Vec<String>,
+    pub config_peers: Vec<String>,
+    pub effective_candidates: Vec<String>,
+    pub merge_exit_nodes: bool,
+    pub select_by: &'static str,
+    pub failover_when: &'static str,
+    pub if_all_unavailable: &'static str,
+    pub state: &'static str,
+    pub active_peer_id: Option<PeerId>,
+    pub resolved_peer_ids: Vec<PeerId>,
+    /// L3: the peer a `failover_when = never` rule pinned to. Still set (and
+    /// still carried by the hot path) while it is unreachable — see
+    /// [`ResolvedRule::pinned_peer`].
+    pub pinned_peer_id: Option<PeerId>,
+    /// L2: per-candidate composite cost and where it came from, for rules that
+    /// actually consult a cost (`quality` / `degraded`). Empty otherwise.
+    ///
+    /// Two costs in the same unit can still come from different measurements —
+    /// see [`CostSource`] — and a threshold (`quality_degraded_cost`) only means
+    /// what it says when the reader knows which one it is looking at.
+    pub peer_costs: Vec<PeerCostInfo>,
+    pub sugar: bool,
+}
+
+/// L2: one candidate's cost plus its source, as shown on the management plane.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PeerCostInfo {
+    pub peer_id: PeerId,
+    pub cost: i32,
+    pub source: CostSource,
+}
+
+/// Build the management-plane view for every rule in `snap`.
+pub fn collect_effective_policy_routes(
+    snap: &LocalRouteSnapshot,
+    exit_nodes: &[IpAddr],
+) -> Vec<EffectivePolicyRouteInfo> {
+    snap.rules
+        .iter()
+        .map(|r| {
+            let candidates = merged_candidates(&r.rule, exit_nodes);
+            let sugar = r.rule.id == u32::MAX;
+            EffectivePolicyRouteInfo {
+                rule_id: r.rule.id,
+                cidr: r.rule.cidr.map(|c| c.to_string()),
+                domains: r
+                    .rule
+                    .domains
+                    .iter()
+                    .map(|d| match d {
+                        DomainPattern::Exact(name) => name.clone(),
+                        DomainPattern::Wildcard(parent) => format!("*.{parent}"),
+                    })
+                    .collect(),
+                config_peers: r.rule.peers.iter().map(ToString::to_string).collect(),
+                effective_candidates: candidates.iter().map(ToString::to_string).collect(),
+                merge_exit_nodes: r.rule.merge_exit_nodes,
+                select_by: r.rule.select_by.as_str(),
+                failover_when: r.rule.failover_when.as_str(),
+                if_all_unavailable: r.rule.if_all_unavailable.as_str(),
+                state: r.state.as_str(),
+                active_peer_id: r.active_peer,
+                resolved_peer_ids: r.resolved_peers.clone(),
+                pinned_peer_id: r.pinned_peer,
+                // Only the peers **this rule** priced. Reading the whole
+                // `peer_quality` map would show another rule's candidates and,
+                // worse, a `priority` placeholder `0` that was never measured.
+                peer_costs: r
+                    .costed_peers
+                    .iter()
+                    .filter_map(|peer_id| {
+                        // A peer with no cost entry means the reconcile memo was
+                        // written by a rule that never measured it; skip rather
+                        // than report a placeholder as a cost.
+                        let (cost, source) = snap
+                            .peer_quality
+                            .get(peer_id)
+                            .zip(snap.peer_cost_source.get(peer_id))?;
+                        Some(PeerCostInfo {
+                            peer_id: *peer_id,
+                            cost: *cost,
+                            source: *source,
+                        })
+                    })
+                    .collect(),
+                sugar,
+            }
+        })
+        .collect()
+}
+
+/// L2: where a candidate's composite cost came from.
+///
+/// Both variants are encoded with `ospf_edge_cost_from_score`, so they share a
+/// unit — but they do **not** share a source, and that matters when the two are
+/// compared or when one replaces the other between reconcile ticks:
+///
+/// - [`CostSource::Path`] — the accumulated weight of the whole path from the
+///   OSPF least-cost table. It is the sum of per-hop edge costs as **published**
+///   by each peer, so it carries whichever relay penalty those peers applied.
+/// - [`CostSource::Edge`] — the local direct-link measurement of the first hop
+///   only (`best_edge_cost` over `list_peer_conns`).
+///
+/// The reconcile loop prefers `Path` and falls back to `Edge` while the route
+/// table does not know the peer yet. Keeping the tag lets the switch between
+/// the two be visible instead of silently re-baselining the hysteresis.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum CostSource {
+    #[default]
+    Path,
+    Edge,
+}
+
+impl CostSource {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Path => "path",
+            Self::Edge => "edge",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -151,6 +349,10 @@ pub struct LocalRouteSnapshot {
     /// Per-peer composite cost, precomputed by the reconcile loop (P4). Never
     /// read on the packet hot path — `active_peer` already carries the verdict.
     pub peer_quality: HashMap<PeerId, i32>,
+    /// L2: which of the two cost families produced each `peer_quality` entry.
+    /// Diagnostic only — used to explain the number and to report a source
+    /// switch, never to rank candidates.
+    pub peer_cost_source: HashMap<PeerId, CostSource>,
     /// `true` when at least one rule uses `select_by = balance`.
     ///
     /// Only a `balance` rule cares about the flow key, so a caller that would
@@ -175,6 +377,12 @@ pub struct RuleUpdate {
     /// P5: eligible reachable candidates for `select_by = balance`. Empty for
     /// other modes (the hot path then reads `active_peer` instead).
     pub resolved_peers: Vec<PeerId>,
+    /// L3: sticky target of a `failover_when = never` rule (see
+    /// [`ResolvedRule::pinned_peer`]). `None` for every other rule.
+    pub pinned_peer: Option<PeerId>,
+    /// L2: peers this rule priced on this pass (see
+    /// [`ResolvedRule::costed_peers`]).
+    pub costed_peers: Vec<PeerId>,
 }
 
 /// Outcome of a hot-path lookup. `Miss` must fall through to the original L3
@@ -262,17 +470,42 @@ impl LocalRouteTable {
             return RouteLookup::Miss;
         };
         match r.state {
-            RuleState::Degraded => match r.rule.if_all_unavailable {
-                AllUnavailable::Closed => RouteLookup::Block,
-                AllUnavailable::Open => RouteLookup::Miss,
-            },
+            // L3: a `never` rule that has already pinned a peer keeps sending
+            // to it even after it became unreachable. "Never fail over" means
+            // "never move to another candidate", not "stop routing when the one
+            // I chose goes down" — falling through here would hand the flow to
+            // the physical gateway (or a peer `/0`), i.e. exactly the egress the
+            // user said not to use.
+            //
+            // The pinned peer may be gone from the peer map; the ordinary send
+            // path then holds or re-establishes the tunnel. That is the same
+            // place a stale-but-live peer ends up, so no new failure mode.
+            RuleState::Degraded => {
+                if let Some(pinned) = r.pinned_peer {
+                    return RouteLookup::Hit { peer: pinned };
+                }
+                match r.rule.if_all_unavailable {
+                    AllUnavailable::Closed => RouteLookup::Block,
+                    AllUnavailable::Open => RouteLookup::Miss,
+                }
+            }
             // Defensive: a consistent reconcile always pairs `None` with
             // `Degraded`. If a writer race ever left Stable/Failover without a
             // peer, honour `closed` instead of silently falling through.
             RuleState::Stable | RuleState::Failover => {
                 // P5: balance spreads flows over the candidate list; everything
                 // else uses the single reconciled `active_peer`.
+                //
+                // L4: `active_peer` is informational for balance (always the
+                // first resolved candidate). Lookup deliberately ignores it —
+                // assert the pair stayed in lockstep so a future writer that
+                // forks them cannot go unnoticed in debug builds.
                 let peer = if r.rule.select_by == SelectBy::Balance {
+                    debug_assert!(
+                        r.active_peer.is_none()
+                            || r.active_peer == r.resolved_peers.first().copied(),
+                        "balance active_peer drifted from resolved_peers[0]"
+                    );
                     pick_balance(flow_key, &r.resolved_peers)
                 } else {
                     r.active_peer
@@ -331,11 +564,19 @@ impl LocalRouteTable {
     /// Only `Stable` / `Failover` rules count: a `Degraded` rule must **not**
     /// pull traffic into the TUN (that is exactly the black-hole case §7.3
     /// warns about).
+    ///
+    /// L3 exception: a `never` rule that still holds a [`ResolvedRule::pinned_peer`]
+    /// contributes **even when `Degraded`**. The pin is the user's explicit
+    /// "route this through *that* peer and nowhere else", so pulling the L2
+    /// route would silently send the traffic out the physical gateway — the one
+    /// thing `never` exists to prevent. The hot path still answers `Hit` for it
+    /// via the same pin.
     pub fn l2_contributing_cidrs(&self) -> BTreeSet<Ipv4Cidr> {
         let snap = self.snapshot.load();
         let mut out = BTreeSet::new();
         for r in &snap.rules {
-            if matches!(r.state, RuleState::Stable | RuleState::Failover) {
+            if matches!(r.state, RuleState::Stable | RuleState::Failover) || r.pinned_peer.is_some()
+            {
                 out.extend(r.compiled_cidrs.iter().copied());
             }
         }
@@ -422,14 +663,25 @@ impl LocalRouteTable {
     /// these fields so concurrent `observe_ips` writes survive. `peer_quality` is
     /// stored even when no rule flipped, so the switch-debounce band reads a
     /// fresh baseline next tick.
-    pub fn apply_peer_updates(&self, peer_quality: &HashMap<PeerId, i32>, updates: &[RuleUpdate]) {
+    ///
+    /// `peer_cost_source` (L2) is metadata for that baseline: the hysteresis
+    /// below must not compare a path cost with an edge cost, so the loop uses
+    /// the previous tick's source to decide whether the previous number is a
+    /// usable baseline at all.
+    pub fn apply_peer_updates(
+        &self,
+        peer_quality: &HashMap<PeerId, i32>,
+        peer_cost_source: &HashMap<PeerId, CostSource>,
+        updates: &[RuleUpdate],
+    ) {
         if updates.is_empty() && peer_quality.is_empty() {
             return;
         }
         let mut l2_state_changed = false;
         self.snapshot.rcu(|old| {
             l2_state_changed = false;
-            let mut any = old.peer_quality != *peer_quality;
+            let mut any =
+                old.peer_quality != *peer_quality || old.peer_cost_source != *peer_cost_source;
             for update in updates {
                 let Some(r) = old.rules.get(update.idx) else {
                     continue;
@@ -438,6 +690,8 @@ impl LocalRouteTable {
                     || r.state != update.state
                     || r.challenger != update.challenger
                     || r.resolved_peers != update.resolved_peers
+                    || r.pinned_peer != update.pinned_peer
+                    || r.costed_peers != update.costed_peers
                 {
                     any = true;
                     if r.state != update.state {
@@ -452,6 +706,7 @@ impl LocalRouteTable {
             }
             let mut new = (**old).clone();
             new.peer_quality = peer_quality.clone();
+            new.peer_cost_source = peer_cost_source.clone();
             for update in updates {
                 let Some(r) = new.rules.get_mut(update.idx) else {
                     continue;
@@ -460,6 +715,8 @@ impl LocalRouteTable {
                 r.state = update.state;
                 r.challenger = update.challenger;
                 r.resolved_peers.clone_from(&update.resolved_peers);
+                r.pinned_peer = update.pinned_peer;
+                r.costed_peers.clone_from(&update.costed_peers);
             }
             Arc::new(new)
         });
@@ -507,6 +764,8 @@ pub fn build_snapshot(rules: Vec<RouteRule>) -> LocalRouteSnapshot {
                 state: RuleState::Degraded,
                 active_peer: None,
                 challenger: None,
+                pinned_peer: None,
+                costed_peers: Vec::new(),
             }
         })
         .collect();
@@ -818,9 +1077,16 @@ pub fn validate_route_rule(rule: &RouteRule) -> Result<(), PolicyRouteError> {
         }
         _ => {}
     }
+    // `closed` with several candidates is a multi-exit black hole, so it needs
+    // the explicit confirmation.
+    //
+    // This only sees the configured peers: the merge can only happen after the
+    // `merge_exit_nodes` flag is set, so the overlap-aware count is checked in
+    // `build_rules_from_config` (once the flag is known) and re-checked on
+    // every hot patch by `update_exit_nodes`.
     if rule.if_all_unavailable == AllUnavailable::Closed
-        && rule.peers.len() > 1
         && !rule.require_confirmed
+        && rule.peers.len() > 1
     {
         return Err(PolicyRouteError::Invalid(format!(
             "policy route {}: if_all_unavailable=closed with {} peers requires require_confirmed=true",
@@ -918,6 +1184,14 @@ pub fn build_rules_from_config(
         // `closed` with more than one candidate needs the explicit
         // confirmation — a single-candidate closed rule was legal before
         // the merge and would become illegal after it.
+        //
+        // This is the check L1 was missing: `validate_route_rule` above only
+        // sees `rule.peers`, and the merge happens **here**, so a one-peer
+        // `closed` default route plus any exit node slipped through without
+        // `require_confirmed`. It counts the merged list because that is what
+        // the rule walks — for `priority` / `quality` a failover chain, for
+        // `balance` the spread pool (where every exit node is its own black
+        // hole).
         if merged > 1
             && rule.if_all_unavailable == AllUnavailable::Closed
             && !rule.require_confirmed
@@ -941,6 +1215,12 @@ pub fn build_rules_from_config(
         // So the rule only records that it wants the exit nodes, and the
         // reconcile loop fills the candidates from the **live** list on
         // every tick — the same mechanism the explicit `/0` rule uses.
+        //
+        // `if_all_unavailable` matches the legacy step-4 behaviour: an
+        // unreachable exit falls back to the physical gateway instead of
+        // black-holing. That keeps the rule at one candidate too — a sugar
+        // rule cannot be confirmed, so `closed` + several exit nodes would be
+        // rejected by `validate_route_rule` anyway.
         let sugar = RouteRule {
             id: u32::MAX,
             cidr: Some(default_cidr),
@@ -1103,10 +1383,27 @@ pub fn validate_and_build_policy_rules(
 pub fn validate_config_loader_policy_routes(
     config: &impl crate::config::toml::ConfigLoader,
 ) -> Result<(), anyhow::Error> {
+    validate_config_loader_policy_routes_for_algo(config, true)
+}
+
+/// Same gate, but told whether the instance will have a route table.
+///
+/// `route_algo` is **not** a TOML field — the config layer cannot express it, so
+/// a plain [`validate_config_loader_policy_routes`] has to assume the default
+/// (`ospf`, and therefore a route table). An embedder that builds
+/// `PortablePeerManagerConfig` with `RouteAlgoType::None` must call this
+/// variant instead, so a `quality` / `degraded` rule is rejected at
+/// save / patch time rather than only when the manager is constructed (L5).
+pub fn validate_config_loader_policy_routes_for_algo(
+    config: &impl crate::config::toml::ConfigLoader,
+    has_route_table: bool,
+) -> Result<(), anyhow::Error> {
     let policy_routes = config.get_policy_routes();
     if policy_routes.is_empty() {
         return Ok(());
     }
+    validate_route_algo_can_price_candidates(&policy_routes, has_route_table)
+        .map_err(|error| anyhow::anyhow!("invalid policy_routes: {error}"))?;
     let zone = config.get_flags().tld_dns_zone;
     validate_and_build_policy_rules(
         &policy_routes,
@@ -1115,6 +1412,59 @@ pub fn validate_config_loader_policy_routes(
         &zone,
     )
     .map_err(|error| anyhow::anyhow!("invalid policy_routes: {error}"))?;
+    Ok(())
+}
+
+/// L5: reject policy rules that need a **cost** when there is no route table.
+///
+/// `select_by = quality` and `failover_when = degraded` both rank candidates by
+/// their composite cost. That cost comes from the route table
+/// (`Route::get_path_cost_with_policy` → `path_latency`), with the direct-link
+/// measurement as a fallback. With `route_algo = none` there is neither:
+///
+/// - `DisabledRoute` keeps the trait's default `get_path_cost_with_policy` →
+///   `None`, and
+/// - the candidate resolution itself goes through the peer map's route list,
+///   which is empty.
+///
+/// Every candidate therefore falls back to `i32::MAX`, so `degraded` drops all
+/// of them (rule becomes `Degraded`) and `quality` ranks them all as equals.
+/// The configuration would silently do something other than what it says, so it
+/// is refused at load time instead — the same policy as the other hard-failure
+/// checks.
+///
+/// Kept free of the `RouteAlgoType` type so this module has no dependency on the
+/// peer manager; the caller passes the answer in.
+pub fn validate_route_algo_can_price_candidates(
+    configs: &[PolicyRouteConfig],
+    has_route_table: bool,
+) -> Result<(), PolicyRouteError> {
+    if has_route_table {
+        return Ok(());
+    }
+    for config in configs {
+        // Parse instead of string-comparing so an invalid string is reported by
+        // the normal validator (`PolicyRouteConfig::validate`) rather than
+        // silently passing here and failing later with a different message.
+        let Ok(select_by) = parse_select_by(&config.select_by) else {
+            continue;
+        };
+        let Ok(failover_when) = parse_failover_when(&config.failover_when) else {
+            continue;
+        };
+        if select_by != SelectBy::Quality && failover_when != FailoverWhen::Degraded {
+            continue;
+        }
+        return Err(PolicyRouteError::Invalid(format!(
+            "policy route on {:?}: select_by={:?} / failover_when={:?} rank candidates by \
+             link cost, which needs a route table, but this instance runs with \
+             route_algo = none. Every candidate would be unmeasurable (cost i32::MAX): \
+             quality would rank them all equal and degraded would drop all of them. \
+             Use route_algo = ospf, or switch to select_by = \"priority\" with \
+             failover_when = \"unreachable\".",
+            config.cidr, config.select_by, config.failover_when
+        )));
+    }
     Ok(())
 }
 
@@ -1438,12 +1788,15 @@ mod tests {
         // Simulate the reconcile pass selecting the peer.
         table.apply_peer_updates(
             &HashMap::new(),
+            &HashMap::new(),
             &[RuleUpdate {
                 idx: 0,
                 active_peer: Some(42),
                 state: RuleState::Stable,
                 challenger: None,
                 resolved_peers: Vec::new(),
+                pinned_peer: None,
+                costed_peers: Vec::new(),
             }],
         );
 
@@ -1761,12 +2114,15 @@ mod tests {
         // The reconcile pass publishes the candidate list for balance rules.
         table.apply_peer_updates(
             &HashMap::new(),
+            &HashMap::new(),
             &[RuleUpdate {
                 idx: 0,
                 active_peer: Some(10),
                 state: RuleState::Stable,
                 challenger: None,
                 resolved_peers: vec![10, 20],
+                pinned_peer: None,
+                costed_peers: Vec::new(),
             }],
         );
 
@@ -1837,6 +2193,96 @@ mod tests {
         table.store(snap);
 
         assert!(!table.is_balance_ambiguous(&"10.0.0.5".parse().unwrap()));
+    }
+
+    /// L3: `failover_when = never` keeps routing to its pinned peer after that
+    /// peer became unreachable.
+    ///
+    /// "Never fail over" constrains **which** peer carries the traffic, not
+    /// whether the rule survives: flipping to `Degraded` would hand the flow to
+    /// the physical gateway (`open`) or drop it (`closed`) — both of which are
+    /// egresses the user ruled out. The pin is what makes the option mean what
+    /// it says.
+    #[test]
+    fn a_pinned_never_rule_keeps_routing_to_its_peer_while_it_is_down() {
+        let table = LocalRouteTable::empty();
+        let mut r = rule_cidr(0, "10.0.0.0/24", &["10.144.0.1"]);
+        r.failover_when = FailoverWhen::Never;
+        table.store(build_snapshot(vec![r]));
+
+        let ip: Ipv4Addr = "10.0.0.5".parse().unwrap();
+        // Before the first reconcile there is nothing pinned yet…
+        assert_eq!(table.lookup(&ip, None), RouteLookup::Miss);
+
+        // …then the peer was reachable and got pinned.
+        table.apply_peer_updates(
+            &HashMap::new(),
+            &HashMap::new(),
+            &[RuleUpdate {
+                idx: 0,
+                active_peer: Some(10),
+                state: RuleState::Stable,
+                challenger: None,
+                resolved_peers: Vec::new(),
+                pinned_peer: Some(10),
+                costed_peers: Vec::new(),
+            }],
+        );
+        assert_eq!(table.lookup(&ip, None), RouteLookup::Hit { peer: 10 });
+
+        // The peer now drops out: the rule is Degraded, but the pin still
+        // answers — no fall-through to the gateway, no block.
+        table.apply_peer_updates(
+            &HashMap::new(),
+            &HashMap::new(),
+            &[RuleUpdate {
+                idx: 0,
+                active_peer: None,
+                state: RuleState::Degraded,
+                challenger: None,
+                resolved_peers: Vec::new(),
+                pinned_peer: Some(10),
+                costed_peers: Vec::new(),
+            }],
+        );
+        assert_eq!(table.lookup(&ip, None), RouteLookup::Hit { peer: 10 });
+        // L2 must keep the CIDR installed, otherwise the packet never reaches
+        // L3 in the first place and the pin is moot.
+        assert!(
+            table
+                .l2_contributing_cidrs()
+                .contains(&"10.0.0.0/24".parse().unwrap()),
+            "a pinned rule must keep its L2 route while its peer is down"
+        );
+    }
+
+    /// The pin only covers the `never` rule: without it, a `Degraded` rule
+    /// keeps the documented behaviour (`open` → fall through, `closed` → drop).
+    #[test]
+    fn a_degraded_rule_without_a_pin_still_falls_through_or_blocks() {
+        let table = LocalRouteTable::empty();
+        let r = rule_cidr(0, "10.0.0.0/24", &["10.144.0.1"]);
+        table.store(build_snapshot(vec![r]));
+        let ip: Ipv4Addr = "10.0.0.5".parse().unwrap();
+        assert_eq!(table.lookup(&ip, None), RouteLookup::Miss);
+        assert!(table.l2_contributing_cidrs().is_empty());
+    }
+
+    /// A `never` rule that never resolved a peer has nothing to pin, so it
+    /// keeps the ordinary `Degraded` behaviour instead of inventing a target.
+    #[test]
+    fn a_never_rule_without_a_resolved_peer_is_still_degraded() {
+        let table = LocalRouteTable::empty();
+        let mut r = rule_cidr(0, "10.0.0.0/24", &["10.144.0.1"]);
+        r.failover_when = FailoverWhen::Never;
+        r.if_all_unavailable = AllUnavailable::Closed;
+        table.store(build_snapshot(vec![r]));
+
+        assert_eq!(
+            table.lookup(&"10.0.0.5".parse().unwrap(), None),
+            RouteLookup::Block,
+            "no pin + closed must not silently fall through"
+        );
     }
 
     fn policy_config(select_by: &str, failover_when: &str) -> PolicyRouteConfig {
@@ -2001,6 +2447,41 @@ mod tests {
             merged_candidates(sugar, &["10.144.0.11".parse().unwrap()]),
             vec!["10.144.0.11".parse::<IpAddr>().unwrap()]
         );
+    }
+
+    /// L6: the management-plane view must show the **merged** candidate list
+    /// (config peers + live exit_nodes), including the sugar `/0` rule.
+    #[test]
+    fn effective_policy_routes_show_merged_candidates_and_sugar() {
+        let policy = validated_policy(Some("10.0.0.0/24"), &["10.144.0.9"]);
+        let exit_nodes = vec!["10.144.0.10".parse::<IpAddr>().unwrap()];
+        // No explicit `/0` ⇒ sugar rule is synthesized for the exit nodes.
+        let rules = build_rules_from_config(&[policy], &exit_nodes).unwrap();
+        let mut snap = build_snapshot(rules);
+        snap.rules[0].active_peer = Some(9);
+        snap.rules[0].state = RuleState::Stable;
+        snap.rules[1].active_peer = Some(10);
+        snap.rules[1].state = RuleState::Stable;
+
+        let views = collect_effective_policy_routes(&snap, &exit_nodes);
+        assert_eq!(views.len(), 2);
+
+        assert!(!views[0].sugar);
+        assert_eq!(views[0].config_peers, vec!["10.144.0.9".to_string()]);
+        assert_eq!(
+            views[0].effective_candidates,
+            vec!["10.144.0.9".to_string()]
+        );
+        assert!(!views[0].merge_exit_nodes);
+
+        assert!(views[1].sugar);
+        assert!(views[1].config_peers.is_empty());
+        assert!(views[1].merge_exit_nodes);
+        assert_eq!(
+            views[1].effective_candidates,
+            vec!["10.144.0.10".to_string()]
+        );
+        assert_eq!(views[1].cidr.as_deref(), Some("0.0.0.0/0"));
     }
 
     /// A default-route rule that also carries `domains` would hand the exit
@@ -2216,6 +2697,350 @@ mod tests {
         assert!(
             err.to_string().contains("require_confirmed"),
             "unexpected error: {err}"
+        );
+    }
+
+    /// L1: the merge must be validated against the list the rule will
+    /// **actually walk**, not just the configured `peers`.
+    ///
+    /// A `balance` rule spreads flows over every merged candidate, so each exit
+    /// node is an independent black hole once `closed` is set. Before this
+    /// check the constructor accepted the rule (one configured peer) and the
+    /// data plane silently started hashing flows onto a second egress that the
+    /// user had never confirmed.
+    #[test]
+    fn a_balance_closed_rule_cannot_gain_exit_nodes_without_confirmation() {
+        let mut policy = validated_policy(Some("0.0.0.0/0"), &["10.144.0.9"]);
+        policy.select_by = SelectBy::Balance;
+        policy.if_all_unavailable = AllUnavailable::Closed;
+        let exit_nodes = vec!["10.144.0.10".parse::<IpAddr>().unwrap()];
+
+        let err = build_rules_from_config(&[policy.clone()], &exit_nodes)
+            .expect_err("balance + closed + exit node must be rejected");
+        assert!(
+            err.to_string().contains("require_confirmed"),
+            "unexpected error: {err}"
+        );
+
+        // Confirming it is enough — the rule itself was never illegal.
+        policy.require_confirmed = true;
+        let rules = build_rules_from_config(&[policy], &exit_nodes).expect("confirmed rule");
+        // One rule: the explicit `/0` absorbs the exit nodes.
+        assert_eq!(rules.len(), 1);
+        assert!(rules[0].merge_exit_nodes);
+        assert_eq!(
+            merged_candidates(&rules[0], &exit_nodes).len(),
+            2,
+            "the balance pool is the merged list"
+        );
+    }
+
+    /// **Decision A (2026-10-20)**: the `closed` confirmation counts the
+    /// **effective** candidate list for every `select_by`, not just `balance`.
+    ///
+    /// `priority` / `quality` treat the exit nodes as a failover *behind* the
+    /// configured peers rather than as a spread pool, but the consequence of
+    /// not asking is the same: a configuration that says "one gateway, drop if
+    /// it is down" silently becomes "one gateway plus a fallback" — and the
+    /// user never agreed to a second egress, nor to what happens when it dies.
+    ///
+    /// This is deliberately the **stricter** of the two options: a previously
+    /// loadable config (one peer + exit nodes, no `require_confirmed`) now
+    /// fails to load until it is confirmed. That is the accepted trade — see
+    /// the L1 row in `routing-bug-audit-2026-10.md`.
+    #[test]
+    fn a_priority_closed_rule_also_needs_confirmation_once_it_takes_exit_nodes() {
+        let mut policy = validated_policy(Some("0.0.0.0/0"), &["10.144.0.9"]);
+        policy.if_all_unavailable = AllUnavailable::Closed;
+        assert_eq!(policy.select_by, SelectBy::Priority);
+        let exit_nodes = vec!["10.144.0.10".parse::<IpAddr>().unwrap()];
+
+        let err = build_rules_from_config(&[policy.clone()], &exit_nodes)
+            .expect_err("a failover candidate is still a second egress");
+        assert!(
+            err.to_string().contains("require_confirmed"),
+            "unexpected error: {err}"
+        );
+
+        policy.require_confirmed = true;
+        let rules = build_rules_from_config(&[policy], &exit_nodes).expect("confirmed rule");
+        assert_eq!(merged_candidate_count(&rules[0], &exit_nodes), 2);
+    }
+
+    /// A `priority` default route whose exit nodes resolve to the peer it
+    /// already names stays a **one-candidate** rule: the merge is overlap
+    /// aware, so the `closed` confirmation guard must not fire on it.
+    ///
+    /// Guards the L1 check against being over-applied — the same exit VIP
+    /// listed in `peers` is not a second egress.
+    #[test]
+    fn a_closed_rule_whose_exit_node_is_already_a_configured_peer_stays_single() {
+        let mut policy = validated_policy(Some("0.0.0.0/0"), &["10.144.0.9"]);
+        policy.if_all_unavailable = AllUnavailable::Closed;
+        let exit_nodes = vec!["10.144.0.9".parse::<IpAddr>().unwrap()];
+
+        let rules = build_rules_from_config(&[policy], &exit_nodes)
+            .expect("an overlapping exit node is not a second candidate");
+        assert_eq!(rules.len(), 1);
+        assert_eq!(
+            merged_candidate_count(&rules[0], &exit_nodes),
+            1,
+            "the overlap must be deduplicated, not counted twice"
+        );
+    }
+
+    /// L5: cost-based selection needs a route table. Without one every
+    /// candidate is unmeasurable (`i32::MAX`), so `quality` would rank them all
+    /// equal and `degraded` would drop all of them.
+    #[test]
+    fn cost_based_selection_is_rejected_without_a_route_table() {
+        let mut quality = policy_config("quality", "unreachable");
+        quality.cidr = None;
+        quality.domains = vec!["api.example.com".to_owned()];
+
+        let mut degraded = policy_config("priority", "degraded");
+        degraded.cidr = None;
+        degraded.domains = vec!["api.example.com".to_owned()];
+        degraded.quality_degraded_cost = Some(500);
+
+        for config in [quality, degraded] {
+            let err = validate_route_algo_can_price_candidates(&[config], false)
+                .expect_err("a cost-based rule cannot work without a route table");
+            assert!(
+                err.to_string().contains("route_algo = none"),
+                "the error must name the cause: {err}"
+            );
+        }
+    }
+
+    /// The same rules load fine when the route table exists, and rules that
+    /// never consult a cost are unaffected.
+    #[test]
+    fn cost_based_selection_is_accepted_with_a_route_table() {
+        let config = policy_config("quality", "unreachable");
+        assert!(validate_route_algo_can_price_candidates(&[config], true).is_ok());
+
+        // `priority` / `unreachable` never read a cost, so they stay legal even
+        // without a route table.
+        let priority = policy_config("priority", "unreachable");
+        assert!(validate_route_algo_can_price_candidates(&[priority], false).is_ok());
+    }
+
+    /// An unparsable value is left to `PolicyRouteConfig::validate` so the
+    /// user gets the single, specific error instead of this coarser one.
+    #[test]
+    fn an_invalid_select_by_is_not_masked_by_the_route_algo_check() {
+        let config = policy_config("bestest", "unreachable");
+        assert!(validate_route_algo_can_price_candidates(&[config], false).is_ok());
+    }
+
+    /// L2: the two cost families are stored with their source, so the
+    /// management plane can say whether a number is an accumulated path weight
+    /// or a local first-hop measurement.
+    #[test]
+    fn peer_costs_carry_their_source_to_the_management_plane() {
+        let mut r = rule_cidr(0, "10.0.0.0/24", &["10.144.0.1", "10.144.0.2"]);
+        r.select_by = SelectBy::Quality;
+        let table = LocalRouteTable::empty();
+        table.store(build_snapshot(vec![r]));
+
+        let quality = HashMap::from([(10, 120), (20, 340)]);
+        let sources = HashMap::from([(10, CostSource::Path), (20, CostSource::Edge)]);
+        table.apply_peer_updates(
+            &quality,
+            &sources,
+            &[RuleUpdate {
+                idx: 0,
+                active_peer: Some(10),
+                state: RuleState::Stable,
+                challenger: None,
+                resolved_peers: Vec::new(),
+                pinned_peer: None,
+                costed_peers: vec![10, 20],
+            }],
+        );
+
+        let views = collect_effective_policy_routes(&table.load_full(), &[]);
+        assert_eq!(
+            views[0].peer_costs,
+            vec![
+                PeerCostInfo {
+                    peer_id: 10,
+                    cost: 120,
+                    source: CostSource::Path
+                },
+                PeerCostInfo {
+                    peer_id: 20,
+                    cost: 340,
+                    source: CostSource::Edge
+                },
+            ],
+            "both the number and its family must reach the status page"
+        );
+    }
+
+    /// A rule that never priced a peer must not report it — even when the
+    /// shared memo holds a `0` written for a different rule.
+    #[test]
+    fn rules_that_ignore_cost_report_no_peer_costs() {
+        let r = rule_cidr(0, "10.0.0.0/24", &["10.144.0.1"]);
+        assert_eq!(r.select_by, SelectBy::Priority);
+        let table = LocalRouteTable::empty();
+        table.store(build_snapshot(vec![r]));
+        let quality = HashMap::from([(10, 0)]);
+        table.apply_peer_updates(
+            &quality,
+            &HashMap::new(),
+            &[RuleUpdate {
+                idx: 0,
+                active_peer: Some(10),
+                state: RuleState::Stable,
+                challenger: None,
+                resolved_peers: Vec::new(),
+                pinned_peer: None,
+                // A `priority` rule prices nothing.
+                costed_peers: Vec::new(),
+            }],
+        );
+
+        let views = collect_effective_policy_routes(&table.load_full(), &[]);
+        assert!(
+            views[0].peer_costs.is_empty(),
+            "a priority rule must not surface a placeholder as a cost"
+        );
+    }
+
+    /// L2 (review finding): a rule reports only the peers **it** priced.
+    ///
+    /// Two `quality` rules with disjoint candidate sets share one memo. Before
+    /// the per-rule list, each rule showed the other's candidates on the status
+    /// page — and a `priority` rule's placeholder `0` for a shared peer came
+    /// out as a real `0 · path` measurement.
+    #[test]
+    fn a_rule_reports_only_the_costs_it_priced_itself() {
+        let mut rule_a = rule_cidr(0, "10.0.0.0/24", &["10.144.0.1"]);
+        rule_a.select_by = SelectBy::Quality;
+        let mut rule_b = rule_cidr(1, "10.1.0.0/24", &["10.144.0.2"]);
+        rule_b.select_by = SelectBy::Quality;
+        let table = LocalRouteTable::empty();
+        table.store(build_snapshot(vec![rule_a, rule_b]));
+
+        // Shared memo holds both rules' candidates, plus a placeholder `0` a
+        // `priority` rule wrote for unrelated peer 30 (no source recorded).
+        let quality = HashMap::from([(10, 120), (20, 340), (30, 0)]);
+        let sources = HashMap::from([(10, CostSource::Path), (20, CostSource::Path)]);
+        table.apply_peer_updates(
+            &quality,
+            &sources,
+            &[
+                RuleUpdate {
+                    idx: 0,
+                    active_peer: Some(10),
+                    state: RuleState::Stable,
+                    challenger: None,
+                    resolved_peers: Vec::new(),
+                    pinned_peer: None,
+                    costed_peers: vec![10],
+                },
+                RuleUpdate {
+                    idx: 1,
+                    active_peer: Some(20),
+                    state: RuleState::Stable,
+                    challenger: None,
+                    resolved_peers: Vec::new(),
+                    pinned_peer: None,
+                    costed_peers: vec![20],
+                },
+            ],
+        );
+
+        let views = collect_effective_policy_routes(&table.load_full(), &[]);
+        assert_eq!(
+            views[0]
+                .peer_costs
+                .iter()
+                .map(|c| c.peer_id)
+                .collect::<Vec<_>>(),
+            vec![10],
+            "rule A must not see rule B's candidate"
+        );
+        assert_eq!(
+            views[1]
+                .peer_costs
+                .iter()
+                .map(|c| c.peer_id)
+                .collect::<Vec<_>>(),
+            vec![20],
+            "rule B must not see rule A's candidate"
+        );
+        assert!(
+            views
+                .iter()
+                .all(|v| v.peer_costs.iter().all(|c| c.peer_id != 30)),
+            "an unmeasured placeholder must never appear as a cost"
+        );
+    }
+
+    /// A peer listed as costed but absent from the memo (or with no recorded
+    /// source) is skipped rather than reported with a default source.
+    #[test]
+    fn a_costed_peer_without_a_measurement_is_skipped() {
+        let mut r = rule_cidr(0, "10.0.0.0/24", &["10.144.0.1", "10.144.0.2"]);
+        r.select_by = SelectBy::Quality;
+        let table = LocalRouteTable::empty();
+        table.store(build_snapshot(vec![r]));
+
+        // 10 was measured; 20 never got an entry; 30 has a number but no source.
+        let quality = HashMap::from([(10, 120), (30, 500)]);
+        let sources = HashMap::from([(10, CostSource::Path)]);
+        table.apply_peer_updates(
+            &quality,
+            &sources,
+            &[RuleUpdate {
+                idx: 0,
+                active_peer: Some(10),
+                state: RuleState::Stable,
+                challenger: None,
+                resolved_peers: Vec::new(),
+                pinned_peer: None,
+                costed_peers: vec![10, 20, 30],
+            }],
+        );
+
+        let views = collect_effective_policy_routes(&table.load_full(), &[]);
+        assert_eq!(
+            views[0].peer_costs,
+            vec![PeerCostInfo {
+                peer_id: 10,
+                cost: 120,
+                source: CostSource::Path
+            }],
+            "only peers with both a number and a source count as priced"
+        );
+    }
+
+    /// The cost source survives a reconcile pass, so the next tick can tell
+    /// whether the previous number is a valid hysteresis baseline.
+    #[test]
+    fn cost_source_is_persisted_for_the_next_reconcile_tick() {
+        let table = LocalRouteTable::empty();
+        table.store(build_snapshot(vec![rule_cidr(
+            0,
+            "10.0.0.0/24",
+            &["10.144.0.1"],
+        )]));
+        table.apply_peer_updates(
+            &HashMap::from([(10, 500)]),
+            &HashMap::from([(10, CostSource::Edge)]),
+            &[],
+        );
+
+        let snap = table.load_full();
+        assert_eq!(snap.peer_quality.get(&10), Some(&500));
+        assert_eq!(
+            snap.peer_cost_source.get(&10),
+            Some(&CostSource::Edge),
+            "without the source the next tick cannot tell the families apart"
         );
     }
 }

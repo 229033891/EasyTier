@@ -1276,11 +1276,6 @@ function removeVpnPortalClient(index: number) {
                     role="img"
                   />
                 </div>
-                <p v-if="tunControlsDisabled" class="config-field-hint m-0">{{ t('no_tun_magic_dns_hint') }}</p>
-                <p
-                  v-else-if="!curNetwork.enable_magic_dns"
-                  class="config-field-hint m-0"
-                >{{ t('dns.magic_dns_off_hint') }}</p>
               </div>
 
               <!-- dns_config 由 syncNormalizedNetwork 保证存在；v-if 只用于类型收窄 -->

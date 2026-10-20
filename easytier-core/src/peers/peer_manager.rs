@@ -80,9 +80,10 @@ use super::{
     route::{
         ArcRoute, DisabledRoute, ForeignNetworkRouteInfoMap, NextHopPolicy, Route, RouteInterface,
         local_route_table::{
-            AllUnavailable, FailoverWhen, LocalRouteTable, MAX_PEERS_PER_RULE, PolicyRouteConfig,
-            RouteLookup, RuleState, RuleUpdate, SelectBy, build_snapshot, is_degraded_cost,
-            merged_candidate_count, merged_candidates, validate_and_build_policy_rules,
+            AllUnavailable, CostSource, FailoverWhen, LocalRouteTable, MAX_PEERS_PER_RULE,
+            PolicyRouteConfig, RouteLookup, RuleState, RuleUpdate, SelectBy, build_snapshot,
+            is_degraded_cost, merged_candidate_count, merged_candidates,
+            validate_and_build_policy_rules, validate_route_algo_can_price_candidates,
             within_switch_band,
         },
         peer_ospf_route::PeerRoute,
@@ -277,11 +278,13 @@ impl PortablePeerManagerConfig {
 ///
 /// Configuration errors (missing policy fields, unconfirmed `closed` + multi
 /// peer, …) are hard failures, never silently defaulted.
+#[allow(clippy::too_many_arguments)]
 fn build_local_route_table(
     policy_routes: &[PolicyRouteConfig],
     exit_nodes: &[IpAddr],
     dns_config: Option<&crate::config::DnsConfig>,
     tld_dns_zone: &str,
+    route_algo: RouteAlgoType,
 ) -> anyhow::Result<LocalRouteTable> {
     // Zero-regression: exit_nodes-only configs keep the empty table and step-4
     // live list (`update_exit_nodes`). Do **not** bake exit_nodes into sugar
@@ -289,6 +292,14 @@ fn build_local_route_table(
     if policy_routes.is_empty() {
         return Ok(LocalRouteTable::empty());
     }
+    // L5: refuse cost-based selection when there is no route table to price the
+    // candidates with. Checked before building so the error names the rule the
+    // user wrote, not an internal reconcile symptom.
+    validate_route_algo_can_price_candidates(
+        policy_routes,
+        matches!(route_algo, RouteAlgoType::Ospf),
+    )
+    .map_err(|error| anyhow::anyhow!("invalid policy_routes: {error}"))?;
     let rules =
         validate_and_build_policy_rules(policy_routes, exit_nodes, dns_config, tld_dns_zone)
             .map_err(|error| anyhow::anyhow!("invalid policy_routes: {error}"))?;
@@ -385,6 +396,11 @@ async fn reconcile_local_routes_once(
     });
     // Composite cost per candidate peer, memoised across rules for this tick.
     let mut quality: HashMap<PeerId, i32> = HashMap::new();
+    // L2: which of the two cost families produced each `quality` entry. Both are
+    // encoded in the same unit, but one is an accumulated **published** path
+    // weight and the other a **local** direct-link measurement, so the previous
+    // tick's number is only a valid hysteresis baseline when the source matches.
+    let mut cost_source: HashMap<PeerId, CostSource> = HashMap::new();
     // Reachability of candidate VIPs, memoised across rules so shared peers are
     // only resolved once per tick.
     let mut reachable_by_ip: HashMap<IpAddr, Option<PeerId>> = HashMap::new();
@@ -434,9 +450,19 @@ async fn reconcile_local_routes_once(
         }
 
         let mut scored: Vec<(PeerId, i32)> = Vec::with_capacity(reachable.len());
-        for peer_id in reachable {
+        // L2: the peers **this rule** priced, so the status page can show this
+        // rule's costs instead of every cost in the shared memo (see
+        // `ResolvedRule::costed_peers`).
+        let mut costed_peers: Vec<PeerId> = Vec::new();
+        for peer_id in &reachable {
+            let peer_id = *peer_id;
             let cost = match quality.get(&peer_id) {
-                Some(cost) => *cost,
+                // Measured earlier in this tick by another rule: real, so it
+                // counts for this rule too.
+                Some(cost) => {
+                    costed_peers.push(peer_id);
+                    *cost
+                }
                 None if needs_quality => {
                     // Price the candidate by the **whole path** to it, relay
                     // hops included. Scoring only the direct link made a
@@ -452,22 +478,57 @@ async fn reconcile_local_routes_once(
                     // evaluates its argument eagerly, so `.or(...)` would run
                     // the extra `list_peer_conns` even when the path cost is
                     // already known.
-                    let raw = match peers.peer_path_cost(peer_id).await {
-                        Some(cost) => cost,
-                        None => peers.peer_edge_cost(peer_id).await.unwrap_or(i32::MAX),
+                    let (raw, source) = match peers.peer_path_cost(peer_id).await {
+                        Some(cost) => (cost, CostSource::Path),
+                        None => (
+                            peers.peer_edge_cost(peer_id).await.unwrap_or(i32::MAX),
+                            CostSource::Edge,
+                        ),
                     };
+                    // L2: only reuse the previous tick's number as the baseline
+                    // while it came from the **same family**. A path cost and an
+                    // edge cost are the same unit but not the same measurement:
+                    // carrying one over as a baseline for the other would pin
+                    // the published cost to a value nobody measured whenever the
+                    // route table briefly forgets a peer and re-learns it, and
+                    // the 20-unit delta would hide the switch.
+                    let previous = snap
+                        .peer_cost_source
+                        .get(&peer_id)
+                        .is_some_and(|prev| *prev == source)
+                        .then(|| snap.peer_quality.get(&peer_id).copied())
+                        .flatten();
+                    if let (Some(prev_source), Some(prev_cost)) = (
+                        snap.peer_cost_source.get(&peer_id),
+                        snap.peer_quality.get(&peer_id),
+                    ) && *prev_source != source
+                    {
+                        tracing::debug!(
+                            peer_id,
+                            ?prev_source,
+                            ?source,
+                            prev_cost,
+                            raw,
+                            "policy cost source switched; re-baselining hysteresis"
+                        );
+                    }
                     // Publish debounce: the same MIN_DELTA rule OSPF uses, but
                     // against our own baseline so OSPF's per-peer-map publisher
                     // state (`PeerMap::ospf_edge_cost_baseline`) is left untouched.
-                    let cost = apply_ospf_cost_hysteresis(
-                        raw,
-                        snap.peer_quality.get(&peer_id).copied(),
-                        OSPF_EDGE_COST_MIN_DELTA,
-                    );
+                    let cost = apply_ospf_cost_hysteresis(raw, previous, OSPF_EDGE_COST_MIN_DELTA);
                     quality.insert(peer_id, cost);
+                    cost_source.insert(peer_id, source);
+                    costed_peers.push(peer_id);
                     cost
                 }
                 // Priority + unreachable/never: costs are never consulted.
+                //
+                // `0` is a **placeholder for this rule's own ranking only** — it
+                // must never enter the shared `quality` memo. Another rule in
+                // the same tick reads that memo, and paying for it once is the
+                // whole point; seeding it with a `0` that nobody measured would
+                // make a `quality` rule rank that peer first and put a
+                // misleading `0` on the status page.
                 None => 0,
             };
             scored.push((peer_id, cost));
@@ -475,6 +536,31 @@ async fn reconcile_local_routes_once(
 
         let eligible =
             |cost: i32| !is_degraded_cost(r.rule.failover_when, r.rule.quality_degraded_cost, cost);
+
+        // L3: `never` pins the first candidate that ever resolved and keeps it
+        // for the lifetime of the rule.
+        //
+        // "Never fail over" is a statement about *which* peer carries the
+        // traffic, not about whether the rule exists: dropping the rule to
+        // `Degraded` when that one peer goes away would hand the flow to the
+        // physical gateway (or a peer `/0`) — the very egress the user ruled
+        // out. Pinning also means the target does not silently change when the
+        // same VIP later resolves to a different `PeerId` (peers can come back
+        // with a new id after a restart of the same node), which a
+        // reachability-follows-policy rule would otherwise do unnoticed.
+        //
+        // Only set while the pinned peer still exists in the peer map: once it
+        // is gone for good there is nothing left to pin, and holding a stale id
+        // forever would keep a dead rule alive. Clearing it also means the rule
+        // re-pins from the first reachable candidate if it ever comes back.
+        let pinned_peer = if r.rule.failover_when == FailoverWhen::Never {
+            match r.pinned_peer {
+                Some(pinned) if peers.has_peer(pinned) => Some(pinned),
+                _ => reachable.first().copied(),
+            }
+        } else {
+            None
+        };
 
         // P5: `balance` spreads flows across *every* eligible candidate, so it
         // publishes the whole list and lets the hot path pick by flow hash
@@ -491,12 +577,16 @@ async fn reconcile_local_routes_once(
                 RuleState::Stable
             };
             // `active_peer` is informational only (first candidate); the hot
-            // path reads `resolved_peers`.
+            // path `lookup` hashes into `resolved_peers` and ignores
+            // `active_peer` (L4). Always write the pair together so status /
+            // dumps never disagree with the spread pool.
             let active_peer = resolved.first().copied();
             if r.active_peer != active_peer
                 || r.state != state
                 || r.challenger.is_some()
                 || r.resolved_peers != resolved
+                || r.pinned_peer != pinned_peer
+                || r.costed_peers != costed_peers
             {
                 updates.push(RuleUpdate {
                     idx,
@@ -504,6 +594,8 @@ async fn reconcile_local_routes_once(
                     state,
                     challenger: None,
                     resolved_peers: resolved,
+                    pinned_peer,
+                    costed_peers,
                 });
             }
             continue;
@@ -541,23 +633,35 @@ async fn reconcile_local_routes_once(
         );
         // `Stable` = the peer we want is the one in use; `Failover` = we are on
         // an alternative (backup, or held by the switch band).
+        //
+        // L3: `Degraded` stays "no reachable candidate". The hot path does not
+        // depend on the state flip for a `never` rule — it reads
+        // `ResolvedRule::pinned_peer` — so the rule keeps routing to its pin
+        // while the reported state still says the target is down.
         let state = match chosen {
             None => RuleState::Degraded,
             Some(current) if Some(current) == best => RuleState::Stable,
             Some(_) => RuleState::Failover,
         };
-        if r.active_peer != chosen || r.state != state || r.challenger != challenger {
+        if r.active_peer != chosen
+            || r.state != state
+            || r.challenger != challenger
+            || r.pinned_peer != pinned_peer
+            || r.costed_peers != costed_peers
+        {
             updates.push(RuleUpdate {
                 idx,
                 active_peer: chosen,
                 state,
                 challenger,
                 resolved_peers: Vec::new(),
+                pinned_peer,
+                costed_peers,
             });
         }
     }
 
-    table.apply_peer_updates(&quality, &updates);
+    table.apply_peer_updates(&quality, &cost_source, &updates);
 }
 
 fn matching_group_memberships(
@@ -1295,6 +1399,7 @@ impl PeerManagerCore {
             &config.exit_nodes,
             config.dns_config.as_ref(),
             &config.snapshot.flags.tld_dns_zone,
+            config.route_algo,
         )?);
         let peer_manager = Self::assemble(
             config.route_algo,
@@ -2342,6 +2447,17 @@ impl PeerManagerCore {
 
     /// Check a proposed `exit_nodes` list against the invariants the policy
     /// table's rules were built with.
+    ///
+    /// Mirrors `validate_route_rule` / `build_rules_from_config` for the part
+    /// that depends on the *live* exit list, because the table is not rebuilt
+    /// when it changes:
+    ///   - the candidate limit (`MAX_PEERS_PER_RULE`), and
+    ///   - the `closed` + multi-candidate confirmation (multi-exit black hole).
+    ///
+    /// A `balance` rule is the case the constructor check cannot see on its
+    /// own: its candidates are the whole merged list, so one exit node turns a
+    /// single-candidate rule into one that spreads flows over two or more
+    /// exits — each of which can be a separate black hole.
     fn exit_nodes_are_acceptable(&self, exit_nodes: &[IpAddr]) -> Result<(), String> {
         let snap = self.local_route_table.load_full();
         for rule in &snap.rules {
@@ -2359,6 +2475,10 @@ impl PeerManagerCore {
                 && rule.rule.if_all_unavailable == AllUnavailable::Closed
                 && !rule.rule.require_confirmed
             {
+                // `merged` is the list the rule can actually walk, and the
+                // constructor now refuses a `closed` rule without
+                // `require_confirmed` once that list exceeds one — so this is
+                // the same guard applied to a hot-patched exit list.
                 return Err(format!(
                     "policy route {}: if_all_unavailable=closed with {merged} peers requires \
                      require_confirmed=true",
@@ -2385,6 +2505,17 @@ impl PeerManagerCore {
     /// `Stable` / `Failover` CIDRs so both planes derive from **one** snapshot.
     pub(crate) fn local_route_table(&self) -> &LocalRouteTable {
         self.local_route_table.as_ref()
+    }
+
+    /// Management-plane view of every `[[policy_routes]]` rule after the live
+    /// `exit_nodes` merge and the latest reconcile (L6).
+    pub async fn effective_policy_routes(
+        &self,
+    ) -> Vec<super::route::local_route_table::EffectivePolicyRouteInfo> {
+        use super::route::local_route_table::collect_effective_policy_routes;
+        let exit_nodes = self.exit_nodes.read().await.clone();
+        let snap = self.local_route_table.load_full();
+        collect_effective_policy_routes(snap.as_ref(), &exit_nodes)
     }
 
     /// Record IPv4 addresses observed in a MagicDNS answer for `qname` (P3).
