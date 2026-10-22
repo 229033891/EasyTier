@@ -763,6 +763,15 @@ status:
   server: 服务器
   relay: 中继
   p2p: 直连
+  # 隧道级 IP 流量（见 docs/roadmap/tunnel-ip-flow-observability.md）
+  flow_detail: IP流量
+  flow_direction: 方向
+  flow_ip: IP
+  flow_bytes: 流量
+  flow_rate: 速率
+  flow_tx: 发送
+  flow_rx: 接收
+  flow_estimated: 估算
   peer_addr_via: "经 {addr}"
   peer_addr_via_tip: "中转路径：本机到下一跳节点的隧道地址（非目标 peer 直连入口）"
   route_path: "{path}"

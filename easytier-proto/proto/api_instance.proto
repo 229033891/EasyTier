@@ -60,6 +60,47 @@ message PeerConnInfo {
   bool in_bond_set = 18;
   // Short diversity summary of this member, e.g. the tunnel scheme ("udp").
   string bond_class = 19;
+  // Per-tunnel IP flows (see docs/roadmap/tunnel-ip-flow-observability.md).
+  // Empty unless the node has flow accounting enabled; the control plane gets
+  // prefix-masked entries unless it explicitly asks for exact IPs.
+  repeated PeerConnFlow flows = 20;
+}
+
+// One IP flow observed on a tunnel.
+//
+// Bytes are **inner IP** bytes (the length of the IP packet before
+// compression/encryption), which is a different unit than `PeerConnStats`
+// (link bytes counted at the tunnel filter).
+message PeerConnFlow {
+  string conn_id = 1;
+  uint32 peer_id = 2;
+  // Destination IP for TX flows, source IP for RX flows. In a masked view this
+  // is the aggregated prefix instead of the exact address ("10.0.0.0").
+  string ip = 3;
+  // 0 = tx, 1 = rx.
+  uint32 direction = 4;
+  uint64 bytes = 5;
+  uint64 packets = 6;
+  // Bytes per second over the last closed rate window (computed on the node).
+  uint64 rate_bytes_per_sec = 7;
+  uint64 last_seen_ms = 8;
+  // True when the counters are an estimate (packet sampling was active).
+  bool sampled = 9;
+  // 0 = exact IP; > 0 = prefix length used for the aggregation.
+  uint32 prefix_len = 10;
+  // Number of distinct IPs merged into this entry (masked views only).
+  uint32 flow_count = 11;
+}
+
+// Which IP detail a caller wants to see.
+//
+// The control plane must ask for EXACT explicitly *and* the node must have
+// `flow_stats_allow_exact_ip` enabled; otherwise the node answers with
+// MASKED data (decision D8 / D13).
+enum FlowView {
+  FLOW_VIEW_UNSPECIFIED = 0;
+  FLOW_VIEW_EXACT = 1;
+  FLOW_VIEW_MASKED = 2;
 }
 
 message PeerInfo {
@@ -69,7 +110,11 @@ message PeerInfo {
   repeated common.UUID directly_connected_conns = 4;
 }
 
-message ListPeerRequest { InstanceIdentifier instance = 1; }
+message ListPeerRequest {
+  InstanceIdentifier instance = 1;
+  // Which IP detail the caller wants (defaults to MASKED).
+  optional FlowView flow_view = 2;
+}
 
 message ListPeerResponse {
   repeated PeerInfo peer_infos = 1;

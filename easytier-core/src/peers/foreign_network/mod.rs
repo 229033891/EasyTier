@@ -394,6 +394,9 @@ impl ForeignNetworkEntry {
             packet_sender,
             peer_context.clone(),
             my_peer_id,
+            Arc::new(super::flow_table::FlowTable::new(
+                super::flow_table::FlowTableConfig::default(),
+            )),
         ));
         let traffic_metrics = Arc::new(TrafficMetricRecorder::new(
             my_peer_id,

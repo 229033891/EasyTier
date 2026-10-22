@@ -747,18 +747,19 @@ where
     #[cfg(feature = "web-client")]
     pub async fn network_info(&self, instance_id: Uuid) -> Option<NetworkInstanceRunningInfo> {
         let instance = self.get(instance_id)?;
-        network_instance_running_info(instance.as_ref()).await.ok()
+        network_instance_running_info(instance.as_ref(), None).await.ok()
     }
 
     #[cfg(feature = "web-client")]
     pub async fn collect_network_infos(
         &self,
+        flow_view: Option<easytier_proto::api::instance::FlowView>,
     ) -> anyhow::Result<std::collections::BTreeMap<Uuid, NetworkInstanceRunningInfo>> {
         let mut result = std::collections::BTreeMap::new();
         for instance in self.list() {
             result.insert(
                 instance.instance_id(),
-                network_instance_running_info(instance.as_ref()).await?,
+                network_instance_running_info(instance.as_ref(), flow_view).await?,
             );
         }
         Ok(result)
@@ -767,11 +768,12 @@ where
     #[cfg(feature = "web-client")]
     pub fn collect_network_infos_sync(
         &self,
+        flow_view: Option<easytier_proto::api::instance::FlowView>,
     ) -> anyhow::Result<std::collections::BTreeMap<Uuid, NetworkInstanceRunningInfo>> {
         self.runtime_handle
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("InstanceManager runtime handle is unavailable"))?
-            .block_on(self.collect_network_infos())
+            .block_on(self.collect_network_infos(flow_view))
     }
 
     #[cfg(feature = "proxy-smoltcp-stack")]

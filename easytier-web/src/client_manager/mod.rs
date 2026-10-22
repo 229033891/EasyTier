@@ -1097,6 +1097,9 @@ impl
                         .into_iter()
                         .map(|id| id.into())
                         .collect(),
+                    // The control plane gets masked (prefix-aggregated) IPs by
+                    // default; exact IPs need an explicit opt-in on both sides.
+                    flow_view: None,
                 },
             )
             .await?;
@@ -1297,6 +1300,7 @@ impl ClientManager {
                 rpc_controller(MANAGED_RPC_PROBE_TIMEOUT_MS),
                 CollectNetworkInfoRequest {
                     inst_ids: vec![inst_id.into()],
+                    flow_view: None,
                 },
             )
             .await?;

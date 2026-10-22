@@ -1129,6 +1129,10 @@ impl<'a> CommandHandler<'a> {
         let client = self.get_peer_manager_client().await?;
         let request = ListPeerRequest {
             instance: Some(self.instance_selector.clone()),
+            // The CLI talks to the local node: ask for exact IPs. The node
+            // still downgrades to masked data unless it is configured with
+            // `flow_stats_allow_exact_ip` (see tunnel-ip-flow-observability.md).
+            flow_view: Some(easytier_proto::api::instance::FlowView::Exact as i32),
         };
         let response = client.list_peer(BaseController::default(), request).await?;
         Ok(response)

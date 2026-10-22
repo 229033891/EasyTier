@@ -26,6 +26,9 @@ impl ForeignNetworkClient {
             packet_sender_to_mgr,
             context.clone(),
             my_peer_id,
+            Arc::new(super::super::flow_table::FlowTable::new(
+                super::super::flow_table::FlowTableConfig::default(),
+            )),
         ));
         Self {
             peer_map,

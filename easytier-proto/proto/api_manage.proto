@@ -144,6 +144,23 @@ message NetworkConfig {
   // Older clients leave it unset; empty `policy_routes` then does not wipe the
   // existing table.
   optional bool has_policy_routes = 90;
+
+  // Per-tunnel IP flow accounting (see docs/roadmap/tunnel-ip-flow-observability.md).
+  // Disabled by default: when off, the node records nothing and the running
+  // page shows no flow details.
+  optional bool flow_stats_enabled = 91;
+  // Keep 1 out of N packets (1 = keep everything, 8 = 1/8 sampling).
+  optional uint32 flow_stats_sample_rate = 92;
+  // Maximum number of distinct IPs kept per tunnel.
+  optional uint32 flow_stats_max_per_conn = 93;
+  // Maximum number of flow entries kept in the whole table.
+  optional uint32 flow_stats_max_total = 94;
+  // Prefix length used when a caller asks for masked (aggregated) IPs.
+  optional uint32 flow_mask_prefix_len_v4 = 95;
+  optional uint32 flow_mask_prefix_len_v6 = 96;
+  // Allow this node to answer EXACT IP requests. The control plane must also
+  // ask for EXACT explicitly; otherwise the node answers with MASKED data.
+  optional bool flow_stats_allow_exact_ip = 97;
 }
 
 // One `[[policy_routes]]` entry: a CIDR and/or domain match, plus the candidate
@@ -322,7 +339,12 @@ message RetainNetworkInstanceResponse {
   repeated common.UUID remain_inst_ids = 1;
 }
 
-message CollectNetworkInfoRequest { repeated common.UUID inst_ids = 1; }
+message CollectNetworkInfoRequest {
+  repeated common.UUID inst_ids = 1;
+  // Which IP detail the caller wants (defaults to MASKED). See
+  // docs/roadmap/tunnel-ip-flow-observability.md.
+  optional api.instance.FlowView flow_view = 2;
+}
 
 message CollectNetworkInfoResponse { NetworkInstanceRunningInfoMap info = 1; }
 

@@ -5,6 +5,7 @@ pub(crate) mod conn;
 pub mod context;
 pub mod credential_manager;
 pub mod error;
+pub(crate) mod flow_table;
 pub mod foreign_network;
 pub mod peer_center;
 pub mod peer_manager;

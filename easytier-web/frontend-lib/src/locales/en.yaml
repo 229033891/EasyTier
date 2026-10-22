@@ -767,6 +767,15 @@ status:
   server: Server
   relay: Relay
   p2p: Direct
+  # Per-tunnel IP flows (see docs/roadmap/tunnel-ip-flow-observability.md)
+  flow_detail: IP flows
+  flow_direction: Direction
+  flow_ip: IP
+  flow_bytes: Traffic
+  flow_rate: Rate
+  flow_tx: TX
+  flow_rx: RX
+  flow_estimated: est.
   peer_addr_via: "via {addr}"
   peer_addr_via_tip: "Relay path: tunnel address from this node to the next hop (not a direct peer endpoint)"
   route_path: "{path}"

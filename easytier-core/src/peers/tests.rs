@@ -24,6 +24,21 @@ use crate::{
     tunnel::ring::create_ring_tunnel_pair,
 };
 
+/// Build a `PeerMap` for tests (flow accounting disabled).
+fn new_test_peer_map(
+    packet_send: crate::peers::PacketRecvChan,
+    context: crate::peers::context::ArcPeerContext,
+    my_peer_id: crate::config::PeerId,
+) -> PeerMap {
+    PeerMap::new(
+        packet_send,
+        context,
+        my_peer_id,
+        Arc::new(crate::peers::flow_table::FlowTable::new(
+            crate::peers::flow_table::FlowTableConfig::default(),
+        )),
+    )
+}
 struct RejectingRecvLimiter;
 
 impl ByteLimiter for RejectingRecvLimiter {
@@ -241,8 +256,8 @@ async fn peer_map_forwards_packet_over_memory_tunnel() {
 
     let (client_tx, _client_rx) = create_packet_recv_chan();
     let (server_tx, mut server_rx) = create_packet_recv_chan();
-    let client_map = PeerMap::new(client_tx, client_ctx, 1);
-    let server_map = PeerMap::new(server_tx, server_ctx, 2);
+    let client_map = new_test_peer_map(client_tx, client_ctx, 1);
+    let server_map = new_test_peer_map(server_tx, server_ctx, 2);
 
     client_map.add_new_peer_conn(client_conn).await.unwrap();
     server_map.add_new_peer_conn(server_conn).await.unwrap();
@@ -256,6 +271,74 @@ async fn peer_map_forwards_packet_over_memory_tunnel() {
         .unwrap()
         .unwrap();
     assert_eq!(received.payload(), b"hello");
+}
+
+/// A packet sent through the real peer path (bond / default_conn / select_conn)
+/// must be booked on the tunnel that actually carries it.
+#[tokio::test]
+async fn tx_flow_is_attributed_to_the_selected_tunnel() {
+    use crate::peers::flow_table::{FlowDirection, FlowTable, FlowTableConfig, FlowView};
+
+    let peer_session_store = Arc::new(PeerSessionStore::new());
+    let (client_tunnel, server_tunnel) = create_ring_tunnel_pair();
+    let client_ctx = Arc::new(NoopPeerContext::default());
+    let server_ctx = Arc::new(NoopPeerContext::default());
+
+    let mut client_conn = PeerConn::new(
+        1,
+        client_ctx.clone(),
+        client_tunnel,
+        peer_session_store.clone(),
+    );
+    let mut server_conn = PeerConn::new(2, server_ctx.clone(), server_tunnel, peer_session_store);
+
+    let (client_ret, server_ret) = tokio::join!(
+        client_conn.do_handshake_as_client(),
+        server_conn.do_handshake_as_server()
+    );
+    client_ret.unwrap();
+    server_ret.unwrap();
+
+    let flow_table = Arc::new(FlowTable::new(FlowTableConfig {
+        enabled: true,
+        ..Default::default()
+    }));
+
+    let (client_tx, _client_rx) = create_packet_recv_chan();
+    let (server_tx, _server_rx) = create_packet_recv_chan();
+    let client_map = PeerMap::new(client_tx, client_ctx, 1, flow_table.clone());
+    let server_map = PeerMap::new(
+        server_tx,
+        server_ctx,
+        2,
+        Arc::new(FlowTable::new(FlowTableConfig::default())),
+    );
+
+    let client_conn_id = client_conn.get_conn_id();
+    client_map.add_new_peer_conn(client_conn).await.unwrap();
+    server_map.add_new_peer_conn(server_conn).await.unwrap();
+    let dst_ip: std::net::IpAddr = "10.10.10.9".parse().unwrap();
+    let mut packet = ZCPacket::new_with_payload(b"hello");
+    packet.fill_peer_manager_hdr(1, 2, PacketType::Data as u8);
+    packet.set_flow_meta(crate::packet::FlowMeta {
+        dst_ip,
+        inner_len: 5,
+    });
+
+    let peer = client_map.get_peer_by_id(2).expect("peer with the conn");
+    peer.send_msg(packet).await.unwrap();
+
+    let snaps = flow_table.snapshot(FlowView::Exact, 10);
+    assert_eq!(snaps.len(), 1, "expected exactly one recorded flow");
+    assert_eq!(snaps[0].dir, FlowDirection::Tx);
+    assert_eq!(snaps[0].ip, dst_ip);
+    assert_eq!(snaps[0].bytes, 5);
+    assert_eq!(snaps[0].peer_id, 2);
+    // The flow must be booked on the tunnel that carried it.
+    assert_eq!(
+        snaps[0].conn_id, client_conn_id,
+        "flow booked on the wrong tunnel"
+    );
 }
 
 #[tokio::test]
@@ -290,8 +373,8 @@ async fn peer_channel_uses_admission_origin_instead_of_packet_header() {
 
     let (client_tx, _client_rx) = create_packet_recv_chan();
     let (server_tx, mut server_rx) = create_packet_recv_chan();
-    let client_map = PeerMap::new(client_tx, client_ctx, 1);
-    let server_map = PeerMap::new(server_tx, server_ctx, 2);
+    let client_map = new_test_peer_map(client_tx, client_ctx, 1);
+    let server_map = new_test_peer_map(server_tx, server_ctx, 2);
     client_map.add_new_peer_conn(client_conn).await.unwrap();
     server_map.add_new_peer_conn(server_conn).await.unwrap();
     assert!(server_map.has_direct_attached_peer(1));
@@ -348,7 +431,7 @@ async fn has_peer_with_live_conn_tracks_conn_liveness_not_map_presence() {
     server_ret.unwrap();
 
     let (client_tx, _client_rx) = create_packet_recv_chan();
-    let client_map = PeerMap::new(client_tx, client_ctx, 1);
+    let client_map = new_test_peer_map(client_tx, client_ctx, 1);
     client_map.add_new_peer_conn(client_conn).await.unwrap();
 
     // Self is always reachable (self-send path), even with an empty peer map.
@@ -419,8 +502,8 @@ async fn peer_map_reselects_cached_connection_after_close() {
 
     let (client_tx, _client_rx) = create_packet_recv_chan();
     let (server_tx, mut server_rx) = create_packet_recv_chan();
-    let client_map = PeerMap::new(client_tx, client_ctx, 1);
-    let server_map = PeerMap::new(server_tx, server_ctx, 2);
+    let client_map = new_test_peer_map(client_tx, client_ctx, 1);
+    let server_map = new_test_peer_map(server_tx, server_ctx, 2);
 
     client_map.add_new_peer_conn(client_conn_a).await.unwrap();
     client_map.add_new_peer_conn(client_conn_b).await.unwrap();

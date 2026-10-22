@@ -262,6 +262,7 @@ impl CoreInstanceConfig {
             policy_routes: config.get_policy_routes(),
             dns_config: config.get_dns_config(),
             foreign_context_default_flags: host.runtime_flags(TomlConfig::default().get_flags()),
+            flow_stats: config.get_flow_stats().to_table_config(),
         };
 
         let tcp_bind = TcpBindOptions::default().with_context(socket_context.clone());

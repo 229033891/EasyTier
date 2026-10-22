@@ -942,10 +942,11 @@ where
             .into_iter()
             .map(uuid::Uuid::from)
             .collect::<HashSet<_>>();
+        let flow_view = crate::management::flow_view::proto_flow_view(request.flow_view);
         let map = if included.is_empty() {
             self.management
                 .instances
-                .collect_network_infos()
+                .collect_network_infos(flow_view)
                 .await?
                 .into_iter()
                 .map(|(id, info)| (id.to_string(), info))
@@ -958,7 +959,7 @@ where
                 };
                 map.insert(
                     instance_id.to_string(),
-                    network_instance_running_info(instance.as_ref()).await?,
+                    network_instance_running_info(instance.as_ref(), flow_view).await?,
                 );
             }
             map

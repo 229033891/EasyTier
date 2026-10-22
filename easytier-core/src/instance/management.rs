@@ -142,6 +142,19 @@ where
         self.peer_manager.list_peer_snapshots().await
     }
 
+    /// Per-tunnel IP flow accounting table of this instance.
+    ///
+    /// Disabled by default; see
+    /// `docs/roadmap/tunnel-ip-flow-observability.md`.
+    pub fn flow_table(&self) -> &Arc<crate::peers::flow_table::FlowTable> {
+        self.peer_manager.flow_table()
+    }
+
+    /// Whether this instance may answer EXACT IP requests (decision D13).
+    pub fn flow_stats_allow_exact_ip(&self) -> bool {
+        self.peer_manager.flow_table().config().allow_exact_ip
+    }
+
     pub async fn node_snapshot(&self) -> crate::peers::peer_manager::NodeSnapshot {
         let mut snapshot = self
             .peer_manager

@@ -207,6 +207,7 @@ impl AttachedPeerRuntime {
                 policy_routes: Vec::new(),
                 dns_config: None,
                 foreign_context_default_flags: flags,
+                flow_stats: Default::default(),
             },
             Vec::new(),
             runtime_config,

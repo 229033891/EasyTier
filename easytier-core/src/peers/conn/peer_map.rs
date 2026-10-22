@@ -15,6 +15,7 @@ use crate::{
     peers::{
         context::{ArcPeerContext, NetworkIdentity, PeerEvent},
         error::Error,
+        flow_table::FlowTable,
         util::shrink_dashmap,
     },
     proto::{
@@ -62,6 +63,8 @@ pub struct PeerMap {
     /// — every foreign-network report therefore cleared the main instance's
     /// baseline, and the anti-flap debounce silently stopped working there.
     ospf_edge_cost_baseline: DashMap<PeerId, i32>,
+    /// Per-tunnel IP flow accounting (disabled by default).
+    flow_table: Arc<FlowTable>,
 }
 
 impl PeerMap {
@@ -69,6 +72,7 @@ impl PeerMap {
         packet_send: PacketRecvChan,
         context: ArcPeerContext,
         my_peer_id: PeerId,
+        flow_table: Arc<FlowTable>,
     ) -> Self {
         PeerMap {
             context,
@@ -79,6 +83,7 @@ impl PeerMap {
             alive_client_urls: Arc::new(Mutex::new(HashMap::new())),
             connecting_peers: DashSet::new(),
             ospf_edge_cost_baseline: DashMap::new(),
+            flow_table,
         }
     }
 
@@ -110,6 +115,7 @@ impl PeerMap {
                     peer_id,
                     self.packet_send.clone(),
                     self.context.clone(),
+                    self.flow_table.clone(),
                 ))
             });
             entry.clone()

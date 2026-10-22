@@ -111,6 +111,9 @@ pub mod instance {
                 unverified_hole_punch: value.unverified_hole_punch,
                 in_bond_set: value.in_bond_set,
                 bond_class: value.bond_class,
+                // Per-tunnel IP flows are filled in by the management layer
+                // (they are not part of the peer-to-peer wire protocol).
+                flows: Vec::new(),
             }
         }
     }

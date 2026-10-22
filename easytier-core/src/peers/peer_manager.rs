@@ -51,7 +51,7 @@ use crate::{
 
 use super::{
     BoxNicPacketFilter, BoxPeerPacketFilter, PacketRecvChanReceiver, PeerConnectionOrigin,
-    PeerPacketFilter,
+    PeerPacketFilter, PeerPacketIngress,
     acl::AclFilter,
     conn::{
         conn_bond::{
@@ -95,6 +95,7 @@ use super::{
     util::shrink_dashmap,
 };
 use crate::foundation::stats::{CounterHandle, LabelSet, LabelType, MetricName, StatsManager};
+use crate::peers::flow_table::{FlowTable, FlowTableConfig};
 use crate::proto::peer_rpc::{
     ForeignNetworkRouteInfoEntry, ForeignNetworkRouteInfoKey, GetIpListResponse, PeerIdentityType,
     PeerInfoForGlobalMap, RouteForeignNetworkInfos, RouteForeignNetworkSummary,
@@ -237,6 +238,11 @@ pub struct PortablePeerManagerConfig {
     /// This is explicit because those contexts participate in the same
     /// handshake as the parent but do not inherit all parent policy flags.
     pub foreign_context_default_flags: FlagsInConfig,
+    /// Per-tunnel IP flow accounting (disabled by default).
+    ///
+    /// See `docs/roadmap/tunnel-ip-flow-observability.md`.
+    #[serde(default)]
+    pub flow_stats: FlowTableConfig,
 }
 
 impl PortablePeerManagerConfig {
@@ -266,6 +272,7 @@ impl PortablePeerManagerConfig {
             policy_routes: Vec::new(),
             dns_config: None,
             foreign_context_default_flags,
+            flow_stats: FlowTableConfig::default(),
         }
     }
 }
@@ -1457,6 +1464,8 @@ pub struct PeerManagerCore {
     is_secure_mode_enabled: bool,
     route: ArcRoute,
     traffic_metrics: Arc<TrafficMetricRecorder>,
+    /// Per-tunnel IP flow accounting (disabled by default).
+    flow_table: Arc<FlowTable>,
     network_name: String,
     counters: PeerManagerTrafficCounters,
 }
@@ -1629,6 +1638,7 @@ impl PeerManagerCore {
             local_route_table,
             config.foreign_context_default_flags,
             foreign_rpc_registrar,
+            config.flow_stats,
         );
         peer_manager.reload_acl(initial_acl.as_ref());
         Ok(peer_manager)
@@ -1648,15 +1658,20 @@ impl PeerManagerCore {
         local_route_table: Arc<LocalRouteTable>,
         foreign_context_default_flags: FlagsInConfig,
         foreign_rpc_registrar: Arc<dyn ForeignNetworkRpcRegistrar>,
+        flow_stats: FlowTableConfig,
     ) -> Self {
         let stats_manager = core_context.stats_manager();
         let acl_filter = Arc::new(AclFilter::new());
         let context: ArcPeerContext = core_context.clone();
         let (packet_send, packet_recv) = super::create_packet_recv_chan();
+        // Per-tunnel IP flow accounting. Disabled by default: the table costs
+        // one atomic load per packet while disabled and allocates nothing.
+        let flow_table = Arc::new(FlowTable::new(flow_stats));
         let peers = Arc::new(PeerMap::new(
             packet_send.clone(),
             context.clone(),
             my_peer_id,
+            flow_table.clone(),
         ));
         let peer_session_store = Arc::new(PeerSessionStore::new());
 
@@ -1820,6 +1835,7 @@ impl PeerManagerCore {
             no_dst_peer_buffered,
             self_tx_counters.tunnel_buffer_full.clone(),
             pending_flush_errors,
+            flow_table.clone(),
         );
 
         Self {
@@ -1851,6 +1867,7 @@ impl PeerManagerCore {
             is_secure_mode_enabled,
             route,
             traffic_metrics,
+            flow_table,
             network_name,
             counters: self_tx_counters,
         }
@@ -1858,6 +1875,19 @@ impl PeerManagerCore {
 
     pub fn my_peer_id(&self) -> PeerId {
         self.my_peer_id
+    }
+
+    /// Per-tunnel IP flow accounting table (disabled by default).
+    pub fn flow_table(&self) -> &Arc<FlowTable> {
+        &self.flow_table
+    }
+
+    /// Enable (or reconfigure) the per-tunnel IP flow accounting.
+    ///
+    /// The table is created together with the peer manager but stays inert
+    /// until it is explicitly enabled, so low-end devices pay nothing.
+    pub fn configure_flow_stats(&self, cfg: FlowTableConfig) {
+        self.flow_table.configure(cfg);
     }
 
     pub(crate) fn credential_manager(&self) -> Arc<CredentialManager> {
@@ -2836,6 +2866,7 @@ impl PeerManagerCore {
             self.counters.self_tx_bytes.clone(),
             self.counters.compress_tx_bytes_before.clone(),
             self.counters.compress_tx_bytes_after.clone(),
+            self.flow_table.clone(),
         );
 
         self.tasks.lock().await.spawn(router.run());
@@ -2866,6 +2897,7 @@ impl PeerManagerCore {
             self.peer_session_store.clone(),
             self.context.clone(),
             self.traffic_metrics.clone(),
+            self.flow_table.clone(),
         )
         .spawn_into(&self.tasks)
         .await;
@@ -3531,9 +3563,12 @@ pub(crate) struct PeerMaintenanceTasks {
     peer_session_store: Arc<PeerSessionStore>,
     context: ArcPeerContext,
     traffic_metrics: Arc<TrafficMetricRecorder>,
+    /// Per-tunnel IP flow accounting (disabled by default).
+    flow_table: Arc<FlowTable>,
 }
 
 impl PeerMaintenanceTasks {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         peer_map: Arc<PeerMap>,
         relay_peer_map: Arc<RelayPeerMap>,
@@ -3542,6 +3577,7 @@ impl PeerMaintenanceTasks {
         peer_session_store: Arc<PeerSessionStore>,
         context: ArcPeerContext,
         traffic_metrics: Arc<TrafficMetricRecorder>,
+        flow_table: Arc<FlowTable>,
     ) -> Self {
         Self {
             peer_map,
@@ -3551,6 +3587,7 @@ impl PeerMaintenanceTasks {
             peer_session_store,
             context,
             traffic_metrics,
+            flow_table,
         }
     }
 
@@ -3561,6 +3598,29 @@ impl PeerMaintenanceTasks {
         self.spawn_peer_session_gc_routine(tasks).await;
         self.spawn_credential_gc_routine(tasks).await;
         self.spawn_traffic_metrics_gc_routine(tasks).await;
+        self.spawn_flow_stats_routines(tasks).await;
+    }
+
+    /// Rate window + GC for the per-tunnel IP flow accounting.
+    ///
+    /// The rate window is closed at a fixed cadence (1s) so the reported rate
+    /// does not depend on how often a consumer polls the table.
+    async fn spawn_flow_stats_routines(&self, tasks: &Mutex<JoinSet<()>>) {
+        let flow_table = self.flow_table.clone();
+        tasks.lock().await.spawn(async move {
+            loop {
+                flow_table.rotate_rate_window();
+                crate::foundation::time::sleep(std::time::Duration::from_secs(1)).await;
+            }
+        });
+
+        let flow_table = self.flow_table.clone();
+        tasks.lock().await.spawn(async move {
+            loop {
+                flow_table.gc(crate::peers::flow_table::now_unix_millis());
+                crate::foundation::time::sleep(std::time::Duration::from_secs(30)).await;
+            }
+        });
     }
 
     async fn spawn_clean_peer_without_conn_routine(&self, tasks: &Mutex<JoinSet<()>>) {
@@ -3719,6 +3779,10 @@ pub(crate) struct PeerOutboundPacketRouter {
     /// Packets parked briefly because their destination had no route yet.
     /// See `peers::pending_packets` (P-AUDIT.12).
     pending_packets: Arc<PendingPackets>,
+    /// Per-tunnel IP flow accounting (disabled by default). Used to decide
+    /// whether the inner destination IP has to be attached to the packet
+    /// before it is encrypted.
+    flow_table: Arc<FlowTable>,
 }
 
 impl PeerOutboundPacketRouter {
@@ -3747,6 +3811,7 @@ impl PeerOutboundPacketRouter {
         no_dst_peer_buffered: CounterHandle,
         tunnel_buffer_full: CounterHandle,
         pending_flush_errors: CounterHandle,
+        flow_table: Arc<FlowTable>,
     ) -> Self {
         let host_routing = context.host_routing_policy();
         Self {
@@ -3777,6 +3842,7 @@ impl PeerOutboundPacketRouter {
                 pending_flush_errors,
             },
             pending_packets: Arc::new(PendingPackets::new()),
+            flow_table,
         }
     }
 
@@ -4288,6 +4354,15 @@ impl PeerOutboundPacketRouter {
         // Sticky key from plaintext IP before compress/encrypt (classic AEAD
         // would otherwise make per-packet ciphertext hash → bond spray).
         msg.set_bond_flow_key(flow_key_from_payload(msg.payload()));
+        // Attach the inner destination IP (and its length) for the per-tunnel
+        // flow accounting. This must happen *before* the payload is compressed
+        // and encrypted, afterwards the inner IP header is unreadable.
+        if self.flow_table.is_enabled() {
+            msg.set_flow_meta(crate::packet::FlowMeta {
+                dst_ip: ip_addr,
+                inner_len: msg.payload().len() as u32,
+            });
+        }
         let packet_policy = self.context.packet_policy();
         let cur_to_peer_id = msg.peer_manager_header().unwrap().to_peer_id.into();
         if cur_to_peer_id != 0 {
@@ -4555,6 +4630,8 @@ pub(crate) struct PeerPacketRouter {
     traffic_metrics: Arc<TrafficMetricRecorder>,
     stats_mgr: Arc<StatsManager>,
     counters: PeerPacketRouterCounters,
+    /// Per-tunnel IP flow accounting (disabled by default).
+    flow_table: Arc<FlowTable>,
 }
 
 impl PeerPacketRouter {
@@ -4581,6 +4658,7 @@ impl PeerPacketRouter {
         self_tx_bytes: CounterHandle,
         compress_tx_bytes_before: CounterHandle,
         compress_tx_bytes_after: CounterHandle,
+        flow_table: Arc<FlowTable>,
     ) -> Self {
         let label_set = LabelSet::new().with_label_type(LabelType::NetworkName(network_name));
         Self {
@@ -4626,7 +4704,30 @@ impl PeerPacketRouter {
                 tunnel_buffer_full: stats_mgr
                     .get_counter(MetricName::DataPlaneTunnelBufferFull, label_set),
             },
+            flow_table,
         }
+    }
+
+    /// Book a received packet on the tunnel it arrived on.
+    ///
+    /// The payload is plaintext at this point, so the source IP of the inner
+    /// packet is available. Packets injected locally and packets that are
+    /// only forwarded (they are never decrypted here) are not counted.
+    fn record_rx_flow(&self, ingress: &PeerPacketIngress, packet: &ZCPacket) {
+        if !self.flow_table.is_enabled() {
+            return;
+        }
+        let PeerPacketIngress::Peer {
+            peer_id, conn_id, ..
+        } = *ingress
+        else {
+            return;
+        };
+        self.flow_table.record_rx(
+            Some((conn_id, peer_id)),
+            packet.payload(),
+            crate::peers::flow_table::now_unix_millis(),
+        );
     }
 
     pub async fn run(mut self) {
@@ -4646,7 +4747,9 @@ impl PeerPacketRouter {
             // arrive for forwarding (stale routes, convergence windows,
             // sole-path topologies) are forwarded, never hard-dropped — drops
             // turn transient misroutes into severe loss.
-            let (ret, _) = envelope.into_parts();
+            // The ingress carries the tunnel the packet arrived on; it is
+            // needed to attribute the traffic to that tunnel (flow accounting).
+            let (ret, ingress) = envelope.into_parts();
             let Err(ret) = try_handle_foreign_network_packet(
                 ret,
                 self.my_peer_id,
@@ -4659,11 +4762,11 @@ impl PeerPacketRouter {
                 continue;
             };
 
-            self.handle_packet(ret).await;
+            self.handle_packet(ret, ingress).await;
         }
     }
 
-    async fn handle_packet(&self, mut ret: ZCPacket) {
+    async fn handle_packet(&self, mut ret: ZCPacket, ingress: PeerPacketIngress) {
         let buf_len = ret.buf_len();
         let Some(hdr) = ret.mut_peer_manager_header() else {
             tracing::warn!(?ret, "invalid packet, skip");
@@ -4807,6 +4910,12 @@ impl PeerPacketRouter {
             self.counters
                 .compress_rx_bytes_after
                 .add(ret.buf_len() as u64);
+
+            // Per-tunnel flow accounting (RX): the payload is plaintext here,
+            // so the source IP of the inner packet is available. Only packets
+            // that arrived on a peer connection are attributed; forwarded
+            // packets are not decrypted and therefore not counted.
+            self.record_rx_flow(&ingress, &ret);
 
             if !self.acl_filter.process_packet_with_acl(
                 &ret,

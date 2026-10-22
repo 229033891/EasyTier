@@ -458,6 +458,12 @@ pub trait ConfigLoader: Send + Sync {
     }
     fn set_network_config_source(&self, _source: Option<ConfigSource>) {}
 
+    /// Per-tunnel IP flow accounting configuration (`[flow_stats]`).
+    fn get_flow_stats(&self) -> FlowStatsConfig {
+        FlowStatsConfig::default()
+    }
+    fn set_flow_stats(&self, _stats: FlowStatsConfig) {}
+
     fn dump(&self) -> String;
     fn dump_redacted(&self) -> String {
         self.dump()
@@ -753,7 +759,62 @@ struct Config {
     credential_file: Option<PathBuf>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     managed_credentials: Vec<ManagedCredentialConfig>,
+    /// Per-tunnel IP flow accounting (`[flow_stats]`).
+    ///
+    /// See `docs/roadmap/tunnel-ip-flow-observability.md`. Disabled by default:
+    /// when off, the node records nothing and the running page shows no flow
+    /// details.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    flow_stats: Option<FlowStatsConfig>,
     source: Option<ConfigSourceConfig>,
+}
+
+/// `[flow_stats]` — per-tunnel IP flow accounting.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FlowStatsConfig {
+    /// Master switch (default: off).
+    #[serde(default)]
+    pub enabled: bool,
+    /// Keep 1 out of N packets (1 = keep everything).
+    #[serde(default)]
+    pub sample_rate: Option<u32>,
+    /// Maximum number of distinct IPs kept per tunnel.
+    #[serde(default)]
+    pub max_per_conn: Option<u32>,
+    /// Maximum number of flow entries kept in the whole table.
+    #[serde(default)]
+    pub max_total: Option<u32>,
+    /// Prefix length used when a caller asks for masked (aggregated) IPs.
+    #[serde(default)]
+    pub mask_prefix_len_v4: Option<u32>,
+    #[serde(default)]
+    pub mask_prefix_len_v6: Option<u32>,
+    /// Allow this node to answer EXACT IP requests (decision D13).
+    #[serde(default)]
+    pub allow_exact_ip: bool,
+}
+
+impl FlowStatsConfig {
+    /// Project the TOML model onto the runtime table configuration.
+    pub fn to_table_config(&self) -> crate::peers::flow_table::FlowTableConfig {
+        let defaults = crate::peers::flow_table::FlowTableConfig::default();
+        crate::peers::flow_table::FlowTableConfig {
+            enabled: self.enabled,
+            sample_rate: self.sample_rate.unwrap_or(defaults.sample_rate).max(1),
+            max_per_conn: self.max_per_conn.map(|v| v as usize).unwrap_or(defaults.max_per_conn),
+            max_total: self.max_total.map(|v| v as usize).unwrap_or(defaults.max_total),
+            ttl: defaults.ttl,
+            mask_prefix_len_v4: self
+                .mask_prefix_len_v4
+                .map(|v| v.min(32) as u8)
+                .unwrap_or(defaults.mask_prefix_len_v4),
+            mask_prefix_len_v6: self
+                .mask_prefix_len_v6
+                .map(|v| v.min(128) as u8)
+                .unwrap_or(defaults.mask_prefix_len_v6),
+            allow_exact_ip: self.allow_exact_ip,
+        }
+    }
 }
 
 #[cfg(feature = "rich-config-errors")]
@@ -1419,6 +1480,14 @@ impl ConfigLoader for TomlConfig {
             ConfigSource::User => None,
             other => Some(ConfigSourceConfig { source: other }),
         });
+    }
+
+    fn get_flow_stats(&self) -> FlowStatsConfig {
+        self.config.lock().unwrap().flow_stats.unwrap_or_default()
+    }
+
+    fn set_flow_stats(&self, stats: FlowStatsConfig) {
+        self.config.lock().unwrap().flow_stats = Some(stats);
     }
 
     fn dump(&self) -> String {

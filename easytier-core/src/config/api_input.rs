@@ -533,6 +533,29 @@ impl NetworkConfigExt for NetworkConfig {
             cfg.set_exit_nodes(exit_nodes);
         }
 
+        // Per-tunnel IP flow accounting (see tunnel-ip-flow-observability.md).
+        // Only written when the caller actually carries the fields, so an
+        // older control plane that omits them does not wipe a locally
+        // configured `[flow_stats]` table.
+        if self.flow_stats_enabled.is_some()
+            || self.flow_stats_sample_rate.is_some()
+            || self.flow_stats_max_per_conn.is_some()
+            || self.flow_stats_max_total.is_some()
+            || self.flow_mask_prefix_len_v4.is_some()
+            || self.flow_mask_prefix_len_v6.is_some()
+            || self.flow_stats_allow_exact_ip.is_some()
+        {
+            cfg.set_flow_stats(crate::config::toml::FlowStatsConfig {
+                enabled: self.flow_stats_enabled.unwrap_or_default(),
+                sample_rate: self.flow_stats_sample_rate,
+                max_per_conn: self.flow_stats_max_per_conn,
+                max_total: self.flow_stats_max_total,
+                mask_prefix_len_v4: self.flow_mask_prefix_len_v4,
+                mask_prefix_len_v6: self.flow_mask_prefix_len_v6,
+                allow_exact_ip: self.flow_stats_allow_exact_ip.unwrap_or_default(),
+            });
+        }
+
         // Unified routing model (P1–P5). Values stay as strings on the wire so a
         // bad entry reports the same message the TOML loader would.
         //
@@ -959,6 +982,30 @@ impl NetworkConfigExt for NetworkConfig {
         }
         if config.get_manual_routes_append() {
             result.manual_routes_append = Some(true);
+        }
+
+        // Per-tunnel IP flow accounting (see tunnel-ip-flow-observability.md).
+        let flow_stats = config.get_flow_stats();
+        if flow_stats.enabled {
+            result.flow_stats_enabled = Some(true);
+        }
+        if let Some(value) = flow_stats.sample_rate {
+            result.flow_stats_sample_rate = Some(value);
+        }
+        if let Some(value) = flow_stats.max_per_conn {
+            result.flow_stats_max_per_conn = Some(value);
+        }
+        if let Some(value) = flow_stats.max_total {
+            result.flow_stats_max_total = Some(value);
+        }
+        if let Some(value) = flow_stats.mask_prefix_len_v4 {
+            result.flow_mask_prefix_len_v4 = Some(value);
+        }
+        if let Some(value) = flow_stats.mask_prefix_len_v6 {
+            result.flow_mask_prefix_len_v6 = Some(value);
+        }
+        if flow_stats.allow_exact_ip {
+            result.flow_stats_allow_exact_ip = Some(true);
         }
 
         if let Some(socks5_portal) = config.get_socks5_portal() {

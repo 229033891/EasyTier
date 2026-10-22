@@ -564,6 +564,21 @@ pub struct ZCPacket {
     /// plaintext inner IP 5-tuple *before* compress/encrypt so send path can
     /// hash after encryption without spraying packets across bond members.
     bond_flow_key: Option<u64>,
+    /// Local-only metadata of the inner IP packet, used by the per-tunnel flow
+    /// accounting (see `peers::flow_table`). Not on the wire; it must be set
+    /// *before* compress/encrypt because afterwards the inner IP header is
+    /// unreadable.
+    flow_meta: Option<FlowMeta>,
+}
+
+/// Local-only description of the inner IP packet carried by a [`ZCPacket`].
+#[derive(Debug, Clone, Copy)]
+pub struct FlowMeta {
+    /// Destination IP of the inner IP packet (the address the packet is
+    /// addressed to in the virtual network).
+    pub dst_ip: std::net::IpAddr,
+    /// Length of the inner IP packet in bytes (before compression/encryption).
+    pub inner_len: u32,
 }
 
 impl ZCPacket {
@@ -580,6 +595,7 @@ impl ZCPacket {
             inner: BytesMut::new(),
             packet_type: ZCPacketType::NIC,
             bond_flow_key: None,
+            flow_meta: None,
         }
     }
 
@@ -588,6 +604,7 @@ impl ZCPacket {
             inner: buf,
             packet_type,
             bond_flow_key: None,
+            flow_meta: None,
         }
     }
 
@@ -599,6 +616,18 @@ impl ZCPacket {
     /// Bonding flow key if the sender attached one before compress/encrypt.
     pub fn bond_flow_key(&self) -> Option<u64> {
         self.bond_flow_key
+    }
+
+    /// Attach the inner-packet metadata used for per-tunnel flow accounting.
+    ///
+    /// Must be called before the payload is compressed/encrypted.
+    pub fn set_flow_meta(&mut self, meta: FlowMeta) {
+        self.flow_meta = Some(meta);
+    }
+
+    /// Inner-packet metadata, if the sender attached one.
+    pub fn flow_meta(&self) -> Option<FlowMeta> {
+        self.flow_meta
     }
 
     pub fn new_with_payload(payload: &[u8]) -> Self {

@@ -66,6 +66,7 @@ crate 内设计稿（非本索引）：`easytier/docs/`（凭据计划已标 Arc
 | [unified-routing-conflicts.md](./roadmap/unified-routing-conflicts.md) | **统一路由 × 现有功能冲突分析**（已核查：2 处设计缺陷 / 3 处实现约束 / 3 处无冲突） |
 | [dns-policy.md](./roadmap/dns-policy.md) | DNS 策略**剩余缺口**（现状见 Current `magic-dns.md`） |
 | [multi-link-bonding.md](./roadmap/multi-link-bonding.md) | 多 PeerConn 聚合：Phase 2a/2b **已合入**（出厂默认 `bond_count=2`）；Phase 3 出口/`bind_device` 多样性待做 |
+| [tunnel-ip-flow-observability.md](./roadmap/tunnel-ip-flow-observability.md) | **隧道级 IP 流量可观测性**：每条隧道在跑哪些目的/源 IP；日志/事件/遥测三通道是否合并（结论：语义 3 类、物理 2 通道）；本机 vs 控制台可见性分维度规划；**Phase 0 实测 + Phase 1 记账内核 + Phase 2 协议/配置/UI 已落地**（待 Phase 3 控制台配置项与历史落库） |
 | [traffic-camouflage.md](./roadmap/traffic-camouflage.md) | 传输伪装 / 抗识别（wss 范式与 TLS 外观，Draft） |
 | [traffic-camouflage-phase-a-todo.md](./roadmap/traffic-camouflage-phase-a-todo.md) | Phase A TODO：中继 + wss:443 Ops/状态（**暂不实现**） |
 | [connection-stability-todo.md](./roadmap/connection-stability-todo.md) | 连接稳定性优化 TODO（相对 OpenVPN/IPsec；**端点可自定义，不假设 443**） |

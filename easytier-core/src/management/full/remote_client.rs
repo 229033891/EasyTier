@@ -112,6 +112,10 @@ where
                         .into_iter()
                         .map(|id| id.into())
                         .collect(),
+                    // The local host (desktop GUI) asks for exact IPs; the node
+                    // still downgrades to masked data unless it is configured
+                    // with `flow_stats_allow_exact_ip` (decision D13).
+                    flow_view: Some(easytier_proto::api::instance::FlowView::Exact as i32),
                 },
             )
             .await?;

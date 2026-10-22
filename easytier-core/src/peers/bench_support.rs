@@ -89,6 +89,9 @@ pub fn new_peer_map(my_peer_id: PeerId) -> Arc<PeerMap> {
         tx,
         Arc::new(super::test_support::NoopPeerContext::default()),
         my_peer_id,
+        Arc::new(super::flow_table::FlowTable::new(
+            super::flow_table::FlowTableConfig::default(),
+        )),
     ))
 }
 

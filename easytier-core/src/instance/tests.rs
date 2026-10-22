@@ -2061,6 +2061,7 @@ virtual_ip = "10.82.0.2/24"
                         requested_id.into(),
                         uuid::Uuid::new_v4().into(),
                     ],
+                    flow_view: None,
                 },
             )
             .await

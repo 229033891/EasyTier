@@ -1,5 +1,5 @@
 use easytier_proto::api::{
-    instance::{PeerInfo, list_peer_route_pair},
+    instance::{FlowView, PeerInfo, list_peer_route_pair},
     manage::{MyNodeInfo, NetworkInstanceRunningInfo},
 };
 
@@ -11,9 +11,14 @@ use crate::{
 use super::super::instance_rpc::effective_policy_route_to_proto;
 
 /// Builds the process-level running snapshot directly from one core Instance.
+///
+/// `flow_view` selects the IP detail of the per-tunnel flow lists; `None` means
+/// "masked" (the default for the control plane). See
+/// `docs/roadmap/tunnel-ip-flow-observability.md`.
 #[allow(deprecated)]
 pub async fn network_instance_running_info<H>(
     instance: &CoreInstance<H>,
+    flow_view: Option<FlowView>,
 ) -> anyhow::Result<NetworkInstanceRunningInfo>
 where
     H: CoreInstanceHost,
@@ -30,19 +35,38 @@ where
         });
     }
 
+    let resolved_flow_view = crate::management::flow_view::resolve_flow_view_with_prefix(
+        flow_view,
+        instance.flow_stats_allow_exact_ip(),
+        instance
+            .flow_table()
+            .config()
+            .mask_prefix_len_v4,
+        instance.flow_table().config().mask_prefix_len_v6,
+    );
+    let flow_table = instance.flow_table().clone();
+
     let peers = instance
         .peer_snapshots()
         .await
         .into_iter()
-        .map(|snapshot| PeerInfo {
-            peer_id: snapshot.peer_id,
-            default_conn_id: snapshot.default_conn_id.map(Into::into),
-            directly_connected_conns: snapshot
-                .directly_connected_conns
-                .into_iter()
-                .map(Into::into)
-                .collect(),
-            conns: snapshot.conns.into_iter().map(Into::into).collect(),
+        .map(|snapshot| {
+            let mut peer_info = PeerInfo {
+                peer_id: snapshot.peer_id,
+                default_conn_id: snapshot.default_conn_id.map(Into::into),
+                directly_connected_conns: snapshot
+                    .directly_connected_conns
+                    .into_iter()
+                    .map(Into::into)
+                    .collect(),
+                conns: snapshot.conns.into_iter().map(Into::into).collect(),
+            };
+            crate::management::flow_view::fill_conn_flows(
+                &mut peer_info.conns,
+                &flow_table,
+                resolved_flow_view,
+            );
+            peer_info
         })
         .collect::<Vec<_>>();
     let node = instance.node_snapshot().await;

@@ -22,6 +22,7 @@ use super::peer_conn::{PeerConn, PeerConnId};
 use crate::peers::{
     PacketRecvChan,
     context::{ArcPeerContext, PeerEvent},
+    flow_table::{FlowDirection, FlowTable},
     util::shrink_dashmap,
 };
 use crate::{
@@ -59,6 +60,8 @@ pub struct Peer {
     peer_public_key: Arc<RwLock<Option<Vec<u8>>>>,
     #[allow(dead_code)]
     default_conn_clear_task: AbortOnDropHandle<()>,
+    /// Per-tunnel IP flow accounting (disabled by default).
+    flow_table: Arc<FlowTable>,
 }
 
 impl Peer {
@@ -66,6 +69,7 @@ impl Peer {
         peer_node_id: PeerId,
         packet_recv_chan: PacketRecvChan,
         context: ArcPeerContext,
+        flow_table: Arc<FlowTable>,
     ) -> Self {
         let conns: ConnMap = Arc::new(DashMap::new());
         let (close_event_sender, mut close_event_receiver) = mpsc::channel(10);
@@ -183,6 +187,7 @@ impl Peer {
             peer_identity_type,
             peer_public_key,
             default_conn_clear_task,
+            flow_table,
         }
     }
 
@@ -312,6 +317,8 @@ impl Peer {
                     // Unreachable: guarded by `!members.is_empty()` above.
                     return Err(Error::PeerNoConnectionError(self.peer_node_id));
                 };
+                // Book the flow on the tunnel that actually carries it.
+                self.record_tx_flow(conn, &msg);
                 // On member failure drop the cached set so the next packet rebuilds
                 // without a half-dead member (matches single-path cache-clear semantics).
                 return conn.send_msg(msg).await.inspect_err(|_| {
@@ -326,6 +333,7 @@ impl Peer {
             if self.cached_conn_should_invalidate(conn) {
                 self.default_conn.store(None);
             } else {
+                self.record_tx_flow(conn, &msg);
                 conn.send_msg(msg).await?;
                 return Ok(());
             }
@@ -335,9 +343,34 @@ impl Peer {
         let Some(conn) = self.select_conn() else {
             return Err(Error::PeerNoConnectionError(self.peer_node_id));
         };
+        self.record_tx_flow(&conn, &msg);
         conn.send_msg(msg).await?;
 
         Ok(())
+    }
+
+    /// Book a locally originated packet on the tunnel that is about to carry it.
+    ///
+    /// The inner destination IP is attached to the packet as a local-only field
+    /// before it is compressed/encrypted (see
+    /// [`crate::packet::ZCPacket::flow_meta`]); control packets and forwarded
+    /// packets carry no such field and are therefore not counted.
+    fn record_tx_flow(&self, conn: &ArcPeerConn, msg: &ZCPacket) {
+        if !self.flow_table.is_enabled() {
+            return;
+        }
+        let Some(meta) = msg.flow_meta() else {
+            return;
+        };
+        self.flow_table.record(
+            conn.get_conn_id(),
+            self.peer_node_id,
+            meta.dst_ip,
+            FlowDirection::Tx,
+            u64::from(meta.inner_len),
+            1,
+            crate::peers::flow_table::now_unix_millis(),
+        );
     }
 
     /// Sends on one **specific** PeerConn instead of letting `send_msg` pick

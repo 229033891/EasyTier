@@ -722,6 +722,37 @@ export interface PeerConnInfo {
   in_bond_set?: boolean
   /** Short diversity summary of a bond member, e.g. tunnel scheme ("udp"). */
   bond_class?: string
+  /**
+   * Per-tunnel IP flows (empty unless the node has flow accounting enabled).
+   * Bytes are inner-IP bytes, not link bytes.
+   */
+  flows?: PeerConnFlow[]
+}
+
+/**
+ * One IP flow observed on a tunnel.
+ *
+ * `ip` is the destination for TX flows and the source for RX flows. When the
+ * node answers with masked data it holds the aggregated prefix instead of the
+ * exact address and `prefix_len` is non-zero.
+ */
+export interface PeerConnFlow {
+  conn_id: string
+  peer_id: number
+  ip: string
+  /** 0 = tx, 1 = rx. */
+  direction: number
+  bytes: number | string
+  packets: number | string
+  /** Bytes per second over the last closed rate window (node-side). */
+  rate_bytes_per_sec: number | string
+  last_seen_ms: number | string
+  /** True when the counters are an estimate (packet sampling was active). */
+  sampled?: boolean
+  /** 0 = exact IP; > 0 = prefix length used for the aggregation. */
+  prefix_len?: number
+  /** Number of distinct IPs merged into this entry (masked views only). */
+  flow_count?: number
 }
 
 export interface PeerRoutePair {
