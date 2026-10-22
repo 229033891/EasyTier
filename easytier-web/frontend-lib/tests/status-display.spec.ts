@@ -7,12 +7,18 @@ import {
   connPathQualityTip,
   connRemoteAddr,
   flattenPeerConnRows,
+  isDirectConnNotOnActivePath,
   jitterMs,
   latencyMs,
   lossRate,
+  nextHopPeerId,
   pathQualityCell,
   pathQualityTip,
+  resolveRoutePath,
+  resolveRouteTableKind,
+  routeHopCost,
   udpNatTypeName,
+  vipCheckedAtRelative,
 } from '../src/modules/statusDisplay'
 import { ipv4ToString, ipv6ToString } from '../src/modules/utils'
 
@@ -330,5 +336,81 @@ describe('flattenPeerConnRows', () => {
     const rows = flattenPeerConnRows([pair])
     expect(rows[0].isDefault).toBe(true)
     expect(rows[1].isDefault).toBe(false)
+  })
+
+  it('relay latency prefers VIP RTT and never paints path cost as Nms', () => {
+    const relay = {
+      route: {
+        peer_id: 42,
+        path_latency: 40,
+        path_latency_latency_first: 88,
+        cost: 2,
+        cost_latency_first: 3,
+      },
+      peer: { conns: [] },
+    } as any
+    expect(latencyMs(relay, { vipRttMs: 12 })).toBe('≈12ms')
+    expect(latencyMs(relay, { pathCostLabel: '路径代价' })).toBe('路径代价')
+    expect(latencyMs(relay)).toBe('')
+    expect(latencyMs(relay, { policyForcedLabel: '政策绕行' })).not.toMatch(/^\d+ms$/)
+  })
+
+  it('maps p2p_only to least_hop even when latency_first is on', () => {
+    expect(resolveRouteTableKind(true)).toBe('least_cost')
+    expect(resolveRouteTableKind(true, { p2pOnly: true })).toBe('least_hop')
+    expect(resolveRouteTableKind(false, { p2pOnly: false })).toBe('least_hop')
+  })
+
+  it('reads hop count and next hop from the same route table', () => {
+    const pair = {
+      route: {
+        peer_id: 99,
+        hostname: 'dst',
+        cost: 2,
+        next_hop_peer_id: 10,
+        cost_latency_first: 3,
+        next_hop_peer_id_latency_first: 20,
+        path_latency: 5,
+        path_latency_latency_first: 15,
+      },
+      peer: { conns: [] },
+    } as any
+    expect(routeHopCost(pair, 'least_cost')).toBe(3)
+    expect(routeHopCost(pair, 'least_hop')).toBe(2)
+    expect(nextHopPeerId(pair, 'least_cost')).toBe(20)
+    expect(nextHopPeerId(pair, 'least_hop')).toBe(10)
+    // Wire / JSON may deliver peer ids as strings — same as routeHopCost.
+    expect(nextHopPeerId({
+      route: { next_hop_peer_id_latency_first: '20', next_hop_peer_id: '10' },
+      peer: { conns: [] },
+    } as any, 'least_cost')).toBe(20)
+
+    const lfPath = resolveRoutePath(pair, { routeTable: 'least_cost', localLabel: 'me' })
+    expect(lfPath.cost).toBe(3)
+    expect(lfPath.hops.some(h => h.peerId === 20)).toBe(true)
+
+    const hopPath = resolveRoutePath(pair, { routeTable: 'least_hop', localLabel: 'me' })
+    expect(hopPath.cost).toBe(2)
+    expect(hopPath.hops.some(h => h.peerId === 10)).toBe(true)
+  })
+
+  it('marks a direct conn unused when next hop is a relay', () => {
+    const pair = {
+      route: {
+        peer_id: 99,
+        next_hop_peer_id_latency_first: 20,
+        next_hop_peer_id: 99,
+      },
+      peer: { conns: [{ conn_id: 'c1' }] },
+    } as any
+    expect(isDirectConnNotOnActivePath(pair, true, 'least_cost')).toBe(true)
+    expect(isDirectConnNotOnActivePath(pair, true, 'least_hop')).toBe(false)
+    expect(isDirectConnNotOnActivePath(pair, false, 'least_cost')).toBe(false)
+  })
+
+  it('formats VIP checked_at as relative age', () => {
+    const now = 1_700_000_045_000
+    expect(vipCheckedAtRelative(1_700_000_000_000, now, s => `${s}s`)).toBe('45s')
+    expect(vipCheckedAtRelative(undefined, now, s => `${s}s`)).toBeUndefined()
   })
 })

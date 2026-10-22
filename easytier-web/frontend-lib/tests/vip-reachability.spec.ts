@@ -84,11 +84,13 @@ describe('vipStateSeverity', () => {
 })
 
 describe('vipStateLabel', () => {
-  it('shows the bare rtt when reachable, no state word', () => {
-    // The number IS the proof that the dataplane answered; the Tag colour and
-    // the 「VIP」 column header carry the verdict instead.
+  it('shows ≈rtt when reachable, no state word', () => {
+    // The number IS the proof that the dataplane answered; ≈ marks business RTT
+    // (not link latency). Tag colour + 「VIP」 header carry the verdict.
     expect(vipStateLabel(record(1, VipState.Reachable, { rtt_ms: 12 }), LABELS))
-      .toBe('12ms')
+      .toBe('≈12ms')
+    expect(vipStateLabel(record(1, VipState.Reachable, { rtt_ms: 5.4 }), LABELS))
+      .toBe('≈6ms')
     // Reachable but no rtt on the wire: keep the state word rather than nothing.
     expect(vipStateLabel(record(1, VipState.Reachable), LABELS)).toBe('可达')
     expect(vipStateLabel(record(1, VipState.Unreachable, { rtt_ms: 9 }), LABELS))
@@ -96,10 +98,15 @@ describe('vipStateLabel', () => {
     expect(vipStateLabel(undefined, LABELS)).toBe('未知')
   })
 
-  it('renders a 0ms rtt instead of dropping it', () => {
+  it('renders sub-ms as ≈<1ms instead of dropping it', () => {
     // Sub-millisecond round trips are reported as 0 by the core.
     expect(vipStateLabel(record(1, VipState.Reachable, { rtt_ms: 0 }), LABELS))
-      .toBe('0ms')
+      .toBe('≈<1ms')
+  })
+
+  it('falls back to the state word when rtt is negative', () => {
+    expect(vipStateLabel(record(1, VipState.Reachable, { rtt_ms: -1 }), LABELS))
+      .toBe('可达')
   })
 })
 
@@ -115,6 +122,17 @@ describe('vipStateTip', () => {
     )
     expect(tip).toBe('探测失败 (timeout)<br>边界说明')
     expect(tip).not.toContain('\n')
+  })
+
+  it('includes freshness lines when provided', () => {
+    const tip = vipStateTip(
+      record(1, VipState.Reachable, { rtt_ms: 6 }),
+      { boundary: '端到端', checkedAt: '约 45 秒前探测', refreshHint: '单条约每 180 秒' },
+    )
+    expect(tip).toContain('端到端')
+    expect(tip).toContain('约 45 秒前探测')
+    expect(tip).toContain('单条约每 180 秒')
+    expect(tip).toMatch(/端到端<br>/)
   })
 
   it('escapes untrusted error text', () => {
@@ -156,7 +174,7 @@ describe('vipStateLabel reasons', () => {
 
   it('does not append a reason to definitive states', () => {
     expect(vipStateLabel(record(1, VipState.Reachable, { rtt_ms: 3 }), LABELS, REASONS))
-      .toBe('3ms')
+      .toBe('≈3ms')
     expect(vipStateLabel(record(1, VipState.Unreachable, { error: 'timeout' }), LABELS, REASONS))
       .toBe('不可达')
   })

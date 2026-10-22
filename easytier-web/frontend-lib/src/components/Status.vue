@@ -14,12 +14,18 @@ import {
   connPathQualityTip,
   connRemoteAddr,
   flattenPeerConnRows,
+  isDirectConnNotOnActivePath,
   latencyMs,
+  nextHopPeerId,
   numericValue,
+  pathLatencyCost,
   peerConns,
+  POLICY_FORCED_PATH_COST,
   resolvePeerRemoteAddr,
   resolveRoutePath,
+  resolveRouteTableKind,
   udpNatTypeName,
+  vipCheckedAtRelative,
   vipReachabilityIndex,
   vipReachabilityScore,
   vipLinkTotal,
@@ -30,6 +36,7 @@ import {
   vipStateTip,
   type PeerConnTableRow,
   type RoutePeerLabel,
+  type RouteTableKind,
   type VipStateKey,
 } from '../modules/statusDisplay';
 import { Badge, DataTable, Column, Tag, Button, ScrollPanel, Card, Panel, } from 'primevue';
@@ -39,7 +46,18 @@ import PeerConnHistoryChart from './PeerConnHistoryChart.vue';
 const props = defineProps<{
   curNetworkInst: NetworkInstance | null,
   api: RemoteClient,
+  /** Matches core `latency_first` (default true). Selects which OSPF table the UI reads. */
+  latencyFirst?: boolean,
+  /**
+   * Matches core `p2p_only`. When true, core clears latency_first for dataplane
+   * (`peers/context.rs`) → LeastHop; UI must mirror that.
+   */
+  p2pOnly?: boolean,
 }>()
+
+const routeTableKind = computed<RouteTableKind>(() =>
+  resolveRouteTableKind(props.latencyFirst !== false, { p2pOnly: !!props.p2pOnly }),
+)
 
 const { t } = useI18n()
 
@@ -88,7 +106,7 @@ const peersMetaById = computed(() => {
 })
 
 function peerAddrDisplay(info: PeerRoutePair) {
-  const resolved = resolvePeerRemoteAddr(info, peersById.value)
+  const resolved = resolvePeerRemoteAddr(info, peersById.value, routeTableKind.value)
   if (!resolved.text)
     return { text: '', tip: undefined as string | undefined }
   if (resolved.viaNextHop) {
@@ -106,8 +124,38 @@ const peerConnRows = computed(() => flattenPeerConnRows(peerRouteInfos.value as 
 function rowLatency(row: PeerConnTableRow) {
   if (row.conn)
     return connLatencyMs(row.conn)
-  // 中转无直连：回退到路由汇总延迟
-  return latencyMs(row.pair, { policyForcedLabel: t('path_latency_policy_forced') })
+  // Relay-only (§3.9 B): prefer VIP measured RTT; never paint path cost as `Nms`.
+  const vip = rowVipInfo(row)
+  const vipKey = vipStateKey(vip)
+  const vipRtt = vipKey === 'reachable' ? numericValue(vip?.rtt_ms) : undefined
+  return latencyMs(row.pair, {
+    policyForcedLabel: t('path_latency_policy_forced'),
+    pathCostLabel: t('status.path_cost_label'),
+    vipRttMs: vipRtt,
+    routeTable: routeTableKind.value,
+  })
+}
+
+function rowLatencyTip(row: PeerConnTableRow): { value: string, escape: false } | undefined {
+  const lines: string[] = []
+  if (row.conn && isDirectConnNotOnActivePath(row.pair, true, routeTableKind.value)) {
+    const hop = nextHopPeerId(row.pair, routeTableKind.value)
+    lines.push(t('status.conn_not_on_active_path_tip', { hop: hop ?? '?' }))
+  }
+  if (!row.conn) {
+    const vip = rowVipInfo(row)
+    if (vipStateKey(vip) === 'reachable' && numericValue(vip?.rtt_ms) !== undefined)
+      lines.push(t('status.relay_latency_from_vip_tip'))
+    const cost = pathLatencyCost(row.pair, routeTableKind.value)
+    if (cost !== undefined && cost > 0) {
+      if (cost >= POLICY_FORCED_PATH_COST)
+        lines.push(t('status.path_latency_policy_forced_tip'))
+      else
+        lines.push(t('status.path_cost_tip', { cost: Math.ceil(cost) }))
+    }
+  }
+  // Match vipStateTip: <br> + escape:false so PrimeVue does not fold newlines.
+  return lines.length ? { value: lines.join('<br>'), escape: false } : undefined
 }
 
 function rowJitter(row: PeerConnTableRow) {
@@ -200,7 +248,11 @@ function rowPathQualityTip(row: PeerConnTableRow) {
 function peerConnRowClass(row: PeerConnTableRow) {
   const moreOfSamePeer = row.connCount > 1 && row.connIndex < row.connCount - 1
   const border = moreOfSamePeer ? 'peer-border-intra' : 'peer-border-peer'
-  return row.isDefault ? `${border} peer-row-default` : border
+  const unused = row.conn && isDirectConnNotOnActivePath(row.pair, true, routeTableKind.value)
+    ? ' peer-row-path-unused'
+    : ''
+  const base = row.isDefault ? `${border} peer-row-default` : border
+  return `${base}${unused}`
 }
 
 function routeCostDisplay(info: PeerRoutePair) {
@@ -213,6 +265,7 @@ function routeCostDisplay(info: PeerRoutePair) {
     viaPath: (p) => t('status.route_path', { path: p }),
     ellipsisLabel: (count) => t('status.route_path_ellipsis', { count }),
     incompleteTip: t('status.route_path_incomplete_tip'),
+    routeTable: routeTableKind.value,
   })
   return path
 }
@@ -626,6 +679,9 @@ function rowVipLabel(row: PeerConnTableRow): string {
   const key = rowVipKey(row)
   if (key === 'not_probed')
     return t('status.vip_state_not_probed')
+  // Relay row: latency column already shows VIP RTT (§3.9) — VIP cell keeps state only.
+  if (!row.conn && key === 'reachable')
+    return t('status.vip_state_reachable')
   return vipStateLabel(rowVipInfo(row), {
     unknown: t('status.vip_state_unknown'),
     probing: t('status.vip_state_probing'),
@@ -635,10 +691,26 @@ function rowVipLabel(row: PeerConnTableRow): string {
 }
 
 function rowVipTip(row: PeerConnTableRow) {
-  const value = vipStateTip(rowVipInfo(row), {
+  const info = rowVipInfo(row)
+  const total = vipLinkTotalCount.value
+  // Mirror core cadence (not wired over the wire): PROBE_INTERVAL=20s and
+  // MAX_CONCURRENT_PROBES=3 in `easytier-core/.../vip_probe.rs` (~L93/L98).
+  // Round-robin ⇒ roughly ceil(N / 3) * 20s per link. If core changes those
+  // constants, update here or prefer a backend-provided hint.
+  const refreshSec = total > 0 ? Math.ceil((total / 3) * 20) : 0
+  const checkedAt = vipCheckedAtRelative(
+    info?.checked_at_unix_ms,
+    Date.now(),
+    (sec) => t('status.vip_checked_ago', { sec }),
+  )
+  const value = vipStateTip(info, {
     boundary: t('status.vip_boundary_tip'),
     probeFailed: t('status.vip_probe_failed'),
     reason: t('status.vip_no_result'),
+    checkedAt,
+    refreshHint: refreshSec > 0
+      ? t('status.vip_refresh_hint', { sec: refreshSec, links: total })
+      : undefined,
   })
   // A never-probed row has no record to derive a tooltip from, so explain the
   // gap explicitly rather than leaving the Tag unexplained.
@@ -1053,7 +1125,22 @@ const eventLogContent = computed(() => {
                 </span>
               </template>
             </Column>
-            <Column :field="rowLatency" :header="t('latency')" />
+            <Column :header="t('latency')">
+              <template #body="slotProps">
+                <span
+                  class="peer-latency-cell"
+                  :class="{ 'peer-latency-unused': slotProps.data.conn && isDirectConnNotOnActivePath(slotProps.data.pair, true, routeTableKind) }"
+                  v-tooltip.top="rowLatencyTip(slotProps.data)"
+                >
+                  {{ rowLatency(slotProps.data) }}
+                  <span
+                    v-if="slotProps.data.conn && isDirectConnNotOnActivePath(slotProps.data.pair, true, routeTableKind)"
+                    class="peer-path-unused-dot"
+                    aria-hidden="true"
+                  />
+                </span>
+              </template>
+            </Column>
             <Column :field="rowJitter" :header="t('jitter')"
               header-class="peer-col-secondary" body-class="peer-col-secondary" />
             <Column :field="rowLoss" :header="t('loss_rate')"
@@ -1632,6 +1719,31 @@ const eventLogContent = computed(() => {
   white-space: nowrap;
   vertical-align: bottom;
   font-variant-numeric: tabular-nums;
+}
+
+.peer-latency-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  max-width: 16rem;
+  font-variant-numeric: tabular-nums;
+  vertical-align: bottom;
+}
+
+.peer-latency-unused {
+  color: var(--text-color-secondary, #64748b);
+}
+
+.peer-path-unused-dot {
+  width: 0.4rem;
+  height: 0.4rem;
+  border-radius: 50%;
+  background: var(--text-color-secondary, #94a3b8);
+  flex-shrink: 0;
+}
+
+.peer-table-scroll :deep(.p-datatable-tbody > tr.peer-row-path-unused > td) {
+  opacity: 0.92;
 }
 
 .path-quality-header {

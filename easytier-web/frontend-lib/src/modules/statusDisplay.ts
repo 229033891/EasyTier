@@ -75,7 +75,118 @@ function defaultConnFirst(info: PeerRoutePair) {
  */
 export const POLICY_FORCED_PATH_COST = 1_000_000_000
 
-export function latencyMs(info: PeerRoutePair, opts?: { policyForcedLabel?: string }) {
+/**
+ * Which OSPF table the UI should read for hop count / next hop / path cost.
+ * Matches core `packet_policy`: `latency_first && !p2p_only` → LeastCost
+ * (`peers/context.rs`). Deep-path `forward_counter > 2` demotion is not
+ * visible to the GUI; see audit §3.8.
+ */
+export type RouteTableKind = 'least_cost' | 'least_hop'
+
+export function resolveRouteTableKind(
+  latencyFirst = true,
+  opts?: { p2pOnly?: boolean },
+): RouteTableKind {
+  // Core clears latency_first when p2p_only is on — mirror that here.
+  const effective = latencyFirst && !opts?.p2pOnly
+  return effective ? 'least_cost' : 'least_hop'
+}
+
+/** Control-plane µs → display ms (ceil), same as conn latency column. */
+export function formatLatencyUsAsMs(latencyUs: number): string {
+  return `${Math.ceil(latencyUs / 1000)}ms`
+}
+
+/**
+ * VIP / end-to-end RTT for display: ceil to match the latency column, `0` →
+ * `<1ms`, optional `≈` so it is not read as link RTT (audit §3.9 / §5 序1–2).
+ */
+export function formatVipRttMs(rttMs: number, opts?: { approx?: boolean }): string {
+  const approx = opts?.approx !== false
+  if (!Number.isFinite(rttMs) || rttMs < 0)
+    return ''
+  if (rttMs === 0)
+    return approx ? '≈<1ms' : '<1ms'
+  const n = Math.ceil(rttMs)
+  return approx ? `≈${n}ms` : `${n}ms`
+}
+
+function positivePeerId(value: unknown): number | undefined {
+  const n = numericValue(value)
+  if (n === undefined || n <= 0)
+    return undefined
+  return n
+}
+
+/** Hop count (edge count) from the selected table; falls back if LF fields absent. */
+export function routeHopCost(info: PeerRoutePair, kind: RouteTableKind = 'least_cost'): number | undefined {
+  const route = info.route
+  if (!route)
+    return undefined
+  if (kind === 'least_cost') {
+    const lf = numericValue(route.cost_latency_first)
+    if (lf !== undefined)
+      return lf
+  }
+  return numericValue(route.cost)
+}
+
+/** Path quality cost (not measured RTT). Prefer the same table as hop/next-hop. */
+export function pathLatencyCost(info: PeerRoutePair, kind: RouteTableKind = 'least_cost'): number | undefined {
+  const route = info.route
+  if (!route)
+    return undefined
+  if (kind === 'least_cost')
+    return numericValue(route.path_latency_latency_first) ?? numericValue(route.path_latency)
+  return numericValue(route.path_latency) ?? numericValue(route.path_latency_latency_first)
+}
+
+/**
+ * Next-hop peer id from the selected table.
+ * Exported for「非在用路径」marks (audit §5 序4); previously module-private.
+ */
+export function nextHopPeerId(info: PeerRoutePair, kind: RouteTableKind = 'least_cost'): number | undefined {
+  const route = info.route
+  if (!route)
+    return undefined
+
+  if (kind === 'least_cost') {
+    const lf = positivePeerId(route.next_hop_peer_id_latency_first)
+    if (lf !== undefined)
+      return lf
+  }
+
+  return positivePeerId(route.next_hop_peer_id)
+}
+
+/**
+ * True when this row has a direct PeerConn but the active next hop is a relay
+ * (next hop ≠ destination). Pure display; uses the same table as path columns.
+ */
+export function isDirectConnNotOnActivePath(
+  info: PeerRoutePair,
+  hasDirectConn: boolean,
+  kind: RouteTableKind = 'least_cost',
+): boolean {
+  if (!hasDirectConn)
+    return false
+  const dest = positivePeerId(info.route?.peer_id)
+  if (dest === undefined)
+    return false
+  const hop = nextHopPeerId(info, kind)
+  if (hop === undefined)
+    return false
+  return hop !== dest
+}
+
+export function latencyMs(info: PeerRoutePair, opts?: {
+  policyForcedLabel?: string
+  /** When no conn: prefer this VIP measured RTT (audit §3.7.4 B / §3.9). */
+  vipRttMs?: number
+  /** When no VIP RTT: show this instead of rendering path cost as `Nms` (A). */
+  pathCostLabel?: string
+  routeTable?: RouteTableKind
+}) {
   const connId = defaultConnId(info)
   let minLatencyUs: number | undefined
 
@@ -88,24 +199,25 @@ export function latencyMs(info: PeerRoutePair, opts?: { policyForcedLabel?: stri
       continue
 
     if (connId === conn.conn_id)
-      return `${Math.ceil(latencyUs / 1000)}ms`
+      return formatLatencyUsAsMs(latencyUs)
 
     minLatencyUs = Math.min(minLatencyUs ?? latencyUs, latencyUs)
   }
 
   if (minLatencyUs !== undefined)
-    return `${Math.ceil(minLatencyUs / 1000)}ms`
+    return formatLatencyUsAsMs(minLatencyUs)
 
-  // 中转无直连 tunnel：回退到路由表汇总的路径延迟（毫秒）
-  const pathLatency = numericValue(info.route?.path_latency_latency_first)
-    ?? numericValue(info.route?.path_latency)
+  // Relay-only: never paint OSPF path cost as measured `Nms` (§3.9).
+  if (opts?.vipRttMs !== undefined && Number.isFinite(opts.vipRttMs))
+    return formatVipRttMs(opts.vipRttMs)
+
+  const kind = opts?.routeTable ?? 'least_cost'
+  const pathLatency = pathLatencyCost(info, kind)
   if (pathLatency !== undefined && pathLatency > 0) {
-    // The backend keeps the relay-policy penalty in `path_latency` instead of
-    // erasing it, so a cost this large is a policy-forced detour. Render it as
-    // such rather than printing "1000000000ms".
     if (pathLatency >= POLICY_FORCED_PATH_COST)
       return opts?.policyForcedLabel || 'policy detour'
-    return `${Math.ceil(pathLatency)}ms`
+    // A: grey label / empty — cost may still be exposed via tooltip elsewhere.
+    return opts?.pathCostLabel ?? ''
   }
 
   return ''
@@ -148,28 +260,14 @@ function peerLabel(meta?: RoutePeerLabel | null, fallback = '?'): string {
   return fallback
 }
 
-function nextHopPeerId(info: PeerRoutePair): number | undefined {
-  const route = info.route
-  if (!route)
-    return undefined
-
-  const latencyFirst = route.next_hop_peer_id_latency_first
-  if (typeof latencyFirst === 'number' && latencyFirst > 0)
-    return latencyFirst
-
-  const nextHop = route.next_hop_peer_id
-  if (typeof nextHop === 'number' && nextHop > 0)
-    return nextHop
-
-  return undefined
-}
-
 /**
  * 路由路径展示。
  * 协议只下发 next_hop + cost（跳数），完整拓扑不可得：
  * - cost=1：直连
  * - cost=2：本机 → 下一跳 → 目标（完整）
  * - cost>2：本机 → 下一跳 → … → 目标（中间节点未知）
+ *
+ * Hop count and next hop MUST come from the same `routeTable` (audit §3.8.4).
  */
 export function resolveRoutePath(
   info: PeerRoutePair,
@@ -184,9 +282,11 @@ export function resolveRoutePath(
     incompleteTip?: string
     p2pLabel?: string
     localText?: string
+    routeTable?: RouteTableKind
   },
 ): RoutePathResult {
-  const cost = info.route?.cost
+  const kind = opts?.routeTable ?? 'least_cost'
+  const cost = routeHopCost(info, kind)
   if (cost === undefined || cost === null || cost === 0) {
     return {
       kind: 'local',
@@ -208,7 +308,7 @@ export function resolveRoutePath(
   const peersMetaById = opts?.peersMetaById
   const localLabel = opts?.localLabel || 'Local'
   const destId = info.route?.peer_id
-  const hopId = nextHopPeerId(info)
+  const hopId = nextHopPeerId(info, kind)
 
   const fromMap = destId ? peersMetaById?.get(destId) : undefined
   const destMeta: RoutePeerLabel = {
@@ -319,16 +419,17 @@ export type PeerRemoteAddrResult = {
 export function resolvePeerRemoteAddr(
   info: PeerRoutePair,
   peersById?: Map<number, PeerInfo>,
+  routeTable: RouteTableKind = 'least_cost',
 ): PeerRemoteAddrResult {
   const direct = collectTunnelRemoteAddrs(info.peer, defaultConnId(info))
   if (direct.length)
     return { text: direct.join(', '), viaNextHop: false }
 
-  const cost = info.route?.cost
+  const cost = routeHopCost(info, routeTable)
   if (!cost || cost <= 1 || !peersById)
     return { text: '', viaNextHop: false }
 
-  const hopId = nextHopPeerId(info)
+  const hopId = nextHopPeerId(info, routeTable)
   if (!hopId)
     return { text: '', viaNextHop: false }
 
@@ -569,7 +670,7 @@ export function flattenPeerConnRows(pairs: PeerRoutePair[]): PeerConnTableRow[] 
 
 export function connLatencyMs(conn?: PeerConnInfo): string {
   const latencyUs = numericValue(conn?.stats?.latency_us)
-  return latencyUs === undefined ? '' : `${Math.ceil(latencyUs / 1000)}ms`
+  return latencyUs === undefined ? '' : formatLatencyUsAsMs(latencyUs)
 }
 
 export function connJitterMs(conn?: PeerConnInfo): string {
@@ -739,9 +840,16 @@ export function vipStateLabel(
 ): string {
   const key = vipStateKey(info)
   const base = labels?.[key] ?? key
-  // Only the measurement, no state word: a time can only come from a reply.
-  if (key === 'reachable' && info?.rtt_ms !== undefined)
-    return `${info.rtt_ms}ms`
+  // Measurement with ≈: end-to-end business RTT, not link latency (§3.9).
+  if (key === 'reachable' && info?.rtt_ms !== undefined) {
+    const rtt = numericValue(info.rtt_ms)
+    if (rtt !== undefined) {
+      const formatted = formatVipRttMs(rtt)
+      // Negative / non-finite → empty; keep the state word so the Tag is not blank.
+      if (formatted)
+        return formatted
+    }
+  }
   if (key === 'unknown' && info?.error) {
     const reason = reasons?.[info.error]
     // Old core / absent field: no error string, so the bare state is all there is.
@@ -782,7 +890,15 @@ export function vipReasonLabels(i18n: {
  */
 export function vipStateTip(
   info: PeerVipReachabilityInfo | undefined,
-  i18n?: { boundary?: string, probeFailed?: string, reason?: string },
+  i18n?: {
+    boundary?: string
+    probeFailed?: string
+    reason?: string
+    /** Relative freshness, e.g. "checked 45s ago". */
+    checkedAt?: string
+    /** Schedule hint when many links share the prober. */
+    refreshHint?: string
+  },
 ): string | undefined {
   const escapeHtml = (text: string) => text
     .replace(/&/g, '&amp;')
@@ -798,7 +914,24 @@ export function vipStateTip(
   }
   if (i18n?.boundary)
     lines.push(escapeHtml(i18n.boundary))
+  if (i18n?.checkedAt)
+    lines.push(escapeHtml(i18n.checkedAt))
+  if (i18n?.refreshHint)
+    lines.push(escapeHtml(i18n.refreshHint))
   return lines.length ? lines.join('<br>') : undefined
+}
+
+/** Format `checked_at_unix_ms` as relative age for tooltips; undefined if unusable. */
+export function vipCheckedAtRelative(
+  checkedAtUnixMs: string | number | undefined,
+  nowMs: number,
+  format: (secondsAgo: number) => string,
+): string | undefined {
+  const ts = numericValue(checkedAtUnixMs)
+  if (ts === undefined || ts <= 0)
+    return undefined
+  const ago = Math.max(0, Math.floor((nowMs - ts) / 1000))
+  return format(ago)
 }
 
 /**

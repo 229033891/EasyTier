@@ -5,7 +5,7 @@ import { writeText } from '@tauri-apps/plugin-clipboard-manager'
 import { type } from '@tauri-apps/plugin-os'
 import { exit } from '@tauri-apps/plugin-process'
 import { open } from '@tauri-apps/plugin-shell'
-import { I18nUtils, type LoggingSettingsApi, LoggingSettingsDialog, RemoteManagement, TOAST_LIFE, Utils } from 'easytier-frontend-lib'
+import { I18nUtils, type LoggingSettingsApi, LoggingSettingsDialog, RemoteManagement, shouldSuppressSyncedOverwriteToast, TOAST_LIFE, Utils } from 'easytier-frontend-lib'
 import { useConfirm, useToast } from 'primevue'
 import ModeSwitcher from '~/components/ModeSwitcher.vue'
 import {
@@ -1376,12 +1376,13 @@ onMounted(async () => {
   cleanupFns.push(await listenGlobalEvents())
   const onSyncedOverwrite = (event: Event) => {
     const detail = (event as CustomEvent<{ instanceId?: string }>).detail
+    // Self-save echo: local Save already toasted; skip the reconcile writeback tip.
+    if (shouldSuppressSyncedOverwriteToast(detail?.instanceId))
+      return
     toast.add({
       severity: 'info',
       summary: t('web.common.success'),
-      detail: t('web.device_management.managed_config_synced_overwrite', {
-        id: detail?.instanceId || '',
-      }),
+      detail: t('web.device_management.managed_config_synced_overwrite'),
       life: TOAST_LIFE.success,
     })
   }

@@ -3,7 +3,7 @@
 ## Status
 
 - Status: **Current**
-- 最近审阅：2026-10-14（§2.5 存储优先 + 热更写回 + Service/Remote Web 运行态指纹采纳；徽章/RPC warn）
+- 最近审阅：2026-10-22（§2.3.1：note 提前到 save/run 前；抑制预算 **2**（reconcile + AdoptRuntime）；另源下发仍提示；同步 tip 文案缩短）；2026-10-14（§2.5 存储优先 + 热更写回 + Service/Remote Web 运行态指纹采纳；徽章/RPC warn）
 - 上次审阅：2026-10-09（补 §2.5：读配置权威；GUI RPC 优先 vs Web 存储优先；补 §6：配置页 / 运行页职责）
 - 范围：Windows/Linux/macOS 桌面 `easytier-gui`、可选后台服务 `ET-Gui`、config-server 会话与 web-owned 配置回写
 - 索引：[`../README.md`](../README.md)
@@ -92,6 +92,19 @@
 4. 文案用 `gui_sync_message` / `gui_sync_message_for_error_code`，不暴露裸 Debug。
 
 > **客户端改配置并推控制台**：连着 config-server 且实例为 web-owned 时，上述第 2–3 步仍会把本次保存写入控制台 SQLite。未连接 / User 源 → 只落本机，不推库。
+
+#### 2.3.1 客户端改本地配置：两种连接情形（验收对照）
+
+| 情形 | 保存时发生什么 | UI 提示（各代表一次动作） | 是否合理 |
+|------|----------------|---------------------------|----------|
+| **未连控制台**，或实例为 **User 源** | 只写本机存储；**不** `ReportManagedNetworkConfig`；运行中实例**不**因 Save 重建 | 一条：`save_ok_local_hint` / `save_ok_unchanged` | **合理**：本地权威，控制台无副本可推 |
+| **已连控制台** 且实例 **Web 托管** | ① 先写本机；② 上报控制台 SQLite；③ 若行仍启用且在线，控制台 reconcile 可热更/重建设备；④ 成功后写回本机缓存并 emit `managed_config_synced_overwrite` | 首条：「已保存到本机…」。自保存回声：`noteLocalConfigSaved` 在 save/run **前**；宿主 tip 在 12s 窗内按预算 **抑制最多 2 次**（`SYNC_OVERWRITE_ECHO_BUDGET`：reconcile 回写 + 随后 `AdoptRuntime` 的二次 emit；见 `managedConfigSyncTip.ts`）。预算用尽后同窗内再来的事件（控制台另源下发）仍提示。编辑器仍可静默 reload | **总体合理**（落盘 ≠ 运行态生效 ≠ 控制台回写）。首条在 GUI 侧恒按「本地已存、未重建」措辞，**不区分**随后是否热更成功 |
+
+**已知边界**：
+
+1. GUI `save_network_config` 对前端仍返回 void/`unchanged`，故首条 toast **看不到**「已推到控制台」；推送成败目前混在 save 的 Err（`gui_sync_message`）或（窗口外的）同步 tip 里。
+2. 上报失败时本地其实已存成功，但命令返回 `Err` → 前端可能显示「保存失败」类提示（文案里会说明已落本地）——体验略拧，但避免静默丢同步。
+3. 自保存回声抑制仅作用于**宿主 tip**；`RemoteManagement` 对同事件的编辑器刷新不受影响。失败保存也可能提前 note，最多吞掉预算内（默认 2 条）真实覆盖 tip（可接受）。更稳的长期方案：事件带 revision / 配置指纹，前端比对后再决定。
 
 > **为什么第 0 步要问权威侧**：GUI 本地 `source` 缓存只由 `GuiHooks::pre_run_network_instance` 写入，
 > 而该 hook 只在**持有 config-server `WebClient` 的那个进程**里安装。Service / Remote 模式下

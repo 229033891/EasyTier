@@ -27,6 +27,12 @@ import {
     addThrottledToast,
     createToastRepeatGate,
 } from './modules/toast';
+import {
+    SYNC_OVERWRITE_ECHO_BUDGET,
+    SYNC_OVERWRITE_ECHO_SUPPRESS_MS,
+    noteLocalConfigSaved,
+    shouldSuppressSyncedOverwriteToast,
+} from './modules/managedConfigSyncTip';
 import { normalizeLoggerLevel, loggerLevelToRpc } from './modules/logging';
 
 export default {
@@ -85,6 +91,10 @@ export {
     TOAST_REPEAT_COOLDOWN_MS,
     addThrottledToast,
     createToastRepeatGate,
+    SYNC_OVERWRITE_ECHO_BUDGET,
+    SYNC_OVERWRITE_ECHO_SUPPRESS_MS,
+    noteLocalConfigSaved,
+    shouldSuppressSyncedOverwriteToast,
     normalizeLoggerLevel,
     loggerLevelToRpc,
     tooltipDirective,

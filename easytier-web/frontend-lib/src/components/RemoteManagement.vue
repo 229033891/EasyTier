@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { Button, Message, Select, Tag, useConfirm, useToast, type VirtualScrollerLazyEvent } from 'primevue';
 import { TOAST_LIFE, addThrottledToast, createToastRepeatGate } from '../modules/toast'
+import { noteLocalConfigSaved } from '../modules/managedConfigSyncTip'
 import { computed, onMounted, onUnmounted, ref, toRaw, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import * as Api from '../modules/api';
@@ -1268,6 +1269,9 @@ const saveAndRunNewNetwork = async (config?: NetworkTypes.NetworkConfig) => {
     }
 
     try {
+        // Note *before* save/run awaits so a fast console echo cannot race past
+        // the suppress window (desktop-gui §2.3.1). Failed save may skip one real tip.
+        noteLocalConfigSaved(cfg.instance_id);
         if (networkIsDisabled.value) {
             const saveResult = await props.api.save_config(cfg);
             await props.api.update_network_instance_state(cfg.instance_id, false);
@@ -1471,6 +1475,9 @@ const doSaveNetworkConfig = async () => {
     const savedId = currentNetworkConfig.value.instance_id;
     const wasRunning = !!savedId && isRunning(savedId);
     try {
+        // Note before await: echo may arrive during post-save refresh / align
+        // (desktop-gui §2.3.1). Also covers the align-fail early return below.
+        noteLocalConfigSaved(savedId);
         const result = await props.api.save_config(currentNetworkConfig.value);
         const savedName = currentNetworkConfig.value.network_name;
 
@@ -2200,7 +2207,10 @@ onUnmounted(() => {
 
             <template v-else-if="needShowNetworkStatus">
                 <Status v-if="curNetworkInfo && curNetworkInfo.error_msg === ''" v-bind:cur-network-inst="curNetworkInfo"
-                    :api="api" class="mb-0 status-fill-host" />
+                    :api="api"
+                    :latency-first="currentNetworkConfig?.latency_first !== false"
+                    :p2p-only="!!currentNetworkConfig?.p2p_only"
+                    class="mb-0 status-fill-host" />
                 <Message v-else-if="curNetworkInfo?.error_msg" severity="error" class="mb-0">{{
                     curNetworkInfo.error_msg }}</Message>
                 <Message v-else severity="info" class="mb-0">{{ t('web.device_management.loading_network_status') }}

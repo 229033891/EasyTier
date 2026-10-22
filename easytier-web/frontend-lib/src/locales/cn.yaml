@@ -776,8 +776,15 @@ status:
   vip_state_unreachable: 不可达
   vip_state_not_probed: 未探测
   vip_not_probed_tip: "该链路未被纳入本轮探测范围，不计入 [M/N] 的 N"
-  vip_reachability_badge_tip: "VIP 可达链路 {m} / 链路总数 {n}（分子分母都只统计探测器实际探测过的链路；与控制面延迟/丢包无关）"
-  vip_boundary_tip: "VIP 数据面探测结果，≠ 控制面连通性；探测失败也可能是对端禁 ping"
+  vip_reachability_badge_tip: "VIP 可达链路 {m} / 链路总数 {n}（分子分母都只统计探测器实际探测过的链路；与控制面延迟/丢包无关；N 含无直连的中继节点条目，故可能与表格行数不等）"
+  vip_boundary_tip: "端到端 ICMP 往返（含两端处理与对端主机栈），≠ 链路延迟；与「延迟」列的差值主要是处理开销，不可相减得抖动；探测失败也可能是对端禁 ping"
+  vip_checked_ago: "约 {sec} 秒前探测"
+  vip_refresh_hint: "当前约 {links} 条链路，单条约每 {sec} 秒刷新一次"
+  path_cost_label: "路径代价"
+  path_cost_tip: "OSPF 路径代价（含丢包/抖动罚分）约 {cost}，非实测 RTT"
+  path_latency_policy_forced_tip: "路径代价为占位值（策略强制绕行）"
+  relay_latency_from_vip_tip: "中转行延迟取自 VIP 数据面实测，非路径代价"
+  conn_not_on_active_path_tip: "当前最优路径经 #{hop} 中转，本行直连链路未在使用"
   vip_probe_failed: "探测失败"
   vip_no_result: "暂无结果"
   vip_reason_disabled: "探测已关闭"
@@ -1142,18 +1149,20 @@ web:
     save_config_disabled_meta: 正在加载权限信息，请稍候再保存
     save_config_disabled_readonly: 当前配置为只读，无法保存
     confirm_save_takeover_user_source: 该网络当前为设备本地（User）配置。保存后将由控制台接管（改为 Web 源），之后设备本地改动可能被控制台覆盖。确定继续？
-    managed_config_synced_overwrite: 控制台已同步更新配置并覆盖本地实例（{id}）
+    # 控制台下发/热更写回本机后的提示（与「本地保存」是两次动作，可同屏）
+    managed_config_synced_overwrite: 控制台配置已同步到本机
     save_failed: 保存配置失败
     save_ok_unchanged: 已保存
-    save_ok_local_hint: 已写入本地；若网络仍在运行，底座字段（如网络名称/密码）需重新运行后才会生效
+    # GUI 本地保存成功：不重建运行中实例时，底座项要重新运行才生效
+    save_ok_local_hint: 已保存到本机。网络在运行时，网络名/密码等需重新运行后生效
     save_ok_patched: 已保存，正在热更新到设备
-    save_ok_rebuilt: 已保存，将重建实例（可能短暂断流）
-    save_ok_pending: 已保存，同步中
-    save_ok_pending_disabled: 已保存（网络仍为停用，启动后生效）
-    save_ok_pending_disabled_still_running: 已保存为停用，但设备仍在运行；自动启动对齐失败
-    save_ok_aligned_start: 已保存并自动启动，使控制台启用态与设备运行态对齐
+    save_ok_rebuilt: 已保存，将重建实例（可能短暂断线）
+    save_ok_pending: 已保存，正在同步
+    save_ok_pending_disabled: 已保存（网络仍停用，启动后生效）
+    save_ok_pending_disabled_still_running: 已保存为停用，但设备仍在运行；自动对齐失败
+    save_ok_aligned_start: 已保存并已自动启动
     save_ok_pending_offline: 已保存（设备离线，上线后同步）
-    save_ok_pending_prepare_timeout: 已保存，同步中（未能立即确认热更新方式）
+    save_ok_pending_prepare_timeout: 已保存，正在同步
     start_failed: 启动网络失败
     stop_failed: 停用网络失败
     load_config_failed: 加载配置失败

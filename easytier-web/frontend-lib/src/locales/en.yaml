@@ -780,8 +780,15 @@ status:
   vip_state_unreachable: Unreachable
   vip_state_not_probed: Not probed
   vip_not_probed_tip: "This link was outside the prober's enumeration, so it is not counted in the N of [M/N]"
-  vip_reachability_badge_tip: "VIP reachable links {m} / {n} (both counted over the links the prober actually probed; independent of control-plane latency/loss)"
-  vip_boundary_tip: "VIP dataplane probe result, not control-plane connectivity; failure may also mean the peer blocks ping"
+  vip_reachability_badge_tip: "VIP reachable links {m} / {n} (both counted over the links the prober actually probed; independent of control-plane latency/loss; N includes relay-only peer entries, so it may differ from the table row count)"
+  vip_boundary_tip: "End-to-end ICMP round-trip (includes mesh processing and the peer host stack), not link latency; the gap vs the Latency column is mostly processing overhead — do not subtract them as jitter; failure may also mean the peer blocks ping"
+  vip_checked_ago: "probed about {sec}s ago"
+  vip_refresh_hint: "About {links} links; each refreshes roughly every {sec}s"
+  path_cost_label: "path cost"
+  path_cost_tip: "OSPF path cost (includes loss/jitter penalties) ≈ {cost}, not measured RTT"
+  path_latency_policy_forced_tip: "Path cost is a policy-forced placeholder (detour)"
+  relay_latency_from_vip_tip: "Relay-row latency uses the VIP dataplane measurement, not path cost"
+  conn_not_on_active_path_tip: "Best path is via relay #{hop}; this direct link is not in use"
   vip_probe_failed: "probe failed"
   vip_no_result: "no result"
   vip_reason_disabled: "probing is disabled"
@@ -1147,18 +1154,20 @@ web:
     save_config_disabled_meta: Loading permissions — try again in a moment
     save_config_disabled_readonly: This config is read-only and cannot be saved
     confirm_save_takeover_user_source: This network is currently a device-local (User) config. Saving will let the console take ownership (Web source); later local edits may be overwritten by the console. Continue?
-    managed_config_synced_overwrite: Console synced a newer config over the local instance ({id})
+    # Tip after console push / hot-patch writes back to the device (separate from local save).
+    managed_config_synced_overwrite: Console config synced to this device
     save_failed: Failed to save config
     save_ok_unchanged: Saved
-    save_ok_local_hint: Saved locally. If the network is still running, base fields (e.g. network name / password) apply after you run it again.
+    # GUI local save: running instance is not rebuilt; base fields need a re-run.
+    save_ok_local_hint: Saved on this device. While the network is running, name/password and similar settings need a re-run to apply.
     save_ok_patched: Saved; hot-updating the device
     save_ok_rebuilt: Saved; instance will rebuild (may briefly disconnect)
     save_ok_pending: Saved; syncing
     save_ok_pending_disabled: Saved (still disabled — start to apply)
-    save_ok_pending_disabled_still_running: Saved as disabled but the device is still running; auto-start to align failed
-    save_ok_aligned_start: Saved and auto-started so console enabled state matches the device
+    save_ok_pending_disabled_still_running: Saved as disabled, but the device is still running; auto-align failed
+    save_ok_aligned_start: Saved and started automatically
     save_ok_pending_offline: Saved (device offline — syncs when online)
-    save_ok_pending_prepare_timeout: Saved; syncing (could not confirm hot-update path yet)
+    save_ok_pending_prepare_timeout: Saved; syncing
     start_failed: Failed to start network
     stop_failed: Failed to stop network
     load_config_failed: Failed to load network config
