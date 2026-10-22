@@ -837,7 +837,7 @@ enum FlowView {
 |---|---|---|
 | Web 控制台（`easytier-web`） | 不传（= MASKED） | 精确 IP **不出节点**（D8） |
 | 桌面 GUI（`easytier-core` 宿主助手） | EXACT | 本机可见精确 IP（前提：节点 `flow_stats_allow_exact_ip=true`） |
-| CLI（`easytier-cli peer`） | EXACT | 同上（本地排障） |
+| CLI（`easytier-cli peer`） | EXACT | 同上（本地排障）；表格新增 `flows` 列，显示该节点最忙的两条流（如 `↑10.0.0.9 ↓10.0.0.5`） |
 
 ### 16.5 开启方式（TOML）
 

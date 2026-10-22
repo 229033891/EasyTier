@@ -1542,11 +1542,47 @@ impl<'a> CommandHandler<'a> {
             tx_bytes: String,
             #[tabled(rename = "tunnel")]
             tunnel_proto: String,
+            /// Busiest IP flows of this peer (per-tunnel detail, node-side).
+            #[tabled(rename = "flows")]
+            flows: String,
             #[tabled(rename = "NAT")]
             nat_type: String,
             #[tabled(skip)]
             id: String,
             version: String,
+        }
+
+        /// Busiest IP flows of a peer, e.g. "↑10.0.0.9 ↓10.0.0.5".
+        ///
+        /// The flows are recorded per tunnel by the node (see
+        /// `docs/roadmap/tunnel-ip-flow-observability.md`); the CLI asks for
+        /// exact IPs, so no masking happens here.
+        fn flow_summary(p: &PeerRoutePair) -> String {
+            let mut flows: Vec<&easytier::proto::api::instance::PeerConnFlow> = p
+                .peer
+                .as_ref()
+                .map(|peer| {
+                    peer.conns
+                        .iter()
+                        .flat_map(|conn| conn.flows.iter())
+                        .collect()
+                })
+                .unwrap_or_default();
+            flows.sort_by_key(|flow| std::cmp::Reverse(flow.bytes));
+            let summary = flows
+                .iter()
+                .take(2)
+                .map(|flow| {
+                    let arrow = if flow.direction == 0 { "↑" } else { "↓" };
+                    format!("{arrow}{}", flow.ip)
+                })
+                .collect::<Vec<_>>()
+                .join(" ");
+            if summary.is_empty() {
+                String::new()
+            } else {
+                summary
+            }
         }
 
         impl From<PeerRoutePair> for PeerTableItem {
@@ -1587,6 +1623,7 @@ impl<'a> CommandHandler<'a> {
                             None => base,
                         }
                     },
+                    flows: flow_summary(&p),
                     nat_type: p.get_udp_nat_type(),
                     id: route.peer_id.to_string(),
                     version: if route.version.is_empty() {
@@ -1612,6 +1649,7 @@ impl<'a> CommandHandler<'a> {
                     rx_bytes: "-".to_string(),
                     tx_bytes: "-".to_string(),
                     tunnel_proto: "-".to_string(),
+                    flows: "-".to_string(),
                     nat_type: if let Some(info) = p.stun_info {
                         info.udp_nat_type().as_str_name().to_string()
                     } else {
