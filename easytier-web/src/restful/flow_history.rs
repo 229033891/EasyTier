@@ -214,7 +214,7 @@ impl FlowHistoryApi {
                         last_seen: 0,
                         points: Vec::new(),
                     });
-                    totals.push(0);
+                    totals.push(0.0);
                     index.insert(key, series.len() - 1);
                     series.len() - 1
                 }
