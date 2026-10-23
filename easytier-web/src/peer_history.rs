@@ -608,6 +608,9 @@ mod tests {
         };
         let got = aggregate_flows(&info);
         assert_eq!(got.len(), 1);
-        assert_eq!(got[0].conn_id, "not-a-number", "不可解析的 conn_id 原样落库");
+        assert_eq!(
+            got[0].conn_id, "not-a-number",
+            "不可解析的 conn_id 原样落库"
+        );
     }
 }

@@ -349,7 +349,11 @@ mod tests {
             .expect("seed flow_history");
     }
 
-    async fn run_series(db: &Db, bucket: i64, to: i64) -> Vec<(i64, String, i32, i64, f64, i64, i64)> {
+    async fn run_series(
+        db: &Db,
+        bucket: i64,
+        to: i64,
+    ) -> Vec<(i64, String, i32, i64, f64, i64, i64)> {
         let rows = db
             .orm_db()
             .query_all(Statement::from_sql_and_values(

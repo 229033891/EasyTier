@@ -615,10 +615,7 @@ impl FlowTable {
         // 按 conn_id 分桶，每桶按 bytes 降序截断到 top_n。
         let mut buckets: HashMap<PeerConnId, Vec<FlowSnapshot>> = HashMap::new();
         for snapshot in merged.into_values() {
-            buckets
-                .entry(snapshot.conn_id)
-                .or_default()
-                .push(snapshot);
+            buckets.entry(snapshot.conn_id).or_default().push(snapshot);
         }
         for flows in buckets.values_mut() {
             flows.sort_by_key(|s| std::cmp::Reverse(s.bytes));
@@ -1253,16 +1250,10 @@ mod tests {
         // 0 used to bypass D8 by returning the exact address. It now clamps to
         // /1, so a form field can no longer leak exact IPs.
         let v4 = IpAddr::V4(Ipv4Addr::new(10, 1, 2, 3));
-        assert_eq!(
-            mask_ip(v4, 0, 64),
-            (IpAddr::V4(Ipv4Addr::UNSPECIFIED), 1)
-        );
+        assert_eq!(mask_ip(v4, 0, 64), (IpAddr::V4(Ipv4Addr::UNSPECIFIED), 1));
 
         let v6 = IpAddr::V6(Ipv6Addr::LOCALHOST);
-        assert_eq!(
-            mask_ip(v6, 24, 0),
-            (IpAddr::V6(Ipv6Addr::UNSPECIFIED), 1)
-        );
+        assert_eq!(mask_ip(v6, 24, 0), (IpAddr::V6(Ipv6Addr::UNSPECIFIED), 1));
 
         // Full-width prefixes clamp instead of overflowing.
         let (ip, plen) = mask_ip(v4, 32, 128);
