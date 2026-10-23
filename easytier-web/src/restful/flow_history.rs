@@ -79,9 +79,12 @@ struct FlowHistoryResponse {
 }
 
 /// 按 (conn_id, peer_id, ip, prefix_len, direction) + 时间桶聚合。
-/// 绑定参数依次为：bucket、bucket、user_id、machine_id、instance_id、from。
+/// 绑定参数依次为：bucket、bucket、user_id、machine_id、instance_id、from、to。
 ///
 /// `rate_bytes_per_sec` 取均值而不是差分：节点侧的 1s 窗口是唯一真相（D11）。
+///
+/// 上界 `sampled_at <= ?` 是必需的：节点时钟超前时写入的行会「来自未来」，
+/// 没有上界的话它们会落进**每一次**查询的任何窗口，把曲线整体抬高（F-2）。
 const SERIES_SQL: &str = r#"
     SELECT conn_id,
            peer_id,
@@ -96,15 +99,18 @@ const SERIES_SQL: &str = r#"
            COUNT(*) AS samples
     FROM flow_history
     WHERE user_id = ? AND machine_id = ? AND instance_id = ? AND sampled_at >= ?
+          AND sampled_at <= ?
     GROUP BY conn_id, peer_id, ip, prefix_len, direction, bucket_ts
     ORDER BY conn_id, peer_id, ip, prefix_len, direction, bucket_ts
 "#;
 
 /// 每个 peer 最近一次采样里的主机名（用于给曲线打标签）。
-/// 绑定参数依次为：user_id、machine_id、instance_id、from。
+/// 绑定参数依次为：user_id、machine_id、instance_id、from、to。
 ///
 /// 用窗口函数取「每个 peer 采样时间最新、同秒再按 id 最大」的那一行，
 /// 避免 `GROUP BY peer_id` + 裸选 `peer_hostname` 在非 SQLite / 多行同秒时取错主机名。
+///
+/// 与 [`SERIES_SQL`] 同因加上界：时钟超前的行不该被当成「最新主机名」（F-2）。
 const PEER_HOSTNAME_SQL: &str = r#"
     SELECT peer_id, peer_hostname, sampled_at AS last_seen
     FROM (
@@ -117,6 +123,7 @@ const PEER_HOSTNAME_SQL: &str = r#"
                ) AS rn
         FROM peer_conn_history
         WHERE user_id = ? AND machine_id = ? AND instance_id = ? AND sampled_at >= ?
+              AND sampled_at <= ?
     )
     WHERE rn = 1
 "#;
@@ -162,6 +169,7 @@ impl FlowHistoryApi {
                     Value::from(machine_id.clone()),
                     Value::from(inst_id.clone()),
                     Value::from(from),
+                    Value::from(now),
                 ],
             ))
             .await
@@ -235,6 +243,7 @@ impl FlowHistoryApi {
                         Value::from(machine_id),
                         Value::from(inst_id),
                         Value::from(from),
+                        Value::from(now),
                     ],
                 ))
                 .await
@@ -340,7 +349,7 @@ mod tests {
             .expect("seed flow_history");
     }
 
-    async fn run_series(db: &Db, bucket: i64) -> Vec<(i64, String, i32, i64, f64, i64, i64)> {
+    async fn run_series(db: &Db, bucket: i64, to: i64) -> Vec<(i64, String, i32, i64, f64, i64, i64)> {
         let rows = db
             .orm_db()
             .query_all(Statement::from_sql_and_values(
@@ -353,6 +362,7 @@ mod tests {
                     Value::from("m-1"),
                     Value::from("i-1"),
                     Value::from(T0),
+                    Value::from(to),
                 ],
             ))
             .await
@@ -385,7 +395,7 @@ mod tests {
         let db = Db::memory_db().await;
         seed(&db).await;
 
-        let rows = run_series(&db, 120).await;
+        let rows = run_series(&db, 120, T0 + 600).await;
         // 3 条系列 × 1 个桶（两条 60s 采样落进同一 120s 桶）
         assert_eq!(rows.len(), 3);
 
@@ -419,10 +429,30 @@ mod tests {
                     Value::from("m-1"),
                     Value::from("i-1"),
                     Value::from(T0 + 600),
+                    Value::from(T0 + 1200),
                 ],
             ))
             .await
             .expect("run flow series query");
         assert!(outside.is_empty(), "窗口外不返回");
+    }
+
+    /// F-2：时钟超前的节点写入的行「来自未来」，没有上界时会落进每一次查询。
+    #[tokio::test]
+    async fn series_ignores_rows_dated_in_the_future() {
+        let db = Db::memory_db().await;
+        seed(&db).await;
+        flow_history::Entity::insert(row("42", 7, "10.0.0.0", 1, 999, 999, 1, T0 + 1_000_000))
+            .exec(db.orm_db())
+            .await
+            .expect("seed a future-dated row");
+
+        let rows = run_series(&db, 120, T0 + 600).await;
+
+        assert_eq!(rows.len(), 3, "只有窗口内的 3 条系列");
+        assert!(
+            rows.iter().all(|r| r.3 != 999),
+            "未来行泄漏进了窗口: {rows:?}"
+        );
     }
 }

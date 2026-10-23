@@ -16,33 +16,43 @@
 
 | 能力 | 现状 |
 |------|------|
-| 热路径记账 | `easytier-core` `peers::flow_table`：按 **PeerConn × IP × 方向** 计数；TX 记目的 IP，RX 记源 IP（内层 IP 明文侧）；**转发包不解密，不计入 RX** |
-| 默认开关 | **`[flow_stats]` 默认关闭**；关闭时热路径仅一次 atomic 读 |
+| 热路径记账 | `easytier-core` `peers::flow_table`：按 **PeerConn × IP × 方向** 计数（`FlowKey` 另含 `peer_id`，因与 PeerConn 一一对应而冗余）；TX 记目的 IP，RX 记源 IP（内层 IP 明文侧） |
+| 记账范围 | **只记本节点收发的流量**：RX 只认 `PacketType::Data` 且非本地注入（转发包在此处不解密，不计入）；TX 只认 outbound router 打过 `flow_meta` 的包（转发方向没有该字段，同样不计入） |
+| **字节口径** | **内层 IP 载荷字节** = 压缩/加密之前的 IP 包长度，**不是链路字节**。运行页「上传/下载」列来自 `PeerConnStats`（隧道 filter 处的链路字节），两者口径不同，**不可比、不可相减**，UI 必须分开标注 |
+| 默认开关 | **`[flow_stats]` 默认关闭**；关闭时**整个 routine 组根本不 spawn** —— 1s 速率窗口、30s `gc()`、5s 聚合日志三个定时任务全部跳过（`spawn_flow_stats_routines` 入口早退）；且 `FlowTable::record()` 只做一次 relaxed atomic 读，无分配、无锁（整条包路径上会命中 2–3 次同一判断，量级不变） |
+| 采样与估算 | `sample_rate = N > 1` 时按 **1/N 抽样**记账，条目置 `sampled` 标记；**读取时 ×N 放大**为估算值（UI 显示「估算」，i18n `flow_estimated`） |
 | 精确 IP | **双重闸门**：节点 `allow_exact_ip` **且** 调用方请求 `FlowView::Exact`；否则只出掩码聚合（缺省 MASKED） |
 | 速率 | 节点侧固定约 1s 窗口算 `rate_bytes_per_sec`（D11）；**不**对累计 `bytes` 做差分求速 |
+| 回传条数 | 节点侧每隧道最多回传 **top-10**（`FLOW_TOP_N_PER_CONN`，按**累计 `bytes`** 降序）。运行页展开行**不会**超过 10 行 |
+| 条目存活 | 无流量超过 `ttl`（固定 **600s，不可配**）的条目由 `gc()` 回收；`max_per_conn`（256）/ `max_total`（8192）限额另做兜底淘汰，按 `last_seen_ms` 最旧优先 |
 | 运行页 | `Status.vue`「IP流量」列：紧凑摘要 + tip；展开行明细 |
-| CLI | `easytier-cli peer` 的 `flows` 列：按 **`rate_bytes_per_sec` 降序** 取 top-2（当前最忙，非累计最大） |
+| CLI | `easytier-cli peer` 的 `flows` 列：按 **`rate_bytes_per_sec` 降序** 取 top-2（当前最忙，**非**累计最大 —— 与上表的 top-10 排序口径不同） |
 | 控制台历史 | `easytier-web` 采样器顺带写 `flow_history`（与 `CollectNetworkInfo` 同次 RPC，只收 MASKED）；API `/api/v1/machines/{machine-id}/flow-history/{inst-id}`（需登录）；曲线按窗口内总流量截断到 40 条 |
+| 历史节奏 | 每 **60s** 采样一次（`DEFAULT_SAMPLE_INTERVAL_SECS`），保留 **7 天**，清理任务每 10 分钟扫一次；节点没开 `flow_stats` 则零写入 |
 
 ---
 
 ## 2. 配置（TOML / managed）
 
-`[flow_stats]`（字段经 `NetworkConfig.flow_stats_*` 进出协议）：
+`[flow_stats]`（经 `NetworkConfig` 的可选字段进出协议：`flow_stats_enabled` / `flow_stats_sample_rate` / `flow_stats_max_per_conn` / `flow_stats_max_total` / **`flow_mask_prefix_len_v4|v6`**（注意无 `stats` 前缀）/ `flow_stats_allow_exact_ip`；控制台未携带这些字段时保留本地原表）：
 
 - `enabled`（默认 `false`）
-- `sample_rate`（≥1；1 = 全量）
-- `max_per_conn` / `max_total` / TTL
-- `mask_prefix_len_v4` / `mask_prefix_len_v6`（服务端将 `0` 钳制为 `1`，避免「填 0 绕过掩码」）
+- `sample_rate`（默认 `1` = 全量；≥1，见 §1「采样与估算」）
+- `max_per_conn`（默认 `256`）/ `max_total`（默认 `8192`）
+- `mask_prefix_len_v4` / `mask_prefix_len_v6`（默认 `24` / `64`；服务端将 `0` 钳制为 `1`，避免「填 0 绕过掩码」）
 - `allow_exact_ip`（默认 `false`；与总开关解耦展示，关总开关时清零）
+
+**生效时机**：`[flow_stats]` 仅在**网络实例构造时**读取（`FlowTable::new()` → `configure()`，后者是私有的一次性 API）。控制台改配置**不会**走热更 —— `flow_stats_*` 不在 `InstanceConfigPatch` 里，会落进 `hot_patch_base()` 的整表比对，一旦变化 `web_source_runtime_patch()` 就返回 `None` → `RunNetworkInstance { overwrite: true }` → **整个实例重建**。因此控制台侧「自动生效」，但代价是**该实例所有隧道重连、flow 计数从零开始**（调 `sample_rate` 时尤其要注意，见 §4 与 Roadmap §18.3）；用 TOML 直接启动的进程必须手动重启实例。
+
+**不可配**：条目 TTL 固定 `600s`（`FlowTableConfig::default()` 的 `ttl`；`FlowStatsConfig` 无对应字段，proto 也没有）。想加速回收只能调小 `max_per_conn` / `max_total`。
 
 ---
 
 ## 3. 存储
 
 - 表 `flow_history`：`conn_id` 为 **PeerConnId UUID 文本**（勿按整数解析）。
-- 迁移 `m20261022_000013` 建表；`m20261023_000014` 为早期 INTEGER 误型的重建修复（已推送环境保留两条，勿再 squash）。
-- 单轮采样写入上限 `MAX_FLOW_ROWS_PER_SAMPLE = 4096`；查询侧 `MAX_SERIES = 40`。
+- 迁移 `m20261022_000013` 建表，**建表起就是 `conn_id TEXT`**；`m20261023_000014` 是为「曾用 `INTEGER` 建过表的老环境」补的 TEXT 重建 —— 对全新环境是一次 `TEXT→TEXT` 空表重建，**无实际作用**。两条都已在 `origin/dev`，保留即可，但不要以为 13 曾经是 INTEGER。
+- 单轮采样写入上限 `MAX_FLOW_ROWS_PER_SAMPLE = 4096`（超出按累计字节降序保留并 `warn`）；查询侧 `MAX_SERIES = 40`。
 
 ---
 

@@ -3593,11 +3593,27 @@ impl PeerMaintenanceTasks {
         self.spawn_flow_stats_routines(tasks).await;
     }
 
-    /// Rate window + GC for the per-tunnel IP flow accounting.
+    /// Rate window, GC and aggregate log for the per-tunnel IP flow accounting.
     ///
     /// The rate window is closed at a fixed cadence (1s) so the reported rate
     /// does not depend on how often a consumer polls the table.
+    ///
+    /// **Nothing is spawned when accounting is off (F-4).** Decision D5 promises
+    /// zero overhead on low-end devices, and three timers waking up every
+    /// 1s / 5s / 30s is a real cost even with an empty table.
+    ///
+    /// This early return is only sound because `FlowTable::configure` is private
+    /// (F-3): `enabled` cannot change after construction, so "off at
+    /// construction" means "off for the lifetime of this instance". If
+    /// `configure` is ever made public again, this must become a
+    /// notification-driven start instead — otherwise a table enabled later
+    /// never rotates its rate window (rate stuck at 0) and never runs `gc`
+    /// (unbounded growth).
     async fn spawn_flow_stats_routines(&self, tasks: &Mutex<JoinSet<()>>) {
+        if !self.flow_table.is_enabled() {
+            return;
+        }
+
         let flow_table = self.flow_table.clone();
         tasks.lock().await.spawn(async move {
             loop {
@@ -3615,7 +3631,9 @@ impl PeerMaintenanceTasks {
         });
 
         // Decision D2: a single aggregate line every 5s instead of per-packet
-        // tracing. Disabled with the master switch; silent when the table is empty.
+        // tracing. Silent when the table is empty. The `is_enabled` check below
+        // is belt-and-braces: the whole routine set is not spawned at all when
+        // accounting is off (F-4).
         let flow_table = self.flow_table.clone();
         tasks.lock().await.spawn(async move {
             loop {

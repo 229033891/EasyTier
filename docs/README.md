@@ -36,6 +36,8 @@ crate 内设计稿（非本索引）：`easytier/docs/`（凭据计划已标 Arc
 | [desktop-gui-and-config-server.md](./current/desktop-gui-and-config-server.md) | 桌面 GUI / `ET-Gui` 进程模型与 config-server 回写路径 |
 | [socket-protection.md](./current/socket-protection.md) | Host VPN-bypass / `need_protect` 契约 |
 | [peer-connections.md](./current/peer-connections.md) | 节点间多 PeerConn 与单 `default_conn` 发送路径 |
+| [tunnel-ip-flow.md](./current/tunnel-ip-flow.md) | **隧道级 IP 流量可观测性（现状）**：每条隧道承载哪些目的/源 IP；**字节口径 = 内层 IP 载荷字节，非链路字节**；精确 IP 双重闸门；采样=估算值；控制台历史（60s / 7 天） |
+| [tunnel-ip-flow-fixes.md](./current/tunnel-ip-flow-fixes.md) | **隧道级 IP 流量可观测性 —— 缺陷修复（批次 A，待验收）**：F-1 运行页 tip 未转义节点上报字符串 / F-2 历史查询缺时间上界 / F-3 `configure` 私有化 / F-4 关闭时不 spawn 定时任务；附 F-5–F-8「明确不做」及理由 |
 | [latency-measurement-and-display-audit.md](./current/latency-measurement-and-display-audit.md) | **延迟测量与展示审查**（2 个真实测量点 + 派生链；「延迟」列双口径等缺陷；展示侧修法以专题下钻 §5 为准；出口端到端探测已撤回；关联选路修复**已合入、待验收**） |
 | [latency-scope-and-relay-visibility.md](./current/latency-scope-and-relay-visibility.md) | **「延迟」vs「VIP可达」口径边界**（Q5/§3.9；两表六种分叉；**§5 序1–5/7/11 前端已改、待验收**；P0×5 / P1×5 / P2×2） |
 | [routing-bug-audit-2026-10.md](./current/routing-bug-audit-2026-10.md) | **节点间选路审查**（净确认 **19** 条 + 4 存疑；修复**工作区待合入 / 待验收**：已落地 11 条 —— **B1**/**B5**/**B6**/**B7**/**B8**/**B9**/**B11**/**B13**/**B18**/**B19**/**B20**；部分修 **B2**/**B10**；B3/B4/B17/B12/B15/B16 待决；B14 撤回；见文内 §1e/§1f 与 §5.1 的行为变更/迁移提示） |

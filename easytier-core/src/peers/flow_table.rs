@@ -221,11 +221,19 @@ impl FlowTable {
         table
     }
 
-    /// Apply a configuration at construction or runtime.
+    /// Apply a configuration. **Construction-time only.**
     ///
-    /// The hot path only reads plain atomics, so no lock is involved. The host
-    /// may call this when an instance configuration is reloaded.
-    pub fn configure(&self, cfg: FlowTableConfig) {
+    /// The hot path only reads plain atomics, so no lock is involved.
+    ///
+    /// Deliberately private (F-3): the amplification factor applied on read is
+    /// the *current* `sample_rate`, while `FlowEntry::sampled` is a sticky
+    /// per-entry flag. Retuning `sample_rate` on a live table would multiply
+    /// counters that were accumulated at a different rate — 1 GB recorded at
+    /// rate 1 reads back as 8 GB after switching to rate 8. Anyone needing new
+    /// settings must build a new table, which is what a network-instance
+    /// restart does; changing `[flow_stats]` therefore requires restarting the
+    /// instance.
+    fn configure(&self, cfg: FlowTableConfig) {
         self.enabled.store(cfg.enabled, Ordering::Relaxed);
         self.sample_rate
             .store(cfg.sample_rate.max(1), Ordering::Relaxed);
@@ -239,6 +247,13 @@ impl FlowTable {
             .store(cfg.mask_prefix_len_v6, Ordering::Relaxed);
         self.allow_exact_ip
             .store(cfg.allow_exact_ip, Ordering::Relaxed);
+        // Counters are only meaningful together with the rate they were
+        // recorded at, so a reconfiguration drops them. A no-op today (the sole
+        // caller is `new`), but it keeps the invariant if `configure` is ever
+        // made public again.
+        self.flows.clear();
+        self.per_conn_counts.clear();
+        self.sample_cursor.store(0, Ordering::Relaxed);
     }
 
     /// Snapshot of the current configuration.
@@ -881,6 +896,25 @@ mod tests {
             off_ns < 20.0,
             "disabled switch must be a single atomic load, got {off_ns:.2} ns"
         );
+    }
+
+    #[test]
+    fn configure_drops_counters_recorded_at_the_old_sample_rate() {
+        let t = table();
+        assert!(t.record(conn(1), 7, ip(1), FlowDirection::Tx, 100, 1, 1000));
+        assert_eq!(t.len(), 1);
+
+        // F-3: the read path scales totals by the *current* sample_rate, so
+        // totals recorded at rate 1 must not survive a switch to rate 8 —
+        // otherwise 1 GB reads back as 8 GB.
+        t.configure(FlowTableConfig {
+            enabled: true,
+            sample_rate: 8,
+            ..Default::default()
+        });
+
+        assert!(t.is_empty(), "counters must not survive a reconfiguration");
+        assert_eq!(t.config().sample_rate, 8);
     }
 
     #[test]

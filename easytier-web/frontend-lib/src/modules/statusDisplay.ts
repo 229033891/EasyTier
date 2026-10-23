@@ -877,6 +877,22 @@ export function vipReasonLabels(i18n: {
 }
 
 /**
+ * Escape text for interpolation into HTML (`v-tooltip` with `escape: false`).
+ *
+ * `&` must be replaced first: doing `<` → `&lt;` before `&` → `&amp;` would
+ * re-escape the entities we just produced (`&amp;lt;`).
+ *
+ * Pure over its input, so callers can pass anything; a plain IP such as
+ * `10.0.0.0/24 (3)` is returned unchanged.
+ */
+export function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+}
+
+/**
  * Tooltip for a row's VIP Tag: state plus failure reason / boundary note.
  *
  * The backend `error` field explains *any* non-result state, not just failures:
@@ -900,10 +916,6 @@ export function vipStateTip(
     refreshHint?: string
   },
 ): string | undefined {
-  const escapeHtml = (text: string) => text
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
   const key = vipStateKey(info)
   const lines: string[] = []
   if (info?.error) {

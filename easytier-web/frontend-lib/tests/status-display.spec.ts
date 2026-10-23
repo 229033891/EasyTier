@@ -6,6 +6,7 @@ import {
   connPathQualityCell,
   connPathQualityTip,
   connRemoteAddr,
+  escapeHtml,
   flattenPeerConnRows,
   isDirectConnNotOnActivePath,
   jitterMs,
@@ -238,6 +239,27 @@ describe('status display helpers', () => {
     ], defaultConnId)
     expect(pathQualityCell(pair)).toBe('0.042')
     expect(pathQualityTip(pair)).not.toContain('bond')
+  })
+})
+
+describe('escapeHtml', () => {
+  it('escapes HTML-significant characters and leaves plain IP text alone', () => {
+    // The flow tooltip renders with `escape: false`, so F-1 relies on this being
+    // an identity transform for the values the node normally sends.
+    expect(escapeHtml('10.0.0.0/24 (3)')).toBe('10.0.0.0/24 (3)')
+    expect(escapeHtml('2001:db8::/64')).toBe('2001:db8::/64')
+    expect(escapeHtml('<img src=x onerror=alert(1)>')).toBe('&lt;img src=x onerror=alert(1)&gt;')
+    expect(escapeHtml('a & b')).toBe('a &amp; b')
+  })
+
+  it('replaces & before < and > so entities are not re-escaped', () => {
+    // Ordering bug would turn `<` into `&amp;lt;` instead of `&lt;`.
+    expect(escapeHtml('<')).toBe('&lt;')
+    expect(escapeHtml('>')).toBe('&gt;')
+    expect(escapeHtml('<')).not.toBe('&amp;lt;')
+    // A literal entity in the input is escaped once, which is correct: the text
+    // read by the user is exactly `&lt;`.
+    expect(escapeHtml('&lt;')).toBe('&amp;lt;')
   })
 })
 
