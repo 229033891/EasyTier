@@ -3,6 +3,7 @@ mod admin_diagnostics;
 mod admin_users;
 mod auth;
 pub(crate) mod captcha;
+mod flow_history;
 mod network;
 pub(crate) mod oidc;
 mod peer_history;
@@ -488,6 +489,7 @@ impl RestfulServer {
             )
             .merge(NetworkApi::build_route())
             .merge(peer_history::PeerHistoryApi::build_route())
+            .merge(flow_history::FlowHistoryApi::build_route())
             .merge(rpc::router())
             .route_layer(login_required!(Backend))
             .merge(auth::router())

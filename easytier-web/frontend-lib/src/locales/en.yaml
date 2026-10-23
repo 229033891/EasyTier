@@ -202,6 +202,12 @@ history_traffic: Traffic
 history_loading: Loading history
 history_no_data: No history yet (samples accumulate while the network is running)
 history_sampling_hint: Sampled every 60s, kept for 7 days. Traffic is the average rate between samples.
+flow_history_title: IP Flow History
+flow_history_select_flow: Select flows
+flow_history_rate: Rate
+flow_history_rate_help: The node measures the rate over fixed 1s windows and stores it; buckets show the mean. Only traffic sent or received by this node is counted (forwarded traffic is not). Masked subnets (e.g. 10.0.0.0/24) are uploaded by default.
+flow_history_no_data: No flow records yet (enable IP flow stats on the node and let it run for a while)
+flow_history_truncated: Showing only the {n} busiest flows
 route_cost: Route Cost
 tunnel_proto: Protocol
 peer_addr: Peer Address
@@ -1406,3 +1412,26 @@ acl:
   match_src: Src
   match_dst: Dst
   empty_chains: No rule chains yet. Add an inbound, outbound, or forward chain to get started.
+
+flow_stats:
+  title: IP flow stats
+  enabled: Enable flow accounting
+  enabled_help: |-
+    Records which IPs each tunnel (PeerConn) carries: destination IPs on TX, source IPs on RX.
+    When off, the hot path costs a single atomic read and allocates nothing.
+    Data is aggregated locally on the node only (the "IP flows" column on the status page) and is never uploaded to public servers.
+  sample_rate: Sample rate
+  sample_rate_help: 1 = account every packet; N = account 1 in N packets. Destination IP cardinality is usually tiny, so keep it at 1 unless the tunnel relays traffic to many distinct targets.
+  max_per_conn: Max per tunnel
+  max_per_conn_help: Maximum IP entries kept per tunnel; the least recently seen entries are evicted first.
+  max_total: Max per node
+  max_total_help: Maximum entries kept across all tunnels on this node, bounding memory use.
+  mask_prefix_len_v4: IPv4 mask length
+  mask_prefix_len_v4_help: Prefix length used when aggregating for the console/web UI. 24 means 10.0.0.0/24; minimum is 1 (0 is clamped to 1 by the node). Exact IPs require an EXACT request plus the node-side "allow exact IPs" switch.
+  mask_prefix_len_v6: IPv6 mask length
+  mask_prefix_len_v6_help: Same as above (minimum 1; 0 is clamped to 1); 64 aggregates by /64.
+  allow_exact_ip: Allow exact IPs
+  allow_exact_ip_help: |-
+    Off by default: the console only ever receives masked subnets.
+    When on, callers that explicitly request the EXACT view (local desktop GUI, CLI) can see exact IPs.
+    This is the second half of the double opt-in; the first half is the caller's explicit request.

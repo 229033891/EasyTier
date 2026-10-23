@@ -2,8 +2,8 @@
 
 ## Status
 
-- Status: **Roadmap / Phase 1 + Phase 2 已落地（待 Phase 3：控制台配置项与历史落库）**（D1-D16 全部拍板；§13 为 Phase 1 实现级附录；§14 为 Phase 0 实测结果；§15/§16 为实施记录）
-- 最近审阅：2026-10-22
+- Status: **Roadmap / Phase 1 + Phase 2 + Phase 3 已落地**（D1-D16 全部拍板；§13 为 Phase 1 实现级附录；§14 为 Phase 0 实测结果；§15/§16/§17 为实施记录；仅剩 Phase 4 告警，D16 本期不做）
+- 最近审阅：2026-10-23
 - 已定决策：**D5（采集默认关）**、**D8/D9（精确 IP 默认不出节点；`flow_view` 缺省 MASKED）**、**D10（挂 `PeerConnInfo.flows` 字段）**、**D11（速率节点侧固定窗口算）**、D12 不审计 / D13 独立开关 / D14 前缀可配 / D15 支持 managed config / D16 本期不做告警；完整表见 §8
 - 归属：运行页（`Status.vue`）可观测性；关联 [`current/peer-connections.md`](../current/peer-connections.md)（多 PeerConn 与 `default_conn`）、[`current/traffic-steering.md`](../current/traffic-steering.md)（出口/子网代理语义）、[`roadmap/web-console-log-persistence.md`](./web-console-log-persistence.md)（控制台日志留存）、[`roadmap/poll-to-push-roi.md`](./poll-to-push-roi.md)（轮询→推送）
 - 范围：`easytier-core`（记账）+ `easytier-proto`（字段）+ `easytier-web/frontend-lib`（运行页展示）+ `easytier-web`（可选历史采样）
@@ -91,7 +91,7 @@
 ```
 通道 A：本机诊断流（tracing）
   ├─ 普通日志
-  ├─ 流量聚合日志（CORE::FLOW，每 5-10s 一行，可关）      ← 新增
+  ├─ 流量聚合日志（CORE::FLOW，每 5s 一行，随总开关可关）      ← 新增
   └─ 事件的文本降级（已有：easytier/src/instance/cli_event_logger.rs）
 
 通道 B：结构化状态 + 遥测（proto 轮询 + 控制台 DB）
@@ -306,16 +306,20 @@ RX 侧解析成本更高（当前 RX 不做 IP 解析，除非启用 ACL，见 `
 
 ### 7.2 本机侧的呈现
 
-- **日志**：新增 target `CORE::FLOW`（走 `easytier/src/common/log/mod.rs` 的 `__log__!` category 形式）。
-  ⚠️ 不要用裸 `tracing::` 调用：控制台进程默认 console targets 只有 `["CORE","easytier_web"]`（`easytier-web/src/main.rs:505`），`easytier_core::*` 在 stdout 默认 Off（文件 sink 仍以 warn+ 捕获）。
-- **节奏**：每 5-10s 输出一行聚合，例如
-  `conn=3f2a… peer=10.0.0.7 tx=1.2MB/s dst=10.0.0.9:443 rx=340KB/s src=10.0.0.9`
+- **日志**：新增 target `CORE::FLOW`。实现位于 `easytier-core`，用
+  `tracing::info!(target: "CORE::FLOW", …)` 显式指定 target（与 `__log__!` category 等价）。
+  ⚠️ 不要用默认模块 target：控制台进程默认 console targets 只有 `["CORE","easytier_web"]`
+  （`easytier-web/src/main.rs:505`），`easytier_core::*` 在 stdout 默认 Off；显式 `CORE::FLOW`
+  才能命中 `CORE` 前缀过滤。
+- **节奏**：每 5s 输出一行聚合；表为空或 `flow_stats_enabled=false` 时不输出。字段为
+  `conns` / `flows` / `tx_bytes` / `rx_bytes` / `rate_bytes_per_sec`，例如
+  `conns=2 flows=17 tx_bytes=12345678 rx_bytes=2345678 rate_bytes_per_sec=456789`。
 - GUI 侧可见性：GUI 没有独立日志页，靠 `frontend-lib/src/components/LoggingSettingsDialog.vue` 读本地日志文件 → 新日志天然可见（需保证文件级别 ≥ info 才能看到 `CORE::FLOW` 的 info 行）。
 
 ### 7.3 为什么不能逐包写日志
 
 83 kpps 下逐包 `tracing::info!` 意味着每秒数万行、几十 MB/s 的格式化 + 文件 IO，足以把隧道打满并吃光 400MB 日志预算。
-⇒ 只允许：**聚合输出**（默认 5-10s 一行）+ **新流首见**（去重后每流一行，可选 debug 级）。
+⇒ 只允许：**聚合输出**（固定 5s 一行）+ **新流首见**（去重后每流一行，可选 debug 级）。
 
 ### 7.4 控制台侧：不新增传输通道
 
@@ -345,7 +349,7 @@ RX 侧解析成本更高（当前 RX 不做 IP 解析，除非启用 ACL，见 `
 | # | 决策 | 理由 |
 |---|------|------|
 | D1 | 流量**不进事件通道**（EventJournal 保持 20 条、broadcast 保持 16 槽语义不变） | 事件是低频状态变化；流量是持续状态，量级不匹配 |
-| D2 | 流量**不进 tracing 逐包日志**；只做 5-10s 聚合行（`CORE::FLOW`） | 逐包日志会打满 IO 与磁盘预算 |
+| D2 | 流量**不进 tracing 逐包日志**；只做 5s 聚合行（`CORE::FLOW`） | 逐包日志会打满 IO 与磁盘预算 |
 | D3 | 记账在 `peer_manager` 层，**不放 tunnel filter** | 隧道层 payload 已加密，解析不到 IP |
 | D4 | RX 复用 `PeerPacketIngress.conn_id`；TX 给 `ZCPacket` 增加本地字段携带目的 IP | ingress 已有 conn_id，TX 侧照抄 `bond_flow_key` 既有模式 |
 | D5 | **采集本身默认关闭**（节点侧开关 `flow_stats_enabled`，默认 `false`）：关闭时**零开销**（不解析、不记账、不占内存）；开启时才付出 §6 的成本。相关参数一并可配：`flow_stats_sample_rate`（默认 1）、`flow_stats_max_per_conn`（默认 256）、`flow_stats_max_total`（默认 8192）、`flow_mask_prefix_len`（掩码前缀长度） | 低端设备（MIPS 软路由等）必须能完全零开销；默认开启也会带来「未声明的采集」合规争议 |
@@ -386,7 +390,7 @@ RX 侧解析成本更高（当前 RX 不做 IP 解析，除非启用 ACL，见 `
 | **Phase 0** | 零改码验证：`tcpdump -i <tun>` / Windows `pktmon` 抓虚拟网卡，确认「哪些 IP」的实际分布与规模 | ✅ **已完成**（2026-10-22，两轮 60s/300s 实测，结论见 §14） |
 | **Phase 1** | core：`FlowTable` + TX/RX 记账 + 开关/抽样/上限/TTL/GC + 节点侧速率窗口（实现级设计见 **§13**） | ✅ **已落地**（2026-10-22，见 §15） |
 | **Phase 2** | proto 字段（`PeerConnInfo.flows` + `flow_view`）+ codegen + `Status.vue` 展开行 + i18n + `[flow_stats]` 配置 | ✅ **已落地**（2026-10-22，见 §16）；控制台视图为**掩码级**、本机/CLI 视图为**精确级**（需节点 `allow_exact_ip=true`） |
-| **Phase 3**（可选） | 控制台 `flow_history` 采样落库 + 图表 | 7 天保留；单实例采样开销 <1% CPU；落库内容为掩码级 |
+| **Phase 3** | 控制台 `[flow_stats]` 表单项 + `flow_history` 采样落库 + 图表 + RX 跨节点端到端用例 | ✅ **已落地**（2026-10-23，见 §17）；7 天保留、落库内容为**掩码级**（采样器只请求默认 MASKED 视图）；「单实例采样开销 <1% CPU」仍为估算，未压测 |
 | **Phase 4**（可选） | 告警（走事件通道 + 限流，D16 本期不做） | 限流生效，`event_lagged` 不再被触发 |
 
 ---
@@ -739,7 +743,7 @@ enum FlowView {
 | `easytier-core/src/packet/mod.rs` | `ZCPacket::flow_meta`（**本地字段，不上线**）+ `FlowMeta { dst_ip, inner_len }` |
 | `easytier-core/src/peers/conn/peer.rs` | `Peer` 持有 `Arc<FlowTable>`；`Peer::send_msg` 的**三条出口**（bond / `default_conn` / `select_conn`）统一在选定隧道后调用 `record_tx_flow()` |
 | `easytier-core/src/peers/conn/peer_map.rs` | `PeerMap::new` 接收并下发 `FlowTable` |
-| `easytier-core/src/peers/peer_manager.rs` | 出站路径在**加密前**把 `FlowMeta` 挂到包上；接收循环保留 `PeerPacketIngress`（原来被丢弃）→ `handle_packet(ret, ingress)`；解密解压后 `record_rx_flow()`；`flow_table()` / `configure_flow_stats()` 访问器；维护任务新增 **1s 速率窗口**与 **30s GC** |
+| `easytier-core/src/peers/peer_manager.rs` | 出站路径在**加密前**把 `FlowMeta` 挂到包上；接收循环保留 `PeerPacketIngress`（原来被丢弃）→ `handle_packet(ret, ingress)`；解密解压后 `record_rx_flow()`；`flow_table()` 访问器；维护任务新增 **1s 速率窗口**、**30s GC** 与 **5s `CORE::FLOW` 聚合行**；`[flow_stats]` 通过建表时的 `PortablePeerManagerConfig.flow_stats` 生效（无运行期重配入口） |
 | `easytier-core/src/peers/foreign_network/{client,mod}.rs` | 外网 PeerMap 传入（禁用的）独立表 |
 | `easytier-core/src/peers/bench_support.rs`、`peers/tests.rs` | 适配新的 `PeerMap::new` 签名 |
 
@@ -785,7 +789,7 @@ enum FlowView {
 
 | 项 | 说明 |
 |---|---|
-| 配置项（`flow_stats_enabled` 等 6 个） | 尚未进 TOML/proto 配置模型；core 侧只有 `configure_flow_stats(FlowTableConfig)` 运行期入口（**默认关闭**） |
+| 配置项（`flow_stats_enabled` 等 7 个） | Phase 2/3 已进 TOML/proto；建表时通过 `PortablePeerManagerConfig.flow_stats` 生效（**默认关闭**）。当前没有运行期重配入口，修改后需重启实例 |
 | 协议下发（`PeerConnInfo.flows` + `flow_view`） | 未加 proto 字段 ⇒ 外部暂时看不到数据 |
 | 控制台 / GUI 展示 | 未做 |
 | RX 端到端（跨节点） | 目前只做了单元级验证（`record_rx`）；跨节点 RX 需要完整 peer manager 集成测试（Phase 2 补） |
@@ -852,9 +856,159 @@ mask_prefix_len_v6 = 64
 allow_exact_ip = false         # 允许本机/CLI 看到精确 IP（D13）
 ```
 
-### 16.6 已知缺口
+### 16.6 已知缺口（**已由 Phase 3 关闭，见 §17**）
 
-- **控制台配置界面**没有 `[flow_stats]` 的表单项（proto 字段已就绪，managed config 可读写，但 GUI 表单未做）→ Phase 3。
-- **控制台历史落库**（`flow_history` 表 + 曲线）未做 → Phase 3。
-- **RX 跨节点端到端**用例仍缺（目前只有单元级 `record_rx` 覆盖）→ Phase 3。
-- 掩码前缀长度默认 /24（IPv6 /64 可能过粗，实测无 v6 流量）→ 见 §14.3。
+- ~~**控制台配置界面**没有 `[flow_stats]` 的表单项（proto 字段已就绪，managed config 可读写，但 GUI 表单未做）~~ → Phase 3 已补，见 §17.1。
+- ~~**控制台历史落库**（`flow_history` 表 + 曲线）未做~~ → Phase 3 已补，见 §17.2 / §17.3。
+- ~~**RX 跨节点端到端**用例仍缺（目前只有单元级 `record_rx` 覆盖）~~ → Phase 3 已补 `peers/tests.rs::rx_flow_is_attributed_to_the_receiving_tunnel`，见 §17.4。
+- 掩码前缀长度默认 /24（IPv6 /64 可能过粗，实测无 v6 流量）→ 现在**可在控制台按实例改**（§17.1），但默认值本身仍未实测复核，见 §14.3 / §17.6。
+
+---
+
+## 17. Phase 3 实施记录（2026-10-23，控制台配置项 + 历史落库 + 图表）
+
+Phase 3 的目标是「把已经采得到的数据变成看得见的历史」。三件事都落在**控制台侧**，
+core 记账层（§15）与协议字段（§16.1）在这一期**没有再改**——除了 §17.5 那个必须修的空指针。
+
+### 17.1 控制台配置项（`easytier-web/frontend-lib/src/components/Config.vue`）
+
+| 改动 | 位置 |
+|---|---|
+| 新增「IP 流量统计」折叠面板：总开关 + `sample_rate` / `max_per_conn` / `max_total` / `mask_prefix_len_v4` / `mask_prefix_len_v6` / `allow_exact_ip` 共 **7 个字段** | `Config.vue`（面板插在 DNS 与 ACL 之间） |
+| 数字项一律 `:allow-empty="true"`：**留空 = 不写 proto 字段 = 用节点自己的默认值**，表单不替用户拍板 | 同上 |
+| `flowStatsEnabled` / `flowStatsAllowExactIp` 用 `computed` 包一层，读写 proto 三元语义（`undefined` = 未设置）；只有用户真动过开关才把值写回 | 同上 |
+| i18n `flow_stats.*`（12 条，含 7 条 help 文案） | `locales/cn.yaml` / `en.yaml` |
+| `carries_flow_stats()`：7 个 proto 字段**全都没带**时，视为「这个调用方没有 flow_stats 表单」，保留节点本地 `[flow_stats]`，不被一次无关保存抹掉 | `easytier-core/src/config/api_input.rs` |
+| 用例：未触碰开关时 `flow_stats_*` 不出现在下发配置里；打开后只写 `flow_stats_enabled`，数字项仍留空 | `tests/config-ui.spec.ts` |
+
+> 为什么需要 `carries_flow_stats()`：`[flow_stats]` 进的是 `FORM_MANAGED_TOML_FIELDS`，
+> 而 7 个字段都是 proto3 `optional`。老控制面（或旧版桌面 GUI）一个字段都不发，若按
+> 「表单托管 = 整表重写」处理，用户每次在控制台点保存都会删掉节点本地手写的 `[flow_stats]`。
+> 与 §16.2 里 `policy_routes` 的处理同一条原则。
+
+### 17.2 历史落库（`easytier-web`）
+
+| 改动 | 位置 |
+|---|---|
+| 新表 `flow_history`（15 列）+ 时序索引 `(user_id, machine_id, instance_id, conn_id, ip, direction, sampled_at)` + 清理索引 `(sampled_at)` | `src/migrator/m20261022_000013_flow_history.rs`（新增） |
+| 实体 | `src/db/entity/flow_history.rs`（新增）+ `entity/mod.rs` / `prelude.rs` |
+| 采样：**复用同一个 `CollectNetworkInfo` 响应**，`aggregate_flows()` 把 `PeerConnInfo.flows` 压成待落库行，与 `peer_conn_history` 同批分块插入（200 行/块） | `src/peer_history.rs` |
+| 清理：与 peer 汇总**同一保留期**（`retention_days`，默认 7 天），一轮 `cleanup_once` 清两张表 | 同上 |
+| 查询：`GET /api/v1/machines/{machine-id}/flow-history/{inst-id}?hours=` | `src/restful/flow_history.rs`（新增）+ `restful/mod.rs` 注册 |
+| 设备改名合并：`flow_history` 跟随 `machine_id` 改写，按 `(instance_id, conn_id, peer_id, ip, prefix_len, direction, sampled_at)` NOT EXISTS 去重 | `src/db/mod.rs` |
+
+落库/查询的几条**硬约定**都源自「流条目有生命周期」，改之前先读：
+
+1. **不差分。** `bytes` / `packets` 是流条目自创建以来的累计值，而流条目会在 TTL（默认 600s）
+   或上限淘汰后**从零重新计数**，对累计值做差分会在淘汰点产生假尖峰。所以库里存节点侧
+   1s 固定窗口算好的 `rate_bytes_per_sec`（D11），查询侧直接画。
+2. **桶内聚合口径**：`rate_bytes_per_sec` 取 `AVG`（唯一可用于曲线的量），`bytes` / `flow_count`
+   / `sampled` 取 `MAX`；桶大小复用 `peer_history::bucket_seconds()`，保证最多约 720 个点。
+   `sampled` 随每桶返回，前端据此在图例上标注「估算」（§4.5 采样放大在历史通道上可见）。
+3. **掩码级**：采样器不传 `flow_view`，节点按缺省 MASKED 返回 ⇒ 库里不会出现精确 IP，
+   D8「精确 IP 不出节点」在历史通道上同样成立。掩码前缀长度在配置层、视图解析层和
+   `mask_ip` 内都 clamp 到 `≥1`，0 不再退化成精确 IP。
+4. **0 字节不落库**：节点刚建流、还没跑流量时 `bytes == 0`，落库只是噪音。
+5. `conn_id` 以 UUID 文本落库（`PeerConnId::to_string()`），不再解析成 `-1`；`flow.peer_id == 0`
+   （老节点未填）回退到 peer 自身 id。
+6. 查询侧 `MAX_SERIES = 40`：开了统计的节点可能有上千条流，按窗口内总流量
+   （`Σ(rate_bytes_per_sec × bucket_seconds)`）降序截断，并回 `truncated: true` 让前端提示；
+   `hours` clamp 到 `[1, 168]`。**不能用 `Σ MAX(bytes)`**：累计计数器在多个桶里重复相加，
+   会把长命低流量流排到前面。
+
+### 17.3 图表（`easytier-web/frontend-lib`）
+
+| 改动 | 位置 |
+|---|---|
+| `FlowHistoryChart.vue`（新增）：chart.js 折线；`MultiSelect` 选曲线 + `SelectButton` 时间范围 + 刷新；面板折叠时**不拉数据** | `src/components/FlowHistoryChart.vue` |
+| 纯函数：`flowSeriesKey` / `flowDirectionArrow` / `flowIpLabel` / `flowSeriesLabel` / `buildFlowTimeline` / `alignFlowRates` / `totalFlowBytes` / `formatFlowRate` / `flowSeriesColor` / `flowSeriesColorForKey`（按 key 哈希，服务端重排后颜色不变） | `src/modules/flowHistory.ts`（新增） |
+| 「IP 流量历史」面板；`api.get_flow_history` 存在时才渲染（桌面 GUI 直连内核没有这个能力 ⇒ 自动隐藏） | `src/components/Status.vue` |
+| 类型 `FlowHistoryPoint` / `FlowHistorySeries` / `FlowHistoryResponse` + `RemoteClient.get_flow_history?` | `src/modules/api.ts` |
+| `WebRemoteClient.get_flow_history` | `easytier-web/frontend/src/modules/api.ts` |
+| i18n `flow_history_*`（7 条） | `locales/cn.yaml` / `en.yaml` |
+| 用例：4 条纯函数 + 3 条组件（实例切换后重建 Chart、无数据空态、折叠不拉数据） | `tests/flow-history.spec.ts` / `tests/flow-history-chart.spec.ts` |
+
+多曲线**共用一条时间轴**（时间戳取并集）：不同曲线的桶会错开（流条目晚出现 / 早消失），
+缺失的桶补 `null` 让 chart.js `spanGaps` 断线，而不是补 0 —— 补 0 会被读成「这一刻没流量」，
+是错误信息。
+
+### 17.4 RX 跨节点端到端（补 §15.4 的缺口）
+
+`easytier-core/src/peers/tests.rs::rx_flow_is_attributed_to_the_receiving_tunnel`：
+
+真实 ring 隧道 + 真实握手（`do_handshake_as_client` / `do_handshake_as_server`），客户端
+`PeerMap::send_msg_directly` 发一个**真实 IPv4 内层包**（28 字节，`10.10.10.9 → 10.10.10.2`），
+服务端断言：
+
+- 内层包**逐字节**穿过隧道（加密/解密不改载荷）；
+- `PeerPacketEnvelope` 的 ingress 保留了 `peer_id = 1` 与**接收侧** `conn_id`；
+- `record_rx` 记在**接收隧道**上，记的是**内层源 IP**（`10.10.10.9`），方向 `Rx`；
+- MASKED 视图折叠成 `10.10.10.0/24`，`flow_count` 仍为 1。
+
+价值在于覆盖纯 `FlowTable` 单测碰不到的**接线**：ingress 会不会在
+`start_recv_loop → handle_packet` 之间被丢掉、记账时载荷是否**已经解密**（否则解析不到内层 IP）。
+
+### 17.5 收尾期间修掉的真 bug + 一处陈旧断言
+
+| 项 | 说明 |
+|---|---|
+| **`flow_table.rs::mask_ip` 在 `prefix_len = 0` 时 panic**（debug）→ **0 绕过 D8** | 第一轮修法（`plen == 0` 早退返回 `(ip, 0)`）虽然止住了移位溢出，却让 0 变成「返回精确 IP」的旁路：控制台把 `mask_prefix_len_v4 = 0` 一填，MASKED 请求就能拿到精确 IP 并落库，D8「精确 IP 不出节点」被一个表单字段绕过。第二轮改为 **`clamp(1, 32)` / `clamp(1, 128)`**：`to_table_config`、`resolve_flow_view_with_prefix` 与 `mask_ip` 三层同时钳制；前端 `:min="1"`，文案改为「最小 1（0 会被服务端钳制为 1）」。精确 IP 只能通过 `FlowView::Exact` + 节点侧 `allow_exact_ip` 获取。用例同步改为 `mask_ip_clamps_zero_prefix_len_to_one` / `masked_view_with_zero_prefix_len_clamps_and_aggregates`。 |
+| `peer_history.rs` 断言 `"1.2.3.4:11010"` → `"udp://1.2.3.4:11010"` | 旧断言**陈旧**而非回归：HEAD 侧走 `display_remote_addr()` → `normalized_tunnel_display()`，规范化后本来就带 scheme。改对了。 |
+
+### 17.6 已知缺口（Phase 3 之后仍开着）
+
+§16.6 的四条已关闭。以下是 Phase 3 收尾审查与新一轮复核中发现的风险；R1 / R2 / R3 / R4 / R5 / R7 已在复核中关闭，R6 需外部环境，其余仍开着（按严重度排）：
+
+| # | 项 | 说明 / 建议 |
+|---|---|---|
+| R1 | **`flow_history` 写入没有表侧限流** → **已关闭** | 新增 `MAX_FLOW_ROWS_PER_SAMPLE = 4096`：单轮采样超过上限时按累计字节降序保留 top-N，丢弃尾部并 `tracing::warn!`。节点侧仍按 `FLOW_TOP_N_PER_CONN = 10` 先截断；表侧闸门把最坏写入从「10 × 隧道数/分钟」压到 4096 行/分钟。 |
+| R2 | `FlowTable::gc` 重建 `per_conn_counts` 是「先 clear 再累加」 → **已关闭** | 改为**先在本地算出完整映射，再逐键覆盖 + 删除多余键**，全程不再 `clear()`。旧写法在清空后的窗口里会吞掉热路径的 `+= 1`，且永久偏小（上限越来越松）；新写法最坏只偏差一个、30s 后自然收敛，且 `enforce_limits` 的兜底扫描能纠正「超出」方向。彻底消除近似需要把 `flows` 与计数放进同一把锁，会让每包付锁代价，与 D5 冲突，**有意不做**——这一点已写进 `gc()` 的文档注释。用例：`gc_rebuild_keeps_per_conn_counts_in_sync`。 |
+| R3 | `record()` 超出每隧道上限时**只淘汰 1 条就 return** → **已关闭** | 两处缺陷一起修：①淘汰时**排除刚插入的条目**（`enforce_limits` 现在收 `just_inserted`，每隧道与全局上限都跳过它），否则突发新目的地会把自己踢掉、下一包重建，形成抖动；②每隧道与全局都改为**一次淘汰掉全部超额**，而不是只删一条。用例：`per_conn_cap_never_evicts_the_entry_just_inserted`（逐个插入后立即断言该流仍在）、`global_cap_evicts_all_excess_in_one_pass`。 |
+| R4 | `db/mod.rs` 设备合并的 `INSERT INTO flow_history … SELECT … FROM flow_history` 是**同表自读自写** → **已关闭** | 去重键补上 `peer_id` 与 `prefix_len`：同 `conn_id` 下不同 peer / 不同网段不会再被误判为重复行。同表自读自写仍靠 `machine_id = ?` 过滤保证安全，后续不要放宽该过滤条件。 |
+| R5 | `Config.vue` 的 `allow_exact_ip` 开关嵌在 `v-if="flowStatsEnabled"` 内 → **已关闭** | 开关移出 `v-if`，始终可见；关闭总开关时把 `flow_stats_allow_exact_ip` 清零（fail-closed），避免隐藏的残留 `true` 在下次开启时静默生效（D13 双重开关）。 |
+| R6 | 掩码默认值（v4 /24、v6 /64）仍未实测复核 | 见 §14.3；现在**可配**了，但默认值合不合适要等有 v6 流量的环境。**本机无 v6 流量，未测**——不做无依据的调整，保持默认。 |
+| R7 | 「单实例采样开销 <1% CPU」仍是 §6 的理论估算 → **已测（release）** | 见 §18。`cargo test --release -p easytier-core --lib flow_record_cost -- --ignored --nocapture`：**关闭 6.6 ns/包；开启（200 条活跃流）118 ns/包；1/8 抽样 35 ns/包**。折算 **1 Gbps ≈ 0.98% 单核**（与 §6.3 的「~1%」吻合），**10 Gbps 小包 ≈ 9.85%**（§6.3 估的是 8-12%，吻合）。**debug 构建不可引用**（同一用例测得 893 ns/包 ⇒ 7.4% / 74%，会得出错误结论）。 |
+
+---
+
+## 18. 热路径开销实测（2026-10-23，R7）
+
+### 18.1 口径（引用数字必须带这行）
+
+```text
+cargo test --release -p easytier-core --lib flow_record_cost -- --ignored --nocapture
+```
+
+- **release** profile；Windows 11 / MSVC；单核单线程，`black_box` 防优化掉。
+- 每次测量 **2,000,000** 次 `FlowTable::record()`，取平均 ns/包。
+- 「开启」场景预先灌入 **200 个不同目的 IP**（同一隧道），远高于 Phase 0 实测的
+  全局 14 个（§14.2 C1），属于**悲观**取值。
+- 用例默认 `#[ignore]`，不进常规测试（墙钟数字在共享 CI 上是噪声）。
+
+### 18.2 结果
+
+| 场景 | ns/包 | 相对关闭 |
+|---|---|---|
+| 总开关关闭 | **6.6** | 1×（仅一次 relaxed atomic load） |
+| 开启，200 条活跃流 | **118** | ~18× |
+| 开启 + 1/8 抽样 | **35** | ~5× |
+
+折算成单核占用（1500B 包，`ns/包 × pps`）：
+
+| 包率 | 场景 | 单核占用 |
+|---|---|---|
+| 83.3 kpps（≈1 Gbps） | 开启 | **0.98 %** |
+| 833 kpps（≈10 Gbps 小包） | 开启 | **9.85 %** |
+| 833 kpps（≈10 Gbps 小包） | 1/8 抽样 | ≈2.9 % |
+
+### 18.3 结论
+
+1. **§6.3 的估算被实测证实**（1 Gbps ~1%、10 Gbps 小包 8-12%），无需修改结论。
+2. **「单实例采样开销 <1% CPU」在 1 Gbps 量级成立**（0.98%），但这是**边界值**，
+   不是宽裕的余量；10 Gbps 小包场景必须开抽样（默认 `sample_rate=1` 会吃掉约一成单核）。
+3. **debug 构建的数字是陷阱**：同一用例 debug 下 893 ns/包 ⇒ 1 Gbps 7.4%、
+   10 Gbps **74%**。任何引用都必须写明 `--release`，否则会得出「必须抽样」甚至
+   「不可用」的错误结论。
+4. 关闭时 6.6 ns ≈ 一次原子读，与 D5「关闭时零开销」的承诺一致（该数字偏高主要来自
+   `black_box` 与循环本身，不是条件判断）。
+

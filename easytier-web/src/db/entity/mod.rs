@@ -3,6 +3,7 @@
 pub mod prelude;
 
 pub mod devices;
+pub mod flow_history;
 pub mod groups;
 pub mod groups_permissions;
 pub mod managed_config_revisions;

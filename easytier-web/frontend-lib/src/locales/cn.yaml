@@ -203,6 +203,12 @@ history_traffic: 流量
 history_loading: 正在加载历史数据
 history_no_data: 暂无历史数据（网络运行一段时间后才会积累采样）
 history_sampling_hint: 每 60 秒采样一次，保留 7 天；流量为相邻采样的平均速率
+flow_history_title: IP 流量历史
+flow_history_select_flow: 选择流量
+flow_history_rate: 速率
+flow_history_rate_help: 节点侧按 1 秒固定窗口算出速率后落库，这里取桶内均值；只统计本节点收发的隧道流量，转发流量不计入。默认只上传掩码网段（如 10.0.0.0/24）。
+flow_history_no_data: 暂无流量记录（需在节点配置中开启 IP 流量统计，并运行一段时间）
+flow_history_truncated: 只显示流量最大的 {n} 条曲线
 hostname: 主机名
 route_cost: 路由
 tunnel_proto: 协议
@@ -1401,3 +1407,26 @@ acl:
   match_src: 源
   match_dst: 目的
   empty_chains: 还没有规则链。可添加入站、出站或转发链开始配置。
+
+flow_stats:
+  title: IP 流量统计
+  enabled: 启用流量统计
+  enabled_help: |-
+    记录每条隧道（PeerConn）上承载的是哪些 IP 的流量：发送记目的 IP，接收记源 IP。
+    关闭时热路径只有一次原子读，不额外分配内存。
+    数据只在节点本地汇总（运行页「IP流量」列），不会上报给公共服务器。
+  sample_rate: 采样率
+  sample_rate_help: 1 = 全量统计；N = 每 N 个包统计 1 个。目的 IP 基数通常很小，除非隧道承载大量不同目标的转发流量，否则保持 1。
+  max_per_conn: 每条隧道上限
+  max_per_conn_help: 每条隧道最多记录的 IP 条目数，超出后按最久未出现淘汰。
+  max_total: 节点总上限
+  max_total_help: 单节点所有隧道合计最多保留的条目数，用于限制内存。
+  mask_prefix_len_v4: IPv4 掩码位数
+  mask_prefix_len_v4_help: 对控制台/网页端展示时聚合的前缀长度。24 表示 10.0.0.0/24；最小为 1（填 0 会被服务端钳制为 1）。精确 IP 只能通过 EXACT 视图且节点开启「允许下发精确 IP」时获取。
+  mask_prefix_len_v6: IPv6 掩码位数
+  mask_prefix_len_v6_help: 同上（最小 1，填 0 会被钳制为 1）；64 表示按 /64 聚合。
+  allow_exact_ip: 允许下发精确 IP
+  allow_exact_ip_help: |-
+    默认关闭：控制台只能拿到掩码后的网段。
+    开启后，显式请求 EXACT 视图的调用方（本机桌面 GUI、CLI）才能看到精确 IP。
+    这是双重开关的第二重，第一重是调用方必须显式请求。

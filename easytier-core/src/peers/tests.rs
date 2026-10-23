@@ -341,6 +341,126 @@ async fn tx_flow_is_attributed_to_the_selected_tunnel() {
     );
 }
 
+/// A packet received over a real encrypted tunnel must be booked as an RX flow
+/// on the tunnel it arrived on, with the *inner* source IP.
+///
+/// This is the RX counterpart of `tx_flow_is_attributed_to_the_selected_tunnel`:
+/// it covers the wiring that the pure `FlowTable` unit tests cannot — the
+/// ingress (`peer_id` + `conn_id`) survives into the receive envelope, and the
+/// payload is plaintext (decrypted) by the time the accounting runs.
+#[tokio::test]
+async fn rx_flow_is_attributed_to_the_receiving_tunnel() {
+    use crate::peers::flow_table::{FlowDirection, FlowTable, FlowTableConfig, FlowView};
+
+    let peer_session_store = Arc::new(PeerSessionStore::new());
+    let (client_tunnel, server_tunnel) = create_ring_tunnel_pair();
+    let client_ctx = Arc::new(NoopPeerContext::default());
+    let server_ctx = Arc::new(NoopPeerContext::default());
+
+    let mut client_conn = PeerConn::new(
+        1,
+        client_ctx.clone(),
+        client_tunnel,
+        peer_session_store.clone(),
+    );
+    let mut server_conn = PeerConn::new(2, server_ctx.clone(), server_tunnel, peer_session_store);
+
+    let (client_ret, server_ret) = tokio::join!(
+        client_conn.do_handshake_as_client(),
+        server_conn.do_handshake_as_server()
+    );
+    client_ret.unwrap();
+    server_ret.unwrap();
+
+    let server_conn_id = server_conn.get_conn_id();
+    let server_flow_table = Arc::new(FlowTable::new(FlowTableConfig {
+        enabled: true,
+        ..Default::default()
+    }));
+
+    let (client_tx, _client_rx) = create_packet_recv_chan();
+    let (server_tx, mut server_rx) = create_packet_recv_chan();
+    let client_map = PeerMap::new(
+        client_tx,
+        client_ctx,
+        1,
+        Arc::new(FlowTable::new(FlowTableConfig::default())),
+    );
+    let server_map = PeerMap::new(server_tx, server_ctx, 2, server_flow_table.clone());
+    client_map.add_new_peer_conn(client_conn).await.unwrap();
+    server_map.add_new_peer_conn(server_conn).await.unwrap();
+
+    // A real IPv4 packet: EasyTier carries the inner IP packet verbatim, which
+    // is why the RX side can recover the source address after decryption.
+    let src: std::net::IpAddr = "10.10.10.9".parse().unwrap();
+    let mut inner = vec![0u8; 28];
+    inner[0] = 0x45;
+    inner[2..4].copy_from_slice(&28u16.to_be_bytes());
+    inner[12..16].copy_from_slice(&[10, 10, 10, 9]);
+    inner[16..20].copy_from_slice(&[10, 10, 10, 2]);
+    inner[20..28].copy_from_slice(b"payload!");
+
+    let mut packet = ZCPacket::new_with_payload(&inner);
+    packet.fill_peer_manager_hdr(1, 2, PacketType::Data as u8);
+    client_map.send_msg_directly(packet, 2).await.unwrap();
+
+    let envelope = timeout(
+        Duration::from_secs(1),
+        recv_packet_envelope_from_chan(&mut server_rx),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    let (received, ingress) = envelope.into_parts();
+    assert_eq!(
+        received.payload(),
+        inner.as_slice(),
+        "inner packet must survive the tunnel byte-for-byte"
+    );
+    // This is exactly what `PeerManager::record_rx_flow` consumes: the
+    // plaintext payload plus the ingress carried by the envelope.
+    let PeerPacketIngress::Peer {
+        peer_id, conn_id, ..
+    } = ingress
+    else {
+        panic!("expected a peer ingress, got {ingress:?}");
+    };
+    assert_eq!(peer_id, 1);
+    assert_eq!(
+        conn_id, server_conn_id,
+        "RX accounting must be attributed to the tunnel that carried the packet"
+    );
+
+    assert!(server_flow_table.record_rx(
+        Some((conn_id, peer_id)),
+        received.payload(),
+        crate::peers::flow_table::now_unix_millis(),
+    ));
+
+    let snaps = server_flow_table.snapshot(FlowView::Exact, 10);
+    assert_eq!(snaps.len(), 1, "expected exactly one recorded flow");
+    assert_eq!(snaps[0].dir, FlowDirection::Rx);
+    assert_eq!(snaps[0].ip, src, "RX flow must record the inner source IP");
+    assert_eq!(snaps[0].bytes, inner.len() as u64);
+    assert_eq!(snaps[0].packets, 1);
+    assert_eq!(snaps[0].peer_id, 1);
+    assert_eq!(
+        snaps[0].conn_id, server_conn_id,
+        "flow booked on the wrong tunnel"
+    );
+    // MASKED view collapses it to the configured prefix but keeps the count.
+    let masked = server_flow_table.snapshot(
+        FlowView::Masked {
+            v4_prefix_len: 24,
+            v6_prefix_len: 64,
+        },
+        10,
+    );
+    assert_eq!(masked.len(), 1);
+    assert_eq!(masked[0].ip.to_string(), "10.10.10.0");
+    assert_eq!(masked[0].flow_count, 1);
+}
+
 #[tokio::test]
 async fn peer_channel_uses_admission_origin_instead_of_packet_header() {
     let peer_session_store = Arc::new(PeerSessionStore::new());

@@ -66,7 +66,7 @@ crate 内设计稿（非本索引）：`easytier/docs/`（凭据计划已标 Arc
 | [unified-routing-conflicts.md](./roadmap/unified-routing-conflicts.md) | **统一路由 × 现有功能冲突分析**（已核查：2 处设计缺陷 / 3 处实现约束 / 3 处无冲突） |
 | [dns-policy.md](./roadmap/dns-policy.md) | DNS 策略**剩余缺口**（现状见 Current `magic-dns.md`） |
 | [multi-link-bonding.md](./roadmap/multi-link-bonding.md) | 多 PeerConn 聚合：Phase 2a/2b **已合入**（出厂默认 `bond_count=2`）；Phase 3 出口/`bind_device` 多样性待做 |
-| [tunnel-ip-flow-observability.md](./roadmap/tunnel-ip-flow-observability.md) | **隧道级 IP 流量可观测性**：每条隧道在跑哪些目的/源 IP；日志/事件/遥测三通道是否合并（结论：语义 3 类、物理 2 通道）；本机 vs 控制台可见性分维度规划；**Phase 0 实测 + Phase 1 记账内核 + Phase 2 协议/配置/UI 已落地**（待 Phase 3 控制台配置项与历史落库） |
+| [tunnel-ip-flow-observability.md](./roadmap/tunnel-ip-flow-observability.md) | **隧道级 IP 流量可观测性**：每条隧道在跑哪些目的/源 IP；日志/事件/遥测三通道是否合并（结论：语义 3 类、物理 2 通道）；本机 vs 控制台可见性分维度规划；**Phase 0 实测 + Phase 1 记账内核 + Phase 2 协议/UI + Phase 3 控制台配置项/历史落库/图表 已落地**（仅剩 Phase 4 告警，本期不做；剩余风险见 §17.6） |
 | [traffic-camouflage.md](./roadmap/traffic-camouflage.md) | 传输伪装 / 抗识别（wss 范式与 TLS 外观，Draft） |
 | [traffic-camouflage-phase-a-todo.md](./roadmap/traffic-camouflage-phase-a-todo.md) | Phase A TODO：中继 + wss:443 Ops/状态（**暂不实现**） |
 | [connection-stability-todo.md](./roadmap/connection-stability-todo.md) | 连接稳定性优化 TODO（相对 OpenVPN/IPsec；**端点可自定义，不假设 443**） |
@@ -177,11 +177,38 @@ export CARGO_PROFILE_DEV_DEBUG=0 CARGO_INCREMENTAL=0 CARGO_TARGET_DIR='D:\EasyTi
 
 两者**不是同一口径，不能相减**。同理，`proxy-packet` 门控的代码（`gateway/magic_dns/{packet,observe}.rs`、`instance/packet_plane` 的 `register_magic_dns_resolver` 等）在裸 `cargo check -p easytier-core` 下**静默跳过、不报错** —— 改到这些文件时必须显式加 `--features proxy-packet`，或直接 `cargo check -p easytier`（该 crate 经 `quic`/`kcp`/`icmp-proxy` 默认开 `proxy-packet`）。
 
+### ⛔ 打包 / 出安装包：**必须**走 `script/` 里的脚本，不要手搓命令
+
+> **硬约束：本地打包一律从 `script/` 目录用现成入口，禁止自己拼 `cargo build` / `pnpm tauri build` 序列。**
+> 手搓几乎必然失败，而且失败点（MSVC `D8050`、esbuild 临时目录、WebView2 引导包、wasm 工具链）看起来像"环境坏了"，
+> 实际是脚本已经替你处理掉的坑。**2026-10-23 已踩过一次**：直接 `cargo test` 反复卡在
+> `cl: 命令行 error D8050: 无法执行 c1.dll` —— 那正是脚本用 `CARGO_PROFILE_DEV_DEBUG=0` + 短 `CARGO_TARGET_DIR`
+> 规避掉的问题（见 `script/build-common.ps1` `Initialize-EasytierWindowsCargoEnv`）。
+
+**目录名是单数 `script\`，不是 `scripts\`**（仓库根目录没有 `scripts/`，那是 `frontend-lib` 内部的目录）。
+
+| 场景 | 入口 |
+|---|---|
+| 完整 Windows 包（GUI NSIS + 无头 zip） | `script\easytier-windows-fast.cmd`（日常）/ `-release.cmd`（正式）/ `-debug.cmd` |
+| 只要无头包（最快） | `.\script\build-easytier-windows.ps1 -Profile Fast -SkipGui` |
+| 只要 NSIS | `.\script\build-easytier-windows.ps1 -SkipHeadless` |
+| 仅 Web embed | `script\easytier-web-fast.cmd` / `-release.cmd` / `-debug.cmd` |
+| 提交前自检（fmt + clippy + features） | `script\easytier-test-fast.cmd` / `-full.cmd` |
+
+- 脚本会自己设置 `CARGO_TARGET_DIR=.cache/cargo-target`、`CARGO_PROFILE_DEV_DEBUG=0`、可写 `TEMP`，并从 Git 目录补 `perl`。
+- 输出在 `artifacts\`，日志在 `artifacts\logs\`（失败先看这里，不要靠猜）。
+- 需要 GUI/NSIS 时脚本会在**编译前**检查 WebView2 引导包，缺失立刻失败并打印下载地址。
+- 细节见 [`ops/windows-build-pack.md`](./ops/windows-build-pack.md)；MSVC 相关见 [`ops/windows-msvc-local-build.md`](./ops/windows-msvc-local-build.md)。
+
+> 上文的 `cargo` / `node` 命令只用于**改代码后的快速校验**（check / test / clippy / fmt），
+> **不能**用于产出安装包。两者不要混用。
+
 ### 已知坑
 
 | 现象 | 处理 |
 |---|---|
 | `failed to write …\.fingerprint\…\lib-*.json` + `拒绝访问。(os error 5)` | 删掉那个 `.json` 后重跑即可（偶发文件锁，非权限配置问题） |
+| `cl: 命令行 error D8050: 无法执行 …\c1.dll: 未能将命令行放入调试记录中` | MSVC 在 `-Z7` + 长路径下写 PDB 失败。**不要**改用 `--release` 瞎试：设 `CARGO_PROFILE_DEV_DEBUG=0` 并用短 `CARGO_TARGET_DIR`（如 `.cache/cargo-target`）；打包场景直接用 `script\` 脚本（已内置）。详见上文「⛔ 打包」 |
 | `--features full` 失败：`openssl-sys: Command 'perl' not found` | `full` 含 `openssl-crypto`，要从源码构建 OpenSSL。CI 的 `cargo clippy --all-targets --features full -- -D warnings` **本地无法复现**；要跑需先装 Strawberry Perl |
 | 默认 features 下出现一批「never used」告警 | 多数是 feature 门控造成的**假死代码**，**不要盲删** |
 
@@ -189,7 +216,7 @@ export CARGO_PROFILE_DEV_DEBUG=0 CARGO_INCREMENTAL=0 CARGO_TARGET_DIR='D:\EasyTi
 
 - 类型检查：`node easytier-web/frontend-lib/node_modules/vue-tsc/bin/vue-tsc.js -b`
 - 单测：`node easytier-web/frontend-lib/node_modules/vitest/vitest.mjs run --config vitest.config.ts`
-- proto TS 生成：`node scripts/codegen-proto.mjs`（`@protobuf-ts/protoc` 自带 protoc，无需系统安装）
+- proto TS 生成：`node easytier-web/frontend-lib/scripts/codegen-proto.mjs`（注意在 `frontend-lib/` 下，**不是**仓库根的 `scripts/`；`@protobuf-ts/protoc` 自带 protoc，无需系统安装）
 - Rust 侧 proto：由 `easytier-proto/build/main.rs` 自动下载 protoc（Windows 走 GitHub release）
 - 不跑 cargo 时的替代校验：`rustfmt --edition 2024 --check <file>`（edition 必须写 2024，否则 let-chains 会误报「only allowed in Rust 2024」）
 

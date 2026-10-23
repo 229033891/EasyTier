@@ -1,8 +1,8 @@
 //! Process-level management over the canonical Instance collection.
 
+pub(crate) mod flow_view;
 #[cfg(all(feature = "management", any(test, target_os = "wasi")))]
 mod forwarded_rpc;
-pub(crate) mod flow_view;
 #[cfg(feature = "web-client")]
 mod full;
 mod instance_rpc;

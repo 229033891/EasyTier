@@ -747,7 +747,9 @@ where
     #[cfg(feature = "web-client")]
     pub async fn network_info(&self, instance_id: Uuid) -> Option<NetworkInstanceRunningInfo> {
         let instance = self.get(instance_id)?;
-        network_instance_running_info(instance.as_ref(), None).await.ok()
+        network_instance_running_info(instance.as_ref(), None)
+            .await
+            .ok()
     }
 
     #[cfg(feature = "web-client")]

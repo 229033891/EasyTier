@@ -42,6 +42,7 @@ import {
 import { Badge, DataTable, Column, Tag, Button, ScrollPanel, Card, Panel, } from 'primevue';
 import NetworkChart from './NetworkChart.vue';
 import PeerConnHistoryChart from './PeerConnHistoryChart.vue';
+import FlowHistoryChart from './FlowHistoryChart.vue';
 
 const props = defineProps<{
   curNetworkInst: NetworkInstance | null,
@@ -253,7 +254,7 @@ function rowFlowTip(row: PeerConnTableRow): { value: string, escape: false } | u
     if (flow.sampled) parts.push(t('status.flow_estimated'))
     return parts.join('  ')
   })
-  return { value: lines.join('\n'), escape: false }
+  return { value: lines.join('\n'), escape: true }
 }
 
 function rowTunnelProto(row: PeerConnTableRow) {
@@ -811,6 +812,7 @@ const panelCollapsed = reactive({
   nodeDetails: true,
   peer: true,
   peerHistory: true,
+  flowHistory: true,
   policyRoutes: true,
   vpnPortal: true,
   eventLog: true,
@@ -1299,6 +1301,17 @@ const eventLogContent = computed(() => {
           <div class="status-panel-body">
             <PeerConnHistoryChart :api="api" :instance-id="curNetworkInst?.instance_id ?? ''"
               :visible="!panelCollapsed.peerHistory" />
+          </div>
+        </Panel>
+
+        <Panel v-if="api.get_flow_history" v-model:collapsed="panelCollapsed.flowHistory"
+          :header="t('flow_history_title')" toggleable
+          class="status-panel"
+          :class="{ 'status-panel--expanded': !panelCollapsed.flowHistory }"
+          :pt="panelHeaderPt('flowHistory')">
+          <div class="status-panel-body">
+            <FlowHistoryChart :api="api" :instance-id="curNetworkInst?.instance_id ?? ''"
+              :visible="!panelCollapsed.flowHistory" />
           </div>
         </Panel>
 

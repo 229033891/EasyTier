@@ -96,7 +96,7 @@ const META_SQL: &str = r#"
 "#;
 
 /// 按时间跨度选桶大小：保证点数不超过 MAX_POINTS，且不小于一个采样间隔（60s）
-fn bucket_seconds(hours: i64) -> i64 {
+pub(crate) fn bucket_seconds(hours: i64) -> i64 {
     let window = hours.clamp(1, MAX_HOURS) * 3600;
     // window 恒为正，用 (a + b - 1) / b 做向上取整。
     // 注意不能用 i64::div_ceil：1.95 上它仍属 unstable 的 int_roundings（只有无符号整数稳定了）。

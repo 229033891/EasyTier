@@ -183,6 +183,7 @@ const FORM_MANAGED_TOML_FIELDS: &[&str] = &[
     "dns_config",
     "credential_file",
     "managed_credentials",
+    "flow_stats",
 ];
 
 #[cfg(all(
@@ -243,6 +244,25 @@ const FORM_MANAGED_FLAG_FIELDS: &[&str] = &[
     feature = "browser-config",
     any(test, all(target_arch = "wasm32", target_os = "unknown"))
 ))]
+/// Does this proto payload carry any `[flow_stats]` value at all?
+///
+/// All seven fields are proto3 `optional`, which is the only presence signal
+/// this table has. A payload with none of them comes from a client without the
+/// flow-stats form, so the local table must be preserved.
+pub(crate) fn carries_flow_stats(config: &NetworkConfig) -> bool {
+    config.flow_stats_enabled.is_some()
+        || config.flow_stats_sample_rate.is_some()
+        || config.flow_stats_max_per_conn.is_some()
+        || config.flow_stats_max_total.is_some()
+        || config.flow_mask_prefix_len_v4.is_some()
+        || config.flow_mask_prefix_len_v6.is_some()
+        || config.flow_stats_allow_exact_ip.is_some()
+}
+
+#[cfg(all(
+    feature = "browser-config",
+    any(test, all(target_arch = "wasm32", target_os = "unknown"))
+))]
 pub(crate) fn merge_network_config_toml(
     original_toml: &str,
     config: &NetworkConfig,
@@ -269,6 +289,15 @@ pub(crate) fn merge_network_config_toml(
     }
     if !original.contains_key("instance_name") {
         generated.remove("instance_name");
+    }
+    // `[flow_stats]` is form-managed too, but every field is `optional`, so a
+    // client that has no flow-stats UI at all sends nothing. Treat "no field
+    // present" as "not my business" and keep whatever the node configured
+    // locally, instead of silently deleting the table on every save.
+    if !carries_flow_stats(config)
+        && let Some(value) = original.get("flow_stats")
+    {
+        generated.insert("flow_stats".to_owned(), value.clone());
     }
 
     let mut merged_flags: toml::Table = original
@@ -1328,6 +1357,61 @@ mod tests {
                 || err.to_string().contains("TLD")
                 || err.to_string().contains("tld"),
             "unexpected error: {err}"
+        );
+    }
+
+    #[cfg(feature = "browser-config")]
+    #[test]
+    fn browser_merge_preserves_or_writes_flow_stats() {
+        let original = r#"
+[network_identity]
+network_name = "net"
+network_secret = "secret"
+
+[flow_stats]
+enabled = true
+sample_rate = 4
+allow_exact_ip = true
+"#;
+        // A client without a flow-stats form sends none of the optional fields:
+        // the locally configured table must survive the save.
+        let omit = NetworkConfig {
+            network_name: Some("net".to_owned()),
+            network_secret: Some("secret".to_owned()),
+            ..standalone_config()
+        };
+        assert!(!carries_flow_stats(&omit));
+        let merged = merge_network_config_toml(original, &omit).unwrap();
+        let table: toml::Table = toml::from_str(&merged).unwrap();
+        let flow = table
+            .get("flow_stats")
+            .and_then(|value| value.as_table())
+            .unwrap_or_else(|| panic!("[flow_stats] must be preserved: {merged}"));
+        assert_eq!(flow.get("enabled").and_then(|v| v.as_bool()), Some(true));
+        assert_eq!(
+            flow.get("sample_rate").and_then(|v| v.as_integer()),
+            Some(4)
+        );
+
+        // Turning the switch off is a real value, so the form owns the table and
+        // the patch replaces it (unset knobs fall back to the defaults).
+        let off = NetworkConfig {
+            flow_stats_enabled: Some(false),
+            network_name: Some("net".to_owned()),
+            network_secret: Some("secret".to_owned()),
+            ..standalone_config()
+        };
+        assert!(carries_flow_stats(&off));
+        let merged = merge_network_config_toml(original, &off).unwrap();
+        let table: toml::Table = toml::from_str(&merged).unwrap();
+        let flow = table
+            .get("flow_stats")
+            .and_then(|value| value.as_table())
+            .unwrap_or_else(|| panic!("[flow_stats] must be written: {merged}"));
+        assert_eq!(flow.get("enabled").and_then(|v| v.as_bool()), Some(false));
+        assert!(
+            flow.get("sample_rate").is_none(),
+            "form patch replaces the table: {merged}"
         );
     }
 

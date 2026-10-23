@@ -33,7 +33,16 @@ musl_gcc
 easytier-panic.log
 check.log
 check_core.log
+check*.log
+_check_*.log
+.tmp_check*
 .dsh_*.log
+
+# compiler / tool output dumps and env snapshots from ad-hoc local runs
+# (*.err covers cargo/clippy stderr captures; the rest are one-off probes)
+*.err
+/check_env.txt
+/check_t.*
 
 # local debug scratch files (build/test transcripts and helper scripts)
 # These are produced by ad-hoc local runs; they must never reach a commit.
@@ -93,3 +102,6 @@ go.sum
 
 # tooling scratch (tgrep index / logs)
 .tgrep/
+
+# local research scratch (agent notes, transcripts, reference dumps)
+/_cursor_research/

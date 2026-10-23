@@ -1813,6 +1813,62 @@ impl Db {
         .await
         .map_err(sqlx_db_error)?;
 
+        // Per-tunnel flow history follows the same device rename rules: keep the
+        // data, but re-attribute it to the merged device so its charts stay
+        // visible. Dedupe on the full series key (there is no natural PK).
+        sqlx::query(
+            r#"
+            INSERT INTO flow_history (
+                user_id, machine_id, instance_id, conn_id, peer_id, ip,
+                prefix_len, direction, bytes, packets, rate_bytes_per_sec,
+                flow_count, sampled, sampled_at
+            )
+            SELECT
+                user_id, ?, instance_id, conn_id, peer_id, ip,
+                prefix_len, direction, bytes, packets, rate_bytes_per_sec,
+                flow_count, sampled, sampled_at
+            FROM (
+                SELECT
+                    user_id, instance_id, conn_id, peer_id, ip,
+                    prefix_len, direction, bytes, packets, rate_bytes_per_sec,
+                    flow_count, sampled, sampled_at
+                FROM flow_history
+                WHERE user_id = ? AND machine_id = ?
+            ) AS src
+            WHERE NOT EXISTS (
+                SELECT 1 FROM flow_history AS existing
+                WHERE existing.user_id = src.user_id
+                  AND existing.machine_id = ?
+                  AND existing.instance_id = src.instance_id
+                  AND existing.conn_id = src.conn_id
+                  AND existing.peer_id = src.peer_id
+                  AND existing.ip = src.ip
+                  AND existing.prefix_len = src.prefix_len
+                  AND existing.direction = src.direction
+                  AND existing.sampled_at = src.sampled_at
+            )
+            "#,
+        )
+        .bind(target_device_id.to_string())
+        .bind(user_id)
+        .bind(source_device_id.to_string())
+        .bind(target_device_id.to_string())
+        .execute(&mut *transaction)
+        .await
+        .map_err(sqlx_db_error)?;
+
+        sqlx::query(
+            r#"
+            DELETE FROM flow_history
+            WHERE user_id = ? AND machine_id = ?
+            "#,
+        )
+        .bind(user_id)
+        .bind(source_device_id.to_string())
+        .execute(&mut *transaction)
+        .await
+        .map_err(sqlx_db_error)?;
+
         sqlx::query(
             r#"
             DELETE FROM devices

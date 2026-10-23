@@ -1882,14 +1882,6 @@ impl PeerManagerCore {
         &self.flow_table
     }
 
-    /// Enable (or reconfigure) the per-tunnel IP flow accounting.
-    ///
-    /// The table is created together with the peer manager but stays inert
-    /// until it is explicitly enabled, so low-end devices pay nothing.
-    pub fn configure_flow_stats(&self, cfg: FlowTableConfig) {
-        self.flow_table.configure(cfg);
-    }
-
     pub(crate) fn credential_manager(&self) -> Arc<CredentialManager> {
         self.context.credential_manager()
     }
@@ -3621,6 +3613,31 @@ impl PeerMaintenanceTasks {
                 crate::foundation::time::sleep(std::time::Duration::from_secs(30)).await;
             }
         });
+
+        // Decision D2: a single aggregate line every 5s instead of per-packet
+        // tracing. Disabled with the master switch; silent when the table is empty.
+        let flow_table = self.flow_table.clone();
+        tasks.lock().await.spawn(async move {
+            loop {
+                crate::foundation::time::sleep(std::time::Duration::from_secs(5)).await;
+                if !flow_table.is_enabled() {
+                    continue;
+                }
+                let summary = flow_table.summary();
+                if summary.entries == 0 {
+                    continue;
+                }
+                tracing::info!(
+                    target: "CORE::FLOW",
+                    conns = summary.conns,
+                    flows = summary.entries,
+                    tx_bytes = summary.tx_bytes,
+                    rx_bytes = summary.rx_bytes,
+                    rate_bytes_per_sec = summary.rate_bytes_per_sec,
+                    "flow aggregate"
+                );
+            }
+        });
     }
 
     async fn spawn_clean_peer_without_conn_routine(&self, tasks: &Mutex<JoinSet<()>>) {
@@ -4713,8 +4730,15 @@ impl PeerPacketRouter {
     /// The payload is plaintext at this point, so the source IP of the inner
     /// packet is available. Packets injected locally and packets that are
     /// only forwarded (they are never decrypted here) are not counted.
-    fn record_rx_flow(&self, ingress: &PeerPacketIngress, packet: &ZCPacket) {
+    fn record_rx_flow(&self, ingress: &PeerPacketIngress, packet_type: u8, packet: &ZCPacket) {
         if !self.flow_table.is_enabled() {
+            return;
+        }
+        // 只记 IP 数据包：KCP/QUIC 等传输层载荷是裸数据报，首字节任意，
+        // parse_inner_ips 可能把随机字节误判成 IPv4/IPv6 头（0x4X/0x6X），
+        // 产生垃圾流条目污染 flow 表。TX 侧仅对有 flow_meta 的 IP 包记账，
+        // 这里对称：只对 PacketType::Data 记 RX 流。
+        if packet_type != PacketType::Data as u8 {
             return;
         }
         let PeerPacketIngress::Peer {
@@ -4915,7 +4939,7 @@ impl PeerPacketRouter {
             // so the source IP of the inner packet is available. Only packets
             // that arrived on a peer connection are attributed; forwarded
             // packets are not decrypted and therefore not counted.
-            self.record_rx_flow(&ingress, &ret);
+            self.record_rx_flow(&ingress, packet_type, &ret);
 
             if !self.acl_filter.process_packet_with_acl(
                 &ret,

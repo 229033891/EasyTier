@@ -548,6 +548,13 @@ class WebRemoteClient implements Api.RemoteClient {
         );
         return response;
     }
+    async get_flow_history(inst_id: string, hours: number): Promise<Api.FlowHistoryResponse | undefined> {
+        const response = await this.client.get<any, Api.FlowHistoryResponse>(
+            `/machines/${this.machine_id}/flow-history/${inst_id}`,
+            { params: { hours } },
+        );
+        return response;
+    }
     async get_logger_level(): Promise<string> {
         const response = await this.client.post<any, { level?: unknown }>(
             `/machines/${this.machine_id}/proxy-rpc`,

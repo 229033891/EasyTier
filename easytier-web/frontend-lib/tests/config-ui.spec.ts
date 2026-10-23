@@ -722,7 +722,9 @@ describe('Config.vue network config projection', () => {
       CONFIG_TOGGLE_FIELDS.length +
       CONFIG_TOGGLE_START_INDEX +
       (curNetwork.disable_ipv6 ? 0 : 1) +
-      (curNetwork.enable_manual_routes ? 1 : 0)
+      (curNetwork.enable_manual_routes ? 1 : 0) +
+      // IP 流量统计：总开关与「允许精确 IP」子开关均恒定渲染（R5：子开关移出 v-if）。
+      2
     expect(toggleSwitches).toHaveLength(expectedToggleCount)
     expect(toggleSwitches[VPN_PORTAL_TOGGLE_INDEX].attributes('id')).toBe('vpn_portal_enabled')
     for (const [field, inputId] of CONFIG_TOGGLE_FIELDS) {
@@ -954,5 +956,43 @@ describe('Config.vue network config projection', () => {
 
     expect(wrapper.emitted('runNetwork')?.[0]).toEqual([curNetwork])
     expect((wrapper.emitted('runNetwork')?.[0][0] as NetworkConfig).network_name).toBe('mesh-running')
+  })
+
+  it('keeps flow stats off the wire until the user touches it', async () => {
+    const { curNetwork, wrapper } = mountConfig()
+    await nextTick()
+
+    // 默认关闭，且未触碰时不向后台发送任何 flow_stats 字段：老节点本地
+    // 配置的 [flow_stats] 表不会被一次无关的保存抹掉。
+    expect(wrapper.find('#flow_stats_enabled').attributes('aria-checked')).toBe('false')
+    // R5：精确 IP 子开关始终可见（不再藏在 v-if 里），但默认仍是关闭。
+    expect(wrapper.find('#flow_stats_allow_exact_ip').exists()).toBe(true)
+    expect(wrapper.find('#flow_stats_allow_exact_ip').attributes('aria-checked')).toBe('false')
+    const untouched = toBackendNetworkConfig(curNetwork) as Record<string, unknown>
+    expect(untouched.flow_stats_enabled).toBeUndefined()
+    expect(untouched.flow_stats_sample_rate).toBeUndefined()
+
+    // 打开总开关：写回 true；精确 IP 子开关保持可见。
+    await wrapper.find('#flow_stats_enabled').trigger('click')
+    await nextTick()
+    expect(curNetwork.flow_stats_enabled).toBe(true)
+    expect(wrapper.find('#flow_stats_allow_exact_ip').exists()).toBe(true)
+    const enabled = toBackendNetworkConfig(curNetwork) as Record<string, unknown>
+    expect(enabled.flow_stats_enabled).toBe(true)
+    // 数字项保持留空 = 交给节点默认值，表单不替用户拍板。
+    expect(enabled.flow_stats_max_per_conn).toBeUndefined()
+
+    await wrapper.find('#flow_stats_allow_exact_ip').trigger('click')
+    await nextTick()
+    expect(curNetwork.flow_stats_allow_exact_ip).toBe(true)
+    const exact = toBackendNetworkConfig(curNetwork) as Record<string, unknown>
+    expect(exact.flow_stats_allow_exact_ip).toBe(true)
+
+    // R5 fail-closed：关闭总开关时清除精确 IP 授权，避免残留 true 在下次开启时静默生效。
+    await wrapper.find('#flow_stats_enabled').trigger('click')
+    await nextTick()
+    expect(curNetwork.flow_stats_enabled).toBe(false)
+    expect(curNetwork.flow_stats_allow_exact_ip).toBeUndefined()
+    expect(wrapper.find('#flow_stats_allow_exact_ip').attributes('aria-checked')).toBe('false')
   })
 })

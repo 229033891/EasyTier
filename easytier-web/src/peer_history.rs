@@ -4,6 +4,11 @@
 //! `CollectNetworkInfo`，把「本设备某个网络实例 ↔ 某个直连对端 peer」的
 //! 延迟与累计流量按一行一条落库，并按 `retention_days`（默认 7 天）清理。
 //!
+//! 同一次采集里还顺带落 `flow_history`（每条隧道上的 IP/网段流量）：
+//! - 复用同一个 `CollectNetworkInfo` 响应，**不额外发 RPC**（见决策 D6）
+//! - 只请求默认的 MASKED 视图，精确 IP 不出节点（见决策 D8）
+//! - 节点没开 `flow_stats` 时 `flows` 为空，这里也就零写入
+//!
 //! 设计取舍：
 //! - **只记直连对端**：`PeerRoutePair.peer` 为 `None` 说明只是路由可达、没有直连，
 //!   没有 IP:端口和延迟可言，跳过。
@@ -17,7 +22,7 @@
 
 use std::{sync::Arc, time::Duration};
 
-use easytier::proto::api::instance::PeerRoutePair;
+use easytier::proto::api::{instance::PeerRoutePair, manage::NetworkInstanceRunningInfo};
 use easytier_core::management::remote_client::RemoteClientManager as _;
 // DeleteMany::filter 来自 QueryFilter trait，必须显式引入，否则会解析到 Iterator::filter
 use sea_orm::{ColumnTrait as _, EntityTrait as _, QueryFilter as _, Set};
@@ -25,7 +30,10 @@ use tokio::time::{MissedTickBehavior, interval};
 use tracing::{debug, error, info};
 
 use crate::client_manager::ClientManager;
-use crate::db::{Db, entity::peer_conn_history};
+use crate::db::{
+    Db,
+    entity::{flow_history, peer_conn_history},
+};
 
 /// 采样间隔：60s
 pub const DEFAULT_SAMPLE_INTERVAL_SECS: u64 = 60;
@@ -35,6 +43,11 @@ pub const DEFAULT_RETENTION_DAYS: i64 = 7;
 const CLEANUP_INTERVAL: Duration = Duration::from_secs(600);
 /// 单台设备一次采集的超时
 const COLLECT_TIMEOUT: Duration = Duration::from_secs(20);
+/// 单次采样写入 `flow_history` 的总行数上限（跨设备/实例）。
+///
+/// 节点侧已按 `FLOW_TOP_N_PER_CONN` 截断；这里再加一道表侧闸门，防止隧道数
+/// 很多时单轮写入无界增长（§17.6 R1）。超出时保留字节最大的行并告警。
+const MAX_FLOW_ROWS_PER_SAMPLE: usize = 4096;
 
 #[derive(Debug, Clone)]
 pub struct PeerHistoryOptions {
@@ -131,6 +144,64 @@ fn aggregate_instance(pairs: &[PeerRoutePair]) -> Vec<PeerSample> {
     out
 }
 
+/// 一次采样里某条隧道上的某个 IP/网段
+#[derive(Debug, Clone, PartialEq)]
+struct FlowSample {
+    conn_id: String,
+    peer_id: i64,
+    ip: String,
+    prefix_len: i32,
+    direction: i32,
+    bytes: i64,
+    packets: i64,
+    rate_bytes_per_sec: i64,
+    flow_count: i32,
+    sampled: bool,
+}
+
+/// 把一次 `CollectNetworkInfo` 里某个实例的 `PeerConnInfo.flows` 压成待落库的行。
+///
+/// 只保留有字节的条目：节点刚建流、还没跑流量时会出现 0 字节行，落库没有意义。
+fn aggregate_flows(info: &NetworkInstanceRunningInfo) -> Vec<FlowSample> {
+    let mut out = Vec::new();
+
+    for pair in &info.peer_route_pairs {
+        let Some(peer) = pair.peer.as_ref() else {
+            continue;
+        };
+        for conn in &peer.conns {
+            // PeerConnId = uuid::Uuid，线上是 to_string() 形如 "3f2a…-…"。
+            // 按文本落库，与 machine_id 同策略；绝不尝试按整数解析。
+            let conn_id = conn.conn_id.to_string();
+            for flow in &conn.flows {
+                if flow.bytes == 0 {
+                    continue;
+                }
+                out.push(FlowSample {
+                    // 同一条隧道可能有多个 flow，String 需要 clone 后再移动。
+                    conn_id: conn_id.clone(),
+                    // `flow.peer_id` 可能为 0（老节点/未填），回退到 peer 自身的 id。
+                    peer_id: if flow.peer_id == 0 {
+                        i64::from(peer.peer_id)
+                    } else {
+                        i64::from(flow.peer_id)
+                    },
+                    ip: flow.ip.clone(),
+                    prefix_len: flow.prefix_len as i32,
+                    direction: flow.direction as i32,
+                    bytes: flow.bytes.min(i64::MAX as u64) as i64,
+                    packets: flow.packets.min(i64::MAX as u64) as i64,
+                    rate_bytes_per_sec: flow.rate_bytes_per_sec.min(i64::MAX as u64) as i64,
+                    flow_count: flow.flow_count as i32,
+                    sampled: flow.sampled,
+                });
+            }
+        }
+    }
+
+    out
+}
+
 /// 从最近一次 heartbeat 取运行中实例；无 heartbeat 返回 `None`（调用方回退全量）。
 async fn running_inst_ids_from_heartbeat(
     client_mgr: &ClientManager,
@@ -145,7 +216,7 @@ async fn running_inst_ids_from_heartbeat(
     )
 }
 
-/// 采集一轮，返回写入的行数
+/// 采集一轮，返回写入的行数（peer_conn_history + flow_history）
 async fn sample_once(client_mgr: &Arc<ClientManager>, db: &Db) -> usize {
     let sessions = client_mgr.list_all_sessions().await;
     if sessions.is_empty() {
@@ -154,6 +225,7 @@ async fn sample_once(client_mgr: &Arc<ClientManager>, db: &Db) -> usize {
 
     let now = chrono::Utc::now().timestamp();
     let mut rows: Vec<peer_conn_history::ActiveModel> = Vec::new();
+    let mut flow_rows: Vec<flow_history::ActiveModel> = Vec::new();
 
     for token in sessions {
         let identify = (token.user_id, token.machine_id);
@@ -219,16 +291,51 @@ async fn sample_once(client_mgr: &Arc<ClientManager>, db: &Db) -> usize {
                     ..Default::default()
                 });
             }
+            // 与上面同一次采集：节点没开 flow_stats 时这里就是空向量。
+            for flow in aggregate_flows(info) {
+                flow_rows.push(flow_history::ActiveModel {
+                    user_id: Set(token.user_id),
+                    machine_id: Set(token.machine_id.to_string()),
+                    instance_id: Set(instance_id.clone()),
+                    conn_id: Set(flow.conn_id),
+                    peer_id: Set(flow.peer_id),
+                    ip: Set(flow.ip),
+                    prefix_len: Set(flow.prefix_len),
+                    direction: Set(flow.direction),
+                    bytes: Set(flow.bytes),
+                    packets: Set(flow.packets),
+                    rate_bytes_per_sec: Set(flow.rate_bytes_per_sec),
+                    flow_count: Set(flow.flow_count),
+                    sampled: Set(flow.sampled),
+                    sampled_at: Set(now),
+                    ..Default::default()
+                });
+            }
         }
     }
 
-    if rows.is_empty() {
-        return 0;
+    // 表侧限流：保留累计字节最大的行，其余丢弃并告警（§17.6 R1）。
+    if flow_rows.len() > MAX_FLOW_ROWS_PER_SAMPLE {
+        let dropped = flow_rows.len() - MAX_FLOW_ROWS_PER_SAMPLE;
+        flow_rows.sort_by_key(|row| {
+            let bytes = match &row.bytes {
+                sea_orm::ActiveValue::Set(v) => *v,
+                _ => 0,
+            };
+            std::cmp::Reverse(bytes)
+        });
+        flow_rows.truncate(MAX_FLOW_ROWS_PER_SAMPLE);
+        tracing::warn!(
+            dropped,
+            kept = MAX_FLOW_ROWS_PER_SAMPLE,
+            "flow history: per-sample row cap reached, dropped the least busy rows"
+        );
     }
+
+    let mut written = 0usize;
 
     // 分块插入：一行 14 个绑定参数，整批一次插入在设备多时会顶到 SQLite 的变量上限
     const INSERT_CHUNK: usize = 200;
-    let mut written = 0usize;
     for chunk in rows.chunks(INSERT_CHUNK) {
         let count = chunk.len();
         if let Err(e) = peer_conn_history::Entity::insert_many(chunk.to_vec())
@@ -240,23 +347,47 @@ async fn sample_once(client_mgr: &Arc<ClientManager>, db: &Db) -> usize {
         }
         written += count;
     }
+    // flow_history 一行 15 个绑定参数，同样分块。
+    for chunk in flow_rows.chunks(INSERT_CHUNK) {
+        let count = chunk.len();
+        if let Err(e) = flow_history::Entity::insert_many(chunk.to_vec())
+            .exec(db.orm_db())
+            .await
+        {
+            error!("flow history: insert {} rows failed: {:?}", count, e);
+            continue;
+        }
+        written += count;
+    }
     written
 }
 
 /// 删除超过保留期的行，返回删除条数
 async fn cleanup_once(db: &Db, retention_days: i64) -> u64 {
     let cutoff = chrono::Utc::now().timestamp() - retention_days.max(1) * 86_400;
+    let mut removed = 0u64;
     match peer_conn_history::Entity::delete_many()
         .filter(peer_conn_history::Column::SampledAt.lt(cutoff))
         .exec(db.orm_db())
         .await
     {
-        Ok(res) => res.rows_affected,
+        Ok(res) => removed += res.rows_affected,
         Err(e) => {
             error!("peer history: cleanup failed: {:?}", e);
-            0
         }
     }
+    // 流量明细与 peer 汇总同一保留期，避免两张表口径不一致。
+    match flow_history::Entity::delete_many()
+        .filter(flow_history::Column::SampledAt.lt(cutoff))
+        .exec(db.orm_db())
+        .await
+    {
+        Ok(res) => removed += res.rows_affected,
+        Err(e) => {
+            error!("flow history: cleanup failed: {:?}", e);
+        }
+    }
+    removed
 }
 
 /// 启动采样任务（后台常驻）。`enabled=false` 时只打一条日志并直接返回。
@@ -309,7 +440,7 @@ pub fn spawn_peer_history_sampler(
 mod tests {
     use super::*;
     use easytier::proto::{
-        api::instance::{PeerConnInfo, PeerConnStats, PeerInfo, Route},
+        api::instance::{PeerConnFlow, PeerConnInfo, PeerConnStats, PeerInfo, Route},
         common::TunnelInfo,
     };
 
@@ -369,7 +500,8 @@ mod tests {
         assert_eq!(got.len(), 1);
         assert_eq!(got[0].peer_id, 7);
         assert_eq!(got[0].hostname, "peer-b");
-        assert_eq!(got[0].remote_addr, "1.2.3.4:11010");
+        // tunnel 地址以规范化形式返回（带 scheme），见 `Url::normalized_tunnel_display`
+        assert_eq!(got[0].remote_addr, "udp://1.2.3.4:11010");
         assert_eq!(got[0].tunnel_type, "udp");
         assert_eq!(got[0].latency_us, 12_500);
         assert_eq!(got[0].jitter_us, 1_500);
@@ -402,5 +534,80 @@ mod tests {
         // 没有 default_conn_id 时取最小延迟 / 最小抖动
         assert_eq!(got[0].latency_us, 9_000);
         assert_eq!(got[0].jitter_us, 800);
+    }
+
+    fn flow(ip: &str, dir: u32, bytes: u64, rate: u64, prefix: u32, count: u32) -> PeerConnFlow {
+        PeerConnFlow {
+            ip: ip.to_string(),
+            direction: dir,
+            bytes,
+            packets: 3,
+            rate_bytes_per_sec: rate,
+            prefix_len: prefix,
+            flow_count: count,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn aggregates_flows_per_tunnel_and_skips_empty() {
+        let mut c1 = conn("42", 1_000, 10, 20);
+        c1.flows = vec![
+            // 掩码行：一个 /24 里 14 台机器
+            flow("10.0.0.0", 1, 4_096, 512, 24, 14),
+            // 节点刚建流、还没跑流量：不落库
+            flow("10.0.1.0", 1, 0, 0, 24, 1),
+            // 出站
+            flow("10.0.2.0", 0, 2_048, 128, 24, 3),
+        ];
+        let mut c2 = conn("7", 1_000, 10, 20);
+        c2.flows = vec![flow("fd00::", 1, 900, 9, 64, 2)];
+
+        let info = NetworkInstanceRunningInfo {
+            peer_route_pairs: vec![pair(vec![c1, c2])],
+            ..Default::default()
+        };
+        let got = aggregate_flows(&info);
+
+        assert_eq!(got.len(), 3, "0 字节条目被跳过");
+        assert_eq!(got[0].conn_id, "42");
+        assert_eq!(got[0].peer_id, 7, "flow.peer_id 未填时回退到 peer 自身");
+        assert_eq!(got[0].ip, "10.0.0.0");
+        assert_eq!(got[0].prefix_len, 24);
+        assert_eq!(got[0].direction, 1);
+        assert_eq!(got[0].bytes, 4_096);
+        assert_eq!(got[0].rate_bytes_per_sec, 512);
+        assert_eq!(got[0].flow_count, 14);
+        assert_eq!(got[1].conn_id, "42");
+        assert_eq!(got[1].direction, 0);
+        assert_eq!(got[2].conn_id, "7");
+        assert_eq!(got[2].prefix_len, 64);
+    }
+
+    #[test]
+    fn aggregate_flows_tolerates_unparsable_conn_id_and_non_direct_peers() {
+        let mut c = conn("not-a-number", 1_000, 10, 20);
+        c.flows = vec![flow("10.0.0.0", 1, 1, 1, 24, 1)];
+        let mut no_peer = pair(vec![c]);
+        no_peer.peer = None;
+
+        let info = NetworkInstanceRunningInfo {
+            peer_route_pairs: vec![no_peer],
+            ..Default::default()
+        };
+        assert!(aggregate_flows(&info).is_empty(), "非直连不落 flows");
+
+        let c = {
+            let mut c = conn("not-a-number", 1_000, 10, 20);
+            c.flows = vec![flow("10.0.0.0", 1, 1, 1, 24, 1)];
+            c
+        };
+        let info = NetworkInstanceRunningInfo {
+            peer_route_pairs: vec![pair(vec![c])],
+            ..Default::default()
+        };
+        let got = aggregate_flows(&info);
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].conn_id, "not-a-number", "不可解析的 conn_id 原样落库");
     }
 }

@@ -38,10 +38,7 @@ where
     let resolved_flow_view = crate::management::flow_view::resolve_flow_view_with_prefix(
         flow_view,
         instance.flow_stats_allow_exact_ip(),
-        instance
-            .flow_table()
-            .config()
-            .mask_prefix_len_v4,
+        instance.flow_table().config().mask_prefix_len_v4,
         instance.flow_table().config().mask_prefix_len_v6,
     );
     let flow_table = instance.flow_table().clone();

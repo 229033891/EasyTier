@@ -134,6 +134,7 @@ const panelCollapsed = reactive({
   trafficRouting: true,
   portForwards: true,
   dns: true,
+  flowStats: true,
   acl: true,
 })
 
@@ -153,6 +154,7 @@ watch(
     panelCollapsed.trafficRouting = false
     panelCollapsed.portForwards = false
     panelCollapsed.dns = false
+    panelCollapsed.flowStats = false
     panelCollapsed.acl = false
   },
   { immediate: true },
@@ -552,6 +554,29 @@ const vpnPortalEnabled = computed({
   get: () => curNetwork.value.vpn_portal_config !== undefined,
   set: (enabled: boolean) => {
     curNetwork.value.vpn_portal_config = enabled ? defaultVpnPortalConfig() : undefined
+  },
+})
+
+/**
+ * 流量统计开关：读的是 proto 三元语义（undefined = 未设置）。
+ * 只有用户真的动过开关才把值写回配置，避免每次保存都给旧配置塞一个
+ * `flow_stats_enabled = false`，把默认关闭变成“显式关闭”。
+ */
+const flowStatsEnabled = computed({
+  get: () => curNetwork.value.flow_stats_enabled ?? false,
+  set: (enabled: boolean) => {
+    curNetwork.value.flow_stats_enabled = enabled
+    if (!enabled) {
+      // 关闭总开关时清除精确 IP 授权，避免隐藏的残留 true 在下次开启时静默生效（D13）。
+      curNetwork.value.flow_stats_allow_exact_ip = undefined
+    }
+  },
+})
+
+const flowStatsAllowExactIp = computed({
+  get: () => curNetwork.value.flow_stats_allow_exact_ip ?? false,
+  set: (allowed: boolean) => {
+    curNetwork.value.flow_stats_allow_exact_ip = allowed
   },
 })
 
@@ -1343,6 +1368,106 @@ function removeVpnPortalClient(index: number) {
                   </fieldset>
                 </div>
               </template>
+            </div>
+          </Panel>
+
+          <Panel v-model:collapsed="panelCollapsed.flowStats" toggleable
+            :pt="panelHeaderPt('flowStats')">
+            <template #header>
+              <div class="flex items-center gap-2 min-w-0">
+                <span>{{ t('flow_stats.title') }}</span>
+              </div>
+            </template>
+            <div class="flex flex-col gap-y-4">
+              <div class="config-inline-field">
+                <div class="config-inline-label flex items-center gap-1">
+                  <label for="flow_stats_enabled">{{ t('flow_stats.enabled') }}</label>
+                  <i class="pi pi-question-circle config-help-tip" tabindex="0"
+                    v-tooltip.top="{ value: t('flow_stats.enabled_help'), escape: false }"
+                    :aria-label="t('flow_stats.enabled_help')" role="img"></i>
+                </div>
+                <div class="config-inline-control">
+                  <ToggleSwitch id="flow_stats_enabled" v-model="flowStatsEnabled"
+                    :aria-label="t('flow_stats.enabled')" />
+                </div>
+              </div>
+
+              <div v-if="flowStatsEnabled" class="flex flex-col gap-2">
+                <div class="config-compact-field config-compact-field--inline config-compact-field--top">
+                  <div class="config-compact-label flex items-center gap-1">
+                    <label for="flow_stats_sample_rate">{{ t('flow_stats.sample_rate') }}</label>
+                    <i class="pi pi-question-circle config-help-tip" tabindex="0"
+                      v-tooltip.top="{ value: t('flow_stats.sample_rate_help'), escape: false }" role="img"></i>
+                  </div>
+                  <div class="config-compact-control">
+                    <InputNumber id="flow_stats_sample_rate" v-model="curNetwork.flow_stats_sample_rate"
+                      :format="false" fluid :allow-empty="true" :min="1" :max="1000000" placeholder="1" />
+                  </div>
+                </div>
+
+                <div class="config-compact-field config-compact-field--inline config-compact-field--top">
+                  <div class="config-compact-label flex items-center gap-1">
+                    <label for="flow_stats_max_per_conn">{{ t('flow_stats.max_per_conn') }}</label>
+                    <i class="pi pi-question-circle config-help-tip" tabindex="0"
+                      v-tooltip.top="{ value: t('flow_stats.max_per_conn_help'), escape: false }" role="img"></i>
+                  </div>
+                  <div class="config-compact-control">
+                    <InputNumber id="flow_stats_max_per_conn" v-model="curNetwork.flow_stats_max_per_conn"
+                      :format="false" fluid :allow-empty="true" :min="1" :max="65536" placeholder="256" />
+                  </div>
+                </div>
+
+                <div class="config-compact-field config-compact-field--inline config-compact-field--top">
+                  <div class="config-compact-label flex items-center gap-1">
+                    <label for="flow_stats_max_total">{{ t('flow_stats.max_total') }}</label>
+                    <i class="pi pi-question-circle config-help-tip" tabindex="0"
+                      v-tooltip.top="{ value: t('flow_stats.max_total_help'), escape: false }" role="img"></i>
+                  </div>
+                  <div class="config-compact-control">
+                    <InputNumber id="flow_stats_max_total" v-model="curNetwork.flow_stats_max_total"
+                      :format="false" fluid :allow-empty="true" :min="1" :max="1048576" placeholder="8192" />
+                  </div>
+                </div>
+
+                <div class="config-compact-field config-compact-field--inline config-compact-field--top">
+                  <div class="config-compact-label flex items-center gap-1">
+                    <label for="flow_mask_prefix_len_v4">{{ t('flow_stats.mask_prefix_len_v4') }}</label>
+                    <i class="pi pi-question-circle config-help-tip" tabindex="0"
+                      v-tooltip.top="{ value: t('flow_stats.mask_prefix_len_v4_help'), escape: false }"
+                      role="img"></i>
+                  </div>
+                  <div class="config-compact-control">
+                    <InputNumber id="flow_mask_prefix_len_v4" v-model="curNetwork.flow_mask_prefix_len_v4"
+                      :format="false" fluid :allow-empty="true" :min="1" :max="32" placeholder="24" />
+                  </div>
+                </div>
+
+                <div class="config-compact-field config-compact-field--inline config-compact-field--top">
+                  <div class="config-compact-label flex items-center gap-1">
+                    <label for="flow_mask_prefix_len_v6">{{ t('flow_stats.mask_prefix_len_v6') }}</label>
+                    <i class="pi pi-question-circle config-help-tip" tabindex="0"
+                      v-tooltip.top="{ value: t('flow_stats.mask_prefix_len_v6_help'), escape: false }"
+                      role="img"></i>
+                  </div>
+                  <div class="config-compact-control">
+                    <InputNumber id="flow_mask_prefix_len_v6" v-model="curNetwork.flow_mask_prefix_len_v6"
+                      :format="false" fluid :allow-empty="true" :min="1" :max="128" placeholder="64" />
+                  </div>
+                </div>
+              </div>
+
+              <div class="config-inline-field">
+                <div class="config-inline-label flex items-center gap-1">
+                  <label for="flow_stats_allow_exact_ip">{{ t('flow_stats.allow_exact_ip') }}</label>
+                  <i class="pi pi-question-circle config-help-tip" tabindex="0"
+                    v-tooltip.top="{ value: t('flow_stats.allow_exact_ip_help'), escape: false }"
+                    :aria-label="t('flow_stats.allow_exact_ip_help')" role="img"></i>
+                </div>
+                <div class="config-inline-control">
+                  <ToggleSwitch id="flow_stats_allow_exact_ip" v-model="flowStatsAllowExactIp"
+                    :aria-label="t('flow_stats.allow_exact_ip')" />
+                </div>
+              </div>
             </div>
           </Panel>
 

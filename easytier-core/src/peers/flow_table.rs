@@ -28,7 +28,7 @@
 //! columns differently.
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     net::{IpAddr, Ipv4Addr, Ipv6Addr},
     sync::{
         Arc,
@@ -167,6 +167,21 @@ pub struct FlowSnapshot {
     pub last_seen_ms: u64,
 }
 
+/// Coarse aggregate of the whole table, used by the periodic `CORE::FLOW` log.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct FlowSummary {
+    /// Number of live entries (distinct conn/peer/ip/direction keys).
+    pub entries: usize,
+    /// Number of tunnels with at least one entry.
+    pub conns: usize,
+    /// Sum of inner IP bytes sent by this node.
+    pub tx_bytes: u64,
+    /// Sum of inner IP bytes received by this node.
+    pub rx_bytes: u64,
+    /// Sum of the last closed rate windows.
+    pub rate_bytes_per_sec: u64,
+}
+
 /// In-memory table of per-tunnel IP flows.
 pub struct FlowTable {
     flows: DashMap<FlowKey, Arc<FlowEntry>>,
@@ -189,25 +204,27 @@ pub struct FlowTable {
 
 impl FlowTable {
     pub fn new(cfg: FlowTableConfig) -> Self {
-        Self {
+        let table = Self {
             flows: DashMap::new(),
             per_conn_counts: DashMap::new(),
-            enabled: AtomicBool::new(cfg.enabled),
-            sample_rate: AtomicU32::new(cfg.sample_rate.max(1)),
-            max_per_conn: AtomicUsize::new(cfg.max_per_conn),
-            max_total: AtomicUsize::new(cfg.max_total),
-            ttl_ms: AtomicU64::new(cfg.ttl.as_millis() as u64),
-            mask_prefix_len_v4: AtomicU8::new(cfg.mask_prefix_len_v4),
-            mask_prefix_len_v6: AtomicU8::new(cfg.mask_prefix_len_v6),
-            allow_exact_ip: AtomicBool::new(cfg.allow_exact_ip),
+            enabled: AtomicBool::new(false),
+            sample_rate: AtomicU32::new(1),
+            max_per_conn: AtomicUsize::new(0),
+            max_total: AtomicUsize::new(0),
+            ttl_ms: AtomicU64::new(0),
+            mask_prefix_len_v4: AtomicU8::new(0),
+            mask_prefix_len_v6: AtomicU8::new(0),
+            allow_exact_ip: AtomicBool::new(false),
             sample_cursor: AtomicU64::new(0),
-        }
+        };
+        table.configure(cfg);
+        table
     }
 
-    /// Apply a new configuration at runtime.
+    /// Apply a configuration at construction or runtime.
     ///
-    /// Used by the host when the instance configuration is (re)loaded; the hot
-    /// path only reads plain atomics, so no lock is involved.
+    /// The hot path only reads plain atomics, so no lock is involved. The host
+    /// may call this when an instance configuration is reloaded.
     pub fn configure(&self, cfg: FlowTableConfig) {
         self.enabled.store(cfg.enabled, Ordering::Relaxed);
         self.sample_rate
@@ -220,7 +237,8 @@ impl FlowTable {
             .store(cfg.mask_prefix_len_v4, Ordering::Relaxed);
         self.mask_prefix_len_v6
             .store(cfg.mask_prefix_len_v6, Ordering::Relaxed);
-        self.allow_exact_ip.store(cfg.allow_exact_ip, Ordering::Relaxed);
+        self.allow_exact_ip
+            .store(cfg.allow_exact_ip, Ordering::Relaxed);
     }
 
     /// Snapshot of the current configuration.
@@ -311,7 +329,7 @@ impl FlowTable {
         entry.last_seen_ms.store(now_ms, Ordering::Relaxed);
 
         if inserted {
-            self.enforce_limits(conn_id);
+            self.enforce_limits(conn_id, &key);
         }
         true
     }
@@ -344,6 +362,38 @@ impl FlowTable {
         )
     }
 
+    /// Aggregate counters for the periodic `CORE::FLOW` log line (decision D2).
+    ///
+    /// Deliberately allocation-light: a single pass over the table, no
+    /// per-prefix merging. Returns all-zero when accounting is disabled.
+    pub fn summary(&self) -> FlowSummary {
+        if !self.is_enabled() {
+            return FlowSummary::default();
+        }
+        let sample_rate = u64::from(self.sample_rate.load(Ordering::Relaxed).max(1));
+        let mut summary = FlowSummary::default();
+        let mut conns = HashSet::new();
+        for entry in self.flows.iter() {
+            let key = entry.key();
+            summary.entries += 1;
+            conns.insert(key.conn_id);
+            // 采样开启时按 1/N 放大，与 snapshot 的估算口径保持一致（§4.5）。
+            let scale = if entry.sampled.load(Ordering::Relaxed) {
+                sample_rate
+            } else {
+                1
+            };
+            let bytes = entry.total_bytes.load(Ordering::Relaxed) * scale;
+            match key.dir {
+                FlowDirection::Tx => summary.tx_bytes += bytes,
+                FlowDirection::Rx => summary.rx_bytes += bytes,
+            }
+            summary.rate_bytes_per_sec += entry.rate_bytes.load(Ordering::Relaxed) * scale;
+        }
+        summary.conns = conns.len();
+        summary
+    }
+
     /// Close the current rate window and start a new one.
     ///
     /// The reported rate is therefore always "bytes seen during the last
@@ -356,15 +406,41 @@ impl FlowTable {
     }
 
     /// Drop expired entries and enforce the global cap.
+    ///
+    /// ## `per_conn_counts` 的竞态（§17.6 R2）
+    ///
+    /// `per_conn_counts` 只是**上限判定的加速索引**，不是权威计数：权威值永远是
+    /// `flows` 里实际的键数。热路径 `enforce_limits` 会对它做 `+= 1`，而这里要按
+    /// `flows` 重算。旧实现用「先 `clear()` 再逐个累加」，中间那段窗口里热路径的
+    /// `+= 1` 会写在**已清空的表**上，随后被重新累加覆盖 ⇒ 计数永久偏小，上限越来
+    /// 越松（且没有任何地方会纠正）。
+    ///
+    /// 现做法：先在本地算出完整的 `next` 映射，再**逐键覆盖 + 删除多余键**，整个过程
+    /// 不做 `clear()`。即便期间有热路径插入新流，也只是让计数短暂偏小一个，下一轮
+    /// GC（30s）就会收敛；而**超出**上限的偏差可以靠 `enforce_limits` 的兜底扫描
+    /// 纠正。功能上界仍是「近似但会收敛」，不会单调漂移到无界。
+    ///
+    /// 想彻底消除近似，只有把 `flows` 与计数放进同一把锁——那会让每包付锁代价，
+    /// 与 D5「关闭时零开销、开启时低开销」冲突，故不做。
     pub fn gc(&self, now_ms: u64) {
         let ttl_ms = self.ttl_ms.load(Ordering::Relaxed);
         self.flows.retain(|_, entry| {
             now_ms.saturating_sub(entry.last_seen_ms.load(Ordering::Relaxed)) <= ttl_ms
         });
-        self.per_conn_counts.clear();
+
+        // Rebuild the per-tunnel index without ever leaving it empty.
+        let mut next: HashMap<PeerConnId, usize> = HashMap::new();
         for entry in self.flows.iter() {
-            *self.per_conn_counts.entry(entry.key().conn_id).or_insert(0) += 1;
+            *next.entry(entry.key().conn_id).or_insert(0) += 1;
         }
+        // Drop tunnels that no longer have entries.
+        self.per_conn_counts
+            .retain(|conn_id, _| next.contains_key(conn_id));
+        // Overwrite the survivors with the freshly counted values.
+        for (conn_id, count) in next {
+            self.per_conn_counts.insert(conn_id, count);
+        }
+
         // Keep the map from keeping the memory of a burst of dead entries.
         let max_total = self.max_total.load(Ordering::Relaxed);
         if self.flows.capacity() > max_total.saturating_mul(2) {
@@ -377,7 +453,17 @@ impl FlowTable {
     /// The per-tunnel check is O(1) thanks to `per_conn_counts`; only when a
     /// cap is actually exceeded do we scan the table to evict the oldest
     /// entries of that tunnel.
-    fn enforce_limits(&self, conn_id: PeerConnId) {
+    ///
+    /// `just_inserted` is the key that triggered this call. It is **never**
+    /// evicted here (§17.6 R3): the entry was only just written, so its
+    /// `last_seen_ms` is the same as (or newer than) any other candidate, and
+    /// picking it would delete the flow we just started accounting for — the
+    /// next packet re-creates it, and a burst of new destinations then thrashes
+    /// the table instead of converging to the cap.
+    ///
+    /// Over-limit eviction removes **all** the excess, not a single entry, so a
+    /// burst drains in one pass instead of one entry per insertion.
+    fn enforce_limits(&self, conn_id: PeerConnId, just_inserted: &FlowKey) {
         let max_per_conn = self.max_per_conn.load(Ordering::Relaxed);
         let over_per_conn = {
             let mut count = self.per_conn_counts.entry(conn_id).or_insert(0);
@@ -386,32 +472,32 @@ impl FlowTable {
         };
 
         if over_per_conn {
-            // Over the per-tunnel cap: evict the least recently seen entry of
-            // this tunnel.
-            let mut oldest: Option<(FlowKey, u64)> = None;
-            for entry in self.flows.iter() {
-                if entry.key().conn_id != conn_id {
-                    continue;
-                }
-                let last = entry.last_seen_ms.load(Ordering::Relaxed);
-                match &oldest {
-                    Some((_, ts)) if *ts <= last => {}
-                    _ => oldest = Some((*entry.key(), last)),
-                }
-            }
-            if let Some((key, _)) = oldest {
+            // Over the per-tunnel cap: evict the least recently seen entries of
+            // this tunnel, oldest first, skipping the one just inserted.
+            let mut candidates: Vec<(FlowKey, u64)> = self
+                .flows
+                .iter()
+                .filter(|e| e.key().conn_id == conn_id && e.key() != just_inserted)
+                .map(|e| (*e.key(), e.last_seen_ms.load(Ordering::Relaxed)))
+                .collect();
+            candidates.sort_by_key(|(_, ts)| *ts);
+            // How many to drop: enough to bring the tunnel back to the cap.
+            let excess = candidates
+                .len()
+                .saturating_sub(max_per_conn.saturating_sub(1));
+            for (key, _) in candidates.into_iter().take(excess) {
                 self.remove_entry(&key);
-                return;
             }
         }
 
-        // Global cap.
+        // Global cap. Same rule: never drop the entry we just inserted.
         let max_total = self.max_total.load(Ordering::Relaxed);
         let excess = self.flows.len().saturating_sub(max_total);
         if excess > 0 {
             let mut candidates: Vec<(FlowKey, u64)> = self
                 .flows
                 .iter()
+                .filter(|e| e.key() != just_inserted)
                 .map(|e| (*e.key(), e.last_seen_ms.load(Ordering::Relaxed)))
                 .collect();
             candidates.sort_by_key(|(_, ts)| *ts);
@@ -448,6 +534,82 @@ impl FlowTable {
         top_n: usize,
     ) -> Vec<FlowSnapshot> {
         self.build_snapshot(view, top_n, Some(conn_id))
+    }
+
+    /// 单次遍历把所有条目按 conn_id 分桶，每条隧道取 top_n。
+    ///
+    /// 对比 `snapshot_for_conn` 逐隧道扫描（O(隧道数 × 条目数)），
+    /// 这里只遍历一次表（O(条目数)），适合一次性给所有隧道附 flows。
+    pub fn snapshot_all_conns(
+        &self,
+        view: FlowView,
+        top_n: usize,
+    ) -> HashMap<PeerConnId, Vec<FlowSnapshot>> {
+        if !self.is_enabled() {
+            return HashMap::new();
+        }
+        let sample_rate = u64::from(self.sample_rate.load(Ordering::Relaxed).max(1));
+
+        // 先按 (conn_id, peer_id, dir, ip, prefix_len) 聚合，再按 conn_id 分桶。
+        let mut merged: HashMap<(PeerConnId, PeerId, FlowDirection, IpAddr, u8), FlowSnapshot> =
+            HashMap::new();
+
+        for entry in self.flows.iter() {
+            let key = entry.key();
+            let (ip, prefix_len) = match view {
+                FlowView::Exact => (key.ip, 0),
+                FlowView::Masked {
+                    v4_prefix_len,
+                    v6_prefix_len,
+                } => mask_ip(key.ip, v4_prefix_len, v6_prefix_len),
+            };
+            let scale = if entry.sampled.load(Ordering::Relaxed) {
+                sample_rate
+            } else {
+                1
+            };
+            let slot = merged
+                .entry((key.conn_id, key.peer_id, key.dir, ip, prefix_len))
+                .or_insert_with(|| FlowSnapshot {
+                    conn_id: key.conn_id,
+                    peer_id: key.peer_id,
+                    ip,
+                    prefix_len,
+                    dir: key.dir,
+                    bytes: 0,
+                    packets: 0,
+                    rate_bytes_per_sec: 0,
+                    flow_count: 0,
+                    sampled: false,
+                    first_seen_ms: u64::MAX,
+                    last_seen_ms: 0,
+                });
+            slot.bytes += entry.total_bytes.load(Ordering::Relaxed) * scale;
+            slot.packets += entry.total_packets.load(Ordering::Relaxed) * scale;
+            slot.rate_bytes_per_sec += entry.rate_bytes.load(Ordering::Relaxed) * scale;
+            slot.flow_count += 1;
+            slot.sampled |= entry.sampled.load(Ordering::Relaxed);
+            slot.first_seen_ms = slot
+                .first_seen_ms
+                .min(entry.first_seen_ms.load(Ordering::Relaxed));
+            slot.last_seen_ms = slot
+                .last_seen_ms
+                .max(entry.last_seen_ms.load(Ordering::Relaxed));
+        }
+
+        // 按 conn_id 分桶，每桶按 bytes 降序截断到 top_n。
+        let mut buckets: HashMap<PeerConnId, Vec<FlowSnapshot>> = HashMap::new();
+        for snapshot in merged.into_values() {
+            buckets
+                .entry(snapshot.conn_id)
+                .or_default()
+                .push(snapshot);
+        }
+        for flows in buckets.values_mut() {
+            flows.sort_by_key(|s| std::cmp::Reverse(s.bytes));
+            flows.truncate(top_n);
+        }
+        buckets
     }
 
     fn build_snapshot(
@@ -529,16 +691,23 @@ pub fn now_unix_millis() -> u64 {
 
 /// Truncate an address to a prefix, returning the masked address and the
 /// prefix length that was applied.
+///
+/// Prefix lengths are clamped to `1..=32` (IPv4) / `1..=128` (IPv6). A value of
+/// 0 used to mean "no aggregation" and returned the exact address, which let a
+/// form field bypass decision D8 (exact IPs never leave the node). Exact IPs
+/// are only available through [`FlowView::Exact`] with the node-side
+/// `allow_exact_ip` opt-in. The clamp also keeps the shifts below in range:
+/// `value << 32` (or `<< 128`) would overflow and panic in debug builds.
 pub fn mask_ip(ip: IpAddr, v4_prefix_len: u8, v6_prefix_len: u8) -> (IpAddr, u8) {
     match ip {
         IpAddr::V4(v4) => {
-            let plen = v4_prefix_len.min(32);
+            let plen = v4_prefix_len.clamp(1, 32);
             let bits = u32::from(32 - plen);
             let masked = u32::from(v4) & (!0u32 << bits);
             (IpAddr::V4(Ipv4Addr::from(masked)), plen)
         }
         IpAddr::V6(v6) => {
-            let plen = v6_prefix_len.min(128);
+            let plen = v6_prefix_len.clamp(1, 128);
             let bits = u32::from(128 - plen);
             let masked = u128::from(v6) & (!0u128 << bits);
             (IpAddr::V6(Ipv6Addr::from(masked)), plen)
@@ -607,6 +776,129 @@ mod tests {
         assert!(!t.record(conn(1), 7, ip(1), FlowDirection::Tx, 100, 1, 1000));
         assert!(t.is_empty());
         assert!(t.snapshot(FlowView::Exact, 10).is_empty());
+    }
+
+    /// §17.6 R7: measure the hot-path cost instead of quoting the §6 estimate.
+    ///
+    /// `#[ignore]` because it is a benchmark, not an assertion — wall-clock
+    /// numbers on a shared CI box are noise. Run it explicitly:
+    ///
+    /// ```text
+    /// cargo test -p easytier-core --lib flow_record_cost -- --ignored --nocapture
+    /// ```
+    ///
+    /// It prints ns/record for the disabled switch and for the enabled table at
+    /// a realistic flow cardinality, so the README / roadmap can quote a
+    /// measured number with its口径 instead of a theoretical one.
+    #[test]
+    #[ignore = "benchmark: run with --ignored --nocapture to print numbers"]
+    fn flow_record_cost_is_measured() {
+        use std::hint::black_box;
+        use std::time::Instant;
+
+        const ITERS: u64 = 2_000_000;
+
+        // 1. Master switch off: the only work per packet is one atomic load.
+        let off = FlowTable::new(FlowTableConfig::default());
+        assert!(!off.is_enabled());
+        let start = Instant::now();
+        for i in 0..ITERS {
+            black_box(off.record(
+                conn(1),
+                7,
+                ip((i % 200) as u8),
+                FlowDirection::Tx,
+                1500,
+                1,
+                i,
+            ));
+        }
+        let off_ns = start.elapsed().as_nanos() as f64 / ITERS as f64;
+
+        // 2. Enabled, 200 live destinations on one tunnel (Phase 0 saw ~14
+        //    globally, so this is deliberately pessimistic).
+        let on = FlowTable::new(FlowTableConfig {
+            enabled: true,
+            max_per_conn: 256,
+            max_total: 8192,
+            ..Default::default()
+        });
+        for i in 0..200u64 {
+            on.record(conn(1), 7, ip(i as u8), FlowDirection::Tx, 1, 1, i);
+        }
+        let start = Instant::now();
+        for i in 0..ITERS {
+            black_box(on.record(
+                conn(1),
+                7,
+                ip((i % 200) as u8),
+                FlowDirection::Tx,
+                1500,
+                1,
+                i,
+            ));
+        }
+        let on_ns = start.elapsed().as_nanos() as f64 / ITERS as f64;
+
+        // 3. Enabled + 1/8 sampling (the high-packet-rate fallback).
+        let sampled = FlowTable::new(FlowTableConfig {
+            enabled: true,
+            sample_rate: 8,
+            max_per_conn: 256,
+            max_total: 8192,
+            ..Default::default()
+        });
+        for i in 0..200u64 {
+            sampled.record(conn(1), 7, ip(i as u8), FlowDirection::Tx, 1, 1, i);
+        }
+        let start = Instant::now();
+        for i in 0..ITERS {
+            black_box(sampled.record(
+                conn(1),
+                7,
+                ip((i % 200) as u8),
+                FlowDirection::Tx,
+                1500,
+                1,
+                i,
+            ));
+        }
+        let sampled_ns = start.elapsed().as_nanos() as f64 / ITERS as f64;
+
+        println!("=== flow accounting hot-path cost (ns per packet) ===");
+        println!("switch off          : {off_ns:8.2}");
+        println!("enabled, 200 flows  : {on_ns:8.2}");
+        println!("enabled, 1/8 sample : {sampled_ns:8.2}");
+        // 1 Gbps @ 1500B ≈ 83.3 kpps; 10 Gbps ≈ 833 kpps.
+        for pps in [83_333.0_f64, 833_333.0] {
+            let share = on_ns * pps / 1e9 * 100.0;
+            println!("  enabled @ {pps:>9.0} pps -> {share:5.2}% of one core");
+        }
+
+        // Guard rails so a catastrophic regression fails the benchmark run.
+        assert_eq!(on.len(), 200, "200 distinct destinations must be kept");
+        assert!(
+            off_ns < 20.0,
+            "disabled switch must be a single atomic load, got {off_ns:.2} ns"
+        );
+    }
+
+    #[test]
+    fn summary_reports_totals_and_is_zero_when_disabled() {
+        let disabled = FlowTable::new(FlowTableConfig::default());
+        assert_eq!(disabled.summary(), FlowSummary::default());
+
+        let t = table();
+        t.record(conn(1), 7, ip(1), FlowDirection::Tx, 100, 1, 1000);
+        t.record(conn(1), 7, ip(2), FlowDirection::Rx, 50, 1, 1000);
+        t.rotate_rate_window();
+
+        let summary = t.summary();
+        assert_eq!(summary.entries, 2);
+        assert_eq!(summary.conns, 1);
+        assert_eq!(summary.tx_bytes, 100);
+        assert_eq!(summary.rx_bytes, 50);
+        assert_eq!(summary.rate_bytes_per_sec, 150);
     }
 
     #[test]
@@ -710,6 +1002,95 @@ mod tests {
         // ttl is 600s -> 600_000 ms; 700s later the entry is expired.
         t.gc(1_000 + 700_000);
         assert_eq!(t.len(), 0);
+    }
+
+    /// §17.6 R2: `gc` must not leave `per_conn_counts` smaller than the real
+    /// number of entries. The old implementation cleared the map and re-summed;
+    /// a concurrent `record` in that window was lost forever, so the cap drifted
+    /// looser on every GC. Rebuilding into a local map and overwriting in place
+    /// keeps the index at least as accurate as the table it describes.
+    #[test]
+    fn gc_rebuild_keeps_per_conn_counts_in_sync() {
+        let t = FlowTable::new(FlowTableConfig {
+            enabled: true,
+            max_per_conn: 1000,
+            max_total: 1000,
+            ..Default::default()
+        });
+        for i in 0..10u8 {
+            t.record(conn(1), 7, ip(i), FlowDirection::Tx, 100, 1, 1_000);
+        }
+        // Wipe the index to simulate the worst case the race could produce.
+        t.per_conn_counts.clear();
+        t.gc(1_000);
+        assert_eq!(
+            t.per_conn_counts.get(&conn(1)).map(|c| *c),
+            Some(10),
+            "gc must restore the exact per-tunnel count from the table"
+        );
+
+        // Entries of a dead tunnel are dropped from the index too.
+        for i in 0..3u8 {
+            t.record(conn(2), 8, ip(i), FlowDirection::Tx, 100, 1, 1_000);
+        }
+        t.gc(1_000 + 700_000);
+        assert_eq!(t.len(), 0);
+        assert!(
+            t.per_conn_counts.is_empty(),
+            "the index must not keep tunnels whose entries all expired"
+        );
+    }
+
+    /// §17.6 R3: the entry that triggered the cap check is the newest one and
+    /// must survive. Evicting it would re-create it on the next packet and make
+    /// a burst of new destinations thrash the table.
+    #[test]
+    fn per_conn_cap_never_evicts_the_entry_just_inserted() {
+        let t = FlowTable::new(FlowTableConfig {
+            enabled: true,
+            max_per_conn: 3,
+            max_total: 1000,
+            ..Default::default()
+        });
+        // Fill to the cap, then insert a burst of new destinations.
+        for i in 0..20u8 {
+            let target = ip(i);
+            assert!(
+                t.record(conn(1), 7, target, FlowDirection::Tx, 100, 1, 1_000),
+                "record must report success"
+            );
+            // The freshest destination is always still present right after.
+            assert!(
+                t.flows.contains_key(&FlowKey {
+                    conn_id: conn(1),
+                    peer_id: 7,
+                    ip: target,
+                    dir: FlowDirection::Tx,
+                }),
+                "the just-inserted flow {target} was evicted by its own cap check"
+            );
+        }
+        assert_eq!(t.len(), 3, "the tunnel must converge to max_per_conn");
+    }
+
+    /// R3 also covers the global cap: one over-limit insertion drops every
+    /// excess entry at once, not one per insertion.
+    #[test]
+    fn global_cap_evicts_all_excess_in_one_pass() {
+        let t = FlowTable::new(FlowTableConfig {
+            enabled: true,
+            max_per_conn: 1000,
+            max_total: 5,
+            ..Default::default()
+        });
+        for i in 0..50u8 {
+            t.record(conn(1), 7, ip(i), FlowDirection::Tx, 100, 1, 1_000);
+            assert!(
+                t.len() <= 5,
+                "table grew past max_total after inserting flow {i}: {}",
+                t.len()
+            );
+        }
     }
 
     #[test]
@@ -831,5 +1212,48 @@ mod tests {
         let (ip, plen) = mask_ip(IpAddr::V4(Ipv4Addr::new(10, 1, 2, 3)), 16, 64);
         assert_eq!(ip, IpAddr::V4(Ipv4Addr::new(10, 1, 0, 0)));
         assert_eq!(plen, 16);
+    }
+
+    #[test]
+    fn mask_ip_clamps_zero_prefix_len_to_one() {
+        // 0 used to bypass D8 by returning the exact address. It now clamps to
+        // /1, so a form field can no longer leak exact IPs.
+        let v4 = IpAddr::V4(Ipv4Addr::new(10, 1, 2, 3));
+        assert_eq!(
+            mask_ip(v4, 0, 64),
+            (IpAddr::V4(Ipv4Addr::UNSPECIFIED), 1)
+        );
+
+        let v6 = IpAddr::V6(Ipv6Addr::LOCALHOST);
+        assert_eq!(
+            mask_ip(v6, 24, 0),
+            (IpAddr::V6(Ipv6Addr::UNSPECIFIED), 1)
+        );
+
+        // Full-width prefixes clamp instead of overflowing.
+        let (ip, plen) = mask_ip(v4, 32, 128);
+        assert_eq!((ip, plen), (v4, 32));
+        assert_eq!(mask_ip(v6, 24, 128), (v6, 128));
+    }
+
+    #[test]
+    fn masked_view_with_zero_prefix_len_clamps_and_aggregates() {
+        let t = table();
+        t.record(conn(1), 7, ip(1), FlowDirection::Tx, 100, 1, 1000);
+        t.record(conn(1), 7, ip(2), FlowDirection::Tx, 200, 1, 1000);
+
+        let rows = t.snapshot(
+            FlowView::Masked {
+                v4_prefix_len: 0,
+                v6_prefix_len: 0,
+            },
+            10,
+        );
+
+        // 0 clamps to /1: 10.0.0.1 and 10.0.0.2 land in the same 0.0.0.0/1 bucket.
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].prefix_len, 1);
+        assert_eq!(rows[0].flow_count, 2);
+        assert_eq!(rows[0].bytes, 300);
     }
 }

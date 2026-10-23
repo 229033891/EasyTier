@@ -462,9 +462,11 @@ where
         request: ListPeerRequest,
     ) -> rpc_types::error::Result<ListPeerResponse> {
         let instance = self.instance(request.instance.as_ref())?;
-        let flow_view = super::flow_view::resolve_flow_view(
+        let flow_view = super::flow_view::resolve_flow_view_with_prefix(
             super::flow_view::proto_flow_view(request.flow_view),
             instance.flow_stats_allow_exact_ip(),
+            instance.flow_table().config().mask_prefix_len_v4,
+            instance.flow_table().config().mask_prefix_len_v6,
         );
         let flow_table = instance.flow_table().clone();
         let peer_infos = instance

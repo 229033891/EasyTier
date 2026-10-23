@@ -14,6 +14,12 @@
 
 ## 0. 和 Web 脚本的关系
 
+> ⛔ **不要手搓打包命令。** 本地打安装包**必须**用本目录列出的 `script\*.cmd` / `script\build-*.ps1` 入口。
+> 直接拼 `cargo build --release` / `pnpm tauri build` 会缺脚本内置的 `CARGO_PROFILE_DEV_DEBUG=0`、
+> 短 `CARGO_TARGET_DIR`、可写 `TEMP`、`perl` 补齐、WebView2 引导包预检等前置，通常以
+> MSVC `D8050`、esbuild「拒绝访问」或编完才卡在微软 CDN 收场。
+> 目录名是**单数 `script\`**（仓库根没有 `scripts/`）。总览见 [`../README.md`](../README.md)「⛔ 打包」。
+
 同一套入口风格，共用 `script/build-common.ps1`：
 
 | 场景 | 入口 |

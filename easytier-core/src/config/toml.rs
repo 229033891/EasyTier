@@ -801,16 +801,24 @@ impl FlowStatsConfig {
         crate::peers::flow_table::FlowTableConfig {
             enabled: self.enabled,
             sample_rate: self.sample_rate.unwrap_or(defaults.sample_rate).max(1),
-            max_per_conn: self.max_per_conn.map(|v| v as usize).unwrap_or(defaults.max_per_conn),
-            max_total: self.max_total.map(|v| v as usize).unwrap_or(defaults.max_total),
+            max_per_conn: self
+                .max_per_conn
+                .map(|v| v as usize)
+                .unwrap_or(defaults.max_per_conn),
+            max_total: self
+                .max_total
+                .map(|v| v as usize)
+                .unwrap_or(defaults.max_total),
             ttl: defaults.ttl,
+            // 下限 1：0 会让 `mask_ip` 返回精确 IP，绕过 D8（精确 IP 不出节点）。
+            // 精确 IP 只能通过 EXACT 视图 + 节点侧 allow_exact_ip 获取。
             mask_prefix_len_v4: self
                 .mask_prefix_len_v4
-                .map(|v| v.min(32) as u8)
+                .map(|v| v.clamp(1, 32) as u8)
                 .unwrap_or(defaults.mask_prefix_len_v4),
             mask_prefix_len_v6: self
                 .mask_prefix_len_v6
-                .map(|v| v.min(128) as u8)
+                .map(|v| v.clamp(1, 128) as u8)
                 .unwrap_or(defaults.mask_prefix_len_v6),
             allow_exact_ip: self.allow_exact_ip,
         }
