@@ -353,7 +353,7 @@ mod tests {
         db: &Db,
         bucket: i64,
         to: i64,
-    ) -> Vec<(i64, String, i32, i64, f64, i64, i64)> {
+    ) -> Vec<(String, String, i32, i64, f64, i64, i64)> {
         let rows = db
             .orm_db()
             .query_all(Statement::from_sql_and_values(
