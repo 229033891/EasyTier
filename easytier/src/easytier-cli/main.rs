@@ -1552,11 +1552,12 @@ impl<'a> CommandHandler<'a> {
             version: String,
         }
 
-        /// Busiest IP flows of a peer, e.g. "↑10.0.0.9 ↓10.0.0.5".
+        /// Currently busiest IP flows of a peer, e.g. "↑10.0.0.9 ↓10.0.0.5".
         ///
-        /// The flows are recorded per tunnel by the node (see
-        /// `docs/roadmap/tunnel-ip-flow-observability.md`); the CLI asks for
-        /// exact IPs, so no masking happens here.
+        /// Ranked by node-side `rate_bytes_per_sec` (fixed 1s window), not
+        /// cumulative `bytes` — long-lived quiet flows must not outrank a short
+        /// burst. Exact IPs only when the node allows EXACT (see
+        /// `docs/current/tunnel-ip-flow.md`).
         fn flow_summary(p: &PeerRoutePair) -> String {
             let mut flows: Vec<&easytier::proto::api::instance::PeerConnFlow> = p
                 .peer
@@ -1568,7 +1569,7 @@ impl<'a> CommandHandler<'a> {
                         .collect()
                 })
                 .unwrap_or_default();
-            flows.sort_by_key(|flow| std::cmp::Reverse(flow.bytes));
+            flows.sort_by_key(|flow| std::cmp::Reverse(flow.rate_bytes_per_sec));
             let summary = flows
                 .iter()
                 .take(2)

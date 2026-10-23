@@ -102,11 +102,23 @@ const SERIES_SQL: &str = r#"
 
 /// 每个 peer 最近一次采样里的主机名（用于给曲线打标签）。
 /// 绑定参数依次为：user_id、machine_id、instance_id、from。
+///
+/// 用窗口函数取「每个 peer 采样时间最新、同秒再按 id 最大」的那一行，
+/// 避免 `GROUP BY peer_id` + 裸选 `peer_hostname` 在非 SQLite / 多行同秒时取错主机名。
 const PEER_HOSTNAME_SQL: &str = r#"
-    SELECT peer_id, peer_hostname, MAX(sampled_at) AS last_seen
-    FROM peer_conn_history
-    WHERE user_id = ? AND machine_id = ? AND instance_id = ? AND sampled_at >= ?
-    GROUP BY peer_id
+    SELECT peer_id, peer_hostname, sampled_at AS last_seen
+    FROM (
+        SELECT peer_id,
+               peer_hostname,
+               sampled_at,
+               ROW_NUMBER() OVER (
+                   PARTITION BY peer_id
+                   ORDER BY sampled_at DESC, id DESC
+               ) AS rn
+        FROM peer_conn_history
+        WHERE user_id = ? AND machine_id = ? AND instance_id = ? AND sampled_at >= ?
+    )
+    WHERE rn = 1
 "#;
 
 pub struct FlowHistoryApi;

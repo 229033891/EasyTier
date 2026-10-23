@@ -83,16 +83,26 @@ const SERIES_SQL: &str = r#"
 "#;
 
 /// peer 的展示信息取最近一次采样。
-/// 依赖 SQLite 的约定：聚合查询里出现 MAX() 时，裸列取最大值所在那一行的值。
+/// 绑定参数依次为：user_id、machine_id、instance_id、from。
+///
+/// 用窗口函数取「每个 peer 采样时间最新、同秒再按 id 最大」的那一行，
+/// 避免 `GROUP BY` + 裸列依赖 SQLite 对 `MAX()` 的特殊约定。
 const META_SQL: &str = r#"
-    SELECT peer_id,
-           peer_hostname,
-           remote_addr,
-           tunnel_type,
-           MAX(sampled_at) AS last_seen
-    FROM peer_conn_history
-    WHERE user_id = ? AND machine_id = ? AND instance_id = ? AND sampled_at >= ?
-    GROUP BY peer_id
+    SELECT peer_id, peer_hostname, remote_addr, tunnel_type, sampled_at AS last_seen
+    FROM (
+        SELECT peer_id,
+               peer_hostname,
+               remote_addr,
+               tunnel_type,
+               sampled_at,
+               ROW_NUMBER() OVER (
+                   PARTITION BY peer_id
+                   ORDER BY sampled_at DESC, id DESC
+               ) AS rn
+        FROM peer_conn_history
+        WHERE user_id = ? AND machine_id = ? AND instance_id = ? AND sampled_at >= ?
+    )
+    WHERE rn = 1
 "#;
 
 /// 按时间跨度选桶大小：保证点数不超过 MAX_POINTS，且不小于一个采样间隔（60s）
@@ -482,5 +492,44 @@ mod tests {
             .find(|r| r.try_get::<i64>("", "peer_id").unwrap() == 7)
             .expect("peer 7 row");
         assert_eq!(peer7.try_get::<i64>("", "last_seen").unwrap(), T0 + 300);
+    }
+
+    /// 同秒两条采样时，按 id 更大的那行取主机名（窗口函数 ORDER BY sampled_at DESC, id DESC）。
+    #[tokio::test]
+    async fn meta_picks_newer_row_id_when_sampled_at_ties() {
+        let db = Db::memory_db().await;
+        let mut older = row(3, "1.1.1.1:1", 100, 0.0, 10, 1, 1, T0);
+        older.peer_hostname = Set("old-name".to_string());
+        let mut newer = row(3, "2.2.2.2:2", 100, 0.0, 10, 1, 1, T0);
+        newer.peer_hostname = Set("new-name".to_string());
+        peer_conn_history::Entity::insert_many([older, newer])
+            .exec(db.orm_db())
+            .await
+            .expect("seed tie rows");
+
+        let rows = db
+            .orm_db()
+            .query_all(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                META_SQL,
+                vec![
+                    Value::from(1),
+                    Value::from("m-1"),
+                    Value::from("i-1"),
+                    Value::from(T0),
+                ],
+            ))
+            .await
+            .expect("run meta query");
+
+        assert_eq!(rows.len(), 1);
+        assert_eq!(
+            rows[0].try_get::<String>("", "peer_hostname").unwrap(),
+            "new-name"
+        );
+        assert_eq!(
+            rows[0].try_get::<String>("", "remote_addr").unwrap(),
+            "2.2.2.2:2"
+        );
     }
 }

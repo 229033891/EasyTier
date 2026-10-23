@@ -39,8 +39,10 @@ _check_*.log
 .dsh_*.log
 
 # compiler / tool output dumps and env snapshots from ad-hoc local runs
-# (*.err covers cargo/clippy stderr captures; the rest are one-off probes)
-*.err
+# Prefer rooted names — do not ignore every `*.err` (may hide intentional fixtures).
+/cargo*.err
+/clippy*.err
+/check*.err
 /check_env.txt
 /check_t.*
 
