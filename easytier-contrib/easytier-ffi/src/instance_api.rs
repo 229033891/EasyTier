@@ -267,7 +267,7 @@ pub(crate) unsafe fn collect_network_infos(
         std::slice::from_raw_parts_mut(infos, max_length)
     };
 
-    let collected_infos = match ffi_context().manager.collect_network_infos_sync() {
+    let collected_infos = match ffi_context().manager.collect_network_infos_sync(None) {
         Ok(infos) => infos,
         Err(e) => {
             set_error_msg(&format!("failed to collect network infos: {}", e));

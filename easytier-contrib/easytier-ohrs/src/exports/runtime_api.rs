@@ -110,7 +110,7 @@ pub(crate) fn annotate_ohos_proxy_cidr_route_sync(
 }
 
 pub(crate) fn collect_network_infos() -> Vec<KeyValuePair> {
-    let infos = match ASYNC_RUNTIME.block_on(INSTANCE_MANAGER.collect_network_infos()) {
+    let infos = match ASYNC_RUNTIME.block_on(INSTANCE_MANAGER.collect_network_infos(None)) {
         Ok(infos) => infos,
         Err(err) => {
             ohrs_log_error!("[Rust] collect network infos failed {}", err);
@@ -160,7 +160,7 @@ pub(crate) fn set_tun_fd(
 }
 
 pub(crate) fn collect_runtime_state() -> RuntimeAggregateState {
-    let infos = match ASYNC_RUNTIME.block_on(INSTANCE_MANAGER.collect_network_infos()) {
+    let infos = match ASYNC_RUNTIME.block_on(INSTANCE_MANAGER.collect_network_infos(None)) {
         Ok(infos) => infos,
         Err(err) => {
             ohrs_log_error!("[Rust] collect network infos failed {}", err);
