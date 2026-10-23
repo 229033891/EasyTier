@@ -76,6 +76,7 @@ Agent / 人工均适用：**未完成 §1 不要提交**。
 - [ ] **clippy `collapsible_if`**：嵌套 `if let` 能合并则合并，或抽 helper（如 `send_runtime_notify`）。
 - [ ] **clippy `too_many_arguments`**：函数 >7 参需打包参数或 `#[allow(clippy::too_many_arguments)]` 并写清原因。
 - [ ] **`Vec<f64>` 不要 `push(0)`**：整数字面量是 `i32`，ET Windows GUI embed 编 `easytier-web` 会 E0308。写 `0.0`。
+- [ ] **测试 helper 返回类型跟 `try_get` 一致**：`conn_id` 等字符串列写成 `i64` 会在 `clippy --tests` 报 E0277（元组类型对不上 / `i64` 与 `&str` 比较）。改 SQL 列类型后同步改 helper 与断言。
 - [ ] **编 `easytier-web` 的路径**：OpenWrt `build-bins`、Linux musl、Windows headless embed 都会编 web；只改 core 绿不够。GUI 打包同样会编 web，frontend 绿不够。
 - [ ] **本地 clippy 对齐 CI**：`-- -D warnings`，与 ET Test Check clippy 一致。
 - [ ] **Criterion bench group 名不要含 `/`**：Criterion 落盘会把 `/` 换成 `_`；`script/check_routing_bench.py` 按落盘路径读 `estimates.json`，group 用 `policy_route_empty` / `policy_route_{scale}`。
@@ -110,6 +111,22 @@ Agent / 人工均适用：**未完成 §1 不要提交**。
 ---
 
 ## 5. 失败记录（新 → 旧）
+
+### 2026-10-23 — ET Test：`flow_history` 测试 `conn_id` 元组类型 E0277
+
+| 项 | 内容 |
+|----|------|
+| 仓库/分支 | `229033891/EasyTier` `dev` |
+| Run | https://github.com/229033891/EasyTier/actions/runs/39974545421 |
+| 失败 job | Check clippy（`easytier-web` `--tests`） |
+| 根因一类 | compile |
+| 状态 | 已修复（`run_series` 返回 `(String, String, …)`） |
+
+**摘要**：`run_series` 用 `try_get::<String>("conn_id")`，返回类型却写成 `Vec<(i64, String, …)>`，断言又用 `r.0 == "42"`，clippy 编测试时 E0277。
+
+**防再犯**：见 §3「测试 helper 返回类型跟 `try_get` 一致」。
+
+---
 
 ### 2026-10-23 — ET Windows GUI：`totals.push(0)` E0308
 
