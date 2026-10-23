@@ -254,7 +254,8 @@ function rowFlowTip(row: PeerConnTableRow): { value: string, escape: false } | u
     if (flow.sampled) parts.push(t('status.flow_estimated'))
     return parts.join('  ')
   })
-  return { value: lines.join('\n'), escape: true }
+  // Match rowLatencyTip: <br> + escape:false so PrimeVue does not fold newlines.
+  return { value: lines.join('<br>'), escape: false }
 }
 
 function rowTunnelProto(row: PeerConnTableRow) {

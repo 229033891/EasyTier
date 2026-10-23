@@ -35,7 +35,7 @@ cargo metadata --format-version 1 --locked > /dev/null
 | `easytier-web` | `cargo clippy -p easytier-web --bins --tests -- -D warnings` |
 | `easytier-web` + 多 crate | `.\script\easytier-test-fast.cmd`（或 `test-easytier.ps1 -Profile Fast`） |
 | OpenWrt / Linux / Windows 打包相关 | 至少 `cargo check -p easytier-web`（embed 会编 web） |
-| `frontend-lib` / locales `*.yaml` | 确保纯量值里含 ASCII `: ` 时加引号；本地可 `pnpm --filter easytier-frontend-lib build` |
+| `frontend-lib` / locales `*.yaml` / `Status.vue` tip | 确保纯量值里含 ASCII `: ` 时加引号；多行 tip 用 `<br>` + `escape: false`（勿改成 `true`）；本地至少 `pnpm --filter easytier-frontend-lib exec vue-tsc -b` |
 
 4. **环境**：`CARGO_PROFILE_DEV_DEBUG=0`、`CARGO_TARGET_DIR=.cache\cargo-target`、vcvars；勿裸跑导致 ring/`-Z7` 误判。
 5. 新失败入库：填 §4 模板，追加到 §5；若已修复，在对应条目标 **已修复** 并移到 §6 或保留并勾选。
@@ -70,6 +70,7 @@ Agent / 人工均适用：**未完成 §1 不要提交**。
 - [ ] **`cargo fmt --all -- --check`**：ET Test 最先跑的 job；手改/合并后的换行、长调用链、`use` 排序都会挂。提交前必过；失败则 `cargo fmt --all`。
 - [ ] **`Cargo.lock` 与元数据一致**：`cargo metadata --format-version 1 --locked`；改过 `Cargo.toml` 依赖后要更新并提交 lock。
 - [ ] **locales YAML 纯量冒号**：`en.yaml` 等纯量值里出现 ASCII `: `（如 `Web source): the …`）必须加双引号；中文全角 `：` 一般没事。否则 `easytier-frontend-lib` / Windows GUI 构建会挂在 `vite:transform-yaml`。
+- [ ] **PrimeVue tip 多行**：返回类型若写 `{ escape: false }`，实现必须是 `escape: false` + `lines.join('<br>')`（见 `rowLatencyTip`）。写成 `escape: true` 会 `vue-tsc` TS2322，挂掉 ET Windows / Android 的 `prepare-build`。
 - [ ] **clippy `clone_on_copy`**：`Uuid` 等 `Copy` 类型不要 `.clone()`，直接传值。
 - [ ] **trait 必须 in scope**：调用 `list_network_configs` 等 `Storage` / `PersistentConfig` 方法时，文件顶部要有 `use …::Storage as _`（测试子模块要自己再 import，`as _` 不会经 `super::*` 继承）。
 - [ ] **clippy `collapsible_if`**：嵌套 `if let` 能合并则合并，或抽 helper（如 `send_runtime_notify`）。
@@ -108,6 +109,24 @@ Agent / 人工均适用：**未完成 §1 不要提交**。
 ---
 
 ## 5. 失败记录（新 → 旧）
+
+### 2026-10-23 — ET Windows/Android：`rowFlowTip` `escape: true` 触发 TS2322
+
+| 项 | 内容 |
+|----|------|
+| 仓库/分支 | `229033891/EasyTier` `dev` |
+| Run | Windows https://github.com/229033891/EasyTier/actions/runs/39903751945 ；Android https://github.com/229033891/EasyTier/actions/runs/39903622775 |
+| 失败 job | `build-gui` / `build-mobile` → Prepare build environment → `pnpm --filter easytier-gui... build` |
+| 根因一类 | frontend / vue-tsc |
+| 状态 | 已修复（`Status.vue` 改回 `<br>` + `escape: false`；`vue-tsc -b` 已绿） |
+
+**摘要**：`81c01fcd` 把 `rowFlowTip` 从 `escape: false` 改成 `escape: true`，但函数返回类型字面量仍是 `{ escape: false }`，`vue-tsc -b` 报 `TS2322: Type 'true' is not assignable to type 'false'`。Windows/Android GUI 的 `prepare-build` 都在 `easytier-frontend-lib` 处 exit 2。且 `\n` + `escape:true` 也不符合同文件 `rowLatencyTip` 的多行 tip 约定（PrimeVue 会折叠换行）。
+
+**防再犯**：见 §3「PrimeVue tip 多行」；改 `frontend-lib` 后至少 `pnpm --filter easytier-frontend-lib exec vue-tsc -b`。
+
+**修复说明**：`rowFlowTip` 与 `rowLatencyTip` 对齐：`lines.join('<br>')` + `escape: false`。
+
+---
 
 ### 2026-10-18 — OpenWrt LuCI：状态页 `unfinished string`（CRLF）
 
