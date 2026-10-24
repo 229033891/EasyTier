@@ -84,12 +84,6 @@ const CONFIG_TOGGLE_FIELDS = [
   ['enable_manual_routes', 'enable_manual_routes'],
 ] as const satisfies readonly (readonly [keyof NetworkConfig, string])[]
 
-/** 非 VPN ToggleSwitch 在序列中的起始下标（用于总数断言） */
-const CONFIG_TOGGLE_START_INDEX = 1
-
-/** 「VPN Portal」开关在 ToggleSwitch 序列中的下标 */
-const VPN_PORTAL_TOGGLE_INDEX = 0
-
 const CONFIG_UI_BOOLEAN_FIELDS = [
   ...CONFIG_CHECKBOX_FIELDS.map(([field]) => field),
   ...CONFIG_TOGGLE_FIELDS.map(([field]) => field),
@@ -503,11 +497,9 @@ describe('Config.vue network config projection', () => {
 
     expect(input(wrapper, '#hostname').value).toBe('host-a')
     expect(input(wrapper, '#subnet-proxy').value).toBe('10.10.0.0/16,172.16.1.0/24')
-    expect(input(wrapper, '#vpn_portal_wireguard_listen').value).toBe('0.0.0.0:22023')
-    expect(input(wrapper, '#vpn_portal_wireguard_private_key').value).toBe('portal-private-key')
-    expect(input(wrapper, '#vpn_portal_client_name_0').value).toBe('phone-a')
-    expect(input(wrapper, '#vpn_portal_client_virtual_ip_0').value).toBe('10.1.2.10/24')
-    expect(input(wrapper, '#vpn_portal_client_groups_0').value).toBe('ops')
+    // VPN Portal UI removed; controls must not render.
+    expect(wrapper.find('#vpn_portal_enabled').exists()).toBe(false)
+    expect(wrapper.find('#vpn_portal_wireguard_listen').exists()).toBe(false)
     expect(input(wrapper, '#dev_name').value).toBe('tun-test')
     expect(input(wrapper, '#mtu').value).toBe('1280')
     expect(input(wrapper, '#instance_recv_bps_limit').value).toBe('9007199254740993')
@@ -537,11 +529,6 @@ describe('Config.vue network config projection', () => {
     await wrapper.find('#allow_ipv6').setValue(true)
     await setInput(wrapper, '#hostname', 'host-edited')
     await setInput(wrapper, '#subnet-proxy', '10.7.0.0/16,172.17.0.0/16')
-    await setInput(wrapper, '#vpn_portal_wireguard_listen', '[::]:23000')
-    await setInput(wrapper, '#vpn_portal_wireguard_private_key', 'edited-private-key')
-    await setInput(wrapper, '#vpn_portal_client_name_0', 'laptop-a')
-    await setInput(wrapper, '#vpn_portal_client_virtual_ip_0', '10.1.2.20/24')
-    await setInput(wrapper, '#vpn_portal_client_groups_0', 'ops,admin')
     await setInput(wrapper, 'input[data-add-label="add_listener_url"]', 'tcp://0.0.0.0:13010')
     await setInput(wrapper, '#dev_name', 'tun-edited')
     await setInput(wrapper, '#mtu', '1260')
@@ -569,13 +556,14 @@ describe('Config.vue network config projection', () => {
       disable_ipv6: false,
       hostname: 'host-edited',
       proxy_cidrs: ['10.7.0.0/16', '172.17.0.0/16'],
+      // Opaque round-trip: UI no longer edits portal, but loaded value stays.
       vpn_portal_config: {
-        wireguard_listen: '[::]:23000',
-        wireguard_private_key: 'edited-private-key',
+        wireguard_listen: '0.0.0.0:22023',
+        wireguard_private_key: 'portal-private-key',
         clients: [{
-          name: 'laptop-a',
-          virtual_ip: '10.1.2.20/24',
-          groups: ['ops', 'admin'],
+          name: 'phone-a',
+          virtual_ip: '10.1.2.10/24',
+          groups: ['ops'],
         }],
       },
       listener_urls: ['tcp://0.0.0.0:13010'],
@@ -606,12 +594,12 @@ describe('Config.vue network config projection', () => {
       mtu: 1260,
       instance_recv_bps_limit: '9007199254740993',
       vpn_portal_config: {
-        wireguard_listen: '[::]:23000',
-        wireguard_private_key: 'edited-private-key',
+        wireguard_listen: '0.0.0.0:22023',
+        wireguard_private_key: 'portal-private-key',
         clients: [{
-          name: 'laptop-a',
-          virtual_ip: '10.1.2.20/24',
-          groups: ['ops', 'admin'],
+          name: 'phone-a',
+          virtual_ip: '10.1.2.10/24',
+          groups: ['ops'],
         }],
       },
       port_forwards: [{
@@ -717,16 +705,15 @@ describe('Config.vue network config projection', () => {
     }
 
     const toggleSwitches = wrapper.findAll('button[data-stub="toggle-switch"]')
-    // VPN Portal + listed toggles + optional IPv6 provider + optional append.
+    // Listed toggles + optional IPv6 provider + optional append + flow-stats pair.
     const expectedToggleCount =
       CONFIG_TOGGLE_FIELDS.length +
-      CONFIG_TOGGLE_START_INDEX +
       (curNetwork.disable_ipv6 ? 0 : 1) +
       (curNetwork.enable_manual_routes ? 1 : 0) +
       // IP 流量统计：总开关与「允许精确 IP」子开关均恒定渲染（R5：子开关移出 v-if）。
       2
     expect(toggleSwitches).toHaveLength(expectedToggleCount)
-    expect(toggleSwitches[VPN_PORTAL_TOGGLE_INDEX].attributes('id')).toBe('vpn_portal_enabled')
+    expect(wrapper.find('#vpn_portal_enabled').exists()).toBe(false)
     for (const [field, inputId] of CONFIG_TOGGLE_FIELDS) {
       const value = originalFlagValues.get(field)
       const toggle = wrapper.find(`#${inputId}`)
@@ -874,53 +861,21 @@ describe('Config.vue network config projection', () => {
     expect(wrapper.text()).toContain('disable_encryption_algo_hint')
   })
 
-  it('uses VPN Portal config presence as the enable switch', async () => {
-    const config = DEFAULT_NETWORK_CONFIG()
-    const { curNetwork, wrapper } = mountConfig(config)
+  it('preserves vpn_portal_config on round-trip without rendering portal UI', async () => {
+    const { curNetwork, wrapper } = mountConfig()
     await nextTick()
 
-    const portalToggle = wrapper.findAll('button[data-stub="toggle-switch"]')[VPN_PORTAL_TOGGLE_INDEX]
-    expect(portalToggle.attributes('aria-checked')).toBe('false')
-
-    await portalToggle.trigger('click')
-    await nextTick()
+    expect(wrapper.find('#vpn_portal_enabled').exists()).toBe(false)
     expect(curNetwork.vpn_portal_config).toEqual({
-      wireguard_listen: '0.0.0.0:22022',
-      clients: [],
+      wireguard_listen: '0.0.0.0:22023',
+      wireguard_private_key: 'portal-private-key',
+      clients: [{
+        name: 'phone-a',
+        virtual_ip: '10.1.2.10/24',
+        groups: ['ops'],
+      }],
     })
-
-    await portalToggle.trigger('click')
-    await nextTick()
-    expect(curNetwork.vpn_portal_config).toBeUndefined()
-  })
-
-  it('keeps each VPN Portal client row bound to the same client when reordered', async () => {
-    const config = makeConfig()
-    config.vpn_portal_config!.clients.push({
-      name: 'phone-b',
-      virtual_ip: '10.1.2.11',
-      groups: ['guests'],
-    })
-    const { curNetwork, wrapper } = mountConfig(config)
-    await nextTick()
-
-    const firstClient = curNetwork.vpn_portal_config!.clients[0]
-    const secondClient = curNetwork.vpn_portal_config!.clients[1]
-    const firstClientInput = input(wrapper, '#vpn_portal_client_name_0')
-    curNetwork.vpn_portal_config!.clients = [secondClient, firstClient]
-    await nextTick()
-
-    expect(input(wrapper, '#vpn_portal_client_name_1')).toBe(firstClientInput)
-    await setInput(wrapper, '#vpn_portal_client_name_1', 'phone-a-edited')
-    expect(firstClient.name).toBe('phone-a-edited')
-    expect(secondClient.name).toBe('phone-b')
-  })
-
-  it('keeps VPN Portal ACL group menus inside the management drawer', async () => {
-    const { wrapper } = mountConfig()
-    await nextTick()
-
-    expect(wrapper.find('#vpn_portal_client_groups_0').attributes('data-append-to')).toBe('self')
+    expect(toBackendNetworkConfig(curNetwork).vpn_portal_config).toEqual(curNetwork.vpn_portal_config)
   })
 
   it('keeps uint64 input editable without losing large values', async () => {

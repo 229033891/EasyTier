@@ -779,6 +779,8 @@ status:
   # Per-tunnel flows (see docs/roadmap/tunnel-ip-flow-observability.md)
   flow_panel: Flow stats
   flow_panel_empty: No flow details yet. Enable flow stats in node config and save; only traffic this node sends or receives is counted (forwarded traffic is not). Records appear after there is some application traffic.
+  flow_filter_placeholder: Search peer / IP / direction…
+  flow_filter_empty: No matching flows. Clear the search to show all.
   flow_peer: Peer
   flow_direction: Direction
   flow_ip: IP / prefix

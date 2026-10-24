@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { NetworkInstance, VpnPortalClientState, type TunnelInfo, type NodeInfo, type PeerInfo, type PeerRoutePair, type PeerVipReachabilityInfo, type PeerConnFlow, type VpnPortalClientInfo, type VpnPortalInfo } from '../types/network'
+import { NetworkInstance, type TunnelInfo, type NodeInfo, type PeerInfo, type PeerRoutePair, type PeerVipReachabilityInfo, type PeerConnFlow } from '../types/network'
 import type { RemoteClient } from '../modules/api'
 import { useI18n } from 'vue-i18n';
-import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue';
+import { computed, onMounted, onUnmounted, reactive, ref } from 'vue';
 import { ipv4InetToString, ipv4ToString, ipv6ToString, formatEventTime } from '../modules/utils';
 import { isPanelHeaderInteractiveTarget } from '../modules/panel';
 import {
@@ -39,10 +39,11 @@ import {
   type RouteTableKind,
   type VipStateKey,
 } from '../modules/statusDisplay';
-import { Badge, DataTable, Column, Tag, Button, ScrollPanel, Card, Panel, } from 'primevue';
+import { Badge, DataTable, Column, Tag, Button, Card, Panel, InputText } from 'primevue';
 import NetworkChart from './NetworkChart.vue';
 import PeerConnHistoryChart from './PeerConnHistoryChart.vue';
 import FlowHistoryChart from './FlowHistoryChart.vue';
+import { filterFlowPanelRows } from '../modules/flowPanelFilter';
 
 const props = defineProps<{
   curNetworkInst: NetworkInstance | null,
@@ -265,6 +266,12 @@ const flowPanelRows = computed((): FlowPanelRow[] => {
   rows.sort((a, b) => b.sortBytes - a.sortBytes)
   return rows
 })
+
+/** Local search for the flow panel (peer / IP / direction). */
+const flowFilterQuery = ref('')
+const filteredFlowPanelRows = computed(() =>
+  filterFlowPanelRows(flowPanelRows.value, flowFilterQuery.value),
+)
 
 function rowTunnelProto(row: PeerConnTableRow) {
   const base = row.conn ? oneTunnelProto(row.conn.tunnel) : tunnelProto(row.pair)
@@ -824,7 +831,6 @@ const panelCollapsed = reactive({
   peerHistory: true,
   flowHistory: true,
   policyRoutes: true,
-  vpnPortal: true,
   eventLog: true,
 })
 
@@ -903,85 +909,6 @@ onMounted(() => {
 onUnmounted(() => {
   clearInterval(rateIntervalId)
 })
-
-const vpnPortalInfo = ref<VpnPortalInfo>()
-const vpnPortalClients = computed(() => vpnPortalInfo.value?.clients ?? [])
-const vpnPortalLoading = ref(false)
-const vpnPortalError = ref('')
-const copiedVpnPortalClient = ref('')
-
-let vpnPortalLoadToken = 0
-
-async function loadVpnPortalConfig() {
-  const instanceId = props.curNetworkInst?.instance_id
-  if (!instanceId)
-    return
-
-  const loadToken = ++vpnPortalLoadToken
-  vpnPortalInfo.value = undefined
-  vpnPortalError.value = ''
-  copiedVpnPortalClient.value = ''
-  vpnPortalLoading.value = true
-  try {
-    const info = await props.api.get_vpn_portal_info(instanceId)
-    // 实例切换后，旧请求不能覆盖当前实例的状态。
-    if (loadToken === vpnPortalLoadToken && props.curNetworkInst?.instance_id === instanceId) {
-      vpnPortalInfo.value = info
-    }
-  } catch (error) {
-    console.error('Failed to load VPN Portal information', error)
-    if (loadToken === vpnPortalLoadToken && props.curNetworkInst?.instance_id === instanceId) {
-      vpnPortalError.value = t('vpn_portal_load_failed')
-    }
-  } finally {
-    if (loadToken === vpnPortalLoadToken) {
-      vpnPortalLoading.value = false
-    }
-  }
-}
-
-watch(
-  [() => panelCollapsed.vpnPortal, () => props.curNetworkInst?.instance_id],
-  ([collapsed]) => {
-    if (!collapsed)
-      void loadVpnPortalConfig()
-  },
-)
-
-function vpnPortalStateKey(state: VpnPortalClientState | string): string {
-  const normalized = typeof state === 'string'
-    ? state.toLowerCase().replace('vpn_portal_client_state_', '')
-    : VpnPortalClientState[state]?.toLowerCase()
-  return `vpn_portal_state_${normalized ?? 'unspecified'}`
-}
-
-function vpnPortalStateSeverity(state: VpnPortalClientState | string): 'success' | 'warn' | 'danger' | 'secondary' {
-  const key = vpnPortalStateKey(state)
-  if (key.endsWith('online')) return 'success'
-  if (key.endsWith('connecting')) return 'warn'
-  if (key.endsWith('error')) return 'danger'
-  return 'secondary'
-}
-
-async function copyVpnPortalClientConfig(client: VpnPortalClientInfo) {
-  try {
-    if (navigator.clipboard?.writeText) {
-      await navigator.clipboard.writeText(client.client_config)
-    } else {
-      const textarea = document.createElement('textarea')
-      textarea.value = client.client_config
-      textarea.style.position = 'fixed'
-      textarea.style.opacity = '0'
-      document.body.appendChild(textarea)
-      textarea.select()
-      document.execCommand('copy')
-      textarea.remove()
-    }
-    copiedVpnPortalClient.value = client.name
-  } catch (error) {
-    console.error('Failed to copy VPN Portal client config', error)
-  }
-}
 
 const eventLogContent = computed(() => {
   const detail = props.curNetworkInst?.detail
@@ -1272,27 +1199,43 @@ const eventLogContent = computed(() => {
             <div v-if="!flowPanelRows.length" class="status-empty">
               {{ t('status.flow_panel_empty') }}
             </div>
-            <div v-else class="peer-table-scroll">
-              <DataTable
-                :value="flowPanelRows"
-                data-key="key"
-                table-class="peer-route-table flow-stats-table"
-              >
-                <Column field="peer" :header="t('status.flow_peer')" />
-                <Column field="proto" :header="t('tunnel_proto')"
-                  header-class="peer-col-secondary" body-class="peer-col-secondary" />
-                <Column field="direction" :header="t('status.flow_direction')" />
-                <Column field="ip" :header="t('status.flow_ip')" />
-                <Column :header="t('status.flow_bytes')">
-                  <template #body="{ data }">
-                    {{ data.bytes }}
-                    <span v-if="data.estimated" class="flow-estimated">{{ t('status.flow_estimated') }}</span>
-                  </template>
-                </Column>
-                <Column field="rate" :header="t('status.flow_rate')"
-                  header-class="peer-col-secondary" body-class="peer-col-secondary" />
-              </DataTable>
-            </div>
+            <template v-else>
+              <div class="flow-filter-bar">
+                <InputText
+                  v-model="flowFilterQuery"
+                  class="flow-filter-input"
+                  :placeholder="t('status.flow_filter_placeholder')"
+                  fluid
+                />
+                <span v-if="flowFilterQuery.trim()" class="flow-filter-count">
+                  {{ filteredFlowPanelRows.length }}/{{ flowPanelRows.length }}
+                </span>
+              </div>
+              <div v-if="!filteredFlowPanelRows.length" class="status-empty">
+                {{ t('status.flow_filter_empty') }}
+              </div>
+              <div v-else class="peer-table-scroll">
+                <DataTable
+                  :value="filteredFlowPanelRows"
+                  data-key="key"
+                  table-class="peer-route-table flow-stats-table"
+                >
+                  <Column field="peer" :header="t('status.flow_peer')" />
+                  <Column field="proto" :header="t('tunnel_proto')"
+                    header-class="peer-col-secondary" body-class="peer-col-secondary" />
+                  <Column field="direction" :header="t('status.flow_direction')" />
+                  <Column field="ip" :header="t('status.flow_ip')" />
+                  <Column :header="t('status.flow_bytes')">
+                    <template #body="{ data }">
+                      {{ data.bytes }}
+                      <span v-if="data.estimated" class="flow-estimated">{{ t('status.flow_estimated') }}</span>
+                    </template>
+                  </Column>
+                  <Column field="rate" :header="t('status.flow_rate')"
+                    header-class="peer-col-secondary" body-class="peer-col-secondary" />
+                </DataTable>
+              </div>
+            </template>
           </div>
         </Panel>
 
@@ -1316,72 +1259,6 @@ const eventLogContent = computed(() => {
             <FlowHistoryChart :api="api" :instance-id="curNetworkInst?.instance_id ?? ''"
               :visible="!panelCollapsed.flowHistory" />
           </div>
-        </Panel>
-
-        <Panel v-if="myNodeInfo" v-model:collapsed="panelCollapsed.vpnPortal" :header="t('vpn_portal_config')"
-          class="status-panel"
-          :class="{ 'status-panel--expanded': !panelCollapsed.vpnPortal }"
-          toggleable :pt="panelHeaderPt('vpnPortal')">
-          <ScrollPanel class="vpn-portal-scroll status-panel-body pr-3">
-            <div v-if="vpnPortalLoading" class="status-empty status-empty--center">
-              {{ t('web.device_management.loading_network_status') }}
-            </div>
-            <div v-else-if="vpnPortalError" class="status-empty status-empty--error">
-              {{ vpnPortalError }}
-            </div>
-            <div
-              v-else-if="!vpnPortalInfo || ((!vpnPortalInfo.vpn_type || vpnPortalInfo.vpn_type === 'null') && vpnPortalClients.length === 0)"
-              class="status-empty">
-              {{ t('vpn_portal_not_configured') }}
-            </div>
-            <div v-else class="flex flex-col gap-3">
-              <div class="status-meta-row">
-                <span v-if="vpnPortalInfo.vpn_type">
-                  <span class="status-meta-label">{{ t('vpn_portal_type') }}</span>
-                  {{ vpnPortalInfo.vpn_type }}
-                </span>
-                <span v-if="vpnPortalInfo.listener">
-                  <span class="status-meta-label">{{ t('vpn_portal_listener') }}</span>
-                  {{ vpnPortalInfo.listener }}
-                </span>
-              </div>
-
-              <div v-for="client in vpnPortalClients" :key="client.name" class="status-subcard">
-                <div class="mb-2 flex flex-wrap items-center justify-between gap-2">
-                  <div class="status-subcard-title">{{ client.name }} · {{ client.virtual_ip }}</div>
-                  <Tag :severity="vpnPortalStateSeverity(client.state)" :value="t(vpnPortalStateKey(client.state))" />
-                </div>
-                <div class="status-meta-grid mb-2">
-                  <span v-if="client.groups.length">
-                    <span class="status-meta-label">{{ t('vpn_portal_client_groups') }}</span>
-                    {{ client.groups.join(', ') }}
-                  </span>
-                  <span v-if="client.peer_id !== undefined">
-                    <span class="status-meta-label">{{ t('vpn_portal_peer_id') }}</span>
-                    {{ client.peer_id }}
-                  </span>
-                  <span v-if="client.endpoint">
-                    <span class="status-meta-label">{{ t('vpn_portal_endpoint') }}</span>
-                    {{ client.endpoint }}
-                  </span>
-                  <span v-if="client.tunnel_ip">
-                    <span class="status-meta-label">{{ t('vpn_portal_tunnel_ip') }}</span>
-                    {{ client.tunnel_ip }}
-                  </span>
-                  <span v-if="client.error" class="status-meta-error sm:col-span-2">{{ client.error }}</span>
-                </div>
-                <div class="mb-2 flex items-center justify-between gap-3">
-                  <span class="status-meta-label">{{ t('vpn_portal_client_config') }}</span>
-                  <Button size="small" severity="secondary" text rounded icon="pi pi-copy"
-                    class="et-icon-action-btn"
-                    :aria-label="t('vpn_portal_copy_client_config')"
-                    v-tooltip.top="copiedVpnPortalClient === client.name ? t('config_copied') : t('vpn_portal_copy_client_config')"
-                    @click="copyVpnPortalClientConfig(client)" />
-                </div>
-                <pre class="status-code-block">{{ client.client_config }}</pre>
-              </div>
-            </div>
-          </ScrollPanel>
         </Panel>
 
         <Panel v-if="myNodeInfo" v-model:collapsed="panelCollapsed.eventLog" :header="t('event_log')" toggleable
@@ -1491,17 +1368,6 @@ const eventLogContent = computed(() => {
 
   .status-panels :deep(.status-panel--expanded .node-detail-groups) {
     max-height: none;
-  }
-
-  .status-panels :deep(.status-panel--expanded .vpn-portal-scroll) {
-    max-height: none !important;
-    height: 100%;
-  }
-
-  .status-panels :deep(.status-panel--expanded .vpn-portal-scroll.p-scrollpanel),
-  .status-panels :deep(.status-panel--expanded .p-scrollpanel.vpn-portal-scroll) {
-    flex: 1 1 0;
-    min-height: 0;
   }
 
   .status-panels :deep(.status-panel--expanded .peer-table-scroll) {
@@ -1831,6 +1697,25 @@ const eventLogContent = computed(() => {
 }
 .peer-table-scroll :deep(.p-datatable-tbody > tr:hover > td) {
   background: color-mix(in srgb, var(--text-color, #0f172a) 6%, var(--surface-ground, #ffffff));
+}
+
+.flow-filter-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+
+.flow-filter-input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.flow-filter-count {
+  flex: 0 0 auto;
+  color: var(--text-color-secondary, #334155);
+  font-size: var(--et-fs-meta, 0.8125rem);
+  font-variant-numeric: tabular-nums;
 }
 
 .flow-estimated {

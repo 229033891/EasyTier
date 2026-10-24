@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import { v4 as uuidv4 } from 'uuid'
 import { AutoComplete, Button, Checkbox, Dialog, InputNumber, InputText, MultiSelect, Panel, Password, Select, ToggleSwitch, useConfirm, useToast } from 'primevue'
 import { TOAST_LIFE } from '../modules/toast'
 import { isPanelHeaderInteractiveTarget } from '../modules/panel'
@@ -18,8 +17,6 @@ import {
   removeRow,
   type DnsConfig,
   type PolicyRouteConfig,
-  type VpnPortalClientConfig,
-  type VpnPortalConfig,
 } from '../types/network'
 import { computed, reactive, ref, onMounted, onUnmounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
@@ -543,20 +540,6 @@ const instanceRecvBpsLimitInput = computed<string>({
   },
 })
 
-function defaultVpnPortalConfig(): VpnPortalConfig {
-  return {
-    wireguard_listen: '0.0.0.0:22022',
-    clients: [],
-  }
-}
-
-const vpnPortalEnabled = computed({
-  get: () => curNetwork.value.vpn_portal_config !== undefined,
-  set: (enabled: boolean) => {
-    curNetwork.value.vpn_portal_config = enabled ? defaultVpnPortalConfig() : undefined
-  },
-})
-
 /**
  * 流量统计开关：读的是 proto 三元语义（undefined = 未设置）。
  * 只有用户真的动过开关才把值写回配置，避免每次保存都给旧配置塞一个
@@ -579,38 +562,6 @@ const flowStatsAllowExactIp = computed({
     curNetwork.value.flow_stats_allow_exact_ip = allowed
   },
 })
-
-const vpnPortalConfig = computed(() => curNetwork.value.vpn_portal_config ?? defaultVpnPortalConfig())
-
-const vpnPortalPrivateKey = computed({
-  get: () => vpnPortalConfig.value.wireguard_private_key ?? '',
-  set: (value: string | null | undefined) => {
-    vpnPortalConfig.value.wireguard_private_key = value && value.length > 0 ? value : undefined
-  },
-})
-
-const vpnPortalGroupOptions = computed(() => (
-  curNetwork.value.acl?.acl_v1?.group?.declares ?? []
-).map((group) => group.group_name))
-
-const vpnPortalClientViewKeys = new WeakMap<VpnPortalClientConfig, string>()
-
-function vpnPortalClientViewKey(client: VpnPortalClientConfig): string {
-  let key = vpnPortalClientViewKeys.get(client)
-  if (!key) {
-    key = uuidv4()
-    vpnPortalClientViewKeys.set(client, key)
-  }
-  return key
-}
-
-function addVpnPortalClient() {
-  vpnPortalConfig.value.clients.push({ name: '', virtual_ip: '', groups: [] })
-}
-
-function removeVpnPortalClient(index: number) {
-  vpnPortalConfig.value.clients.splice(index, 1)
-}
 </script>
 
 <template>
@@ -932,62 +883,6 @@ function removeVpnPortalClient(index: number) {
               </div>
 
               <div class="flex flex-col gap-2">
-                <div class="config-inline-field">
-                  <label for="vpn_portal_enabled" class="config-inline-label">VPN Portal</label>
-                  <div class="config-inline-control">
-                    <ToggleSwitch v-model="vpnPortalEnabled" input-id="vpn_portal_enabled"
-                      aria-label="VPN Portal" />
-                  </div>
-                </div>
-                <div v-if="vpnPortalEnabled" class="config-inline-expand config-inline-expand--flush flex flex-col gap-3">
-                  <div class="flex flex-col gap-3 md:flex-row md:gap-4">
-                    <div class="flex flex-col gap-1 flex-1 min-w-0">
-                      <label for="vpn_portal_wireguard_listen">{{ t('vpn_portal_wireguard_listen') }}</label>
-                      <InputText id="vpn_portal_wireguard_listen" v-model="vpnPortalConfig.wireguard_listen"
-                        :placeholder="t('vpn_portal_wireguard_listen_placeholder')" fluid />
-                    </div>
-                    <div class="flex flex-col gap-1 flex-1 min-w-0">
-                      <label for="vpn_portal_wireguard_private_key">{{ t('vpn_portal_wireguard_private_key') }}</label>
-                      <Password id="vpn_portal_wireguard_private_key" v-model="vpnPortalPrivateKey"
-                        :placeholder="t('vpn_portal_wireguard_private_key_placeholder')"
-                        toggleMask :feedback="false" fluid />
-                    </div>
-                  </div>
-
-                  <div class="flex items-center justify-between gap-3">
-                    <label>{{ t('vpn_portal_clients') }}</label>
-                    <Button icon="pi pi-plus" :label="t('vpn_portal_add_client')" severity="secondary" size="small"
-                      outlined :disabled="vpnPortalConfig.clients.length >= 64"
-                      @click="addVpnPortalClient" />
-                  </div>
-
-                  <div v-if="vpnPortalConfig.clients.length === 0"
-                    class="text-sm text-surface-500 dark:text-surface-400">
-                    {{ t('vpn_portal_no_clients') }}
-                  </div>
-                  <div v-for="(client, index) in vpnPortalConfig.clients" :key="vpnPortalClientViewKey(client)"
-                    class="flex flex-row gap-3 flex-wrap items-end rounded border border-surface-200 dark:border-surface-700 p-3">
-                    <div class="flex flex-col gap-2 grow basis-3/12">
-                      <label :for="`vpn_portal_client_name_${index}`">{{ t('vpn_portal_client_name') }}</label>
-                      <InputText :id="`vpn_portal_client_name_${index}`" v-model="client.name"
-                        :placeholder="t('vpn_portal_client_name_placeholder')" />
-                    </div>
-                    <div class="flex flex-col gap-2 grow basis-3/12">
-                      <label :for="`vpn_portal_client_virtual_ip_${index}`">{{ t('vpn_portal_client_virtual_ip') }}</label>
-                      <InputText :id="`vpn_portal_client_virtual_ip_${index}`" v-model="client.virtual_ip"
-                        :placeholder="t('vpn_portal_client_virtual_ip_placeholder')" />
-                    </div>
-                    <div class="flex flex-col gap-2 grow basis-4/12">
-                      <label :for="`vpn_portal_client_groups_${index}`">{{ t('vpn_portal_client_groups') }}</label>
-                      <MultiSelect :input-id="`vpn_portal_client_groups_${index}`" v-model="client.groups"
-                        :options="vpnPortalGroupOptions" appendTo="self" filter fluid
-                        :placeholder="t('vpn_portal_client_groups_placeholder')" />
-                    </div>
-                    <Button icon="pi pi-trash" severity="danger" text rounded class="et-icon-action-btn"
-                      :aria-label="t('vpn_portal_remove_client')" @click="removeVpnPortalClient(index)" />
-                  </div>
-                </div>
-
                 <div class="config-inline-field">
                   <div class="config-inline-label flex items-center gap-1">
                     <label for="relay_network_whitelist">{{ t('relay_network_whitelist') }}</label>
