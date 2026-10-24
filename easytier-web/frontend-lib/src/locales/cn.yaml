@@ -186,8 +186,8 @@ vpn_portal_state_offline: 离线
 vpn_portal_state_connecting: 连接中
 vpn_portal_state_online: 在线
 vpn_portal_state_error: 错误
-show_event_log: 显示事件日志
-event_log: 事件日志
+show_event_log: 显示网络事件
+event_log: 网络事件
 peer_info: 节点信息
 local_addr: 本端地址
 peer_conn_history: 对端连接历史
@@ -207,7 +207,7 @@ flow_history_title: IP 流量历史
 flow_history_select_flow: 选择流量
 flow_history_rate: 速率
 flow_history_rate_help: 节点侧按 1 秒固定窗口算出速率后落库，这里取桶内均值；只统计本节点收发的隧道流量，转发流量不计入。默认只上传掩码网段（如 10.0.0.0/24）。
-flow_history_no_data: 暂无流量记录（需在节点配置中开启 IP 流量统计，并运行一段时间）
+flow_history_no_data: 暂无流量记录（需在节点配置中开启流量统计，并运行一段时间）
 flow_history_truncated: 只显示流量最大的 {n} 条曲线
 hostname: 主机名
 route_cost: 路由
@@ -769,10 +769,12 @@ status:
   server: 服务器
   relay: 中继
   p2p: 直连
-  # 隧道级 IP 流量（见 docs/roadmap/tunnel-ip-flow-observability.md）
-  flow_detail: IP流量
+  # 隧道级流量（见 docs/roadmap/tunnel-ip-flow-observability.md）
+  flow_panel: 流量统计
+  flow_panel_empty: 暂无流量明细。请在节点配置中开启流量统计并保存；仅统计本节点收发的隧道流量（转发不计），有业务流量后才会出现记录。
+  flow_peer: 对端
   flow_direction: 方向
-  flow_ip: IP
+  flow_ip: IP / 网段
   flow_bytes: 流量
   flow_rate: 速率
   flow_tx: 发送
@@ -1409,12 +1411,12 @@ acl:
   empty_chains: 还没有规则链。可添加入站、出站或转发链开始配置。
 
 flow_stats:
-  title: IP 流量统计
+  title: 流量统计
   enabled: 启用流量统计
   enabled_help: |-
     记录每条隧道（PeerConn）上承载的是哪些 IP 的流量：发送记目的 IP，接收记源 IP。
     关闭时热路径只有一次原子读，不额外分配内存。
-    数据只在节点本地汇总（运行页「IP流量」列），不会上报给公共服务器。
+    数据只在节点本地汇总（运行页「流量统计」面板），不会上报给公共服务器。
   sample_rate: 采样率
   sample_rate_help: 1 = 全量统计；N = 每 N 个包统计 1 个。目的 IP 基数通常很小，除非隧道承载大量不同目标的转发流量，否则保持 1。
   max_per_conn: 每条隧道上限

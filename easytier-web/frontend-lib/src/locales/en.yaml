@@ -185,8 +185,8 @@ vpn_portal_state_offline: Offline
 vpn_portal_state_connecting: Connecting
 vpn_portal_state_online: Online
 vpn_portal_state_error: Error
-show_event_log: Show Event Log
-event_log: Event Log
+show_event_log: Show Network Events
+event_log: Network Events
 peer_info: Peer Info
 local_addr: Local Address
 peer_conn_history: Peer Connection History
@@ -206,7 +206,7 @@ flow_history_title: IP Flow History
 flow_history_select_flow: Select flows
 flow_history_rate: Rate
 flow_history_rate_help: The node measures the rate over fixed 1s windows and stores it; buckets show the mean. Only traffic sent or received by this node is counted (forwarded traffic is not). Masked subnets (e.g. 10.0.0.0/24) are uploaded by default.
-flow_history_no_data: No flow records yet (enable IP flow stats on the node and let it run for a while)
+flow_history_no_data: No flow records yet (enable flow stats on the node and let it run for a while)
 flow_history_truncated: Showing only the {n} busiest flows
 route_cost: Route Cost
 tunnel_proto: Protocol
@@ -773,10 +773,12 @@ status:
   server: Server
   relay: Relay
   p2p: Direct
-  # Per-tunnel IP flows (see docs/roadmap/tunnel-ip-flow-observability.md)
-  flow_detail: IP flows
+  # Per-tunnel flows (see docs/roadmap/tunnel-ip-flow-observability.md)
+  flow_panel: Flow stats
+  flow_panel_empty: No flow details yet. Enable flow stats in node config and save; only traffic this node sends or receives is counted (forwarded traffic is not). Records appear after there is some application traffic.
+  flow_peer: Peer
   flow_direction: Direction
-  flow_ip: IP
+  flow_ip: IP / prefix
   flow_bytes: Traffic
   flow_rate: Rate
   flow_tx: TX
@@ -1414,12 +1416,12 @@ acl:
   empty_chains: No rule chains yet. Add an inbound, outbound, or forward chain to get started.
 
 flow_stats:
-  title: IP flow stats
+  title: Flow stats
   enabled: Enable flow accounting
   enabled_help: |-
     Records which IPs each tunnel (PeerConn) carries: destination IPs on TX, source IPs on RX.
     When off, the hot path costs a single atomic read and allocates nothing.
-    Data is aggregated locally on the node only (the "IP flows" column on the status page) and is never uploaded to public servers.
+    Data is aggregated locally on the node only (the "Flow stats" panel on the status page) and is never uploaded to public servers.
   sample_rate: Sample rate
   sample_rate_help: 1 = account every packet; N = account 1 in N packets. Destination IP cardinality is usually tiny, so keep it at 1 unless the tunnel relays traffic to many distinct targets.
   max_per_conn: Max per tunnel
