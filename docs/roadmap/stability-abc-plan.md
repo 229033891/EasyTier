@@ -99,7 +99,7 @@ A（core，3–7 人日）→ B（前端/文案，1–3 人日，可与 A 尾声
 
 | 风险 | 缓解 |
 |------|------|
-| 真死最后一条拖成僵尸 | C 阶段用「拔线」场景测；若不可接受再加「最后一条最大挂起秒数」flag（另开 PR） |
+| 真死最后一条拖成僵尸 | **已缓解（2026-10-24）**：连续失败达 `ping_fail_close_count + 5` 时强制拆最后一条（默认约 ~30s，避免 credential / `proxy_three_node_disconnect` 僵尸）。更细的「最大挂起秒数」flag 仍可另开 |
 | 与 bond / fuse 交互 | 替代判定复用 `is_unfused_verified`，与 P-AUDIT.1 一致 |
 | 回归「该拆不拆」导致 UI 长期绿但不通 | 最后一条仍应持续 ping；状态面已有 VIP 可达探测（正交）——C 用 ping 对齐 |
 
@@ -211,7 +211,7 @@ A（core，3–7 人日）→ B（前端/文案，1–3 人日，可与 A 尾声
 | 项 | 状态 | 日期 / 备注 |
 |----|------|-------------|
 | A 设计拍板（本文 §3.2） | **已拍板** | 2026-10-24 |
-| A 代码 + 单测 | **代码已合入工作区** | 2026-10-24：闸门 + `build_ping_fail_close_gate`；单测已写；**本机 cargo 跳过**，CI/出包前补跑 |
+| A 代码 + 单测 | **代码已合入工作区** | 2026-10-24：闸门 + `build_ping_fail_close_gate`；`fail_close+5` 强制拆最后一条（credential / proxy disconnect）；单测已写 |
 | A release note | **草稿见 §3.6** | 短暂抖动不拆光唯一 PeerConn；有已验证替代仍可拆劣质 conn |
 | B1 文档勘误 5b | **已完成** | 2026-10-24 |
 | B2/B3 交互引导文案 | **B2 已完成**（B3 场景块跳过） | 2026-10-24：`default_protocol` / `peer_link_bond_count` / `ping_fail_close_count` 中英文 help |

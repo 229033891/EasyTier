@@ -56,6 +56,14 @@ pub(crate) fn may_tear_down_for_ping_failure<'a>(
 /// Wait budget for one ordinary keepalive ping.
 const PING_WAIT_TIMEOUT: Duration = Duration::from_secs(2);
 
+/// After `fail_close_count` with no alternative, keep the last path for this many
+/// **extra** consecutive misses, then force-close (P1.5 zombie escape).
+///
+/// Total misses ≈ `fail_close_count + EXTRA`. Under loss each attempt waits up to
+/// [`PING_WAIT_TIMEOUT`], so default 10+5 → ~30s — fits `proxy_three_node_disconnect`
+/// (40s) and credential failover (60s). A full `2×` budget was too close to 40s.
+const LAST_PATH_FORCE_CLOSE_EXTRA: u32 = 5;
+
 /// Fast liveness probe (roadmap `live-next-hop.md` Phase F — "BFD-style").
 ///
 /// This is an *extra* short round trip whose only job is to publish the loss
@@ -247,8 +255,9 @@ pub struct PeerConnPinger {
     /// Consecutive ping failures before closing; default 10 (see `DEFAULT_PING_FAIL_CLOSE_COUNT`).
     fail_close_count: u32,
     /// Optional P1.5 gate: when set, reaching `fail_close_count` only closes if
-    /// the gate returns true (peer still has a verified alternative). `None`
-    /// keeps the legacy always-close behaviour (tests / fast_probe).
+    /// the gate returns true (peer still has a verified alternative), until
+    /// losses hit `fail_close_count + LAST_PATH_FORCE_CLOSE_EXTRA`. `None` keeps
+    /// the legacy always-close behaviour (tests / fast_probe).
     close_gate: Option<PingFailCloseGate>,
 }
 
@@ -470,11 +479,17 @@ impl PeerConnPinger {
                 my_node_id
             );
 
-            if loss_counter.load(Ordering::Relaxed) >= fail_close_count {
-                // P1.5: only tear down when a verified alternative still exists.
-                // Otherwise keep probing — rebuild costs ~30s and flash-closing the
-                // last path freezes interactive flows (RDP/SSH).
-                let allowed = self.close_gate.as_ref().map(|gate| gate()).unwrap_or(true);
+            let losses = loss_counter.load(Ordering::Relaxed);
+            if losses >= fail_close_count {
+                // P1.5: prefer keeping the last path through brief jitter when no
+                // verified alternative exists. After LAST_PATH_FORCE_CLOSE_EXTRA more
+                // consecutive misses, force-close anyway — otherwise a dead peer stays
+                // `has_live_conns` forever and blocks disconnect detection / credential
+                // non-reusable failover.
+                let force_last_path =
+                    losses >= fail_close_count.saturating_add(LAST_PATH_FORCE_CLOSE_EXTRA);
+                let allowed =
+                    force_last_path || self.close_gate.as_ref().map(|gate| gate()).unwrap_or(true);
                 if !allowed {
                     tracing::warn!(
                         ?ret,
@@ -484,8 +499,8 @@ impl PeerConnPinger {
                         fail_close_count,
                         "ping fail close skipped: no verified alternative PeerConn (keeping last path)",
                     );
-                    // Stay at threshold so every further miss re-evaluates the gate
-                    // (an alternative may appear); a successful ping resets to 0.
+                    // Stay at/above threshold so every further miss re-evaluates the
+                    // gate (an alternative may appear) or hits the force-close budget.
                     continue;
                 }
                 tracing::warn!(
@@ -494,6 +509,7 @@ impl PeerConnPinger {
                     ?loss_rate_1,
                     ?loss_counter,
                     fail_close_count,
+                    force_last_path,
                     "too many consecutive pingpong failures, closing the connection",
                 );
                 break;
