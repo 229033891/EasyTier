@@ -474,11 +474,7 @@ impl PeerConnPinger {
                 // P1.5: only tear down when a verified alternative still exists.
                 // Otherwise keep probing — rebuild costs ~30s and flash-closing the
                 // last path freezes interactive flows (RDP/SSH).
-                let allowed = self
-                    .close_gate
-                    .as_ref()
-                    .map(|gate| gate())
-                    .unwrap_or(true);
+                let allowed = self.close_gate.as_ref().map(|gate| gate()).unwrap_or(true);
                 if !allowed {
                     tracing::warn!(
                         ?ret,

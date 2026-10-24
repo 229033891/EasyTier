@@ -1455,10 +1455,7 @@ impl PeerConn {
     /// threshold, the ordinary pinger only tears down if the gate returns true.
     /// Peer wires a gate that requires a verified unfused alternative under a
     /// peer-wide lock. Fast probe never closes and always gets `None`.
-    pub fn start_pingpong(
-        &mut self,
-        close_gate: Option<super::peer_conn_ping::PingFailCloseGate>,
-    ) {
+    pub fn start_pingpong(&mut self, close_gate: Option<super::peer_conn_ping::PingFailCloseGate>) {
         let mut pingpong = PeerConnPinger::new(
             self.my_peer_id,
             self.get_peer_id(),
