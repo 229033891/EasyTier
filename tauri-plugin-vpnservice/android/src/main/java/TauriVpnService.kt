@@ -43,7 +43,8 @@ class TauriVpnService : VpnService() {
         const val DISALLOWED_APPLICATIONS = "DISALLOWED_APPLICATIONS"
         const val MTU = "MTU"
 
-        private const val NOTIFICATION_CHANNEL_ID = "easytier_vpn_channel"
+        // New id: existing IMPORTANCE_LOW channels never upgrade on device.
+        private const val NOTIFICATION_CHANNEL_ID = "easytier_vpn_status_v2"
         private const val NOTIFICATION_ID = 1356
 
         /**
@@ -322,13 +323,17 @@ class TauriVpnService : VpnService() {
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
             )
         }
+        // Visible status-bar icon only while VPN is up; MainForegroundService
+        // keepalive uses IMPORTANCE_MIN and must not compete for the top glyph.
         val notification = NotificationCompat.Builder(this, NOTIFICATION_CHANNEL_ID)
-            .setSmallIcon(android.R.drawable.ic_menu_manage)
+            .setSmallIcon(R.drawable.ic_stat_easytier)
             .setContentTitle("EasyTier VPN is running")
             .setContentText("VPN connection is active")
             .setOngoing(true)
             .setOnlyAlertOnce(true)
+            .setSilent(true)
             .setCategory(NotificationCompat.CATEGORY_SERVICE)
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
             .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
             .apply { contentIntent?.let(::setContentIntent) }
             .build()
@@ -376,8 +381,14 @@ class TauriVpnService : VpnService() {
             val channel = NotificationChannel(
                 NOTIFICATION_CHANNEL_ID,
                 "EasyTier VPN",
-                NotificationManager.IMPORTANCE_LOW,
-            )
+                // DEFAULT so status-bar icons show on OEM skins; keep quiet via setSilent.
+                NotificationManager.IMPORTANCE_DEFAULT,
+            ).apply {
+                description = "Shows EasyTier VPN is active in the status bar"
+                setShowBadge(false)
+                setSound(null, null)
+                enableVibration(false)
+            }
             getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
         }
     }
