@@ -17,7 +17,11 @@ use crate::{
     foundation::time::{Interval, interval, sleep, timeout},
     packet::{PacketType, ZCPacket},
     peers::{
-        conn::{peer_conn::PeerConnCloseNotify, peer_conn_liveness::PeerConnLiveness},
+        conn::{
+            conn_select::{ConnMetrics, ConnSelectConfig, is_unfused_verified},
+            peer_conn::PeerConnCloseNotify,
+            peer_conn_liveness::PeerConnLiveness,
+        },
         context::ArcPeerContext,
         error::Error,
     },
@@ -26,6 +30,28 @@ use crate::{
         stats::{Throughput, WindowLatency},
     },
 };
+
+/// Callback used by the ordinary keepalive when consecutive failures reach
+/// `ping_fail_close_count`. Returns `true` if this PeerConn may be torn down.
+///
+/// Wired from [`super::peer::Peer`]: under a peer-wide lock it checks for a
+/// verified unfused alternative and, when allowing close, marks the conn closed
+/// before releasing the lock so concurrent ping tasks cannot avalanche.
+pub(crate) type PingFailCloseGate = Arc<dyn Fn() -> bool + Send + Sync>;
+
+/// P1.5 pure decision: may consecutive ping failures tear this conn down?
+///
+/// `true` only when at least one *other* live path is a real alternative
+/// (`is_unfused_verified`). Unverified hole-punches do not count — same predicate
+/// as `pick_default_conn` / cached-path invalidation.
+pub(crate) fn may_tear_down_for_ping_failure<'a>(
+    alternatives: impl IntoIterator<Item = &'a ConnMetrics>,
+    cfg: ConnSelectConfig,
+) -> bool {
+    alternatives
+        .into_iter()
+        .any(|metrics| is_unfused_verified(metrics, cfg))
+}
 
 /// Wait budget for one ordinary keepalive ping.
 const PING_WAIT_TIMEOUT: Duration = Duration::from_secs(2);
@@ -218,8 +244,12 @@ pub struct PeerConnPinger {
     fast_probe_sustained: Arc<AtomicBool>,
     close_notify: Arc<PeerConnCloseNotify>,
     max_interval: Duration,
-    /// Consecutive ping failures before closing; default 5.
+    /// Consecutive ping failures before closing; default 10 (see `DEFAULT_PING_FAIL_CLOSE_COUNT`).
     fail_close_count: u32,
+    /// Optional P1.5 gate: when set, reaching `fail_close_count` only closes if
+    /// the gate returns true (peer still has a verified alternative). `None`
+    /// keeps the legacy always-close behaviour (tests / fast_probe).
+    close_gate: Option<PingFailCloseGate>,
 }
 
 impl std::fmt::Debug for PeerConnPinger {
@@ -249,6 +279,7 @@ impl PeerConnPinger {
         close_notify: Arc<PeerConnCloseNotify>,
         max_interval: Duration,
         fail_close_count: u32,
+        close_gate: Option<PingFailCloseGate>,
     ) -> Self {
         Self {
             my_peer_id,
@@ -266,6 +297,7 @@ impl PeerConnPinger {
             close_notify,
             max_interval,
             fail_close_count: fail_close_count.max(1),
+            close_gate,
         }
     }
 
@@ -439,6 +471,27 @@ impl PeerConnPinger {
             );
 
             if loss_counter.load(Ordering::Relaxed) >= fail_close_count {
+                // P1.5: only tear down when a verified alternative still exists.
+                // Otherwise keep probing — rebuild costs ~30s and flash-closing the
+                // last path freezes interactive flows (RDP/SSH).
+                let allowed = self
+                    .close_gate
+                    .as_ref()
+                    .map(|gate| gate())
+                    .unwrap_or(true);
+                if !allowed {
+                    tracing::warn!(
+                        ?ret,
+                        ?self,
+                        ?loss_rate_1,
+                        ?loss_counter,
+                        fail_close_count,
+                        "ping fail close skipped: no verified alternative PeerConn (keeping last path)",
+                    );
+                    // Stay at threshold so every further miss re-evaluates the gate
+                    // (an alternative may appear); a successful ping resets to 0.
+                    continue;
+                }
                 tracing::warn!(
                     ?ret,
                     ?self,
@@ -655,6 +708,7 @@ mod tests {
             Arc::new(PeerConnCloseNotify::new(PeerConnId::new_v4())),
             Duration::from_secs(32),
             5,
+            None,
         );
 
         let ingress = tokio::spawn(async move {
@@ -718,6 +772,7 @@ mod tests {
             Arc::new(PeerConnCloseNotify::new(PeerConnId::new_v4())),
             Duration::from_secs(32),
             5,
+            None,
         );
 
         let result = timeout(Duration::from_secs(12), pinger.pingpong()).await;
@@ -727,6 +782,54 @@ mod tests {
         assert!(
             result.is_err(),
             "matching business-packet echoes did not keep the connection alive"
+        );
+    }
+
+    #[test]
+    fn may_tear_down_requires_verified_unfused_alternative() {
+        use uuid::Uuid;
+        let cfg = ConnSelectConfig::default();
+        let healthy = ConnMetrics {
+            conn_id: Uuid::from_bytes([1; 16]),
+            latency_us: 5_000,
+            loss_rate: 0.0,
+            jitter_us: 0,
+            is_hole_punched: false,
+        };
+        let unverified_punch = ConnMetrics {
+            conn_id: Uuid::from_bytes([2; 16]),
+            latency_us: 0,
+            loss_rate: 0.0,
+            jitter_us: 0,
+            is_hole_punched: true,
+        };
+        let fused = ConnMetrics {
+            conn_id: Uuid::from_bytes([3; 16]),
+            latency_us: 5_000,
+            loss_rate: 0.35,
+            jitter_us: 0,
+            is_hole_punched: false,
+        };
+
+        assert!(
+            !may_tear_down_for_ping_failure(std::iter::empty(), cfg),
+            "last path must not be torn down"
+        );
+        assert!(
+            !may_tear_down_for_ping_failure([&unverified_punch], cfg),
+            "unverified hole-punch is not a real alternative"
+        );
+        assert!(
+            !may_tear_down_for_ping_failure([&fused], cfg),
+            "fused path is not a real alternative"
+        );
+        assert!(
+            may_tear_down_for_ping_failure([&healthy], cfg),
+            "verified unfused path allows teardown"
+        );
+        assert!(
+            may_tear_down_for_ping_failure([&unverified_punch, &healthy], cfg),
+            "one good alternative among junk is enough"
         );
     }
 

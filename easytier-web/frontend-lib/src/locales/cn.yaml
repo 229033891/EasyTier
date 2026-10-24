@@ -508,6 +508,7 @@ default_protocol_help: |-
   有序协议列表（逗号分隔存盘）。直连按此顺序尝试对端已宣告的监听。
   手动 peer URL 先按配置的 scheme 拨号，失败后才在 tcp/udp/ws/wss/quic 之间改写 scheme 降级（保留主机与端口，不锁死 443）；wg / faketcp 仍可用于直连排序，但不会对手动 peer 改写。
   默认 udp,tcp：其余常见协议（tcp/ws/wss/quic/faketcp）都自带重传，内层 TCP（RDP/SSH/HTTP）会变成 TCP over TCP，轻微丢包即卡顿；保留 tcp 作第二位是为了「UDP 被阻断时自动落到 TCP」。例如 wss,tcp,quic,udp：UDP 被阻断时仍可落到列表中的 TCP/WSS。
+  交互场景（RDP / SSH）：若已确认 UDP 可用，可将顺序收为仅 udp，避免落到 TCP-over-TCP；禁 UDP 的环境请保留 tcp/wss 等兜底，不要只留 udp。
   下拉框中的芯片顺序即尝试顺序；新勾选的协议按目录顺序追加到末尾，取消后重新勾选可调整相对位置。
   ⚠️ 此列表只定「优先级」，不排除协议：未勾选的协议排在最后，仍会被尝试。
   ⚠️ 但「多链路聚合数」会截断拨号：前 N 个协议（N = 聚合数）拨成功即止，列表里第 N+1 个及以后通常拨不到，只在前面的失败时才有机会。建议把 tcp 放在靠前位置兜底。
@@ -731,6 +732,7 @@ peer_link_bond_count: 多链路聚合数
 peer_link_bond_count_help: |-
   一对 peer 之间并行发送的目标 PeerConn 条数。默认 2：按内层 IP 五元组把不同流分摊到多条隧道（需有多条同质量档存活隧道）。
   质量优先：明显更差的路径不进发送集（仅热备）；同档不足时允许实际条数小于该值。设为 1 只走单条 default_conn（多条隧道仅为热备，不叠带宽）。上限 5；单个 RDP 等单流仍受单条隧道上限。
+  对照实验：排查交互卡顿时可暂设为 1（知悉会关掉多协议拨号兜底）；出厂保持 2，不建议长期改 1。
   ⚠️ 设为 1 会连带关掉多协议拨号：此时「协议顺序」里只拨第一条，连上即停，udp 被限速时不会自动降级到 tcp。保持 2 即可常备第二种协议（差异隧道平时只作热备，不额外占带宽）。
 peer_link_bond_count_placeholder: 留空为默认值2
 peer_link_replica_fill_max: 同类补齐上限
@@ -746,10 +748,11 @@ ping_interval_max_sec_help: |-
   恢复旧的慢节奏可显式写 32。留空使用出厂默认 10。
 ping_interval_max_sec_placeholder: 留空为默认值10
 
-ping_fail_close_count: 拆连失败阈值(次)
+ping_fail_close_count: 拆连失败次数(次)
 ping_fail_close_count_help: |-
   PeerConn 连续保活失败多少次后判定为死链并拆连重建，出厂默认 10。
   调小恢复更快，但短暂抖动也会触发拆连（重建期间必然丢包）；调大容忍抖动，但黑洞窗口拉长。出厂 10 已在「容忍抖动」与「尽快重建」之间取平衡。
+  弱网可适当调高（如 12–20）。另：若该对端已无其它可用隧道，节点不会因保活失败拆掉最后一条路径（避免整段冻结），会继续探测直至恢复。
   留空使用出厂默认 10。
 ping_fail_close_count_placeholder: 留空为默认值10
 

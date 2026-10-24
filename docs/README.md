@@ -72,6 +72,7 @@ crate 内设计稿（非本索引）：`easytier/docs/`（凭据计划已标 Arc
 | [traffic-camouflage.md](./roadmap/traffic-camouflage.md) | 传输伪装 / 抗识别（wss 范式与 TLS 外观，Draft） |
 | [traffic-camouflage-phase-a-todo.md](./roadmap/traffic-camouflage-phase-a-todo.md) | Phase A TODO：中继 + wss:443 Ops/状态（**暂不实现**） |
 | [connection-stability-todo.md](./roadmap/connection-stability-todo.md) | 连接稳定性优化 TODO（相对 OpenVPN/IPsec；**端点可自定义，不假设 443**） |
+| [stability-abc-plan.md](./roadmap/stability-abc-plan.md) | **稳定性 A/B/C 施工计划**（A=P1.5 拆连雪崩防护；B=配置引导；C=现网验收；不对标 DERP） |
 | [live-next-hop.md](./roadmap/live-next-hop.md) | **已建立线路才转发**（**方案重议**：首版改法不被接受，无方向性 ⇒ 环路；目标语义=已建立+在通往目的的路径上+无环；比较规则=字典序 `成本→跳数→稳定身份键`；Phase A/C/F/F2/B/D 已落地待现网，**B/D 限等代价旁路**） |
 | [code-review-fixes-2026-10.md](./roadmap/code-review-fixes-2026-10.md) | **全仓代码审查修复清单**（15 条 CR-01…CR-15 + 10 条附带发现；`panic=abort` 放大前提；分 Phase A–D） |
 | [web-evolution.md](./roadmap/web-evolution.md) | easytier-web 演进约束与阶段 |

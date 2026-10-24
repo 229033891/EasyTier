@@ -1,5 +1,5 @@
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
 use arc_swap::ArcSwapOption;
 use crossbeam::atomic::AtomicCell;
@@ -19,6 +19,7 @@ use super::conn_select::{
     score_conn,
 };
 use super::peer_conn::{PeerConn, PeerConnId};
+use super::peer_conn_ping::{PingFailCloseGate, may_tear_down_for_ping_failure};
 use crate::peers::{
     PacketRecvChan,
     context::{ArcPeerContext, PeerEvent},
@@ -62,6 +63,8 @@ pub struct Peer {
     default_conn_clear_task: AbortOnDropHandle<()>,
     /// Per-tunnel IP flow accounting (disabled by default).
     flow_table: Arc<FlowTable>,
+    /// P1.5: times we refused to tear the last verified PeerConn on ping failure.
+    close_skipped_last: Arc<AtomicU64>,
 }
 
 impl Peer {
@@ -188,7 +191,55 @@ impl Peer {
             peer_public_key,
             default_conn_clear_task,
             flow_table,
+            close_skipped_last: Arc::new(AtomicU64::new(0)),
         }
+    }
+
+    /// How many times ping-fail teardown was skipped because this was the last
+    /// verified path (P1.5). Useful for status / existing-network acceptance.
+    pub fn close_skipped_last_count(&self) -> u64 {
+        self.close_skipped_last.load(Ordering::Relaxed)
+    }
+
+    /// Build the P1.5 close gate for `conn_id` / `notifier`.
+    ///
+    /// Under [`Self::default_conn_update_lock`]: if a verified unfused alternative
+    /// exists, mark this conn closed (so concurrent gates cannot both close) and
+    /// allow teardown; otherwise increment [`Self::close_skipped_last`] and deny.
+    fn build_ping_fail_close_gate(
+        &self,
+        conn_id: PeerConnId,
+        notifier: Arc<super::peer_conn::PeerConnCloseNotify>,
+    ) -> PingFailCloseGate {
+        let conns = self.conns.clone();
+        let context = self.context.clone();
+        let lock = self.default_conn_update_lock.clone();
+        let skipped = self.close_skipped_last.clone();
+        Arc::new(move || {
+            let _guard = lock.lock();
+            if notifier.is_closed() {
+                return true;
+            }
+            let cfg = context.conn_select_config();
+            let alternatives: Vec<ConnMetrics> = conns
+                .iter()
+                .filter_map(|entry| {
+                    let conn = entry.value();
+                    if conn.is_closed() || conn.get_conn_id() == conn_id {
+                        return None;
+                    }
+                    Some(Self::conn_select_metrics(conn))
+                })
+                .collect();
+            if !may_tear_down_for_ping_failure(alternatives.iter(), cfg) {
+                skipped.fetch_add(1, Ordering::Relaxed);
+                return false;
+            }
+            // Claim close under the lock so a racing peer_conn cannot also pass
+            // the alternative check against this still-open conn.
+            notifier.notify_close();
+            true
+        })
     }
 
     pub async fn add_peer_conn(&self, mut conn: PeerConn) -> Result<(), Error> {
@@ -206,6 +257,12 @@ impl Peer {
         }
 
         let close_notifier = conn.get_close_notifier();
+        // Subscribe *before* start_pingpong: the P1.5 close gate may call
+        // `notify_close` under the peer lock while the keepalive task is still
+        // running. If we subscribed afterwards, `get_waiter` would see a taken
+        // sender and the close event would never reach the peer map.
+        let close_waiter = close_notifier.get_waiter().await;
+        let conn_id_for_close = close_notifier.get_conn_id();
         let conn_info = conn.get_conn_info();
         let conn_pubkey = conn_info.noise_remote_static_pubkey.clone();
         {
@@ -225,17 +282,18 @@ impl Peer {
         }
 
         conn.start_recv_loop(self.packet_recv_chan.clone()).await;
-        conn.start_pingpong();
+        let close_gate =
+            self.build_ping_fail_close_gate(conn.get_conn_id(), conn.get_close_notifier());
+        conn.start_pingpong(Some(close_gate));
         self.conns.insert(conn.get_conn_id(), Arc::new(conn));
 
         let close_event_sender = self.close_event_sender.clone();
         tokio::spawn(async move {
-            let conn_id = close_notifier.get_conn_id();
-            if let Some(mut waiter) = close_notifier.get_waiter().await {
+            if let Some(mut waiter) = close_waiter {
                 let _ = waiter.recv().await;
             }
-            if let Err(e) = close_event_sender.send(conn_id).await {
-                tracing::warn!(?conn_id, "failed to send close event: {}", e);
+            if let Err(e) = close_event_sender.send(conn_id_for_close).await {
+                tracing::warn!(?conn_id_for_close, "failed to send close event: {}", e);
             }
         });
 

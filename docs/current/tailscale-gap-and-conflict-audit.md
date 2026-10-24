@@ -3,10 +3,10 @@
 ## Status
 
 - Status: **Current**（静态审查 + 2026-10-17 一轮代码修复；**仍无现网抓包/压测**）
-- 最近审阅：2026-10-17 v2 **勘误**（§8 P1 删过时的 `P-AUDIT.8` 旧条目、§1.2 删重复行、§5.1 补记 P-AUDIT.7 已落地、§11 修正「easytier crate 无法构建」）；同日首版（**P-AUDIT.1/2/3/4/9/10 + S1b + `latency_first` 默认统一 + KCP 对齐 已合入、待现网验收**；新增 §5.1「不通 vs 卡顿」分栏与失效链、§9 设计原则三轴、§10 默认值一致性；**并推翻两条初版结论**：§3 C7「状态页绿一小时」、§5.1「纯 P2P 无中继」）
+- 最近审阅：2026-10-24（§8 P-AUDIT.5b 标已落地；施工入口 [`../roadmap/stability-abc-plan.md`](../roadmap/stability-abc-plan.md)）；2026-10-17 v2 **勘误**与 P-AUDIT 合入轮见下文历史
 - 范围：对照 Tailscale（WireGuard 会话保持 + DERP）语义，区分 **代码 bug/冲突** vs **设计默认** vs **运维/环境**
 - 关联：[`p2p-direct-stability-audit.md`](./p2p-direct-stability-audit.md)（S1–S5/S1b）、[`p2p-direct-throughput-audit.md`](./p2p-direct-throughput-audit.md)（B1–B3）、[`peer-connections.md`](./peer-connections.md)、[`traffic-steering.md`](./traffic-steering.md)
-- 修复跟踪：[`../roadmap/connection-stability-todo.md`](../roadmap/connection-stability-todo.md)（P1.5 + 本文 P-AUDIT.*）
+- 修复跟踪：[`../roadmap/stability-abc-plan.md`](../roadmap/stability-abc-plan.md)（A/B/C）、[`../roadmap/connection-stability-todo.md`](../roadmap/connection-stability-todo.md)（总清单）
 - 索引：[`../README.md`](../README.md)
 
 > 本文只描述**今天代码做什么**与分类结论。建议修复清单**不是已落地行为**。
@@ -446,7 +446,7 @@ NAT 保活是**正确性要求**而非调优旋钮，不允许用大值关掉。
 | **P-AUDIT.8** | ~~路由/Peer 残留 90s~61min~~ | **⚠️ 初版前提已被推翻，不做代码改动。** 原以为「对端掉线后状态页最长绿一小时（`REMOVE_DEAD_PEER_INFO_AFTER=3660s`）」。实测追踪后发现**不成立**，详见 §3 C7 | 单测 `stale_peer_survives_while_a_neighbour_still_claims_adjacency` 已把真实行为固化 | §3 C7 |
 | P1.5 | 短时抖动宽限 | 短暂丢包不立即拆 conn（`peer_conn_ping.rs:327`）。无中继的组网里这是**从「可选优化」升为「必需」**的项 | 丢 1–2 包不触发拆连 | 已有 Roadmap |
 | P-AUDIT.5 | TCP 回落产品提示 | ✅ 已修：状态页「协议」列在**所有隧道均为自带重传传输**（tcp/faketcp/quic/kcp）时加 ⚠ 并给 tooltip，说明 TCP-over-TCP 成因与排查方法。**混合集合不提示**（UDP 仍可走 ⇒ 提示只是噪音）。判定为纯函数 `allPathsRetransmit` | Web `vitest` 通过 | X2 |
-| P-AUDIT.5b | 配置面默认值提示 | 未做：`ping_fail_close_count` 等在 GUI 无控件（`network.ts` 默认模板不含该字段），只能走 TOML/CLI。要暴露需新增 proto + UI 字段 | — | — |
+| P-AUDIT.5b | 配置面默认值提示 | ✅ **已落地**（2026-10 复核）：`Config.vue` + `network.ts` 默认模板含 `ping_fail_close_count` / `ping_interval_max_sec`（出厂 10/10）。旧「无控件」结论作废。交互场景引导见 Roadmap [`../roadmap/stability-abc-plan.md`](../roadmap/stability-abc-plan.md) 档 B | GUI 可见两字段；新建网络默认 10/10 | — |
 | **P-AUDIT.10c** | OHRS / Android `path_latency` 大数值 | **核实为非问题**：该字段仅在 `easytier-ohrs` 的 API 类型之间透传（`napi_types.rs` / `runtime_state.rs`），**全仓无消费方**（Kotlin 侧 `pathLatency` 零命中；默认构造里一律 `None`）⇒ 没有可显示的 UI，不存在回归。记录在此以免后续加 UI 时踩坑 | — | `easytier-ohrs` |
 | — | 打洞刚成时的代价空窗 | **已复核，暂不改**，详见 §3 C8 | — | `peer_map.rs` `best_edge_cost` |
 

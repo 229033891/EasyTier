@@ -2,12 +2,12 @@
 
 ## Status
 
-- Status: **Roadmap**（Checklist；P-UX + P0.1–P0.4 + P1.1–P1.3/P1.6–P1.8 + P2.1–P2.3 + P-AUTO.L1 已落地；下一步 P0.5 / P1.5 / **P-AUDIT.***）
+- Status: **Roadmap**（Checklist；P-UX + P0.1–P0.4 + P1.1–P1.3/P1.6–P1.8 + P2.1–P2.3 + P-AUTO.L1 已落地；下一步按 [`stability-abc-plan.md`](./stability-abc-plan.md) 执行 A/B/C）
 - 日期：2026-10-06
-- 最近审阅：2026-10-18（**.12 打磨**：flusher 挂 `peer_info` 唤醒 + 挤出/过期 reclaim 计入 drops + relay `handshake_pending_packets` 命名互指；Android GUI / OHOS L2 对齐 `desired_proxy_cidrs`；**收益仍待现网**）；2026-10-18（**P-AUDIT.11 + .12 已落地**：路由安装/会话启动改事件驱动，1s tick 降为兜底；无路由的包改 500ms 短暂暂存后重发；.5b/.6/.8b/.10b 明确不做，理由见 Current §11）；2026-10-17（**P-AUDIT.1–.5/.7/.9/.10 + S1b + `latency_first` 默认统一 + `ping_fail_close_count` 5→10 + KCP 对齐 已落地，待现网**）
+- 最近审阅：2026-10-24（A/B **代码已落地、待 C 现网**：P1.5 闸门 + 交互引导文案；验收仍走 [`stability-abc-plan.md`](./stability-abc-plan.md) §7）；2026-10-18（**.12 打磨** / P-AUDIT.11+.12）；2026-10-17（P-AUDIT.1–.5/.7/.9/.10 + S1b + DEF + ping 阈值 5→10 + KCP 对齐）
 - 背景：对照 OpenVPN / IPsec 的「固定隧道 + 强保活」模型，梳理 EasyTier Mesh（多 PeerConn + 打洞 + 中继）的稳定性差距与可落地项；**另纳入 2026-10-06 用户反馈：高级选项互斥缺校验、长表单占空间、单协议配置失败后无智能回落**；**2026-10-16**：对照 Tailscale 的延迟/卡顿/偶发不通代码审查见 [`../current/tailscale-gap-and-conflict-audit.md`](../current/tailscale-gap-and-conflict-audit.md)
 - 相关 Current：[`../current/peer-connections.md`](../current/peer-connections.md)、[`../current/tunnels-and-transport.md`](../current/tunnels-and-transport.md)、[`../current/tailscale-gap-and-conflict-audit.md`](../current/tailscale-gap-and-conflict-audit.md)、[`../current/p2p-direct-stability-audit.md`](../current/p2p-direct-stability-audit.md)
-- 相关 Roadmap：[`traffic-camouflage.md`](./traffic-camouflage.md)、[`multi-link-bonding.md`](./multi-link-bonding.md)（Phase 2a/2b 已合入；Phase 3 待做）、[`market-comparison-2026-10.md`](./market-comparison-2026-10.md)
+- 相关 Roadmap：[`stability-abc-plan.md`](./stability-abc-plan.md)（**当前施工入口**）、[`traffic-camouflage.md`](./traffic-camouflage.md)、[`multi-link-bonding.md`](./multi-link-bonding.md)（Phase 2a/2b 已合入；Phase 3 待做）、[`market-comparison-2026-10.md`](./market-comparison-2026-10.md)
 - 索引：[`../README.md`](../README.md)
 
 **硬约束（全文适用）**
@@ -153,7 +153,7 @@ score = w_lat * norm(rtt)
 - [x] **P1.2** `ping_interval_max_sec` 可配置（默认 32；与 per-conn TCP 打洞 1s cap 取更严）；自适应下限仍为 1s 踢拍
 - [x] **P1.3** 弱网/策略预设：**优先 scheme 列表**可自定义（例：`wss,tcp,quic,udp`），失败按序降级——**不写死「先 443」**（= P-AUTO.L1）
 - [ ] **P1.4** 验证 #2632：TCP/非 UDP 打洞连接 1s ping 在目标环境不再因 idle 掉线（`cargo test` / 现网抽样）
-- [ ] **P1.5** 可选：短时抖动宽限（如短暂丢包不立即拆 conn），避免比 OpenVPN 更「神经质」的闪断（vs Tailscale 会话保持；见 `tailscale-gap-and-conflict-audit.md` X3）
+- [x] **P1.5** 短时抖动宽限 / 拆连雪崩防护：**代码已落地、待现网**（[`stability-abc-plan.md`](./stability-abc-plan.md) 档 A：有替代才拆 / 保护最后一条；`PingFailCloseGate` + `may_tear_down_for_ping_failure`）
 - [x] **P1.6** 度量：在现有 RTT 窗口上增加 **jitter** 统计，并与已有 `loss_rate` 一并暴露到 `PeerConnStats` / 状态面（`WindowLatency::get_jitter_us`；proto `jitter_us=6`；Status 表展示）
 
 ### P-AUDIT — vs Tailscale 审查（2026-10-16 立项；2026-10-17 大部分已落地、待现网验收）
@@ -165,13 +165,13 @@ score = w_lat * norm(rtt)
 - [x] **P-AUDIT.3** `BufferFull` / NIC `try_send` 失败：`data_plane_tunnel_buffer_full`（含中继转发腿）/ `data_plane_nic_channel_drops`（C5）
 - [x] **P-AUDIT.4** 转发网关判定：`has_peer` → live conn（C3/C6；`PeerMap::has_peer_with_live_conn`，`send_msg_internal` 两处网关闸门 + 直连分支；选路仍用 `has_peer`）。**2026-10-17 补**：现网长黑洞（[`../current/packet-loss-investigation-2026-10.md`](../current/packet-loss-investigation-2026-10.md) §10）后重新审议「选路是否也改 live」——首版改法（选路 + 兜底 relay）会引入跨节点环路，**未落地**；**Phase A** 只保留「对路由点名的那个下一跳查活连接」（`select_next_hop`：**本地可发优先，「无本地条目」只作兜底**——它既可能是跨网网关，也可能是条目已被回收的死下一跳，见 [`live-next-hop.md`](./live-next-hop.md) §4 P9、§5.3、§6），**不搜索**替代下一跳
 - [x] **P-AUDIT.5** 状态面：协议列在**所有隧道均为自带重传传输**（tcp/faketcp/quic/kcp）时加 ⚠ + TCP-over-TCP 说明；混合集合不提示（X2）
-- [ ] **P-AUDIT.5b** 配置面提示：`ping_fail_close_count` / `ping_interval_max_sec` 目前无 GUI 控件（`network.ts` 默认模板无该字段），只能走 TOML/CLI；要暴露需新增 proto + UI 字段
+- [x] **P-AUDIT.5b** 配置面：`ping_fail_close_count` / `ping_interval_max_sec` GUI + 默认模板 **已落地**（`Config.vue` / `network.ts`）；旧「无控件」结论作废。后续交互场景引导见 [`stability-abc-plan.md`](./stability-abc-plan.md) 档 B
 - [ ] **P-AUDIT.6** 发送环满时背压（吞吐 B2 / S5）—— **明确不做**：改阻塞会在数据面引入背压链，可能与 `select!`/定时器产生死锁或活锁，且无法用单测可靠覆盖；属需压测 + 故障注入的架构级改动（Current 审计 §11 已记录理由）
 - [x] **P-AUDIT.9** Bond 成员改一致哈希（`bond_member_for_flow` 按 conn_id 取最小哈希）：消除「按位置哈希 + 成员重排 ⇒ 流被重映射」；**纯重排 0 迁移**。⚠️ 刻意**不**强制选最优成员、**不**降 `bond_count`（两者都会删掉聚合能力）
 - [x] **P-AUDIT.10** 政策否决透明化（核心）：`AVOID_RELAY_COST` 由 `i32::MAX` → `1e9`（`saturating_add`，仍是事实否决）；`path_latency` 停止 `% AVOID_RELAY_COST` 抹除惩罚、如实上报；Web 渲染「政策绕行」
 - [ ] **P-AUDIT.10b** 状态面指名**具体哪个中继**拒载：proto 缺字段（`Route.feature_flag` 只带终点 flag），需新增 + 跨语言 codegen
 - [x] **P-AUDIT.7**（前提已复核推翻后重做）：`ping_fail_close_count` 默认 5 → **10**（拆连判定 ~15s → ~30s，短暂抖动不再触发拆-建；重建代价 ~30s 使该容忍度近乎免费）。顺带把 `peer_conn.rs` 中硬编码的 `5` / `32` 回落值改为引用 `config::toml::DEFAULT_PING_*`，消除与 `gen_default_flags()` 的漂移隐患；同步 `three_node.rs` 依赖旧时间窗的测试超时 15s→40s
-- [ ] **P1.5**（仍需）：抖动宽限的**正确形态**是「仅在**无替代路径**时才激进拆」，而不是无条件延长阈值——判据应是 `Peer` 是否还有别的可用路，而非「有没有中继」
+- [x] **P1.5**（**代码已落地、待现网**）：「仅在有已验证未熔断替代路径时才因 ping 失败拆连 / 保护最后一条」；判据为同 Peer 其它 `is_unfused_verified` conn，非「有没有中继」。实现与验收：[`stability-abc-plan.md`](./stability-abc-plan.md) 档 A / §7
 - [x] **P-AUDIT.10c**（核实为非问题）：OHRS/Android 侧 `path_latency` 全仓**无消费方**（Kotlin `pathLatency` 零命中；默认构造一律 `None`）⇒ 无可显示 UI，不存在回归
 - [x] **KCP** GUI `enable_kcp_proxy` `true` → `false`，与 core 一致（拍板「KCP 模式不开启」）
 - [x] **S1b** UDP 打洞 conn NAT 保活上限：32s → **10s**（TCP 打洞 1s 不变）；`hole_punch_ping_max` 纯函数，`min(cap, ping_interval_max_sec)` 只收紧不放宽
@@ -290,8 +290,8 @@ P1.6 stats jitter/loss 上报 + P1.1/P1.2 透参
 | 项 | 状态 | 备注 |
 |----|------|------|
 | P0.* | P0.1–P0.4 **已完成（档位已简化删除）**；P0.5 验收未开始 | 全量拨号 + 质量选路 + 文档/模板 |
-| P1.* | P1.1–P1.3/P1.6–P1.8（单元）**已完成**；P0.5/P1.8b 现网验收、P1.4–P1.5 未开始 | 质量分 Flags 透参已接；P1.3=L1 |
-| P-AUDIT.* | **.1–.5 + .7 + .9 + .10 + S1b + DEF + KCP 已落地，待现网**；.5b/.6/.8b/.10b 未开始（理由见 Current §11） | 见 Current `tailscale-gap-and-conflict-audit.md`（§1.1 落地清单 / §8 修复清单 / §5.1 失效链 / §9 设计三轴） |
+| P1.* | P1.1–P1.3/P1.5–P1.8（单元）**已完成**（P1.5 待现网）；P0.5/P1.8b 现网、P1.4 未开始 | 质量分 Flags 透参已接；P1.3=L1；P1.5 见 [`stability-abc-plan.md`](./stability-abc-plan.md) |
+| P-AUDIT.* | **.1–.5 + .5b + .7 + .9 + .10 + S1b + DEF + KCP 已落地，待现网**；.6/.8b/.10b 未开始或明确不做（理由见 Current §11）；交互引导 B2/B4 已合 | 见 Current `tailscale-gap-and-conflict-audit.md`；A/B/C 见 [`stability-abc-plan.md`](./stability-abc-plan.md) |
 | P2.* | P2.1–P2.4 **已完成**；P2.5 未开始 | bonding Phase 2 见 [`multi-link-bonding.md`](./multi-link-bonding.md)；Phase 3 仍开放 |
 | P3.* | Backlog | |
 | P-UX.* | **已完成** | 老配置只提示；断点 760px；`configConflicts.ts` + Config 紧凑布局 |

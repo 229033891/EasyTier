@@ -248,7 +248,11 @@ impl PeerConnCloseNotify {
         }
     }
 
-    fn notify_close(&self) {
+    /// Mark this conn closed. Idempotent (`take` twice is a no-op).
+    ///
+    /// `pub(crate)` so [`super::peer::Peer`] can claim a ping-fail teardown under
+    /// its lock (P1.5) before concurrent peers re-check alternatives.
+    pub(crate) fn notify_close(&self) {
         self.sender.lock().unwrap().take();
     }
 
@@ -1445,7 +1449,16 @@ impl PeerConn {
         );
     }
 
-    pub fn start_pingpong(&mut self) {
+    /// Start keepalive + fast probe.
+    ///
+    /// `close_gate` (P1.5): when consecutive ping failures reach the close
+    /// threshold, the ordinary pinger only tears down if the gate returns true.
+    /// Peer wires a gate that requires a verified unfused alternative under a
+    /// peer-wide lock. Fast probe never closes and always gets `None`.
+    pub fn start_pingpong(
+        &mut self,
+        close_gate: Option<super::peer_conn_ping::PingFailCloseGate>,
+    ) {
         let mut pingpong = PeerConnPinger::new(
             self.my_peer_id,
             self.get_peer_id(),
@@ -1462,6 +1475,7 @@ impl PeerConn {
             self.close_event_notifier.clone(),
             self.max_ping_interval(),
             self.ping_fail_close_count(),
+            close_gate,
         );
 
         // Phase F: a second, much faster probe whose only output is the degraded
@@ -1483,6 +1497,7 @@ impl PeerConn {
             self.close_event_notifier.clone(),
             self.max_ping_interval(),
             self.ping_fail_close_count(),
+            None,
         );
 
         let close_event_notifier = self.close_event_notifier.clone();
