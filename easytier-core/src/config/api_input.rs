@@ -1420,8 +1420,8 @@ allow_exact_ip = true
 network_name = "net"
 network_secret = "secret"
 "#;
-        let config = NetworkConfig::new_from_config(TomlConfigLoader::new_from_str(toml).unwrap())
-            .unwrap();
+        let config =
+            NetworkConfig::new_from_config(TomlConfigLoader::new_from_str(toml).unwrap()).unwrap();
         assert_eq!(config.flow_stats_enabled, None);
         assert_eq!(config.flow_stats_sample_rate, None);
         assert_eq!(config.flow_stats_max_per_conn, None);
@@ -1446,15 +1446,14 @@ enabled = false
 sample_rate = 4
 allow_exact_ip = true
 "#;
-        let config = NetworkConfig::new_from_config(TomlConfigLoader::new_from_str(toml).unwrap())
-            .unwrap();
+        let config =
+            NetworkConfig::new_from_config(TomlConfigLoader::new_from_str(toml).unwrap()).unwrap();
         assert_eq!(config.flow_stats_enabled, Some(false));
         assert_eq!(config.flow_stats_sample_rate, Some(4));
         assert_eq!(config.flow_stats_allow_exact_ip, Some(true));
 
         // And the readback must survive a re-materialization unchanged.
-        let round_tripped =
-            NetworkConfig::new_from_config(config.gen_config().unwrap()).unwrap();
+        let round_tripped = NetworkConfig::new_from_config(config.gen_config().unwrap()).unwrap();
         assert_eq!(round_tripped.flow_stats_enabled, Some(false));
         assert_eq!(round_tripped.flow_stats_sample_rate, Some(4));
         assert_eq!(round_tripped.flow_stats_allow_exact_ip, Some(true));

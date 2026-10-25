@@ -114,6 +114,22 @@ Agent / 人工均适用：**未完成 §1 不要提交**。
 
 ## 5. 失败记录（新 → 旧）
 
+### 2026-10-25 — ET Test：`cargo fmt --check`（api_input flow_stats 测试）
+
+| 项 | 内容 |
+|----|------|
+| 仓库/分支 | `229033891/EasyTier` `dev` |
+| Run | https://github.com/229033891/EasyTier/actions/runs/40194422628 |
+| 失败 job | Check fmt & lockfile（连带 Run linters & check / test） |
+| 根因一类 | fmt |
+| 状态 | 已修复（`cargo fmt --all`；`api_input.rs` 三处换行） |
+
+**摘要**：`flow_stats` 相关测试里 `NetworkConfig::new_from_config(...).unwrap()` 换行与 rustfmt 不一致。本轮 clippy / Build test / 各 Test\* / Windows / Android 均绿；只有 fmt 门禁红。
+
+**防再犯**：任意 `.rs` 提交前 `cargo fmt --all -- --check`。
+
+---
+
 ### 2026-10-25 — ET Test：`prefer_peer_relay` 双 admin 探针打到 forbidden admin
 
 | 项 | 内容 |
