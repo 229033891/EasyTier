@@ -108,6 +108,15 @@ async fn set_prefer_peer_relay(inst: &Instance, prefer_peer_relay: bool) {
     );
 }
 
+/// Topology projection tests assert hop structure, not latency-based path
+/// quality. Default `latency_first=true` would let a freshly attached relay
+/// lose LeastCost to a measured admin path until peer-center costs settle.
+fn disable_latency_first(config: &TomlConfigLoader) {
+    let mut flags = config.get_flags();
+    flags.latency_first = false;
+    config.set_flags(flags);
+}
+
 fn forwarded_data_packets_for_network(inst: &Instance, network_name: &str) -> u64 {
     let labels = LabelSet::new().with_label_type(LabelType::NetworkName(network_name.to_owned()));
     inst.get_core_instance()
@@ -163,17 +172,34 @@ async fn wait_route_next_hop(
     timeout: Duration,
     label: &str,
 ) {
+    // Match the send path: latency_first=true (the default) uses LeastCost
+    // (`next_hop_peer_id_latency_first`); otherwise LeastHop (`next_hop_peer_id`).
+    // A newly attached relay can win LeastHop immediately on hop count while
+    // its edge is still peer-center default 500, so LeastCost keeps a measured
+    // admin path and assert_ping_forwarded_by sees TrafficPacketsForwarded on
+    // the forbidden admin. Wait for the table data packets actually consult.
+    // Keep this in sync with `PeerPacketPolicy::from_flags`: `p2p_only`
+    // disables latency-first routing even when the flag is set.
+    let flags = inst.get_global_ctx().get_flags();
+    let latency_first = flags.latency_first && !flags.p2p_only;
     wait_for_condition(
         || async {
             let routes = inst.get_core_instance().route_snapshots().await;
-            let next_hop = routes
-                .iter()
-                .find(|route| route.peer_id == peer_id)
-                .map(|route| route.next_hop_peer_id);
+            let route = routes.iter().find(|route| route.peer_id == peer_id);
+            let next_hop = route.map(|route| route.next_hop_peer_id);
+            let next_hop_latency_first =
+                route.and_then(|route| route.next_hop_peer_id_latency_first);
+            let data_next_hop = if latency_first {
+                next_hop_latency_first
+            } else {
+                next_hop
+            };
             println!(
-                "{label}: next_hop={next_hop:?}, target={peer_id}, expected={next_hop_peer_id}"
+                "{label}: latency_first={latency_first}, next_hop={next_hop:?}, \
+                 next_hop_latency_first={next_hop_latency_first:?}, data_next_hop={data_next_hop:?}, \
+                 target={peer_id}, expected={next_hop_peer_id}"
             );
-            next_hop == Some(next_hop_peer_id)
+            data_next_hop == Some(next_hop_peer_id)
         },
         timeout,
     )
@@ -1330,6 +1356,7 @@ async fn prefer_peer_relay_single_admin(#[case] allow_relay: bool) {
 
     // Create admin node
     let admin_config = create_admin_config("admin", Some("ns_adm"), "10.144.144.1", "fd00::1/64");
+    disable_latency_first(&admin_config);
     let mut admin_inst = Instance::new_with_process_runtime(admin_config, process_runtime.clone());
     admin_inst.run().await.unwrap();
 
@@ -1387,6 +1414,7 @@ async fn prefer_peer_relay_single_admin(#[case] allow_relay: bool) {
         ));
         config.set_secure_mode(Some(generate_secure_mode_config_with_key(&private)));
         disable_p2p(&config);
+        disable_latency_first(&config);
         config
     };
     let mut cred_a_inst =
@@ -1416,6 +1444,7 @@ async fn prefer_peer_relay_single_admin(#[case] allow_relay: bool) {
         ));
         config.set_secure_mode(Some(generate_secure_mode_config_with_key(&private)));
         disable_p2p(&config);
+        disable_latency_first(&config);
         config
     };
     let mut cred_b_inst =
@@ -1447,6 +1476,7 @@ async fn prefer_peer_relay_single_admin(#[case] allow_relay: bool) {
         ));
         config.set_secure_mode(Some(generate_secure_mode_config_with_key(&private)));
         disable_p2p(&config);
+        disable_latency_first(&config);
         config
     };
     let mut cred_c_inst =
@@ -1622,12 +1652,14 @@ async fn prefer_peer_relay_uses_forwarded_coverage_across_two_admins() {
 
     let admin_a_config =
         create_admin_config("admin_a", Some("ns_adm"), "10.144.144.1", "fd00::1/64");
+    disable_latency_first(&admin_a_config);
     let mut admin_a_inst =
         Instance::new_with_process_runtime(admin_a_config, process_runtime.clone());
     admin_a_inst.run().await.unwrap();
 
     let admin_b_config =
         create_admin_config("admin_b", Some("ns_c3"), "10.144.144.4", "fd00::4/64");
+    disable_latency_first(&admin_b_config);
     let mut admin_b_inst =
         Instance::new_with_process_runtime(admin_b_config, process_runtime.clone());
     admin_b_inst.run().await.unwrap();
@@ -1686,6 +1718,7 @@ async fn prefer_peer_relay_uses_forwarded_coverage_across_two_admins() {
     );
     relay_config.set_listeners(vec!["tcp://0.0.0.0:11020".parse().unwrap()]);
     disable_p2p(&relay_config);
+    disable_latency_first(&relay_config);
 
     let target_config = create_credential_config_from_secret(
         network_name.clone(),
@@ -1696,6 +1729,7 @@ async fn prefer_peer_relay_uses_forwarded_coverage_across_two_admins() {
         "fd00::3/64",
     );
     disable_p2p(&target_config);
+    disable_latency_first(&target_config);
 
     let source_config = create_credential_config_from_secret(
         network_name,
@@ -1706,6 +1740,7 @@ async fn prefer_peer_relay_uses_forwarded_coverage_across_two_admins() {
         "fd00::5/64",
     );
     disable_p2p(&source_config);
+    disable_latency_first(&source_config);
 
     let mut relay_inst = Instance::new_with_process_runtime(relay_config, process_runtime.clone());
     let mut target_inst =

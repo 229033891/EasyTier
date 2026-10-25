@@ -86,6 +86,7 @@ Agent / 人工均适用：**未完成 §1 不要提交**。
 - [ ] **proto 注释勿让续行以 `+`/`-`/`*` 开头**：prost 会把字段注释编成 `///`；Markdown 把行首 `+` 当成列表，后续未缩进行触发 clippy `doc_lazy_continuation`（`-D warnings` 直接挂）。改写成逗号并列，或续行缩进两空格。
 - [ ] **`#[cfg(test)]` helper 若无断言引用也算 dead_code**：CI 编 lib test 时 `cfg(test)` 为真，未调用的 `pub(super)`/`fn` 仍触发 `-D dead-code`。helper 写了就要在同文件测试里用，否则删掉。
 - [ ] **OpenWrt LuCI `.htm` 必须 LF**：LuCI 把模板正文塞进 `write("…")` 时只转义 `\n`，不转义 `\r`。Windows 上打出的 CRLF apk 会让状态页报 `unfinished string near '"'`。打包前 `sed -i 's/\r$//'`；`luci-app-easytier` 有 `Build/Prepare` 钩子与 `.gitattributes` `eol=lf`。
+- [ ] **数据面 next_hop 要对齐 `latency_first`**：默认 `latency_first=true` 时发包走 LeastCost（`next_hop_peer_id_latency_first`），不是 LeastHop（`next_hop_peer_id`）。拓扑类测试若只等 LeastHop，新建边在 peer-center 仍为默认 500 时 LeastCost 会继续走已测速的 admin 路径，`assert_ping_forwarded_by` 会误报 forbidden forwarder。`wait_route_next_hop` 必须按实例 flag 选表；纯拓扑用例可 `disable_latency_first`。
 
 ---
 
@@ -112,6 +113,27 @@ Agent / 人工均适用：**未完成 §1 不要提交**。
 ---
 
 ## 5. 失败记录（新 → 旧）
+
+### 2026-10-25 — ET Test：`prefer_peer_relay` 双 admin 探针打到 forbidden admin
+
+| 项 | 内容 |
+|----|------|
+| 仓库/分支 | `229033891/EasyTier` `dev` |
+| Run | https://github.com/229033891/EasyTier/actions/runs/40148655510 |
+| 失败 job | Test (easytier) |
+| 根因一类 | flaky-test |
+| 状态 | 已修复（测试侧） |
+
+**摘要**：`prefer_peer_relay_uses_forwarded_coverage_across_two_admins` 在 `wait_route_next_hop`（LeastHop 已是 relay）后 `assert_ping_forwarded_by` 失败：`TrafficPacketsForwarded` 在 forbidden admin 上 +3（三次 ping）。默认 `latency_first=true`，数据走 LeastCost；新建 `source→relay` 边在 peer-center 仍为默认代价 500 时，LeastCost 继续走已测速的 `source→admin→relay→target`，admin 计入转发。
+
+**防再犯**：见 §3「数据面 next_hop 要对齐 `latency_first`」。
+
+**修复说明**（`easytier/src/tests/credential_tests.rs`）：
+
+- `wait_route_next_hop` 按实例 `latency_first` 等待真正的数据面 next hop；
+- `prefer_peer_relay_*` 拓扑用例对所有节点 `disable_latency_first`，避免测速时序干扰投影断言。
+
+---
 
 ### 2026-10-24 — ET Test：P1.5 最后一条路径 hold 拖死 failover（credential 用例连挂）
 
