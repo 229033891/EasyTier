@@ -77,6 +77,7 @@ Agent / 人工均适用：**未完成 §1 不要提交**。
 - [ ] **clippy `too_many_arguments`**：函数 >7 参需打包参数或 `#[allow(clippy::too_many_arguments)]` 并写清原因。
 - [ ] **`Vec<f64>` 不要 `push(0)`**：整数字面量是 `i32`，ET Windows GUI embed 编 `easytier-web` 会 E0308。写 `0.0`。
 - [ ] **测试 helper 返回类型跟 `try_get` 一致**：`conn_id` 等字符串列写成 `i64` 会在 `clippy --tests` 报 E0277（元组类型对不上 / `i64` 与 `&str` 比较）。改 SQL 列类型后同步改 helper 与断言。
+- [ ] **SQL 时间窗必须带显式上界**：查询采样/历史表时，除下界 `sampled_at >= ?` 外还必须有上界 `sampled_at <= ?`。节点时钟超前时写入的行「来自未来」，没有上界它们会落进**每一次**查询的窗口，把曲线整体抬高（见 `docs/current/tunnel-ip-flow-fixes.md` F-2）；删上界时必须同步删掉对应的「未来行被忽略」回归测试。
 - [ ] **编 `easytier-web` 的路径**：OpenWrt `build-bins`、Linux musl、Windows headless embed 都会编 web；只改 core 绿不够。GUI 打包同样会编 web，frontend 绿不够。
 - [ ] **本地 clippy 对齐 CI**：`-- -D warnings`，与 ET Test Check clippy 一致。
 - [ ] **Criterion bench group 名不要含 `/`**：Criterion 落盘会把 `/` 换成 `_`；`script/check_routing_bench.py` 按落盘路径读 `estimates.json`，group 用 `policy_route_empty` / `policy_route_{scale}`。
@@ -111,6 +112,32 @@ Agent / 人工均适用：**未完成 §1 不要提交**。
 ---
 
 ## 5. 失败记录（新 → 旧）
+
+### 2026-10-24 — ET Test：P1.5 最后一条路径 hold 拖死 failover（credential 用例连挂）
+
+| 项 | 内容 |
+|----|------|
+| 仓库/分支 | `229033891/EasyTier` `dev` |
+| Run | 首个红 ET Test `40072947771`（HEAD `87225ba7`）；同因 `40074168968`（`c45ed1cc`）、`40076151092`（`1fe10220`）；最后绿 `40046135326`（`36bba9e4`） |
+| 失败 job | ET Test（Linux，`--features wireguard`） |
+| 根因一类 | 逻辑回归（`4aa7bb50` P1.5） |
+| 状态 | 已修复 |
+
+**摘要**：`4aa7bb50` 的 P1.5 gate 在达 `ping_fail_close_count` 且「无已验证替代」时跳过关闭，再用 **额外 miss 数**（`+5`）兜底强关。两处失真：① miss 间隔由 `PingIntervalController` 退避决定，5 个 miss 的墙钟时间不可控（实测≈+10s）；② 「从未 round-trip 成功过」的新建 conn 也享受 hold，而这正是 credential 直连重试的场景。
+
+结果：dead conn 一直占着 `has_live_conns()`，`has_directly_connected_conn` 为真 → direct connector 不重拨 → `wait_direct_peer(30s)` 报 `direct peers=[]`；`credential_non_reusable_*` 在 60.08s 撞 60s 预算。
+
+**防再犯**：连续失败阈值只表达「失败次数」，任何「再等一会儿」的宽限必须用**墙钟**（`Duration`）表达并写上界；新增 hold 规则时要回答「这条 conn 凭什么是值得保护的路径」，并配一条「gate 始终 deny 也必须能关」的单测。
+
+**修复说明**（`easytier-core/src/peers/conn/peer_conn_ping.rs`）：
+
+- 传输已关（`TunnelError::Shutdown` 或 `close_notify.is_closed()`）→ 立刻 break，不再空数 miss；
+- 从未 round-trip 成功的 conn 不适用 hold（`had_roundtrip`），到阈值即关，恢复 `4aa7bb50` 之前的时序；
+- 真正的最后路径宽限改为墙钟 `LAST_PATH_HOLD_MAX = 5s`（自首次越过阈值起算），到期强关并打 `last path hold expired`；
+- 宽限期的 `ping fail close skipped` 降为 debug（stability plan §3.4），关闭日志串保持不变；
+- 新增单测 `never_round_tripped_conn_closes_even_when_gate_denies`（gate 一直 deny 也必须能关）。
+
+---
 
 ### 2026-10-23 — ET Test：`flow_history` 测试 `conn_id` 元组类型 E0277
 

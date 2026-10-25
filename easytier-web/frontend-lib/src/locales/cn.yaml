@@ -773,11 +773,7 @@ status:
   relay: 中继
   p2p: 直连
   # 隧道级流量（见 docs/roadmap/tunnel-ip-flow-observability.md）
-  flow_panel: 流量统计
-  flow_panel_empty: 暂无流量明细。请在节点配置中开启流量统计并保存；仅统计本节点收发的隧道流量（转发不计），有业务流量后才会出现记录。
-  flow_filter_placeholder: 搜索对端 / IP / 方向…
-  flow_filter_empty: 无匹配流量。可清空搜索框查看全部。
-  flow_peer: 对端
+  flow_detail: 流量明细
   flow_direction: 方向
   flow_ip: IP / 网段
   flow_bytes: 流量

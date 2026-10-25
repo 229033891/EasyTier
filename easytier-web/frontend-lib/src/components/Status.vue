@@ -39,11 +39,10 @@ import {
   type RouteTableKind,
   type VipStateKey,
 } from '../modules/statusDisplay';
-import { Badge, DataTable, Column, Tag, Button, Card, Panel, InputText } from 'primevue';
+import { Badge, DataTable, Column, Tag, Button, Card, Panel } from 'primevue';
 import NetworkChart from './NetworkChart.vue';
 import PeerConnHistoryChart from './PeerConnHistoryChart.vue';
 import FlowHistoryChart from './FlowHistoryChart.vue';
-import { filterFlowPanelRows } from '../modules/flowPanelFilter';
 
 const props = defineProps<{
   curNetworkInst: NetworkInstance | null,
@@ -194,6 +193,30 @@ function rowRxBytes(row: PeerConnTableRow) {
  * is a different unit than the link bytes of the upload/download columns.
  * ------------------------------------------------------------------ */
 
+function rowFlows(row: PeerConnTableRow): PeerConnFlow[] {
+  return row.conn?.flows ?? []
+}
+
+function hasFlowRows(): boolean {
+  return peerConnRows.value.some(row => rowFlows(row).length > 0)
+}
+
+/** 展开了流量明细的 peer 行（按 PeerConnTableRow.key 索引）。 */
+const expandedFlowRows = ref<Set<string>>(new Set())
+
+function isFlowRowExpanded(row: PeerConnTableRow): boolean {
+  return expandedFlowRows.value.has(row.key)
+}
+
+function toggleFlowRowExpanded(row: PeerConnTableRow) {
+  const next = new Set(expandedFlowRows.value)
+  if (next.has(row.key))
+    next.delete(row.key)
+  else
+    next.add(row.key)
+  expandedFlowRows.value = next
+}
+
 /** Show the aggregated prefix (with how many IPs it covers) when masked. */
 function flowIpLabel(flow: PeerConnFlow): string {
   const prefixLen = flow.prefix_len ?? 0
@@ -221,57 +244,35 @@ function flowRateLabel(flow: PeerConnFlow): string {
   return `${humanFileSize(rate)}/s`
 }
 
-/** One row in the dedicated flow-stats panel (not the peer table). */
-type FlowPanelRow = {
-  key: string
-  peer: string
-  proto: string
-  direction: string
-  ip: string
-  bytes: string
-  rate: string
-  estimated: boolean
-  sortBytes: number
+/** Compact per-row summary: the two busiest destinations of the tunnel. */
+function rowFlowSummary(row: PeerConnTableRow): string {
+  const flows = rowFlows(row)
+  if (!flows.length) return ''
+  const top = flows.slice(0, 2).map(flow => {
+    const arrow = flow.direction === 0 ? '↑' : '↓'
+    return `${arrow}${flowIpLabel(flow)} ${flowBytesLabel(flow)}`
+  })
+  const rest = flows.length - top.length
+  return rest > 0 ? `${top.join('  ')}  +${rest}` : top.join('  ')
 }
 
-/**
- * Flatten PeerConn.flows into a standalone table. Kept out of the peer table
- * so that dense status view stays readable (see tunnel-ip-flow observability).
- */
-const flowPanelRows = computed((): FlowPanelRow[] => {
-  const rows: FlowPanelRow[] = []
-  for (const row of peerConnRows.value) {
-    const flows = row.conn?.flows ?? []
-    if (!flows.length)
-      continue
-    const hostname = row.pair.route?.hostname || ''
-    const vip = rowIpFormat(row)
-    const peer = hostname && vip ? `${hostname} (${vip})` : (hostname || vip || '-')
-    const proto = row.conn ? oneTunnelProto(row.conn.tunnel) : ''
-    for (let i = 0; i < flows.length; i++) {
-      const flow = flows[i]
-      rows.push({
-        key: `${row.key}-${flow.direction}-${flow.ip}-${i}`,
-        peer,
-        proto,
-        direction: flowDirectionLabel(flow),
-        ip: flowIpLabel(flow),
-        bytes: flowBytesLabel(flow),
-        rate: flowRateLabel(flow),
-        estimated: !!flow.sampled,
-        sortBytes: numericValue(flow.bytes) ?? 0,
-      })
-    }
-  }
-  rows.sort((a, b) => b.sortBytes - a.sortBytes)
-  return rows
-})
-
-/** Local search for the flow panel (peer / IP / direction). */
-const flowFilterQuery = ref('')
-const filteredFlowPanelRows = computed(() =>
-  filterFlowPanelRows(flowPanelRows.value, flowFilterQuery.value),
-)
+function rowFlowTip(row: PeerConnTableRow): { value: string, escape: false } | undefined {
+  const flows = rowFlows(row)
+  if (!flows.length) return undefined
+  const lines = flows.map(flow => {
+    const parts = [
+      flowDirectionLabel(flow),
+      flowIpLabel(flow),
+      flowBytesLabel(flow),
+    ]
+    const rate = flowRateLabel(flow)
+    if (rate) parts.push(rate)
+    if (flow.sampled) parts.push(t('status.flow_estimated'))
+    return parts.join('  ')
+  })
+  // Match rowLatencyTip: <br> + escape:false so PrimeVue does not fold newlines.
+  return { value: lines.join('<br>'), escape: false }
+}
 
 function rowTunnelProto(row: PeerConnTableRow) {
   const base = row.conn ? oneTunnelProto(row.conn.tunnel) : tunnelProto(row.pair)
@@ -822,12 +823,11 @@ let prevRxSum: number | undefined
 const txRate = ref('0 B')
 const rxRate = ref('0 B')
 
-/** 可折叠 Panel：节点默认展开（仅图表）；详情/历史/Peer/流量/VPN/事件默认收起 */
+/** 可折叠 Panel：节点默认展开（仅图表）；详情/历史/Peer/事件默认收起 */
 const panelCollapsed = reactive({
   myNode: false,
   nodeDetails: true,
   peer: true,
-  flowStats: true,
   peerHistory: true,
   flowHistory: true,
   policyRoutes: true,
@@ -1182,60 +1182,59 @@ const eventLogContent = computed(() => {
               header-class="peer-col-secondary" body-class="peer-col-secondary" />
             <Column :field="rowRxBytes" :header="t('download_bytes')"
               header-class="peer-col-secondary" body-class="peer-col-secondary" />
+            <Column v-if="hasFlowRows()" :header="t('status.flow_detail')"
+              header-class="peer-col-secondary" body-class="peer-col-secondary">
+              <template #body="slotProps">
+                <div class="flow-detail-cell">
+                  <div class="flow-summary-row">
+                    <button
+                      v-if="rowFlows(slotProps.data).length"
+                      type="button"
+                      class="flow-expand-toggle"
+                      :aria-expanded="isFlowRowExpanded(slotProps.data)"
+                      :aria-label="t('status.flow_detail')"
+                      @click="toggleFlowRowExpanded(slotProps.data)">
+                      <i class="pi" :class="isFlowRowExpanded(slotProps.data) ? 'pi-chevron-down' : 'pi-chevron-right'" />
+                    </button>
+                    <span
+                      class="flow-summary-cell"
+                      v-tooltip.top="rowFlowTip(slotProps.data)"
+                    >{{ rowFlowSummary(slotProps.data) }}</span>
+                  </div>
+                  <div v-if="isFlowRowExpanded(slotProps.data)" class="flow-detail-panel">
+                    <table class="flow-detail-table">
+                      <thead>
+                        <tr>
+                          <th>{{ t('status.flow_direction') }}</th>
+                          <th>{{ t('status.flow_ip') }}</th>
+                          <th>{{ t('status.flow_bytes') }}</th>
+                          <th>{{ t('status.flow_rate') }}</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr
+                          v-for="(flow, flowIdx) in rowFlows(slotProps.data)"
+                          :key="`${flow.conn_id}-${flow.direction}-${flow.ip}-${flowIdx}`"
+                        >
+                          <td>{{ flowDirectionLabel(flow) }}</td>
+                          <td>{{ flowIpLabel(flow) }}</td>
+                          <td>
+                            {{ flowBytesLabel(flow) }}
+                            <span v-if="flow.sampled" class="flow-estimated">{{ t('status.flow_estimated') }}</span>
+                          </td>
+                          <td>{{ flowRateLabel(flow) }}</td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </template>
+            </Column>
             <Column :field="rowNatType" :header="t('nat_type')"
               header-class="peer-col-secondary" body-class="peer-col-secondary" />
             <Column :field="rowVersion" :header="t('status.version')"
               header-class="peer-col-secondary" body-class="peer-col-secondary" />
           </DataTable>
-          </div>
-        </Panel>
-
-        <Panel v-model:collapsed="panelCollapsed.flowStats" :header="t('status.flow_panel')"
-          toggleable
-          class="status-panel"
-          :class="{ 'status-panel--expanded': !panelCollapsed.flowStats }"
-          :pt="panelHeaderPt('flowStats')">
-          <div class="status-panel-body">
-            <div v-if="!flowPanelRows.length" class="status-empty">
-              {{ t('status.flow_panel_empty') }}
-            </div>
-            <template v-else>
-              <div class="flow-filter-bar">
-                <InputText
-                  v-model="flowFilterQuery"
-                  class="flow-filter-input"
-                  :placeholder="t('status.flow_filter_placeholder')"
-                  fluid
-                />
-                <span v-if="flowFilterQuery.trim()" class="flow-filter-count">
-                  {{ filteredFlowPanelRows.length }}/{{ flowPanelRows.length }}
-                </span>
-              </div>
-              <div v-if="!filteredFlowPanelRows.length" class="status-empty">
-                {{ t('status.flow_filter_empty') }}
-              </div>
-              <div v-else class="peer-table-scroll">
-                <DataTable
-                  :value="filteredFlowPanelRows"
-                  data-key="key"
-                  table-class="peer-route-table flow-stats-table"
-                >
-                  <Column field="peer" :header="t('status.flow_peer')" />
-                  <Column field="proto" :header="t('tunnel_proto')"
-                    header-class="peer-col-secondary" body-class="peer-col-secondary" />
-                  <Column field="direction" :header="t('status.flow_direction')" />
-                  <Column field="ip" :header="t('status.flow_ip')" />
-                  <Column :header="t('status.flow_bytes')">
-                    <template #body="{ data }">
-                      {{ data.bytes }}
-                      <span v-if="data.estimated" class="flow-estimated">{{ t('status.flow_estimated') }}</span>
-                    </template>
-                  </Column>
-                  <Column field="rate" :header="t('status.flow_rate')"
-                    header-class="peer-col-secondary" body-class="peer-col-secondary" />
-                </DataTable>
-              </div>
-            </template>
           </div>
         </Panel>
 
@@ -1699,23 +1698,69 @@ const eventLogContent = computed(() => {
   background: color-mix(in srgb, var(--text-color, #0f172a) 6%, var(--surface-ground, #ffffff));
 }
 
-.flow-filter-bar {
+/* Per-tunnel IP flow details (expandable cell + compact summary). */
+.flow-detail-cell {
   display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  margin-bottom: 0.5rem;
+  flex-direction: column;
+  gap: 0.25rem;
 }
 
-.flow-filter-input {
-  flex: 1 1 auto;
+.flow-summary-row {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
   min-width: 0;
 }
 
-.flow-filter-count {
+.flow-expand-toggle {
   flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.35rem;
+  height: 1.35rem;
+  padding: 0;
+  border: none;
+  border-radius: var(--et-radius-sm, 0.25rem);
+  background: transparent;
   color: var(--text-color-secondary, #334155);
+  cursor: pointer;
+}
+
+.flow-expand-toggle:hover {
+  background: color-mix(in srgb, var(--text-color, #0f172a) 8%, transparent);
+  color: var(--text-color, #0f172a);
+}
+
+.flow-summary-cell {
+  display: inline-block;
+  max-width: 22rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: bottom;
+}
+
+.flow-detail-panel {
+  padding: 0.25rem 0.5rem 0.5rem 0.5rem;
+}
+
+.flow-detail-table {
+  border-collapse: collapse;
   font-size: var(--et-fs-meta, 0.8125rem);
-  font-variant-numeric: tabular-nums;
+  color: var(--text-color, #0f172a);
+}
+
+.flow-detail-table th {
+  text-align: left;
+  font-weight: 600;
+  color: var(--text-color-secondary, #334155);
+  padding: 0.15rem 0.75rem 0.15rem 0;
+  white-space: nowrap;
+}
+
+.flow-detail-table td {
+  padding: 0.15rem 0.75rem 0.15rem 0;
+  white-space: nowrap;
 }
 
 .flow-estimated {

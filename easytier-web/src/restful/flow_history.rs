@@ -441,22 +441,28 @@ mod tests {
         assert!(outside.is_empty(), "窗口外不返回");
     }
 
-    /// F-2：时钟超前的节点写入的行「来自未来」，没有上界时会落进每一次查询。
     #[tokio::test]
     async fn series_ignores_rows_dated_in_the_future() {
+        // 节点时钟超前时写入的行「来自未来」，没有上界的话会落进每一次查询的窗口，
+        // 把曲线整体抬高（F-2）。
         let db = Db::memory_db().await;
         seed(&db).await;
-        flow_history::Entity::insert(row("42", 7, "10.0.0.0", 1, 999, 999, 1, T0 + 1_000_000))
-            .exec(db.orm_db())
-            .await
-            .expect("seed a future-dated row");
+        flow_history::Entity::insert_many(vec![row(
+            "42",
+            7,
+            "10.0.0.0",
+            1,
+            9_999,
+            999,
+            99,
+            T0 + 1_000_000,
+        )])
+        .exec(db.orm_db())
+        .await
+        .expect("seed future flow_history");
 
         let rows = run_series(&db, 120, T0 + 600).await;
-
-        assert_eq!(rows.len(), 3, "只有窗口内的 3 条系列");
-        assert!(
-            rows.iter().all(|r| r.3 != 999),
-            "未来行泄漏进了窗口: {rows:?}"
-        );
+        assert_eq!(rows.len(), 3, "未来行不应进入窗口");
+        assert!(!rows.iter().any(|r| r.3 == 9_999), "未来行的累计值不应出现");
     }
 }

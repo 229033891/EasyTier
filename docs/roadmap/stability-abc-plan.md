@@ -89,6 +89,7 @@ A（core，3–7 人日）→ B（前端/文案，1–3 人日，可与 A 尾声
 - [ ] `cargo test -p easytier-core --lib` 相关单测全绿（**2026-10-24 本机跳过**；合入/CI 前仍须跑）
 - [x] 单测覆盖：双路径可拆劣质 / 单路径不拆最后一条 / unverified 不算替代（`may_tear_down_requires_verified_unfused_alternative`）
 - [x] 日志：触发宽限时有可 grep 的 debug（勿每包 warn）
+- [x] **宽限必须有限**：hold 用墙钟（`LAST_PATH_HOLD_MAX`，默认 5s）而不是「再数 N 次失败」，且只对 **round-trip 成功过** 的 conn 生效；传输已关时立即拆。无替代 ≠ 无限保留 —— 否则 dead conn 占着 `has_live_conns()`，direct connector 不重拨（2026-10-24 回归，见 [`../ops/ci-failure-log.md`](../ops/ci-failure-log.md)）
 - [x] Release note 草稿：见 §7「A release note」
 
 ### 3.6 Release note 草稿（发版说明用）
@@ -99,7 +100,7 @@ A（core，3–7 人日）→ B（前端/文案，1–3 人日，可与 A 尾声
 
 | 风险 | 缓解 |
 |------|------|
-| 真死最后一条拖成僵尸 | **已缓解（2026-10-24）**：连续失败达 `ping_fail_close_count + 5` 时强制拆最后一条（默认约 ~30s，避免 credential / `proxy_three_node_disconnect` 僵尸）。更细的「最大挂起秒数」flag 仍可另开 |
+| 真死最后一条拖成僵尸 | **已缓解（2026-10-24）**：达 `ping_fail_close_count` 后用墙钟 `LAST_PATH_HOLD_MAX`（默认 5s）强关，且仅对 round-trip 成功过的 conn 生效；传输已关立即拆。默认约 `10×2s+5s≈25s`，避免 credential / `proxy_three_node_disconnect` 僵尸。更细的可配 flag 仍可另开 |
 | 与 bond / fuse 交互 | 替代判定复用 `is_unfused_verified`，与 P-AUDIT.1 一致 |
 | 回归「该拆不拆」导致 UI 长期绿但不通 | 最后一条仍应持续 ping；状态面已有 VIP 可达探测（正交）——C 用 ping 对齐 |
 

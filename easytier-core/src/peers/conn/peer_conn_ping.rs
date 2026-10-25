@@ -26,6 +26,7 @@ use crate::{
         error::Error,
     },
     tunnel::{
+        TunnelError,
         mpsc::MpscTunnelSender,
         stats::{Throughput, WindowLatency},
     },
@@ -56,13 +57,23 @@ pub(crate) fn may_tear_down_for_ping_failure<'a>(
 /// Wait budget for one ordinary keepalive ping.
 const PING_WAIT_TIMEOUT: Duration = Duration::from_secs(2);
 
-/// After `fail_close_count` with no alternative, keep the last path for this many
-/// **extra** consecutive misses, then force-close (P1.5 zombie escape).
+/// Wall-clock budget for holding the last path **after** `fail_close_count` is
+/// reached with no verified alternative (P1.5). Measured from the first miss at
+/// or above the threshold, then force-close (zombie escape).
 ///
-/// Total misses ≈ `fail_close_count + EXTRA`. Under loss each attempt waits up to
-/// [`PING_WAIT_TIMEOUT`], so default 10+5 → ~30s — fits `proxy_three_node_disconnect`
-/// (40s) and credential failover (60s). A full `2×` budget was too close to 40s.
-const LAST_PATH_FORCE_CLOSE_EXTRA: u32 = 5;
+/// Why wall clock and not "N more misses": the keepalive retries as fast as one
+/// outstanding ping per [`PING_WAIT_TIMEOUT`], but the *interval* between
+/// attempts is owned by `PingIntervalController`, which may slow down (backoff,
+/// `max_ping_interval`). A miss-count budget therefore silently stretched from
+/// ~10s to well over a minute on slow links — long enough to outlive
+/// `credential_non_reusable_*` (60s) and to keep `has_live_conns()` true while
+/// the connector refused to re-dial (`direct peers=[]` in the credential tests).
+///
+/// The hold is also **bounded on purpose**: it buys a brief grace window, it is
+/// not a promise to keep a dead conn forever. `fail_close_count` consecutive
+/// misses (~20s at the default 10 × 2s) is already the jitter tolerance; this is
+/// only the escape hatch on top of it.
+const LAST_PATH_HOLD_MAX: Duration = Duration::from_secs(5);
 
 /// Fast liveness probe (roadmap `live-next-hop.md` Phase F — "BFD-style").
 ///
@@ -255,9 +266,10 @@ pub struct PeerConnPinger {
     /// Consecutive ping failures before closing; default 10 (see `DEFAULT_PING_FAIL_CLOSE_COUNT`).
     fail_close_count: u32,
     /// Optional P1.5 gate: when set, reaching `fail_close_count` only closes if
-    /// the gate returns true (peer still has a verified alternative), until
-    /// losses hit `fail_close_count + LAST_PATH_FORCE_CLOSE_EXTRA`. `None` keeps
-    /// the legacy always-close behaviour (tests / fast_probe).
+    /// the gate returns true (peer still has a verified alternative), for at most
+    /// [`LAST_PATH_HOLD_MAX`] past the threshold, and only for a conn that has
+    /// already round-tripped at least once. `None` keeps the legacy always-close
+    /// behaviour (tests / fast_probe).
     close_gate: Option<PingFailCloseGate>,
 }
 
@@ -425,6 +437,10 @@ impl PeerConnPinger {
         });
 
         let mut req_seq = 0u32;
+        // P1.5 bookkeeping: has this conn ever completed a round trip, and when
+        // did the current `fail_close_count`-crossing hold start?
+        let mut had_roundtrip = false;
+        let mut last_path_hold: Option<Instant> = None;
         while trigger_receiver.recv().await.is_some() {
             tracing::debug!(
                 "pingpong controller send pingpong task, seq: {}, node_id: {}",
@@ -441,6 +457,24 @@ impl PeerConnPinger {
                 .await;
             req_seq = keepalive_seq(req_seq.wrapping_add(1));
 
+            // A closed transport is not a path: the sink can no longer carry a
+            // ping, so no amount of keepalive will revive it. Close immediately
+            // instead of counting 10 misses' worth of wait — during which
+            // `has_live_conns()` stays true and the direct connector refuses to
+            // re-dial (`direct peers=[]`), which is exactly the failover delay
+            // the ping-fail threshold is not supposed to add.
+            let transport_gone = matches!(&ret, Err(Error::Tunnel(TunnelError::Shutdown)))
+                || self.close_notify.is_closed();
+            if transport_gone {
+                tracing::warn!(
+                    ?ret,
+                    ?self,
+                    req_seq,
+                    "pingpong transport closed, closing the connection"
+                );
+                break;
+            }
+
             if let Ok(response) = &ret {
                 if let PingResponse::Pong(lat) = response {
                     self.latency_stats.record_latency(*lat as u32);
@@ -450,6 +484,10 @@ impl PeerConnPinger {
                 }
                 loss_rate_stats_1.record_latency(0);
                 loss_counter.store(0, Ordering::Relaxed);
+                had_roundtrip = true;
+                // Any round trip ends the current hold: the next crossing of the
+                // threshold starts a fresh grace window.
+                last_path_hold = None;
                 // Any successful round trip on this conn also clears the fast
                 // probe's degraded reading: the flag must never outlive its
                 // evidence, even if the probe task is gone (it only ever raises
@@ -482,26 +520,58 @@ impl PeerConnPinger {
             let losses = loss_counter.load(Ordering::Relaxed);
             if losses >= fail_close_count {
                 // P1.5: prefer keeping the last path through brief jitter when no
-                // verified alternative exists. After LAST_PATH_FORCE_CLOSE_EXTRA more
-                // consecutive misses, force-close anyway — otherwise a dead peer stays
-                // `has_live_conns` forever and blocks disconnect detection / credential
-                // non-reusable failover.
-                let force_last_path =
-                    losses >= fail_close_count.saturating_add(LAST_PATH_FORCE_CLOSE_EXTRA);
-                let allowed =
-                    force_last_path || self.close_gate.as_ref().map(|gate| gate()).unwrap_or(true);
+                // verified alternative exists. Bounded twice over, because an
+                // open-ended hold is a zombie: `has_live_conns()` keeps counting
+                // it, the direct connector will not re-dial, and credential
+                // failover never converges.
+                //
+                //   1. only a conn that has answered at least one ping is a path
+                //      worth holding. A conn that never round-tripped is a dial
+                //      attempt that never worked; holding it open only keeps
+                //      `has_directly_connected_conn()` true, which stops the
+                //      connector from re-dialing (the credential tests' 30s
+                //      `wait_direct_peer` then reports `direct peers=[]`).
+                //   2. the hold itself is a wall-clock budget, not a miss count
+                //      (`LAST_PATH_HOLD_MAX`).
+                let hold_applies = had_roundtrip;
+                let hold_started = if hold_applies {
+                    *last_path_hold.get_or_insert_with(Instant::now)
+                } else {
+                    // Not applicable: skip straight to "close", as before P1.5.
+                    Instant::now()
+                };
+                let hold_expired = !hold_applies || hold_started.elapsed() >= LAST_PATH_HOLD_MAX;
+                let allowed = if hold_expired {
+                    true
+                } else {
+                    self.close_gate.as_ref().map(|gate| gate()).unwrap_or(true)
+                };
                 if !allowed {
-                    tracing::warn!(
+                    // Debug, not warn: this repeats every keepalive round for the
+                    // whole hold and would flood exactly during the incident it
+                    // explains (see stability plan §3.4).
+                    tracing::debug!(
                         ?ret,
                         ?self,
                         ?loss_rate_1,
                         ?loss_counter,
                         fail_close_count,
+                        hold_elapsed_ms = hold_started.elapsed().as_millis() as u64,
                         "ping fail close skipped: no verified alternative PeerConn (keeping last path)",
                     );
                     // Stay at/above threshold so every further miss re-evaluates the
-                    // gate (an alternative may appear) or hits the force-close budget.
+                    // gate (an alternative may appear) or expires the hold.
                     continue;
+                }
+                if hold_applies && hold_expired {
+                    tracing::warn!(
+                        ?ret,
+                        ?self,
+                        ?loss_counter,
+                        fail_close_count,
+                        hold_ms = LAST_PATH_HOLD_MAX.as_millis() as u64,
+                        "last path hold expired, closing the connection",
+                    );
                 }
                 tracing::warn!(
                     ?ret,
@@ -509,7 +579,7 @@ impl PeerConnPinger {
                     ?loss_rate_1,
                     ?loss_counter,
                     fail_close_count,
-                    force_last_path,
+                    held_last_path = hold_applies,
                     "too many consecutive pingpong failures, closing the connection",
                 );
                 break;
@@ -794,6 +864,47 @@ mod tests {
         assert!(
             result.is_err(),
             "matching business-packet echoes did not keep the connection alive"
+        );
+    }
+
+    /// Regression guard for the credential failover timeouts: P1.5 used to hold
+    /// the last path for a fixed number of *misses* regardless of whether the
+    /// conn had ever worked. A dial attempt that never round-tripped then stayed
+    /// in `has_live_conns()` for the whole hold, the direct connector refused to
+    /// re-dial, and tests waiting on a fresh direct conn (30s budget) saw
+    /// `direct peers=[]`.
+    #[tokio::test(flavor = "current_thread")]
+    async fn never_round_tripped_conn_closes_even_when_gate_denies() {
+        let (local_tunnel, _remote_tunnel) = create_ring_tunnel_pair();
+        let tunnel = MpscTunnel::new(local_tunnel, None);
+        let (ctrl_sender, _) = broadcast::channel(16);
+        // A gate that always denies: "there is no verified alternative" — the
+        // exact condition under which the hold used to apply unconditionally.
+        let deny_gate: PingFailCloseGate = Arc::new(|| false);
+        let mut pinger = PeerConnPinger::new(
+            1,
+            2,
+            tunnel.get_sink(),
+            ctrl_sender,
+            Arc::new(WindowLatency::new(15)),
+            Arc::new(AtomicU32::new(0)),
+            Arc::new(Throughput::new()),
+            Arc::new(NoopPeerContext::default()),
+            "test".to_owned(),
+            PeerConnLiveness::new(),
+            Arc::new(AtomicBool::new(false)),
+            Arc::new(AtomicBool::new(false)),
+            Arc::new(PeerConnCloseNotify::new(PeerConnId::new_v4())),
+            Duration::from_secs(32),
+            2,
+            Some(deny_gate),
+        );
+
+        let result = timeout(Duration::from_secs(12), pinger.pingpong()).await;
+
+        assert!(
+            result.is_ok(),
+            "a conn that never round-tripped must still close at the threshold"
         );
     }
 

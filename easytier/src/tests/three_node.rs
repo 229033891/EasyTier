@@ -1663,9 +1663,10 @@ pub async fn proxy_three_node_disconnect_test(#[values("tcp", "wg")] proto: &str
                 // 0 down, assume last packet is recv in -0.01
                 // one ping outstanding at a time, each waits up to 2s
                 // (PING_WAIT_TIMEOUT).
-                // P1.5: sole-path peers skip close at fail_close_count=10, then
-                // force-close after +LAST_PATH_FORCE_CLOSE_EXTRA (5) → ~15×2s≈30s.
-                // Keep headroom above that bound.
+                // P1.5: a sole path is held past fail_close_count=10 and then
+                // force-closed by a wall-clock budget (LAST_PATH_HOLD_MAX=5s),
+                // so the bound is ~10×2s+5s≈25s, not a miss count. Keep headroom
+                // above that bound.
                 Duration::from_secs(50),
             )
             .await;
