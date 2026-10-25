@@ -785,6 +785,7 @@ status:
   flow_tx: TX
   flow_rx: RX
   flow_estimated: est.
+  flow_detail_empty_tip: "This column is always shown, but no per-tunnel flows are available yet. Typical causes: (1) flow accounting is off on the node ([flow_stats] enabled = true is required); (2) the tunnel is up but has not carried traffic yet. Bytes here are inner IP bytes, not the link bytes of the Upload/Download columns."
   peer_addr_via: "via {addr}"
   peer_addr_via_tip: "Relay path: tunnel address from this node to the next hop (not a direct peer endpoint)"
   route_path: "{path}"

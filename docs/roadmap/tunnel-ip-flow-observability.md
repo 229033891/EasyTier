@@ -832,8 +832,8 @@ enum FlowView {
 | 文件 | 改动 |
 |---|---|
 | `src/types/network.ts` | `PeerConnFlow` 类型 + `PeerConnInfo.flows?` |
-| `src/components/Status.vue` | 节点表新增 **「IP流量」列**（紧凑摘要：前 2 个目的地 + `+N`，悬停出全部明细）；新增**展开行**（方向 / IP / 流量 / 速率 / 估算标记）；无流量时整列与展开按钮**不渲染** |
-| `src/locales/cn.yaml` / `en.yaml` | `status.flow_detail` / `flow_direction` / `flow_ip` / `flow_bytes` / `flow_rate` / `flow_tx` / `flow_rx` / `flow_estimated` |
+| `src/components/Status.vue` | 节点表新增 **「IP流量」列**（紧凑摘要：前 2 个目的地 + `+N`，悬停出全部明细）；新增**展开行**（方向 / IP / 流量 / 速率 / 估算标记）。**该列常驻**：不随有无流量出现/消失（避免表格宽度跳动、也避免用户以为功能不存在）；单行无数据时单元格显示 `—`，整表无数据时表头带 `?` 说明「需开 flow_stats / 还没流量」 |
+| `src/locales/cn.yaml` / `en.yaml` | `status.flow_detail` / `flow_direction` / `flow_ip` / `flow_bytes` / `flow_rate` / `flow_tx` / `flow_rx` / `flow_estimated` / `flow_detail_empty_tip` |
 
 ### 16.4 调用方的视图选择
 

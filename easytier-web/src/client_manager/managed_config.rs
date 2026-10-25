@@ -260,6 +260,43 @@ fn map_apply_result(result: ManagedConfigApplyResult) -> anyhow::Result<ManagedC
     }
 }
 
+/// Does this payload carry any `[flow_stats]` value at all?
+///
+/// Mirrors `carries_flow_stats` in `easytier-core/src/config/api_input.rs`: all
+/// seven fields are proto3 `optional`, so presence is the only signal. A client
+/// built before the flow-stats form reports none of them.
+fn carries_flow_stats(config: &NetworkConfig) -> bool {
+    config.flow_stats_enabled.is_some()
+        || config.flow_stats_sample_rate.is_some()
+        || config.flow_stats_max_per_conn.is_some()
+        || config.flow_stats_max_total.is_some()
+        || config.flow_mask_prefix_len_v4.is_some()
+        || config.flow_mask_prefix_len_v6.is_some()
+        || config.flow_stats_allow_exact_ip.is_some()
+}
+
+/// Keep the row's `[flow_stats]` table when the reporter carries none of it.
+///
+/// A report replaces the whole row — there is no field-level patch (see
+/// `docs/current/web-managed-config.md` §4.2), so writing an older client's
+/// payload verbatim would silently delete flow accounting the console
+/// configured. This is the same rule the TOML merge applies on the node side:
+/// "no field present" means "not my business", not "clear it". A payload that
+/// carries any flow-stats field owns the whole table, so explicit changes
+/// (`enabled = false`, knob edits) still land.
+fn preserve_omitted_flow_stats(incoming: &mut NetworkConfig, previous: &NetworkConfig) {
+    if carries_flow_stats(incoming) || !carries_flow_stats(previous) {
+        return;
+    }
+    incoming.flow_stats_enabled = previous.flow_stats_enabled;
+    incoming.flow_stats_sample_rate = previous.flow_stats_sample_rate;
+    incoming.flow_stats_max_per_conn = previous.flow_stats_max_per_conn;
+    incoming.flow_stats_max_total = previous.flow_stats_max_total;
+    incoming.flow_mask_prefix_len_v4 = previous.flow_mask_prefix_len_v4;
+    incoming.flow_mask_prefix_len_v6 = previous.flow_mask_prefix_len_v6;
+    incoming.flow_stats_allow_exact_ip = previous.flow_stats_allow_exact_ip;
+}
+
 /// Client-reported edit of an existing web-owned config with revision CAS.
 ///
 /// - Non-empty `expected_config_revision`: Patch CAS (must match persisted).
@@ -324,6 +361,23 @@ pub(super) async fn report_client_web_config(
         };
         if PersistedConfigSource::from_db(&existing.source) != PersistedConfigSource::Web {
             return Err(ManagedConfigError::OwnershipConflict { instance_id }.into());
+        }
+
+        // Both branches below write the reported config wholesale, so the
+        // preservation has to happen once, here, before either of them runs.
+        let mut upsert = upsert;
+        match existing.get_network_config() {
+            Ok(previous) => {
+                preserve_omitted_flow_stats(&mut upsert.network_config, &previous);
+            }
+            // The row was validated on write, so this is a corrupt-row path:
+            // never fail a client's save over it, but make the lost
+            // preservation visible instead of silent.
+            Err(error) => tracing::warn!(
+                instance_id = %instance_id,
+                error = %error,
+                "cannot read stored network config; reporting client config as-is"
+            ),
         }
 
         if current.is_some() {
@@ -1550,6 +1604,93 @@ mod tests {
             err.downcast_ref::<ManagedConfigError>(),
             Some(ManagedConfigError::OwnershipConflict { .. })
         ));
+    }
+
+    #[tokio::test]
+    async fn report_client_web_config_preserves_flow_stats_omitted_by_older_clients() {
+        let storage = Storage::new(crate::db::Db::memory_db().await);
+        let user_id = storage
+            .db()
+            .auto_create_user("web-user-report-flow-stats")
+            .await
+            .unwrap()
+            .id;
+        let machine_id = uuid::Uuid::new_v4();
+        let inst_id = uuid::Uuid::new_v4();
+
+        storage
+            .db()
+            .insert_or_update_user_network_config(
+                (user_id, machine_id),
+                inst_id,
+                NetworkConfig {
+                    instance_id: Some(inst_id.to_string()),
+                    network_name: Some("console-configured".to_string()),
+                    flow_stats_enabled: Some(true),
+                    flow_stats_sample_rate: Some(4),
+                    flow_stats_allow_exact_ip: Some(true),
+                    ..Default::default()
+                },
+                ConfigSource::Web,
+            )
+            .await
+            .unwrap();
+
+        // A client without the flow-stats form reports a whole config without any
+        // of the optional fields: the console's table must survive the replacement.
+        report_client_web_config(
+            &storage,
+            user_id,
+            machine_id,
+            managed_config(inst_id, "renamed-by-old-client"),
+            "",
+            "old-client-rev",
+        )
+        .await
+        .unwrap();
+
+        let row = storage
+            .db()
+            .get_network_config((user_id, machine_id), &inst_id.to_string())
+            .await
+            .unwrap()
+            .unwrap()
+            .get_network_config()
+            .unwrap();
+        assert_eq!(row.network_name.as_deref(), Some("renamed-by-old-client"));
+        assert_eq!(row.flow_stats_enabled, Some(true));
+        assert_eq!(row.flow_stats_sample_rate, Some(4));
+        assert_eq!(row.flow_stats_allow_exact_ip, Some(true));
+
+        // A payload that carries the field owns the table, explicit off included.
+        report_client_web_config(
+            &storage,
+            user_id,
+            machine_id,
+            crate::webhook::ManagedNetworkConfig {
+                instance_id: inst_id.to_string(),
+                network_config: json!({
+                    "instance_id": inst_id.to_string(),
+                    "network_name": "renamed-by-old-client",
+                    "flow_stats_enabled": false,
+                }),
+            },
+            "old-client-rev",
+            "new-client-rev",
+        )
+        .await
+        .unwrap();
+
+        let row = storage
+            .db()
+            .get_network_config((user_id, machine_id), &inst_id.to_string())
+            .await
+            .unwrap()
+            .unwrap()
+            .get_network_config()
+            .unwrap();
+        assert_eq!(row.flow_stats_enabled, Some(false));
+        assert_eq!(row.flow_stats_sample_rate, None);
     }
 
     #[test]

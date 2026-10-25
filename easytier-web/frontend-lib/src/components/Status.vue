@@ -197,6 +197,12 @@ function rowFlows(row: PeerConnTableRow): PeerConnFlow[] {
   return row.conn?.flows ?? []
 }
 
+/**
+ * 是否**任意**一行有流量明细。
+ *
+ * 只用于表头的「为什么这里是空的」提示：列本身常驻（见模板），
+ * 所以无数据时不该隐藏列，而应该在表头说明原因（未开 flow_stats / 还没流量）。
+ */
 function hasFlowRows(): boolean {
   return peerConnRows.value.some(row => rowFlows(row).length > 0)
 }
@@ -1182,26 +1188,45 @@ const eventLogContent = computed(() => {
               header-class="peer-col-secondary" body-class="peer-col-secondary" />
             <Column :field="rowRxBytes" :header="t('download_bytes')"
               header-class="peer-col-secondary" body-class="peer-col-secondary" />
-            <Column v-if="hasFlowRows()" :header="t('status.flow_detail')"
+            <!-- 列本身常驻：不随「有没有流量」出现/消失，避免表格宽度来回跳。
+                 无数据时单元格显示占位符，表头给一次性说明（首次进入即可知道怎么开）。
+                 注意 rowFlows() 只在有 conn 且有流量时非空，因此占位符是常态而非异常。 -->
+            <Column :header="t('status.flow_detail')"
               header-class="peer-col-secondary" body-class="peer-col-secondary">
+              <template #header>
+                <span class="flow-detail-header">
+                  {{ t('status.flow_detail') }}
+                  <i
+                    v-if="!hasFlowRows()"
+                    class="pi pi-question-circle config-help-tip"
+                    tabindex="0"
+                    role="img"
+                    :aria-label="t('status.flow_detail_empty_tip')"
+                    v-tooltip.top="{ value: t('status.flow_detail_empty_tip'), escape: false }"
+                  />
+                </span>
+              </template>
               <template #body="slotProps">
                 <div class="flow-detail-cell">
                   <div class="flow-summary-row">
-                    <button
-                      v-if="rowFlows(slotProps.data).length"
-                      type="button"
-                      class="flow-expand-toggle"
-                      :aria-expanded="isFlowRowExpanded(slotProps.data)"
-                      :aria-label="t('status.flow_detail')"
-                      @click="toggleFlowRowExpanded(slotProps.data)">
-                      <i class="pi" :class="isFlowRowExpanded(slotProps.data) ? 'pi-chevron-down' : 'pi-chevron-right'" />
-                    </button>
-                    <span
-                      class="flow-summary-cell"
-                      v-tooltip.top="rowFlowTip(slotProps.data)"
-                    >{{ rowFlowSummary(slotProps.data) }}</span>
+                    <template v-if="rowFlows(slotProps.data).length">
+                      <button
+                        type="button"
+                        class="flow-expand-toggle"
+                        :aria-expanded="isFlowRowExpanded(slotProps.data)"
+                        :aria-label="t('status.flow_detail')"
+                        @click="toggleFlowRowExpanded(slotProps.data)">
+                        <i class="pi" :class="isFlowRowExpanded(slotProps.data) ? 'pi-chevron-down' : 'pi-chevron-right'" />
+                      </button>
+                      <span
+                        class="flow-summary-cell"
+                        v-tooltip.top="rowFlowTip(slotProps.data)"
+                      >{{ rowFlowSummary(slotProps.data) }}</span>
+                    </template>
+                    <span v-else class="flow-summary-empty">—</span>
                   </div>
-                  <div v-if="isFlowRowExpanded(slotProps.data)" class="flow-detail-panel">
+                  <!-- 也不在无流量时渲染空面板：流可以中途出现/消失，展开状态可能残留 -->
+                  <div v-if="isFlowRowExpanded(slotProps.data) && rowFlows(slotProps.data).length" class="flow-detail-panel">
                     <table class="flow-detail-table">
                       <thead>
                         <tr>
@@ -1699,10 +1724,24 @@ const eventLogContent = computed(() => {
 }
 
 /* Per-tunnel IP flow details (expandable cell + compact summary). */
+.flow-detail-header {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  white-space: nowrap;
+}
+
 .flow-detail-cell {
   display: flex;
   flex-direction: column;
   gap: 0.25rem;
+}
+
+/* 常驻列 + 无数据：占位符用次要色，避免读成「值为 0」 */
+.flow-summary-empty {
+  color: var(--text-color-secondary, #64748b);
+  opacity: 0.7;
+  padding-left: 0.2rem;
 }
 
 .flow-summary-row {

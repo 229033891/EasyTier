@@ -134,6 +134,15 @@ fn hot_patch_base(config: &NetworkConfig) -> anyhow::Result<NetworkConfig> {
     }
     config.data_compress_algo = data_compress_algo;
     config.encryption_algorithm = encryption_algorithm;
+    // `[flow_stats]` rides on proto3 `optional` fields whose absent value means
+    // "off". Normalize both booleans on both sides of the comparison: a node
+    // whose TOML carries an explicit `enabled = false` table (core reports it as
+    // `Some(false)`) must not look different from a console row that simply omits
+    // the field, or every reconcile round would fall back to a full instance
+    // re-run. A real `true` still differs, and flow stats are not patchable, so
+    // turning accounting on/off still rebuilds the instance.
+    config.flow_stats_enabled = Some(config.flow_stats_enabled.unwrap_or(false));
+    config.flow_stats_allow_exact_ip = Some(config.flow_stats_allow_exact_ip.unwrap_or(false));
     Ok(config)
 }
 
@@ -1261,6 +1270,56 @@ mod tests {
             .expect("build patch");
 
         assert!(patch.is_none());
+    }
+
+    #[test]
+    fn runtime_reconcile_treats_absent_and_explicit_off_flow_stats_as_equal() {
+        // The node keeps an explicit `[flow_stats] enabled = false` table, the
+        // console row omits the field. Same configuration: no rebuild.
+        let mut current = config_with_port_forwards(vec![port_forward(23000, 5174)]);
+        current.flow_stats_enabled = Some(false);
+        let mut desired = current.clone();
+        desired.flow_stats_enabled = None;
+
+        let action = prepare_web_source_runtime_reconcile_from_current(
+            &current,
+            desired,
+            Some(DNS_POLICY_MIN_VERSION),
+        )
+        .expect("plan reconcile action");
+
+        assert!(
+            matches!(action, RuntimeReconcileAction::Unchanged(_)),
+            "an omitted flow-stats field must compare equal to an explicit false"
+        );
+    }
+
+    #[test]
+    fn runtime_reconcile_requires_full_run_for_flow_stats_change() {
+        // Flow stats are not patchable (the table is built in `PeerManager::new`),
+        // so turning accounting on must rebuild the instance instead of being
+        // silently dropped by the hot patch.
+        let current = config_with_port_forwards(vec![port_forward(23000, 5174)]);
+        let mut desired = current.clone();
+        desired.flow_stats_enabled = Some(true);
+
+        let action = prepare_web_source_runtime_reconcile_from_current(
+            &current,
+            desired,
+            Some(DNS_POLICY_MIN_VERSION),
+        )
+        .expect("plan reconcile action");
+
+        assert!(
+            matches!(
+                action,
+                RuntimeReconcileAction::Run {
+                    overwrite: true,
+                    ..
+                }
+            ),
+            "flow stats changes must force a full instance run"
+        );
     }
 
     #[test]

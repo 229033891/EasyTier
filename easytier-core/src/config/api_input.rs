@@ -1014,27 +1014,22 @@ impl NetworkConfigExt for NetworkConfig {
         }
 
         // Per-tunnel IP flow accounting (see tunnel-ip-flow-observability.md).
-        let flow_stats = config.get_flow_stats();
-        if flow_stats.enabled {
-            result.flow_stats_enabled = Some(true);
-        }
-        if let Some(value) = flow_stats.sample_rate {
-            result.flow_stats_sample_rate = Some(value);
-        }
-        if let Some(value) = flow_stats.max_per_conn {
-            result.flow_stats_max_per_conn = Some(value);
-        }
-        if let Some(value) = flow_stats.max_total {
-            result.flow_stats_max_total = Some(value);
-        }
-        if let Some(value) = flow_stats.mask_prefix_len_v4 {
-            result.flow_mask_prefix_len_v4 = Some(value);
-        }
-        if let Some(value) = flow_stats.mask_prefix_len_v6 {
-            result.flow_mask_prefix_len_v6 = Some(value);
-        }
-        if flow_stats.allow_exact_ip {
-            result.flow_stats_allow_exact_ip = Some(true);
+        //
+        // Presence is preserved rather than inferred: `None` means "this config
+        // carries no `[flow_stats]` table" and stays unset on every field, so an
+        // older control plane that omits them cannot wipe a locally configured
+        // table. When the table *does* exist it is reported faithfully, including
+        // `enabled = false` together with its knobs — collapsing the boolean to
+        // "unset" would drop `sample_rate` / `allow_exact_ip` from every edit that
+        // starts from a readback.
+        if let Some(flow_stats) = config.get_flow_stats_raw() {
+            result.flow_stats_enabled = Some(flow_stats.enabled);
+            result.flow_stats_sample_rate = flow_stats.sample_rate;
+            result.flow_stats_max_per_conn = flow_stats.max_per_conn;
+            result.flow_stats_max_total = flow_stats.max_total;
+            result.flow_mask_prefix_len_v4 = flow_stats.mask_prefix_len_v4;
+            result.flow_mask_prefix_len_v6 = flow_stats.mask_prefix_len_v6;
+            result.flow_stats_allow_exact_ip = Some(flow_stats.allow_exact_ip);
         }
 
         if let Some(socks5_portal) = config.get_socks5_portal() {
@@ -1413,6 +1408,56 @@ allow_exact_ip = true
             flow.get("sample_rate").is_none(),
             "form patch replaces the table: {merged}"
         );
+    }
+
+    #[test]
+    fn flow_stats_absent_table_reads_back_as_unset() {
+        // No `[flow_stats]` table: every field stays unset, which is the signal
+        // the TOML merge reads as "an older control plane is talking, keep the
+        // node's local table".
+        let toml = r#"
+[network_identity]
+network_name = "net"
+network_secret = "secret"
+"#;
+        let config = NetworkConfig::new_from_config(TomlConfigLoader::new_from_str(toml).unwrap())
+            .unwrap();
+        assert_eq!(config.flow_stats_enabled, None);
+        assert_eq!(config.flow_stats_sample_rate, None);
+        assert_eq!(config.flow_stats_max_per_conn, None);
+        assert_eq!(config.flow_stats_max_total, None);
+        assert_eq!(config.flow_mask_prefix_len_v4, None);
+        assert_eq!(config.flow_mask_prefix_len_v6, None);
+        assert_eq!(config.flow_stats_allow_exact_ip, None);
+    }
+
+    #[test]
+    fn flow_stats_disabled_table_reads_back_with_its_knobs() {
+        // `enabled = false` is a real value, not "unset": collapsing it would
+        // hide `sample_rate` / `allow_exact_ip` from every edit that starts from
+        // a readback and silently drop them on the next save.
+        let toml = r#"
+[network_identity]
+network_name = "net"
+network_secret = "secret"
+
+[flow_stats]
+enabled = false
+sample_rate = 4
+allow_exact_ip = true
+"#;
+        let config = NetworkConfig::new_from_config(TomlConfigLoader::new_from_str(toml).unwrap())
+            .unwrap();
+        assert_eq!(config.flow_stats_enabled, Some(false));
+        assert_eq!(config.flow_stats_sample_rate, Some(4));
+        assert_eq!(config.flow_stats_allow_exact_ip, Some(true));
+
+        // And the readback must survive a re-materialization unchanged.
+        let round_tripped =
+            NetworkConfig::new_from_config(config.gen_config().unwrap()).unwrap();
+        assert_eq!(round_tripped.flow_stats_enabled, Some(false));
+        assert_eq!(round_tripped.flow_stats_sample_rate, Some(4));
+        assert_eq!(round_tripped.flow_stats_allow_exact_ip, Some(true));
     }
 
     #[cfg(feature = "browser-config")]

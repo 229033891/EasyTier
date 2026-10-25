@@ -462,6 +462,20 @@ pub trait ConfigLoader: Send + Sync {
     fn get_flow_stats(&self) -> FlowStatsConfig {
         FlowStatsConfig::default()
     }
+
+    /// Raw `[flow_stats]` table, keeping *absence* observable.
+    ///
+    /// `get_flow_stats` cannot express "this config has no `[flow_stats]`
+    /// table": it falls back to `FlowStatsConfig::default()` (`enabled = false`),
+    /// so an explicitly disabled table and an absent one are indistinguishable.
+    /// `[flow_stats]` rides on proto3 `optional` fields, where absence is the
+    /// "not my business" signal a control plane needs, so the readback path
+    /// (`NetworkConfig::new_from_config`) has to see the difference. Loaders that
+    /// do not own a TOML table keep the default: absent.
+    fn get_flow_stats_raw(&self) -> Option<FlowStatsConfig> {
+        None
+    }
+
     fn set_flow_stats(&self, _stats: FlowStatsConfig) {}
 
     fn dump(&self) -> String;
@@ -1492,6 +1506,10 @@ impl ConfigLoader for TomlConfig {
 
     fn get_flow_stats(&self) -> FlowStatsConfig {
         self.config.lock().unwrap().flow_stats.unwrap_or_default()
+    }
+
+    fn get_flow_stats_raw(&self) -> Option<FlowStatsConfig> {
+        self.config.lock().unwrap().flow_stats
     }
 
     fn set_flow_stats(&self, stats: FlowStatsConfig) {
