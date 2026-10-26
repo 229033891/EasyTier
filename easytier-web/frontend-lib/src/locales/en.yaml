@@ -777,7 +777,11 @@ status:
   relay: Relay
   p2p: Direct
   # Per-tunnel flows (see docs/roadmap/tunnel-ip-flow-observability.md)
-  flow_detail: Flow details
+  flow_panel: Flow stats
+  flow_panel_empty: "No flow details yet. Enable flow stats in node config and save; only traffic this node sends or receives is counted (forwarded traffic is not). Records appear after there is some application traffic. Bytes here are inner IP bytes, not the link bytes of the Upload/Download columns."
+  flow_filter_placeholder: Search peer / IP / direction…
+  flow_filter_empty: No matching flows. Clear the search to show all.
+  flow_peer: Peer
   flow_direction: Direction
   flow_ip: IP / prefix
   flow_bytes: Traffic
@@ -785,7 +789,6 @@ status:
   flow_tx: TX
   flow_rx: RX
   flow_estimated: est.
-  flow_detail_empty_tip: "This column is always shown, but no per-tunnel flows are available yet. Typical causes: (1) flow accounting is off on the node ([flow_stats] enabled = true is required); (2) the tunnel is up but has not carried traffic yet. Bytes here are inner IP bytes, not the link bytes of the Upload/Download columns."
   peer_addr_via: "via {addr}"
   peer_addr_via_tip: "Relay path: tunnel address from this node to the next hop (not a direct peer endpoint)"
   route_path: "{path}"

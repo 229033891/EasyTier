@@ -773,7 +773,11 @@ status:
   relay: 中继
   p2p: 直连
   # 隧道级流量（见 docs/roadmap/tunnel-ip-flow-observability.md）
-  flow_detail: 流量明细
+  flow_panel: 流量统计
+  flow_panel_empty: 暂无流量明细。请在节点配置中开启流量统计并保存；仅统计本节点收发的隧道流量（转发不计），有业务流量后才会出现记录。字节数为隧道内层 IP 字节，与「上传/下载」列的链路字节不是同一口径。
+  flow_filter_placeholder: 搜索对端 / IP / 方向…
+  flow_filter_empty: 无匹配流量。可清空搜索框查看全部。
+  flow_peer: 对端
   flow_direction: 方向
   flow_ip: IP / 网段
   flow_bytes: 流量
@@ -781,7 +785,6 @@ status:
   flow_tx: 发送
   flow_rx: 接收
   flow_estimated: 估算
-  flow_detail_empty_tip: "此列常驻显示，但当前还没有隧道级流量明细。常见原因：① 节点配置未开启「IP 流量统计」（flow_stats.enabled = true）；② 隧道已建立但还没开始收发流量。字节数为隧道内层 IP 字节，与「上传/下载」列的链路字节不是同一口径。"
   peer_addr_via: "经 {addr}"
   peer_addr_via_tip: "中转路径：本机到下一跳节点的隧道地址（非目标 peer 直连入口）"
   route_path: "{path}"
