@@ -3,7 +3,7 @@
 ## Status
 
 - Status: **Current**（Phase 1–3 可依赖行为；Phase 4 告警本期不做）
-- 最近审阅：2026-10-23
+- 最近审阅：2026-10-26
 - 设计决策与实施记录：[`../roadmap/tunnel-ip-flow-observability.md`](../roadmap/tunnel-ip-flow-observability.md)
 - 关联：[`peer-connections.md`](./peer-connections.md)（多 PeerConn / `default_conn`）
 - 索引：[`../README.md`](../README.md)
@@ -17,7 +17,7 @@
 | 能力 | 现状 |
 |------|------|
 | 热路径记账 | `easytier-core` `peers::flow_table`：按 **PeerConn × IP × 方向** 计数（`FlowKey` 另含 `peer_id`，因与 PeerConn 一一对应而冗余）；TX 记目的 IP，RX 记源 IP（内层 IP 明文侧） |
-| 记账范围 | **只记本节点收发的流量**：RX 只认 `PacketType::Data` 且非本地注入（转发包在此处不解密，不计入）；TX 只认 outbound router 打过 `flow_meta` 的包（转发方向没有该字段，同样不计入） |
+| 记账范围 | **只记本节点收发的流量**：RX 只认 `PacketType::Data` 且非本地注入（转发包在此处不解密，不计入）；TX 只认 outbound router 打过 `flow_meta` 的包，且仅在所选隧道 `send_msg` **成功之后**记账（sink 失败不抬 TX；转发方向没有该字段，同样不计入） |
 | **字节口径** | **内层 IP 载荷字节** = 压缩/加密之前的 IP 包长度，**不是链路字节**。运行页「上传/下载」列来自 `PeerConnStats`（隧道 filter 处的链路字节），两者口径不同，**不可比、不可相减**，UI 必须分开标注 |
 | 默认开关 | **`[flow_stats]` 默认关闭**；关闭时**整个 routine 组根本不 spawn** —— 1s 速率窗口、30s `gc()`、5s 聚合日志三个定时任务全部跳过（`spawn_flow_stats_routines` 入口早退）；且 `FlowTable::record()` 只做一次 relaxed atomic 读，无分配、无锁（整条包路径上会命中 2–3 次同一判断，量级不变） |
 | 采样与估算 | `sample_rate = N > 1` 时按 **1/N 抽样**记账，条目置 `sampled` 标记；**读取时 ×N 放大**为估算值（UI 显示「估算」，i18n `flow_estimated`） |
@@ -25,7 +25,7 @@
 | 速率 | 节点侧固定约 1s 窗口算 `rate_bytes_per_sec`（D11）；**不**对累计 `bytes` 做差分求速 |
 | 回传条数 | 节点侧每隧道最多回传 **top-10**（`FLOW_TOP_N_PER_CONN`，按**累计 `bytes`** 降序）。运行页展开行**不会**超过 10 行 |
 | 条目存活 | 无流量超过 `ttl`（固定 **600s，不可配**）的条目由 `gc()` 回收；`max_per_conn`（256）/ `max_total`（8192）限额另做兜底淘汰，按 `last_seen_ms` 最旧优先 |
-| 运行页 | `Status.vue`「IP流量」列：紧凑摘要 + tip；展开行明细 |
+| 运行页 | `Status.vue`「IP流量」列：紧凑摘要 + tip（`escape: false` 时对 `flow.ip` 做 `escapeHtml`）；展开行明细（`{{ }}` 文本插值，勿在 `flowIpLabel` 内转义） |
 | CLI | `easytier-cli peer` 的 `flows` 列：按 **`rate_bytes_per_sec` 降序** 取 top-2（当前最忙，**非**累计最大 —— 与上表的 top-10 排序口径不同） |
 | 控制台历史 | `easytier-web` 采样器顺带写 `flow_history`（与 `CollectNetworkInfo` 同次 RPC，只收 MASKED）；API `/api/v1/machines/{machine-id}/flow-history/{inst-id}`（需登录）；曲线按窗口内总流量截断到 40 条 |
 | 历史节奏 | 每 **60s** 采样一次（`DEFAULT_SAMPLE_INTERVAL_SECS`），保留 **7 天**，清理任务每 10 分钟扫一次；节点没开 `flow_stats` 则零写入 |

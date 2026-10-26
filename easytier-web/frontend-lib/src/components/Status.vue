@@ -13,6 +13,7 @@ import {
   connPathQualityCell,
   connPathQualityTip,
   connRemoteAddr,
+  escapeHtml,
   flattenPeerConnRows,
   isDirectConnNotOnActivePath,
   latencyMs,
@@ -268,7 +269,11 @@ function rowFlowTip(row: PeerConnTableRow): { value: string, escape: false } | u
   const lines = flows.map(flow => {
     const parts = [
       flowDirectionLabel(flow),
-      flowIpLabel(flow),
+      // `escape: false` below means this is rendered as HTML, so the only
+      // node-supplied string (`flow.ip`) must be escaped. Do NOT escape inside
+      // `flowIpLabel()`: `rowFlowSummary()` and the expanded table use `{{ }}`,
+      // which Vue escapes again, and the entities would show up literally.
+      escapeHtml(flowIpLabel(flow)),
       flowBytesLabel(flow),
     ]
     const rate = flowRateLabel(flow)

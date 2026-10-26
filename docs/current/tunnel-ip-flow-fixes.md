@@ -3,7 +3,7 @@
 ## Status
 
 - Status: **Current**（本批次已实现，待验收）
-- 最近更新：2026-10-24
+- 最近更新：2026-10-26
 - 行为基线：[`./tunnel-ip-flow.md`](./tunnel-ip-flow.md)（描述代码**今天做什么**，本文件只记录**本次要改什么**）
 - 设计决策：[`../roadmap/tunnel-ip-flow-observability.md`](../roadmap/tunnel-ip-flow-observability.md)
 
@@ -212,6 +212,7 @@ cargo test -p easytier-web --lib restful::flow_history
 | 项 | 评估 |
 |----|------|
 | F-1 误在 `flowIpLabel` 内转义 | **唯一实质风险**，会造成显示回归（`10.0.0.0&lt;/24`）。已用「禁止清单」+ 恒等用例双重卡住 |
+| F-1 回归（2026-10-25） | `a4829412` 改独立流量面板时删掉 tip 转义；`218f377b` 嵌回 peer 表 tip 时未恢复。**2026-10-26 已再修**：`rowFlowTip` 重新 `escapeHtml(flowIpLabel(flow))` |
 | F-2 参数个数漏改 | 低。会在首个测试 panic，非线上 |
 | F-3 私有化破坏外部调用者 | 已 grep 全仓确认仅 `new()` 一处；若某个未覆盖路径存在，会**编译失败**而非静默错误 |
 | F-4 早退导致热更失效 | 仅在 F-3 未落实时成立；两项已绑定交付 |

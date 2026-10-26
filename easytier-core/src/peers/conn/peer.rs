@@ -375,13 +375,22 @@ impl Peer {
                     // Unreachable: guarded by `!members.is_empty()` above.
                     return Err(Error::PeerNoConnectionError(self.peer_node_id));
                 };
-                // Book the flow on the tunnel that actually carries it.
-                self.record_tx_flow(conn, &msg);
+                // Capture meta before move; book only after the sink accepts the
+                // packet so failed sends do not inflate TX counters.
+                let meta = msg.flow_meta();
+                let conn_id = conn.get_conn_id();
                 // On member failure drop the cached set so the next packet rebuilds
                 // without a half-dead member (matches single-path cache-clear semantics).
-                return conn.send_msg(msg).await.inspect_err(|_| {
-                    self.bond_conns.store(None);
-                });
+                return match conn.send_msg(msg).await {
+                    Ok(()) => {
+                        self.record_tx_flow(conn_id, meta);
+                        Ok(())
+                    }
+                    Err(e) => {
+                        self.bond_conns.store(None);
+                        Err(e)
+                    }
+                };
             }
             // Fall through to single-path select if bond set empty.
         }
@@ -391,8 +400,10 @@ impl Peer {
             if self.cached_conn_should_invalidate(conn) {
                 self.default_conn.store(None);
             } else {
-                self.record_tx_flow(conn, &msg);
+                let meta = msg.flow_meta();
+                let conn_id = conn.get_conn_id();
                 conn.send_msg(msg).await?;
+                self.record_tx_flow(conn_id, meta);
                 return Ok(());
             }
         }
@@ -401,27 +412,31 @@ impl Peer {
         let Some(conn) = self.select_conn() else {
             return Err(Error::PeerNoConnectionError(self.peer_node_id));
         };
-        self.record_tx_flow(&conn, &msg);
+        let meta = msg.flow_meta();
+        let conn_id = conn.get_conn_id();
         conn.send_msg(msg).await?;
+        self.record_tx_flow(conn_id, meta);
 
         Ok(())
     }
 
-    /// Book a locally originated packet on the tunnel that is about to carry it.
+    /// Book a locally originated packet after the chosen tunnel accepted it.
     ///
     /// The inner destination IP is attached to the packet as a local-only field
     /// before it is compressed/encrypted (see
     /// [`crate::packet::ZCPacket::flow_meta`]); control packets and forwarded
-    /// packets carry no such field and are therefore not counted.
-    fn record_tx_flow(&self, conn: &ArcPeerConn, msg: &ZCPacket) {
+    /// packets carry no such field and are therefore not counted. Callers must
+    /// invoke this only after `send_msg` returns `Ok`, so sink failures do not
+    /// inflate TX totals.
+    fn record_tx_flow(&self, conn_id: PeerConnId, meta: Option<crate::packet::FlowMeta>) {
         if !self.flow_table.is_enabled() {
             return;
         }
-        let Some(meta) = msg.flow_meta() else {
+        let Some(meta) = meta else {
             return;
         };
         self.flow_table.record(
-            conn.get_conn_id(),
+            conn_id,
             self.peer_node_id,
             meta.dst_ip,
             FlowDirection::Tx,
