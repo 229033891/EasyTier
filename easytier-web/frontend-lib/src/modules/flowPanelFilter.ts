@@ -1,4 +1,4 @@
-/** Fields used by the Status「流量统计」search box. */
+/** Fields used by the Status「实时流量」search box. */
 export type FlowPanelFilterFields = {
   peer: string
   ip: string
