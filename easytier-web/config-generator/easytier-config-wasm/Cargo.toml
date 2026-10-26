@@ -1,7 +1,7 @@
 [package]
 name = "easytier-config-wasm"
 description = "cdylib WASM bindings for EasyTier browser config generation."
-version = "2.7.8"
+version = "2.7.9"
 edition.workspace = true
 rust-version.workspace = true
 publish = false
