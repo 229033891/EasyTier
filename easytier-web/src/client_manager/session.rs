@@ -199,9 +199,13 @@ pub struct SessionData {
 
     storage_token: Option<StorageToken>,
     binding_version: Option<u64>,
+    // Authentication does not prove that this receiver has the desired Exact Set.
+    // Keep that authority on the Session, not in runtime continuity shared with
+    // an earlier connection.
+    webhook_config_revision: Option<String>,
     managed_runtime: SharedManagedRuntimeState,
     direct_run_failed_instance_ids: HashSet<String>,
-    notifier: broadcast::Sender<HeartbeatRequest>,
+    notifier: broadcast::Sender<()>,
     req: Option<HeartbeatRequest>,
     location: Option<Location>,
     heartbeat_count: std::sync::atomic::AtomicU32,
@@ -237,6 +241,7 @@ impl SessionData {
             client_url,
             storage_token: None,
             binding_version: None,
+            webhook_config_revision: None,
             managed_runtime: Arc::new(Mutex::new(ManagedRuntimeState::default())),
             direct_run_failed_instance_ids: HashSet::new(),
             notifier: tx,
@@ -292,8 +297,20 @@ impl SessionData {
         self.req.clone()
     }
 
-    pub fn heartbeat_waiter(&self) -> broadcast::Receiver<HeartbeatRequest> {
+    pub fn heartbeat_waiter(&self) -> broadcast::Receiver<()> {
         self.notifier.subscribe()
+    }
+
+    fn runtime_config_is_ready(&self, persisted_revision: Option<&str>) -> bool {
+        if !self.webhook_config.is_enabled() {
+            return true;
+        }
+        match self.webhook_config_revision.as_deref() {
+            // Standalone webhook integrations can omit both managed fields.
+            Some("") if self.binding_version == Some(0) => true,
+            Some(revision) if !revision.is_empty() => persisted_revision == Some(revision),
+            _ => false,
+        }
     }
 
     pub fn location(&self) -> Option<&Location> {
@@ -409,6 +426,11 @@ async fn record_webhook_connected_binding_if_current(
     binding_version: u64,
 ) -> Option<ConnectedBindingRecord> {
     let session_data = session_data.upgrade()?;
+    let storage = Storage::try_from(session_data.read().await.storage.clone()).ok()?;
+    let persisted_revision = storage
+        .db()
+        .get_managed_config_revision((storage_token.user_id, storage_token.machine_id))
+        .await;
     let mut data = session_data.write().await;
     if !connection_state_matches(&data, storage_token, binding_version) {
         return Some(ConnectedBindingRecord::IdentityStale);
@@ -420,7 +442,18 @@ async fn record_webhook_connected_binding_if_current(
     {
         return Some(ConnectedBindingRecord::OwnershipLost);
     }
+    let newly_connected = data.webhook_connected_binding_version != Some(binding_version);
     data.webhook_connected_binding_version = Some(binding_version);
+    if newly_connected
+        && data.webhook_config.is_enabled()
+        && !persisted_revision
+            .as_ref()
+            .is_ok_and(|revision| data.runtime_config_is_ready(revision.as_deref()))
+    {
+        // The connected ACK makes the receiver route publishable. Retry the
+        // existing validation path now, rather than waiting ten heartbeats.
+        SessionRpcService::mark_webhook_validation_state_changed_locked(&mut data).notify_one();
+    }
     Some(ConnectedBindingRecord::Recorded)
 }
 
@@ -534,11 +567,8 @@ async fn send_webhook_connection_transition(
     }
 }
 
-pub(super) fn send_runtime_notify(
-    notifier: &broadcast::Sender<HeartbeatRequest>,
-    req: HeartbeatRequest,
-) {
-    if let Err(error) = notifier.send(req) {
+pub(super) fn send_runtime_notify(notifier: &broadcast::Sender<()>) {
+    if let Err(error) = notifier.send(()) {
         tracing::debug!(%error, "managed runtime notifier has no subscribers");
     }
 }
@@ -640,10 +670,10 @@ impl SessionRpcService {
     async fn notify_runtime_after_client_report(&self) {
         let notify = {
             let data = self.data.read().await;
-            data.req.clone().map(|req| (data.notifier.clone(), req))
+            data.req.as_ref().map(|_| data.notifier.clone())
         };
         match notify {
-            Some((notifier, req)) => send_runtime_notify(&notifier, req),
+            Some(notifier) => send_runtime_notify(&notifier),
             // Nothing to hand to the runtime yet; convergence then waits for the
             // next heartbeat, which is worth being able to see while debugging.
             None => tracing::debug!(
@@ -1114,8 +1144,8 @@ impl SessionRpcService {
                     data.session_epoch,
                 );
             }
-            let runtime_notify = (authorized && data.storage_token.is_some())
-                .then(|| (data.notifier.clone(), runtime_req));
+            let runtime_notify =
+                (authorized && data.storage_token.is_some()).then(|| data.notifier.clone());
             (notify, runtime_notify, device_upsert)
         };
 
@@ -1138,8 +1168,8 @@ impl SessionRpcService {
             tracing::warn!(?e, "failed to upsert device archive from webhook heartbeat");
         }
 
-        if let Some((notifier, runtime_req)) = runtime_notify {
-            send_runtime_notify(&notifier, runtime_req);
+        if let Some(notifier) = runtime_notify {
+            send_runtime_notify(&notifier);
         }
         if let Some(notify) = notify {
             notify.notify_one();
@@ -1284,7 +1314,7 @@ impl SessionRpcService {
         {
             tracing::warn!(?e, "failed to upsert device archive from heartbeat");
         }
-        send_runtime_notify(&notifier, runtime_req);
+        send_runtime_notify(&notifier);
         if let Some(notify) = validation_notify {
             notify.notify_one();
         }
@@ -1548,9 +1578,10 @@ impl Session {
         &self,
         user_id: i32,
         machine_id: uuid::Uuid,
+        published_revision: Option<&str>,
     ) {
         let notify = {
-            let data = self.data.read().await;
+            let mut data = self.data.write().await;
             if !data.auth_state.is_authorized() {
                 return;
             }
@@ -1561,10 +1592,21 @@ impl Session {
             {
                 return;
             }
-            data.req.clone().map(|req| (data.notifier.clone(), req))
+            if let Some(revision) = published_revision
+                && data.webhook_config.is_enabled()
+                && data.webhook_config_revision.as_deref() != Some(revision)
+            {
+                // Only validation establishes the desired revision. A delayed
+                // publication callback must not replace newer authority, even
+                // when its revision is still the receiver's persisted value.
+                // Fence validation already in flight and request current authority.
+                SessionRpcService::mark_webhook_validation_state_changed_locked(&mut data)
+                    .notify_one();
+            }
+            data.req.as_ref().map(|_| data.notifier.clone())
         };
-        if let Some((notifier, req)) = notify {
-            send_runtime_notify(&notifier, req);
+        if let Some(notifier) = notify {
+            send_runtime_notify(&notifier);
         }
     }
 
@@ -1584,10 +1626,10 @@ impl Session {
             runtime.reconcile_fail_streak = 0;
             runtime.reconcile_paused = false;
             drop(runtime);
-            data.req.clone().map(|req| (data.notifier.clone(), req))
+            data.req.as_ref().map(|_| data.notifier.clone())
         };
-        if let Some((notifier, req)) = notify {
-            send_runtime_notify(&notifier, req);
+        if let Some(notifier) = notify {
+            send_runtime_notify(&notifier);
         }
     }
 
@@ -2384,7 +2426,7 @@ mod tests {
         assert_eq!(data.binding_version, Some(1));
         assert_eq!(data.webhook_connected_binding_version, Some(1));
         drop(data);
-        assert_eq!(heartbeat_waiter.recv().await.unwrap().user_token, "token");
+        heartbeat_waiter.recv().await.unwrap();
         assert!(
             storage
                 .db()

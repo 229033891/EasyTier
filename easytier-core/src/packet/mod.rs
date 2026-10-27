@@ -1,5 +1,6 @@
 pub(crate) mod compressor;
 mod hole_punch;
+pub(crate) mod ip;
 pub mod stun;
 
 pub(crate) use hole_punch::{
@@ -845,6 +846,7 @@ impl ZCPacket {
         tracing::trace!(?self.packet_type, ?target_packet_type, ?new_offset, "convert zc packet type");
 
         let bond_flow_key = self.bond_flow_key;
+        let flow_meta = self.flow_meta;
         if new_offset == INVALID_OFFSET {
             // copy peer manager header and payload to new buffer
             let tunnel_payload = self.tunnel_payload();
@@ -856,12 +858,14 @@ impl ZCPacket {
             buf.extend_from_slice(tunnel_payload);
             let mut pkt = Self::new_from_buf(buf, target_packet_type);
             pkt.bond_flow_key = bond_flow_key;
+            pkt.flow_meta = flow_meta;
             return pkt;
         }
 
         self.inner.advance(new_offset);
         let mut pkt = Self::new_from_buf(self.inner, target_packet_type);
         pkt.bond_flow_key = bond_flow_key;
+        pkt.flow_meta = flow_meta;
         pkt
     }
 

@@ -335,13 +335,13 @@ impl PeerConnPinger {
         liveness_token: Option<u8>,
         wait_timeout: Duration,
     ) -> Result<PingResponse, Error> {
+        let now = Instant::now();
         // should add seq here. so latency can be calculated more accurately
         let req = Self::new_ping_packet(self.my_peer_id, self.peer_id, seq);
         let req_len = req.buf_len() as u64;
         self.sink.send(req).await?;
         self.context.record_control_tx(&self.network_name, req_len);
 
-        let now = Instant::now();
         let wait_for_pong = async {
             loop {
                 match receiver.recv().await {
@@ -476,6 +476,8 @@ impl PeerConnPinger {
             }
 
             if let Ok(response) = &ret {
+                // A liveness echo proves reachability, not prompt delivery of a
+                // queued packet. Only a matching Pong supplies an RTT sample.
                 if let PingResponse::Pong(lat) = response {
                     self.latency_stats.record_latency(*lat as u32);
                 }
@@ -712,6 +714,75 @@ mod tests {
             Tunnel, filter::TunnelWithFilter, mpsc::MpscTunnel, ring::create_ring_tunnel_pair,
         },
     };
+
+    #[tokio::test]
+    async fn pong_latency_includes_waiting_for_send_queue_capacity() {
+        use crate::tunnel::ring::{RingTunnel, create_ring_socket_pair};
+
+        let (left, right) = create_ring_socket_pair(1);
+        let tunnel = MpscTunnel::new(RingTunnel::new(left, None), None);
+        let remote = RingTunnel::new(right, None);
+        let (mut stream, _sink) = remote.split();
+        let sender = tunnel.get_sink();
+        // Fill both the underlying ring and the MPSC queue without draining.
+        assert!(
+            timeout(Duration::from_millis(10), async {
+                loop {
+                    sender
+                        .send(ZCPacket::new_with_payload(b"queued business"))
+                        .await
+                        .unwrap();
+                }
+            })
+            .await
+            .is_err()
+        );
+
+        let (ctrl_sender, mut receiver) = broadcast::channel(16);
+        let pinger = PeerConnPinger::new(
+            1,
+            2,
+            sender,
+            ctrl_sender.clone(),
+            Arc::new(WindowLatency::new(15)),
+            Arc::new(AtomicU32::new(0)),
+            Arc::new(Throughput::new()),
+            Arc::new(NoopPeerContext::default()),
+            "test".to_owned(),
+            PeerConnLiveness::new(),
+            Arc::new(AtomicBool::new(false)),
+            Arc::new(AtomicBool::new(false)),
+            Arc::new(PeerConnCloseNotify::new(PeerConnId::new_v4())),
+            Duration::from_secs(1),
+            5,
+            None,
+        );
+        let probe = pinger.do_pingpong_once(&mut receiver, 1, None, PING_WAIT_TIMEOUT);
+        tokio::pin!(probe);
+        assert!(
+            timeout(Duration::from_millis(50), &mut probe)
+                .await
+                .is_err()
+        );
+        let reply = tokio::spawn(async move {
+            while let Some(Ok(packet)) = stream.next().await {
+                if packet.peer_manager_header().unwrap().packet_type == PacketType::Ping as u8 {
+                    ctrl_sender.send(packet).unwrap();
+                    return;
+                }
+            }
+            panic!("queued Ping was not delivered");
+        });
+        let PingResponse::Pong(rtt) = timeout(Duration::from_secs(1), probe)
+            .await
+            .unwrap()
+            .unwrap()
+        else {
+            panic!("expected a measured Pong");
+        };
+        assert!(rtt >= 50_000, "send queue wait was excluded: {rtt} us");
+        reply.await.unwrap();
+    }
 
     #[cfg(not(target_os = "wasi"))]
     #[tokio::test(start_paused = true)]

@@ -1498,16 +1498,20 @@ impl PeerConn {
         );
 
         let close_event_notifier = self.close_event_notifier.clone();
+        let conn_id = self.conn_id;
 
-        self.tasks.spawn(async move {
-            pingpong.pingpong().await;
+        self.tasks.spawn(
+            async move {
+                pingpong.pingpong().await;
 
-            tracing::warn!(?pingpong, "pingpong task exit");
+                tracing::warn!(?pingpong, "pingpong task exit");
 
-            close_event_notifier.notify_close();
+                close_event_notifier.notify_close();
 
-            Ok(())
-        });
+                Ok(())
+            }
+            .instrument(tracing::info_span!("peer_conn_pingpong", ?conn_id)),
+        );
 
         self.tasks.spawn(async move {
             fast_probe.fast_probe().await;
@@ -1516,7 +1520,11 @@ impl PeerConn {
     }
 
     pub async fn send_msg(&self, msg: ZCPacket) -> Result<(), Error> {
-        Ok(self.sink.send(msg).await?)
+        if let Err(error) = self.sink.send(msg).await {
+            self.close_event_notifier.notify_close();
+            return Err(error.into());
+        }
+        Ok(())
     }
 
     pub fn get_peer_id(&self) -> PeerId {

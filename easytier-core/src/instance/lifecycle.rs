@@ -82,10 +82,12 @@ where
     }
 
     #[cfg(feature = "proxy-packet")]
-    async fn start_packet_proxy(&self) -> anyhow::Result<()> {
+    pub(super) async fn start_packet_proxy(&self) -> anyhow::Result<()> {
         let config = self.runtime_config.snapshot();
         let has_proxy_networks = !config.peer.runtime.core.routes.proxy_networks.is_empty();
         if config.services.proxy.should_start(has_proxy_networks) {
+            // This fork runs instance tasks on the caller's executor; there is no
+            // separate CoreInstance::runtime_handle to hop onto.
             self.packet_proxy
                 .start()
                 .await

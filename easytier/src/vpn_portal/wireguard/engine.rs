@@ -18,17 +18,14 @@ use boringtun::{
     },
     x25519::{PublicKey, StaticSecret},
 };
-use easytier_core::{
-    gateway::vpn_portal::{PortalClientConfig, PortalSession},
-    socket::udp::VirtualUdpSocket,
-};
+use easytier_core::gateway::vpn_portal::{PortalClientConfig, PortalSession};
 use tokio::{
     sync::{Mutex, mpsc, watch},
     task::JoinSet,
 };
 use tokio_util::sync::CancellationToken;
 
-use crate::socket::udp::RuntimeUdpSocket;
+use super::PortalSocket;
 const MIN_WIREGUARD_PACKET_CAPACITY: usize = 148;
 // We pre-verify through this shared limiter and BoringTun verifies again inside
 // each Tunn. Doubling the threshold preserves the intended 100 datagrams/s
@@ -94,12 +91,12 @@ impl EngineSlots {
 
 #[derive(Clone)]
 struct Endpoint {
-    socket: Arc<RuntimeUdpSocket>,
+    socket: Arc<PortalSocket>,
     remote: SocketAddr,
 }
 
 impl ClientSession {
-    fn update_endpoint(&mut self, socket: Arc<RuntimeUdpSocket>, remote: SocketAddr) {
+    fn update_endpoint(&mut self, socket: Arc<PortalSocket>, remote: SocketAddr) {
         let changed = self
             .endpoint
             .as_ref()
@@ -222,7 +219,7 @@ impl PortalEngine {
 
     pub(super) async fn handle_datagram(
         self: &Arc<Self>,
-        socket: Arc<RuntimeUdpSocket>,
+        socket: Arc<PortalSocket>,
         remote: SocketAddr,
         datagram: &[u8],
     ) {
@@ -374,7 +371,7 @@ impl PortalEngine {
     fn new_session(
         self: &Arc<Self>,
         slot: &Arc<ClientSlot>,
-        socket: Arc<RuntimeUdpSocket>,
+        socket: Arc<PortalSocket>,
         remote: SocketAddr,
     ) -> ClientSession {
         let generation = slot.next_generation.fetch_add(1, Ordering::Relaxed);
@@ -384,7 +381,7 @@ impl PortalEngine {
         let engine = Arc::downgrade(self);
         let slot_for_task = Arc::downgrade(slot);
         let mut tasks = JoinSet::new();
-        tasks.spawn(async move {
+        let forward_packets = async move {
             while let Some(payload) = to_client.recv().await {
                 let Some(engine) = engine.upgrade() else {
                     return;
@@ -398,6 +395,13 @@ impl PortalEngine {
             }
             if let (Some(engine), Some(slot)) = (engine.upgrade(), slot_for_task.upgrade()) {
                 engine.expire_if_current(slot, generation).await;
+            }
+        };
+        let cancel = self.cancel.clone();
+        tasks.spawn(async move {
+            tokio::select! {
+                _ = cancel.cancelled() => {},
+                _ = forward_packets => {},
             }
         });
         ClientSession {

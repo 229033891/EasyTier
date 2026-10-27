@@ -559,16 +559,19 @@ struct ProbeReplyFilter {
 
 #[async_trait::async_trait]
 impl crate::peers::PeerPacketFilter for ProbeReplyFilter {
-    async fn try_process_packet_from_peer(&self, packet: ZCPacket) -> Option<ZCPacket> {
+    async fn try_process_packet_from_peer(
+        &self,
+        packet: ZCPacket,
+    ) -> crate::peers::PeerPacketFilterResult {
         if let Some((key, rtt_ms)) = try_match_probe_reply(&self.sent, &packet) {
             self.state.record(
                 key,
                 ProbeResult::new(PeerVipState::Reachable, Some(rtt_ms), ""),
             );
             // Consumed: this reply belongs to the prober, not the TUN.
-            return None;
+            return crate::peers::PeerPacketFilterResult::Consumed;
         }
-        Some(packet)
+        crate::peers::PeerPacketFilterResult::Pass(packet)
     }
 }
 

@@ -51,7 +51,7 @@ use crate::{
 
 use super::{
     BoxNicPacketFilter, BoxPeerPacketFilter, PacketRecvChanReceiver, PeerConnectionOrigin,
-    PeerPacketFilter, PeerPacketIngress,
+    PeerPacketFilter, PeerPacketFilterResult, PeerPacketIngress,
     acl::AclFilter,
     conn::{
         conn_bond::{
@@ -1095,7 +1095,7 @@ struct NicPacketProcessor {
 
 #[async_trait::async_trait]
 impl PeerPacketFilter for NicPacketProcessor {
-    async fn try_process_packet_from_peer(&self, packet: ZCPacket) -> Option<ZCPacket> {
+    async fn try_process_packet_from_peer(&self, packet: ZCPacket) -> PeerPacketFilterResult {
         let hdr = packet.peer_manager_header().unwrap();
         if hdr.packet_type == PacketType::Data as u8 && !hdr.is_not_send_to_tun() {
             if hdr.is_encrypted() || hdr.is_compressed() {
@@ -1106,7 +1106,7 @@ impl PeerPacketFilter for NicPacketProcessor {
                     compressed = hdr.is_compressed(),
                     "dropping packet before nic because it is not fully decoded"
                 );
-                return None;
+                return PeerPacketFilterResult::Consumed;
             }
             tracing::trace!(?packet, "send packet to nic channel");
             if let Err(error) = self
@@ -1122,9 +1122,9 @@ impl PeerPacketFilter for NicPacketProcessor {
                     "dropping packet because nic channel cannot accept it"
                 );
             }
-            None
+            PeerPacketFilterResult::Consumed
         } else {
-            Some(packet)
+            PeerPacketFilterResult::Pass(packet)
         }
     }
 }
@@ -1135,16 +1135,16 @@ struct PeerRpcPacketProcessor {
 
 #[async_trait::async_trait]
 impl PeerPacketFilter for PeerRpcPacketProcessor {
-    async fn try_process_packet_from_peer(&self, packet: ZCPacket) -> Option<ZCPacket> {
+    async fn try_process_packet_from_peer(&self, packet: ZCPacket) -> PeerPacketFilterResult {
         let hdr = packet.peer_manager_header().unwrap();
         if hdr.packet_type == PacketType::TaRpc as u8
             || hdr.packet_type == PacketType::RpcReq as u8
             || hdr.packet_type == PacketType::RpcResp as u8
         {
             self.peer_rpc_tspt_sender.send(packet).unwrap();
-            None
+            PeerPacketFilterResult::Consumed
         } else {
-            Some(packet)
+            PeerPacketFilterResult::Pass(packet)
         }
     }
 }
@@ -2056,6 +2056,16 @@ impl PeerManagerCore {
         &self,
         config: CoreInstanceRuntimeConfig,
     ) -> anyhow::Result<Arc<CoreInstanceRuntimeConfig>> {
+        self.update_runtime_config_with(config, || ())
+            .await
+            .map(|(published, ())| published)
+    }
+
+    pub(crate) async fn update_runtime_config_with<T>(
+        &self,
+        config: CoreInstanceRuntimeConfig,
+        before_publish: impl FnOnce() -> T,
+    ) -> anyhow::Result<(Arc<CoreInstanceRuntimeConfig>, T)> {
         let _update = self.runtime_config_update.lock().await;
         let current = self.runtime_config.snapshot();
         let refresh_acl_groups = current.peer.peer_group_memberships
@@ -2065,6 +2075,9 @@ impl PeerManagerCore {
         let next_acl = reload_acl.then(|| config.services.acl.clone());
         let next_built_acl = next_acl.as_ref().map(AclRuleConfig::build).transpose()?;
 
+        // Commit prepared host resources only after all fallible validation,
+        // with no cancellation point before publishing their configuration.
+        let committed = before_publish();
         self.set_avoid_relay_data_preference(config.peer.avoid_relay_data_preference);
         let published = self
             .runtime_config
@@ -2077,7 +2090,7 @@ impl PeerManagerCore {
         if refresh_acl_groups {
             self.route.refresh_acl_groups().await;
         }
-        Ok(published)
+        Ok((published, committed))
     }
 
     /// Keeps this manager's ACL rules and group assignments aligned with a
@@ -4257,13 +4270,30 @@ impl PeerOutboundPacketRouter {
     pub async fn send_msg_by_ip(
         &self,
         mut msg: ZCPacket,
-        ip_addr: IpAddr,
+        mut ip_addr: IpAddr,
         not_send_to_self: bool,
     ) -> Result<(), Error> {
         msg.fill_peer_manager_hdr(self.my_peer_id, 0, PacketType::Data as u8);
+        let filters_registered = !self.nic_packet_process_pipeline.load().is_empty();
         if !self.run_nic_packet_process_pipeline(&mut msg).await {
             return Ok(());
         }
+
+        // NIC filters may rewrite the IP header (e.g. NAT). Route by the
+        // post-filter destination rather than the caller's pre-filter address.
+        if filters_registered
+            && let Some(meta) = crate::packet::ip::parse_ip_packet(msg.payload())
+            && meta.has_valid_length
+            && meta.dst_ip != ip_addr
+        {
+            tracing::trace!(
+                original_dst = %ip_addr,
+                new_dst = %meta.dst_ip,
+                "destination rewritten by nic packet filter"
+            );
+            ip_addr = meta.dst_ip;
+        }
+
         self.send_msg_by_ip_after_pipeline(msg, ip_addr, not_send_to_self, true)
             .await
             .map(|_| ())
@@ -4969,25 +4999,33 @@ impl PeerPacketRouter {
                 return;
             }
 
-            let mut processed = false;
-            let mut zc_packet = Some(ret);
-            tracing::trace!(?zc_packet, "try_process_packet_from_peer");
+            tracing::trace!(?ret, "try_process_packet_from_peer");
             let pipelines = self.peer_packet_process_pipeline.load_full();
-            for pipeline in pipelines.iter().rev() {
-                if let Some(filter) = pipeline.filter_if_active() {
-                    zc_packet = filter
-                        .try_process_packet_from_peer(zc_packet.unwrap())
-                        .await;
+            process_peer_packet(&pipelines, ret).await;
+        }
+    }
+}
+
+async fn process_peer_packet(pipelines: &[PeerPipelineEntry], packet: ZCPacket) {
+    let mut first = Some((packet, pipelines.len()));
+    // The ordinary single-packet path does not allocate this queue.
+    let mut pending = Vec::new();
+    'packets: while let Some((mut packet, next)) = first.take().or_else(|| pending.pop()) {
+        for (index, pipeline) in pipelines[..next].iter().enumerate().rev() {
+            let Some(filter) = pipeline.filter_if_active() else {
+                continue;
+            };
+            match filter.try_process_packet_from_peer(packet).await {
+                PeerPacketFilterResult::Consumed => continue 'packets,
+                PeerPacketFilterResult::Pass(next) => packet = next,
+                PeerPacketFilterResult::PassBatch(packets) => {
+                    // Resume each packet after the filter that produced it.
+                    pending.extend(packets.into_iter().rev().map(|packet| (packet, index)));
+                    continue 'packets;
                 }
-                if zc_packet.is_none() {
-                    processed = true;
-                    break;
-                }
-            }
-            if !processed {
-                tracing::error!(?zc_packet, "unhandled packet");
             }
         }
+        tracing::error!(?packet, "unhandled packet");
     }
 }
 

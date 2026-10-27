@@ -15,7 +15,10 @@ use crate::{
     config::runtime::CoreRuntimeConfig,
     config::{CoreConfig, IpPrefix, NetworkIdentity, NodeConfig, ProxyNetworkConfig},
     host::packet::{HostPacketSender, host_packet_channel},
-    peers::context::{PeerContext, PeerEvent},
+    peers::{
+        PeerPacketFilter, PeerPacketFilterResult,
+        context::{PeerContext, PeerEvent},
+    },
     proto::common::{PeerFeatureFlag, StunInfo},
 };
 
@@ -120,7 +123,10 @@ async fn full_host_packet_queue_does_not_block_peer_packet_processing() {
     .await;
 
     assert!(result.is_ok(), "a full host queue blocked the peer router");
-    assert!(result.unwrap().is_none());
+    assert!(matches!(
+        result.unwrap(),
+        PeerPacketFilterResult::Consumed
+    ));
     assert_eq!(nic_receiver.try_recv().unwrap().payload(), b"queued");
     assert_eq!(nic_channel_drops.get(), 1);
 }
@@ -1481,4 +1487,215 @@ fn rule_reads_cost_covers_every_select_by_and_failover_when() {
         SelectBy::Balance,
         FailoverWhen::Unreachable
     )));
+}
+
+fn set_packet_destination(packet: &mut [u8], destination: IpAddr) {
+    match destination {
+        IpAddr::V4(destination) => {
+            assert_eq!(packet[0] >> 4, 4);
+            packet[16..20].copy_from_slice(&destination.octets());
+            packet[10..12].fill(0);
+            let mut checksum: u32 = packet[..20]
+                .chunks_exact(2)
+                .map(|word| u32::from(u16::from_be_bytes([word[0], word[1]])))
+                .sum();
+            while checksum >> 16 != 0 {
+                checksum = (checksum & 0xffff) + (checksum >> 16);
+            }
+            packet[10..12].copy_from_slice(&(!(checksum as u16)).to_be_bytes());
+        }
+        IpAddr::V6(destination) => {
+            assert_eq!(packet[0] >> 4, 6);
+            packet[24..40].copy_from_slice(&destination.octets());
+        }
+    }
+}
+
+struct DestinationRewriteNicFilter(IpAddr);
+
+#[async_trait::async_trait]
+impl super::super::NicPacketFilter for DestinationRewriteNicFilter {
+    async fn try_process_packet_from_nic(&self, packet: &mut ZCPacket) -> bool {
+        // Leave to_peer_id unset: the router must use the rewritten IP header.
+        assert_eq!(packet.peer_manager_header().unwrap().to_peer_id.get(), 0);
+        set_packet_destination(packet.mut_payload(), self.0);
+        true
+    }
+}
+
+async fn check_nic_filter_destination_routing(addresses: [IpAddr; 4]) {
+    let [source, original, rewritten, unrouted] = addresses;
+    let mut peers = Vec::new();
+    let mut receivers = Vec::new();
+    for address in [source, original, rewritten] {
+        let mut runtime = portable_runtime_config("nic-filter-routing");
+        if address.is_ipv4() {
+            runtime.core.routes.ipv4 = Some(IpPrefix::new(address, 24).unwrap());
+        } else {
+            runtime.core.routes.ipv6 = Some(IpPrefix::new(address, 64).unwrap());
+        }
+        let (sender, receiver) = host_packet_channel();
+        let peer = PeerManagerCore::new_portable_for_test(
+            PortablePeerManagerConfig::new(runtime),
+            sender,
+        )
+        .unwrap();
+        peer.run().await.unwrap();
+        peers.push(peer);
+        receivers.push(receiver);
+    }
+    let sender = &peers[0];
+    for peer in &peers[1..] {
+        let (client, server) = crate::tunnel::ring::create_ring_tunnel_pair();
+        let (client_result, server_result) = tokio::join!(
+            sender.add_client_tunnel(client, true),
+            peer.add_tunnel_as_server(server, true),
+        );
+        client_result.unwrap();
+        server_result.unwrap();
+    }
+    tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            if sender.get_msg_dst_peer(&original).await == (vec![peers[1].my_peer_id()], false)
+                && sender.get_msg_dst_peer(&rewritten).await
+                    == (vec![peers[2].my_peer_id()], false)
+            {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("both destination routes must be ready before sending");
+    assert_eq!(
+        sender.get_msg_dst_peer(&unrouted).await,
+        (Vec::new(), false)
+    );
+    sender
+        .add_nic_packet_process_pipeline(Box::new(DestinationRewriteNicFilter(rewritten)))
+        .await;
+
+    // Exercise both misdelivery to an existing peer and silent loss for an
+    // address with no route. Send once per case, without retrying data packets.
+    for destination in [original, unrouted] {
+        let mut payload = match source {
+            IpAddr::V4(source) => {
+                let mut payload = vec![0u8; 20];
+                payload[0] = 0x45;
+                payload[2..4].copy_from_slice(&20u16.to_be_bytes());
+                payload[8] = 64;
+                payload[9] = 253; // Experimental protocol; no transport header.
+                payload[12..16].copy_from_slice(&source.octets());
+                payload
+            }
+            IpAddr::V6(source) => {
+                let mut payload = vec![0u8; 40];
+                payload[0] = 0x60;
+                payload[6] = 59; // No next header.
+                payload[7] = 64;
+                payload[8..24].copy_from_slice(&source.octets());
+                payload
+            }
+        };
+        set_packet_destination(&mut payload, destination);
+        sender
+            .send_msg_by_ip(ZCPacket::new_with_payload(&payload), destination, false)
+            .await
+            .unwrap();
+
+        let packet = tokio::time::timeout(Duration::from_secs(5), receivers[2].recv())
+            .await
+            .expect("rewritten destination peer did not receive the packet")
+            .unwrap()
+            .into_core_packet();
+        set_packet_destination(&mut payload, rewritten);
+        assert_eq!(packet.payload(), payload);
+        let header = packet.peer_manager_header().unwrap();
+        assert_eq!(header.from_peer_id.get(), sender.my_peer_id());
+        assert_eq!(header.to_peer_id.get(), peers[2].my_peer_id());
+        assert!(
+            tokio::time::timeout(Duration::from_millis(100), receivers[1].recv())
+                .await
+                .is_err(),
+            "packet reached the old destination"
+        );
+    }
+
+    for peer in &peers {
+        peer.clear_resources().await;
+    }
+}
+
+#[tokio::test]
+async fn nic_filter_rewritten_ipv4_destination_controls_routing() {
+    check_nic_filter_destination_routing([
+        "10.82.0.1".parse().unwrap(),
+        "10.82.0.2".parse().unwrap(),
+        "10.82.0.3".parse().unwrap(),
+        "10.82.0.99".parse().unwrap(),
+    ])
+    .await;
+}
+
+#[tokio::test]
+async fn nic_filter_rewritten_ipv6_destination_controls_routing() {
+    check_nic_filter_destination_routing([
+        "fd00::1".parse().unwrap(),
+        "fd00::2".parse().unwrap(),
+        "fd00::3".parse().unwrap(),
+        "fd00::99".parse().unwrap(),
+    ])
+    .await;
+}
+
+#[tokio::test]
+async fn packet_batches_resume_at_next_filter_in_order() {
+    struct Filter {
+        stage: u8,
+        seen: Arc<std::sync::Mutex<Vec<(u8, u8)>>>,
+    }
+    #[async_trait::async_trait]
+    impl PeerPacketFilter for Filter {
+        async fn try_process_packet_from_peer(
+            &self,
+            packet: ZCPacket,
+        ) -> PeerPacketFilterResult {
+            self.seen
+                .lock()
+                .unwrap()
+                .push((self.stage, packet.payload()[0]));
+            match self.stage {
+                0 => PeerPacketFilterResult::Consumed,
+                1 | 2 => {
+                    let mut extra = packet.clone();
+                    extra.mut_payload()[0] += if self.stage == 1 { 10 } else { 1 };
+                    PeerPacketFilterResult::PassBatch(vec![packet, extra])
+                }
+                _ => PeerPacketFilterResult::Pass(packet),
+            }
+        }
+    }
+    let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let pipelines = (0..4)
+        .map(|stage| {
+            permanent_peer_pipeline_entry(Box::new(Filter {
+                stage,
+                seen: seen.clone(),
+            }))
+        })
+        .collect::<Vec<_>>();
+    process_peer_packet(&pipelines, ZCPacket::new_with_payload(&[0])).await;
+    assert_eq!(
+        *seen.lock().unwrap(),
+        vec![
+            (3, 0),
+            (2, 0),
+            (1, 0),
+            (0, 0),
+            (0, 10),
+            (1, 1),
+            (0, 1),
+            (0, 11),
+        ]
+    );
 }
