@@ -67,6 +67,10 @@ android {
             keyPassword = keystoreProperties["keyPassword"] as String
             storeFile = file(keystoreProperties["storeFile"] as String)
             storePassword = keystoreProperties["storePassword"] as String
+            // OEM package installers often require JAR (v1) signatures (META-INF/*.RSA).
+            // v2-only APKs install on stock Android but fail with "no signature file".
+            enableV1Signing = true
+            enableV2Signing = true
         }
     }
     buildTypes {

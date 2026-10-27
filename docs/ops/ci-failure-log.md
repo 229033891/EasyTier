@@ -91,6 +91,7 @@ Agent / 人工均适用：**未完成 §1 不要提交**。
 - [ ] **Status 前端单测对齐 Panel/i18n**：节点详情是 `node_info_details` Panel + `node_info_group_udp_nat_type`，不要再找 `show_node_details` / `UDP NAT Type:` 硬编码。
 - [ ] **删 UI 控件后清 unused import**：`vue-tsc -b` 开 `noUnusedLocals`（TS6133）。去掉按钮/组件后同步删 `primevue` 等 import（如 `Button`）；改 `Status.vue` 后至少 `pnpm --filter easytier-frontend-lib exec vue-tsc -b`。
 - [ ] **改 dataplane/WASI guest 后刷新嵌入 wasm**：ET Go 跑的是 `easytier-go/internal/artifact/easytier_core.wasm`，不是仓库现编 Rust。Close→FIN（`DataPlaneTcpStream::Drop`）等行为若只改源码不 `go generate`，Go 测会报 `FIN not sent`。artifact/`proto` provenance 的 Commit 必须一致。
+- [ ] **Android release 须开 v1+v2 签名**：仅有 APK Sig Block（v2）而无 `META-INF/*.RSA`（v1）时，不少国产安装器报「解析失败 / 没有签名文件」。`signingConfigs.release` 显式 `enableV1Signing = true` / `enableV2Signing = true`；发版前可 unzip 检查是否含 `META-INF/*.RSA`。
 - [ ] **OpenWrt LuCI `.htm` 必须 LF**：LuCI 把模板正文塞进 `write("…")` 时只转义 `\n`，不转义 `\r`。Windows 上打出的 CRLF apk 会让状态页报 `unfinished string near '"'`。打包前 `sed -i 's/\r$//'`；`luci-app-easytier` 有 `Build/Prepare` 钩子与 `.gitattributes` `eol=lf`。
 - [ ] **数据面 next_hop 要对齐 `latency_first`**：默认 `latency_first=true` 时发包走 LeastCost（`next_hop_peer_id_latency_first`），不是 LeastHop（`next_hop_peer_id`）。拓扑类测试若只等 LeastHop，新建边在 peer-center 仍为默认 500 时 LeastCost 会继续走已测速的 admin 路径，`assert_ping_forwarded_by` 会误报 forbidden forwarder。`wait_route_next_hop` 必须按实例 flag 选表；纯拓扑用例可 `disable_latency_first`。生效值要跟 `PeerPacketPolicy::from_flags` 一致：`flags.latency_first && !flags.p2p_only`（`p2p_only` 会强制关掉时延优先）。
 
