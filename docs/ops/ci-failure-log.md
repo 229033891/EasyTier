@@ -89,6 +89,7 @@ Agent / 人工均适用：**未完成 §1 不要提交**。
 - [ ] **数据面 `send_msg` 勿纯 `try_send`**：无有界等待时 TCP 段/UDP 分片突发会整波 `BufferFull`，dataplane 大包单测与现网突发都会挂；keepalive 的 `try_send`（LocalCongestion）可保留。
 - [ ] **attached 直连测试清 `is_hole_punched`**：`PeerConn::new*` 默认 hole-punched=true；`has_direct_attached_conn` 要求 `!is_hole_punched && is_attached`，测试需与 `peer_manager` 准入一致地 `set_is_hole_punched(false)`。
 - [ ] **Status 前端单测对齐 Panel/i18n**：节点详情是 `node_info_details` Panel + `node_info_group_udp_nat_type`，不要再找 `show_node_details` / `UDP NAT Type:` 硬编码。
+- [ ] **删 UI 控件后清 unused import**：`vue-tsc -b` 开 `noUnusedLocals`（TS6133）。去掉按钮/组件后同步删 `primevue` 等 import（如 `Button`）；改 `Status.vue` 后至少 `pnpm --filter easytier-frontend-lib exec vue-tsc -b`。
 - [ ] **OpenWrt LuCI `.htm` 必须 LF**：LuCI 把模板正文塞进 `write("…")` 时只转义 `\n`，不转义 `\r`。Windows 上打出的 CRLF apk 会让状态页报 `unfinished string near '"'`。打包前 `sed -i 's/\r$//'`；`luci-app-easytier` 有 `Build/Prepare` 钩子与 `.gitattributes` `eol=lf`。
 - [ ] **数据面 next_hop 要对齐 `latency_first`**：默认 `latency_first=true` 时发包走 LeastCost（`next_hop_peer_id_latency_first`），不是 LeastHop（`next_hop_peer_id`）。拓扑类测试若只等 LeastHop，新建边在 peer-center 仍为默认 500 时 LeastCost 会继续走已测速的 admin 路径，`assert_ping_forwarded_by` 会误报 forbidden forwarder。`wait_route_next_hop` 必须按实例 flag 选表；纯拓扑用例可 `disable_latency_first`。生效值要跟 `PeerPacketPolicy::from_flags` 一致：`flags.latency_first && !flags.p2p_only`（`p2p_only` 会强制关掉时延优先）。
 
@@ -117,6 +118,20 @@ Agent / 人工均适用：**未完成 §1 不要提交**。
 ---
 
 ## 5. 失败记录（新 → 旧）
+
+### 2026-10-27 — 全线打包：Status.vue 未用 `Button` 导致 vue-tsc TS6133
+
+| 项 | 内容 |
+|----|------|
+| 仓库/分支 | `229033891/EasyTier` `releases/v2.7.9`（`ed14e5d2` 同步） |
+| Run | https://github.com/229033891/EasyTier/actions/runs/40489145962 等（Windows/Linux/Android/Test/OpenWrt） |
+| 失败 job | Windows `build-gui`；Linux `build_web`；Android `build-mobile`；Test `Build test`；OpenWrt `build-bins` |
+| 根因一类 | frontend / vue-tsc |
+| 状态 | 已修复（去掉 `Button` import；`vue-tsc -b` 已绿） |
+
+**摘要**：`ed14e5d2` 去掉节点详情复制按钮，但 `Status.vue` 仍 `import { …, Button, … } from 'primevue'`。`vue-tsc -b` 报 `TS6133: 'Button' is declared but its value is never read`，所有编 frontend-lib 的打包/测试 job 在 prepare-build 即 exit 2。
+
+**防再犯**：见 §3「删 UI 控件后清 unused import」。
 
 ### 2026-10-27 — ET Linux / ET Test：前端 Status 单测 + clippy/DB 测试 + try_send 突发
 

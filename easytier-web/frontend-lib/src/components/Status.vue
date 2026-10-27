@@ -39,7 +39,7 @@ import {
   type RouteTableKind,
   type VipStateKey,
 } from '../modules/statusDisplay';
-import { Badge, DataTable, Column, Tag, Button, Card, Panel, InputText } from 'primevue';
+import { Badge, DataTable, Column, Tag, Card, Panel, InputText } from 'primevue';
 import NetworkChart from './NetworkChart.vue';
 import PeerConnHistoryChart from './PeerConnHistoryChart.vue';
 import FlowHistoryChart from './FlowHistoryChart.vue';
