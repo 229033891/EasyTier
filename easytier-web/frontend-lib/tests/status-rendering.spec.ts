@@ -63,9 +63,17 @@ describe('status protobuf JSON rendering', () => {
     expect(rows[0].text()).not.toContain('0%')
     expect(rows[1].text()).toContain('Port Restricted')
     expect(rows[1].text()).toContain('0%')
-    await wrapper.findAll('button').find(button => button.text() === 'show_node_details')!.trigger('click')
-    expect(wrapper.text()).toContain('UDP NAT Type: Full Cone')
-    expect(wrapper.text()).not.toContain('UDP NAT Type: undefined')
+    // Node details is a top-level toggleable Panel (header i18n key), not the
+    // old nested "show_node_details" button.
+    const detailsHeader = wrapper
+      .findAll('.p-panel-header, [data-pc-section="header"]')
+      .find(el => el.text().includes('node_info_details'))
+    expect(detailsHeader).toBeTruthy()
+    await detailsHeader!.trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('node_info_group_udp_nat_type')
+    expect(wrapper.text()).toContain('Full Cone')
+    expect(wrapper.text()).not.toContain('undefined')
   })
 
   it('renders omitted enum defaults as Unknown but leaves missing STUN data blank', async () => {
@@ -74,7 +82,14 @@ describe('status protobuf JSON rendering', () => {
     expect(rows[0].text()).toContain('Unknown')
     expect(rows[1].text()).not.toContain('Unknown')
     expect(rows[1].text()).toContain('25%')
-    expect(wrapper.text()).toContain('UDP NAT Type: Unknown')
+    const detailsHeader = wrapper
+      .findAll('.p-panel-header, [data-pc-section="header"]')
+      .find(el => el.text().includes('node_info_details'))
+    expect(detailsHeader).toBeTruthy()
+    await detailsHeader!.trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('node_info_group_udp_nat_type')
+    expect(wrapper.text()).toContain('Unknown')
   })
 
   it('preserves numeric NAT values from older backends', async () => {

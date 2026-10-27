@@ -308,14 +308,11 @@ impl SessionData {
 
     /// Returns true when the next heartbeat should persist the device archive.
     fn should_write_device_archive(&self, snapshot: &DeviceArchiveSnapshot) -> bool {
-        match (&self.device_archive, self.last_device_archive_write) {
+        !matches!(
+            (&self.device_archive, self.last_device_archive_write),
             (Some(prev), Some(written_at))
-                if prev == snapshot && written_at.elapsed() < DEVICE_ARCHIVE_MIN_WRITE_INTERVAL =>
-            {
-                false
-            }
-            _ => true,
-        }
+                if prev == snapshot && written_at.elapsed() < DEVICE_ARCHIVE_MIN_WRITE_INTERVAL
+        )
     }
 
     fn record_device_archive_write(&mut self, snapshot: DeviceArchiveSnapshot) {

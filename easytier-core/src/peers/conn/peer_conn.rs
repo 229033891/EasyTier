@@ -1522,17 +1522,23 @@ impl PeerConn {
     }
 
     pub async fn send_msg(&self, msg: ZCPacket) -> Result<(), Error> {
-        // Non-blocking egress: a slow peer must not stall PeerPacketRouter and
-        // every other conn sharing the ingress path. BufferFull is counted at
-        // the router (`data_plane_tunnel_buffer_full`) and must not tear down
-        // the conn — only Shutdown / hard errors do.
-        match self.sink.try_send(msg) {
-            Ok(()) => Ok(()),
-            Err(TunnelError::BufferFull) => Err(TunnelError::BufferFull.into()),
-            Err(error) => {
+        // Bounded egress wait (not unbounded `send`, not pure `try_send`):
+        // - `MpscTunnelSender::send` tries non-blocking first, so the common
+        //   empty-ring path never parks the shared PeerPacketRouter.
+        // - On a full ring we wait briefly for the forwarder to drain — enough
+        //   for in-process / lightly loaded tunnels to absorb TCP segments and
+        //   UDP fragments, short enough that a stuck peer surfaces as
+        //   `BufferFull` instead of HOL-blocking every other conn.
+        // - BufferFull is counted at the router and must not tear the conn
+        //   down; only Shutdown / hard errors do.
+        const EGRESS_WAIT: Duration = Duration::from_millis(100);
+        match timeout(EGRESS_WAIT, self.sink.send(msg)).await {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(error)) => {
                 self.close_event_notifier.notify_close();
                 Err(error.into())
             }
+            Err(_) => Err(TunnelError::BufferFull.into()),
         }
     }
 

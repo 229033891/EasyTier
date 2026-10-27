@@ -488,6 +488,10 @@ async fn peer_channel_uses_admission_origin_instead_of_packet_header() {
     );
     client_ret.unwrap();
     server_ret.unwrap();
+    // Production admission clears this for direct/attached paths
+    // (`peer_manager` sets `!is_directly_connected`). `PeerConn::new*` defaults
+    // to hole-punched=true, and `has_direct_attached_conn` requires the clear.
+    server_conn.set_is_hole_punched(false);
     let server_conn_id = server_conn.get_conn_id();
 
     let (client_tx, _client_rx) = create_packet_recv_chan();

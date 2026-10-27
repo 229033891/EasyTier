@@ -218,28 +218,6 @@ fn build_tcp_packet_with_bad_data_offset(
     buf
 }
 
-fn build_udp_followup_fragment(src: Ipv4Addr, dst: Ipv4Addr) -> Vec<u8> {
-    let mut buf = vec![0u8; 28];
-    {
-        let mut ip_packet = Ipv4Packet::new_unchecked(&mut buf);
-        ip_packet.set_version(4);
-        ip_packet.set_header_len(20);
-        ip_packet.set_total_len(28);
-        ip_packet.set_hop_limit(64);
-        ip_packet.set_next_header(IpProtocol::Udp);
-        ip_packet.set_frag_offset(8);
-        ip_packet.set_src_addr(src);
-        ip_packet.set_dst_addr(dst);
-        ip_packet
-            .payload_mut()
-            .copy_from_slice(&[0xde, 0xad, 0xbe, 0xef, 0xca, 0xfe, 0xba, 0xbe]);
-
-        ip_packet.fill_checksum();
-    }
-
-    buf
-}
-
 pub(super) const UDP_LOCAL_IP: Ipv4Addr = Ipv4Addr::new(10, 144, 144, 1);
 const UDP_LOCAL: SocketAddr = SocketAddr::new(IpAddr::V4(UDP_LOCAL_IP), 40000);
 const UDP_REMOTE: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(10, 144, 144, 3)), 53);

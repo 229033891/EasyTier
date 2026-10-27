@@ -85,6 +85,10 @@ Agent / 人工均适用：**未完成 §1 不要提交**。
 - [ ] **桌面专用 Tauri 权限勿进共用 capability**：`autostart:*` 等仅 desktop 依赖提供的权限，必须写在带 `platforms: [macOS, windows, linux]` 的 capability；写进 Android 也会加载的 `migrated.json` 会在 ET Android `tauri build` 报 `Permission … not found`。
 - [ ] **proto 注释勿让续行以 `+`/`-`/`*` 开头**：prost 会把字段注释编成 `///`；Markdown 把行首 `+` 当成列表，后续未缩进行触发 clippy `doc_lazy_continuation`（`-D warnings` 直接挂）。改写成逗号并列，或续行缩进两空格。
 - [ ] **`#[cfg(test)]` helper 若无断言引用也算 dead_code**：CI 编 lib test 时 `cfg(test)` 为真，未调用的 `pub(super)`/`fn` 仍触发 `-D dead-code`。helper 写了就要在同文件测试里用，否则删掉。
+- [ ] **`mod tests` 调父模块私有函数用 `super::`**：unix-only DB 权限 helper 等，裸名在子模块不可见，Linux CI 会 E0425。
+- [ ] **数据面 `send_msg` 勿纯 `try_send`**：无有界等待时 TCP 段/UDP 分片突发会整波 `BufferFull`，dataplane 大包单测与现网突发都会挂；keepalive 的 `try_send`（LocalCongestion）可保留。
+- [ ] **attached 直连测试清 `is_hole_punched`**：`PeerConn::new*` 默认 hole-punched=true；`has_direct_attached_conn` 要求 `!is_hole_punched && is_attached`，测试需与 `peer_manager` 准入一致地 `set_is_hole_punched(false)`。
+- [ ] **Status 前端单测对齐 Panel/i18n**：节点详情是 `node_info_details` Panel + `node_info_group_udp_nat_type`，不要再找 `show_node_details` / `UDP NAT Type:` 硬编码。
 - [ ] **OpenWrt LuCI `.htm` 必须 LF**：LuCI 把模板正文塞进 `write("…")` 时只转义 `\n`，不转义 `\r`。Windows 上打出的 CRLF apk 会让状态页报 `unfinished string near '"'`。打包前 `sed -i 's/\r$//'`；`luci-app-easytier` 有 `Build/Prepare` 钩子与 `.gitattributes` `eol=lf`。
 - [ ] **数据面 next_hop 要对齐 `latency_first`**：默认 `latency_first=true` 时发包走 LeastCost（`next_hop_peer_id_latency_first`），不是 LeastHop（`next_hop_peer_id`）。拓扑类测试若只等 LeastHop，新建边在 peer-center 仍为默认 500 时 LeastCost 会继续走已测速的 admin 路径，`assert_ping_forwarded_by` 会误报 forbidden forwarder。`wait_route_next_hop` 必须按实例 flag 选表；纯拓扑用例可 `disable_latency_first`。生效值要跟 `PeerPacketPolicy::from_flags` 一致：`flags.latency_first && !flags.p2p_only`（`p2p_only` 会强制关掉时延优先）。
 
@@ -113,6 +117,30 @@ Agent / 人工均适用：**未完成 §1 不要提交**。
 ---
 
 ## 5. 失败记录（新 → 旧）
+
+### 2026-10-27 — ET Linux / ET Test：前端 Status 单测 + clippy/DB 测试 + try_send 突发
+
+| 项 | 内容 |
+|----|------|
+| 仓库/分支 | `229033891/EasyTier` `dev` |
+| Run | https://github.com/229033891/EasyTier/actions/runs/40476840157 、https://github.com/229033891/EasyTier/actions/runs/40476849720 |
+| 失败 job | Linux `build_web`；Test `Check clippy` / `Test (easytier)` |
+| 根因一类 | frontend-test / clippy / compile / regression |
+| 状态 | 已修复（本地未推送） |
+
+**摘要**：
+1. `status-rendering.spec.ts` 仍点旧按钮 `show_node_details` / 断言 `UDP NAT Type:`，UI 已改为一级 Panel `node_info_details` + i18n key。
+2. `db/mod.rs` unix 单测在子模块里裸调私有 `sqlite_database_path` / `restrict_database_sidecar_permissions`（需 `super::`）。
+3. clippy `match_like_matches_macro`（`should_write_device_archive`）；`build_udp_followup_fragment` dead_code。
+4. `PeerConn::send_msg` 纯 `try_send` 使 dataplane 大包/TCP 突发直接 `BufferFull` 超时；改为 100ms 有界 `send`。
+5. `peer_channel_uses_admission_origin_*` 未 `set_is_hole_punched(false)`，`has_direct_attached_conn` 恒假。
+
+**防再犯**：
+- 前端改 Panel/i18n 文案后同步 `status-rendering.spec.ts`。
+- `mod tests` 访问父模块私有 fn 一律 `super::`。
+- 数据面 egress 勿纯 `try_send`：至少有界等待，否则 TCP/分片突发必挂。
+- attached 直连测试要清 `is_hole_punched`（与 `peer_manager` 准入一致）。
+- `cfg(test)` helper 未用即删（`-D dead-code`）。
 
 ### 2026-10-25 — ET Test：`cargo fmt --check`（api_input flow_stats 测试）
 

@@ -2810,16 +2810,16 @@ mod tests {
     #[test]
     fn sqlite_database_path_strips_url_decorations() {
         assert_eq!(
-            sqlite_database_path("sqlite:///var/lib/et/web.db"),
+            super::sqlite_database_path("sqlite:///var/lib/et/web.db"),
             Some("/var/lib/et/web.db")
         );
         assert_eq!(
-            sqlite_database_path("sqlite:file:/tmp/a.db?mode=rwc"),
+            super::sqlite_database_path("sqlite:file:/tmp/a.db?mode=rwc"),
             Some("/tmp/a.db")
         );
-        assert_eq!(sqlite_database_path("sqlite::memory:"), None);
+        assert_eq!(super::sqlite_database_path("sqlite::memory:"), None);
         assert_eq!(
-            sqlite_database_path("sqlite://file:memdb?mode=memory"),
+            super::sqlite_database_path("sqlite://file:memdb?mode=memory"),
             None
         );
     }
@@ -2853,7 +2853,7 @@ mod tests {
             std::fs::set_permissions(&sidecar, std::fs::Permissions::from_mode(0o644)).unwrap();
         }
 
-        restrict_database_sidecar_permissions(&format!("sqlite://{}", db_file.display()));
+        super::restrict_database_sidecar_permissions(&format!("sqlite://{}", db_file.display()));
 
         for suffix in ["-wal", "-shm", "-journal"] {
             let sidecar = dir.path().join(format!("web.db{suffix}"));
