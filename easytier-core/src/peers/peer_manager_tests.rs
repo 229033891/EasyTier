@@ -123,10 +123,7 @@ async fn full_host_packet_queue_does_not_block_peer_packet_processing() {
     .await;
 
     assert!(result.is_ok(), "a full host queue blocked the peer router");
-    assert!(matches!(
-        result.unwrap(),
-        PeerPacketFilterResult::Consumed
-    ));
+    assert!(matches!(result.unwrap(), PeerPacketFilterResult::Consumed));
     assert_eq!(nic_receiver.try_recv().unwrap().payload(), b"queued");
     assert_eq!(nic_channel_drops.get(), 1);
 }
@@ -1535,11 +1532,9 @@ async fn check_nic_filter_destination_routing(addresses: [IpAddr; 4]) {
             runtime.core.routes.ipv6 = Some(IpPrefix::new(address, 64).unwrap());
         }
         let (sender, receiver) = host_packet_channel();
-        let peer = PeerManagerCore::new_portable_for_test(
-            PortablePeerManagerConfig::new(runtime),
-            sender,
-        )
-        .unwrap();
+        let peer =
+            PeerManagerCore::new_portable_for_test(PortablePeerManagerConfig::new(runtime), sender)
+                .unwrap();
         peer.run().await.unwrap();
         peers.push(peer);
         receivers.push(receiver);
@@ -1557,8 +1552,7 @@ async fn check_nic_filter_destination_routing(addresses: [IpAddr; 4]) {
     tokio::time::timeout(Duration::from_secs(10), async {
         loop {
             if sender.get_msg_dst_peer(&original).await == (vec![peers[1].my_peer_id()], false)
-                && sender.get_msg_dst_peer(&rewritten).await
-                    == (vec![peers[2].my_peer_id()], false)
+                && sender.get_msg_dst_peer(&rewritten).await == (vec![peers[2].my_peer_id()], false)
             {
                 break;
             }
@@ -1656,10 +1650,7 @@ async fn packet_batches_resume_at_next_filter_in_order() {
     }
     #[async_trait::async_trait]
     impl PeerPacketFilter for Filter {
-        async fn try_process_packet_from_peer(
-            &self,
-            packet: ZCPacket,
-        ) -> PeerPacketFilterResult {
+        async fn try_process_packet_from_peer(&self, packet: ZCPacket) -> PeerPacketFilterResult {
             self.seen
                 .lock()
                 .unwrap()

@@ -17,13 +17,13 @@ use sqlx::{
     sqlite::{SqliteConnectOptions, SqliteJournalMode, SqliteSynchronous},
     types::chrono,
 };
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt as _;
 use std::{
     collections::{HashMap, HashSet},
     str::FromStr as _,
     time::Duration,
 };
-#[cfg(unix)]
-use std::os::unix::fs::PermissionsExt as _;
 use uuid::Uuid;
 
 use crate::migrator;
@@ -410,22 +410,27 @@ async fn upsert_network_config(
     Ok(result.rows_affected() > 0)
 }
 
+/// Strip the sqlx URL decorations from a database path, yielding the on-disk
+/// file (`None` for in-memory databases).
 #[cfg(unix)]
-fn restrict_database_file_permissions(db_path: &str) -> anyhow::Result<()> {
+fn sqlite_database_path(db_path: &str) -> Option<&str> {
     if db_path.ends_with(":memory:") || db_path.contains("mode=memory") {
-        return Ok(());
+        return None;
     }
     let path = db_path
         .strip_prefix("sqlite://")
         .or_else(|| db_path.strip_prefix("sqlite:"))
         .unwrap_or(db_path);
-    let path = path
-        .strip_prefix("file:")
+    path.strip_prefix("file:")
         .unwrap_or(path)
         .split('?')
         .next()
-        .filter(|path| !path.is_empty());
-    let Some(path) = path else {
+        .filter(|path| !path.is_empty())
+}
+
+#[cfg(unix)]
+fn restrict_database_file_permissions(db_path: &str) -> anyhow::Result<()> {
+    let Some(path) = sqlite_database_path(db_path) else {
         return Ok(());
     };
     let mut permissions = std::fs::metadata(path)?.permissions();
@@ -434,10 +439,49 @@ fn restrict_database_file_permissions(db_path: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Tighten the WAL sidecars.
+///
+/// SQLite does **not** create these with the process umask: `findCreateFileMode()`
+/// copies the database file's mode to `<db>-wal` / `<db>-journal`, and
+/// `unixOpenSharedMemory()` opens `<db>-shm` with `fstat(db).st_mode & 0777`. So
+/// once the main file is 0600 (see [`restrict_database_file_permissions`], which
+/// runs before the first connection opens the database) any sidecar SQLite
+/// recreates later already inherits 0600.
+///
+/// This sweep therefore only covers the transition case: files left behind by an
+/// older build that allowed 0644, or a database whose mode was tightened while a
+/// sidecar from the old mode was still on disk. Those pages do contain
+/// `network_secret` (a rollback journal held the same content but was deleted on
+/// commit; these live until the next checkpoint), so it is worth one stat+chmod
+/// per file at startup.
+///
+/// Best effort on purpose: a read-only deployment (or a bind-mounted WAL) must
+/// not fail startup over this.
+#[cfg(unix)]
+fn restrict_database_sidecar_permissions(db_path: &str) {
+    let Some(path) = sqlite_database_path(db_path) else {
+        return;
+    };
+    for suffix in ["-wal", "-shm", "-journal"] {
+        let sidecar = format!("{path}{suffix}");
+        let Ok(metadata) = std::fs::metadata(&sidecar) else {
+            continue; // not created (yet): nothing to protect
+        };
+        let mut permissions = metadata.permissions();
+        permissions.set_mode(0o600);
+        if let Err(error) = std::fs::set_permissions(&sidecar, permissions) {
+            tracing::warn!(sidecar = %sidecar, %error, "failed to tighten SQLite sidecar permissions");
+        }
+    }
+}
+
 #[cfg(not(unix))]
 fn restrict_database_file_permissions(_db_path: &str) -> anyhow::Result<()> {
     Ok(())
 }
+
+#[cfg(not(unix))]
+fn restrict_database_sidecar_permissions(_db_path: &str) {}
 
 #[derive(Debug, Clone)]
 pub struct Db {
@@ -448,13 +492,18 @@ pub struct Db {
 
 impl Db {
     pub async fn new<T: ToString>(db_path: T) -> anyhow::Result<Self> {
-        let db = Self::prepare_db(db_path.to_string().as_str()).await?;
+        let db_path = db_path.to_string();
+        let db = Self::prepare_db(db_path.as_str()).await?;
         let orm_db = SqlxSqliteConnector::from_sqlx_sqlite_pool(db.clone());
         migrator::Migrator::up(&orm_db, None).await?;
         Self::backfill_empty_network_secret_digests(&orm_db).await?;
+        // Migrator + first WAL connection have written by now: sweep sidecars left
+        // behind with a looser mode (see `restrict_database_sidecar_permissions`
+        // for why SQLite itself keeps 0600 for anything it recreates).
+        restrict_database_sidecar_permissions(&db_path);
 
         Ok(Self {
-            db_path: db_path.to_string(),
+            db_path,
             db,
             orm_db,
         })
@@ -507,7 +556,13 @@ impl Db {
 
         let db = sqlx::pool::PoolOptions::new()
             .max_connections(16)
-            .acquire_timeout(Duration::from_secs(5))
+            // Queue for a connection briefly, then fail fast. Waiting longer
+            // than this only burns the caller's budget: a heartbeat that cannot
+            // get a connection within 1s is better reported as a DB error than
+            // silently answered after the client's timeout has expired. It also
+            // keeps the worst case (acquire + busy) below the smallest
+            // configurable `heartbeat_timeout_ms` (5s).
+            .acquire_timeout(Duration::from_secs(1))
             .max_lifetime(None)
             .idle_timeout(None)
             .connect_with(options)
@@ -2749,5 +2804,61 @@ mod tests {
             .await
             .unwrap_err();
         assert!(matches!(err, DbErr::Custom(msg) if msg == "source device not found"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn sqlite_database_path_strips_url_decorations() {
+        assert_eq!(
+            sqlite_database_path("sqlite:///var/lib/et/web.db"),
+            Some("/var/lib/et/web.db")
+        );
+        assert_eq!(
+            sqlite_database_path("sqlite:file:/tmp/a.db?mode=rwc"),
+            Some("/tmp/a.db")
+        );
+        assert_eq!(sqlite_database_path("sqlite::memory:"), None);
+        assert_eq!(
+            sqlite_database_path("sqlite://file:memdb?mode=memory"),
+            None
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn database_file_is_owner_only() {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let dir = tempfile::tempdir().unwrap();
+        let db_file = dir.path().join("web.db");
+        let db_url = format!("sqlite://{}", db_file.display());
+        let _db = Db::new(&db_url).await.unwrap();
+
+        let file_mode = std::fs::metadata(&db_file).unwrap().permissions().mode() & 0o777;
+        assert_eq!(file_mode, 0o600, "main DB file must be owner-only");
+    }
+
+    /// The sweep exists for files an older build left at 0644; SQLite itself
+    /// already copies the database mode (see `restrict_database_sidecar_permissions`).
+    #[cfg(unix)]
+    #[test]
+    fn stale_sidecars_are_tightened() {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let dir = tempfile::tempdir().unwrap();
+        let db_file = dir.path().join("web.db");
+        for suffix in ["-wal", "-shm", "-journal"] {
+            let sidecar = dir.path().join(format!("web.db{suffix}"));
+            std::fs::write(&sidecar, b"stale").unwrap();
+            std::fs::set_permissions(&sidecar, std::fs::Permissions::from_mode(0o644)).unwrap();
+        }
+
+        restrict_database_sidecar_permissions(&format!("sqlite://{}", db_file.display()));
+
+        for suffix in ["-wal", "-shm", "-journal"] {
+            let sidecar = dir.path().join(format!("web.db{suffix}"));
+            let mode = std::fs::metadata(&sidecar).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode, 0o600, "{suffix} sidecar must be tightened");
+        }
     }
 }

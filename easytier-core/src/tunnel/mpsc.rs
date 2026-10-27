@@ -1,4 +1,7 @@
-use std::{pin::Pin, time::Duration};
+use std::{
+    pin::Pin,
+    time::{Duration, Instant},
+};
 
 use futures::SinkExt;
 use tokio::{
@@ -112,24 +115,56 @@ impl<T: Tunnel> MpscTunnel<T> {
         rx: &mut Receiver<ZCPacket>,
         sink: &mut Pin<Box<dyn ZCPacketSink>>,
         initial_item: ZCPacket,
-        timeout_ms: Duration,
+        no_progress_timeout: Duration,
     ) -> Result<(), TunnelError> {
-        match timeout(timeout_ms, async move {
-            Self::forward_one_round_no_timeout(rx, sink, initial_item).await
-        })
-        .await
-        {
-            Ok(Ok(_)) => Ok(()),
+        // Per-write no-progress budget (not a whole-batch wall clock). A slow
+        // but progressing link can take longer than `no_progress_timeout` to
+        // drain a full ring; only a stuck feed/flush tears the conn down.
+        async fn feed_or_timeout(
+            sink: &mut Pin<Box<dyn ZCPacketSink>>,
+            item: ZCPacket,
+            no_progress_timeout: Duration,
+        ) -> Result<(), TunnelError> {
+            match timeout(no_progress_timeout, sink.feed(item)).await {
+                Ok(Ok(())) => Ok(()),
+                Ok(Err(e)) => Err(e),
+                Err(e) => {
+                    tracing::error!(?e, "mpsc feed no-progress timeout");
+                    Err(e.into())
+                }
+            }
+        }
+
+        feed_or_timeout(sink, initial_item, no_progress_timeout).await?;
+
+        while let Ok(item) = rx.try_recv() {
+            if let Err(e) = feed_or_timeout(sink, item, no_progress_timeout).await {
+                if matches!(e, TunnelError::Shutdown) {
+                    tracing::debug!(?e, "feed error");
+                } else {
+                    tracing::error!(?e, "feed error");
+                }
+                return Err(e);
+            }
+        }
+
+        let flush_started = Instant::now();
+        match timeout(no_progress_timeout, sink.flush()).await {
+            Ok(Ok(())) => Ok(()),
             Ok(Err(e)) => {
                 if matches!(e, TunnelError::Shutdown) {
-                    tracing::debug!(?e, "forward error");
+                    tracing::debug!(?e, "flush error");
                 } else {
-                    tracing::error!(?e, "forward error");
+                    tracing::error!(?e, "flush error");
                 }
                 Err(e)
             }
             Err(e) => {
-                tracing::error!(?e, "forward timeout");
+                tracing::error!(
+                    ?e,
+                    elapsed_ms = flush_started.elapsed().as_millis(),
+                    "mpsc flush no-progress timeout"
+                );
                 Err(e.into())
             }
         }

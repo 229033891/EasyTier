@@ -68,7 +68,7 @@ use super::{
         PeerPacketPolicy, PeerStunInfoSource,
     },
     credential_manager::{CredentialManager, CredentialStorage},
-    error::{Error, take_path_unavailable_warn_token},
+    error::{Error, take_congestion_warn_token, take_path_unavailable_warn_token},
     foreign_network::client::ForeignNetworkClient,
     foreign_network::{ForeignNetworkEntryInfo, ForeignNetworkManager, ForeignNetworkRpcRegistrar},
     peer_center::instance::PeerCenterPeerManagerTrait,
@@ -1751,6 +1751,26 @@ impl PeerManagerCore {
             tunnel_buffer_full: stats_manager
                 .get_counter(MetricName::DataPlaneTunnelBufferFull, net_label),
         };
+        // Drop counters that live at the bottom of the stack (session rings, relay
+        // handshake parking) have no access to this manager, so they publish into
+        // a process-wide slot instead. Label is deliberately `scope=process` (not
+        // `net_label`): the slot is first-install-wins across networks in one
+        // process, and pretending the series belongs to the first network would
+        // mislead ops. Increments from every network still land on that one
+        // series — which answers "is anything dropping at the bottom?". The
+        // per-instance authority remains `data_plane_tunnel_buffer_full`.
+        let process_drop_labels =
+            crate::foundation::stats::LabelSet::new().with_label("scope", "process");
+        crate::socket::udp::install_udp_session_ring_full_counter(stats_manager.get_counter(
+            MetricName::DataPlaneUdpSessionRingFull,
+            process_drop_labels.clone(),
+        ));
+        crate::peers::relay_peer_map::install_relay_handshake_pending_full_counter(
+            stats_manager.get_counter(
+                MetricName::DataPlaneRelayHandshakePendingFull,
+                process_drop_labels,
+            ),
+        );
         let traffic_rx_metrics = Arc::new(LogicalTrafficMetrics::new(
             stats_manager.clone(),
             network_name.clone(),
@@ -4549,6 +4569,19 @@ impl PeerOutboundPacketRouter {
 
         if errs.is_empty() {
             Ok(SendByIpStatus::Done)
+        } else if errs.iter().all(Error::is_congestion) {
+            // Every destination failed only because a local egress ring was full.
+            // That is the expected outcome under load (the packet is dropped so a
+            // slow peer cannot stall the shared ingress path), it is already
+            // counted in `data_plane_tunnel_buffer_full`, and it must not raise
+            // one `error!` per packet — congestion is exactly when logging is
+            // most expensive and least useful.
+            if dst_peers.iter().any(|p| take_congestion_warn_token(*p)) {
+                tracing::warn!(?errs, ?dst_peers, "send_msg dropped by local congestion");
+            } else {
+                tracing::debug!(?errs, ?dst_peers, "send_msg dropped by local congestion");
+            }
+            Err(anyhow::anyhow!("send_msg has error: {:?}", errs).into())
         } else {
             tracing::error!(?errs, "send_msg has error");
             Err(anyhow::anyhow!("send_msg has error: {:?}", errs).into())
@@ -4935,6 +4968,25 @@ impl PeerPacketRouter {
                         tracing::warn!(?ret, ?to_peer_id, ?from_peer_id, "forward packet error");
                     } else {
                         tracing::debug!(?ret, ?to_peer_id, ?from_peer_id, "forward packet error");
+                    }
+                } else if e.is_congestion() {
+                    // Local egress ring full on the forwarded leg: counted above,
+                    // expected under load, and per-packet here it would flood
+                    // exactly during the incident it describes.
+                    if take_congestion_warn_token(to_peer_id) {
+                        tracing::warn!(
+                            ?ret,
+                            ?to_peer_id,
+                            ?from_peer_id,
+                            "forward packet dropped by local congestion"
+                        );
+                    } else {
+                        tracing::debug!(
+                            ?ret,
+                            ?to_peer_id,
+                            ?from_peer_id,
+                            "forward packet dropped by local congestion"
+                        );
                     }
                 } else {
                     tracing::error!(?ret, ?to_peer_id, ?from_peer_id, "forward packet error");

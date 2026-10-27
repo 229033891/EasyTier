@@ -94,6 +94,26 @@ fn setup_socket2_ext(
         let _ = reuse_port;
     }
 
+    // Tunnel UDP defaults are tiny on Windows (~64 KiB ≈ 45×1400B). A brief
+    // scheduler stall then drops in the kernel with no app-visible signal.
+    //
+    // Sized, not maximised: one socket per peer/session, so the receive buffer is
+    // paid per conn (a 200-peer relay at 4 MiB would be ~800 MiB of kernel
+    // buffer). 1 MiB already holds 128 × 8 KiB session datagrams — far more than
+    // any sane stall. Best-effort: the OS may clamp to rmem_max/wmem_max, and a
+    // refusal is not a reason to fail the bind, so log at debug (this runs once
+    // per socket, which on a large mesh is a lot of lines).
+    if matches!(socket2_socket.r#type()?, socket2::Type::DGRAM) {
+        const UDP_RECV_BUF: usize = 1024 * 1024;
+        const UDP_SEND_BUF: usize = 256 * 1024;
+        if let Err(e) = socket2_socket.set_recv_buffer_size(UDP_RECV_BUF) {
+            tracing::debug!(?e, desired = UDP_RECV_BUF, "SO_RCVBUF not applied");
+        }
+        if let Err(e) = socket2_socket.set_send_buffer_size(UDP_SEND_BUF) {
+            tracing::debug!(?e, desired = UDP_SEND_BUF, "SO_SNDBUF not applied");
+        }
+    }
+
     if let Err(e) = socket2_socket.bind(&socket2::SockAddr::from(*bind_addr)) {
         if bind_addr.is_ipv4() {
             return Err(e.into());

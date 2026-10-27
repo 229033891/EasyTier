@@ -346,9 +346,15 @@ pub const MIN_TUNNEL_MTU: u32 = 1280 + ENCRYPTION_MTU_OVERHEAD;
 
 /// Largest MTU a tunnel interface can be given.
 ///
-/// `u16::MAX` is the natural ceiling for an MTU on every supported platform, and
-/// it is also what `TrafficConfig::mtu` already encodes.
-pub const MAX_TUNNEL_MTU: u32 = u16::MAX as u32;
+/// Cross-checked against tunnel frame budgets so a huge TUN MTU cannot produce
+/// packets every transport path silently fails to carry:
+/// - UDP session datagram max = 8 KiB (`MAX_UDP_SESSION_DATAGRAM_SIZE`)
+/// - UDP tunnel header = 8, peer-manager header = 16 ⇒ payload budget 8168
+///
+/// TCP framed body budget is smaller (`TCP_MTU_BYTES` = 2000); values above
+/// ~1980 may only work on non-TCP tunnels. Platform `u16::MAX` is no longer
+/// accepted — it was never carryable on either path.
+pub const MAX_TUNNEL_MTU: u32 = 8 * 1024 - 8 - 16;
 
 /// Validate a configured tunnel MTU.
 ///

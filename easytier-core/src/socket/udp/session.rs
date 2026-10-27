@@ -947,7 +947,8 @@ pub(super) fn dispatch_payload_to_session(
     match result {
         Ok(()) => true,
         Err(RingSocketSendError::Full(_)) => {
-            tracing::trace!(?policy, "udp session data queue full");
+            super::note_udp_session_ring_full();
+            tracing::debug!(?policy, "udp session data queue full");
             true
         }
         Err(RingSocketSendError::Closed(_)) => false,

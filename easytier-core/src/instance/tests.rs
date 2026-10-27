@@ -3791,7 +3791,6 @@ virtual_ip = "10.82.0.2/24"
             instance.stop().await;
             assert_eq!(host.active_tcp_listeners.load(Ordering::Relaxed), 0);
         }
-
     }
 
     #[cfg(feature = "dhcp-ipv4")]

@@ -75,6 +75,17 @@ const PING_WAIT_TIMEOUT: Duration = Duration::from_secs(2);
 /// only the escape hatch on top of it.
 const LAST_PATH_HOLD_MAX: Duration = Duration::from_secs(5);
 
+/// How long the egress ring may stay full before the keepalive gives up.
+///
+/// `TunnelError::BufferFull` on a ping is **local congestion**, not a path miss,
+/// so it must not advance `loss_counter` (a full ring says nothing about the
+/// peer). But a full ring that never clears is a stuck sink: the ping itself
+/// cannot leave the box, so without this clock the conn would look healthy
+/// forever — `has_live_conns()` stays true, the direct connector refuses to
+/// re-dial, and the only escape left is the 30s per-write budget inside
+/// `MpscTunnel`. This is that escape, expressed where liveness is decided.
+const LOCAL_CONGESTION_CLOSE_AFTER: Duration = Duration::from_secs(30);
+
 /// Fast liveness probe (roadmap `live-next-hop.md` Phase F — "BFD-style").
 ///
 /// This is an *extra* short round trip whose only job is to publish the loss
@@ -146,6 +157,8 @@ fn fast_probe_timeout(rtt_us: u32) -> Duration {
 enum PingResponse {
     Pong(u128),
     LivenessEcho,
+    /// Egress ring was full — local congestion, not a path miss.
+    LocalCongestion,
 }
 
 struct PingIntervalController {
@@ -335,11 +348,19 @@ impl PeerConnPinger {
         liveness_token: Option<u8>,
         wait_timeout: Duration,
     ) -> Result<PingResponse, Error> {
-        let now = Instant::now();
         // should add seq here. so latency can be calculated more accurately
         let req = Self::new_ping_packet(self.my_peer_id, self.peer_id, seq);
         let req_len = req.buf_len() as u64;
-        self.sink.send(req).await?;
+        // try_send so a full data ring does not stall keepalive behind HOL, and
+        // so local congestion is not scored as a path miss.
+        match self.sink.try_send(req) {
+            Ok(()) => {}
+            Err(TunnelError::BufferFull) => return Ok(PingResponse::LocalCongestion),
+            Err(e) => return Err(e.into()),
+        }
+        // RTT starts after enqueue (queue drain until wire write remains in the
+        // sample by design — that is the observed delivery delay).
+        let now = Instant::now();
         self.context.record_control_tx(&self.network_name, req_len);
 
         let wait_for_pong = async {
@@ -441,6 +462,8 @@ impl PeerConnPinger {
         // did the current `fail_close_count`-crossing hold start?
         let mut had_roundtrip = false;
         let mut last_path_hold: Option<Instant> = None;
+        // Since when every ping attempt has been rejected by a full egress ring.
+        let mut congestion_since: Option<Instant> = None;
         while trigger_receiver.recv().await.is_some() {
             tracing::debug!(
                 "pingpong controller send pingpong task, seq: {}, node_id: {}",
@@ -476,29 +499,54 @@ impl PeerConnPinger {
             }
 
             if let Ok(response) = &ret {
-                // A liveness echo proves reachability, not prompt delivery of a
-                // queued packet. Only a matching Pong supplies an RTT sample.
-                if let PingResponse::Pong(lat) = response {
-                    self.latency_stats.record_latency(*lat as u32);
+                match response {
+                    // Local egress full: not a path miss and not a round-trip proof.
+                    // Bounded on its own clock so a stuck ring cannot masquerade as
+                    // a healthy link forever (see `LOCAL_CONGESTION_CLOSE_AFTER`).
+                    PingResponse::LocalCongestion => {
+                        let since = *congestion_since.get_or_insert_with(Instant::now);
+                        if since.elapsed() >= LOCAL_CONGESTION_CLOSE_AFTER {
+                            tracing::warn!(
+                                ?self,
+                                congested_ms = since.elapsed().as_millis() as u64,
+                                "pingpong egress full for too long, closing the connection"
+                            );
+                            break;
+                        }
+                    }
+                    // A liveness echo proves reachability, not prompt delivery of a
+                    // queued packet. Only a matching Pong supplies an RTT sample.
+                    PingResponse::Pong(lat) => {
+                        congestion_since = None;
+                        self.latency_stats.record_latency(*lat as u32);
+                        if let Some(token) = liveness_token {
+                            self.liveness.finish_probe(token);
+                        }
+                        loss_rate_stats_1.record_latency(0);
+                        loss_counter.store(0, Ordering::Relaxed);
+                        had_roundtrip = true;
+                        last_path_hold = None;
+                        self.fast_probe_degraded.store(false, Ordering::Relaxed);
+                        self.fast_probe_sustained.store(false, Ordering::Relaxed);
+                    }
+                    PingResponse::LivenessEcho => {
+                        congestion_since = None;
+                        if let Some(token) = liveness_token {
+                            self.liveness.finish_probe(token);
+                        }
+                        loss_rate_stats_1.record_latency(0);
+                        loss_counter.store(0, Ordering::Relaxed);
+                        had_roundtrip = true;
+                        last_path_hold = None;
+                        self.fast_probe_degraded.store(false, Ordering::Relaxed);
+                        self.fast_probe_sustained.store(false, Ordering::Relaxed);
+                    }
                 }
-                if let Some(token) = liveness_token {
-                    self.liveness.finish_probe(token);
-                }
-                loss_rate_stats_1.record_latency(0);
-                loss_counter.store(0, Ordering::Relaxed);
-                had_roundtrip = true;
-                // Any round trip ends the current hold: the next crossing of the
-                // threshold starts a fresh grace window.
-                last_path_hold = None;
-                // Any successful round trip on this conn also clears the fast
-                // probe's degraded reading: the flag must never outlive its
-                // evidence, even if the probe task is gone (it only ever raises
-                // the flag, and this is the independent second opinion). The
-                // sustained gate goes with it — a link that just proved it
-                // round-trips must not stay re-priced in the local SPF.
-                self.fast_probe_degraded.store(false, Ordering::Relaxed);
-                self.fast_probe_sustained.store(false, Ordering::Relaxed);
             } else {
+                // A real miss (timeout / closed sink) ends the congestion window:
+                // the two explanations for "no Pong" must not be mixed, or a link
+                // that is genuinely dying could be excused as "just busy".
+                congestion_since = None;
                 loss_rate_stats_1.record_latency(1);
                 loss_counter.fetch_add(1, Ordering::Relaxed);
             }
@@ -638,18 +686,22 @@ impl PeerConnPinger {
             let rtt_us = self.latency_stats.get_latency_us::<u32>();
             // No liveness token: the echo slot is single-slot and shared with the
             // keepalive, and a plain Ping/Pong answers the same question.
-            let ok = self
+            let probe = self
                 .do_pingpong_once(
                     &mut receiver,
                     fast_probe_seq(seq),
                     None,
                     fast_probe_timeout(rtt_us),
                 )
-                .await
-                .is_ok();
+                .await;
             seq = seq.wrapping_add(1);
 
-            misses = if ok { 0 } else { misses + 1 };
+            // LocalCongestion: leave `misses` unchanged (not a path miss).
+            misses = match &probe {
+                Ok(PingResponse::LocalCongestion) => misses,
+                Ok(_) => 0,
+                Err(_) => misses + 1,
+            };
             let degraded = misses >= FAST_PROBE_MISSES_TO_DEGRADE;
             self.fast_probe_degraded.store(degraded, Ordering::Relaxed);
             // `misses` already restarts at 0 on any success, so the sustained
@@ -716,13 +768,12 @@ mod tests {
     };
 
     #[tokio::test]
-    async fn pong_latency_includes_waiting_for_send_queue_capacity() {
+    async fn full_egress_queue_is_local_congestion_not_a_path_miss() {
         use crate::tunnel::ring::{RingTunnel, create_ring_socket_pair};
 
         let (left, right) = create_ring_socket_pair(1);
         let tunnel = MpscTunnel::new(RingTunnel::new(left, None), None);
-        let remote = RingTunnel::new(right, None);
-        let (mut stream, _sink) = remote.split();
+        let _remote = RingTunnel::new(right, None);
         let sender = tunnel.get_sink();
         // Fill both the underlying ring and the MPSC queue without draining.
         assert!(
@@ -743,7 +794,7 @@ mod tests {
             1,
             2,
             sender,
-            ctrl_sender.clone(),
+            ctrl_sender,
             Arc::new(WindowLatency::new(15)),
             Arc::new(AtomicU32::new(0)),
             Arc::new(Throughput::new()),
@@ -757,31 +808,19 @@ mod tests {
             5,
             None,
         );
-        let probe = pinger.do_pingpong_once(&mut receiver, 1, None, PING_WAIT_TIMEOUT);
-        tokio::pin!(probe);
+        // try_send + LocalCongestion: must not block behind a full data ring, and
+        // must not be scored as a keepalive/path miss by callers.
+        let response = timeout(
+            Duration::from_millis(50),
+            pinger.do_pingpong_once(&mut receiver, 1, None, PING_WAIT_TIMEOUT),
+        )
+        .await
+        .expect("congestion probe must not wait on a full egress queue")
+        .unwrap();
         assert!(
-            timeout(Duration::from_millis(50), &mut probe)
-                .await
-                .is_err()
+            matches!(response, PingResponse::LocalCongestion),
+            "expected LocalCongestion, got {response:?}"
         );
-        let reply = tokio::spawn(async move {
-            while let Some(Ok(packet)) = stream.next().await {
-                if packet.peer_manager_header().unwrap().packet_type == PacketType::Ping as u8 {
-                    ctrl_sender.send(packet).unwrap();
-                    return;
-                }
-            }
-            panic!("queued Ping was not delivered");
-        });
-        let PingResponse::Pong(rtt) = timeout(Duration::from_secs(1), probe)
-            .await
-            .unwrap()
-            .unwrap()
-        else {
-            panic!("expected a measured Pong");
-        };
-        assert!(rtt >= 50_000, "send queue wait was excluded: {rtt} us");
-        reply.await.unwrap();
     }
 
     #[cfg(not(target_os = "wasi"))]

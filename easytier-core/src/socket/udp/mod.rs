@@ -13,9 +13,30 @@ mod virtual_socket;
 #[cfg(test)]
 mod tests;
 
+use std::sync::OnceLock;
+
+use crate::foundation::stats::CounterHandle;
+
 const UDP_SESSION_RESEND_INTERVAL: std::time::Duration = std::time::Duration::from_millis(200);
 const UDP_SESSION_CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(3);
 const UDP_SESSION_QUEUE_CAPACITY: usize = 128;
+
+static UDP_SESSION_RING_FULL_METRIC: OnceLock<CounterHandle> = OnceLock::new();
+
+/// Install the stats counter used when a UDP session ring rejects a datagram.
+///
+/// First install wins. Callers must pass a **process-scoped** label (not a
+/// per-network one); see `PeerManagerCore::new`.
+pub fn install_udp_session_ring_full_counter(counter: CounterHandle) {
+    let _ = UDP_SESSION_RING_FULL_METRIC.set(counter);
+}
+
+/// Count one datagram dropped because the session application ring was full.
+pub(crate) fn note_udp_session_ring_full() {
+    if let Some(counter) = UDP_SESSION_RING_FULL_METRIC.get() {
+        counter.inc();
+    }
+}
 
 pub use layer::{UdpSessionDialer, UdpSessionLayer};
 pub use listener::{UdpSessionAcceptKind, UdpSessionSocketListener, accept_udp_session};

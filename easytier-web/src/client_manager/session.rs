@@ -46,11 +46,32 @@ const CONNECTED_WEBHOOK_RETRY_DELAYS: [Duration; 2] =
 /// Keeps heartbeat responses off the SQLite write path under load.
 const DEVICE_ARCHIVE_MIN_WRITE_INTERVAL: Duration = Duration::from_secs(45);
 
+/// How long a heartbeat's managed-config snapshot may be reused by the
+/// reconcile round it wakes up. The round starts immediately after the
+/// response is built, so this only has to absorb scheduler delay; anything
+/// older is dropped and the round reads the DB itself.
+const MANAGED_CONFIG_SNAPSHOT_TTL: Duration = Duration::from_secs(5);
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct DeviceArchiveSnapshot {
     hostname: String,
     easytier_version: String,
     client_url: String,
+}
+
+/// Managed-config DB state read while building one heartbeat response.
+///
+/// The reconcile round triggered by that same heartbeat needs the exact same
+/// two values (the managed revision and the device's config rows). Handing
+/// them over keeps a heartbeat at one revision read and one config scan
+/// instead of two of each. Both members come from the same pair of queries,
+/// so `revision` always describes `configs` — sharing them can never produce
+/// a revision/row mismatch the way two independent reads could.
+#[derive(Debug)]
+pub(super) struct ManagedConfigSnapshot {
+    pub(super) revision: Option<String>,
+    pub(super) configs: Arc<Vec<crate::db::entity::user_running_network_configs::Model>>,
+    loaded_at: Instant,
 }
 
 /// Reverse index: bound `(user_id, machine_id)` → session client URLs (S4).
@@ -239,6 +260,9 @@ pub struct SessionData {
     /// from `user_clients_map` / fire `node_disconnected` before the replacement
     /// finishes its first heartbeat).
     replaced_by_handover: bool,
+    /// What the latest heartbeat response read from the managed-config tables.
+    /// Consumed by the reconcile round that heartbeat wakes up.
+    managed_config_snapshot: Option<ManagedConfigSnapshot>,
 }
 
 impl SessionData {
@@ -278,6 +302,7 @@ impl SessionData {
             device_archive: None,
             last_device_archive_write: None,
             replaced_by_handover: false,
+            managed_config_snapshot: None,
         }
     }
 
@@ -300,6 +325,21 @@ impl SessionData {
 
     fn mark_replaced_by_handover(&mut self) {
         self.replaced_by_handover = true;
+    }
+
+    /// Record the managed-config reads a heartbeat response just made.
+    fn set_managed_config_snapshot(&mut self, snapshot: ManagedConfigSnapshot) {
+        self.managed_config_snapshot = Some(snapshot);
+    }
+
+    /// Take the snapshot for the round triggered by the heartbeat that produced
+    /// it. A snapshot older than [`MANAGED_CONFIG_SNAPSHOT_TTL`] is dropped: it
+    /// would come from a round that was skipped, and reconciling on stale rows
+    /// is worse than paying for one more read.
+    fn take_managed_config_snapshot(&mut self) -> Option<ManagedConfigSnapshot> {
+        self.managed_config_snapshot
+            .take()
+            .filter(|snapshot| snapshot.loaded_at.elapsed() <= MANAGED_CONFIG_SNAPSHOT_TTL)
     }
 
     pub(super) fn set_route_bind(
@@ -684,12 +724,15 @@ impl SessionRpcService {
         machine_id: uuid::Uuid,
     ) -> HeartbeatResponse {
         let mut response = self.heartbeat_policy.response();
-        match storage
+        let revision = match storage
             .db()
             .get_managed_config_revision((user_id, machine_id))
             .await
         {
-            Ok(revision) => response.managed_config_revision = revision,
+            Ok(revision) => {
+                response.managed_config_revision = revision.clone();
+                Some(revision)
+            }
             Err(error) => {
                 tracing::warn!(
                     user_id,
@@ -697,11 +740,12 @@ impl SessionRpcService {
                     ?error,
                     "failed to load managed config revision for heartbeat"
                 );
+                None
             }
-        }
+        };
         // W = all Web-source rows (enabled+disabled). GUI prune must use this,
         // not device running ids (local-config-residue.md §4.1).
-        match storage
+        let configs = match storage
             .db()
             .list_network_configs((user_id, machine_id), ListNetworkProps::All)
             .await
@@ -714,6 +758,7 @@ impl SessionRpcService {
                         .filter_map(|id| uuid::Uuid::parse_str(&id).ok())
                         .map(Into::into)
                         .collect();
+                Some(configs)
             }
             Err(error) => {
                 tracing::warn!(
@@ -722,8 +767,24 @@ impl SessionRpcService {
                     ?error,
                     "failed to load web-owned instance ids for heartbeat"
                 );
+                None
             }
+        };
+
+        // Hand both reads to the reconcile round this heartbeat is about to
+        // wake. Only when *both* succeeded: a half snapshot would make the
+        // round skip the error handling that each read owns.
+        if let (Some(revision), Some(configs)) = (revision, configs) {
+            self.data
+                .write()
+                .await
+                .set_managed_config_snapshot(ManagedConfigSnapshot {
+                    revision,
+                    configs: Arc::new(configs),
+                    loaded_at: Instant::now(),
+                });
         }
+
         response
     }
 
@@ -1240,19 +1301,22 @@ impl SessionRpcService {
             }
         }
 
-        if let Some(notifier) = runtime_notify {
-            send_runtime_notify(&notifier);
-        }
         if let Some(notify) = notify {
             notify.notify_one();
         }
-        if let Some((user_id, machine_id)) = revision_identity {
-            Ok(self
-                .heartbeat_response_with_revision(storage, user_id, machine_id)
-                .await)
+        // Build the response first: it records the managed-config snapshot the
+        // reconcile round reuses, so waking the round before that would make it
+        // read the same rows a second time.
+        let response = if let Some((user_id, machine_id)) = revision_identity {
+            self.heartbeat_response_with_revision(storage, user_id, machine_id)
+                .await
         } else {
-            Ok(self.heartbeat_response())
+            self.heartbeat_response()
+        };
+        if let Some(notifier) = runtime_notify {
+            send_runtime_notify(&notifier);
         }
+        Ok(response)
     }
 
     async fn handle_heartbeat(
@@ -1406,17 +1470,20 @@ impl SessionRpcService {
                 }
             }
         }
-        send_runtime_notify(&notifier);
-        if let Some(notify) = validation_notify {
-            notify.notify_one();
-        }
-        Ok(self
+        // Response first (records the managed-config snapshot), then wake the
+        // reconciler so it can reuse that snapshot instead of re-reading the DB.
+        let response = self
             .heartbeat_response_with_revision(
                 &storage,
                 storage_token.user_id,
                 storage_token.machine_id,
             )
-            .await)
+            .await;
+        send_runtime_notify(&notifier);
+        if let Some(notify) = validation_notify {
+            notify.notify_one();
+        }
+        Ok(response)
     }
 }
 

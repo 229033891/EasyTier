@@ -23,7 +23,11 @@ pub static malloc_conf: &[u8] = b"dirty_decay_ms:1000,muzzy_decay_ms:1000,retain
 
 rust_i18n::i18n!("locales", fallback = "en");
 
-#[tokio::main(flavor = "current_thread")]
+// Multi-thread runtime (same as Windows service `Runtime::new()`): a single
+// current_thread worker serializes every peer's dataplane and magnifies HOL.
+// No extra tokio feature is needed here: this bin only builds under
+// `required-features = ["management"]`, which already enables `tokio/full`.
+#[tokio::main]
 async fn main() -> std::process::ExitCode {
     core::main().await
 }

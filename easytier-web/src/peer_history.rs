@@ -49,8 +49,10 @@ pub const DEFAULT_RETENTION_DAYS: i64 = 7;
 const CLEANUP_INTERVAL: Duration = Duration::from_secs(600);
 /// 单台设备一次采集的超时（串行时代 20s 会让离线设备堵住整轮）
 const COLLECT_TIMEOUT: Duration = Duration::from_secs(5);
-/// 并行采集上限，避免与心跳抢满同一批隧道
+/// 并行采集下限：小规模车队也至少这么多台同时采集
 const SAMPLE_CONCURRENCY: usize = 24;
+/// 并行采集上限：再大也不在一个 tick 里同时开这么多 RPC
+const SAMPLE_CONCURRENCY_MAX: usize = 256;
 /// 单次采样写入 `flow_history` 的总行数上限（跨设备/实例）。
 ///
 /// 节点侧已按 `FLOW_TOP_N_PER_CONN` 截断；这里再加一道表侧闸门，防止隧道数
@@ -272,12 +274,30 @@ async fn collect_one_device(
     Some(CollectedDeviceSample { token, info_map })
 }
 
+/// 计算本轮并行宽度，使最坏情况下（每台都耗尽 `COLLECT_TIMEOUT`）一轮仍能
+/// 在一个 `sample_interval` 内跑完：
+///
+/// `ceil(N / concurrency) * COLLECT_TIMEOUT <= interval`
+/// ⇒ `concurrency >= N * COLLECT_TIMEOUT / interval`
+///
+/// 固定的 24 并发在 1000 台时最坏要 `ceil(1000/24)*5s = 210s`，远超 60s 的
+/// tick；按设备数放大并发后同样的规模只需 60s。上下限分别防止小车队过度并发
+/// 和大车队在一个 tick 内开太多 RPC。
+fn sample_concurrency(device_count: usize, sample_interval: Duration) -> usize {
+    let interval_ms = sample_interval.as_millis().max(1) as u64;
+    let needed = (device_count as u64)
+        .saturating_mul(COLLECT_TIMEOUT.as_millis() as u64)
+        .div_ceil(interval_ms);
+    needed.clamp(SAMPLE_CONCURRENCY as u64, SAMPLE_CONCURRENCY_MAX as u64) as usize
+}
+
 /// 采集一轮，返回写入的行数（peer_conn_history + flow_history）
-async fn sample_once(client_mgr: &Arc<ClientManager>, db: &Db) -> usize {
+async fn sample_once(client_mgr: &Arc<ClientManager>, db: &Db, sample_interval: Duration) -> usize {
     let sessions = client_mgr.list_all_sessions().await;
     if sessions.is_empty() {
         return 0;
     }
+    let concurrency = sample_concurrency(sessions.len(), sample_interval);
 
     let now = chrono::Utc::now().timestamp();
     let mut rows: Vec<peer_conn_history::ActiveModel> = Vec::new();
@@ -285,7 +305,7 @@ async fn sample_once(client_mgr: &Arc<ClientManager>, db: &Db) -> usize {
 
     let mut pending = sessions.into_iter();
     let mut join_set = JoinSet::new();
-    while join_set.len() < SAMPLE_CONCURRENCY {
+    while join_set.len() < concurrency {
         let Some(token) = pending.next() else {
             break;
         };
@@ -447,7 +467,7 @@ pub fn spawn_peer_history_sampler(
         loop {
             ticker.tick().await;
 
-            let written = sample_once(&client_mgr, &db).await;
+            let written = sample_once(&client_mgr, &db, opts.sample_interval).await;
             if written > 0 {
                 debug!("peer history: wrote {} rows", written);
             }
@@ -643,6 +663,28 @@ mod tests {
         assert_eq!(
             got[0].conn_id, "not-a-number",
             "不可解析的 conn_id 原样落库"
+        );
+    }
+
+    #[test]
+    fn sample_concurrency_scales_until_the_tick_fits() {
+        let tick = Duration::from_secs(DEFAULT_SAMPLE_INTERVAL_SECS);
+
+        // 小车队：保持下限，不做无意义的并发。
+        assert_eq!(sample_concurrency(0, tick), SAMPLE_CONCURRENCY);
+        assert_eq!(sample_concurrency(10, tick), SAMPLE_CONCURRENCY);
+
+        // 1000 台：ceil(1000 * 5s / 60s) = 84，最坏一轮 ⌈1000/84⌉ * 5s = 60s，
+        // 正好落在 tick 内（固定 24 并发时是 210s）。
+        assert_eq!(sample_concurrency(1000, tick), 84);
+
+        // 极大车队：有上限，不在一个 tick 里开上千个 RPC。
+        assert_eq!(sample_concurrency(100_000, tick), SAMPLE_CONCURRENCY_MAX);
+
+        // 间隔被调小或置零时不能除零/回绕。
+        assert_eq!(
+            sample_concurrency(1000, Duration::ZERO),
+            SAMPLE_CONCURRENCY_MAX
         );
     }
 }

@@ -17,7 +17,7 @@ use crate::{
     packet::ZCPacket,
     peers::{
         PeerPacketFilter, PeerPacketFilterResult,
-        error::take_path_unavailable_warn_token,
+        error::{take_congestion_warn_token, take_path_unavailable_warn_token},
         peer_manager::{PeerManagerCore, PipelineRegistrationGuard},
     },
 };
@@ -100,6 +100,20 @@ impl<R: IcmpProxyRuntime + 'static> IcmpProxyService<R> {
                                 tracing::warn!(?err, "send ICMP proxy response to peer failed");
                             } else {
                                 tracing::debug!(?err, "send ICMP proxy response to peer failed");
+                            }
+                        } else if err.is_congestion() {
+                            // Full local egress ring is expected under load; one WARN
+                            // per peer per window, the rest debug (see Error::is_congestion).
+                            if take_congestion_warn_token(to_peer_id) {
+                                tracing::warn!(
+                                    ?err,
+                                    "send ICMP proxy response dropped by local congestion"
+                                );
+                            } else {
+                                tracing::debug!(
+                                    ?err,
+                                    "send ICMP proxy response dropped by local congestion"
+                                );
                             }
                         } else {
                             tracing::error!(?err, "send ICMP proxy response to peer failed");

@@ -215,6 +215,16 @@ pub enum MetricName {
     /// unrelated send failures into it would blur exactly the metric the
     /// roadmap tells operators to watch.
     DataPlanePendingFlushErrors,
+    /// UDP session application ring was full; Lossy/Reliable enqueue dropped.
+    ///
+    /// Process-wide via `OnceLock` (`scope=process` label): first installer wins.
+    /// Use for "is anything dropping at the bottom?"; per-network authority is
+    /// still `DataPlaneTunnelBufferFull`.
+    DataPlaneUdpSessionRingFull,
+    /// Relay Noise handshake pending buffer per dst peer was full; packet dropped.
+    ///
+    /// Same process-wide `OnceLock` contract as `DataPlaneUdpSessionRingFull`.
+    DataPlaneRelayHandshakePendingFull,
 
     /// VIP reachability probes sent to the data plane (GUI "connected vs
     /// reachable"). One increment per peer per probe round.
@@ -335,6 +345,12 @@ impl fmt::Display for MetricName {
             MetricName::DataPlaneTunnelBufferFull => write!(f, "data_plane_tunnel_buffer_full"),
             MetricName::DataPlanePendingFlushErrors => {
                 write!(f, "data_plane_pending_flush_errors")
+            }
+            MetricName::DataPlaneUdpSessionRingFull => {
+                write!(f, "data_plane_udp_session_ring_full")
+            }
+            MetricName::DataPlaneRelayHandshakePendingFull => {
+                write!(f, "data_plane_relay_handshake_pending_full")
             }
             MetricName::VipReachabilityProbesSent => {
                 write!(f, "vip_reachability_probes_sent")

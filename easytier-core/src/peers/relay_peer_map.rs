@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use dashmap::DashMap;
 use prost::Message;
@@ -8,7 +8,10 @@ use tokio::sync::{Mutex, OwnedMutexGuard, oneshot};
 
 use crate::{
     config::PeerId,
-    foundation::time::{Duration, timeout},
+    foundation::{
+        stats::CounterHandle,
+        time::{Duration, timeout},
+    },
     packet::{PacketType, ZCPacket},
     peers::{
         conn::{
@@ -24,6 +27,22 @@ use crate::{
     proto::peer_rpc::RoutePeerInfo,
     proto::peer_rpc::{PeerConnSessionActionPb, RelayNoiseMsg1Pb, RelayNoiseMsg2Pb},
 };
+
+static RELAY_HANDSHAKE_PENDING_FULL_METRIC: OnceLock<CounterHandle> = OnceLock::new();
+
+/// Install the stats counter for relay handshake pending-buffer drops.
+///
+/// First install wins. Callers must pass a **process-scoped** label (not a
+/// per-network one); see `PeerManagerCore::new`.
+pub fn install_relay_handshake_pending_full_counter(counter: CounterHandle) {
+    let _ = RELAY_HANDSHAKE_PENDING_FULL_METRIC.set(counter);
+}
+
+fn note_relay_handshake_pending_full() {
+    if let Some(counter) = RELAY_HANDSHAKE_PENDING_FULL_METRIC.get() {
+        counter.inc();
+    }
+}
 
 const RELAY_NOISE_VERSION: u32 = 1;
 const RELAY_NOISE_PROLOGUE: &[u8] = b"easytier-relay-noise";
@@ -271,8 +290,14 @@ impl RelayPeerMap {
             .or_default();
         if entry.len() < MAX_PENDING_PACKETS_PER_PEER {
             entry.push((pkt, policy));
+        } else {
+            note_relay_handshake_pending_full();
+            tracing::debug!(
+                ?dst_peer_id,
+                limit = MAX_PENDING_PACKETS_PER_PEER,
+                "relay handshake pending buffer full, dropping packet"
+            );
         }
-        // silently drop when buffer is full
     }
 
     async fn flush_pending_packets(&self, dst_peer_id: PeerId, session: Arc<PeerSession>) {

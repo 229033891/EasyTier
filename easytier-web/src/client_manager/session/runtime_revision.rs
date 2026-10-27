@@ -12,8 +12,8 @@ use easytier_core::management::remote_client::{ListNetworkProps, Storage as _};
 use tokio::sync::{RwLock, broadcast};
 
 use super::{
-    MANAGED_RECONCILE_FAIL_LIMIT, ManagedConfigReconcileHint, SessionConfigClient, SessionData,
-    SessionRpcClient, SessionRpcService,
+    MANAGED_RECONCILE_FAIL_LIMIT, ManagedConfigReconcileHint, ManagedConfigSnapshot,
+    SessionConfigClient, SessionData, SessionRpcClient, SessionRpcService,
 };
 use crate::client_manager::{
     managed_config::{self, PersistedConfigSource},
@@ -91,18 +91,14 @@ pub(super) async fn reconcile_network_configs_on_heartbeat(
                 RoundStatus::Stop => return,
             };
         cache.reset_if_runtime_config_cache_epoch_changed(round.runtime_config_cache_epoch);
-        let running_metas = match sync_running_sources_for_round(
-            &mut rpc_client,
-            &storage,
-            &mut round,
-            &mut cache,
-        )
-        .await
-        {
-            RoundStatus::Ready(running_metas) => running_metas,
-            RoundStatus::Skip => continue,
-            RoundStatus::Stop => return,
-        };
+        let running_metas =
+            match sync_running_sources_for_round(&mut rpc_client, &storage, &mut round, &mut cache)
+                .await
+            {
+                RoundStatus::Ready(running_metas) => running_metas,
+                RoundStatus::Skip => continue,
+                RoundStatus::Stop => return,
+            };
         let context = ReconcileRoundContext {
             session_data: &session_data,
             round: &round,
@@ -269,6 +265,11 @@ struct ReconcileCache {
     last_desired_web_inst_ids: Option<HashSet<String>>,
     /// Last successful `list_network_instance_meta` fingerprint (revision + running set).
     last_synced_running_sources: Option<(Option<String>, HashSet<String>)>,
+    /// When that sync last ran. The fingerprint cannot see a config-source
+    /// change made *on the device* (same instance ids, same revision), so the
+    /// round refreshes anyway once [`SOURCE_RESYNC_INTERVAL`] has passed;
+    /// otherwise the DB's `source` column stays stale forever.
+    last_synced_running_sources_at: Option<std::time::Instant>,
     runtime_configs: SessionRuntimeConfigCache,
 }
 
@@ -281,6 +282,24 @@ impl ReconcileCache {
             runtime_config_cache_epoch: current_epoch,
             ..Default::default()
         };
+    }
+
+    /// Whether the metadata RPC can be skipped this round.
+    ///
+    /// Skippable only when the observable fingerprint cannot have moved *and*
+    /// the periodic refresh is not due — the latter covers changes the
+    /// fingerprint is blind to (a device-side source take-over).
+    fn can_skip_source_sync(
+        &self,
+        should_apply_runtime_revision: bool,
+        fingerprint: &(Option<String>, HashSet<String>),
+        now: std::time::Instant,
+    ) -> bool {
+        !should_apply_runtime_revision
+            && self.last_synced_running_sources.as_ref() == Some(fingerprint)
+            && self
+                .last_synced_running_sources_at
+                .is_none_or(|at| now.saturating_duration_since(at) < SOURCE_RESYNC_INTERVAL)
     }
 }
 
@@ -431,6 +450,15 @@ async fn prepare_reconcile_round(
         }
     };
 
+    // Take the snapshot here (as early as possible) so a skipped round cannot
+    // leave it behind for a later one. Absent or stale => read the DB below.
+    let managed_config_snapshot = {
+        let Some(data) = session_data.upgrade() else {
+            return RoundStatus::Stop;
+        };
+        data.write().await.take_managed_config_snapshot()
+    };
+
     let (
         applied_config_revision,
         known_runtime_base_revision,
@@ -453,12 +481,16 @@ async fn prepare_reconcile_round(
             SessionRpcService::failed_instance_ids_locked(&data),
         )
     };
-    let target_config_revision =
-        match read_managed_config_revision(storage, user_id, machine_id).await {
+    let snapshot_revision = managed_config_snapshot.as_ref().map(|s| s.revision.clone());
+    let target_config_revision = match snapshot_revision {
+        // The heartbeat that triggered this round already read it.
+        Some(revision) => revision,
+        None => match read_managed_config_revision(storage, user_id, machine_id).await {
             RoundStatus::Ready(revision) => revision,
             RoundStatus::Skip => return RoundStatus::Skip,
             RoundStatus::Stop => return RoundStatus::Stop,
-        };
+        },
+    };
     {
         let Some(data) = session_data.upgrade() else {
             return RoundStatus::Stop;
@@ -495,7 +527,11 @@ async fn prepare_reconcile_round(
     };
 
     let (local_configs, delete_instance_ids) = match load_round_configs(
-        storage, user_id, machine_id, &scope,
+        storage,
+        user_id,
+        machine_id,
+        &scope,
+        managed_config_snapshot.as_ref(),
     )
     .await
     {
@@ -608,6 +644,7 @@ async fn load_round_configs(
     user_id: i32,
     machine_id: uuid::Uuid,
     scope: &ReconcileScope,
+    snapshot: Option<&ManagedConfigSnapshot>,
 ) -> Result<
     Option<(
         Vec<crate::db::entity::user_running_network_configs::Model>,
@@ -616,6 +653,19 @@ async fn load_round_configs(
     sea_orm::DbErr,
 > {
     let ReconcileScope::Patch { dirty_instance_ids } = scope else {
+        // The heartbeat that triggered this round already listed every row for
+        // this device (including disabled ones) when it built its response.
+        // `EnabledOnly` is exactly that set minus disabled rows, so reuse it
+        // instead of scanning the table a second time per heartbeat.
+        if let Some(snapshot) = snapshot {
+            let configs: Vec<crate::db::entity::user_running_network_configs::Model> = snapshot
+                .configs
+                .iter()
+                .filter(|config| !config.disabled)
+                .cloned()
+                .collect();
+            return Ok(Some((configs, HashSet::new())));
+        }
         return storage
             .db
             .list_network_configs((user_id, machine_id), ListNetworkProps::EnabledOnly)
@@ -694,6 +744,16 @@ async fn running_instance_ids_for_round(
     )
 }
 
+/// How often the reconciler re-reads the device's instance metadata even when
+/// nothing it can observe changed.
+///
+/// The steady-state short circuit compares `(revision, running instance ids)`.
+/// A user who takes an instance over with a local config changes neither, so
+/// without this refresh the DB would keep claiming `source = Web` and the next
+/// console save would overwrite the take-over. One meta RPC per device per
+/// minute is the price of correctness; it used to be one per heartbeat.
+const SOURCE_RESYNC_INTERVAL: std::time::Duration = std::time::Duration::from_secs(60);
+
 async fn sync_running_sources_for_round(
     rpc_client: &mut SessionRpcClient,
     storage: &StorageInner,
@@ -705,14 +765,17 @@ async fn sync_running_sources_for_round(
     }
 
     // When managed revision is unchanged, the heartbeat already carries the
-    // running instance set — skip the meta RPC unless that set moved.
+    // running instance set — skip the meta RPC unless that set moved, or the
+    // periodic refresh is due.
     let fingerprint = (
         round.target_config_revision.clone(),
         round.running_inst_ids.clone(),
     );
-    if !round.should_apply_runtime_revision
-        && cache.last_synced_running_sources.as_ref() == Some(&fingerprint)
-    {
+    if cache.can_skip_source_sync(
+        round.should_apply_runtime_revision,
+        &fingerprint,
+        std::time::Instant::now(),
+    ) {
         return RoundStatus::Ready(None);
     }
 
@@ -736,6 +799,7 @@ async fn sync_running_sources_for_round(
 
     match ret {
         Ok(metas) => {
+            let mut source_synced = false;
             if let Err(e) = managed_config::sync_running_config_sources(
                 &storage.db,
                 round.user_id,
@@ -751,26 +815,34 @@ async fn sync_running_sources_for_round(
                     %e,
                     "Failed to sync running network config sources"
                 );
-            } else if !metas.is_empty() && matches!(round.scope, ReconcileScope::Full) {
-                round.local_configs = match storage
-                    .db
-                    .list_network_configs(
-                        (round.user_id, round.machine_id),
-                        ListNetworkProps::EnabledOnly,
-                    )
-                    .await
-                {
-                    Ok(configs) => configs,
-                    Err(e) => {
-                        tracing::error!(
-                            "Failed to reload network configs after source sync, error: {:?}",
-                            e
-                        );
-                        return RoundStatus::Skip;
-                    }
-                };
+            } else {
+                source_synced = true;
+                if !metas.is_empty() && matches!(round.scope, ReconcileScope::Full) {
+                    round.local_configs = match storage
+                        .db
+                        .list_network_configs(
+                            (round.user_id, round.machine_id),
+                            ListNetworkProps::EnabledOnly,
+                        )
+                        .await
+                    {
+                        Ok(configs) => configs,
+                        Err(e) => {
+                            tracing::error!(
+                                "Failed to reload network configs after source sync, error: {:?}",
+                                e
+                            );
+                            return RoundStatus::Skip;
+                        }
+                    };
+                }
             }
             cache.last_synced_running_sources = Some(fingerprint);
+            // Only a *successful* sync may defer the next refresh: a failure
+            // must be retried on the next round, not 60s later.
+            if source_synced {
+                cache.last_synced_running_sources_at = Some(std::time::Instant::now());
+            }
             RoundStatus::Ready(Some(metas))
         }
         Err(e) => {
@@ -2204,6 +2276,42 @@ mod tests {
     }
 
     #[test]
+    fn source_sync_is_skipped_only_until_the_periodic_refresh() {
+        let mut cache = ReconcileCache::default();
+        let fingerprint = (
+            Some("rev-1".to_string()),
+            HashSet::from(["inst-a".to_string()]),
+        );
+        let now = std::time::Instant::now();
+
+        // Nothing synced yet: the round must ask the device.
+        assert!(!cache.can_skip_source_sync(false, &fingerprint, now));
+
+        cache.last_synced_running_sources = Some(fingerprint.clone());
+        cache.last_synced_running_sources_at = Some(now);
+        assert!(cache.can_skip_source_sync(false, &fingerprint, now));
+
+        // A revision change or a moved running set must ask even inside the
+        // refresh window.
+        assert!(!cache.can_skip_source_sync(true, &fingerprint, now));
+        let moved = (
+            Some("rev-2".to_string()),
+            HashSet::from(["inst-a".to_string()]),
+        );
+        assert!(!cache.can_skip_source_sync(false, &moved, now));
+
+        // A device-side take-over moves neither, so only the periodic refresh
+        // can notice it.
+        let after_window = now + SOURCE_RESYNC_INTERVAL;
+        assert!(cache.can_skip_source_sync(
+            false,
+            &fingerprint,
+            after_window - std::time::Duration::from_secs(1),
+        ));
+        assert!(!cache.can_skip_source_sync(false, &fingerprint, after_window));
+    }
+
+    #[test]
     fn missing_or_full_hint_uses_full_reconcile() {
         assert_eq!(
             select_reconcile_scope(
@@ -2287,10 +2395,11 @@ mod tests {
         };
 
         let storage_inner = storage.weak_ref().upgrade().unwrap();
-        let (configs, deleted) = load_round_configs(&storage_inner, user_id, machine_id, &scope)
-            .await
-            .unwrap()
-            .unwrap();
+        let (configs, deleted) =
+            load_round_configs(&storage_inner, user_id, machine_id, &scope, None)
+                .await
+                .unwrap()
+                .unwrap();
 
         assert_eq!(configs.len(), 1);
         assert_eq!(configs[0].network_instance_id, persisted_id.to_string());
@@ -2308,10 +2417,11 @@ mod tests {
         .await
         .unwrap();
 
-        let (configs, deleted) = load_round_configs(&storage_inner, user_id, machine_id, &scope)
-            .await
-            .unwrap()
-            .unwrap();
+        let (configs, deleted) =
+            load_round_configs(&storage_inner, user_id, machine_id, &scope, None)
+                .await
+                .unwrap()
+                .unwrap();
 
         assert!(configs.is_empty());
         assert_eq!(

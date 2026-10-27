@@ -3,7 +3,7 @@
 ## Status
 
 - Status: **Current**
-- 最近审阅：2026-10-17（S3 摘要表数值对齐出厂 1300→TUN 1280，正文早已更新、摘要表遗漏；**§3.3 同步 CR-13：MTU 改为共享校验 `validate_tunnel_mtu`，越界由「静默产生坏 MTU」改为拒绝启动，合法范围 `[1300, 65535]`**；新增 **S1b「UDP 打洞 conn 缺 NAT 保活上限」**，2026-10-17 已修为 10s 上限）
+- 最近审阅：2026-10-27（**§3.3 MTU 上限收紧：`MAX_TUNNEL_MTU` 由 `u16::MAX` 改为 8168 = `MAX_UDP_SESSION_DATAGRAM_SIZE` 8192 − UDP 隧道头 8 − peer-manager 头 16，合法范围变为 `[1300, 8168]`**；2026-10-17：S3 摘要表数值对齐出厂 1300→TUN 1280（正文早已更新、摘要表遗漏）；§3.3 同步 CR-13 —— MTU 改为共享校验 `validate_tunnel_mtu`，越界由「静默产生坏 MTU」改为拒绝启动；新增 **S1b「UDP 打洞 conn 缺 NAT 保活上限」**，2026-10-17 已修为 10s 上限）
 - 范围：两节点**已直连**后，**长连接交互式流量（RDP / SSH / 终端）**的体感稳定性
 - 关联：[`p2p-direct-throughput-audit.md`](./p2p-direct-throughput-audit.md)（同一条通路的吞吐瓶颈）、[`peer-connections.md`](./peer-connections.md)（选路 / bond）、[`tunnels-and-transport.md`](./tunnels-and-transport.md)、[`tailscale-gap-and-conflict-audit.md`](./tailscale-gap-and-conflict-audit.md)（Bug/冲突 vs 设计分栏）
 - 上游缺口跟踪：[`../roadmap/connection-stability-todo.md`](../roadmap/connection-stability-todo.md)
@@ -107,7 +107,11 @@ let mtu_in_config = if flags.enable_encryption {
 
 ⇒ 默认加密下 **TUN MTU = 1280**（与 Tailscale `tstun` `defaultMTU` 一致）。
 
-**⚠️ 行为变更（CR-13，需写进 release note）**：合法范围收紧为 **`[1300, 65535]`**（`MIN_TUNNEL_MTU = 1280 + 20`、`MAX_TUNNEL_MTU = u16::MAX`）。改前 `mtu` 越界（如 `0` / `-1`）会**静默产生一个坏 MTU**，Linux 上 `SIOCSIFMTU` 只抛裸 `EINVAL`；改后**拒绝启动**并给出可读错误。**部署中若有 `mtu` 设成 `0` / `-1` / 极小值的配置，升级后实例将起不来**，需先改配置。`api_input.rs` 侧同步改为 `u32::try_from` + 共享校验，`ConfigError::InvalidMtu` 载荷由 `u32` 改为 `i64`（忠实反映调用方实际发来的值，GUI 传 `-1` 不再被报成 `4294967295`）。
+**⚠️ 行为变更（CR-13 + 上限收紧，需写进 release note）**：合法范围 **`[1300, 8168]`**（`MIN_TUNNEL_MTU = 1280 + 20`；`MAX_TUNNEL_MTU = 8192 - 8 - 16 = 8168` —— `MAX_UDP_SESSION_DATAGRAM_SIZE`（`socket/udp/virtual_socket.rs:34`）减去 UDP 隧道头 8 与 peer-manager 头 16；加密的 20 由接口侧扣除，所以配置值本身就是 ZCPacket 上限）。两条边界各自会挡下什么：
+
+- **下限（CR-13）**：改前 `mtu` 越界（如 `0` / `-1`）会**静默产生一个坏 MTU**，Linux 上 `SIOCSIFMTU` 只抛裸 `EINVAL`；改后**拒绝启动**并给出可读错误。**部署中若有 `mtu` 设成 `0` / `-1` / 极小值的配置，升级后实例将起不来**，需先改配置。
+- **上限（2026-10-27 收紧）**：`u16::MAX` 从来就载不动 —— UDP 会话路径超过 8192 的数据报在 `socket/udp/session.rs:442` 直接拒收，TCP 帧化路径的 body 上限只有 2000（`tunnel/framed.rs:23` `TCP_MTU_BYTES`）。改前 `mtu = 9000`（jumbo）属于「能启动但**静默不通**」，改后**拒绝启动**。**部署中若有 `mtu > 8168` 的配置，升级后实例将起不来**，需先改配置。注意该上限只保证 UDP 会话路径能承载；TCP 隧道上实际可用上限更低（约 1976），见下。
+- `api_input.rs` 侧同步改为 `u32::try_from` + 共享校验，`ConfigError::InvalidMtu` 载荷由 `u32` 改为 `i64`（忠实反映调用方实际发来的值，GUI 传 `-1` 不再被报成 `4294967295`）。
 
 线缆包大小（`packet/mod.rs:450`）：
 

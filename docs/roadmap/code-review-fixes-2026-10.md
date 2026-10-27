@@ -316,7 +316,7 @@ let Ok(seq_buf) = payload[0..4].try_into() else { ... };   // 先切片，try_in
 **修复**：把规则收敛到 `easytier-core::config` 的**单一共享校验** `validate_tunnel_mtu(u32) -> Result<u32, ConfigError>`，两侧都调它，避免再次分叉：
 
 - `MIN_TUNNEL_MTU = 1280 + ENCRYPTION_MTU_OVERHEAD`（1280 是 IPv6 最小 MTU；再减去加密开销后仍留有 1280）
-- `MAX_TUNNEL_MTU = u16::MAX`（与 `TrafficConfig::mtu` 的既有编码一致）
+- `MAX_TUNNEL_MTU = 8 * 1024 - 8 - 16`（= **8168**）。初版取 `u16::MAX`（理由是与 `TrafficConfig::mtu` 的既有编码一致），**2026-10-27 收紧**：`u16::MAX` 在两条路径上都载不动 —— UDP 会话数据报上限 8192（`MAX_UDP_SESSION_DATAGRAM_SIZE`，减去 UDP 隧道头 8 + peer-manager 头 16 得 8168），TCP 帧化 body 上限 2000。改前的 `mtu = 9000` 属于「能启动但静默不通」，改后拒绝启动
 - `ENCRYPTION_MTU_OVERHEAD = 20` 导出，`virtual_nic.rs` 不再写死字面量
 
 `api_input.rs` 的 `mtu as u32` 改为 `u32::try_from(mtu)` + `validate_tunnel_mtu`，越界直接 `ConfigError::InvalidMtu`。为忠实反映调用方实际发来的值，`InvalidMtu` 的载荷由 `u32` 改为 `i64` —— 否则 GUI 传 `-1` 会被报成 `4294967295`。
@@ -572,7 +572,7 @@ $env:CARGO_INCREMENTAL    = '0'
 
 | 条目 | 变更 | 影响面 |
 |---|---|---|
-| **CR-13** | MTU 合法范围收紧为 `[1300, 65535]`；越界值从「静默产生一个坏 MTU、Linux 上报 `EINVAL`」变为**拒绝启动**并给出可读错误 | 部署中若有人把 `mtu` 设成 `0` / `-1` / 极小值，**升级后实例将起不来**，需改配置 |
+| **CR-13** | MTU 合法范围收紧为 `[1300, 8168]`（上限 2026-10-27 由 `u16::MAX` 收紧到 `8192 - 8 - 16`）；越界值从「静默产生一个坏 MTU、Linux 上报 `EINVAL`」或「能启动但静默不通」变为**拒绝启动**并给出可读错误 | 部署中若有人把 `mtu` 设成 `0` / `-1` / 极小值，或设成 jumbo `9000` 这类大于 8168 的值，**升级后实例将起不来**，需改配置 |
 | **CR-14** | DHCP 自动分配的候选顺序由「首个空闲地址」改为「按 `peer_id` 派生的确定性置换」 | 升级后节点的**虚拟 IP 可能变化一次**（此后稳定）。同网段内多节点**不再**会撞同一 VIP 与永久 flapping |
 | **5-F2 / 5-F1** | 打洞端口数、打洞 socket 数、打洞发包量有了上界 | 正常客户端不受影响（合法值只用个位到几十）。若有人**依赖**了超大请求，升级后会被明确拒绝而非静默生效 |
 | **5-F3** | STUN `ChangeRequest` 响应改为按源地址限速（突发 8 / 秒），超限在原 socket 上回复 | 真实客户端只发少量探测，不受影响。极端情况下客户端观察不到源端口变化，但**仍能学到映射**，不影响打洞本身 |
@@ -580,6 +580,7 @@ $env:CARGO_INCREMENTAL    = '0'
 | **5-F7** | `ipv4/ipv6_peer_id_map` 每轮重建 | 对端**改过 VIP** 时，旧地址将不再解析到它（改前会一直解析）。这是修正，但会让「改 IP 后旧 IP 仍可达」这种既非预期也非文档化的行为消失 |
 | **CLI 默认监听收窄**（2026-10-17 补登记） | CLI 不带 `-l` 时从「裸 `11010` 展开全部 7 种协议」收窄为 `tcp/udp://0.0.0.0:11010` + `wg://0.0.0.0:11011`（与 GUI 模板一致） | 升级后**不再监听** quic/ws/wss/faketcp 的入站端口；依赖这些协议做入站的部署需显式 `-l` 指定。出站/打洞不受影响 |
 | **保活 ping 默认间隔 32s → 10s**（2026-10-17 补登记） | `DEFAULT_PING_INTERVAL_MAX_SEC` 32→10，直连隧道不再沿全局默认落在 NAT UDP 映射超时之外（打洞隧道此前已由 S1b 单独限 10s/1s）。新增 GUI 表单与 CLI `--ping-interval-max-sec` / `--ping-fail-close-count` 两处配置入口 | 直连隧道的信令 ping 频率约 ×3（每 conn ≤1 包/10s，量级可忽略）；**可观察行为**是「空 idle 一段时间后整段不通的黑洞窗口消失」。恢复旧节奏可显式写 `flags.ping_interval_max_sec = 32`（或 CLI `--ping-interval-max-sec 32`） |
+| **easytier-core 入口固定多线程 runtime**（2026-10-27） | `#[tokio::main]` 由 `current_thread` 改为默认 `multi_thread`（与 Windows service `Runtime::new()` 对齐，减轻数据面 HOL）。无需新增 tokio 特性：该 bin 只在 `required-features = ["management"]` 下构建，而 `management` 已启用 `tokio/full`（含 `rt-multi-thread`）。CLI/配置里的 `multi_thread` / `multi_thread_count` **仍写入配置但不切换进程调度器** | 升级后 CLI 前台进程与 service 一样用多线程 Tokio；依赖「单线程串行」时序的外部脚本若存在，需自测。`--multi-thread false` 不再能把进程改回 current_thread |
 
 > 与 [`../current/tailscale-gap-and-conflict-audit.md`](../current/tailscale-gap-and-conflict-audit.md) §行为变更清单（`latency_first` 默认、P-AUDIT.4/10、KCP、`ping_fail_close_count`）**互不重叠**，可一并发布。
 
@@ -589,6 +590,7 @@ $env:CARGO_INCREMENTAL    = '0'
 
 | 日期 | 变更 |
 |---|---|
+| 2026-10-27 | **审查收口**：P-AUDIT.3 文档 `trace`→`debug`；SQLite sidecar 注释改为事实——SQLite 自己会把主库 mode 复制给 `-wal`/`-journal`/`-shm`，启动扫描只兜老版本遗留的 0644 文件（**撤销**父目录 `0700`：无依据，且 DB 落在共享目录时会改坏系统权限）；底层丢包指标改 `scope=process` 标签；`multi_thread` CLI 文案对齐「入口已固定多线程」；`peer_conn_ping` 满队单测改为断言 `LocalCongestion`。 |
 | 2026-10-17 | **§6.1 对照更新**：`credential_non_reusable_allows_only_one_peer` 在 `3bd7ce83` 绿、`79331629`/`f2a6a82a` 连续红（均 ~38.6s）。测试改为先确认双端直连再选举，failover 预算 60s 并打印诊断。产品根因仍未在代码里钉死。 |
 | 2026-10-17 | **v4（勘误 + 一处代码修复）**：经逐条复核后修正 —— ① 测试数字口径写错（裸 `--lib` 实为 **986**；1150 是叠加 `proxy-smoltcp-stack` 的数字，与 964 非同一口径，原「净增 186」是跨口径比较）；② 「`easytier` 无法构建」是**误判**——工具链本机就有，只是 MSVC 环境变量未备（配方见 §6）；据此 CR-13 现已是**真编译验证通过**，不再只做人工复核；③ CR-01/02/07/09/15 行号统一回「修复前」基准，并补一张「修复后实际位置 + 搜索关键字」对照表（中途曾一度填入与任何基准都对不上的数值，已作废）；④ CR-04 的函数名 `try_handle_nic_packet` 不存在，实为 `try_process_packet_from_nic`；⑤ 删掉 CR-03 中不成立的 `udp/client.rs` 引用注；⑥ **代码**：`bond_member_for_flow` 只是被单测引用却没加 `#[cfg(test)]`（P-AUDIT.9 遗留），导致 `cargo clippy` 在纯 lib 目标上报警告 —— 已加门控，lib 与 lib test 均回到 8 条基线；⑦ `connection-stability-todo.md` P-AUDIT 段标题「未实现」与段内 9 条 `[x]` 打架，改为「部分已落地」。 |
 | 2026-10-17 | **v3**：第二轮。补齐 CR-07 后果链第 4 条（peer-center `report_peers`）与 CR-15 遗留（`reap_joinset_background` 吞 `JoinError`，影响 9 个子系统）；§5 十条附带发现**全部修复**。修复过程中新确认一处事实：`OrderedHashMap` 插入序并非新鲜度序（`insert` 对已有 key 原地保留位置），据此 `build_route_info` / `build_conn_peer_list` 的 `break` 确为缺陷。另发现本仓库 IPv4 `frag_offset` 单位不合规（按字节），已登记未改。测试全绿（默认 features **986** / 叠加 `proxy-smoltcp-stack` **1150**，0 失败）。 |

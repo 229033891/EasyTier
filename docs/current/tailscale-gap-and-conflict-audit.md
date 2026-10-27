@@ -191,7 +191,7 @@ flowchart LR
 | 点 | 位置 | 改前 | 改后 |
 |----|------|------|------|
 | 入 NIC | `NicPacketProcessor::try_process_packet_from_peer` | `trace!` 丢包 | `data_plane_nic_channel_drops` + `debug` |
-| UDP 出站环满 | `tunnel/udp.rs` `force_send`；容量 `socket/ring.rs` **128**（预留 4） | `TunnelError::BufferFull` 上抛，无统计 | `data_plane_tunnel_buffer_full` + `debug` |
+| UDP 出站环满 | `tunnel/udp.rs` `force_send`；容量 `socket/ring.rs` **128**（预留 4） | `TunnelError::BufferFull` 上抛，无统计 | `data_plane_tunnel_buffer_full` + 每 peer 每 30s 一条 `warn`、其余 `debug`（`Error::is_congestion` + `take_congestion_warn_token`；**不是** `error!` —— `send_msg` 改 `try_send` 后环满是常态，逐包 `error!` 会在拥塞时刷屏） |
 | 中继转发腿 BufferFull | `PeerPacketRouter::handle_packet` | 无统计 | **同计数器**（初版遗漏，中继节点恰恰最需要） |
 
 **症状**：小包 ICMP 常通、RDP 突发卡顿（与吞吐文档 B2 / 稳定性 S5 一致）。
@@ -428,11 +428,11 @@ NAT 保活是**正确性要求**而非调优旋钮，不允许用大值关掉。
 | P-AUDIT.1 | 热路径尊重 closed + fuse | `send_msg`：cached `default_conn` closed，或 fused 且存在**已验证未熔断**替代 → 清缓存并 `select_conn`。bond 缓存同样失效后 `pick_bond_set`。唯一路径即使 fused 仍发送。判定复用 `is_unfused_verified`，与 `pick_default_conn` / `pick_bond_set` 的 `has_unfused` **同一谓词**（未验证打洞不算替代）。per-packet 配置解析走 `PeerContext::{bond_config, conn_select_config}`（借快照，**不** clone `FlagsInConfig`） | 单测 `cached_path_unusable_*` / `is_unfused_verified_*`；现网高丢包双路径应离开坏链 |
 | P-AUDIT.4 | 转发前可用性闸门 | 新增 `PeerMap::has_peer_with_live_conn`（`my_peer_id` 或 `has_live_conns()`）；`send_msg_internal` 的**两处网关闸门 + 直连分支**均改用它。此前一条已死的直连条目会**先匹配上分支**并在 `Peer::send_msg` 内失败，**永远不会落到可用的中继腿**。选路 `get_gateway_peer_id` 仍用 `has_peer`（拓扑 ≠ 可用性） | 单测 `has_peer_with_live_conn_tracks_conn_liveness_not_map_presence`（断言 `has_peer` 与新谓词**会分叉**）；三节点 mesh 中坏网关应改走直连而非失败 |
 | P-AUDIT.2 | 空 `dst_peers` 可观测 | `send_msg_by_ip` 空下一跳：`data_plane_no_dst_peer_drops` + `debug`。policy Block 仍返回空集，由该路径计数 | VIP 无路由时指标上升 |
-| P-AUDIT.3 | BufferFull / NIC 满可观测 | NIC `try_send` 失败：`data_plane_nic_channel_drops` + `debug`。出站 `TunnelError::BufferFull`：`data_plane_tunnel_buffer_full`（**含中继转发腿** `PeerPacketRouter::handle_packet`） | 突发丢包可对上计数 |
+| P-AUDIT.3 | BufferFull / NIC 满可观测 | NIC `try_send` 失败：`data_plane_nic_channel_drops` + `debug`。出站 `TunnelError::BufferFull`：`data_plane_tunnel_buffer_full`（**含中继转发腿** `PeerPacketRouter::handle_packet`）。**日志分级（2026-10-27）**：`PeerConn::send_msg` 改用 `try_send` 后环满是常态，故 `Error::is_congestion()` 单独成类，两处原本的逐包 `error!` 改为「每 peer 每 30s 一条 `warn` + 其余 `debug`」，不与 `is_expected_path_unavailable` 混用 | 突发丢包可对上计数，且拥塞时不产生日志风暴 |
 | **S1b** | **UDP 打洞 NAT 保活上限** | UDP 打洞 conn 控制 ping 上限 **32s → 10s**（TCP 打洞 1s 不变）；`hole_punch_ping_max()` 为纯函数，`min(cap, ping_interval_max_sec)` 只收紧不放宽；直连 conn 不变 | 单测 `udp_hole_punch_gets_nat_safe_ping_ceiling`（断言 10s < 32s 且 10s×3 ≤ 30s） |
 | **DEF** | **`latency_first` 默认一致性** | core `gen_default_flags()` / `PeerPolicyConfig::default()` 由 `false` → **`true`**，与 GUI 模板统一。改前 `false`（LeastHop）下 `get_gateway_peer_id` 对有直连的目标**直接短路返回目标**，中继腿永不参与竞争 —— 即「不区分直连/中转」这条已拍板原则（旧 §2.2）在代码里未落实 | TOML/CLI 与 GUI 建出的网络行为一致；⚠️ **行为变更**，既有部署升级后跨 peer 选路可能改变 |
 
-> **日志级别约定**：P-AUDIT.2/.3 的三条丢包路径都是**每包**触发，若用 `warn!` 会在丢包时打爆日志；因此统一 `debug!`，**以计数器为可观测信号**。若确需 `warn` 语义，按同文件 `take_path_unavailable_warn_token()` 的令牌限流范式改。
+> **日志级别约定**：P-AUDIT.2 的空下一跳与 NIC 满仍是每包 `debug!` + 计数器。P-AUDIT.3 的出站 `BufferFull`（`Error::is_congestion`）在改 `try_send` 后是负载下的常态：每 peer 每 30s 一条 `warn!`（`take_congestion_warn_token`），其余 `debug!`，**不以逐包 `error!` 刷屏**。
 
 ### P1（**P-AUDIT.5 / .7 / .9 / .10 已落地、待现网验收**；P1.5 / .5b / .10c 未做或核实为非问题。以下含机制与验收要求，便于直接施工）
 

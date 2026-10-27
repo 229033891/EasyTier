@@ -13,7 +13,7 @@ use crate::{
     packet::{PacketType, ZCPacket, ZCPacketType},
     peers::{
         PeerPacketFilter, PeerPacketFilterResult,
-        error::take_path_unavailable_warn_token,
+        error::{take_congestion_warn_token, take_path_unavailable_warn_token},
         peer_manager::{PeerManagerCore, PipelineRegistrationGuard},
     },
     process_runtime::ProtectedTcpPortRegistry,
@@ -271,6 +271,26 @@ impl WrappedTransportProxyModule {
                                 ?role,
                                 peer_id,
                                 "failed to send wrapped transport packet"
+                            );
+                        }
+                    } else if error.is_congestion() {
+                        // Full local egress ring is expected under load; one WARN per
+                        // peer per window, the rest debug (see Error::is_congestion).
+                        if take_congestion_warn_token(peer_id) {
+                            tracing::warn!(
+                                ?error,
+                                ?transport,
+                                ?role,
+                                peer_id,
+                                "wrapped transport packet dropped by local congestion"
+                            );
+                        } else {
+                            tracing::debug!(
+                                ?error,
+                                ?transport,
+                                ?role,
+                                peer_id,
+                                "wrapped transport packet dropped by local congestion"
                             );
                         }
                     } else {

@@ -378,7 +378,9 @@ impl PeerConn {
         let filter_chain = TunnelFilterChain::new(session_filter.clone(), peer_conn_tunnel_filter)
             .chain(liveness.clone());
         let peer_conn_tunnel = TunnelWithFilter::new(tunnel, filter_chain);
-        let mut mpsc_tunnel = MpscTunnel::new(peer_conn_tunnel, Some(Duration::from_secs(7)));
+        // No-progress write budget (was a 7s whole-batch timeout that tore down
+        // healthy ≤50kbps links). Liveness is owned by ping/fast-probe.
+        let mut mpsc_tunnel = MpscTunnel::new(peer_conn_tunnel, Some(Duration::from_secs(30)));
 
         let (recv, sink) = (mpsc_tunnel.get_stream(), mpsc_tunnel.get_sink());
 
@@ -1520,11 +1522,18 @@ impl PeerConn {
     }
 
     pub async fn send_msg(&self, msg: ZCPacket) -> Result<(), Error> {
-        if let Err(error) = self.sink.send(msg).await {
-            self.close_event_notifier.notify_close();
-            return Err(error.into());
+        // Non-blocking egress: a slow peer must not stall PeerPacketRouter and
+        // every other conn sharing the ingress path. BufferFull is counted at
+        // the router (`data_plane_tunnel_buffer_full`) and must not tear down
+        // the conn — only Shutdown / hard errors do.
+        match self.sink.try_send(msg) {
+            Ok(()) => Ok(()),
+            Err(TunnelError::BufferFull) => Err(TunnelError::BufferFull.into()),
+            Err(error) => {
+                self.close_event_notifier.notify_close();
+                Err(error.into())
+            }
         }
-        Ok(())
     }
 
     pub fn get_peer_id(&self) -> PeerId {
