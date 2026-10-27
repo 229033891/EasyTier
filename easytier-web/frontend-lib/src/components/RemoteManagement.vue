@@ -45,8 +45,13 @@ const props = defineProps<{
      * 不传则保持 GUI 原「状态+配置」合一行为。
      */
     mode?: 'status' | 'config';
-    /** 全页标题，放在网络选择栏内，避免页头再空出一截 */
+    /** 全页标题（无设备名时仍作可见标题；有 deviceName 时仅作无障碍兜底） */
     pageTitle?: string;
+    /**
+     * 设备显示名（hostname）。有值时：桌面并入网络选择条同一行，
+     * 窄屏放进下拉头部，省掉「网络状态/编辑网络 · 设备」独立标题行。
+     */
+    deviceName?: string;
     /** Heartbeat fields for B6 DNS coverage badge (device management page). */
     deviceOsType?: string;
     deviceEasytierVersion?: string;
@@ -2012,7 +2017,12 @@ onUnmounted(() => {
         </div>
 
         <div class="network-header">
-            <h1 v-if="pageTitle" class="et-page-title network-page-title">{{ pageTitle }}</h1>
+            <!-- 有设备名时标题并入选择条，此处仅保留无障碍文案，不再占一行 -->
+            <h1
+                v-if="pageTitle || deviceName"
+                class="et-page-title network-page-title"
+                :class="{ 'network-page-title--sr-only': !!deviceName }"
+            >{{ pageTitle || deviceName }}</h1>
             <div class="network-header-main flex flex-row justify-between items-center gap-2">
                 <!-- 网络选择下拉 -->
                 <div class="flex-1 min-w-0">
@@ -2020,6 +2030,7 @@ onUnmounted(() => {
                         class="w-full network-instance-select"
                         inputId="dd-inst-id" :placeholder="t('web.device_management.select_network')"
                         overlay-class="network-select-overlay"
+                        :aria-label="pageTitle || deviceName || t('web.device_management.select_network')"
                         @update:modelValue="onSelectInstanceId"
                         :pt="{
                             root: {
@@ -2039,39 +2050,51 @@ onUnmounted(() => {
                             itemSize: 60,
                             delay: 50
                         }">
-                            <template #value="slotProps">
-                                <div v-if="slotProps.value" class="flex items-center min-w-0 gap-2">
-                                    <span class="truncate block min-w-0 flex-1 network-instance-label">
-                                        <span v-if="slotProps.value.meta || currentNetworkConfig?.instance_id === slotProps.value.uuid">
-                                            {{ displayNetworkName(slotProps.value.uuid, slotProps.value.meta) }} ({{ slotProps.value.uuid }})
-                                        </span>
-                                        <span v-else>{{ slotProps.value.uuid }}</span>
-                                    </span>
-                                    <Tag
-                                        v-if="currentConfigSourceBadge"
-                                        class="network-source-tag network-source-tag--icon-only leading-3 shrink-0"
-                                        :severity="currentConfigSourceBadge.severity"
-                                        :icon="currentConfigSourceBadge.icon"
-                                        :aria-label="currentConfigSourceBadge.label"
-                                        v-tooltip.top="currentConfigSourceBadge.tip"
-                                    />
-                                    <Tag v-if="isConfigDirty && showConfigPanel" class="network-dirty-tag leading-3 shrink-0"
-                                        severity="warn"
-                                        :value="t('web.device_management.unsaved_changes')" />
-                                    <Tag v-if="residualKindFor(slotProps.value.uuid)" class="network-residual-tag leading-3 shrink-0"
-                                        severity="warn"
-                                        :value="residualBadgeLabel(residualKindFor(slotProps.value.uuid)!)" />
-                                    <Tag class="network-status-tag leading-3 shrink-0"
-                                        :severity="isRunning(slotProps.value.uuid) ? 'success' : 'danger'"
-                                        :value="t(isRunning(slotProps.value.uuid) ? 'network_running' : 'network_stopped')" />
-                                    <!-- Roadmap §2.3「最上方（实例态旁）」：VIP 可达 [M/N]，与实例运行态并排 -->
-                                    <Tag v-if="vipBadgeFor(slotProps.value.uuid)?.text"
-                                        class="vip-reachability-tag leading-3 shrink-0"
-                                        :severity="vipBadgeFor(slotProps.value.uuid)?.severity"
-                                        :value="vipBadgeFor(slotProps.value.uuid)?.text"
-                                        v-tooltip.top="vipBadgeFor(slotProps.value.uuid)?.tip" />
+                            <template #header>
+                                <div v-if="deviceName" class="network-select-device-header">
+                                    <span class="network-select-device-header__label">{{ deviceName }}</span>
                                 </div>
-                                <span v-else class="network-select-placeholder">{{ slotProps.placeholder }}</span>
+                            </template>
+                            <template #value="slotProps">
+                                <div class="flex items-center min-w-0 gap-2">
+                                    <span
+                                        v-if="deviceName"
+                                        class="network-device-chip shrink-0"
+                                        :title="deviceName"
+                                    >{{ deviceName }}</span>
+                                    <template v-if="slotProps.value">
+                                        <span class="truncate block min-w-0 flex-1 network-instance-label">
+                                            <span v-if="slotProps.value.meta || currentNetworkConfig?.instance_id === slotProps.value.uuid">
+                                                {{ displayNetworkName(slotProps.value.uuid, slotProps.value.meta) }} ({{ slotProps.value.uuid }})
+                                            </span>
+                                            <span v-else>{{ slotProps.value.uuid }}</span>
+                                        </span>
+                                        <Tag
+                                            v-if="currentConfigSourceBadge"
+                                            class="network-source-tag network-source-tag--icon-only leading-3 shrink-0"
+                                            :severity="currentConfigSourceBadge.severity"
+                                            :icon="currentConfigSourceBadge.icon"
+                                            :aria-label="currentConfigSourceBadge.label"
+                                            v-tooltip.top="currentConfigSourceBadge.tip"
+                                        />
+                                        <Tag v-if="isConfigDirty && showConfigPanel" class="network-dirty-tag leading-3 shrink-0"
+                                            severity="warn"
+                                            :value="t('web.device_management.unsaved_changes')" />
+                                        <Tag v-if="residualKindFor(slotProps.value.uuid)" class="network-residual-tag leading-3 shrink-0"
+                                            severity="warn"
+                                            :value="residualBadgeLabel(residualKindFor(slotProps.value.uuid)!)" />
+                                        <Tag class="network-status-tag leading-3 shrink-0"
+                                            :severity="isRunning(slotProps.value.uuid) ? 'success' : 'danger'"
+                                            :value="t(isRunning(slotProps.value.uuid) ? 'network_running' : 'network_stopped')" />
+                                        <!-- Roadmap §2.3「最上方（实例态旁）」：VIP 可达 [M/N]，与实例运行态并排 -->
+                                        <Tag v-if="vipBadgeFor(slotProps.value.uuid)?.text"
+                                            class="vip-reachability-tag leading-3 shrink-0"
+                                            :severity="vipBadgeFor(slotProps.value.uuid)?.severity"
+                                            :value="vipBadgeFor(slotProps.value.uuid)?.text"
+                                            v-tooltip.top="vipBadgeFor(slotProps.value.uuid)?.tip" />
+                                    </template>
+                                    <span v-else class="network-select-placeholder min-w-0 flex-1 truncate">{{ slotProps.placeholder }}</span>
+                                </div>
                             </template>
                             <template #option="slotProps">
                                 <div class="flex flex-col items-start content-center max-w-full">
@@ -2334,6 +2357,18 @@ onUnmounted(() => {
     white-space: nowrap;
 }
 
+.network-page-title--sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+}
+
 .network-page-title::before {
     content: "";
     position: absolute;
@@ -2343,6 +2378,43 @@ onUnmounted(() => {
     width: 0.25rem;
     border-radius: 999px;
     background: var(--primary-color, var(--et-primary, #0ea5e9));
+}
+
+.network-page-title--sr-only::before {
+    content: none;
+}
+
+/* 桌面：设备名并入绿色/红色选择条；窄屏改由下拉头部展示 */
+.network-device-chip {
+    max-width: 6.5rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: var(--et-fs-body, 0.9375rem);
+    font-weight: 700;
+    letter-spacing: -0.01em;
+    line-height: 1.2;
+    padding: 0.1rem 0.45rem;
+    border-radius: 0.4rem;
+    background: rgba(15, 23, 42, 0.12);
+    color: inherit;
+}
+
+.network-select-device-header {
+    display: none;
+    padding: 0.45rem 0.75rem 0.35rem;
+    border-bottom: 1px solid var(--et-border-color, #e2e8f0);
+}
+
+.network-select-device-header__label {
+    display: inline-block;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: var(--et-fs-body, 0.9375rem);
+    font-weight: 700;
+    color: var(--text-color, #0f172a);
 }
 
 .network-header-main {
@@ -2554,6 +2626,8 @@ onUnmounted(() => {
 
 :deep(.network-instance-select--running .network-instance-label),
 :deep(.network-instance-select--stopped .network-instance-label),
+:deep(.network-instance-select--running .network-device-chip),
+:deep(.network-instance-select--stopped .network-device-chip),
 :deep(.network-instance-select--running .p-select-dropdown),
 :deep(.network-instance-select--stopped .p-select-dropdown),
 :deep(.network-instance-select--running .p-select-dropdown-icon),
@@ -2561,6 +2635,11 @@ onUnmounted(() => {
 :deep(.network-instance-select--running .p-select-label),
 :deep(.network-instance-select--stopped .p-select-label) {
     color: #ffffff !important;
+}
+
+:deep(.network-instance-select--running .network-device-chip),
+:deep(.network-instance-select--stopped .network-device-chip) {
+    background: rgba(255, 255, 255, 0.22);
 }
 
 /* Trailing tags: shared weight/padding; soft chips in the overlay / default surface. */
@@ -2703,6 +2782,19 @@ onUnmounted(() => {
     .network-page-title {
         font-size: 1.05rem;
         margin-bottom: 0.4rem;
+    }
+
+    .network-page-title--sr-only {
+        margin: -1px;
+    }
+
+    /* 窄屏：关闭条上不放设备名，改在下拉头部显示 */
+    .network-device-chip {
+        display: none;
+    }
+
+    .network-select-device-header {
+        display: block;
     }
 
     .network-header {

@@ -50,8 +50,14 @@ const managementQuery = computed(() => {
     return q;
 });
 
+/** 设备名并入网络选择条；标题文案仅作无障碍兜底，不再单独占一行 */
+const deviceName = computed(() => {
+    // hostname 可能是 ""，不能用 ??，否则不会回退到 deviceId
+    return (deviceInfo.value?.hostname || deviceId.value || '').trim()
+});
+
 const pageTitle = computed(() => {
-    const host = deviceInfo.value?.hostname ?? deviceId.value ?? '';
+    const host = deviceName.value;
     if (managementMode.value === 'config') {
         return `${t('web.device.page_title_config')} · ${host}`;
     }
@@ -146,6 +152,7 @@ onUnmounted(() => {
         :device-easytier-version="deviceInfo?.easytier_version"
         :device-magic-dns-os-wired="deviceInfo?.magic_dns_os_wired"
         :page-title="pageTitle"
+        :device-name="deviceName"
         :drawer-close="backToList"
         :leave-button-label="managementFrom === 'networkList' ? t('web.device.back_to_network_list') : t('web.device.back_to_list')"
         :leave-button-tooltip="managementFrom === 'networkList' ? t('web.device.back_to_network_list_tip') : t('web.device.back_to_list_tip')"

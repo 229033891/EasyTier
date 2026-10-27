@@ -940,7 +940,7 @@ const eventLogContent = computed(() => {
       </template>
     </Card>
 
-  <div v-else class="status-panels flex flex-col gap-2">
+  <div v-else class="status-panels flex flex-col gap-1">
         <Panel v-model:collapsed="panelCollapsed.myNode" :header="t('my_node_info')" toggleable
           class="status-panel"
           :class="{ 'status-panel--expanded': !panelCollapsed.myNode }"
@@ -1299,10 +1299,10 @@ const eventLogContent = computed(() => {
   min-height: 0;
 }
 
-/* 面板标题栏：浅底色区分标题与内容；标题略大于正文、近黑 */
+/* 面板标题栏：浅底色区分标题与内容；标题略大于正文、近黑（收紧以多留展开区） */
 .status-panels :deep(.p-panel .p-panel-header) {
-  padding: 0.4rem 0.75rem !important;
-  min-height: 2.125rem !important;
+  padding: 0.25rem 0.65rem !important;
+  min-height: 1.75rem !important;
   font-size: var(--et-fs-section, 1.0625rem);
   font-weight: 600;
   line-height: 1.25;
@@ -1313,11 +1313,11 @@ const eventLogContent = computed(() => {
 }
 
 .status-panels :deep(.p-panel .p-panel-header.cursor-pointer) {
-  min-height: 2.125rem !important;
+  min-height: 1.75rem !important;
 }
 
 .status-panels :deep(.p-panel .p-panel-content) {
-  padding: 0.55rem 0.75rem !important;
+  padding: 0.45rem 0.65rem !important;
   border: none;
   background: transparent;
   font-size: var(--et-fs-body, 0.9375rem);

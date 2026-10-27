@@ -1552,7 +1552,8 @@ const flowStatsAllowExactIp = computed({
 .config-panels {
   display: flex;
   flex-direction: column;
-  gap: 0.5rem;
+  /* 收紧折叠条间距，给展开内容多留约 1–2 行 */
+  gap: 0.25rem;
 }
 
 .config-panels :deep(.p-panel) {
@@ -1565,8 +1566,8 @@ const flowStatsAllowExactIp = computed({
 
 /* 面板标题栏：浅底区分标题与内容（与 Status.vue 一致） */
 .config-panels :deep(.p-panel .p-panel-header) {
-  padding: 0.4rem 0.75rem !important;
-  min-height: 2.125rem !important;
+  padding: 0.25rem 0.65rem !important;
+  min-height: 1.75rem !important;
   font-size: var(--et-fs-section, 1.0625rem);
   font-weight: 600;
   line-height: 1.25;
@@ -1576,11 +1577,11 @@ const flowStatsAllowExactIp = computed({
 }
 
 .config-panels :deep(.p-panel .p-panel-header.cursor-pointer) {
-  min-height: 2.125rem !important;
+  min-height: 1.75rem !important;
 }
 
 .config-panels :deep(.p-panel .p-panel-content) {
-  padding: 0.55rem 0.75rem !important;
+  padding: 0.45rem 0.65rem !important;
   border: none;
   background: transparent;
   font-size: var(--et-fs-body, 0.9375rem);
