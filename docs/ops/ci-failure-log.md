@@ -121,6 +121,20 @@ Agent / 人工均适用：**未完成 §1 不要提交**。
 
 ## 5. 失败记录（新 → 旧）
 
+### 2026-10-27 — Android APK：仅 v2 签名导致安装「没有签名文件」
+
+| 项 | 内容 |
+|----|------|
+| 仓库/分支 | `229033891/EasyTier` `releases/v2.7.9` |
+| Run | Release `v2.7.9` / ET Android `40506438992` |
+| 失败 job | 用户安装（非 CI 红） |
+| 根因一类 | android-signing |
+| 状态 | 已修复（Release APK 补 jarsigner v1；gradle 强制 v1+v2） |
+
+**摘要**：产物含 `APK Sig Block 42` 但无 `META-INF/*.RSA`。部分 OEM 安装器只认 JAR v1，报解析失败/没有签名文件。
+
+**防再犯**：见 §3「Android release 须开 v1+v2 签名」。
+
 ### 2026-10-27 — ET Go：嵌入 wasm 过期导致 Close 不发 FIN
 
 | 项 | 内容 |
