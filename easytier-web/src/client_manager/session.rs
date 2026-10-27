@@ -42,6 +42,16 @@ mod lifecycle_tests;
 const WEBHOOK_VALIDATION_HEARTBEAT_INTERVAL: u32 = 10;
 const CONNECTED_WEBHOOK_RETRY_DELAYS: [Duration; 2] =
     [Duration::from_millis(100), Duration::from_millis(500)];
+/// Persist device archive at most this often when hostname/version/url are unchanged.
+/// Keeps heartbeat responses off the SQLite write path under load.
+const DEVICE_ARCHIVE_MIN_WRITE_INTERVAL: Duration = Duration::from_secs(45);
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct DeviceArchiveSnapshot {
+    hostname: String,
+    easytier_version: String,
+    client_url: String,
+}
 
 /// Reverse index: bound `(user_id, machine_id)` → session client URLs (S4).
 pub(crate) type MachineSessionIndex =
@@ -221,6 +231,14 @@ pub struct SessionData {
     route_bind: Arc<std::sync::Mutex<Option<(crate::db::UserIdInDb, uuid::Uuid, u64)>>>,
     /// Shared with `ClientManager` for O(1) machine→session lookup (S4).
     sessions_by_machine: Arc<MachineSessionIndex>,
+    /// Last device-archive identity written to SQLite (throttle hot-path upserts).
+    device_archive: Option<DeviceArchiveSnapshot>,
+    last_device_archive_write: Option<Instant>,
+    /// Set when a newer session for the same `client_url` replaces this one.
+    /// Drop must not treat that as a real disconnect (would remove the device
+    /// from `user_clients_map` / fire `node_disconnected` before the replacement
+    /// finishes its first heartbeat).
+    replaced_by_handover: bool,
 }
 
 impl SessionData {
@@ -257,7 +275,31 @@ impl SessionData {
             session_epoch: 0,
             route_bind: Arc::new(std::sync::Mutex::new(None)),
             sessions_by_machine,
+            device_archive: None,
+            last_device_archive_write: None,
+            replaced_by_handover: false,
         }
+    }
+
+    /// Returns true when the next heartbeat should persist the device archive.
+    fn should_write_device_archive(&self, snapshot: &DeviceArchiveSnapshot) -> bool {
+        match (&self.device_archive, self.last_device_archive_write) {
+            (Some(prev), Some(written_at))
+                if prev == snapshot && written_at.elapsed() < DEVICE_ARCHIVE_MIN_WRITE_INTERVAL =>
+            {
+                false
+            }
+            _ => true,
+        }
+    }
+
+    fn record_device_archive_write(&mut self, snapshot: DeviceArchiveSnapshot) {
+        self.device_archive = Some(snapshot);
+        self.last_device_archive_write = Some(Instant::now());
+    }
+
+    fn mark_replaced_by_handover(&mut self) {
+        self.replaced_by_handover = true;
     }
 
     pub(super) fn set_route_bind(
@@ -309,7 +351,22 @@ impl SessionData {
             // Standalone webhook integrations can omit both managed fields.
             Some("") if self.binding_version == Some(0) => true,
             Some(revision) if !revision.is_empty() => persisted_revision == Some(revision),
-            _ => false,
+            // Validation has not completed yet — keep the takeover gate closed
+            // (at most one validation cycle before it opens).
+            None => false,
+            // Incomplete webhook contract (empty revision with binding_version>0):
+            // degrade open so reconcile is not permanently skipped while the
+            // device still looks online via heartbeats.
+            Some("") => {
+                tracing::warn!(
+                    binding_version = ?self.binding_version,
+                    persisted_revision,
+                    "webhook omitted config_revision; degrading runtime gate open"
+                );
+                true
+            }
+            // Exhaustive for Option<&str> after the arms above; keep warn path.
+            Some(_) => false,
         }
     }
 
@@ -575,6 +632,9 @@ pub(super) fn send_runtime_notify(notifier: &broadcast::Sender<()>) {
 
 impl Drop for SessionData {
     fn drop(&mut self) {
+        if self.replaced_by_handover {
+            return;
+        }
         if let Ok(storage) = Storage::try_from(self.storage.clone())
             && let Some(token) = self.storage_token.as_ref()
         {
@@ -1123,14 +1183,17 @@ impl SessionRpcService {
             });
             let authorized = data.auth_state.is_authorized();
             let device_upsert = if authorized {
-                data.storage_token.clone().map(|storage_token| {
+                data.storage_token.clone().and_then(|storage_token| {
+                    let snapshot = DeviceArchiveSnapshot {
+                        hostname: runtime_req.hostname.clone(),
+                        easytier_version: runtime_req.easytier_version.clone(),
+                        client_url: storage_token.client_url.to_string(),
+                    };
+                    if !data.should_write_device_archive(&snapshot) {
+                        return None;
+                    }
                     let report_time = Self::heartbeat_report_timestamp(&runtime_req);
-                    (
-                        storage_token,
-                        runtime_req.hostname.clone(),
-                        runtime_req.easytier_version.clone(),
-                        report_time,
-                    )
+                    Some((storage_token, snapshot, report_time))
                 })
             } else {
                 None
@@ -1151,21 +1214,30 @@ impl SessionRpcService {
 
         let revision_identity = device_upsert
             .as_ref()
-            .map(|(token, _, _, _)| (token.user_id, token.machine_id));
-        if let Some((storage_token, hostname, version, report_time)) = device_upsert
-            && let Err(e) = storage
+            .map(|(token, _, _)| (token.user_id, token.machine_id));
+        if let Some((storage_token, snapshot, report_time)) = device_upsert {
+            match storage
                 .db()
                 .upsert_device(
                     storage_token.user_id,
                     storage_token.machine_id,
-                    &hostname,
-                    &version,
+                    &snapshot.hostname,
+                    &snapshot.easytier_version,
                     storage_token.client_url.as_str(),
                     report_time,
                 )
                 .await
-        {
-            tracing::warn!(?e, "failed to upsert device archive from webhook heartbeat");
+            {
+                Ok(()) => {
+                    self.data
+                        .write()
+                        .await
+                        .record_device_archive_write(snapshot);
+                }
+                Err(e) => {
+                    tracing::warn!(?e, "failed to upsert device archive from webhook heartbeat");
+                }
+            }
         }
 
         if let Some(notifier) = runtime_notify {
@@ -1300,19 +1372,39 @@ impl SessionRpcService {
 
         let report_time = Self::heartbeat_report_timestamp(&runtime_req);
         storage.update_session_client(storage_token.clone(), report_time, true, session_epoch);
-        if let Err(e) = storage
-            .db()
-            .upsert_device(
-                storage_token.user_id,
-                storage_token.machine_id,
-                &runtime_req.hostname,
-                &runtime_req.easytier_version,
-                storage_token.client_url.as_str(),
-                report_time,
-            )
-            .await
-        {
-            tracing::warn!(?e, "failed to upsert device archive from heartbeat");
+        let device_snapshot = {
+            let data = self.data.read().await;
+            let snapshot = DeviceArchiveSnapshot {
+                hostname: runtime_req.hostname.clone(),
+                easytier_version: runtime_req.easytier_version.clone(),
+                client_url: storage_token.client_url.to_string(),
+            };
+            data.should_write_device_archive(&snapshot)
+                .then_some(snapshot)
+        };
+        if let Some(snapshot) = device_snapshot {
+            match storage
+                .db()
+                .upsert_device(
+                    storage_token.user_id,
+                    storage_token.machine_id,
+                    &snapshot.hostname,
+                    &snapshot.easytier_version,
+                    storage_token.client_url.as_str(),
+                    report_time,
+                )
+                .await
+            {
+                Ok(()) => {
+                    self.data
+                        .write()
+                        .await
+                        .record_device_archive_write(snapshot);
+                }
+                Err(e) => {
+                    tracing::warn!(?e, "failed to upsert device archive from heartbeat");
+                }
+            }
         }
         send_runtime_notify(&notifier);
         if let Some(notify) = validation_notify {
@@ -1537,6 +1629,12 @@ impl Session {
         })
     }
 
+    /// Mark this session as replaced by a newer accept on the same `client_url`
+    /// so [`SessionData`]'s Drop skips disconnect side effects.
+    pub(super) async fn mark_replaced_by_handover(&self) {
+        self.data.write().await.mark_replaced_by_handover();
+    }
+
     pub async fn stop(&self) {
         if let Some(task) = &self.webhook_validation_task {
             task.abort();
@@ -1658,6 +1756,82 @@ mod tests {
     use tokio::sync::{Mutex, Notify, oneshot};
 
     use super::{super::storage::Storage, *};
+
+    #[tokio::test]
+    async fn device_archive_write_is_throttled_until_interval_or_snapshot_change() {
+        let mut data = SessionData::new(
+            Storage::new(crate::db::Db::memory_db().await).weak_ref(),
+            url::Url::parse("udp://127.0.0.1:1").unwrap(),
+            None,
+            Arc::new(FeatureFlags::default()),
+            Arc::new(crate::webhook::WebhookConfig::new(
+                None, None, None, None, None,
+            )),
+            Arc::new(MachineSessionIndex::new()),
+        );
+        let snapshot = DeviceArchiveSnapshot {
+            hostname: "host".into(),
+            easytier_version: "2.7.9".into(),
+            client_url: "udp://127.0.0.1:1".into(),
+        };
+        assert!(data.should_write_device_archive(&snapshot));
+        data.record_device_archive_write(snapshot.clone());
+        assert!(!data.should_write_device_archive(&snapshot));
+        // Failed writes must not advance the window — leave last_write unset
+        // after a synthetic "failure" by clearing the recorded snapshot time
+        // only when testing the change path below; interval expiry uses a
+        // backdated timestamp.
+        data.last_device_archive_write =
+            Some(Instant::now() - DEVICE_ARCHIVE_MIN_WRITE_INTERVAL - Duration::from_secs(1));
+        assert!(data.should_write_device_archive(&snapshot));
+        data.record_device_archive_write(snapshot.clone());
+        let changed = DeviceArchiveSnapshot {
+            hostname: "host-b".into(),
+            ..snapshot
+        };
+        assert!(data.should_write_device_archive(&changed));
+    }
+
+    #[tokio::test]
+    async fn replaced_session_drop_skips_remove_and_keeps_client_entry() {
+        let storage = Storage::new(crate::db::Db::memory_db().await);
+        let user_id = storage.db().auto_create_user("handover").await.unwrap().id;
+        let machine_id = uuid::Uuid::new_v4();
+        let client_url: url::Url = "udp://127.0.0.1:22020".parse().unwrap();
+        let token = StorageToken {
+            token: "t".into(),
+            client_url: client_url.clone(),
+            machine_id,
+            user_id,
+        };
+        storage.update_session_client(token.clone(), 1, true, 1);
+        assert!(
+            storage
+                .get_client_url_by_machine_id(user_id, &machine_id)
+                .is_some()
+        );
+
+        let mut old = SessionData::new(
+            storage.weak_ref(),
+            client_url,
+            None,
+            Arc::new(FeatureFlags::default()),
+            Arc::new(crate::webhook::WebhookConfig::new(
+                None, None, None, None, None,
+            )),
+            Arc::new(MachineSessionIndex::new()),
+        );
+        old.storage_token = Some(token.clone());
+        old.session_epoch = 1;
+        old.mark_replaced_by_handover();
+        drop(old);
+
+        assert_eq!(
+            storage.get_client_url_by_machine_id(user_id, &machine_id),
+            Some(token.client_url),
+            "handed-over Drop must not remove the live client entry"
+        );
+    }
 
     #[test]
     fn heartbeat_response_delay_only_fills_remaining_time() {

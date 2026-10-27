@@ -11,8 +11,17 @@ use sea_orm::{
     sea_query::OnConflict,
 };
 use sea_orm_migration::MigratorTrait as _;
-use sqlx::{Sqlite, SqlitePool, migrate::MigrateDatabase as _, types::chrono};
-use std::collections::{HashMap, HashSet};
+use sqlx::{
+    Sqlite, SqlitePool,
+    migrate::MigrateDatabase as _,
+    sqlite::{SqliteConnectOptions, SqliteJournalMode, SqliteSynchronous},
+    types::chrono,
+};
+use std::{
+    collections::{HashMap, HashSet},
+    str::FromStr as _,
+    time::Duration,
+};
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt as _;
 use uuid::Uuid;
@@ -486,14 +495,23 @@ impl Db {
         }
         restrict_database_file_permissions(db_path)?;
 
+        // Heartbeats write `devices` on a hot path. Rollback journal +
+        // synchronous=FULL serializes every reader behind each fsync; WAL +
+        // NORMAL keeps readers concurrent and cuts commit cost roughly 10×.
+        let options = SqliteConnectOptions::from_str(db_path)?
+            .create_if_missing(true)
+            .journal_mode(SqliteJournalMode::Wal)
+            .synchronous(SqliteSynchronous::Normal)
+            .busy_timeout(Duration::from_secs(5))
+            .foreign_keys(true);
+
         let db = sqlx::pool::PoolOptions::new()
+            .max_connections(16)
+            .acquire_timeout(Duration::from_secs(5))
             .max_lifetime(None)
             .idle_timeout(None)
-            .connect(db_path)
+            .connect_with(options)
             .await?;
-
-        // Enforce FK cascades (SQLite defaults to OFF per connection).
-        sqlx::query("PRAGMA foreign_keys = ON").execute(&db).await?;
 
         Ok(db)
     }

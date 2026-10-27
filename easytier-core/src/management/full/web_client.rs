@@ -58,6 +58,9 @@ const MAX_HEARTBEAT_INTERVAL_MS: u32 = 60_000;
 const MIN_HEARTBEAT_TIMEOUT_MS: u32 = 5_000;
 const MAX_HEARTBEAT_TIMEOUT_MS: u32 = 120_000;
 const MIN_HEARTBEAT_TIMEOUT_MARGIN_MS: u32 = 5_000;
+/// Floor between successful heartbeats when the round-trip already ate the interval.
+/// Without this, a slow console makes the client spin at ~1/RTT and amplify load.
+const MIN_HEARTBEAT_SUCCESS_GAP: std::time::Duration = std::time::Duration::from_millis(500);
 
 /// Recover from a poisoned `StdMutex` instead of silently dropping updates.
 /// Poison means a prior holder paniced while holding the lock; the inner state
@@ -95,7 +98,8 @@ fn session_end_reconnect_delay(streak: u32) -> std::time::Duration {
     for _ in 0..steps {
         base = next_backoff(base);
     }
-    let jitter_ms = u64::from(rand::random::<u16>() % 1_001); // 0..=1000ms
+    // Full 0–5s jitter spreads reconnect storms when the console is overloaded.
+    let jitter_ms = u64::from(rand::random::<u16>() % 5_001);
     base + std::time::Duration::from_millis(jitter_ms)
 }
 
@@ -154,9 +158,13 @@ impl HeartbeatPolicy {
     }
 
     fn remaining_interval(self, elapsed: std::time::Duration) -> Option<std::time::Duration> {
-        self.interval
-            .checked_sub(elapsed)
-            .filter(|delay| !delay.is_zero())
+        match self.interval.checked_sub(elapsed) {
+            Some(delay) if !delay.is_zero() => Some(delay.max(MIN_HEARTBEAT_SUCCESS_GAP)),
+            // Slow success: wait a full interval (floor 500ms) so a congested
+            // console is not hammered at ~1/RTT. Complements server-side
+            // `heartbeat_interval_ms` backpressure.
+            _ => Some(self.interval.max(MIN_HEARTBEAT_SUCCESS_GAP)),
+        }
     }
 }
 
@@ -1454,12 +1462,32 @@ mod tests {
     fn session_end_reconnect_delay_escalates_with_streak() {
         let first = session_end_reconnect_delay(1);
         assert!(first >= RETRY_INTERVAL);
-        assert!(first <= RETRY_INTERVAL + std::time::Duration::from_secs(1));
+        assert!(first <= RETRY_INTERVAL + std::time::Duration::from_secs(5));
 
         let fourth = session_end_reconnect_delay(4);
-        // streak 4 → 3 doublings → 8s base + jitter
+        // streak 4 → 3 doublings → 8s base + up to 5s jitter
         assert!(fourth >= std::time::Duration::from_secs(8));
-        assert!(fourth <= std::time::Duration::from_secs(9));
+        assert!(fourth <= std::time::Duration::from_secs(13));
+    }
+
+    #[test]
+    fn remaining_interval_backs_off_full_interval_when_round_trip_is_slow() {
+        let policy = HeartbeatPolicy {
+            interval: std::time::Duration::from_millis(3_500),
+            timeout_ms: 15_000,
+        };
+        assert_eq!(
+            policy.remaining_interval(std::time::Duration::from_millis(100)),
+            Some(std::time::Duration::from_millis(3_400))
+        );
+        assert_eq!(
+            policy.remaining_interval(std::time::Duration::from_millis(3_500)),
+            Some(std::time::Duration::from_millis(3_500))
+        );
+        assert_eq!(
+            policy.remaining_interval(std::time::Duration::from_secs(10)),
+            Some(std::time::Duration::from_millis(3_500))
+        );
     }
 
     #[test]

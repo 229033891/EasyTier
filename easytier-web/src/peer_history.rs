@@ -22,14 +22,20 @@
 
 use std::{sync::Arc, time::Duration};
 
-use easytier::proto::api::{instance::PeerRoutePair, manage::NetworkInstanceRunningInfo};
+use easytier::proto::api::{
+    instance::PeerRoutePair,
+    manage::{NetworkInstanceRunningInfo, NetworkInstanceRunningInfoMap},
+};
 use easytier_core::management::remote_client::RemoteClientManager as _;
 // DeleteMany::filter 来自 QueryFilter trait，必须显式引入，否则会解析到 Iterator::filter
 use sea_orm::{ColumnTrait as _, EntityTrait as _, QueryFilter as _, Set};
-use tokio::time::{MissedTickBehavior, interval};
+use tokio::{
+    task::JoinSet,
+    time::{MissedTickBehavior, interval},
+};
 use tracing::{debug, error, info};
 
-use crate::client_manager::ClientManager;
+use crate::client_manager::{ClientManager, storage::StorageToken};
 use crate::db::{
     Db,
     entity::{flow_history, peer_conn_history},
@@ -41,8 +47,10 @@ pub const DEFAULT_SAMPLE_INTERVAL_SECS: u64 = 60;
 pub const DEFAULT_RETENTION_DAYS: i64 = 7;
 /// 清理任务的执行间隔（每 10 分钟扫一次）
 const CLEANUP_INTERVAL: Duration = Duration::from_secs(600);
-/// 单台设备一次采集的超时
-const COLLECT_TIMEOUT: Duration = Duration::from_secs(20);
+/// 单台设备一次采集的超时（串行时代 20s 会让离线设备堵住整轮）
+const COLLECT_TIMEOUT: Duration = Duration::from_secs(5);
+/// 并行采集上限，避免与心跳抢满同一批隧道
+const SAMPLE_CONCURRENCY: usize = 24;
 /// 单次采样写入 `flow_history` 的总行数上限（跨设备/实例）。
 ///
 /// 节点侧已按 `FLOW_TOP_N_PER_CONN` 截断；这里再加一道表侧闸门，防止隧道数
@@ -216,6 +224,54 @@ async fn running_inst_ids_from_heartbeat(
     )
 }
 
+struct CollectedDeviceSample {
+    token: StorageToken,
+    info_map: NetworkInstanceRunningInfoMap,
+}
+
+async fn collect_one_device(
+    client_mgr: Arc<ClientManager>,
+    token: StorageToken,
+) -> Option<CollectedDeviceSample> {
+    let identify = (token.user_id, token.machine_id);
+    // Prefer scoped collect: empty running list → skip RPC; missing heartbeat → full collect.
+    let inst_ids = match running_inst_ids_from_heartbeat(&client_mgr, &token.client_url).await {
+        Some(ids) if ids.is_empty() => {
+            debug!(
+                machine_id = %token.machine_id,
+                "peer history: no running instances, skip collect"
+            );
+            return None;
+        }
+        Some(ids) => Some(ids),
+        None => None,
+    };
+    let collected = match tokio::time::timeout(
+        COLLECT_TIMEOUT,
+        client_mgr.handle_collect_network_info(identify, inst_ids),
+    )
+    .await
+    {
+        Ok(Ok(resp)) => resp,
+        Ok(Err(e)) => {
+            debug!(
+                machine_id = %token.machine_id,
+                "peer history: collect network info failed: {:?}", e
+            );
+            return None;
+        }
+        Err(_) => {
+            debug!(
+                machine_id = %token.machine_id,
+                "peer history: collect network info timed out"
+            );
+            return None;
+        }
+    };
+    let info_map = collected.info?;
+    Some(CollectedDeviceSample { token, info_map })
+}
+
 /// 采集一轮，返回写入的行数（peer_conn_history + flow_history）
 async fn sample_once(client_mgr: &Arc<ClientManager>, db: &Db) -> usize {
     let sessions = client_mgr.list_all_sessions().await;
@@ -227,44 +283,20 @@ async fn sample_once(client_mgr: &Arc<ClientManager>, db: &Db) -> usize {
     let mut rows: Vec<peer_conn_history::ActiveModel> = Vec::new();
     let mut flow_rows: Vec<flow_history::ActiveModel> = Vec::new();
 
-    for token in sessions {
-        let identify = (token.user_id, token.machine_id);
-        // Prefer scoped collect: empty running list → skip RPC; missing heartbeat → full collect.
-        let inst_ids = match running_inst_ids_from_heartbeat(client_mgr, &token.client_url).await {
-            Some(ids) if ids.is_empty() => {
-                debug!(
-                    machine_id = %token.machine_id,
-                    "peer history: no running instances, skip collect"
-                );
-                continue;
-            }
-            Some(ids) => Some(ids),
-            None => None,
+    let mut pending = sessions.into_iter();
+    let mut join_set = JoinSet::new();
+    while join_set.len() < SAMPLE_CONCURRENCY {
+        let Some(token) = pending.next() else {
+            break;
         };
-        let collected = match tokio::time::timeout(
-            COLLECT_TIMEOUT,
-            client_mgr.handle_collect_network_info(identify, inst_ids),
-        )
-        .await
-        {
-            Ok(Ok(resp)) => resp,
-            Ok(Err(e)) => {
-                debug!(
-                    machine_id = %token.machine_id,
-                    "peer history: collect network info failed: {:?}", e
-                );
-                continue;
-            }
-            Err(_) => {
-                debug!(
-                    machine_id = %token.machine_id,
-                    "peer history: collect network info timed out"
-                );
-                continue;
-            }
-        };
+        join_set.spawn(collect_one_device(client_mgr.clone(), token));
+    }
 
-        let Some(info_map) = collected.info else {
+    while let Some(joined) = join_set.join_next().await {
+        if let Some(token) = pending.next() {
+            join_set.spawn(collect_one_device(client_mgr.clone(), token));
+        }
+        let Ok(Some(CollectedDeviceSample { token, info_map })) = joined else {
             continue;
         };
 

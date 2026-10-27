@@ -369,7 +369,16 @@ impl ClientManager {
                     );
                     session.serve(tunnel).await;
                     let session = Arc::new(session);
-                    sessions.insert(client_url, session.clone());
+                    // Explicitly stop a superseded session for the same remote
+                    // URL; relying on Drop leaves the old RPC/reconcile tasks
+                    // racing until prune_sessions notices they are gone.
+                    if let Some(old) = sessions.insert(client_url, session.clone()) {
+                        // Hand over before stop/Drop so the old session does not
+                        // remove the device or fire node_disconnected while the
+                        // replacement is still waiting for its first heartbeat.
+                        old.mark_replaced_by_handover().await;
+                        old.stop().await;
+                    }
                     session.mark_route_ready();
                 }
             }

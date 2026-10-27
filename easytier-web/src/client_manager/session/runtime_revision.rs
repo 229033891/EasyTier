@@ -91,12 +91,18 @@ pub(super) async fn reconcile_network_configs_on_heartbeat(
                 RoundStatus::Stop => return,
             };
         cache.reset_if_runtime_config_cache_epoch_changed(round.runtime_config_cache_epoch);
-        let running_metas =
-            match sync_running_sources_for_round(&mut rpc_client, &storage, &mut round).await {
-                RoundStatus::Ready(running_metas) => running_metas,
-                RoundStatus::Skip => continue,
-                RoundStatus::Stop => return,
-            };
+        let running_metas = match sync_running_sources_for_round(
+            &mut rpc_client,
+            &storage,
+            &mut round,
+            &mut cache,
+        )
+        .await
+        {
+            RoundStatus::Ready(running_metas) => running_metas,
+            RoundStatus::Skip => continue,
+            RoundStatus::Stop => return,
+        };
         let context = ReconcileRoundContext {
             session_data: &session_data,
             round: &round,
@@ -261,6 +267,8 @@ struct ReconcileCache {
     runtime_config_cache_epoch: u64,
     cleaned_web_source_instances: bool,
     last_desired_web_inst_ids: Option<HashSet<String>>,
+    /// Last successful `list_network_instance_meta` fingerprint (revision + running set).
+    last_synced_running_sources: Option<(Option<String>, HashSet<String>)>,
     runtime_configs: SessionRuntimeConfigCache,
 }
 
@@ -690,8 +698,21 @@ async fn sync_running_sources_for_round(
     rpc_client: &mut SessionRpcClient,
     storage: &StorageInner,
     round: &mut ReconcileRound,
+    cache: &mut ReconcileCache,
 ) -> RoundStatus<Option<Vec<NetworkMeta>>> {
     if !round.req.support_config_source {
+        return RoundStatus::Ready(None);
+    }
+
+    // When managed revision is unchanged, the heartbeat already carries the
+    // running instance set — skip the meta RPC unless that set moved.
+    let fingerprint = (
+        round.target_config_revision.clone(),
+        round.running_inst_ids.clone(),
+    );
+    if !round.should_apply_runtime_revision
+        && cache.last_synced_running_sources.as_ref() == Some(&fingerprint)
+    {
         return RoundStatus::Ready(None);
     }
 
@@ -749,6 +770,7 @@ async fn sync_running_sources_for_round(
                     }
                 };
             }
+            cache.last_synced_running_sources = Some(fingerprint);
             RoundStatus::Ready(Some(metas))
         }
         Err(e) => {
@@ -1673,7 +1695,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn authoritative_empty_config_remains_ready_but_missing_revision_does_not() {
+    async fn incomplete_webhook_revision_degrades_open_but_unvalidated_stays_closed() {
         let (storage, data, round) = takeover_session(Some("current")).await;
         let mut mutation = RuntimeMutationFence::default();
         assert!(round.local_configs.is_empty());
@@ -1685,11 +1707,20 @@ mod tests {
             )
             .await
         );
+        {
+            let mut data = data.write().await;
+            // Simulate "authorized but validation not finished yet".
+            data.webhook_config_revision = None;
+            assert!(!data.runtime_config_is_ready(None));
+            assert!(!data.runtime_config_is_ready(Some("current")));
+        }
         let epoch = data.read().await.webhook_validation_change_epoch;
         validate_takeover_session(&storage, &data, &round, "", epoch).await;
         let mut data = data.write().await;
-        assert!(!data.runtime_config_is_ready(None));
-        assert!(!data.runtime_config_is_ready(Some("current")));
+        // Incomplete webhook (empty revision, binding_version>0) must not
+        // permanently block reconcile while heartbeats still succeed.
+        assert!(data.runtime_config_is_ready(None));
+        assert!(data.runtime_config_is_ready(Some("current")));
         data.binding_version = Some(0);
         assert!(
             data.runtime_config_is_ready(None),
