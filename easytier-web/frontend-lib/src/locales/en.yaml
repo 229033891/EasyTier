@@ -164,7 +164,6 @@ node_info_group_public_ip: Public IP
 node_info_group_listener: Listener
 node_info_group_route: Route
 node_info_details: Node Details
-node_info_copy_group: Copy this group
 peer_count: Connected
 upload: Upload
 download: Download

@@ -841,26 +841,6 @@ const effectivePolicyRoutes = computed(
 
 /** 节点详情不再分组折叠：所有条目一次铺开，长内容允许换行，避免撑出横向滚动条。 */
 
-async function copyGroupChips(group: { titleKey: string; chips: InfoChip[] }) {
-  const text = group.chips.map(c => c.label).join('\n')
-  try {
-    if (navigator.clipboard?.writeText) {
-      await navigator.clipboard.writeText(text)
-    } else {
-      const textarea = document.createElement('textarea')
-      textarea.value = text
-      textarea.style.position = 'fixed'
-      textarea.style.opacity = '0'
-      document.body.appendChild(textarea)
-      textarea.select()
-      document.execCommand('copy')
-      textarea.remove()
-    }
-  } catch (e) {
-    console.error('Failed to copy node info group', e)
-  }
-}
-
 function onToggleablePanelHeaderClick(
   key: keyof typeof panelCollapsed,
   event: Event,
@@ -970,9 +950,6 @@ const eventLogContent = computed(() => {
                   class="node-info-chip"
                 >{{ chip.label }}</span>
               </div>
-              <Button v-if="group.chips.length" size="small" severity="secondary" text rounded icon="pi pi-copy"
-                class="et-icon-action-btn node-info-group-copy" :aria-label="t('node_info_copy_group')"
-                v-tooltip.top="t('node_info_copy_group')" @click="copyGroupChips(group)" />
             </div>
           </div>
         </Panel>
@@ -1394,7 +1371,7 @@ const eventLogContent = computed(() => {
 
 .node-info-group {
   display: grid;
-  grid-template-columns: 6.5rem minmax(0, 1fr) auto;
+  grid-template-columns: 6.5rem minmax(0, 1fr);
   align-items: start;
   column-gap: 0.5rem;
   row-gap: 0.35rem;
@@ -1436,11 +1413,6 @@ const eventLogContent = computed(() => {
   align-content: flex-start;
   gap: 0.3rem;
   height: auto;
-}
-
-.node-info-group-copy {
-  grid-column: 3;
-  align-self: start;
 }
 
 /*
@@ -1591,8 +1563,8 @@ const eventLogContent = computed(() => {
   }
 
   .node-info-group {
-    /* Narrow: title + copy on row 1, chips full-width on row 2. */
-    grid-template-columns: minmax(0, 1fr) auto;
+    /* Narrow: title on row 1, chips full-width on row 2. */
+    grid-template-columns: minmax(0, 1fr);
     padding: 0.45rem 0.55rem;
   }
 
@@ -1605,10 +1577,6 @@ const eventLogContent = computed(() => {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-  }
-
-  .node-info-group-copy {
-    grid-column: 2;
   }
 
   .node-info-group-chips {

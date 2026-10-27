@@ -165,7 +165,6 @@ node_info_group_public_ip: Public IP
 node_info_group_listener: Listener
 node_info_group_route: Route
 node_info_details: 节点详情
-node_info_copy_group: 复制本组
 peer_count: 已连接
 upload: 上传
 download: 下载
