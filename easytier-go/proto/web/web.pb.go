@@ -7,6 +7,7 @@
 package web
 
 import (
+	manage "github.com/easytier/easytier/easytier-go/proto/api/manage"
 	common "github.com/easytier/easytier/easytier-go/proto/common"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
@@ -95,8 +96,16 @@ type HeartbeatRequest struct {
 	SupportConfigSource     bool                   `protobuf:"varint,9,opt,name=support_config_source,json=supportConfigSource,proto3" json:"support_config_source,omitempty"`
 	FailedNetworkInstances  []*common.UUID         `protobuf:"bytes,10,rep,name=failed_network_instances,json=failedNetworkInstances,proto3" json:"failed_network_instances,omitempty"`
 	SupportHeartbeatPolicy  bool                   `protobuf:"varint,11,opt,name=support_heartbeat_policy,json=supportHeartbeatPolicy,proto3" json:"support_heartbeat_policy,omitempty"`
-	unknownFields           protoimpl.UnknownFields
-	sizeCache               protoimpl.SizeCache
+	// When true, disabled_network_instances is the client's full set of
+	// user-disabled web-managed instance IDs. Older clients leave this false
+	// so the server must not treat an empty list as "enable everything".
+	SupportUserDisabledInstances bool           `protobuf:"varint,12,opt,name=support_user_disabled_instances,json=supportUserDisabledInstances,proto3" json:"support_user_disabled_instances,omitempty"`
+	DisabledNetworkInstances     []*common.UUID `protobuf:"bytes,13,rep,name=disabled_network_instances,json=disabledNetworkInstances,proto3" json:"disabled_network_instances,omitempty"`
+	// B6 phase 2 (dns-policy.md): whether OS DNS was successfully wired to MagicDNS.
+	// Unset on older clients / platforms that do not report; false = accept_dns but skip/fail.
+	MagicDnsOsWired *bool `protobuf:"varint,14,opt,name=magic_dns_os_wired,json=magicDnsOsWired,proto3,oneof" json:"magic_dns_os_wired,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *HeartbeatRequest) Reset() {
@@ -206,10 +215,39 @@ func (x *HeartbeatRequest) GetSupportHeartbeatPolicy() bool {
 	return false
 }
 
+func (x *HeartbeatRequest) GetSupportUserDisabledInstances() bool {
+	if x != nil {
+		return x.SupportUserDisabledInstances
+	}
+	return false
+}
+
+func (x *HeartbeatRequest) GetDisabledNetworkInstances() []*common.UUID {
+	if x != nil {
+		return x.DisabledNetworkInstances
+	}
+	return nil
+}
+
+func (x *HeartbeatRequest) GetMagicDnsOsWired() bool {
+	if x != nil && x.MagicDnsOsWired != nil {
+		return *x.MagicDnsOsWired
+	}
+	return false
+}
+
 type HeartbeatResponse struct {
 	state               protoimpl.MessageState `protogen:"open.v1"`
 	HeartbeatIntervalMs *uint32                `protobuf:"varint,1,opt,name=heartbeat_interval_ms,json=heartbeatIntervalMs,proto3,oneof" json:"heartbeat_interval_ms,omitempty"`
 	HeartbeatTimeoutMs  *uint32                `protobuf:"varint,2,opt,name=heartbeat_timeout_ms,json=heartbeatTimeoutMs,proto3,oneof" json:"heartbeat_timeout_ms,omitempty"`
+	// Current persisted managed-config revision for this machine, if any.
+	ManagedConfigRevision *string `protobuf:"bytes,3,opt,name=managed_config_revision,json=managedConfigRevision,proto3,oneof" json:"managed_config_revision,omitempty"`
+	// When true, web_owned_instance_ids is authoritative for this machine (may be
+	// empty). Older servers leave this false so clients must not treat a missing
+	// list as "no web rows" (would wipe GUI cache). See local-config-residue.md.
+	WebOwnedInstanceIdsValid bool `protobuf:"varint,4,opt,name=web_owned_instance_ids_valid,json=webOwnedInstanceIdsValid,proto3" json:"web_owned_instance_ids_valid,omitempty"`
+	// All console SQLite rows with source=Web for this machine (enabled+disabled).
+	WebOwnedInstanceIds []*common.UUID `protobuf:"bytes,5,rep,name=web_owned_instance_ids,json=webOwnedInstanceIds,proto3" json:"web_owned_instance_ids,omitempty"`
 	unknownFields       protoimpl.UnknownFields
 	sizeCache           protoimpl.SizeCache
 }
@@ -256,6 +294,27 @@ func (x *HeartbeatResponse) GetHeartbeatTimeoutMs() uint32 {
 		return *x.HeartbeatTimeoutMs
 	}
 	return 0
+}
+
+func (x *HeartbeatResponse) GetManagedConfigRevision() string {
+	if x != nil && x.ManagedConfigRevision != nil {
+		return *x.ManagedConfigRevision
+	}
+	return ""
+}
+
+func (x *HeartbeatResponse) GetWebOwnedInstanceIdsValid() bool {
+	if x != nil {
+		return x.WebOwnedInstanceIdsValid
+	}
+	return false
+}
+
+func (x *HeartbeatResponse) GetWebOwnedInstanceIds() []*common.UUID {
+	if x != nil {
+		return x.WebOwnedInstanceIds
+	}
+	return nil
 }
 
 type GetFeatureRequest struct {
@@ -338,15 +397,164 @@ func (x *GetFeatureResponse) GetSupportEncryption() bool {
 	return false
 }
 
+// Client → console: push an edited web-owned NetworkConfig with revision CAS.
+type ReportNetworkConfigRequest struct {
+	state     protoimpl.MessageState `protogen:"open.v1"`
+	MachineId *common.UUID           `protobuf:"bytes,1,opt,name=machine_id,json=machineId,proto3" json:"machine_id,omitempty"`
+	UserToken string                 `protobuf:"bytes,2,opt,name=user_token,json=userToken,proto3" json:"user_token,omitempty"`
+	Config    *manage.NetworkConfig  `protobuf:"bytes,3,opt,name=config,proto3" json:"config,omitempty"`
+	// Must match the client's cached heartbeat revision (empty when none exists).
+	ExpectedConfigRevision string `protobuf:"bytes,4,opt,name=expected_config_revision,json=expectedConfigRevision,proto3" json:"expected_config_revision,omitempty"`
+	// Client-minted target revision; must differ from expected_config_revision.
+	ConfigRevision string `protobuf:"bytes,5,opt,name=config_revision,json=configRevision,proto3" json:"config_revision,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *ReportNetworkConfigRequest) Reset() {
+	*x = ReportNetworkConfigRequest{}
+	mi := &file_web_proto_msgTypes[5]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ReportNetworkConfigRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ReportNetworkConfigRequest) ProtoMessage() {}
+
+func (x *ReportNetworkConfigRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_web_proto_msgTypes[5]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ReportNetworkConfigRequest.ProtoReflect.Descriptor instead.
+func (*ReportNetworkConfigRequest) Descriptor() ([]byte, []int) {
+	return file_web_proto_rawDescGZIP(), []int{5}
+}
+
+func (x *ReportNetworkConfigRequest) GetMachineId() *common.UUID {
+	if x != nil {
+		return x.MachineId
+	}
+	return nil
+}
+
+func (x *ReportNetworkConfigRequest) GetUserToken() string {
+	if x != nil {
+		return x.UserToken
+	}
+	return ""
+}
+
+func (x *ReportNetworkConfigRequest) GetConfig() *manage.NetworkConfig {
+	if x != nil {
+		return x.Config
+	}
+	return nil
+}
+
+func (x *ReportNetworkConfigRequest) GetExpectedConfigRevision() string {
+	if x != nil {
+		return x.ExpectedConfigRevision
+	}
+	return ""
+}
+
+func (x *ReportNetworkConfigRequest) GetConfigRevision() string {
+	if x != nil {
+		return x.ConfigRevision
+	}
+	return ""
+}
+
+type ReportNetworkConfigResponse struct {
+	state                 protoimpl.MessageState `protogen:"open.v1"`
+	Ok                    bool                   `protobuf:"varint,1,opt,name=ok,proto3" json:"ok,omitempty"`
+	AppliedConfigRevision string                 `protobuf:"bytes,2,opt,name=applied_config_revision,json=appliedConfigRevision,proto3" json:"applied_config_revision,omitempty"`
+	// On conflict, the server's current revision so the client can refresh.
+	CurrentConfigRevision string `protobuf:"bytes,3,opt,name=current_config_revision,json=currentConfigRevision,proto3" json:"current_config_revision,omitempty"`
+	// empty | managed_config_revision_conflict | managed_config_ownership_conflict | invalid_request
+	ErrorCode     string `protobuf:"bytes,4,opt,name=error_code,json=errorCode,proto3" json:"error_code,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ReportNetworkConfigResponse) Reset() {
+	*x = ReportNetworkConfigResponse{}
+	mi := &file_web_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ReportNetworkConfigResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ReportNetworkConfigResponse) ProtoMessage() {}
+
+func (x *ReportNetworkConfigResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_web_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ReportNetworkConfigResponse.ProtoReflect.Descriptor instead.
+func (*ReportNetworkConfigResponse) Descriptor() ([]byte, []int) {
+	return file_web_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *ReportNetworkConfigResponse) GetOk() bool {
+	if x != nil {
+		return x.Ok
+	}
+	return false
+}
+
+func (x *ReportNetworkConfigResponse) GetAppliedConfigRevision() string {
+	if x != nil {
+		return x.AppliedConfigRevision
+	}
+	return ""
+}
+
+func (x *ReportNetworkConfigResponse) GetCurrentConfigRevision() string {
+	if x != nil {
+		return x.CurrentConfigRevision
+	}
+	return ""
+}
+
+func (x *ReportNetworkConfigResponse) GetErrorCode() string {
+	if x != nil {
+		return x.ErrorCode
+	}
+	return ""
+}
+
 var File_web_proto protoreflect.FileDescriptor
 
 const file_web_proto_rawDesc = "" +
 	"\n" +
-	"\tweb.proto\x12\x03web\x1a\fcommon.proto\"e\n" +
+	"\tweb.proto\x12\x03web\x1a\fcommon.proto\x1a\x10api_manage.proto\"e\n" +
 	"\fDeviceOsInfo\x12\x17\n" +
 	"\aos_type\x18\x01 \x01(\tR\x06osType\x12\x18\n" +
 	"\aversion\x18\x02 \x01(\tR\aversion\x12\"\n" +
-	"\fdistribution\x18\x03 \x01(\tR\fdistribution\"\x9d\x04\n" +
+	"\fdistribution\x18\x03 \x01(\tR\fdistribution\"\xf9\x05\n" +
 	"\x10HeartbeatRequest\x12+\n" +
 	"\n" +
 	"machine_id\x18\x01 \x01(\v2\f.common.UUIDR\tmachineId\x12%\n" +
@@ -362,19 +570,42 @@ const file_web_proto_rawDesc = "" +
 	"\x15support_config_source\x18\t \x01(\bR\x13supportConfigSource\x12F\n" +
 	"\x18failed_network_instances\x18\n" +
 	" \x03(\v2\f.common.UUIDR\x16failedNetworkInstances\x128\n" +
-	"\x18support_heartbeat_policy\x18\v \x01(\bR\x16supportHeartbeatPolicy\"\xb6\x01\n" +
+	"\x18support_heartbeat_policy\x18\v \x01(\bR\x16supportHeartbeatPolicy\x12E\n" +
+	"\x1fsupport_user_disabled_instances\x18\f \x01(\bR\x1csupportUserDisabledInstances\x12J\n" +
+	"\x1adisabled_network_instances\x18\r \x03(\v2\f.common.UUIDR\x18disabledNetworkInstances\x120\n" +
+	"\x12magic_dns_os_wired\x18\x0e \x01(\bH\x00R\x0fmagicDnsOsWired\x88\x01\x01B\x15\n" +
+	"\x13_magic_dns_os_wired\"\x92\x03\n" +
 	"\x11HeartbeatResponse\x127\n" +
 	"\x15heartbeat_interval_ms\x18\x01 \x01(\rH\x00R\x13heartbeatIntervalMs\x88\x01\x01\x125\n" +
-	"\x14heartbeat_timeout_ms\x18\x02 \x01(\rH\x01R\x12heartbeatTimeoutMs\x88\x01\x01B\x18\n" +
+	"\x14heartbeat_timeout_ms\x18\x02 \x01(\rH\x01R\x12heartbeatTimeoutMs\x88\x01\x01\x12;\n" +
+	"\x17managed_config_revision\x18\x03 \x01(\tH\x02R\x15managedConfigRevision\x88\x01\x01\x12>\n" +
+	"\x1cweb_owned_instance_ids_valid\x18\x04 \x01(\bR\x18webOwnedInstanceIdsValid\x12A\n" +
+	"\x16web_owned_instance_ids\x18\x05 \x03(\v2\f.common.UUIDR\x13webOwnedInstanceIdsB\x18\n" +
 	"\x16_heartbeat_interval_msB\x17\n" +
-	"\x15_heartbeat_timeout_ms\"\x13\n" +
+	"\x15_heartbeat_timeout_msB\x1a\n" +
+	"\x18_managed_config_revision\"\x13\n" +
 	"\x11GetFeatureRequest\"C\n" +
 	"\x12GetFeatureResponse\x12-\n" +
-	"\x12support_encryption\x18\x01 \x01(\bR\x11supportEncryption2\x8d\x01\n" +
+	"\x12support_encryption\x18\x01 \x01(\bR\x11supportEncryption\"\xfe\x01\n" +
+	"\x1aReportNetworkConfigRequest\x12+\n" +
+	"\n" +
+	"machine_id\x18\x01 \x01(\v2\f.common.UUIDR\tmachineId\x12\x1d\n" +
+	"\n" +
+	"user_token\x18\x02 \x01(\tR\tuserToken\x121\n" +
+	"\x06config\x18\x03 \x01(\v2\x19.api.manage.NetworkConfigR\x06config\x128\n" +
+	"\x18expected_config_revision\x18\x04 \x01(\tR\x16expectedConfigRevision\x12'\n" +
+	"\x0fconfig_revision\x18\x05 \x01(\tR\x0econfigRevision\"\xbc\x01\n" +
+	"\x1bReportNetworkConfigResponse\x12\x0e\n" +
+	"\x02ok\x18\x01 \x01(\bR\x02ok\x126\n" +
+	"\x17applied_config_revision\x18\x02 \x01(\tR\x15appliedConfigRevision\x126\n" +
+	"\x17current_config_revision\x18\x03 \x01(\tR\x15currentConfigRevision\x12\x1d\n" +
+	"\n" +
+	"error_code\x18\x04 \x01(\tR\terrorCode2\xe7\x01\n" +
 	"\x10WebServerService\x12:\n" +
 	"\tHeartbeat\x12\x15.web.HeartbeatRequest\x1a\x16.web.HeartbeatResponse\x12=\n" +
 	"\n" +
-	"GetFeature\x12\x16.web.GetFeatureRequest\x1a\x17.web.GetFeatureResponseb\x06proto3"
+	"GetFeature\x12\x16.web.GetFeatureRequest\x1a\x17.web.GetFeatureResponse\x12X\n" +
+	"\x13ReportNetworkConfig\x12\x1f.web.ReportNetworkConfigRequest\x1a .web.ReportNetworkConfigResponseb\x06proto3"
 
 var (
 	file_web_proto_rawDescOnce sync.Once
@@ -388,30 +619,39 @@ func file_web_proto_rawDescGZIP() []byte {
 	return file_web_proto_rawDescData
 }
 
-var file_web_proto_msgTypes = make([]protoimpl.MessageInfo, 5)
+var file_web_proto_msgTypes = make([]protoimpl.MessageInfo, 7)
 var file_web_proto_goTypes = []any{
-	(*DeviceOsInfo)(nil),       // 0: web.DeviceOsInfo
-	(*HeartbeatRequest)(nil),   // 1: web.HeartbeatRequest
-	(*HeartbeatResponse)(nil),  // 2: web.HeartbeatResponse
-	(*GetFeatureRequest)(nil),  // 3: web.GetFeatureRequest
-	(*GetFeatureResponse)(nil), // 4: web.GetFeatureResponse
-	(*common.UUID)(nil),        // 5: common.UUID
+	(*DeviceOsInfo)(nil),                // 0: web.DeviceOsInfo
+	(*HeartbeatRequest)(nil),            // 1: web.HeartbeatRequest
+	(*HeartbeatResponse)(nil),           // 2: web.HeartbeatResponse
+	(*GetFeatureRequest)(nil),           // 3: web.GetFeatureRequest
+	(*GetFeatureResponse)(nil),          // 4: web.GetFeatureResponse
+	(*ReportNetworkConfigRequest)(nil),  // 5: web.ReportNetworkConfigRequest
+	(*ReportNetworkConfigResponse)(nil), // 6: web.ReportNetworkConfigResponse
+	(*common.UUID)(nil),                 // 7: common.UUID
+	(*manage.NetworkConfig)(nil),        // 8: api.manage.NetworkConfig
 }
 var file_web_proto_depIdxs = []int32{
-	5, // 0: web.HeartbeatRequest.machine_id:type_name -> common.UUID
-	5, // 1: web.HeartbeatRequest.inst_id:type_name -> common.UUID
-	5, // 2: web.HeartbeatRequest.running_network_instances:type_name -> common.UUID
-	0, // 3: web.HeartbeatRequest.device_os:type_name -> web.DeviceOsInfo
-	5, // 4: web.HeartbeatRequest.failed_network_instances:type_name -> common.UUID
-	1, // 5: web.WebServerService.Heartbeat:input_type -> web.HeartbeatRequest
-	3, // 6: web.WebServerService.GetFeature:input_type -> web.GetFeatureRequest
-	2, // 7: web.WebServerService.Heartbeat:output_type -> web.HeartbeatResponse
-	4, // 8: web.WebServerService.GetFeature:output_type -> web.GetFeatureResponse
-	7, // [7:9] is the sub-list for method output_type
-	5, // [5:7] is the sub-list for method input_type
-	5, // [5:5] is the sub-list for extension type_name
-	5, // [5:5] is the sub-list for extension extendee
-	0, // [0:5] is the sub-list for field type_name
+	7,  // 0: web.HeartbeatRequest.machine_id:type_name -> common.UUID
+	7,  // 1: web.HeartbeatRequest.inst_id:type_name -> common.UUID
+	7,  // 2: web.HeartbeatRequest.running_network_instances:type_name -> common.UUID
+	0,  // 3: web.HeartbeatRequest.device_os:type_name -> web.DeviceOsInfo
+	7,  // 4: web.HeartbeatRequest.failed_network_instances:type_name -> common.UUID
+	7,  // 5: web.HeartbeatRequest.disabled_network_instances:type_name -> common.UUID
+	7,  // 6: web.HeartbeatResponse.web_owned_instance_ids:type_name -> common.UUID
+	7,  // 7: web.ReportNetworkConfigRequest.machine_id:type_name -> common.UUID
+	8,  // 8: web.ReportNetworkConfigRequest.config:type_name -> api.manage.NetworkConfig
+	1,  // 9: web.WebServerService.Heartbeat:input_type -> web.HeartbeatRequest
+	3,  // 10: web.WebServerService.GetFeature:input_type -> web.GetFeatureRequest
+	5,  // 11: web.WebServerService.ReportNetworkConfig:input_type -> web.ReportNetworkConfigRequest
+	2,  // 12: web.WebServerService.Heartbeat:output_type -> web.HeartbeatResponse
+	4,  // 13: web.WebServerService.GetFeature:output_type -> web.GetFeatureResponse
+	6,  // 14: web.WebServerService.ReportNetworkConfig:output_type -> web.ReportNetworkConfigResponse
+	12, // [12:15] is the sub-list for method output_type
+	9,  // [9:12] is the sub-list for method input_type
+	9,  // [9:9] is the sub-list for extension type_name
+	9,  // [9:9] is the sub-list for extension extendee
+	0,  // [0:9] is the sub-list for field type_name
 }
 
 func init() { file_web_proto_init() }
@@ -419,6 +659,7 @@ func file_web_proto_init() {
 	if File_web_proto != nil {
 		return
 	}
+	file_web_proto_msgTypes[1].OneofWrappers = []any{}
 	file_web_proto_msgTypes[2].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
@@ -426,7 +667,7 @@ func file_web_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_web_proto_rawDesc), len(file_web_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   5,
+			NumMessages:   7,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

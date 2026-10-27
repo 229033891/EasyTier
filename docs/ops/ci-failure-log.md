@@ -90,6 +90,7 @@ Agent / 人工均适用：**未完成 §1 不要提交**。
 - [ ] **attached 直连测试清 `is_hole_punched`**：`PeerConn::new*` 默认 hole-punched=true；`has_direct_attached_conn` 要求 `!is_hole_punched && is_attached`，测试需与 `peer_manager` 准入一致地 `set_is_hole_punched(false)`。
 - [ ] **Status 前端单测对齐 Panel/i18n**：节点详情是 `node_info_details` Panel + `node_info_group_udp_nat_type`，不要再找 `show_node_details` / `UDP NAT Type:` 硬编码。
 - [ ] **删 UI 控件后清 unused import**：`vue-tsc -b` 开 `noUnusedLocals`（TS6133）。去掉按钮/组件后同步删 `primevue` 等 import（如 `Button`）；改 `Status.vue` 后至少 `pnpm --filter easytier-frontend-lib exec vue-tsc -b`。
+- [ ] **改 dataplane/WASI guest 后刷新嵌入 wasm**：ET Go 跑的是 `easytier-go/internal/artifact/easytier_core.wasm`，不是仓库现编 Rust。Close→FIN（`DataPlaneTcpStream::Drop`）等行为若只改源码不 `go generate`，Go 测会报 `FIN not sent`。artifact/`proto` provenance 的 Commit 必须一致。
 - [ ] **OpenWrt LuCI `.htm` 必须 LF**：LuCI 把模板正文塞进 `write("…")` 时只转义 `\n`，不转义 `\r`。Windows 上打出的 CRLF apk 会让状态页报 `unfinished string near '"'`。打包前 `sed -i 's/\r$//'`；`luci-app-easytier` 有 `Build/Prepare` 钩子与 `.gitattributes` `eol=lf`。
 - [ ] **数据面 next_hop 要对齐 `latency_first`**：默认 `latency_first=true` 时发包走 LeastCost（`next_hop_peer_id_latency_first`），不是 LeastHop（`next_hop_peer_id`）。拓扑类测试若只等 LeastHop，新建边在 peer-center 仍为默认 500 时 LeastCost 会继续走已测速的 admin 路径，`assert_ping_forwarded_by` 会误报 forbidden forwarder。`wait_route_next_hop` 必须按实例 flag 选表；纯拓扑用例可 `disable_latency_first`。生效值要跟 `PeerPacketPolicy::from_flags` 一致：`flags.latency_first && !flags.p2p_only`（`p2p_only` 会强制关掉时延优先）。
 
@@ -118,6 +119,20 @@ Agent / 人工均适用：**未完成 §1 不要提交**。
 ---
 
 ## 5. 失败记录（新 → 旧）
+
+### 2026-10-27 — ET Go：嵌入 wasm 过期导致 Close 不发 FIN
+
+| 项 | 内容 |
+|----|------|
+| 仓库/分支 | `229033891/EasyTier` `releases/v2.7.9` / `dev` |
+| Run | https://github.com/229033891/EasyTier/actions/runs/40493996791 |
+| 失败 job | Test Go modules |
+| 根因一类 | stale-artifact / wasm |
+| 状态 | 已修复（按 HEAD 重建 `easytier_core.wasm` + provenance；本地 FIN 三测已绿） |
+
+**摘要**：Go `Close` 走嵌入 guest 的 `close_resource`。源码已有 `DataPlaneTcpStream::Drop`→`stream.close()` 发 FIN，但 artifact provenance 仍指向本仓库不存在的 `599e4eac…`，guest 不发 FIN，对端 Read 超时（`want io.EOF`）。
+
+**防再犯**：见 §3「改 dataplane/WASI guest 后刷新嵌入 wasm」。
 
 ### 2026-10-27 — 全线打包：Status.vue 未用 `Button` 导致 vue-tsc TS6133
 

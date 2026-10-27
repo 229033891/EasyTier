@@ -259,8 +259,41 @@ type FlagsInConfig struct {
 	// Prefer direct credential peers that already relay to a destination over
 	// advertising another direct edge to the same destination.
 	PreferPeerRelay bool `protobuf:"varint,44,opt,name=prefer_peer_relay,json=preferPeerRelay,proto3" json:"prefer_peer_relay,omitempty"`
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
+	// When true, install a peer-advertised 0.0.0.0/0 into the OS route table even
+	// without a reachable local exit_nodes entry (high metric on desktop). Default
+	// false: peer /0 stays L3-only unless this node itself installs an exit default.
+	AllowPeerDefaultWithoutExit bool `protobuf:"varint,45,opt,name=allow_peer_default_without_exit,json=allowPeerDefaultWithoutExit,proto3" json:"allow_peer_default_without_exit,omitempty"`
+	// Consecutive ping failures before closing a PeerConn. Default 5; 0 means default.
+	PingFailCloseCount uint32 `protobuf:"varint,46,opt,name=ping_fail_close_count,json=pingFailCloseCount,proto3" json:"ping_fail_close_count,omitempty"`
+	// Adaptive ping max interval in seconds (factory default 10 since 2026-10, was 32). Per-conn caps (e.g. TCP
+	// hole-punch 1s) still win when lower. 0 means default.
+	PingIntervalMaxSec uint32 `protobuf:"varint,47,opt,name=ping_interval_max_sec,json=pingIntervalMaxSec,proto3" json:"ping_interval_max_sec,omitempty"`
+	// PeerConn quality select (P1.7). Weights are hundredths (100 = 1.0).
+	// All-zero select block = built-in defaults; otherwise values are literal
+	// (so `conn_select_w_lat = 0` disables the latency term after TOML merge).
+	ConnSelectWLat    uint32 `protobuf:"varint,49,opt,name=conn_select_w_lat,json=connSelectWLat,proto3" json:"conn_select_w_lat,omitempty"`
+	ConnSelectWLoss   uint32 `protobuf:"varint,50,opt,name=conn_select_w_loss,json=connSelectWLoss,proto3" json:"conn_select_w_loss,omitempty"`
+	ConnSelectWJitter uint32 `protobuf:"varint,51,opt,name=conn_select_w_jitter,json=connSelectWJitter,proto3" json:"conn_select_w_jitter,omitempty"`
+	// Loss fuse percent 0..100 (default 20 when select block unset).
+	ConnSelectLossFusePct uint32 `protobuf:"varint,52,opt,name=conn_select_loss_fuse_pct,json=connSelectLossFusePct,proto3" json:"conn_select_loss_fuse_pct,omitempty"`
+	// Relative switch margin percent (default 10 when select block unset).
+	ConnSelectSwitchMarginPct uint32 `protobuf:"varint,53,opt,name=conn_select_switch_margin_pct,json=connSelectSwitchMarginPct,proto3" json:"conn_select_switch_margin_pct,omitempty"`
+	// Absolute score margin in milli-units (default 5 => 0.005 when unset).
+	ConnSelectSwitchAbsMarginMilli uint32 `protobuf:"varint,54,opt,name=conn_select_switch_abs_margin_milli,json=connSelectSwitchAbsMarginMilli,proto3" json:"conn_select_switch_abs_margin_milli,omitempty"`
+	// Consecutive reselect windows before switch (default 2 when unset; runtime min 1).
+	ConnSelectSwitchWindows uint32 `protobuf:"varint,55,opt,name=conn_select_switch_windows,json=connSelectSwitchWindows,proto3" json:"conn_select_switch_windows,omitempty"`
+	// PeerConn bonding (Phase 2a). Default 1 = single default_conn (today's behavior).
+	// Hard cap applied at runtime (suggested max 5).
+	PeerLinkBondCount uint32 `protobuf:"varint,56,opt,name=peer_link_bond_count,json=peerLinkBondCount,proto3" json:"peer_link_bond_count,omitempty"`
+	// Max same diversity-class replicas when filling bond set (default 5; range often 3–5).
+	PeerLinkReplicaFillMax uint32 `protobuf:"varint,57,opt,name=peer_link_replica_fill_max,json=peerLinkReplicaFillMax,proto3" json:"peer_link_replica_fill_max,omitempty"`
+	// Turn off the GUI "VIP reachable" dataplane prober. Probing is display-only
+	// (it never reroutes or tears down conns), so deployments that forbid probe
+	// traffic on the mesh can switch it off here; every peer then reports
+	// "unknown" with reason disabled rather than "unreachable".
+	DisableVipReachabilityProbe bool `protobuf:"varint,58,opt,name=disable_vip_reachability_probe,json=disableVipReachabilityProbe,proto3" json:"disable_vip_reachability_probe,omitempty"`
+	unknownFields               protoimpl.UnknownFields
+	sizeCache                   protoimpl.SizeCache
 }
 
 func (x *FlagsInConfig) Reset() {
@@ -591,6 +624,97 @@ func (x *FlagsInConfig) GetSocketMark() uint32 {
 func (x *FlagsInConfig) GetPreferPeerRelay() bool {
 	if x != nil {
 		return x.PreferPeerRelay
+	}
+	return false
+}
+
+func (x *FlagsInConfig) GetAllowPeerDefaultWithoutExit() bool {
+	if x != nil {
+		return x.AllowPeerDefaultWithoutExit
+	}
+	return false
+}
+
+func (x *FlagsInConfig) GetPingFailCloseCount() uint32 {
+	if x != nil {
+		return x.PingFailCloseCount
+	}
+	return 0
+}
+
+func (x *FlagsInConfig) GetPingIntervalMaxSec() uint32 {
+	if x != nil {
+		return x.PingIntervalMaxSec
+	}
+	return 0
+}
+
+func (x *FlagsInConfig) GetConnSelectWLat() uint32 {
+	if x != nil {
+		return x.ConnSelectWLat
+	}
+	return 0
+}
+
+func (x *FlagsInConfig) GetConnSelectWLoss() uint32 {
+	if x != nil {
+		return x.ConnSelectWLoss
+	}
+	return 0
+}
+
+func (x *FlagsInConfig) GetConnSelectWJitter() uint32 {
+	if x != nil {
+		return x.ConnSelectWJitter
+	}
+	return 0
+}
+
+func (x *FlagsInConfig) GetConnSelectLossFusePct() uint32 {
+	if x != nil {
+		return x.ConnSelectLossFusePct
+	}
+	return 0
+}
+
+func (x *FlagsInConfig) GetConnSelectSwitchMarginPct() uint32 {
+	if x != nil {
+		return x.ConnSelectSwitchMarginPct
+	}
+	return 0
+}
+
+func (x *FlagsInConfig) GetConnSelectSwitchAbsMarginMilli() uint32 {
+	if x != nil {
+		return x.ConnSelectSwitchAbsMarginMilli
+	}
+	return 0
+}
+
+func (x *FlagsInConfig) GetConnSelectSwitchWindows() uint32 {
+	if x != nil {
+		return x.ConnSelectSwitchWindows
+	}
+	return 0
+}
+
+func (x *FlagsInConfig) GetPeerLinkBondCount() uint32 {
+	if x != nil {
+		return x.PeerLinkBondCount
+	}
+	return 0
+}
+
+func (x *FlagsInConfig) GetPeerLinkReplicaFillMax() uint32 {
+	if x != nil {
+		return x.PeerLinkReplicaFillMax
+	}
+	return 0
+}
+
+func (x *FlagsInConfig) GetDisableVipReachabilityProbe() bool {
+	if x != nil {
+		return x.DisableVipReachabilityProbe
 	}
 	return false
 }
@@ -2147,7 +2271,7 @@ var File_common_proto protoreflect.FileDescriptor
 
 const file_common_proto_rawDesc = "" +
 	"\n" +
-	"\fcommon.proto\x12\x06common\x1a\verror.proto\"\xf5\x0e\n" +
+	"\fcommon.proto\x12\x06common\x1a\verror.proto\"\xe8\x14\n" +
 	"\rFlagsInConfig\x12)\n" +
 	"\x10default_protocol\x18\x01 \x01(\tR\x0fdefaultProtocol\x12\x19\n" +
 	"\bdev_name\x18\x02 \x01(\tR\adevName\x12+\n" +
@@ -2199,8 +2323,21 @@ const file_common_proto_rawDesc = "" +
 	"\x1aenable_udp_broadcast_relay\x18* \x01(\bR\x17enableUdpBroadcastRelay\x12$\n" +
 	"\vsocket_mark\x18+ \x01(\rH\x00R\n" +
 	"socketMark\x88\x01\x01\x12*\n" +
-	"\x11prefer_peer_relay\x18, \x01(\bR\x0fpreferPeerRelayB\x0e\n" +
-	"\f_socket_mark\"\x95\x01\n" +
+	"\x11prefer_peer_relay\x18, \x01(\bR\x0fpreferPeerRelay\x12D\n" +
+	"\x1fallow_peer_default_without_exit\x18- \x01(\bR\x1ballowPeerDefaultWithoutExit\x121\n" +
+	"\x15ping_fail_close_count\x18. \x01(\rR\x12pingFailCloseCount\x121\n" +
+	"\x15ping_interval_max_sec\x18/ \x01(\rR\x12pingIntervalMaxSec\x12)\n" +
+	"\x11conn_select_w_lat\x181 \x01(\rR\x0econnSelectWLat\x12+\n" +
+	"\x12conn_select_w_loss\x182 \x01(\rR\x0fconnSelectWLoss\x12/\n" +
+	"\x14conn_select_w_jitter\x183 \x01(\rR\x11connSelectWJitter\x128\n" +
+	"\x19conn_select_loss_fuse_pct\x184 \x01(\rR\x15connSelectLossFusePct\x12@\n" +
+	"\x1dconn_select_switch_margin_pct\x185 \x01(\rR\x19connSelectSwitchMarginPct\x12K\n" +
+	"#conn_select_switch_abs_margin_milli\x186 \x01(\rR\x1econnSelectSwitchAbsMarginMilli\x12;\n" +
+	"\x1aconn_select_switch_windows\x187 \x01(\rR\x17connSelectSwitchWindows\x12/\n" +
+	"\x14peer_link_bond_count\x188 \x01(\rR\x11peerLinkBondCount\x12:\n" +
+	"\x1apeer_link_replica_fill_max\x189 \x01(\rR\x16peerLinkReplicaFillMax\x12C\n" +
+	"\x1edisable_vip_reachability_probe\x18: \x01(\bR\x1bdisableVipReachabilityProbeB\x0e\n" +
+	"\f_socket_markJ\x04\b0\x101\"\x95\x01\n" +
 	"\rRpcDescriptor\x12\x1f\n" +
 	"\vdomain_name\x18\x01 \x01(\tR\n" +
 	"domainName\x12\x1d\n" +
