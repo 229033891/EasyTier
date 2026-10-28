@@ -87,6 +87,31 @@ runs:
         cache: false
         rustflags: ''
 
+    # Desktop platform confs (tauri.linux/macos/windows.conf.json) list
+    # externalBin binaries/ET-cli. Tauri's build script errors if the
+    # triple-suffixed file is missing — including `cargo clippy --all` on
+    # Linux (ET Test). Packaging stages a real sidecar; for compile/clippy
+    # only the path must exist. Real bytes are overwritten by Stage-Gui /
+    # windows.yml before `tauri build`.
+    - name: Stage stub ET-cli for Tauri externalBin
+      if: ${{ inputs.gui == 'true' }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        mkdir -p easytier-gui/src-tauri/binaries
+        host="$(rustc -vV | awk '/^host:/{print $2}')"
+        case "$RUNNER_OS" in
+          Windows) stub="easytier-gui/src-tauri/binaries/ET-cli-${host}.exe" ;;
+          *)       stub="easytier-gui/src-tauri/binaries/ET-cli-${host}" ;;
+        esac
+        if [[ ! -e "$stub" ]]; then
+          : > "$stub"
+          chmod +x "$stub" 2>/dev/null || true
+          echo "created stub $stub"
+        else
+          echo "sidecar already present: $stub"
+        fi
+
     - name: Setup sccache
       if: ${{ inputs.sccache == 'true' }}
       uses: mozilla-actions/sccache-action@fd02668681acd5f960e1372061bee5e3e987195c # v0.0.11
