@@ -1532,7 +1532,12 @@ impl ForeignNetworkPacketRouter {
                     Some(peer_id) if peer_map.has_peer(peer_id) => {
                         if peer_id != to_peer_id && hdr.from_peer_id.get() == my_node_id {
                             if let Err(e) = relay_peer_map
-                                .send_msg(zc_packet, to_peer_id, NextHopPolicy::LeastHop)
+                                .send_msg(
+                                    zc_packet,
+                                    to_peer_id,
+                                    NextHopPolicy::LeastHop,
+                                    Some(peer_id),
+                                )
                                 .await
                             {
                                 tracing::error!(

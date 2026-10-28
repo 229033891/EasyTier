@@ -167,6 +167,7 @@ score = w_lat * norm(rtt)
 - [x] **P-AUDIT.5** 状态面：协议列在**所有隧道均为自带重传传输**（tcp/faketcp/quic/kcp）时加 ⚠ + TCP-over-TCP 说明；混合集合不提示（X2）
 - [x] **P-AUDIT.5b** 配置面：`ping_fail_close_count` / `ping_interval_max_sec` GUI + 默认模板 **已落地**（`Config.vue` / `network.ts`）；旧「无控件」结论作废。后续交互场景引导见 [`stability-abc-plan.md`](./stability-abc-plan.md) 档 B
 - [ ] **P-AUDIT.6** 发送环满时背压（吞吐 B2 / S5）—— **明确不做**：改阻塞会在数据面引入背压链，可能与 `select!`/定时器产生死锁或活锁，且无法用单测可靠覆盖；属需压测 + 故障注入的架构级改动（Current 审计 §11 已记录理由）
+- [x] **中继转发 per-dst 出口队列**（代码已落地，待现网）：共享 `PeerPacketRouter` 不再在转发腿上 `await` 出口；每目的 peer 有界 lane（64）+ 独立 drain，避免慢下一跳 HOL。**不**替代 P-AUDIT.6。见 [`relay-forward-egress-queue.md`](./relay-forward-egress-queue.md)
 - [x] **P-AUDIT.9** Bond 成员改一致哈希（`bond_member_for_flow` 按 conn_id 取最小哈希）：消除「按位置哈希 + 成员重排 ⇒ 流被重映射」；**纯重排 0 迁移**。⚠️ 刻意**不**强制选最优成员、**不**降 `bond_count`（两者都会删掉聚合能力）
 - [x] **P-AUDIT.10** 政策否决透明化（核心）：`AVOID_RELAY_COST` 由 `i32::MAX` → `1e9`（`saturating_add`，仍是事实否决）；`path_latency` 停止 `% AVOID_RELAY_COST` 抹除惩罚、如实上报；Web 渲染「政策绕行」
 - [ ] **P-AUDIT.10b** 状态面指名**具体哪个中继**拒载：proto 缺字段（`Route.feature_flag` 只带终点 flag），需新增 + 跨语言 codegen

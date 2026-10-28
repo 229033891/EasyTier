@@ -90,11 +90,13 @@ pub struct RelayPeerMap {
 pub trait RelayRouteTransport: Send + Sync {
     async fn get_route_peer_info(&self, peer_id: PeerId) -> Option<RoutePeerInfo>;
 
+    /// `next_hop_hint`: when `Some`, skip a second `get_gateway_peer_id`.
     async fn send_msg_to_next_hop(
         &self,
         msg: ZCPacket,
         dst_peer_id: PeerId,
         policy: NextHopPolicy,
+        next_hop_hint: Option<PeerId>,
     ) -> Result<(), Error>;
 }
 
@@ -114,11 +116,17 @@ impl RelayRouteTransport for PeerMapRelayRouteTransport {
         msg: ZCPacket,
         dst_peer_id: PeerId,
         policy: NextHopPolicy,
+        next_hop_hint: Option<PeerId>,
     ) -> Result<(), Error> {
-        let Some(next_hop) = self.peer_map.get_gateway_peer_id(dst_peer_id, policy).await else {
-            return Err(Error::RouteError(Some(format!(
-                "next hop not found in route for peer {dst_peer_id:?}"
-            ))));
+        let next_hop = if let Some(hint) = next_hop_hint {
+            hint
+        } else {
+            let Some(hop) = self.peer_map.get_gateway_peer_id(dst_peer_id, policy).await else {
+                return Err(Error::RouteError(Some(format!(
+                    "next hop not found in route for peer {dst_peer_id:?}"
+                ))));
+            };
+            hop
         };
         if self.peer_map.has_peer(next_hop) {
             self.peer_map.send_msg_directly(msg, next_hop).await
@@ -228,7 +236,8 @@ impl RelayPeerMap {
             .unwrap()
             .set_latency_first(matches!(&policy, NextHopPolicy::LeastCost));
         let pkt_len = pkt.buf_len() as u64;
-        self.send_via_next_hop(pkt, dst_peer_id, policy).await?;
+        self.send_via_next_hop(pkt, dst_peer_id, policy, None)
+            .await?;
         self.context
             .record_control_tx(&self.metric_network_name, pkt_len);
         Ok(())
@@ -239,9 +248,10 @@ impl RelayPeerMap {
         msg: ZCPacket,
         dst_peer_id: PeerId,
         policy: NextHopPolicy,
+        next_hop_hint: Option<PeerId>,
     ) -> Result<(), Error> {
         self.route_transport
-            .send_msg_to_next_hop(msg, dst_peer_id, policy)
+            .send_msg_to_next_hop(msg, dst_peer_id, policy, next_hop_hint)
             .await
     }
 
@@ -250,6 +260,7 @@ impl RelayPeerMap {
         mut msg: ZCPacket,
         dst_peer_id: PeerId,
         policy: NextHopPolicy,
+        next_hop_hint: Option<PeerId>,
     ) -> Result<(), Error> {
         // Forwarded packets belong to the original sender's end-to-end session.
         // Do not establish another session or encrypt them at this hop.
@@ -257,7 +268,9 @@ impl RelayPeerMap {
             .peer_manager_header()
             .is_some_and(|hdr| hdr.from_peer_id.get() != self.my_peer_id)
         {
-            return self.send_via_next_hop(msg, dst_peer_id, policy).await;
+            return self
+                .send_via_next_hop(msg, dst_peer_id, policy, next_hop_hint)
+                .await;
         }
 
         let now = Instant::now();
@@ -280,7 +293,10 @@ impl RelayPeerMap {
             }
         }
 
-        self.send_via_next_hop(msg, dst_peer_id, policy).await
+        // Locally originated: callers (e.g. send_msg_internal) may already have
+        // resolved the gateway — pass the hint through to avoid a second lookup.
+        self.send_via_next_hop(msg, dst_peer_id, policy, next_hop_hint)
+            .await
     }
 
     fn buffer_pending_packet(&self, dst_peer_id: PeerId, pkt: ZCPacket, policy: NextHopPolicy) {
@@ -323,7 +339,9 @@ impl RelayPeerMap {
             {
                 continue;
             }
-            let _ = self.send_via_next_hop(pkt, dst_peer_id, policy).await;
+            // Buffered during handshake; routes may have changed while waiting.
+            // Intentionally re-resolve (None) — do not reuse a stale next hop.
+            let _ = self.send_via_next_hop(pkt, dst_peer_id, policy, None).await;
         }
     }
 
@@ -866,6 +884,7 @@ mod tests {
             msg: ZCPacket,
             _dst_peer_id: PeerId,
             policy: NextHopPolicy,
+            _next_hop_hint: Option<PeerId>,
         ) -> Result<(), Error> {
             let packet_type = msg.peer_manager_header().unwrap().packet_type;
             if packet_type == PacketType::RelayHandshakeAck as u8 {
@@ -924,6 +943,7 @@ mod tests {
             msg: ZCPacket,
             dst_peer_id: PeerId,
             policy: NextHopPolicy,
+            _next_hop_hint: Option<PeerId>,
         ) -> Result<(), Error> {
             self.packets
                 .lock()
@@ -959,7 +979,7 @@ mod tests {
             }
             let expected = packet.clone();
             relay
-                .send_msg(packet, 3, NextHopPolicy::LeastCost)
+                .send_msg(packet, 3, NextHopPolicy::LeastCost, None)
                 .await
                 .unwrap();
 

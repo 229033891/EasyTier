@@ -7,6 +7,7 @@ pub mod credential_manager;
 pub mod error;
 pub(crate) mod flow_table;
 pub mod foreign_network;
+pub(crate) mod forward_egress;
 pub mod peer_center;
 pub mod peer_manager;
 pub(crate) mod peer_rpc;

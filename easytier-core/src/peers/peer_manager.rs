@@ -68,9 +68,10 @@ use super::{
         PeerPacketPolicy, PeerStunInfoSource,
     },
     credential_manager::{CredentialManager, CredentialStorage},
-    error::{Error, take_congestion_warn_token, take_path_unavailable_warn_token},
+    error::{Error, take_congestion_warn_token},
     foreign_network::client::ForeignNetworkClient,
     foreign_network::{ForeignNetworkEntryInfo, ForeignNetworkManager, ForeignNetworkRpcRegistrar},
+    forward_egress::ForwardEgress,
     peer_center::instance::PeerCenterPeerManagerTrait,
     peer_rpc::{PeerRpcManager, PeerRpcManagerTransport},
     pending_packets::{PENDING_TTL, Parked, PendingPackets},
@@ -1404,7 +1405,7 @@ pub(crate) struct PeerManagerTrafficCounters {
     pub tunnel_buffer_full: CounterHandle,
 }
 
-fn note_tunnel_buffer_full(counter: &CounterHandle, err: &Error) {
+pub(crate) fn note_tunnel_buffer_full(counter: &CounterHandle, err: &Error) {
     if matches!(err, Error::Tunnel(crate::tunnel::TunnelError::BufferFull)) {
         counter.inc();
     }
@@ -4715,7 +4716,6 @@ pub(crate) struct PeerPacketRouter {
     my_peer_id: PeerId,
     peers: Arc<PeerMap>,
     peer_packet_process_pipeline: PeerPacketPipeline,
-    foreign_client: Arc<ForeignNetworkClient>,
     relay_peer_map: Arc<RelayPeerMap>,
     foreign_network_manager: Arc<ForeignNetworkManager>,
     encryptor: Arc<dyn Encryptor>,
@@ -4730,6 +4730,9 @@ pub(crate) struct PeerPacketRouter {
     counters: PeerPacketRouterCounters,
     /// Per-tunnel IP flow accounting (disabled by default).
     flow_table: Arc<FlowTable>,
+    /// Per-destination forward lanes so a slow next hop does not HOL the
+    /// shared ingress loop (see `forward_egress`).
+    forward_egress: Arc<ForwardEgress>,
 }
 
 impl PeerPacketRouter {
@@ -4759,12 +4762,20 @@ impl PeerPacketRouter {
         flow_table: Arc<FlowTable>,
     ) -> Self {
         let label_set = LabelSet::new().with_label_type(LabelType::NetworkName(network_name));
+        let tunnel_buffer_full =
+            stats_mgr.get_counter(MetricName::DataPlaneTunnelBufferFull, label_set.clone());
+        let forward_egress = ForwardEgress::new(
+            peers.clone(),
+            foreign_client.clone(),
+            relay_peer_map.clone(),
+            traffic_metrics.clone(),
+            tunnel_buffer_full.clone(),
+        );
         Self {
             packet_recv,
             my_peer_id,
             peers,
             peer_packet_process_pipeline,
-            foreign_client,
             relay_peer_map,
             foreign_network_manager,
             encryptor,
@@ -4799,9 +4810,9 @@ impl PeerPacketRouter {
                     .get_counter(MetricName::CompressionBytesRxBefore, label_set.clone()),
                 compress_rx_bytes_after: stats_mgr
                     .get_counter(MetricName::CompressionBytesRxAfter, label_set.clone()),
-                tunnel_buffer_full: stats_mgr
-                    .get_counter(MetricName::DataPlaneTunnelBufferFull, label_set),
+                tunnel_buffer_full,
             },
+            forward_egress,
             flow_table,
         }
     }
@@ -4945,51 +4956,34 @@ impl PeerPacketRouter {
             }
 
             tracing::trace!(?to_peer_id, my_peer_id = ?self.my_peer_id, "need forward");
-            let tx_metrics = if from_peer_id == self.my_peer_id {
-                Some(&self.traffic_metrics)
-            } else {
-                None
-            };
-            let ret = send_msg_internal(
-                self.peers.as_ref(),
-                &self.foreign_client,
-                &self.relay_peer_map,
-                tx_metrics,
-                ret,
-                to_peer_id,
-            )
-            .await;
-            if let Err(ref e) = ret {
-                // Count the silent-loss path on the forwarded leg too: for a
-                // relay node this is the only place BufferFull shows up.
-                note_tunnel_buffer_full(&self.counters.tunnel_buffer_full, e);
-                if e.is_expected_path_unavailable() {
-                    if take_path_unavailable_warn_token(to_peer_id) {
-                        tracing::warn!(?ret, ?to_peer_id, ?from_peer_id, "forward packet error");
-                    } else {
-                        tracing::debug!(?ret, ?to_peer_id, ?from_peer_id, "forward packet error");
-                    }
-                } else if e.is_congestion() {
-                    // Local egress ring full on the forwarded leg: counted above,
-                    // expected under load, and per-packet here it would flood
-                    // exactly during the incident it describes.
+            // Enqueue onto a per-dst lane instead of awaiting PeerConn::send_msg
+            // here: a slow next hop must not stall this shared router (HOL).
+            // Lane drain still calls send_msg_internal; BufferFull on a full
+            // lane is counted the same as egress congestion.
+            let record_self_tx = from_peer_id == self.my_peer_id;
+            if let Err(e) =
+                self.forward_egress
+                    .try_enqueue(to_peer_id, from_peer_id, ret, record_self_tx)
+            {
+                note_tunnel_buffer_full(&self.counters.tunnel_buffer_full, &e);
+                if e.is_congestion() {
                     if take_congestion_warn_token(to_peer_id) {
                         tracing::warn!(
-                            ?ret,
+                            ?e,
                             ?to_peer_id,
                             ?from_peer_id,
                             "forward packet dropped by local congestion"
                         );
                     } else {
                         tracing::debug!(
-                            ?ret,
+                            ?e,
                             ?to_peer_id,
                             ?from_peer_id,
                             "forward packet dropped by local congestion"
                         );
                     }
                 } else {
-                    tracing::error!(?ret, ?to_peer_id, ?from_peer_id, "forward packet error");
+                    tracing::error!(?e, ?to_peer_id, ?from_peer_id, "forward enqueue error");
                 }
             }
         } else {
@@ -5297,7 +5291,10 @@ pub(crate) async fn send_msg_internal(
     let send_result = if let Some(gateway) = latency_first_gateway
         && (peers.has_peer_with_live_conn(gateway) || foreign_network_client.has_next_hop(gateway))
     {
-        relay_peer_map.send_msg(msg, dst_peer_id, policy).await
+        // Reuse the gateway already resolved above (avoids a second lookup).
+        relay_peer_map
+            .send_msg(msg, dst_peer_id, policy, Some(gateway))
+            .await
     } else if let Some(peer) = peers.get_peer_by_id(dst_peer_id)
         && peer.has_live_conns()
     {
@@ -5308,7 +5305,9 @@ pub(crate) async fn send_msg_internal(
         foreign_network_client.send_msg(msg, dst_peer_id).await
     } else if let Some(gateway) = peers.get_gateway_peer_id(dst_peer_id, policy.clone()).await {
         if peers.has_peer_with_live_conn(gateway) || foreign_network_client.has_next_hop(gateway) {
-            relay_peer_map.send_msg(msg, dst_peer_id, policy).await
+            relay_peer_map
+                .send_msg(msg, dst_peer_id, policy, Some(gateway))
+                .await
         } else {
             tracing::warn!(
                 ?gateway,
