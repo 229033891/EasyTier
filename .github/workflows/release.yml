@@ -333,6 +333,14 @@ jobs:
               fi
             done
             shopt -u nullglob
+            # Frontend-only CI intermediates (Web dashboard dist) are never shippable
+            # products. They arrive under release_assets_nozip and would otherwise be
+            # flattened into zipped_assets by the find below and published as loose
+            # release assets (index.html / index-*.js / index-*.css / *.wasm / ...).
+            rm -rf release_assets_nozip/ET-web-dashboard* \
+                   release_assets_nozip/ET-openwrt-bins
+            # Keep this recursive: the ET-gui-* NSIS .exe lives one level down in
+            # release_assets_nozip/ET-gui-*/ and must still be published loose.
             find release_assets_nozip -type f -exec mv {} zipped_assets \;
           fi
           ls -l -R ./zipped_assets || true
