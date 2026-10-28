@@ -3,16 +3,29 @@
 ## Status
 
 - Status: **Ops**
-- 最近审阅：2026-10-28（GUI NSIS **默认嵌入** `ET-cli.exe` sidecar）
+- 最近审阅：2026-10-28（CI：`build-gui` ∥ `build-headless`；写清交付三分法）
 - 适用范围：本机打出与 CI `windows.yml` 同布局的 **GUI NSIS 安装包**（含 `ET-cli`）+ **无头 `ET-windows-*` 目录/zip**
 - 索引：[`../README.md`](../README.md)
+- 产品语义：[`../current/product-map.md`](../current/product-map.md) §1.2
 - 配套：
   - [`web-build-deploy.md`](./web-build-deploy.md)（仅 Web embed 一键脚本）
   - [`windows-msvc-local-build.md`](./windows-msvc-local-build.md)（MSVC / vcvars）
 
 ---
 
-## 0. 和 Web 脚本的关系
+## 0. Windows 交付三分法（先读）
+
+| # | 产品 | 你该拿什么 | 备注 |
+|---|------|------------|------|
+| 1 | **Web 控制台** | `script\easytier-web-*.cmd` → `easytier-web-embed`；或无头目录里的 `ET-web-embed.exe` | 独立产品；集中配置时才需要 |
+| 2 | **桌面 GUI + CORE + CLI** | NSIS（`artifacts\*.exe` / CI `ET-gui-windows-*`） | `ET.exe` **内嵌** core；同目录 `ET-cli.exe` |
+| 3 | **无桌面节点 CORE + CLI** | 无头包中的 `ET-core.exe` + `ET-cli.exe` + 驱动 | **不需要** GUI；**不必然**需要 Web |
+
+当前 CI/本地「完整 Windows 包」仍产出 **两份 artifact**（GUI NSIS + 无头 zip）。无头 zip **附带** `ET-web-embed.exe` 是部署便利，**不是**把产品 1 并进产品 3 的语义定义。只要节点可忽略 embed；只要控制台优先用 Web 单独脚本。
+
+---
+
+## 0.1 和 Web 脚本的关系
 
 > ⛔ **不要手搓打包命令。** 本地打安装包**必须**用本目录列出的 `script\*.cmd` / `script\build-*.ps1` 入口。
 > 直接拼 `cargo build --release` / `pnpm tauri build` 会缺脚本内置的 `CARGO_PROFILE_DEV_DEBUG=0`、
@@ -24,10 +37,10 @@
 
 | 场景 | 入口 |
 |------|------|
-| **仅 Web embed** | `script\easytier-web-*.cmd` |
-| **完整 Windows 包**（GUI NSIS + 无头 zip） | `script\easytier-windows-*.cmd` |
+| **仅 Web embed**（产品 1） | `script\easytier-web-*.cmd` |
+| **完整 Windows 包**（GUI NSIS + 无头 zip；无头内仍附带 embed） | `script\easytier-windows-*.cmd` |
 
-完整 Windows 包会**内含** `ET-web-embed.exe`（与 CI headless 一致），不必再单独跑 web-release，除非你只想要单个 web 二进制。
+完整 Windows 包的无头半边会**附带** `ET-web-embed.exe`（与 CI headless 一致），不必再单独跑 web-release，除非你只想要单个 web 二进制或要跳过 GUI/无头整包。
 
 ---
 
@@ -67,11 +80,12 @@ script\easytier-windows-release.cmd    REM 正式：两端都 --release（更接
 
 与 CI artifact 命名对齐：
 
-| 产物 | 说明 |
-|------|------|
-| `artifacts\*.exe` | GUI **NSIS** 安装包（Tauri bundle；安装目录含 `ET.exe` + **`ET-cli.exe`** sidecar） |
-| `artifacts\ET-windows-x86_64\` | 无头：`ET-core.exe` / `ET-cli.exe` / `ET-web-embed.exe` + `wintun`/`Packet`/`WinDivert` |
-| `artifacts\ET-windows-x86_64.zip` | 上述目录的 zip（可用 `-NoZip` 跳过） |
+| 产物 | 对应产品 | 说明 |
+|------|----------|------|
+| `artifacts\*.exe` | **2 桌面** | GUI **NSIS**（`ET.exe` 内嵌 core + **`ET-cli.exe`** sidecar） |
+| `artifacts\ET-windows-x86_64\` | **3 无头节点**（+ 附带 1） | `ET-core.exe` / `ET-cli.exe` + 驱动；**另附** `ET-web-embed.exe`（便利，可忽略） |
+| `artifacts\ET-windows-x86_64.zip` | 同上 | 上述目录的 zip（可用 `-NoZip` 跳过） |
+| （Web 单独脚本产物） | **1 Web** | 见 [`web-build-deploy.md`](./web-build-deploy.md)；不强制走本脚本 |
 
 架构目录名随主机：`x86_64` / `arm64` / `i686`（来自 `easytier/third_party/<arch>`）。
 
@@ -81,7 +95,15 @@ script\easytier-windows-release.cmd    REM 正式：两端都 --release（更接
 
 ## 3. 脚本在做什么（对照 CI）
 
-大致对齐 `.github/workflows/windows.yml`：
+本地脚本仍可一次打出 GUI + 无头（串行）。CI（`.github/workflows/windows.yml`）为缩短墙钟已拆成并行 job：
+
+| CI job | 产物 | 说明 |
+|--------|------|------|
+| `build_web`（ubuntu） | `ET-web-dashboard-windows` | web 前端 dist，供 embed |
+| `build-gui`（windows） | `ET-gui-windows-*` | NSIS；与 headless **并行** |
+| `build-headless`（windows） | `ET-windows-*` | 下载 web dist 后编 core/cli/embed；与 GUI **并行** |
+
+本地大致步骤：
 
 1. 从 `easytier/third_party/<arch>/` 拷贝 `*.dll` / `*.sys` → `easytier-gui/src-tauri/`（Tauri resources）
 2. `pnpm` 先构建 `easytier-gui^...`（依赖，含 frontend-lib 一次），再 `pnpm run build:app`

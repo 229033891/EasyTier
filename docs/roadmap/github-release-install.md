@@ -3,13 +3,15 @@
 ## Status
 
 - Status: **Roadmap / Partially landed**（`ET Release` 对 `releases/v*` 自动 Publish **已落地**；客户端内更新、统一安装脚本默认源等仍属后续）
-- 最近审阅：2026-10-28（Windows GUI 同装 `ET-cli`；NSIS 写入/卸载 PATH）
+- 最近审阅：2026-10-28（Windows **交付三分法**；无头 zip 附带 embed 仅为便利）
 - 现状对照：发版流水线见 `.github/workflows/release.yml`；安装脚本用法见 [`../ops/deploy-install.md`](../ops/deploy-install.md)。
 - 目标：后续**以 GitHub Actions / Release / GHCR 为唯一发版来源**，统一安装与升级路径
 - 索引：[`../README.md`](../README.md)
 - 配套：
   - [`../ops/deploy-install.md`](../ops/deploy-install.md)（Linux 交互脚本用法）
   - [`../ops/web-upgrade.md`](../ops/web-upgrade.md)（控制台保库升级）
+  - [`../ops/windows-build-pack.md`](../ops/windows-build-pack.md)（Windows 本地打包与三分法）
+  - [`../current/product-map.md`](../current/product-map.md) §1.2（Windows 交付三分法）
   - `docker-compose.yml`（Docker 部署示例）
   - `script/install.sh` / `script/install.ps1`
   - 讨论材料：[`discussion-proposal-2026-10.md`](./discussion-proposal-2026-10.md)、[`market-comparison-2026-10.md`](./market-comparison-2026-10.md)
@@ -18,11 +20,21 @@
 
 ## 1. 产物矩阵（GitHub 生成）
 
+### 1.0 Windows 选包（产品三分法）
+
+| 你要装的产品 | 拿哪个产物 | 说明 |
+|--------------|------------|------|
+| **Web 控制台** | 无头 zip 内 `ET-web-embed.exe`，或本地/脚本单独打的 embed | 独立产品；节点不强制依赖它 |
+| **桌面 GUI + CORE + CLI** | `ET-gui-windows-*`（NSIS） | `ET.exe` 内嵌 core + 同目录 `ET-cli`；PATH 由安装器写入 |
+| **无桌面 CORE + CLI** | `ET-windows-*` 里的 `ET-core` / `ET-cli` + 驱动 | 可忽略同包内的 `ET-web-embed`（附带便利，非产品合并） |
+
+### 1.1 渠道一览
+
 | 渠道 | Workflow | 产物 | 用途 |
 |------|----------|------|------|
-| Linux 无头包 | `ET Linux` | Artifact `ET-linux-x86_64`：`ET-core` / `ET-cli` / `ET-web-embed` | VPS / NAS 二进制部署 |
-| Windows 无头包 | `ET Windows` | Artifact `ET-windows-x86_64`：三个 exe + `wintun`/`Packet`/`WinDivert` | Windows 服务节点 / CLI |
-| Windows GUI | `ET Windows` | Artifact `ET-gui-windows-x86_64`：NSIS 安装包（`ET.exe` + **`ET-cli.exe`** 同目录；安装器把 `$INSTDIR` 写入 PATH，卸载移除；需新开终端） | 桌面客户端 |
+| Linux 无头包 | `ET Linux` | Artifact `ET-linux-x86_64`：`ET-core` / `ET-cli` / `ET-web-embed` | VPS / NAS；embed 同为附带便利 |
+| Windows 无头包 | `ET Windows` | Artifact `ET-windows-x86_64`：`ET-core` / `ET-cli` / **附带** `ET-web-embed` + 驱动 | 无桌面节点 / CLI；需要 Web 时再用 embed |
+| Windows GUI | `ET Windows` | Artifact `ET-gui-windows-x86_64`：NSIS（`ET.exe` + **`ET-cli.exe`**；`$INSTDIR` 写入 PATH） | 桌面客户端（产品 2） |
 | Android | `ET Android` | APK | 手机端 |
 | Docker 镜像 | `ET Docker` | `ghcr.io/<owner>/et:<tag>`（可选 Docker Hub） | 容器部署 |
 | 正式 Release | `ET Release` | GitHub Release 附件 zip | **对外安装脚本默认下载源** |
@@ -32,6 +44,7 @@
 1. **日常验证**：`workflow_dispatch` 打 Artifact；Docker 用对应 `ET Linux` 的 `run_id` 手动触发。
 2. **对外安装**：走 **Release 附件**（`script/install.sh` / `install.ps1` 默认读 `229033891/EasyTier` 的 latest/tag）。
 3. **Docker**：镜像源为 `ghcr.io/229033891/et:<tag>`（`docker-compose.yml` 默认直连 GHCR）。DaoCloud 公共加速对该镜像不在白名单，不可用。勿再使用历史第三方同名镜像（ENTRYPOINT / 二进制名不同）。
+4. **Windows 选包**先看 §1.0；严格拆成「Web / GUI / 无头」三个独立 artifact 属后续可选，当前不拆 CI。
 
 ---
 
@@ -154,6 +167,7 @@ gh workflow run "ET Docker" --ref <branch> \
 
 | 日期 | 说明 |
 |------|------|
+| 2026-10-28 | Windows 交付三分法（Web / 桌面 GUI+CLI / 无头 CORE+CLI）；无头 zip 附带 embed 仅为便利 |
 | 2026-10-28 | Windows GUI NSIS：安装把 `$INSTDIR` 写入 PATH（卸载移除）；产物表同步 |
 | 2026-10-03 | P0：`ET Release` Draft 聚合 |
 | 2026-10-03 | `releases/v*`：三端 success → 自动 Publish；`workflow_run` 须在 `main` |

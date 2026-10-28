@@ -3,7 +3,7 @@
 ## Status
 
 - Status: **Current**
-- 最近审阅：2026-10-28（Win 安装器不再兼容 `easytier-gui` 旧名升级；桌面 GUI 默认附带 `ET-cli`）；2026-10-11（桌面 GUI 主程序改为 `ET`/`ET.exe`）
+- 最近审阅：2026-10-28（Windows **交付三分法**：Web / 桌面 GUI+CLI / 无头 CORE+CLI；无头 zip 附带 embed 仅为便利）；2026-10-11（桌面 GUI 主程序改为 `ET`/`ET.exe`）
 - 状态说明：帮助理解 monorepo 内各产品/组件职责与关系
 - 范围：仓库内主要 crate、前端包与贡献组件
 - 索引：[`../README.md`](../README.md)
@@ -47,6 +47,18 @@
 | 组网节点 | `easytier-core`（二进制） | P2P VPN 数据面/节点 | 是（组网就需要） |
 | 本机 GUI | `easytier-gui` | 本机启停与状态 | 否 |
 | 集中管理 | **`easytier-web`** | 下发配置 + 浏览器管理 | 否（集中配置时需要） |
+
+### 1.2 Windows 交付三分法（选包用）
+
+产品语义上 Windows 是 **三份独立产品**；装哪个取决于场景，不要把 artifact 文件名当成产品边界的唯一依据：
+
+| # | 产品 | 典型交付 | 含什么 | 不含 / 说明 |
+|---|------|----------|--------|-------------|
+| 1 | **Web 控制台** | `easytier-web-embed`（[`../ops/web-build-deploy.md`](../ops/web-build-deploy.md)）；或无头 zip 内同名 exe | 配置服务器 + 浏览器 UI | 不是组网节点本身 |
+| 2 | **桌面客户端** | CI `ET-gui-windows-*`：**NSIS** | `ET.exe`（**库内嵌 core**）+ `ET-cli.exe` | 安装目录一般**没有**独立 `ET-core.exe` |
+| 3 | **无桌面节点** | 需要的是 **CORE + CLI**（+ `wintun`/`Packet`/`WinDivert`） | 服务/NAS/无界面组网 | **不需要** GUI / WebView2；**不必然**需要 Web |
+
+**与当前打包的关系**：`ET Windows` 无头 artifact（`ET-windows-*`）为部署便利，在 CORE+CLI 之外 **附带** `ET-web-embed.exe`——这是打包捆绑，**不等于**「无头节点产品必须含 Web」。只要节点：用 zip 里的 `ET-core`/`ET-cli`（可忽略 embed）；只要控制台：用 web 单独脚本产物，或取 zip 内 embed；只要桌面：只用 NSIS。严格拆成三个独立 artifact 属后续可选，见 [`../ops/windows-build-pack.md`](../ops/windows-build-pack.md)。
 
 ---
 
