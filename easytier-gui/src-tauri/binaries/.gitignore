@@ -1,0 +1,4 @@
+# Staged by script/CI before `tauri build` (see Stage-GuiEtCliSidecar).
+# Keep the directory; ignore target-triple sidecars.
+*
+!.gitignore

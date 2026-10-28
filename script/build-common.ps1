@@ -584,6 +584,78 @@ function Copy-EasytierThirdPartyRuntime {
     Write-Log ("Copied runtime: " + ($copied -join ', ') + " -> $DestDir") -Level Ok
 }
 
+function Get-EasytierRustcHostTriple {
+    Assert-Command rustc
+    $line = (& rustc -vV 2>$null | Where-Object { $_ -match '^host:\s+' } | Select-Object -First 1)
+    if (-not $line) {
+        throw 'Could not read rustc host triple (rustc -vV)'
+    }
+    return ($line -replace '^host:\s+', '').Trim()
+}
+
+function Stage-GuiEtCliSidecar {
+    <#
+      Build easytier-cli and stage it for Tauri externalBin:
+        easytier-gui/src-tauri/binaries/ET-cli-<target-triple>[.exe]
+      Windows GUI NSIS installs it beside ET.exe as ET-cli.exe.
+    #>
+    param(
+        [string]$TargetTriple = '',
+        # GUI/NSIS always uses cargo --release; keep the sidecar on the same profile.
+        [string]$CargoProfile = 'release'
+    )
+    Assert-Command cargo
+    if (-not $RepoRoot) {
+        throw 'Stage-GuiEtCliSidecar: $RepoRoot must be set'
+    }
+
+    $triple = if ($TargetTriple) { $TargetTriple } else { Get-EasytierRustcHostTriple }
+    $isWindowsTriple = $triple -match 'windows'
+    $builtName = if ($isWindowsTriple) { 'easytier-cli.exe' } else { 'easytier-cli' }
+    $stagedName = if ($isWindowsTriple) { "ET-cli-$triple.exe" } else { "ET-cli-$triple" }
+
+    $binariesDir = Join-Path $RepoRoot 'easytier-gui\src-tauri\binaries'
+    New-Item -ItemType Directory -Force -Path $binariesDir | Out-Null
+
+    $cargoArgs = @(
+        'build', '-p', 'easytier', '--bin', 'easytier-cli'
+    )
+    if ($CargoProfile -eq 'release') {
+        $cargoArgs += '--release'
+    }
+    elseif ($CargoProfile -ne 'dev') {
+        $cargoArgs += '--profile', $CargoProfile
+    }
+    if ($TargetTriple) {
+        $cargoArgs += '--target', $TargetTriple
+    }
+
+    Write-Step ("Stage GUI ET-cli sidecar ($stagedName)")
+    Write-Log ("cargo " + ($cargoArgs -join ' ')) -Level Info
+    $code = Invoke-NativeLogged -FilePath 'cargo' -ArgumentList $cargoArgs
+    if ($code -ne 0) {
+        throw "cargo build easytier-cli failed (exit $code)"
+    }
+
+    $targetRoot = if ($env:CARGO_TARGET_DIR) { $env:CARGO_TARGET_DIR } else { Join-Path $RepoRoot 'target' }
+    $profileDir = if ($CargoProfile -eq 'dev') { 'debug' } else { $CargoProfile }
+    $candidates = @()
+    if ($TargetTriple) {
+        $candidates += Join-Path $targetRoot "$TargetTriple\$profileDir\$builtName"
+    }
+    $candidates += Join-Path $targetRoot "$profileDir\$builtName"
+
+    $src = $candidates | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
+    if (-not $src) {
+        throw "Built easytier-cli not found. Looked for: $($candidates -join ', ')"
+    }
+
+    $dest = Join-Path $binariesDir $stagedName
+    Copy-Item -Force -LiteralPath $src -Destination $dest
+    Write-Log "Staged GUI sidecar: $dest" -Level Ok
+    return $dest
+}
+
 function Get-EasytierWebView2BootstrapperPath {
     # tauri-bundler: dirs::cache_dir()\tauri\MicrosoftEdgeWebview2Setup.exe
     # On Windows cache_dir == %LOCALAPPDATA%

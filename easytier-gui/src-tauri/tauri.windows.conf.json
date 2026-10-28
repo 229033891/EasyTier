@@ -1,6 +1,8 @@
 {
     "bundle": {
-        "externalBin": [],
+        "externalBin": [
+            "binaries/ET-cli"
+        ],
         "resources": [
             "./wintun.dll",
             "./Packet.dll",

@@ -93,15 +93,20 @@
   ; Legacy binary name (pre-rename installs)
   nsExec::ExecToLog 'taskkill /F /T /IM easytier-gui.exe'
   Pop $0
+  ; Bundled CLI (externalBin); may lock ET-cli.exe during upgrade.
+  nsExec::ExecToLog 'taskkill /F /T /IM ET-cli.exe'
+  Pop $0
   Sleep 400
 !macroend
 
 !macro ET_WaitUntilGuiGone
   ; Retry kill until neither current nor legacy main binary remains.
-  DetailPrint "Waiting for ET.exe / easytier-gui.exe to release install files..."
+  DetailPrint "Waiting for ET.exe / easytier-gui.exe / ET-cli.exe to release install files..."
   nsExec::ExecToLog 'cmd /c "for /L %i in (1,1,25) do @(tasklist /FI \"IMAGENAME eq ET.exe\" | find /I \"ET.exe\" >nul && (taskkill /F /T /IM ET.exe >nul 2>&1 & ping -n 2 127.0.0.1 >nul) || exit /b 0)"'
   Pop $0
   nsExec::ExecToLog 'cmd /c "for /L %i in (1,1,25) do @(tasklist /FI \"IMAGENAME eq easytier-gui.exe\" | find /I \"easytier-gui.exe\" >nul && (taskkill /F /T /IM easytier-gui.exe >nul 2>&1 & ping -n 2 127.0.0.1 >nul) || exit /b 0)"'
+  Pop $0
+  nsExec::ExecToLog 'cmd /c "for /L %i in (1,1,25) do @(tasklist /FI \"IMAGENAME eq ET-cli.exe\" | find /I \"ET-cli.exe\" >nul && (taskkill /F /T /IM ET-cli.exe >nul 2>&1 & ping -n 2 127.0.0.1 >nul) || exit /b 0)"'
   Pop $0
   Sleep 800
 !macroend

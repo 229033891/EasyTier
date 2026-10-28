@@ -69,11 +69,13 @@ script\easytier-windows-release.cmd    REM 正式：两端都 --release（更接
 
 | 产物 | 说明 |
 |------|------|
-| `artifacts\*.exe` | GUI **NSIS** 安装包（Tauri bundle） |
+| `artifacts\*.exe` | GUI **NSIS** 安装包（Tauri bundle；安装目录含 `ET.exe` + **`ET-cli.exe`** sidecar） |
 | `artifacts\ET-windows-x86_64\` | 无头：`ET-core.exe` / `ET-cli.exe` / `ET-web-embed.exe` + `wintun`/`Packet`/`WinDivert` |
 | `artifacts\ET-windows-x86_64.zip` | 上述目录的 zip（可用 `-NoZip` 跳过） |
 
 架构目录名随主机：`x86_64` / `arm64` / `i686`（来自 `easytier/third_party/<arch>`）。
+
+桌面 GUI（Win / macOS / Linux）通过各平台 conf 的 Tauri `externalBin`（`tauri.windows.conf.json` / `tauri.macos.conf.json` / `tauri.linux.conf.json` → `binaries/ET-cli`）附带 CLI；**不要**写进共享 `tauri.conf.json`，以免 Android 构建也去找 sidecar。打包装前须先 `Stage-GuiEtCliSidecar` / CI「Stage ET-cli sidecar」。Windows 安装后一般为 `C:\Program Files\ET\ET-cli.exe`（**未**自动写入 PATH；连 GUI 实例常用 `-p 127.0.0.1:15999`）。当前 `windows.yml` GUI 矩阵以 Windows 为主；workflow 已预留 darwin/linux 收集与 stage，恢复矩阵行即可同样带 CLI。
 
 ---
 
@@ -82,9 +84,10 @@ script\easytier-windows-release.cmd    REM 正式：两端都 --release（更接
 大致对齐 `.github/workflows/windows.yml`：
 
 1. 从 `easytier/third_party/<arch>/` 拷贝 `*.dll` / `*.sys` → `easytier-gui/src-tauri/`（Tauri resources）
-2. `pnpm` 先构建 `easytier-gui^...`（依赖，含 frontend-lib 一次），再 `pnpm run build:app`；然后 `pnpm tauri build --bundles nsis`（跳过二次 `beforeBuildCommand`）
-3. 构建 `easytier-web` 前端（含 wasm），再 `cargo build -p easytier-web -p easytier --features easytier-web/embed`
-4. 收集到 `artifacts/`
+2. `pnpm` 先构建 `easytier-gui^...`（依赖，含 frontend-lib 一次），再 `pnpm run build:app`
+3. `cargo build -p easytier --bin easytier-cli --release` → stage 到 `src-tauri/binaries/`；再 `pnpm tauri build --bundles nsis`（跳过二次 `beforeBuildCommand`）
+4. 构建 `easytier-web` 前端（含 wasm），再 `cargo build -p easytier-web -p easytier --features easytier-web/embed`
+5. 收集到 `artifacts/`
 
 实现：`script/build-easytier-windows.ps1`；公共逻辑：`script/build-common.ps1`。
 

@@ -157,6 +157,8 @@ curl -fsSL "https://github.com/229033891/EasyTier/raw/main/script/update.sh" | s
 ```text
 只要改 Web 控制台、打 embed exe     →  easytier-web-*.cmd
 要 GUI 安装包 + ET-core/cli/web zip →  easytier-windows-*.cmd
+
+桌面 GUI 打包装前会编译并嵌入 `ET-cli`（与主程序同目录；Win/macOS/Linux 各自 platform conf 的 `externalBin`，不进 Android 基座配置；见 `docs/ops/windows-build-pack.md`）。
 push 前对齐 lint / feature 门控       →  easytier-test-fast.cmd
 本地尽量对齐 CI 测试                 →  easytier-test-full.cmd / test-easytier.sh
 只要现成发布包装到机器上           →  install.cmd / install.sh

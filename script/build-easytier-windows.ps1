@@ -244,6 +244,9 @@ function Invoke-EasytierGuiTauriBuild {
     # Re-assert TEMP: long GUI builds can outlive a manual delete of old cache dirs.
     Set-EasytierWritableTemp
 
+    # Tauri externalBin: binaries/ET-cli-<triple>.exe → installed as ET-cli.exe.
+    Stage-GuiEtCliSidecar -TargetTriple $Target -CargoProfile 'release'
+
     # Skip Tauri beforeBuildCommand — frontend already built (same as CI tauri.ci.conf.json).
     # Written only for this step; gitignored + eslint-ignored.
     $ciConf = Join-Path $GuiDir 'tauri.ci.conf.json'
@@ -485,6 +488,7 @@ if (-not $SkipGui) {
             throw "GUI build needs dist: $dist"
         }
     }
+    # Stage-GuiEtCliSidecar runs inside Invoke-EasytierGuiTauriBuild.
     Invoke-EasytierGuiTauriBuild
     $guiOutputs = @(Collect-GuiArtifacts)
 }

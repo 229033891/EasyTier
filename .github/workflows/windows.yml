@@ -161,6 +161,27 @@ jobs:
           printf '%s\n' '{"build":{"beforeBuildCommand":""}}' \
             > easytier-gui/tauri.ci.conf.json
 
+      # Tauri externalBin (desktop platform conf → binaries/ET-cli). Must exist
+      # before `tauri build`. Not in base tauri.conf.json — Android must not
+      # require this sidecar. Later headless step rebuilds cli (cargo cache hit).
+      - name: Stage ET-cli sidecar for GUI bundle
+        if: ${{ matrix.GUI_TARGET != '' }}
+        run: |
+          set -euo pipefail
+          cargo build --release --target "$GUI_TARGET" -p easytier --bin easytier-cli
+          mkdir -p easytier-gui/src-tauri/binaries
+          TARGET_ROOT="${CARGO_TARGET_DIR:-./target}"
+          if [[ "$GUI_TARGET" == *windows* ]]; then
+            src="$TARGET_ROOT/$GUI_TARGET/release/easytier-cli.exe"
+            dst="easytier-gui/src-tauri/binaries/ET-cli-${GUI_TARGET}.exe"
+          else
+            src="$TARGET_ROOT/$GUI_TARGET/release/easytier-cli"
+            dst="easytier-gui/src-tauri/binaries/ET-cli-${GUI_TARGET}"
+          fi
+          test -f "$src"
+          cp -f "$src" "$dst"
+          ls -la "$dst"
+
       - name: Build GUI
         if: ${{ matrix.GUI_TARGET != '' && (!contains(matrix.GUI_TARGET, 'darwin') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository)) }}
         uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f # action-v1.0.0
