@@ -91,6 +91,7 @@ impl ForwardLaneTable {
         }
     }
 
+    #[cfg(test)]
     fn lane_count(&self) -> usize {
         self.lanes.len()
     }
