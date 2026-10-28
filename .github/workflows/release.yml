@@ -324,11 +324,15 @@ jobs:
           mkdir -p zipped_assets release_assets
 
           if [ -d release_assets_nozip ]; then
-            for d in release_assets_nozip/ET-windows-*; do
+            # Headless + web console dirs from ET Windows → zip like Linux artifacts.
+            # (ET-gui-* NSIS .exe stay as loose files via the find below.)
+            shopt -s nullglob
+            for d in release_assets_nozip/ET-windows-* release_assets_nozip/ET-web-windows-*; do
               if [ -d "$d" ]; then
                 mv "$d" release_assets/
               fi
             done
+            shopt -u nullglob
             find release_assets_nozip -type f -exec mv {} zipped_assets \;
           fi
           ls -l -R ./zipped_assets || true
@@ -338,9 +342,10 @@ jobs:
             ls -l -R ./ || true
             chmod -R 755 . || true
             for x in `ls`; do
-              if [ "$x" = "ET-openwrt-bins" ] || [ "$x" = "ET-web-dashboard" ]; then
-                continue
-              fi
+              # Frontend-only CI intermediates, not shippable products.
+              case "$x" in
+                ET-openwrt-bins|ET-web-dashboard|ET-web-dashboard-windows) continue ;;
+              esac
               zip -r ../zipped_assets/$x-${VERSION}.zip $x
             done
           fi

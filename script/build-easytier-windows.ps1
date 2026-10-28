@@ -1,18 +1,19 @@
 <#
 .SYNOPSIS
-    One-click Windows package: GUI NSIS installer + headless ET zip (mirrors CI windows.yml).
+    One-click Windows package: GUI NSIS + headless zip + web console zip (mirrors CI triad).
 
 .DESCRIPTION
-    Aligns with script/easytier-web-*.cmd:
-      Fast     = headless release-fast; GUI/NSIS still --release (Tauri path)
-      Release  = --release for GUI + headless (closer to CI)
+    Aligns with CI windows.yml three products:
+      Fast     = headless/web release-fast; GUI/NSIS still --release (Tauri path)
+      Release  = --release for GUI + headless + web (closer to CI)
       Dev      = pnpm tauri dev (no installer / zip)
 
     Steps (package modes):
       1) Copy easytier/third_party/<arch>/*.dll|*.sys into easytier-gui/src-tauri/
       2) Build GUI frontend + tauri NSIS (unless -SkipGui)
-      3) Build web embed frontend + cargo easytier-web + easytier (unless -SkipHeadless)
-      4) Collect into artifacts/ (same layout as CI ET-gui-* / ET-windows-*)
+      3) Build headless core+cli (unless -SkipHeadless)
+      4) Build web embed console (unless -SkipWeb)
+      5) Collect into artifacts/ (ET-gui / ET-windows-* / ET-web-windows-*)
 
     Shared helpers: script/build-common.ps1
 
@@ -26,7 +27,10 @@
     Skip GUI / NSIS build.
 
 .PARAMETER SkipHeadless
-    Skip headless ET-core / ET-cli / ET-web-embed collection.
+    Skip headless ET-core / ET-cli collection.
+
+.PARAMETER SkipWeb
+    Skip web console (ET-web-embed) collection.
 
 .PARAMETER SkipFrontend
     Skip all pnpm frontend builds (require existing dist trees).
@@ -35,7 +39,7 @@
     Skip `pnpm -r install`.
 
 .PARAMETER NoZip
-    Do not write artifacts/ET-windows-<arch>.zip (folder still collected).
+    Do not write artifacts/ET-windows-<arch>.zip / ET-web-windows-<arch>.zip (folders still collected).
 
 .PARAMETER OutDir
     Output root (default: <repo>/artifacts).
@@ -50,7 +54,7 @@
     .\script\build-easytier-windows.ps1
     .\script\build-easytier-windows.ps1 -Profile Release
     .\script\build-easytier-windows.ps1 -Dev
-    .\script\build-easytier-windows.ps1 -SkipGui -Profile Fast
+    .\script\build-easytier-windows.ps1 -SkipGui -SkipWeb -Profile Fast
     .\script\build-easytier-windows.ps1 -Interactive
 #>
 param(
@@ -61,6 +65,7 @@ param(
 
     [switch]$SkipGui,
     [switch]$SkipHeadless,
+    [switch]$SkipWeb,
     [switch]$SkipFrontend,
     [switch]$SkipInstall,
     [switch]$NoZip,
@@ -104,12 +109,14 @@ if ($Interactive) {
 
     Write-Host ''
     Write-Host 'What to build?'
-    Write-Host '  [1] GUI + headless (default, like CI)'
+    Write-Host '  [1] All three (GUI + headless + web console; default, like CI)'
     Write-Host '  [2] GUI only (NSIS)'
-    Write-Host '  [3] Headless only (ET-windows zip)'
-    $c = Read-MenuChoice -Prompt 'Choose [1/2/3] (Enter=1)' -Valid @('1', '2', '3') -Default '1'
-    $SkipGui = ($c -eq '3')
-    $SkipHeadless = ($c -eq '2')
+    Write-Host '  [3] Headless only (ET-windows zip; core+cli)'
+    Write-Host '  [4] Web console only (ET-web-windows)'
+    $c = Read-MenuChoice -Prompt 'Choose [1/2/3/4] (Enter=1)' -Valid @('1', '2', '3', '4') -Default '1'
+    $SkipGui = ($c -eq '3' -or $c -eq '4')
+    $SkipHeadless = ($c -eq '2' -or $c -eq '4')
+    $SkipWeb = ($c -eq '2' -or $c -eq '3')
 
     Write-Host ''
     Write-Host 'Build frontends (pnpm)?'
@@ -132,6 +139,7 @@ if ($Interactive) {
     Write-Host "  Profile  : $Profile"
     Write-Host ("  GUI      : " + ($(if ($SkipGui) { 'skip' } else { 'yes' })))
     Write-Host ("  Headless : " + ($(if ($SkipHeadless) { 'skip' } else { 'yes' })))
+    Write-Host ("  Web      : " + ($(if ($SkipWeb) { 'skip' } else { 'yes' })))
     Write-Host ("  Frontend : " + ($(if ($SkipFrontend) { 'skip' } elseif ($SkipInstall) { 'build only' } else { 'install + build' })))
     Write-Host ("  OutDir   : " + ($(if ($OutDir) { $OutDir } else { 'artifacts' })))
     Write-Host '----------------------------------------'
@@ -331,17 +339,8 @@ function Invoke-EasytierHeadlessBuild {
     Assert-Command cargo
     Ensure-WindowsBuildPrereqs
 
-    if (-not $SkipFrontend) {
-        Invoke-EasytierWebFrontendBuild -SkipInstall:$SkipInstall
-    }
-    else {
-        $dist = Join-Path $RepoRoot 'easytier-web\frontend\dist\index.html'
-        if (-not (Test-Path $dist)) {
-            throw "Headless embed needs web frontend dist: $dist"
-        }
-    }
-
-    $cargoArgs = @('build', '-p', 'easytier-web', '-p', 'easytier', '--features', 'easytier-web/embed')
+    # Node product only (core + cli). Web console is a separate package.
+    $cargoArgs = @('build', '-p', 'easytier')
     if ($Profile -eq 'Release') {
         $cargoArgs += '--release'
     }
@@ -357,13 +356,45 @@ function Invoke-EasytierHeadlessBuild {
     if ($code -ne 0) { throw "cargo headless build failed (exit $code)" }
 
     $artifactDir = [string](Get-CargoArtifactDir -Profile $Profile -Target $Target)
+    return , $artifactDir
+}
+
+function Invoke-EasytierWebConsoleBuild {
+    Assert-Command cargo
+    Ensure-WindowsBuildPrereqs
+
+    if (-not $SkipFrontend) {
+        Invoke-EasytierWebFrontendBuild -SkipInstall:$SkipInstall
+    }
+    else {
+        $dist = Join-Path $RepoRoot 'easytier-web\frontend\dist\index.html'
+        if (-not (Test-Path $dist)) {
+            throw "Web console embed needs frontend dist: $dist"
+        }
+    }
+
+    $cargoArgs = @('build', '-p', 'easytier-web', '--features', 'easytier-web/embed')
+    if ($Profile -eq 'Release') {
+        $cargoArgs += '--release'
+    }
+    else {
+        $cargoArgs += '--profile', 'release-fast'
+    }
+    if ($Target) {
+        $cargoArgs += '--target', $Target
+    }
+
+    Write-Step ("cargo " + ($cargoArgs -join ' '))
+    $code = Invoke-NativeLogged -FilePath 'cargo' -ArgumentList $cargoArgs
+    if ($code -ne 0) { throw "cargo web-embed build failed (exit $code)" }
+
+    $artifactDir = [string](Get-CargoArtifactDir -Profile $Profile -Target $Target)
     $webBuilt = Join-Path $artifactDir 'easytier-web.exe'
     $webEmbed = Join-Path $artifactDir 'easytier-web-embed.exe'
     if (-not (Test-Path $webBuilt)) {
         throw "Build artifact not found: $webBuilt"
     }
     Copy-Item -Force $webBuilt $webEmbed | Out-Null
-    # Unary comma: return a single string even if earlier code leaked pipeline output.
     return , $artifactDir
 }
 
@@ -377,9 +408,8 @@ function Collect-HeadlessArtifacts {
     New-Item -ItemType Directory -Force -Path $headlessDir | Out-Null
 
     $rename = @{
-        'easytier-core.exe'      = 'ET-core.exe'
-        'easytier-cli.exe'       = 'ET-cli.exe'
-        'easytier-web-embed.exe' = 'ET-web-embed.exe'
+        'easytier-core.exe' = 'ET-core.exe'
+        'easytier-cli.exe'  = 'ET-cli.exe'
     }
     foreach ($srcName in $rename.Keys) {
         $src = Join-Path $ArtifactDir $srcName
@@ -391,7 +421,7 @@ function Collect-HeadlessArtifacts {
 
     Copy-EasytierThirdPartyRuntime -ArchDir $ArchDir -DestDir $headlessDir
 
-    foreach ($must in @('ET-core.exe', 'ET-cli.exe', 'ET-web-embed.exe')) {
+    foreach ($must in @('ET-core.exe', 'ET-cli.exe')) {
         if (-not (Test-Path (Join-Path $headlessDir $must))) {
             throw "Headless collect incomplete: missing $must"
         }
@@ -410,6 +440,35 @@ function Collect-HeadlessArtifacts {
     }
 
     return $headlessDir
+}
+
+function Collect-WebConsoleArtifacts {
+    param([Parameter(Mandatory)][string]$ArtifactDir)
+
+    $webDir = Join-Path $OutDir "ET-web-$ArtifactStem"
+    if (Test-Path $webDir) {
+        Remove-Item -Recurse -Force $webDir
+    }
+    New-Item -ItemType Directory -Force -Path $webDir | Out-Null
+
+    $src = Join-Path $ArtifactDir 'easytier-web-embed.exe'
+    if (-not (Test-Path $src)) {
+        throw "Missing web console binary: $src"
+    }
+    Copy-Item -Force $src (Join-Path $webDir 'ET-web-embed.exe')
+    Write-Log "Web console folder: $webDir" -Level Ok
+
+    if (-not $NoZip) {
+        $zipPath = Join-Path $OutDir "ET-web-$ArtifactStem.zip"
+        if (Test-Path $zipPath) {
+            Remove-Item -Force $zipPath
+        }
+        Write-Step "Zip web console -> $zipPath"
+        Compress-Archive -Path (Join-Path $webDir '*') -DestinationPath $zipPath -Force
+        Write-Log "Web console zip: $zipPath" -Level Ok
+    }
+
+    return $webDir
 }
 
 function Collect-GuiArtifacts {
@@ -477,6 +536,7 @@ Copy-EasytierThirdPartyRuntime -ArchDir $ArchDir -DestDir $GuiSrcTauri
 
 $guiOutputs = @()
 $headlessDir = $null
+$webDir = $null
 
 if (-not $SkipGui) {
     if (-not $SkipFrontend) {
@@ -494,16 +554,23 @@ if (-not $SkipGui) {
 }
 
 if (-not $SkipHeadless) {
-    # If GUI already ran pnpm install, SkipInstall for the web frontend step.
-    if (-not $SkipGui -and -not $SkipFrontend) {
-        $SkipInstall = $true
-    }
-    # -Last 1: defensive if any leftover pipeline noise precedes the path string.
     $artifactDir = [string]((@(Invoke-EasytierHeadlessBuild) | Select-Object -Last 1))
     if ([string]::IsNullOrWhiteSpace($artifactDir) -or -not (Test-Path -LiteralPath $artifactDir)) {
         throw "Headless artifact directory invalid: '$artifactDir'"
     }
     $headlessDir = Collect-HeadlessArtifacts -ArtifactDir $artifactDir
+}
+
+if (-not $SkipWeb) {
+    # If GUI already ran pnpm install, SkipInstall for the web frontend step.
+    if (-not $SkipGui -and -not $SkipFrontend) {
+        $SkipInstall = $true
+    }
+    $webArtifactDir = [string]((@(Invoke-EasytierWebConsoleBuild) | Select-Object -Last 1))
+    if ([string]::IsNullOrWhiteSpace($webArtifactDir) -or -not (Test-Path -LiteralPath $webArtifactDir)) {
+        throw "Web console artifact directory invalid: '$webArtifactDir'"
+    }
+    $webDir = Collect-WebConsoleArtifacts -ArtifactDir $webArtifactDir
 }
 
 Write-Host ''
@@ -513,15 +580,20 @@ if ($guiOutputs.Count -gt 0) {
     foreach ($p in $guiOutputs) { Write-Log "    $p" }
 }
 if ($headlessDir) {
-    Write-Log "  Headless: $headlessDir"
+    Write-Log "  Headless (core+cli): $headlessDir"
     if (-not $NoZip) {
         Write-Log ("  Zip:      " + (Join-Path $OutDir "ET-$ArtifactStem.zip"))
     }
 }
+if ($webDir) {
+    Write-Log "  Web console: $webDir"
+    if (-not $NoZip) {
+        Write-Log ("  Zip:      " + (Join-Path $OutDir "ET-web-$ArtifactStem.zip"))
+    }
+}
 Write-EasytierBuildElapsed
 Write-Host ''
-Write-Log 'Same layout as CI artifacts ET-gui-* / ET-windows-* (local OutDir).'
-Write-Log 'Web-only builds stay on: script\easytier-web-fast.cmd / easytier-web-release.cmd'
+Write-Log 'Same layout as CI: ET-gui-* / ET-windows-* / ET-web-windows-* (local OutDir).'
 
 } finally {
     Stop-EasytierBuildTranscript

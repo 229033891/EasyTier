@@ -78,7 +78,7 @@ Agent / 人工均适用：**未完成 §1 不要提交**。
 - [ ] **`Vec<f64>` 不要 `push(0)`**：整数字面量是 `i32`，ET Windows GUI embed 编 `easytier-web` 会 E0308。写 `0.0`。
 - [ ] **测试 helper 返回类型跟 `try_get` 一致**：`conn_id` 等字符串列写成 `i64` 会在 `clippy --tests` 报 E0277（元组类型对不上 / `i64` 与 `&str` 比较）。改 SQL 列类型后同步改 helper 与断言。
 - [ ] **SQL 时间窗必须带显式上界**：查询采样/历史表时，除下界 `sampled_at >= ?` 外还必须有上界 `sampled_at <= ?`。节点时钟超前时写入的行「来自未来」，没有上界它们会落进**每一次**查询的窗口，把曲线整体抬高（见 `docs/current/tunnel-ip-flow-fixes.md` F-2）；删上界时必须同步删掉对应的「未来行被忽略」回归测试。
-- [ ] **编 `easytier-web` 的路径**：OpenWrt `build-bins`、Linux musl、Windows headless embed 都会编 web；只改 core 绿不够。GUI 打包同样会编 web，frontend 绿不够。
+- [ ] **编 `easytier-web` 的路径**：OpenWrt `build-bins`、Linux/Windows `build-web-embed` 都会编 web；只改 core / 无头绿不够。GUI 打包不编 web，但改 frontend-lib 仍影响 GUI。
 - [ ] **本地 clippy 对齐 CI**：`-- -D warnings`，与 ET Test Check clippy 一致。
 - [ ] **Criterion bench group 名不要含 `/`**：Criterion 落盘会把 `/` 换成 `_`；`script/check_routing_bench.py` 按落盘路径读 `estimates.json`，group 用 `policy_route_empty` / `policy_route_{scale}`。
 - [ ] **routing 规模门禁比值用 1.50**：fixture 全是同前缀 `/24`，1K→10K 二分本身约 1.25–1.35×；CI 阈值勿再收紧到 1.20（会误杀）。线性扫描约 10×，1.50 仍挡得住。

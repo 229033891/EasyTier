@@ -2067,6 +2067,7 @@ download_and_install_binaries() {
 
   install -m 755 "$inner/ET-core" "${INSTALL_PATH}/ET-core"
   install -m 755 "$inner/ET-cli" "${INSTALL_PATH}/ET-cli"
+  # Older releases bundled embed in the headless zip; new triad ships it separately.
   if [[ -f "$inner/ET-web-embed" ]]; then
     install -m 755 "$inner/ET-web-embed" "${INSTALL_PATH}/ET-web-embed"
   fi
@@ -2079,6 +2080,58 @@ download_and_install_binaries() {
   ln -sfn "${INSTALL_PATH}/ET-cli" /usr/sbin/ET-cli 2>/dev/null || true
   INSTALLED_VERSION="$tag"
   log "二进制已更新到 ${INSTALL_PATH}（版本 ${tag}）"
+}
+
+# Web console product: ET-web-linux-<arch>-<tag>.zip (triad; not inside headless zip).
+download_and_install_web_embed() {
+  local arch="$1"
+  local tag="${2:-}"
+  [[ -n "$tag" ]] || tag="${INSTALLED_VERSION:-}"
+  [[ -n "$tag" ]] || tag="$(get_latest_release_tag)"
+
+  if [[ -f "${INSTALL_PATH}/ET-web-embed" ]]; then
+    return 0
+  fi
+
+  local asset="ET-web-linux-${arch}-${tag}.zip"
+  local base_tag="${RELEASES_PAGE}/download/${tag}/${asset}"
+  local base_latest="${RELEASES_PAGE}/latest/download/${asset}"
+
+  log "准备下载 Web 控制台 ${tag} (${arch}) ..."
+  mkdir -p "$INSTALL_PATH"
+  rm -rf /tmp/easytier-web-extract /tmp/easytier-web.zip
+  if ! fetch_file_with_fallback "$base_tag" /tmp/easytier-web.zip; then
+    warn "按 tag 下载 Web 包失败，改试 latest/download ..."
+    if ! fetch_file_with_fallback "$base_latest" /tmp/easytier-web.zip; then
+      err "无法从 ${RELEASES_PAGE} 下载 ${asset}"
+      return 1
+    fi
+  fi
+  unzip -oq /tmp/easytier-web.zip -d /tmp/easytier-web-extract
+  local inner=""
+  local candidate
+  for candidate in \
+    "/tmp/easytier-web-extract/ET-web-linux-${arch}" \
+    "/tmp/easytier-web-extract"; do
+    if [[ -f "${candidate}/ET-web-embed" ]]; then
+      inner="$candidate"
+      break
+    fi
+  done
+  if [[ -z "$inner" ]]; then
+    candidate="$(find /tmp/easytier-web-extract -maxdepth 2 -type f -name ET-web-embed 2>/dev/null | head -1 || true)"
+    if [[ -n "$candidate" ]]; then
+      inner="$(dirname "$candidate")"
+    fi
+  fi
+  [[ -n "$inner" && -f "$inner/ET-web-embed" ]] || {
+    err "解压后未找到 ET-web-embed（期望 ET-web-linux-${arch}/）"
+    rm -rf /tmp/easytier-web.zip /tmp/easytier-web-extract
+    return 1
+  }
+  install -m 755 "$inner/ET-web-embed" "${INSTALL_PATH}/ET-web-embed"
+  rm -rf /tmp/easytier-web.zip /tmp/easytier-web-extract
+  log "已安装 ET-web-embed → ${INSTALL_PATH}"
 }
 
 wait_for_web_api() {
@@ -2409,7 +2462,13 @@ EOF
 }
 
 install_server() {
-  [[ -f "$INSTALL_PATH/ET-web-embed" ]] || { err "包内无 ET-web-embed，请检查 release zip"; exit 1; }
+  if [[ ! -f "$INSTALL_PATH/ET-web-embed" ]]; then
+    download_and_install_web_embed "$(detect_arch)" "${INSTALLED_VERSION:-}" || {
+      err "缺少 ET-web-embed（无头包已不含控制台；请确认 Release 有 ET-web-linux-*）"
+      exit 1
+    }
+  fi
+  [[ -f "$INSTALL_PATH/ET-web-embed" ]] || { err "缺少 ET-web-embed"; exit 1; }
 
   # Stop/disable any pre-rename units so ports are free and only ET-* remain
   stop_legacy_easytier_services
@@ -3079,6 +3138,12 @@ cmd_update() {
 
   # Rewrite systemd units（与 install 相同的 write_* 路径，含 NAT 标志）
   if [[ "$had_web" == "yes" ]]; then
+    if [[ ! -f "${INSTALL_PATH}/ET-web-embed" ]]; then
+      download_and_install_web_embed "$arch" "${INSTALLED_VERSION:-}" || {
+        err "更新包缺少 ET-web-embed（请确认 Release 有 ET-web-linux-*）"
+        exit 1
+      }
+    fi
     [[ -f "${INSTALL_PATH}/ET-web-embed" ]] || { err "更新包缺少 ET-web-embed"; exit 1; }
     if [[ -z "${PUBLIC_HOST:-}" ]]; then
       err "无法解析控制台地址，请加参数: --public-host <域名或IP>"

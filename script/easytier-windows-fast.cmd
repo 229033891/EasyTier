@@ -1,6 +1,6 @@
 @echo off
 setlocal EnableExtensions
-REM Package: release-fast GUI NSIS + headless ET-windows zip (daily / local)
+REM Package: GUI NSIS + headless (release-fast) + web console (daily / local)
 
 cd /d "%~dp0.."
 if not exist "%~dp0build-easytier-windows.ps1" (
@@ -19,7 +19,7 @@ if errorlevel 1 (
 echo.
 echo ========================================
 echo   EasyTier Windows - FAST package
-echo   GUI NSIS (--release) + headless (release-fast)
+echo   GUI NSIS + headless + web (headless/web = release-fast)
 echo ========================================
 echo.
 
@@ -35,7 +35,7 @@ if not "%ERR%"=="0" (
 )
 
 echo Fast package finished.
-echo Output: artifacts\  (NSIS installer + ET-windows-*\ + .zip)
+echo Output: artifacts\  (NSIS + ET-windows-* + ET-web-windows-* + zips)
 echo Logs:   artifacts\logs\easytier-windows-*.log
 pause
 exit /b 0

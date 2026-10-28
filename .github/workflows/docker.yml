@@ -94,11 +94,14 @@ jobs:
             EXTRA_SHA_TAG="$SHORT_SHA"
           fi
 
-          # Core 被 path-skip 时 workflow 仍可能 conclusion=success，但没有 ET-linux 产物
-          ARTIFACT_COUNT="$(gh api "repos/${{ github.repository }}/actions/runs/${RUN_ID}/artifacts" \
+          # Core 被 path-skip 时 workflow 仍可能 conclusion=success，但没有包装产物。
+          # 镜像需无头(core+cli) + Web 控制台两份 artifact（三分法后不再同包）。
+          HEADLESS_COUNT="$(gh api "repos/${{ github.repository }}/actions/runs/${RUN_ID}/artifacts" \
             --jq '[.artifacts[] | select(.name == "ET-linux-x86_64" and .expired == false)] | length')"
-          if [[ "$ARTIFACT_COUNT" -eq 0 ]]; then
-            echo "No ET-linux-x86_64 artifact on run ${RUN_ID}; skip docker build."
+          WEB_COUNT="$(gh api "repos/${{ github.repository }}/actions/runs/${RUN_ID}/artifacts" \
+            --jq '[.artifacts[] | select(.name == "ET-web-linux-x86_64" and .expired == false)] | length')"
+          if [[ "${HEADLESS_COUNT:-0}" -eq 0 || "${WEB_COUNT:-0}" -eq 0 ]]; then
+            echo "Missing packaging artifacts on run ${RUN_ID} (headless=${HEADLESS_COUNT:-0} web=${WEB_COUNT:-0}); skip docker build."
             echo "skip=true" >> "$GITHUB_OUTPUT"
             echo "run_id=${RUN_ID}" >> "$GITHUB_OUTPUT"
             echo "checkout_ref=${CHECKOUT_REF}" >> "$GITHUB_OUTPUT"
@@ -175,7 +178,7 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Download Linux artifacts
+      - name: Download Linux headless artifact
         if: steps.meta.outputs.skip != 'true'
         uses: dawidd6/action-download-artifact@eab87c9830c39eff17e5a6eadb20bfb4bc880477 # v27
         with:
@@ -185,15 +188,50 @@ jobs:
           path: docker_context/ET-linux-x86_64
           name: ET-linux-x86_64
 
+      - name: Download Linux web console artifact
+        if: steps.meta.outputs.skip != 'true'
+        uses: dawidd6/action-download-artifact@eab87c9830c39eff17e5a6eadb20bfb4bc880477 # v27
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          run_id: ${{ steps.meta.outputs.run_id }}
+          repo: ${{ github.repository }}
+          path: docker_context/ET-web-linux-x86_64
+          name: ET-web-linux-x86_64
+
+      - name: Merge artifacts into Docker context
+        if: steps.meta.outputs.skip != 'true'
+        run: |
+          set -euo pipefail
+          # Dockerfile copies docker_context/ET-linux-x86_64/* into the image.
+          # Keep a single-image layout (core+cli+web) even though CI artifacts are split.
+          mkdir -p docker_context/ET-linux-x86_64
+          if [[ -f docker_context/ET-web-linux-x86_64/ET-web-embed ]]; then
+            cp -f docker_context/ET-web-linux-x86_64/ET-web-embed docker_context/ET-linux-x86_64/ET-web-embed
+          elif [[ -f docker_context/ET-web-linux-x86_64/ET-web-embed.exe ]]; then
+            echo "::error::Unexpected Windows web binary in Linux docker context" >&2
+            exit 1
+          else
+            # download-artifact may nest one extra directory
+            found="$(find docker_context/ET-web-linux-x86_64 -type f -name ET-web-embed | head -1 || true)"
+            [[ -n "$found" ]] || {
+              echo "::error::ET-web-embed missing under docker_context/ET-web-linux-x86_64" >&2
+              find docker_context -maxdepth 5 -type f | head -n 80 >&2
+              exit 1
+            }
+            cp -f "$found" docker_context/ET-linux-x86_64/ET-web-embed
+          fi
+
       - name: Verify artifact layout for Dockerfile
         if: steps.meta.outputs.skip != 'true'
         run: |
           set -euo pipefail
-          if ! compgen -G "docker_context/ET-linux-x86_64/ET-*" > /dev/null; then
-            echo "Expected ET-* binaries missing under docker_context/ET-linux-x86_64:" >&2
-            find docker_context -maxdepth 4 -type f | head -n 80 >&2
-            exit 1
-          fi
+          for must in ET-core ET-cli ET-web-embed; do
+            if [[ ! -f "docker_context/ET-linux-x86_64/$must" ]]; then
+              echo "::error::missing $must under docker_context/ET-linux-x86_64" >&2
+              find docker_context -maxdepth 5 -type f | head -n 80 >&2
+              exit 1
+            fi
+          done
           chmod +x docker_context/ET-linux-x86_64/ET-* || true
           ls -lR docker_context
 

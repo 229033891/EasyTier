@@ -1,6 +1,6 @@
 @echo off
 setlocal EnableExtensions
-REM Package: formal --release GUI NSIS + headless ET-windows zip (production)
+REM Package: formal --release GUI NSIS + headless + web console (production)
 
 cd /d "%~dp0.."
 if not exist "%~dp0build-easytier-windows.ps1" (
@@ -19,7 +19,7 @@ if errorlevel 1 (
 echo.
 echo ========================================
 echo   EasyTier Windows - RELEASE package
-echo   GUI NSIS + headless (--release)
+echo   GUI NSIS + headless + web (--release)
 echo ========================================
 echo.
 
@@ -35,7 +35,7 @@ if not "%ERR%"=="0" (
 )
 
 echo Release package finished.
-echo Output: artifacts\  (NSIS installer + ET-windows-*\ + .zip)
+echo Output: artifacts\  (NSIS + ET-windows-* + ET-web-windows-* + zips)
 echo Logs:   artifacts\logs\easytier-windows-*.log
 pause
 exit /b 0
