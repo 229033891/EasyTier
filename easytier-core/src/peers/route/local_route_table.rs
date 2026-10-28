@@ -1540,6 +1540,12 @@ pub fn validate_and_build_policy_rules(
 /// A gate that runs against an **existing** instance must call
 /// [`validate_config_loader_policy_routes_for_algo`] with
 /// `CoreInstance::has_route_table()` instead — see `config_patch`.
+///
+/// Callers live under `web-client` / `browser-config` (`api_input`) or
+/// `management` (`config_patch`, via `web-client`). Gate the same way so
+/// `cargo hack --each-feature` without those features does not warn
+/// `dead_code` (see `has_domain_rules` above).
+#[cfg(any(feature = "web-client", feature = "browser-config", test))]
 pub fn validate_config_loader_policy_routes(
     config: &impl crate::config::toml::ConfigLoader,
 ) -> Result<(), anyhow::Error> {
@@ -1566,6 +1572,7 @@ pub fn validate_config_loader_policy_routes(
 /// it must call this variant itself. The construction path is the backstop —
 /// `build_local_route_table` refuses the same combination, so such a config
 /// fails to start rather than running unpriced.
+#[cfg(any(feature = "web-client", feature = "browser-config", test))]
 pub fn validate_config_loader_policy_routes_for_algo(
     config: &impl crate::config::toml::ConfigLoader,
     has_route_table: bool,
