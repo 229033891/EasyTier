@@ -435,7 +435,7 @@ mod tests {
     fn queue_cap_constant_is_above_peerconn_mpsc() {
         // PeerConn MpscTunnel uses 32; lane must be able to hold a little more
         // so try_enqueue absorbs bursts the 100ms egress wait can drain.
-        assert!(FORWARD_EGRESS_QUEUE_CAP > 32);
+        const { assert!(FORWARD_EGRESS_QUEUE_CAP > 32) };
     }
 
     #[tokio::test]

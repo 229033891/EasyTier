@@ -67,6 +67,7 @@ Agent / 人工均适用：**未完成 §1 不要提交**。
 
 改代码时优先自查：
 
+- [ ] **常量 `assert!` 用 `const { assert!(…) }`**：对 `const`/`static` 的恒真断言会触发 clippy `assertions_on_constants`（`-D warnings`）。例：`FORWARD_EGRESS_QUEUE_CAP > 32` → `const { assert!(…) }`（见 `forward_egress` 测例）。
 - [ ] **`cargo fmt --all -- --check`**：ET Test 最先跑的 job；手改/合并后的换行、长调用链、`use` 排序都会挂。提交前必过；失败则 `cargo fmt --all`。
 - [ ] **`Cargo.lock` 与元数据一致**：`cargo metadata --format-version 1 --locked`；改过 `Cargo.toml` 依赖后要更新并提交 lock。
 - [ ] **locales YAML 纯量冒号**：`en.yaml` 等纯量值里出现 ASCII `: `（如 `Web source): the …`）必须加双引号；中文全角 `：` 一般没事。否则 `easytier-frontend-lib` / Windows GUI 构建会挂在 `vite:transform-yaml`。
