@@ -3,7 +3,7 @@
 ## Status
 
 - Status: **Roadmap / Partially landed**（`ET Release` 对 `releases/v*` 自动 Publish **已落地**；客户端内更新、统一安装脚本默认源等仍属后续）
-- 最近审阅：2026-10-09
+- 最近审阅：2026-10-28（Windows GUI 同装 `ET-cli`；NSIS 写入/卸载 PATH）
 - 现状对照：发版流水线见 `.github/workflows/release.yml`；安装脚本用法见 [`../ops/deploy-install.md`](../ops/deploy-install.md)。
 - 目标：后续**以 GitHub Actions / Release / GHCR 为唯一发版来源**，统一安装与升级路径
 - 索引：[`../README.md`](../README.md)
@@ -22,7 +22,7 @@
 |------|----------|------|------|
 | Linux 无头包 | `ET Linux` | Artifact `ET-linux-x86_64`：`ET-core` / `ET-cli` / `ET-web-embed` | VPS / NAS 二进制部署 |
 | Windows 无头包 | `ET Windows` | Artifact `ET-windows-x86_64`：三个 exe + `wintun`/`Packet`/`WinDivert` | Windows 服务节点 / CLI |
-| Windows GUI | `ET Windows` | Artifact `ET-gui-windows-x86_64`：NSIS 安装包 | 桌面客户端 |
+| Windows GUI | `ET Windows` | Artifact `ET-gui-windows-x86_64`：NSIS 安装包（`ET.exe` + **`ET-cli.exe`** 同目录；安装器把 `$INSTDIR` 写入 PATH，卸载移除；需新开终端） | 桌面客户端 |
 | Android | `ET Android` | APK | 手机端 |
 | Docker 镜像 | `ET Docker` | `ghcr.io/<owner>/et:<tag>`（可选 Docker Hub） | 容器部署 |
 | 正式 Release | `ET Release` | GitHub Release 附件 zip | **对外安装脚本默认下载源** |
@@ -154,5 +154,6 @@ gh workflow run "ET Docker" --ref <branch> \
 
 | 日期 | 说明 |
 |------|------|
+| 2026-10-28 | Windows GUI NSIS：安装把 `$INSTDIR` 写入 PATH（卸载移除）；产物表同步 |
 | 2026-10-03 | P0：`ET Release` Draft 聚合 |
 | 2026-10-03 | `releases/v*`：三端 success → 自动 Publish；`workflow_run` 须在 `main` |

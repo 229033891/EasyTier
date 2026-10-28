@@ -3,8 +3,8 @@
 ## Status
 
 - Status: **Ops**
-- 最近审阅：2026-10-10
-- 适用范围：本机打出与 CI `windows.yml` 同布局的 **GUI NSIS 安装包** + **无头 `ET-windows-*` 目录/zip**
+- 最近审阅：2026-10-28（GUI NSIS **默认嵌入** `ET-cli.exe` sidecar）
+- 适用范围：本机打出与 CI `windows.yml` 同布局的 **GUI NSIS 安装包**（含 `ET-cli`）+ **无头 `ET-windows-*` 目录/zip**
 - 索引：[`../README.md`](../README.md)
 - 配套：
   - [`web-build-deploy.md`](./web-build-deploy.md)（仅 Web embed 一键脚本）
@@ -75,7 +75,7 @@ script\easytier-windows-release.cmd    REM 正式：两端都 --release（更接
 
 架构目录名随主机：`x86_64` / `arm64` / `i686`（来自 `easytier/third_party/<arch>`）。
 
-桌面 GUI（Win / macOS / Linux）通过各平台 conf 的 Tauri `externalBin`（`tauri.windows.conf.json` / `tauri.macos.conf.json` / `tauri.linux.conf.json` → `binaries/ET-cli`）附带 CLI；**不要**写进共享 `tauri.conf.json`，以免 Android 构建也去找 sidecar。打包装前须先 `Stage-GuiEtCliSidecar` / CI「Stage ET-cli sidecar」。Windows 安装后一般为 `C:\Program Files\ET\ET-cli.exe`（**未**自动写入 PATH；连 GUI 实例常用 `-p 127.0.0.1:15999`）。当前 `windows.yml` GUI 矩阵以 Windows 为主；workflow 已预留 darwin/linux 收集与 stage，恢复矩阵行即可同样带 CLI。
+桌面 GUI（Win / macOS / Linux）通过各平台 conf 的 Tauri `externalBin`（`tauri.windows.conf.json` / `tauri.macos.conf.json` / `tauri.linux.conf.json` → `binaries/ET-cli`）附带 CLI；**不要**写进共享 `tauri.conf.json`，以免 Android 构建也去找 sidecar。打包装前须先 `Stage-GuiEtCliSidecar` / CI「Stage ET-cli sidecar」。Windows NSIS 安装后一般为 `C:\Program Files\ET\ET-cli.exe`，安装器会把 **`$INSTDIR` 写入系统 PATH**（幂等；卸载时移除；**需新开终端**才生效）。连 GUI 实例常用 `-p 127.0.0.1:15999`。当前 `windows.yml` GUI 矩阵以 Windows 为主；workflow 已预留 darwin/linux 收集与 stage，恢复矩阵行即可同样带 CLI。
 
 ---
 

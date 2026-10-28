@@ -2,8 +2,8 @@
 ;
 ; Two independent lock classes, both must be handled before the file copy:
 ;
-; 1. $INSTDIR\ET.exe (legacy: easytier-gui.exe) - the app hides to tray on
-;    close, so it often stays running and locks the install path:
+; 1. $INSTDIR\ET.exe - the app hides to tray on close, so it often stays
+;    running and locks the install path:
 ;      Error opening file for writing: ...\ET\ET.exe
 ;
 ; 2. $INSTDIR\Packet.dll / wintun.dll / WinDivert*.sys - third-party binaries.
@@ -59,39 +59,26 @@
   ; `actions= //` clears the action list on modern Windows sc.exe.
   nsExec::ExecToLog 'sc.exe failure ET-Gui reset= 0 actions= //'
   Pop $0
-  nsExec::ExecToLog 'sc.exe failure easytier-gui reset= 0 actions= //'
-  Pop $0
 !macroend
 
 !macro ET_StopGuiService
   DetailPrint "Stopping ET Gui Windows service if present..."
   !insertmacro ET_ClearGuiServiceRecovery
   ; Prevent SCM from restarting the GUI while we replace the binary.
-  ; Current service name (sc): ET-Gui  | display name: ET Gui Service
+  ; Service name (sc): ET-Gui  | display name: ET Gui Service
   nsExec::ExecToLog 'sc.exe config ET-Gui start= demand'
   Pop $0
   nsExec::ExecToLog 'sc.exe stop ET-Gui'
   Pop $0
-  ; Pre-rename leftover (sc): easytier-gui  | display name: EasyTier Gui Service
-  nsExec::ExecToLog 'sc.exe config easytier-gui start= demand'
-  Pop $0
-  nsExec::ExecToLog 'sc.exe stop easytier-gui'
-  Pop $0
-  ; Wait until services leave RUNNING (sc query; ignore missing service).
+  ; Wait until service leaves RUNNING (sc query; ignore missing service).
   nsExec::ExecToLog 'cmd /c "for /L %i in (1,1,20) do @(sc query ET-Gui 2>nul | findstr /I \"RUNNING\" >nul && (ping -n 2 127.0.0.1 >nul) || exit /b 0)"'
-  Pop $0
-  nsExec::ExecToLog 'cmd /c "for /L %i in (1,1,20) do @(sc query easytier-gui 2>nul | findstr /I \"RUNNING\" >nul && (ping -n 2 127.0.0.1 >nul) || exit /b 0)"'
   Pop $0
   Sleep 500
 !macroend
 
 !macro ET_KillGuiProcesses
   DetailPrint "Stopping running ET GUI processes..."
-  ; Current main binary
   nsExec::ExecToLog 'taskkill /F /T /IM ET.exe'
-  Pop $0
-  ; Legacy binary name (pre-rename installs)
-  nsExec::ExecToLog 'taskkill /F /T /IM easytier-gui.exe'
   Pop $0
   ; Bundled CLI (externalBin); may lock ET-cli.exe during upgrade.
   nsExec::ExecToLog 'taskkill /F /T /IM ET-cli.exe'
@@ -100,11 +87,8 @@
 !macroend
 
 !macro ET_WaitUntilGuiGone
-  ; Retry kill until neither current nor legacy main binary remains.
-  DetailPrint "Waiting for ET.exe / easytier-gui.exe / ET-cli.exe to release install files..."
+  DetailPrint "Waiting for ET.exe / ET-cli.exe to release install files..."
   nsExec::ExecToLog 'cmd /c "for /L %i in (1,1,25) do @(tasklist /FI \"IMAGENAME eq ET.exe\" | find /I \"ET.exe\" >nul && (taskkill /F /T /IM ET.exe >nul 2>&1 & ping -n 2 127.0.0.1 >nul) || exit /b 0)"'
-  Pop $0
-  nsExec::ExecToLog 'cmd /c "for /L %i in (1,1,25) do @(tasklist /FI \"IMAGENAME eq easytier-gui.exe\" | find /I \"easytier-gui.exe\" >nul && (taskkill /F /T /IM easytier-gui.exe >nul 2>&1 & ping -n 2 127.0.0.1 >nul) || exit /b 0)"'
   Pop $0
   nsExec::ExecToLog 'cmd /c "for /L %i in (1,1,25) do @(tasklist /FI \"IMAGENAME eq ET-cli.exe\" | find /I \"ET-cli.exe\" >nul && (taskkill /F /T /IM ET-cli.exe >nul 2>&1 & ping -n 2 127.0.0.1 >nul) || exit /b 0)"'
   Pop $0
@@ -184,9 +168,7 @@
 !macroend
 
 !macro ET_UnlockInstallExe
-  ; Current name first; keep legacy so upgrades from older installs unlock too.
   !insertmacro ET_UnlockOneInstallExe "ET"
-  !insertmacro ET_UnlockOneInstallExe "easytier-gui"
 !macroend
 
 !macro ET_EnsureGuiStopped
@@ -293,7 +275,6 @@
 !macro ET_DeleteGuiService
   DetailPrint "Removing ET Gui Windows service if present..."
   !insertmacro ET_DeleteOneService "ET-Gui" etgui
-  !insertmacro ET_DeleteOneService "easytier-gui" legacy
 !macroend
 
 !macro ET_ElevateServiceStopForInstall
@@ -317,14 +298,14 @@
   ; Labels are safe here (and only here): NSIS_HOOK_PREINSTALL expands exactly
   ; once, into Section Install. The macro is NOT reusable from a hook that may
   ; expand more than once.
-  nsExec::ExecToLog 'cmd /c "(sc query ET-Gui 2>nul | findstr /I \"RUNNING\" >nul || sc query easytier-gui 2>nul | findstr /I \"RUNNING\" >nul) && exit /b 1 || exit /b 0"'
+  nsExec::ExecToLog 'cmd /c "(sc query ET-Gui 2>nul | findstr /I \"RUNNING\" >nul) && exit /b 1 || exit /b 0"'
   Pop $0
   StrCmp $0 1 0 et_install_svc_stop_done   ; 0 = nothing running, no elevation needed
 
   DetailPrint "ET Gui service is still running; requesting elevation to stop it..."
   ClearErrors
   ; start= demand is restored to auto by NSIS_HOOK_POSTINSTALL afterwards.
-  ExecShellWait "runas" "$SYSDIR\cmd.exe" '/c sc failure ET-Gui reset= 0 actions= // & sc config ET-Gui start= demand & sc stop ET-Gui & sc failure easytier-gui reset= 0 actions= // & sc config easytier-gui start= demand & sc stop easytier-gui & ping -n 4 127.0.0.1 >nul' SW_HIDE
+  ExecShellWait "runas" "$SYSDIR\cmd.exe" '/c sc failure ET-Gui reset= 0 actions= // & sc config ET-Gui start= demand & sc stop ET-Gui & ping -n 4 127.0.0.1 >nul' SW_HIDE
   IfErrors 0 et_install_svc_stop_done
     DetailPrint "Elevation declined or failed; falling back to unlock-by-rename."
 
@@ -352,18 +333,12 @@
 
   DetailPrint "Migrating per-user install $LegacyUserDir -> $INSTDIR ..."
 
-  ; Retire the legacy service and its SCM registration.
+  ; Retire the service and its SCM registration (app re-registers at new path).
   nsExec::ExecToLog 'sc.exe failure ET-Gui reset= 0 actions= //'
   Pop $0
   nsExec::ExecToLog 'sc.exe stop ET-Gui'
   Pop $0
   nsExec::ExecToLog 'sc.exe delete ET-Gui'
-  Pop $0
-  nsExec::ExecToLog 'sc.exe failure easytier-gui reset= 0 actions= //'
-  Pop $0
-  nsExec::ExecToLog 'sc.exe stop easytier-gui'
-  Pop $0
-  nsExec::ExecToLog 'sc.exe delete easytier-gui'
   Pop $0
 
   ; Terminate anything still running from the old tree.
@@ -410,63 +385,41 @@
   !insertmacro ET_UnlockThirdPartyBinaries
 !macroend
 
-!macro ET_MigrateGuiServiceBinPath
-  ; Service binPath embeds the absolute exe path at install time. After renaming
-  ; the main binary to ET.exe, leaving PathName pointing at easytier-gui.exe
-  ; would break Service mode once the legacy file is removed.
-  ;
-  ; Pushes 0 on success (no service still references the legacy name), pushes 1
-  ; when at least one service could not be migrated (typically a per-user
-  ; install without elevation to run `sc config`). The caller uses that result
-  ; to decide whether the legacy shim is genuinely required.
-  DetailPrint "Migrating ET Gui service PathName easytier-gui.exe -> ET.exe if needed..."
-  nsExec::ExecToLog '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "$$left = 0; foreach ($$n in @(''ET-Gui'',''easytier-gui'')) { $$s = Get-CimInstance Win32_Service -Filter (\"Name=''$$n''\") -ErrorAction SilentlyContinue; if (-not $$s -or -not $$s.PathName) { continue }; if ($$s.PathName -notmatch ''(?i)easytier-gui\.exe'') { continue }; $$np = [regex]::Replace($$s.PathName, ''easytier-gui\.exe'', ''ET.exe'', ''IgnoreCase''); & sc.exe config $$n binPath= $$np | Out-Null; $$re = Get-CimInstance Win32_Service -Filter (\"Name=''$$n''\") -ErrorAction SilentlyContinue; if (-not $$re -or $$re.PathName -match ''(?i)easytier-gui\.exe'') { $$left++ } }; exit $$left"'
+; Append $INSTDIR to PATH so `ET-cli` is discoverable without a full path.
+; Prefer Machine (perMachine installer); fall back to User if HKLM is denied.
+; Idempotent: skips when the directory is already present (case-insensitive).
+; New shells pick this up; already-open terminals need a restart (documented).
+!macro ET_AddInstallDirToPath
+  DetailPrint "Adding $INSTDIR to PATH (ET-cli)..."
+  System::Call 'Kernel32::SetEnvironmentVariable(t "ET_INSTDIR_FOR_PATH", t "$INSTDIR")'
+  nsExec::ExecToLog '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "$$d = $$env:ET_INSTDIR_FOR_PATH; if (-not $$d) { exit 0 }; $$d = $$d.TrimEnd([char]92); function Test-HasDir([string]$$path, [string]$$dir) { @($$path -split [char]59) | Where-Object { $$_ -and ($$_.TrimEnd([char]92) -ieq $$dir) } | Select-Object -First 1 }; function Add-Dir([string]$$scope) { $$p = [Environment]::GetEnvironmentVariable(''Path'', $$scope); if ($$null -eq $$p) { $$p = '''' }; if (Test-HasDir $$p $$d) { return 0 }; $$parts = @(@($$p -split [char]59) | Where-Object { $$_ }); $$parts += $$d; [Environment]::SetEnvironmentVariable(''Path'', ($$parts -join [char]59), $$scope); return 1 }; try { [void](Add-Dir ''Machine'') } catch { try { [void](Add-Dir ''User'') } catch { exit 1 } }; exit 0"'
   Pop $0
-  ; nsExec pushes the child exit code; non-zero means a service still points at
-  ; easytier-gui.exe, so removing the shim would break Service mode at boot.
-  StrCmp $0 "0" et_migrate_binpath_ok
-    Push 1
-    Goto et_migrate_binpath_done
-  et_migrate_binpath_ok:
-    Push 0
-  et_migrate_binpath_done:
+!macroend
+
+; POSTUNINSTALL runs after DeleteRegKey ${UNINSTKEY}, so use $INSTDIR only
+; (still set for the whole uninstall section). Strip from Machine and User PATH.
+!macro ET_RemoveInstallDirFromPath
+  DetailPrint "Removing $INSTDIR from PATH..."
+  System::Call 'Kernel32::SetEnvironmentVariable(t "ET_INSTDIR_FOR_PATH", t "$INSTDIR")'
+  nsExec::ExecToLog '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "$$d = $$env:ET_INSTDIR_FOR_PATH; if (-not $$d) { exit 0 }; $$d = $$d.TrimEnd([char]92); function Remove-Dir([string]$$scope) { $$p = [Environment]::GetEnvironmentVariable(''Path'', $$scope); if ($$null -eq $$p -or $$p -eq '''') { return 0 }; $$parts = @(@($$p -split [char]59) | Where-Object { $$_ -and ($$_.TrimEnd([char]92) -ine $$d) }); $$new = $$parts -join [char]59; if ($$new -eq $$p) { return 0 }; [Environment]::SetEnvironmentVariable(''Path'', $$new, $$scope); return 1 }; try { [void](Remove-Dir ''Machine'') } catch {}; try { [void](Remove-Dir ''User'') } catch {}; exit 0"'
+  Pop $0
 !macroend
 
 !macro NSIS_HOOK_POSTINSTALL
   ; We set start= demand while replacing binaries; restore auto-start if the
   ; service still exists (GUI service mode). Ignore missing service.
-  DetailPrint "Restoring ET Gui service start type if present..."
+  DetailPrint "Restoring ET-Gui service start type if present..."
   nsExec::ExecToLog 'sc.exe config ET-Gui start= auto'
   Pop $0
-  nsExec::ExecToLog 'sc.exe config easytier-gui start= auto'
-  Pop $0
-  !insertmacro ET_MigrateGuiServiceBinPath
-  Pop $R2
-  ; The legacy shim (easytier-gui.exe = byte copy of ET.exe) only exists so a
-  ; service whose PathName still says easytier-gui.exe keeps working after this
-  ; install. When the migration above succeeded, nothing references the old
-  ; name any more, so writing the shim would only resurrect the duplicate that
-  ; users notice in Task Manager. Skipping it there is safe: every remaining
-  ; reference (service PathName, shortcuts) was retargeted to ET.exe.
-  ;
-  ; The shim is still created when migration failed - typically a per-user
-  ; install that could not elevate to run `sc config`. Dropping it in that case
-  ; would break Service mode on the next boot.
-  StrCmp $R2 "0" et_postinstall_shim_skip
-  IfFileExists "$INSTDIR\ET.exe" 0 et_postinstall_shim_done
-    DetailPrint "Service still references easytier-gui.exe; keeping legacy shim $INSTDIR\easytier-gui.exe (= ET.exe)..."
-    nsExec::ExecToLog 'cmd /c copy /Y "$INSTDIR\ET.exe" "$INSTDIR\easytier-gui.exe"'
-    Pop $0
-    Goto et_postinstall_shim_done
-  et_postinstall_shim_skip:
-    ; Migration succeeded: remove a shim left by an earlier version so the
-    ; install directory converges on the single ET.exe.
-    IfFileExists "$INSTDIR\easytier-gui.exe" 0 et_postinstall_shim_done
-      DetailPrint "Removing obsolete legacy shim $INSTDIR\easytier-gui.exe (service already points at ET.exe)..."
-      Delete "$INSTDIR\easytier-gui.exe"
-  et_postinstall_shim_done:
-  ; Leftover from an older unlock-by-rename; a stale .bak must not force a reboot.
-  !insertmacro ET_TryDeleteBak "$INSTDIR\easytier-gui.exe.bak"
+  ; Ship ET-cli on PATH (new shells; reopen terminal after install/upgrade).
+  !insertmacro ET_AddInstallDirToPath
+!macroend
+
+!macro NSIS_HOOK_POSTUNINSTALL
+  ; Skip during in-place update: POSTINSTALL of the new build re-asserts PATH.
+  StrCmp $UpdateMode 1 et_path_rm_skip
+    !insertmacro ET_RemoveInstallDirFromPath
+  et_path_rm_skip:
 !macroend
 
 !macro ET_PurgeStaleBackups
@@ -480,7 +433,6 @@
   ; is still locked - the retry loop just logs and moves on.
   DetailPrint "Purging stale .bak files from a previous install..."
   !insertmacro ET_TryDeleteBak "$INSTDIR\ET.exe.bak"
-  !insertmacro ET_TryDeleteBak "$INSTDIR\easytier-gui.exe.bak"
   !insertmacro ET_TryDeleteBak "$INSTDIR\Packet.dll.bak"
   !insertmacro ET_TryDeleteBak "$INSTDIR\wintun.dll.bak"
   !insertmacro ET_TryDeleteBak "$INSTDIR\WinDivert64.sys.bak"

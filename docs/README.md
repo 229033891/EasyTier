@@ -96,7 +96,7 @@ crate 内设计稿（非本索引）：`easytier/docs/`（凭据计划已标 Arc
 | 文档 | 说明 |
 |------|------|
 | [web-build-deploy.md](./ops/web-build-deploy.md) | Web 打包与 Win/Linux 部署 |
-| [windows-build-pack.md](./ops/windows-build-pack.md) | Windows 一键打包：GUI NSIS + 无头 `ET-windows-*`（对齐 CI） |
+| [windows-build-pack.md](./ops/windows-build-pack.md) | Windows 一键打包：GUI NSIS（含 `ET-cli`）+ 无头 `ET-windows-*`（对齐 CI） |
 | [windows-msvc-local-build.md](./ops/windows-msvc-local-build.md) | Windows 本机 MSVC：已装 Build Tools 仍编不过时，先 vcvars 再 cargo |
 | [web-upgrade.md](./ops/web-upgrade.md) | Web 现网升级与保库 |
 | [deploy-install.md](./ops/deploy-install.md) | 安装脚本用法 |

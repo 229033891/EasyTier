@@ -3,7 +3,7 @@
 ## Status
 
 - Status: **Ops**
-- 最近审阅：2026-10-09
+- 最近审阅：2026-10-28（补充：飞牛上项目目录/容器名常与示例不同）
 - 索引：[`../README.md`](../README.md)
 - 配套：仓库根目录 [`docker-compose.yml`](../../docker-compose.yml)
 
@@ -151,11 +151,12 @@ sudo docker compose --profile console up -d
 
 ## 3. 飞牛 NAS UI 简要说明
 
-1. 文件管理：把 `docker-compose.yml` 放到 `/vol1/<uid>/docker/easytier/`（`config` 可由 `docker-up.sh` 自动创建）  
-2. Docker → **项目 / Compose** → 从该路径创建项目  
+1. 文件管理：把 `docker-compose.yml` 放到 `/vol1/<uid>/docker/<项目名>/`（示例常用 `easytier`；飞牛里也可能是 `et` 等，以实际为准。`config` 可由 `docker-up.sh` 自动创建）  
+2. Docker → **项目 / Compose** → 从该路径创建项目；**容器名**可能是 `et-node`、`fnnas_et` 等（看 `container_name` / UI），不要写死  
 3. **只跑节点**：直接「启动」→ 等价 `docker compose up -d`  
 4. **还要控制台**：若 UI 支持 profile，勾选 `console`；否则 SSH 执行 §2.3  
-5. 节点连**远程**控制台时，无需在 NAS 上起 `console`
+5. 节点连**远程**控制台时，无需在 NAS 上起 `console`  
+6. **找不到目录时**（SSH）：`sudo docker ps -a` 看镜像/名；`sudo find /vol1 -maxdepth 5 -name docker-compose.yml` 找 compose；再用 `sudo docker exec <容器名> ET-core --version` 核对版本
 
 ---
 

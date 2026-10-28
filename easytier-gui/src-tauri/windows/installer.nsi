@@ -352,7 +352,7 @@ Function PageLeaveReinstall
  ${EndIf}
  ; Stop ET-Gui / tray and unlock the main exe BEFORE the old uninstall.exe
  ; runs. Required when upgrading over a build whose PREUNINSTALL hooks were
- ; too weak to release ET.exe / legacy easytier-gui.exe (Tauri then pops "Unable to uninstall!").
+ ; too weak to release ET.exe (Tauri then pops "Unable to uninstall!").
  !ifmacrodef ET_EnsureGuiStopped
    !insertmacro ET_EnsureGuiStopped
  !endif
