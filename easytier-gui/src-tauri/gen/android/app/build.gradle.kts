@@ -71,6 +71,9 @@ android {
             // v2-only APKs install on stock Android but fail with "no signature file".
             enableV1Signing = true
             enableV2Signing = true
+            // Android 9+ installers prefer v3. Additive: v1/v2/v3 coexist, so devices
+            // that only understand older schemes keep working.
+            enableV3Signing = true
         }
     }
     buildTypes {

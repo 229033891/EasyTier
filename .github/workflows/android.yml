@@ -184,6 +184,58 @@ jobs:
           mv ./artifacts/objects/* ./artifacts/
           rm -rf ./artifacts/objects/
 
+      - name: Verify APK signatures
+        # Regression guard for the "安装包没有签名文件" report: OEM installers need the
+        # v1 JAR signature (META-INF/*.RSA), and a signing config that silently produces
+        # a v2-only APK is otherwise only noticed by end users. keytool re-computes every
+        # JAR digest, so a repacked APK is caught here too.
+        run: |
+          set -euo pipefail
+          # Newest installed build-tools (the workflow installs build-tools;34.0.0).
+          SDK="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
+          APKSIGNER="$(ls -d "$SDK"/build-tools/*/apksigner 2>/dev/null | sort -V | tail -1 || true)"
+          if [[ -z "${APKSIGNER}" || ! -x "${APKSIGNER}" ]]; then
+            echo "::error::apksigner not found under $SDK/build-tools"
+            exit 1
+          fi
+          echo "Using ${APKSIGNER}"
+
+          shopt -s nullglob
+          apks=(./artifacts/*.apk)
+          if (( ${#apks[@]} == 0 )); then
+            echo "::error::no APK under ./artifacts — nothing was built"
+            exit 1
+          fi
+
+          for apk in "${apks[@]}"; do
+            name="$(basename "$apk")"
+            echo "::group::Verify ${name}"
+
+            # v1: JAR signature present and every MANIFEST entry digest valid.
+            if ! keytool -printcert -jarfile "$apk" > /dev/null 2>&1; then
+              echo "::error::${name} has no valid v1 JAR signature (META-INF/*.RSA); OEM installers reject it as unsigned"
+              exit 1
+            fi
+
+            # v2/v3: signing block must verify, and v1/v2 must be reported as verified.
+            report="$("${APKSIGNER}" verify --verbose --print-certs "$apk")" || {
+              echo "::error::${name} failed apksigner verification"
+              exit 1
+            }
+            echo "$report"
+            grep -q 'Verified using v1 scheme (JAR signing): true' <<<"${report}" || {
+              echo "::error::${name} is missing the v1 (JAR) signature"
+              exit 1
+            }
+            grep -q 'Verified using v2 scheme (APK Signature Scheme v2): true' <<<"${report}" || {
+              echo "::error::${name} is missing the v2 (APK Signature Scheme v2) signature"
+              exit 1
+            }
+            # v3 is best-effort (Android 9+ installers); do not fail the build on it.
+            grep 'Verified using v3 scheme (APK Signature Scheme v3):' <<<"${report}" || true
+            echo "::endgroup::"
+          done
+
       - name: Archive artifact
         uses: actions/upload-artifact@v7
         with:
