@@ -72,7 +72,7 @@ jobs:
 
   build-bins:
     # 先编译 x86_64 musl 静态二进制, 供 easytier apk 打包用.
-    # 包含 easytier-core + easytier-cli (+ easytier-web-embed, LuCI 自建控制台用).
+    # 产出 ET-core + ET-cli (+ ET-web-embed, LuCI 自建控制台用); 与 Release/Docker 同名.
     runs-on: ubuntu-24.04
     needs: pre_job
     if: needs.pre_job.outputs.should_skip != 'true'
@@ -120,16 +120,26 @@ jobs:
           # install-upx.sh runs in a subshell; use UPX_INSTALL_DIR for this step
           bash script/install-upx.sh
           UPX_BIN="${UPX_INSTALL_DIR}/upx"
-          for BIN in ./target/x86_64-unknown-linux-musl/release/easytier-{core,cli,web-embed}; do
+          # OpenWrt install names match Release/Docker: ET-core / ET-cli / ET-web-embed
+          declare -A RENAME=(
+            [easytier-core]=ET-core
+            [easytier-cli]=ET-cli
+            [easytier-web-embed]=ET-web-embed
+          )
+          for SRC in easytier-core easytier-cli easytier-web-embed; do
+            BIN="./target/x86_64-unknown-linux-musl/release/${SRC}"
             if [[ -f "$BIN" ]]; then
               if [[ -x "$UPX_BIN" ]]; then
                 # Default UPX level (was --lzma --best); compare artifact size on next run.
                 "$UPX_BIN" "$BIN" || true
               fi
-              cp "$BIN" bins/
+              cp "$BIN" "bins/${RENAME[$SRC]}"
             fi
           done
           ls -l bins/
+          test -f bins/ET-core
+          test -f bins/ET-cli
+          test -f bins/ET-web-embed
 
       - name: Archive bins
         uses: actions/upload-artifact@v7
@@ -259,12 +269,13 @@ jobs:
           old_end = text.index("endef", old_start) + len("endef")
           new_block = (
               # Absolute path inside the SDK container feed mount (FEED_DIR -> /feed).
+              # Binaries use Release names (ET-*); feed Makefile installs them as-is.
               "EASYTIER_FEED_DIR:=/feed/easytier/\n"
               "define Build/Prepare\n"
               "\tmkdir -p $(PKG_BUILD_DIR)\n"
-              "\t$(CP) $(EASYTIER_FEED_DIR)bins/easytier-core $(PKG_BUILD_DIR)/\n"
-              "\t$(CP) $(EASYTIER_FEED_DIR)bins/easytier-cli $(PKG_BUILD_DIR)/\n"
-              "\t-$(CP) $(EASYTIER_FEED_DIR)bins/easytier-web-embed $(PKG_BUILD_DIR)/easytier-web-embed\n"
+              "\t$(CP) $(EASYTIER_FEED_DIR)bins/ET-core $(PKG_BUILD_DIR)/\n"
+              "\t$(CP) $(EASYTIER_FEED_DIR)bins/ET-cli $(PKG_BUILD_DIR)/\n"
+              "\t-$(CP) $(EASYTIER_FEED_DIR)bins/ET-web-embed $(PKG_BUILD_DIR)/\n"
               "endef"
           )
           mk.write_text(text[:old_start] + new_block + text[old_end:])
