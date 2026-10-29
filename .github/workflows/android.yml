@@ -191,7 +191,9 @@ jobs:
         # JAR digest, so a repacked APK is caught here too.
         run: |
           set -euo pipefail
-          # Newest installed build-tools (the workflow installs build-tools;34.0.0).
+          # Newest build-tools available on the runner. The workflow installs
+          # build-tools;34.0.0, but runner images may ship newer revisions (e.g. 37) and
+          # any apksigner that knows v2+v3 schemes verifies the same set here.
           SDK="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
           APKSIGNER="$(ls -d "$SDK"/build-tools/*/apksigner 2>/dev/null | sort -V | tail -1 || true)"
           if [[ -z "${APKSIGNER}" || ! -x "${APKSIGNER}" ]]; then
@@ -218,7 +220,13 @@ jobs:
             fi
 
             # v2/v3: signing block must verify, and v1/v2 must be reported as verified.
-            report="$("${APKSIGNER}" verify --verbose --print-certs "$apk")" || {
+            # --min-sdk-version 23 matters: for an APK whose manifest minSdkVersion >= 24,
+            # apksigner skips JAR (v1) verification entirely once v2/v3 signatures are found
+            # (apksig ApkVerifier does not run V1SchemeVerifier in that range) and the -v
+            # report then shows "Verified using v1 scheme: false" even for a perfectly
+            # valid JAR signature. Forcing the range to start below API 24 makes apksigner
+            # actually verify the JAR signature, so the v1 grep below is deterministic.
+            report="$("${APKSIGNER}" verify --verbose --print-certs --min-sdk-version 23 "$apk")" || {
               echo "::error::${name} failed apksigner verification"
               exit 1
             }
