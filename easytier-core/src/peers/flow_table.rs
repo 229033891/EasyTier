@@ -536,7 +536,9 @@ impl FlowTable {
     /// * masked views merge the entries that share a prefix and report how many
     ///   distinct IPs were merged (`flow_count`), so a consumer can still tell
     ///   "one host" from "fourteen hosts in this /24";
-    /// * the result is sorted by bytes (descending) and truncated to `top_n`.
+    /// * the result is truncated to `top_n` with **direction-fair** slots
+    ///   (TX/RX each get about half; a short side yields leftovers to the
+    ///   other), then sorted by bytes descending.
     pub fn snapshot(&self, view: FlowView, top_n: usize) -> Vec<FlowSnapshot> {
         self.build_snapshot(view, top_n, None)
     }
@@ -551,7 +553,7 @@ impl FlowTable {
         self.build_snapshot(view, top_n, Some(conn_id))
     }
 
-    /// 单次遍历把所有条目按 conn_id 分桶，每条隧道取 top_n。
+    /// 单次遍历把所有条目按 conn_id 分桶，每条隧道取 top_n（TX/RX 公平截断）。
     ///
     /// 对比 `snapshot_for_conn` 逐隧道扫描（O(隧道数 × 条目数)），
     /// 这里只遍历一次表（O(条目数)），适合一次性给所有隧道附 flows。
@@ -612,14 +614,13 @@ impl FlowTable {
                 .max(entry.last_seen_ms.load(Ordering::Relaxed));
         }
 
-        // 按 conn_id 分桶，每桶按 bytes 降序截断到 top_n。
+        // 按 conn_id 分桶，每桶 TX/RX 公平截断到 top_n。
         let mut buckets: HashMap<PeerConnId, Vec<FlowSnapshot>> = HashMap::new();
         for snapshot in merged.into_values() {
             buckets.entry(snapshot.conn_id).or_default().push(snapshot);
         }
         for flows in buckets.values_mut() {
-            flows.sort_by_key(|s| std::cmp::Reverse(s.bytes));
-            flows.truncate(top_n);
+            truncate_top_n_fair_by_direction(flows, top_n);
         }
         buckets
     }
@@ -687,10 +688,62 @@ impl FlowTable {
         }
 
         let mut out: Vec<FlowSnapshot> = merged.into_values().collect();
-        out.sort_by_key(|s| std::cmp::Reverse(s.bytes));
-        out.truncate(top_n);
+        truncate_top_n_fair_by_direction(&mut out, top_n);
         out
     }
+}
+
+/// Keep at most `top_n` flows, splitting slots fairly between TX and RX.
+///
+/// TX gets `ceil(top_n / 2)`, RX gets `floor(top_n / 2)`. If one side cannot
+/// fill its quota, the leftover slots go to the other side. The final list is
+/// sorted by cumulative bytes descending so UI/RPC consumers keep a stable
+/// "busiest first" order.
+fn truncate_top_n_fair_by_direction(flows: &mut Vec<FlowSnapshot>, top_n: usize) {
+    if top_n == 0 {
+        flows.clear();
+        return;
+    }
+    if flows.len() <= top_n {
+        flows.sort_by_key(|s| std::cmp::Reverse(s.bytes));
+        return;
+    }
+
+    let mut tx = Vec::new();
+    let mut rx = Vec::new();
+    for snap in flows.drain(..) {
+        match snap.dir {
+            FlowDirection::Tx => tx.push(snap),
+            FlowDirection::Rx => rx.push(snap),
+        }
+    }
+    tx.sort_by_key(|s| std::cmp::Reverse(s.bytes));
+    rx.sort_by_key(|s| std::cmp::Reverse(s.bytes));
+
+    let tx_quota = top_n.div_ceil(2);
+    let rx_quota = top_n / 2;
+    let mut tx_take = tx.len().min(tx_quota);
+    let mut rx_take = rx.len().min(rx_quota);
+    let rem = top_n.saturating_sub(tx_take + rx_take);
+    if rem > 0 {
+        if tx_take < tx_quota {
+            // TX short → leftover to RX.
+            rx_take = (rx_take + rem).min(rx.len());
+        } else if rx_take < rx_quota {
+            // RX short → leftover to TX.
+            tx_take = (tx_take + rem).min(tx.len());
+        } else {
+            // Both met quota but still rem (should not happen when quotas sum
+            // to top_n); prefer TX so outbound stays visible for policy checks.
+            let to_tx = rem.min(tx.len().saturating_sub(tx_take));
+            tx_take += to_tx;
+            rx_take = (rx_take + rem.saturating_sub(to_tx)).min(rx.len());
+        }
+    }
+
+    flows.extend(tx.into_iter().take(tx_take));
+    flows.extend(rx.into_iter().take(rx_take));
+    flows.sort_by_key(|s| std::cmp::Reverse(s.bytes));
 }
 
 /// Current wall clock in unix milliseconds (0 if the clock is unavailable).
@@ -1183,6 +1236,58 @@ mod tests {
         assert_eq!(snaps.len(), 2);
         assert_eq!(snaps[0].bytes, 1000);
         assert_eq!(snaps[1].bytes, 100);
+    }
+
+    /// Heavy RX must not crowd every top-N slot: policy checks need TX rows.
+    #[test]
+    fn snapshot_keeps_tx_when_rx_dominates_bytes() {
+        let t = table();
+        // 8 large RX flows would fill a naive top-10 alone.
+        for i in 1..=8u8 {
+            t.record(conn(1), 7, ip(i), FlowDirection::Rx, 10_000, 1, 1000);
+        }
+        // 3 small TX flows — all would be dropped without direction-fair cut.
+        for i in 20..=22u8 {
+            t.record(conn(1), 7, ip(i), FlowDirection::Tx, 10, 1, 1000);
+        }
+
+        let snaps = t.snapshot(FlowView::Exact, 10);
+        assert_eq!(snaps.len(), 10);
+        let tx_count = snaps.iter().filter(|s| s.dir == FlowDirection::Tx).count();
+        let rx_count = snaps.iter().filter(|s| s.dir == FlowDirection::Rx).count();
+        assert_eq!(tx_count, 3, "all TX rows must survive when under TX quota");
+        assert_eq!(rx_count, 7, "RX fills remaining slots after TX shortfall");
+
+        let per_conn = t.snapshot_all_conns(FlowView::Exact, 10);
+        let conn_snaps = per_conn.get(&conn(1)).expect("conn bucket");
+        assert_eq!(
+            conn_snaps
+                .iter()
+                .filter(|s| s.dir == FlowDirection::Tx)
+                .count(),
+            3
+        );
+    }
+
+    #[test]
+    fn snapshot_fair_split_reserves_half_each_direction() {
+        let t = table();
+        for i in 1..=8u8 {
+            t.record(conn(1), 7, ip(i), FlowDirection::Rx, 10_000, 1, 1000);
+        }
+        for i in 20..=27u8 {
+            t.record(conn(1), 7, ip(i), FlowDirection::Tx, 10, 1, 1000);
+        }
+        let snaps = t.snapshot(FlowView::Exact, 10);
+        assert_eq!(snaps.len(), 10);
+        assert_eq!(
+            snaps.iter().filter(|s| s.dir == FlowDirection::Tx).count(),
+            5
+        );
+        assert_eq!(
+            snaps.iter().filter(|s| s.dir == FlowDirection::Rx).count(),
+            5
+        );
     }
 
     #[test]

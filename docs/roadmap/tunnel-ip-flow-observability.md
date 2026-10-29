@@ -3,7 +3,7 @@
 ## Status
 
 - Status: **Roadmap / Phase 1 + Phase 2 + Phase 3 已落地**（D1-D16 全部拍板；§13 为 Phase 1 实现级附录；§14 为 Phase 0 实测结果；§15/§16/§17 为实施记录；仅剩 Phase 4 告警，D16 本期不做）
-- 最近审阅：2026-10-23
+- 最近审阅：2026-10-29（节点 top-N：TX/RX 公平截断；运行页默认「发送」）
 - 已定决策：**D5（采集默认关）**、**D8/D9（精确 IP 默认不出节点；`flow_view` 缺省 MASKED）**、**D10（挂 `PeerConnInfo.flows` 字段）**、**D11（速率节点侧固定窗口算）**、D12 不审计 / D13 独立开关 / D14 前缀可配 / D15 支持 managed config / D16 本期不做告警；完整表见 §8
 - 归属：运行页（`Status.vue`）可观测性；关联 [`current/peer-connections.md`](../current/peer-connections.md)（多 PeerConn 与 `default_conn`）、[`current/traffic-steering.md`](../current/traffic-steering.md)（出口/子网代理语义）、[`roadmap/web-console-log-persistence.md`](./web-console-log-persistence.md)（控制台日志留存）、[`roadmap/poll-to-push-roi.md`](./poll-to-push-roi.md)（轮询→推送）
 - 范围：`easytier-core`（记账）+ `easytier-proto`（字段）+ `easytier-web/frontend-lib`（运行页展示）+ `easytier-web`（可选历史采样）
@@ -516,7 +516,7 @@ pub enum FlowView { Exact, Masked { v4_prefix: u8, v6_prefix: u8 } }
 
 要点：
 - `record()` 里做抽样判定（`sample_rate`）+ 上限判定；**上限判定必须 O(1) 摊销**（不要每次遍历）→ 用 `per_conn_counts: DashMap<PeerConnId, usize>` 计数，超限才触发一次淘汰扫描。
-- `snapshot()` 的掩码聚合：把同 `(conn_id, dir, prefix)` 的条目合并（字节/包求和，`flow_count` = 合并条目数），**再**做 top-N 截断。
+- `snapshot()` 的掩码聚合：把同 `(conn_id, dir, prefix)` 的条目合并（字节/包求和，`flow_count` = 合并条目数），**再**做 top-N 截断；截断按 **TX/RX 公平分槽**（各约 `top_n/2`，一侧不足由另一侧补满），避免下行挤掉发送（策略验证依赖 TX）。
 - `FlowTable` 挂在 `PeerManagerCore` 上（与 `traffic_metrics` 同级），通过 `Arc<FlowTable>` 下发给 `Peer`/`PeerConn`。
 
 ### 13.3 TX 记账点
@@ -781,7 +781,7 @@ enum FlowView {
 8. `masked_view_merges_prefixes_and_counts_flows`（用例 9）
 9. `rate_window_is_independent_of_polling_cadence`（用例 10）
 10. `rx_records_the_source_ip_of_the_inner_packet` / `rx_ignores_non_ip_payloads`
-11. `snapshot_is_truncated_and_sorted_by_bytes`
+11. `snapshot_is_truncated_and_sorted_by_bytes` / `snapshot_keeps_tx_when_rx_dominates_bytes` / `snapshot_fair_split_reserves_half_each_direction`（TX/RX 公平 top-N）
 12. `parse_inner_ips_handles_v4_and_v6` / `mask_ip_truncates_to_prefix`
 13. `tx_flow_is_attributed_to_the_selected_tunnel`（**端到端**：真实 `Peer::send_msg` 路径 + 内存隧道对端，断言记账落在正确的 PeerConn 上）
 

@@ -39,11 +39,15 @@ import {
   type RouteTableKind,
   type VipStateKey,
 } from '../modules/statusDisplay';
-import { Badge, DataTable, Column, Tag, Card, Panel, InputText } from 'primevue';
+import { Badge, DataTable, Column, Tag, Card, Panel, InputText, SelectButton } from 'primevue';
 import NetworkChart from './NetworkChart.vue';
 import PeerConnHistoryChart from './PeerConnHistoryChart.vue';
 import FlowHistoryChart from './FlowHistoryChart.vue';
-import { filterFlowPanelRows } from '../modules/flowPanelFilter';
+import {
+  filterFlowPanelRows,
+  type FlowPanelDirectionFilter,
+  type FlowPanelDirectionKey,
+} from '../modules/flowPanelFilter';
 
 const props = defineProps<{
   curNetworkInst: NetworkInstance | null,
@@ -206,8 +210,12 @@ function flowIpLabel(flow: PeerConnFlow): string {
   return flow.ip
 }
 
+function flowDirectionKey(flow: PeerConnFlow): FlowPanelDirectionKey {
+  return flow.direction === 0 ? 'tx' : 'rx'
+}
+
 function flowDirectionLabel(flow: PeerConnFlow): string {
-  return flow.direction === 0 ? t('status.flow_tx') : t('status.flow_rx')
+  return flowDirectionKey(flow) === 'tx' ? t('status.flow_tx') : t('status.flow_rx')
 }
 
 function flowBytesLabel(flow: PeerConnFlow): string {
@@ -227,6 +235,7 @@ type FlowPanelRow = {
   peer: string
   proto: string
   direction: string
+  dirKey: FlowPanelDirectionKey
   ip: string
   bytes: string
   rate: string
@@ -255,6 +264,7 @@ const flowPanelRows = computed((): FlowPanelRow[] => {
         peer,
         proto,
         direction: flowDirectionLabel(flow),
+        dirKey: flowDirectionKey(flow),
         ip: flowIpLabel(flow),
         bytes: flowBytesLabel(flow),
         rate: flowRateLabel(flow),
@@ -269,8 +279,20 @@ const flowPanelRows = computed((): FlowPanelRow[] => {
 
 /** Local search for the flow panel (peer / IP / direction). */
 const flowFilterQuery = ref('')
+/** Default TX: policy-route checks care about outbound paths first. */
+const flowDirectionFilter = ref<FlowPanelDirectionFilter>('tx')
+const flowDirectionOptions = computed(() => [
+  { label: t('status.flow_filter_all'), value: 'all' as const },
+  { label: t('status.flow_tx'), value: 'tx' as const },
+  { label: t('status.flow_rx'), value: 'rx' as const },
+])
 const filteredFlowPanelRows = computed(() =>
-  filterFlowPanelRows(flowPanelRows.value, flowFilterQuery.value),
+  filterFlowPanelRows(
+    flowPanelRows.value,
+    flowFilterQuery.value,
+    flowDirectionFilter.value,
+    row => row.dirKey,
+  ),
 )
 
 function rowTunnelProto(row: PeerConnTableRow) {
@@ -1167,27 +1189,61 @@ const eventLogContent = computed(() => {
           </div>
         </Panel>
 
-        <Panel v-model:collapsed="panelCollapsed.flowStats" :header="t('status.flow_panel')"
+        <Panel v-model:collapsed="panelCollapsed.flowStats"
           toggleable
           class="status-panel"
           :class="{ 'status-panel--expanded': !panelCollapsed.flowStats }"
           :pt="panelHeaderPt('flowStats')">
+          <template #header>
+            <div class="flow-panel-header">
+              <span class="flow-panel-title">{{ t('status.flow_panel') }}</span>
+              <div
+                v-if="flowPanelRows.length"
+                class="flow-filter-header"
+                @click.stop
+                @mousedown.stop
+              >
+                <SelectButton
+                  v-model="flowDirectionFilter"
+                  :options="flowDirectionOptions"
+                  option-label="label"
+                  option-value="value"
+                  :allow-empty="false"
+                  class="flow-dir-select"
+                  :aria-label="t('status.flow_direction')"
+                />
+                <div class="flow-filter-input-wrap">
+                  <InputText
+                    v-model="flowFilterQuery"
+                    class="flow-filter-input"
+                    :placeholder="t('status.flow_filter_placeholder')"
+                    fluid
+                  />
+                  <button
+                    v-if="flowFilterQuery.length"
+                    type="button"
+                    class="flow-filter-clear"
+                    :aria-label="t('status.flow_filter_clear')"
+                    :title="t('status.flow_filter_clear')"
+                    @click.stop="flowFilterQuery = ''"
+                  >
+                    <i class="pi pi-times" aria-hidden="true" />
+                  </button>
+                </div>
+                <span
+                  v-if="flowFilterQuery.trim() || flowDirectionFilter !== 'all'"
+                  class="flow-filter-count"
+                >
+                  {{ filteredFlowPanelRows.length }}/{{ flowPanelRows.length }}
+                </span>
+              </div>
+            </div>
+          </template>
           <div class="status-panel-body">
             <div v-if="!flowPanelRows.length" class="status-empty">
               {{ t('status.flow_panel_empty') }}
             </div>
             <template v-else>
-              <div class="flow-filter-bar">
-                <InputText
-                  v-model="flowFilterQuery"
-                  class="flow-filter-input"
-                  :placeholder="t('status.flow_filter_placeholder')"
-                  fluid
-                />
-                <span v-if="flowFilterQuery.trim()" class="flow-filter-count">
-                  {{ filteredFlowPanelRows.length }}/{{ flowPanelRows.length }}
-                </span>
-              </div>
               <div v-if="!filteredFlowPanelRows.length" class="status-empty">
                 {{ t('status.flow_filter_empty') }}
               </div>
@@ -1667,23 +1723,95 @@ const eventLogContent = computed(() => {
   background: color-mix(in srgb, var(--text-color, #0f172a) 6%, var(--surface-ground, #ffffff));
 }
 
-.flow-filter-bar {
+.flow-panel-header {
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  margin-bottom: 0.5rem;
+  flex: 1 1 auto;
+  min-width: 0;
+  width: 100%;
 }
 
-.flow-filter-input {
+.flow-panel-title {
+  flex: 0 0 auto;
+}
+
+.status-panels :deep(.p-panel .p-panel-header .flow-filter-header) {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: 32rem;
+  margin-left: auto;
+  font-size: var(--et-fs-meta, 0.8125rem);
+  font-weight: 400;
+  color: var(--text-color-secondary, #334155);
+}
+
+.status-panels :deep(.p-panel .p-panel-header .flow-dir-select) {
+  flex: 0 0 auto;
+}
+
+.status-panels :deep(.p-panel .p-panel-header .flow-dir-select .p-togglebutton) {
+  padding: 0.1rem 0.45rem;
+  font-size: var(--et-fs-meta, 0.8125rem);
+  font-weight: 500;
+  line-height: 1.35;
+}
+
+.flow-filter-input-wrap {
+  position: relative;
   flex: 1 1 auto;
   min-width: 0;
 }
 
-.flow-filter-count {
+.status-panels :deep(.p-panel .p-panel-header .flow-filter-input-wrap .p-inputtext),
+.status-panels :deep(.p-panel .p-panel-header .flow-filter-input) {
+  width: 100%;
+  min-width: 0;
+  padding-block: 0.15rem;
+  padding-inline: 0.5rem 1.75rem;
+  font-size: var(--et-fs-meta, 0.8125rem);
+  font-weight: 400;
+  line-height: 1.35;
+  color: var(--text-color, #0f172a);
+}
+
+.status-panels :deep(.p-panel .p-panel-header .flow-filter-clear) {
+  position: absolute;
+  right: 0.2rem;
+  top: 50%;
+  transform: translateY(-50%);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.35rem;
+  height: 1.35rem;
+  padding: 0;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-color-secondary, #64748b);
+  cursor: pointer;
+  font-size: 0.7rem;
+  line-height: 1;
+}
+
+.status-panels :deep(.p-panel .p-panel-header .flow-filter-clear:hover),
+.status-panels :deep(.p-panel .p-panel-header .flow-filter-clear:focus-visible) {
+  color: var(--text-color, #0f172a);
+  background: color-mix(in srgb, var(--text-color, #0f172a) 8%, transparent);
+  outline: none;
+}
+
+.status-panels :deep(.p-panel .p-panel-header .flow-filter-count) {
   flex: 0 0 auto;
   color: var(--text-color-secondary, #334155);
   font-size: var(--et-fs-meta, 0.8125rem);
+  font-weight: 400;
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 .flow-estimated {

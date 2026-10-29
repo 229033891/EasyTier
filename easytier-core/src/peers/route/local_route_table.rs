@@ -380,16 +380,25 @@ pub struct PeerCostInfo {
 }
 
 /// Build the management-plane view for every rule in `snap`.
+///
+/// Sugar `/0` is an internal slot so a later hot-patched `exit_nodes` list can
+/// fill candidates without rebuilding the table. When **no** exit nodes are
+/// configured, that placeholder has nothing to show and only confuses the
+/// status page / CLI — so it is omitted here. The dataplane rule itself stays.
 pub fn collect_effective_policy_routes(
     snap: &LocalRouteSnapshot,
     exit_nodes: &[IpAddr],
 ) -> Vec<EffectivePolicyRouteInfo> {
     snap.rules
         .iter()
-        .map(|r| {
-            let candidates = merged_candidates(&r.rule, exit_nodes);
+        .filter_map(|r| {
             let sugar = r.rule.id == u32::MAX;
-            EffectivePolicyRouteInfo {
+            // Hide unused sugar when the operator never configured exit nodes.
+            if sugar && exit_nodes.is_empty() {
+                return None;
+            }
+            let candidates = merged_candidates(&r.rule, exit_nodes);
+            Some(EffectivePolicyRouteInfo {
                 rule_id: r.rule.id,
                 cidr: r.rule.cidr.map(|c| c.to_string()),
                 domains: r
@@ -425,7 +434,7 @@ pub fn collect_effective_policy_routes(
                     })
                     .collect(),
                 sugar,
-            }
+            })
         })
         .collect()
 }
@@ -2661,6 +2670,26 @@ mod tests {
             vec!["10.144.0.10".to_string()]
         );
         assert_eq!(views[1].cidr.as_deref(), Some("0.0.0.0/0"));
+    }
+
+    /// Empty `exit_nodes` must not surface the sugar `/0` placeholder on the
+    /// status page — the dataplane still keeps the slot for a later hot patch.
+    #[test]
+    fn effective_policy_routes_hide_sugar_when_exit_nodes_empty() {
+        let policy = validated_policy(Some("10.0.0.0/24"), &["10.144.0.9"]);
+        let rules = build_rules_from_config(&[policy], &[]).unwrap();
+        assert_eq!(rules.len(), 2, "dataplane still synthesizes sugar /0");
+        assert_eq!(rules[1].id, u32::MAX);
+
+        let mut snap = build_snapshot(rules);
+        snap.rules[0].active_peer = Some(9);
+        snap.rules[0].state = RuleState::Stable;
+        snap.rules[1].state = RuleState::Degraded;
+
+        let views = collect_effective_policy_routes(&snap, &[]);
+        assert_eq!(views.len(), 1);
+        assert!(!views[0].sugar);
+        assert_eq!(views[0].config_peers, vec!["10.144.0.9".to_string()]);
     }
 
     /// A default-route rule that also carries `domains` would hand the exit
