@@ -2083,15 +2083,13 @@ download_and_install_binaries() {
 }
 
 # Web console: ET-linux-<arch>-web-<tag>.zip (legacy: ET-web-linux-<arch>-<tag>.zip).
+# Always download+replace: triad headless zip no longer embeds this binary, and
+# skipping when the file already exists left server upgrades stuck on old Web.
 download_and_install_web_embed() {
   local arch="$1"
   local tag="${2:-}"
   [[ -n "$tag" ]] || tag="${INSTALLED_VERSION:-}"
   [[ -n "$tag" ]] || tag="$(get_latest_release_tag)"
-
-  if [[ -f "${INSTALL_PATH}/ET-web-embed" ]]; then
-    return 0
-  fi
 
   local asset="ET-linux-${arch}-web-${tag}.zip"
   local asset_legacy="ET-web-linux-${arch}-${tag}.zip"
@@ -2470,12 +2468,10 @@ EOF
 }
 
 install_server() {
-  if [[ ! -f "$INSTALL_PATH/ET-web-embed" ]]; then
-    download_and_install_web_embed "$(detect_arch)" "${INSTALLED_VERSION:-}" || {
-      err "缺少 ET-web-embed（无头包已不含控制台；请确认 Release 有 ET-linux-*-web）"
-      exit 1
-    }
-  fi
+  download_and_install_web_embed "$(detect_arch)" "${INSTALLED_VERSION:-}" || {
+    err "缺少 ET-web-embed（无头包已不含控制台；请确认 Release 有 ET-linux-*-web）"
+    exit 1
+  }
   [[ -f "$INSTALL_PATH/ET-web-embed" ]] || { err "缺少 ET-web-embed"; exit 1; }
 
   # Stop/disable any pre-rename units so ports are free and only ET-* remain
@@ -3146,12 +3142,11 @@ cmd_update() {
 
   # Rewrite systemd units（与 install 相同的 write_* 路径，含 NAT 标志）
   if [[ "$had_web" == "yes" ]]; then
-    if [[ ! -f "${INSTALL_PATH}/ET-web-embed" ]]; then
-      download_and_install_web_embed "$arch" "${INSTALLED_VERSION:-}" || {
-        err "更新包缺少 ET-web-embed（请确认 Release 有 ET-linux-*-web）"
-        exit 1
-      }
-    fi
+    # Always refresh Web embed (separate Release asset since triad split).
+    download_and_install_web_embed "$arch" "${INSTALLED_VERSION:-}" || {
+      err "更新包缺少 ET-web-embed（请确认 Release 有 ET-linux-*-web）"
+      exit 1
+    }
     [[ -f "${INSTALL_PATH}/ET-web-embed" ]] || { err "更新包缺少 ET-web-embed"; exit 1; }
     if [[ -z "${PUBLIC_HOST:-}" ]]; then
       err "无法解析控制台地址，请加参数: --public-host <域名或IP>"
