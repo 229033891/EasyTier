@@ -11,11 +11,21 @@
 //!   downgraded to `MASKED` unless the node itself is configured with
 //!   `flow_stats_allow_exact_ip` (decision D13).
 
+use std::collections::HashMap;
+
 use crate::peers::flow_table::{FlowSnapshot, FlowTable, FlowView};
-use crate::proto::api::instance::{FlowView as ProtoFlowView, PeerConnFlow, PeerConnInfo};
+use crate::proto::api::instance::{
+    FlowView as ProtoFlowView, PeerConnFlow, PeerConnInfo, PeerInfo,
+};
 
 /// How many flows are reported per tunnel.
 pub const FLOW_TOP_N_PER_CONN: usize = 10;
+
+/// Wire-ready flows keyed by PeerConnId. Built once per collect via
+/// [`snapshot_conn_flows`], then attached with [`attach_conn_flows`] /
+/// [`fill_peers_conn_flows`] so CollectNetworkInfo / ListPeer do not
+/// re-scan the whole table per peer (O(peers × entries) → O(entries)).
+pub type ConnFlowsById = HashMap<uuid::Uuid, Vec<PeerConnFlow>>;
 
 /// Convert the wire representation (prost uses `i32` for enums) into the
 /// typed view, ignoring unknown values.
@@ -48,26 +58,54 @@ pub fn resolve_flow_view_with_prefix(
     }
 }
 
-/// Attach the recorded flows of every tunnel to its `PeerConnInfo`.
+/// One full-table snapshot, converted to wire `PeerConnFlow` rows.
 ///
-/// The flows are grouped per tunnel; only the tunnels that actually carry
-/// traffic get entries, so an idle tunnel keeps an empty list (and therefore
-/// costs nothing on the wire).
-pub fn fill_conn_flows(conns: &mut [PeerConnInfo], table: &FlowTable, view: FlowView) {
+/// Empty when accounting is off. Callers that build a multi-peer response
+/// must use this **once**, then [`attach_conn_flows`] / [`fill_peers_conn_flows`].
+pub fn snapshot_conn_flows(table: &FlowTable, view: FlowView) -> ConnFlowsById {
     if !table.is_enabled() {
-        return;
+        return ConnFlowsById::new();
     }
-    // 单次遍历按 conn 分桶，避免 O(隧道数 × 条目数) 的重复扫描。
-    let per_conn = table.snapshot_all_conns(view, FLOW_TOP_N_PER_CONN);
+    table
+        .snapshot_all_conns(view, FLOW_TOP_N_PER_CONN)
+        .into_iter()
+        .map(|(conn_id, snaps)| (conn_id, snaps.iter().map(to_proto_flow).collect()))
+        .collect()
+}
+
+/// Attach precomputed flows onto a conn list (lookup by `conn_id`).
+pub fn attach_conn_flows(conns: &mut [PeerConnInfo], by_conn: &ConnFlowsById) {
     for conn in conns.iter_mut() {
         let Ok(conn_id) = conn.conn_id.parse::<uuid::Uuid>() else {
             continue;
         };
-        let Some(flows) = per_conn.get(&conn_id) else {
+        let Some(flows) = by_conn.get(&conn_id) else {
             continue;
         };
-        conn.flows = flows.iter().map(to_proto_flow).collect();
+        conn.flows = flows.clone();
     }
+}
+
+/// Snapshot the table once and fill every peer's tunnels.
+///
+/// Prefer this over calling [`fill_conn_flows`] inside a per-peer map.
+pub fn fill_peers_conn_flows(peers: &mut [PeerInfo], table: &FlowTable, view: FlowView) {
+    let by_conn = snapshot_conn_flows(table, view);
+    if by_conn.is_empty() {
+        return;
+    }
+    for peer in peers.iter_mut() {
+        attach_conn_flows(&mut peer.conns, &by_conn);
+    }
+}
+
+/// Attach the recorded flows of every tunnel to its `PeerConnInfo`.
+///
+/// Convenience for a **single** conn list (tests / one-off). For multi-peer
+/// collects use [`fill_peers_conn_flows`] so the table is scanned only once.
+pub fn fill_conn_flows(conns: &mut [PeerConnInfo], table: &FlowTable, view: FlowView) {
+    let by_conn = snapshot_conn_flows(table, view);
+    attach_conn_flows(conns, &by_conn);
 }
 
 fn to_proto_flow(snapshot: &FlowSnapshot) -> PeerConnFlow {
@@ -221,6 +259,57 @@ mod tests {
         assert_eq!(conns[1].flows[0].direction, 1);
         // An idle tunnel keeps an empty list.
         assert!(conns[2].flows.is_empty());
+    }
+
+    #[test]
+    fn fill_peers_conn_flows_snapshots_once_across_peers() {
+        let table = enabled_table();
+        table.record(
+            conn_id(1),
+            7,
+            IpAddr::V4(Ipv4Addr::new(10, 0, 0, 9)),
+            FlowDirection::Tx,
+            1200,
+            3,
+            1000,
+        );
+        table.record(
+            conn_id(2),
+            8,
+            IpAddr::V4(Ipv4Addr::new(10, 0, 0, 10)),
+            FlowDirection::Rx,
+            400,
+            1,
+            1000,
+        );
+
+        let mut peers = vec![
+            PeerInfo {
+                peer_id: 7,
+                conns: vec![PeerConnInfo {
+                    conn_id: conn_id(1).to_string(),
+                    peer_id: 7,
+                    ..Default::default()
+                }],
+                ..Default::default()
+            },
+            PeerInfo {
+                peer_id: 8,
+                conns: vec![PeerConnInfo {
+                    conn_id: conn_id(2).to_string(),
+                    peer_id: 8,
+                    ..Default::default()
+                }],
+                ..Default::default()
+            },
+        ];
+
+        fill_peers_conn_flows(&mut peers, &table, FlowView::Exact);
+
+        assert_eq!(peers[0].conns[0].flows.len(), 1);
+        assert_eq!(peers[0].conns[0].flows[0].bytes, 1200);
+        assert_eq!(peers[1].conns[0].flows.len(), 1);
+        assert_eq!(peers[1].conns[0].flows[0].direction, 1);
     }
 
     #[test]

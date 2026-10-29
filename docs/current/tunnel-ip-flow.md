@@ -3,7 +3,7 @@
 ## Status
 
 - Status: **Current**（Phase 1–3 可依赖行为；Phase 4 告警本期不做）
-- 最近审阅：2026-10-29（实时流量：默认发送；JSON 缺 direction 按 TX）
+- 最近审阅：2026-10-29（CollectNetworkInfo 一次快照填 flows；JSON 缺 direction 按 TX）
 - 设计决策与实施记录：[`../roadmap/tunnel-ip-flow-observability.md`](../roadmap/tunnel-ip-flow-observability.md)
 - 关联：[`peer-connections.md`](./peer-connections.md)（多 PeerConn / `default_conn`）
 - 索引：[`../README.md`](../README.md)
@@ -23,7 +23,7 @@
 | 采样与估算 | `sample_rate = N > 1` 时按 **1/N 抽样**记账，条目置 `sampled` 标记；**读取时 ×N 放大**为估算值（UI 显示「估算」，i18n `flow_estimated`） |
 | 精确 IP | **双重闸门**：节点 `allow_exact_ip` **且** 调用方请求 `FlowView::Exact`；否则只出掩码聚合（缺省 MASKED） |
 | 速率 | 节点侧固定约 1s 窗口算 `rate_bytes_per_sec`（D11）；**不**对累计 `bytes` 做差分求速 |
-| 回传条数 | 节点侧每隧道最多回传 **top-10**（`FLOW_TOP_N_PER_CONN`）：TX/RX **各约一半槽位**（`ceil/floor`；一侧不足则另一侧补满），方向内按累计 `bytes` 降序，合并后再按 bytes 排序。避免下行把发送挤出回传（策略验证依赖发送行） |
+| 回传条数 | 节点侧每隧道最多回传 **top-10**（`FLOW_TOP_N_PER_CONN`）：TX/RX **各约一半槽位**（`ceil/floor`；一侧不足则另一侧补满），方向内按累计 `bytes` 降序，合并后再按 bytes 排序。避免下行把发送挤出回传（策略验证依赖发送行）。`CollectNetworkInfo` / `ListPeer` 经 `fill_peers_conn_flows` **整次响应只 `snapshot_all_conns` 一次**，再按 `conn_id` 挂到各 peer（勿在 per-peer 循环里调 `fill_conn_flows`） |
 | 条目存活 | 无流量超过 `ttl`（固定 **600s，不可配**）的条目由 `gc()` 回收；`max_per_conn`（256）/ `max_total`（8192）限额另做兜底淘汰，按 `last_seen_ms` 最旧优先 |
 | 运行页 | `Status.vue` 独立折叠面板「实时流量」（不嵌在 Peer 表内）：扁平表（对端 / 协议 / IP / 字节 / 速率；**无方向列**——方向由筛选决定），按累计字节降序；标题栏右侧有 **发送/接收** 下拉（**默认发送**，便于核对策略网关）+ 文本搜索（对端/IP，框内可一键清空）。IP 走 `{{ }}` 文本插值（勿在 `flowIpLabel` 内转义）。历史曲线仍是另一块「流量历史」面板。**方向字段**：wire 上 `0=tx / 1=rx`；Web JSON（pbjson）会省略默认 `0`，前端 `wireFlowDirectionKey` 把缺失当作发送，避免「发送」筛空 |
 | CLI | `easytier-cli peer` 的 `flows` 列：按 **`rate_bytes_per_sec` 降序** 取 top-2（当前最忙，**非**累计最大 —— 与上表的 top-10 排序口径不同） |

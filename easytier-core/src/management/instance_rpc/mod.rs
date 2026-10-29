@@ -469,25 +469,23 @@ where
             instance.flow_table().config().mask_prefix_len_v6,
         );
         let flow_table = instance.flow_table().clone();
-        let peer_infos = instance
+        // One FlowTable snapshot for the whole response — see fill_peers_conn_flows.
+        let mut peer_infos = instance
             .peer_snapshots()
             .await
             .into_iter()
-            .map(|snapshot| {
-                let mut peer_info = PeerInfo {
-                    peer_id: snapshot.peer_id,
-                    default_conn_id: snapshot.default_conn_id.map(Into::into),
-                    directly_connected_conns: snapshot
-                        .directly_connected_conns
-                        .into_iter()
-                        .map(Into::into)
-                        .collect(),
-                    conns: snapshot.conns.into_iter().map(Into::into).collect(),
-                };
-                super::flow_view::fill_conn_flows(&mut peer_info.conns, &flow_table, flow_view);
-                peer_info
+            .map(|snapshot| PeerInfo {
+                peer_id: snapshot.peer_id,
+                default_conn_id: snapshot.default_conn_id.map(Into::into),
+                directly_connected_conns: snapshot
+                    .directly_connected_conns
+                    .into_iter()
+                    .map(Into::into)
+                    .collect(),
+                conns: snapshot.conns.into_iter().map(Into::into).collect(),
             })
-            .collect();
+            .collect::<Vec<_>>();
+        super::flow_view::fill_peers_conn_flows(&mut peer_infos, &flow_table, flow_view);
         Ok(ListPeerResponse {
             peer_infos,
             ..Default::default()

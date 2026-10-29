@@ -3,7 +3,7 @@
 ## Status
 
 - Status: **Roadmap / Phase 1 + Phase 2 + Phase 3 已落地**（D1-D16 全部拍板；§13 为 Phase 1 实现级附录；§14 为 Phase 0 实测结果；§15/§16/§17 为实施记录；仅剩 Phase 4 告警，D16 本期不做）
-- 最近审阅：2026-10-29（修复：JSON RPC 省略 direction=0 导致发送筛空）
+- 最近审阅：2026-10-29（fill_peers_conn_flows 一次快照；JSON direction=0 省略修复）
 - 已定决策：**D5（采集默认关）**、**D8/D9（精确 IP 默认不出节点；`flow_view` 缺省 MASKED）**、**D10（挂 `PeerConnInfo.flows` 字段）**、**D11（速率节点侧固定窗口算）**、D12 不审计 / D13 独立开关 / D14 前缀可配 / D15 支持 managed config / D16 本期不做告警；完整表见 §8
 - 归属：运行页（`Status.vue`）可观测性；关联 [`current/peer-connections.md`](../current/peer-connections.md)（多 PeerConn 与 `default_conn`）、[`current/traffic-steering.md`](../current/traffic-steering.md)（出口/子网代理语义）、[`roadmap/web-console-log-persistence.md`](./web-console-log-persistence.md)（控制台日志留存）、[`roadmap/poll-to-push-roi.md`](./poll-to-push-roi.md)（轮询→推送）
 - 范围：`easytier-core`（记账）+ `easytier-proto`（字段）+ `easytier-web/frontend-lib`（运行页展示）+ `easytier-web`（可选历史采样）
@@ -969,6 +969,7 @@ core 记账层（§15）与协议字段（§16.1）在这一期**没有再改**�
 | R6 | 掩码默认值（v4 /24、v6 /64）仍未实测复核 | 见 §14.3；现在**可配**了，但默认值合不合适要等有 v6 流量的环境。**本机无 v6 流量，未测**——不做无依据的调整，保持默认。 |
 | R7 | 「单实例采样开销 <1% CPU」仍是 §6 的理论估算 → **已测（release）** | 见 §18。`cargo test --release -p easytier-core --lib flow_record_cost -- --ignored --nocapture`：**关闭 6.6 ns/包；开启（200 条活跃流）118 ns/包；1/8 抽样 35 ns/包**。折算 **1 Gbps ≈ 0.98% 单核**（与 §6.3 的「~1%」吻合），**10 Gbps 小包 ≈ 9.85%**（§6.3 估的是 8-12%，吻合）。**debug 构建不可引用**（同一用例测得 893 ns/包 ⇒ 7.4% / 74%，会得出错误结论）。 |
 | R8 | Web JSON RPC 下「发送」筛空 → **已关闭（前端）** | pbjson 省略 proto3 默认标量：`direction = 0`（TX）在 JSON 里常缺字段；`Status.vue` 用 `=== 0` 把缺失当成 RX → 默认「发送」恒空、`0/N`。修复：`wireFlowDirectionKey` 把 `undefined`/`null`/`0` 当 tx；`peer_conn_flow_json_omits_tx_direction_zero` 锁定 pbjson 行为。**待现网验收**（刷控制台前端后看发送是否出现）。 |
+| R9 | CollectNetworkInfo 按 peer 重复全表快照 → **已关闭** | `fill_conn_flows` 在 per-peer `map` 里调用 → 每次 `snapshot_all_conns`（注释本意是单次遍历）。改为 `fill_peers_conn_flows`：一次快照再按 `conn_id` 挂载。用例：`fill_peers_conn_flows_snapshots_once_across_peers`。 |
 
 ---
 

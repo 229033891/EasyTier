@@ -43,29 +43,29 @@ where
     );
     let flow_table = instance.flow_table().clone();
 
-    let peers = instance
+    // Build peers first, then attach flows from one table snapshot. Calling
+    // fill_conn_flows inside the per-peer map would re-scan the whole FlowTable
+    // once per peer (O(peers × entries)) on every CollectNetworkInfo.
+    let mut peers = instance
         .peer_snapshots()
         .await
         .into_iter()
-        .map(|snapshot| {
-            let mut peer_info = PeerInfo {
-                peer_id: snapshot.peer_id,
-                default_conn_id: snapshot.default_conn_id.map(Into::into),
-                directly_connected_conns: snapshot
-                    .directly_connected_conns
-                    .into_iter()
-                    .map(Into::into)
-                    .collect(),
-                conns: snapshot.conns.into_iter().map(Into::into).collect(),
-            };
-            crate::management::flow_view::fill_conn_flows(
-                &mut peer_info.conns,
-                &flow_table,
-                resolved_flow_view,
-            );
-            peer_info
+        .map(|snapshot| PeerInfo {
+            peer_id: snapshot.peer_id,
+            default_conn_id: snapshot.default_conn_id.map(Into::into),
+            directly_connected_conns: snapshot
+                .directly_connected_conns
+                .into_iter()
+                .map(Into::into)
+                .collect(),
+            conns: snapshot.conns.into_iter().map(Into::into).collect(),
         })
         .collect::<Vec<_>>();
+    crate::management::flow_view::fill_peers_conn_flows(
+        &mut peers,
+        &flow_table,
+        resolved_flow_view,
+    );
     let node = instance.node_snapshot().await;
     let routes = instance
         .route_snapshots()
