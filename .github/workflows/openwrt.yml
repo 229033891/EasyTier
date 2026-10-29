@@ -303,11 +303,10 @@ jobs:
 
       - name: Collect packages
         run: |
-          set -e
+          set -euo pipefail
           mkdir -p dist
-          find out-${{ matrix.pkgtype }}/bin -type f -name '*.apk' -exec cp {} dist/ \;
-          ls -l dist/
-          # apk 用连字符 (easytier-1.2.3.apk / luci-app-easytier-1.2.3-r1.apk)
+          # SDK bin/ 里会混进大量无关 kmod-*.apk；Release zip 若全收会撑爆路由器 /tmp。
+          # 只要 easytier 主包 + luci 界面包 + 中文语言包（i18n 是 luci 子包）。
           pkg="${{ matrix.pkgtype }}"
           ver="$(python3 - <<'PY'
           import re, pathlib
@@ -316,14 +315,12 @@ jobs:
           PY
           )"
           shopt -s nullglob
-          easytier=(dist/easytier-*.${pkg})
-          luci=(dist/luci-app-easytier-*.${pkg})
-          i18n=(dist/luci-i18n-easytier-zh-cn-*.${pkg})
-          # 只要 easytier 主包 + luci 界面包 + 中文语言包
-          # (中文包是 luci-app-easytier 编译时自动带出的子包, 无需加到 PACKAGES 里)
-          (( ${#easytier[@]} > 0 )) || { echo "missing easytier .${pkg}"; ls -l dist/; exit 1; }
-          (( ${#luci[@]} > 0 )) || { echo "missing luci-app-easytier .${pkg}"; ls -l dist/; exit 1; }
-          (( ${#i18n[@]} > 0 )) || { echo "missing luci-i18n-easytier-zh-cn .${pkg}"; ls -l dist/; exit 1; }
+          mapfile -t easytier < <(find "out-${{ matrix.pkgtype }}/bin" -type f -name "easytier-*.${pkg}" ! -name 'luci-*')
+          mapfile -t luci < <(find "out-${{ matrix.pkgtype }}/bin" -type f -name "luci-app-easytier-*.${pkg}")
+          mapfile -t i18n < <(find "out-${{ matrix.pkgtype }}/bin" -type f -name "luci-i18n-easytier-zh-cn-*.${pkg}")
+          (( ${#easytier[@]} > 0 )) || { echo "missing easytier .${pkg}"; find "out-${{ matrix.pkgtype }}/bin" -name "*.${pkg}" | head; exit 1; }
+          (( ${#luci[@]} > 0 )) || { echo "missing luci-app-easytier .${pkg}"; exit 1; }
+          (( ${#i18n[@]} > 0 )) || { echo "missing luci-i18n-easytier-zh-cn .${pkg}"; exit 1; }
           # Guard against MAKEFILE_LIST include bug (stale 2.6.4) and unpinned
           # PKG_PO_VERSION (luci-i18n date-hash). Boundary-aware match (avoid
           # bare *${ver}* matching 2.7.40):
@@ -333,11 +330,12 @@ jobs:
             base="$(basename "$f")"
             if [[ "$base" != *"-${ver}.apk" && "$base" != *"-${ver}-"* ]]; then
               echo "package version mismatch: expected ${ver} in ${base}"
-              ls -l dist/
               exit 1
             fi
+            cp -f "$f" dist/
           done
-          echo "openwrt package version ok: ${ver}"
+          ls -l dist/
+          echo "openwrt package version ok: ${ver} (shipped $(ls dist | wc -l) apks)"
 
       - name: Archive packages
         uses: actions/upload-artifact@v7
