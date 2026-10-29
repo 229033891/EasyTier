@@ -35,7 +35,7 @@ if not "%ERR%"=="0" (
 )
 
 echo Release package finished.
-echo Output: artifacts\  (NSIS + ET-windows-* + ET-web-windows-* + zips)
+echo Output: artifacts\  (NSIS + ET-windows-* + ET-windows-*-web + zips)
 echo Logs:   artifacts\logs\easytier-windows-*.log
 pause
 exit /b 0

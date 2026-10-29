@@ -99,7 +99,7 @@ jobs:
           HEADLESS_COUNT="$(gh api "repos/${{ github.repository }}/actions/runs/${RUN_ID}/artifacts" \
             --jq '[.artifacts[] | select(.name == "ET-linux-x86_64" and .expired == false)] | length')"
           WEB_COUNT="$(gh api "repos/${{ github.repository }}/actions/runs/${RUN_ID}/artifacts" \
-            --jq '[.artifacts[] | select(.name == "ET-web-linux-x86_64" and .expired == false)] | length')"
+            --jq '[.artifacts[] | select(.name == "ET-linux-x86_64-web" and .expired == false)] | length')"
           if [[ "${HEADLESS_COUNT:-0}" -eq 0 || "${WEB_COUNT:-0}" -eq 0 ]]; then
             echo "Missing packaging artifacts on run ${RUN_ID} (headless=${HEADLESS_COUNT:-0} web=${WEB_COUNT:-0}); skip docker build."
             echo "skip=true" >> "$GITHUB_OUTPUT"
@@ -195,8 +195,8 @@ jobs:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           run_id: ${{ steps.meta.outputs.run_id }}
           repo: ${{ github.repository }}
-          path: docker_context/ET-web-linux-x86_64
-          name: ET-web-linux-x86_64
+          path: docker_context/ET-linux-x86_64-web
+          name: ET-linux-x86_64-web
 
       - name: Merge artifacts into Docker context
         if: steps.meta.outputs.skip != 'true'
@@ -205,16 +205,16 @@ jobs:
           # Dockerfile copies docker_context/ET-linux-x86_64/* into the image.
           # Keep a single-image layout (core+cli+web) even though CI artifacts are split.
           mkdir -p docker_context/ET-linux-x86_64
-          if [[ -f docker_context/ET-web-linux-x86_64/ET-web-embed ]]; then
-            cp -f docker_context/ET-web-linux-x86_64/ET-web-embed docker_context/ET-linux-x86_64/ET-web-embed
-          elif [[ -f docker_context/ET-web-linux-x86_64/ET-web-embed.exe ]]; then
+          if [[ -f docker_context/ET-linux-x86_64-web/ET-web-embed ]]; then
+            cp -f docker_context/ET-linux-x86_64-web/ET-web-embed docker_context/ET-linux-x86_64/ET-web-embed
+          elif [[ -f docker_context/ET-linux-x86_64-web/ET-web-embed.exe ]]; then
             echo "::error::Unexpected Windows web binary in Linux docker context" >&2
             exit 1
           else
             # download-artifact may nest one extra directory
-            found="$(find docker_context/ET-web-linux-x86_64 -type f -name ET-web-embed | head -1 || true)"
+            found="$(find docker_context/ET-linux-x86_64-web -type f -name ET-web-embed | head -1 || true)"
             [[ -n "$found" ]] || {
-              echo "::error::ET-web-embed missing under docker_context/ET-web-linux-x86_64" >&2
+              echo "::error::ET-web-embed missing under docker_context/ET-linux-x86_64-web" >&2
               find docker_context -maxdepth 5 -type f | head -n 80 >&2
               exit 1
             }

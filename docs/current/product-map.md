@@ -3,7 +3,7 @@
 ## Status
 
 - Status: **Current**
-- 最近审阅：2026-10-28（Windows/Linux **三独立 artifact**：Web / 桌面 GUI+CLI / 无头 CORE+CLI；无头不含 embed）；2026-10-11（桌面 GUI 主程序改为 `ET`/`ET.exe`）
+- 最近审阅：2026-10-29（产物前缀 `ET-{os}-{arch}…`；三独立 artifact；无头不含 embed）；2026-10-11（桌面 GUI 主程序改为 `ET`/`ET.exe`）
 - 状态说明：帮助理解 monorepo 内各产品/组件职责与关系
 - 范围：仓库内主要 crate、前端包与贡献组件
 - 索引：[`../README.md`](../README.md)
@@ -54,8 +54,8 @@
 
 | # | 产品 | 典型交付 | 含什么 | 不含 / 说明 |
 |---|------|----------|--------|-------------|
-| 1 | **Web 控制台** | CI `ET-web-windows-*` / `ET-web-linux-*`：`ET-web-embed`；或 [`../ops/web-build-deploy.md`](../ops/web-build-deploy.md) | 配置服务器 + 浏览器 UI | 不是组网节点本身 |
-| 2 | **桌面客户端** | CI `ET-gui-windows-*`（NSIS）/ `ET-gui-linux-*`（`.deb`） | `ET`（**库内嵌 core**）+ `ET-cli` | 一般**没有**独立 `ET-core`；**不含** Web |
+| 1 | **Web 控制台** | CI `ET-windows-*-web` / `ET-linux-*-web`：`ET-web-embed`；或 [`../ops/web-build-deploy.md`](../ops/web-build-deploy.md) | 配置服务器 + 浏览器 UI | 不是组网节点本身 |
+| 2 | **桌面客户端** | CI `ET-windows-*-gui`（NSIS）/ `ET-linux-*-gui`（`.deb`） | `ET`（**库内嵌 core**）+ `ET-cli` | 一般**没有**独立 `ET-core`；**不含** Web |
 | 3 | **无桌面节点** | CI `ET-windows-*` / `ET-linux-*`：**CORE + CLI**（Win 另含驱动） | 服务/NAS/无界面组网 | **不含** GUI / Web 控制台 |
 
 **与当前打包的关系**：`ET Windows` / `ET Linux` 均产出 **三份独立 artifact**（GUI、无头、Web）。选包见 [`../ops/windows-build-pack.md`](../ops/windows-build-pack.md) 与 [`../roadmap/github-release-install.md`](../roadmap/github-release-install.md) §1.0。

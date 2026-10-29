@@ -13,7 +13,7 @@
       2) Build GUI frontend + tauri NSIS (unless -SkipGui)
       3) Build headless core+cli (unless -SkipHeadless)
       4) Build web embed console (unless -SkipWeb)
-      5) Collect into artifacts/ (ET-gui / ET-windows-* / ET-web-windows-*)
+      5) Collect into artifacts/ (NSIS / ET-windows-* / ET-windows-*-web)
 
     Shared helpers: script/build-common.ps1
 
@@ -39,7 +39,7 @@
     Skip `pnpm -r install`.
 
 .PARAMETER NoZip
-    Do not write artifacts/ET-windows-<arch>.zip / ET-web-windows-<arch>.zip (folders still collected).
+    Do not write artifacts/ET-windows-<arch>.zip / ET-windows-<arch>-web.zip (folders still collected).
 
 .PARAMETER OutDir
     Output root (default: <repo>/artifacts).
@@ -112,7 +112,7 @@ if ($Interactive) {
     Write-Host '  [1] All three (GUI + headless + web console; default, like CI)'
     Write-Host '  [2] GUI only (NSIS)'
     Write-Host '  [3] Headless only (ET-windows zip; core+cli)'
-    Write-Host '  [4] Web console only (ET-web-windows)'
+    Write-Host '  [4] Web console only (ET-windows-*-web)'
     $c = Read-MenuChoice -Prompt 'Choose [1/2/3/4] (Enter=1)' -Valid @('1', '2', '3', '4') -Default '1'
     $SkipGui = ($c -eq '3' -or $c -eq '4')
     $SkipHeadless = ($c -eq '2' -or $c -eq '4')
@@ -445,7 +445,7 @@ function Collect-HeadlessArtifacts {
 function Collect-WebConsoleArtifacts {
     param([Parameter(Mandatory)][string]$ArtifactDir)
 
-    $webDir = Join-Path $OutDir "ET-web-$ArtifactStem"
+    $webDir = Join-Path $OutDir "ET-$ArtifactStem-web"
     if (Test-Path $webDir) {
         Remove-Item -Recurse -Force $webDir
     }
@@ -459,7 +459,7 @@ function Collect-WebConsoleArtifacts {
     Write-Log "Web console folder: $webDir" -Level Ok
 
     if (-not $NoZip) {
-        $zipPath = Join-Path $OutDir "ET-web-$ArtifactStem.zip"
+        $zipPath = Join-Path $OutDir "ET-$ArtifactStem-web.zip"
         if (Test-Path $zipPath) {
             Remove-Item -Force $zipPath
         }
@@ -588,12 +588,12 @@ if ($headlessDir) {
 if ($webDir) {
     Write-Log "  Web console: $webDir"
     if (-not $NoZip) {
-        Write-Log ("  Zip:      " + (Join-Path $OutDir "ET-web-$ArtifactStem.zip"))
+        Write-Log ("  Zip:      " + (Join-Path $OutDir "ET-$ArtifactStem-web.zip"))
     }
 }
 Write-EasytierBuildElapsed
 Write-Host ''
-Write-Log 'Same layout as CI: ET-gui-* / ET-windows-* / ET-web-windows-* (local OutDir).'
+Write-Log 'Same layout as CI: ET-windows-* / ET-windows-*-web / NSIS (local OutDir).'
 
 } finally {
     Stop-EasytierBuildTranscript

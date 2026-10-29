@@ -178,7 +178,8 @@ jobs:
             if [[ "$abi" == "$(basename "$apk")" ]]; then
               abi="universal"
             fi
-            mv "$apk" "./artifacts/objects/ET-android${SUFFIX}-${abi}.apk"
+            # ET-{os}-{arch}-{version}.apk (os=android; arch from APK abi tag)
+            mv "$apk" "./artifacts/objects/ET-android-${abi}${SUFFIX}.apk"
           done
 
           mv ./artifacts/objects/* ./artifacts/
@@ -247,7 +248,7 @@ jobs:
       - name: Archive artifact
         uses: actions/upload-artifact@v7
         with:
-          name: ET-mobile-android-${{ matrix.ARCH }}
+          name: ET-android-${{ matrix.ARCH }}
           path: |
             ./artifacts/*
 

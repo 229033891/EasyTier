@@ -3,8 +3,8 @@
 ## Status
 
 - Status: **Ops**
-- 最近审阅：2026-10-28（CI/本地：**三独立 artifact**；无头不含 embed）
-- 适用范围：本机打出与 CI `windows.yml` 同布局的 **GUI NSIS** + **无头 `ET-windows-*`** + **Web `ET-web-windows-*`**
+- 最近审阅：2026-10-29（产物前缀统一 `ET-{os}-{arch}…`；三独立 artifact；无头不含 embed）
+- 适用范围：本机打出与 CI `windows.yml` 同布局的 **GUI NSIS** + **无头 `ET-windows-*`** + **Web `ET-windows-*-web`**
 - 索引：[`../README.md`](../README.md)
 - 产品语义：[`../current/product-map.md`](../current/product-map.md) §1.2
 - 配套：
@@ -17,8 +17,8 @@
 
 | # | 产品 | 你该拿什么 | 备注 |
 |---|------|------------|------|
-| 1 | **Web 控制台** | `ET-web-windows-*` / `script\easytier-web-*.cmd` → `ET-web-embed` | 独立 artifact；集中配置时才需要 |
-| 2 | **桌面 GUI + CORE + CLI** | NSIS（`artifacts\*.exe` / CI `ET-gui-windows-*`） | `ET.exe` **内嵌** core；同目录 `ET-cli.exe` |
+| 1 | **Web 控制台** | `ET-windows-*-web` / `script\easytier-web-*.cmd` → `ET-web-embed` | 独立 artifact；集中配置时才需要 |
+| 2 | **桌面 GUI + CORE + CLI** | NSIS（`artifacts\*.exe` / CI `ET-windows-*-gui`） | `ET.exe` **内嵌** core；同目录 `ET-cli.exe` |
 | 3 | **无桌面节点 CORE + CLI** | `ET-windows-*`：`ET-core` + `ET-cli` + 驱动 | **不含** Web 控制台 |
 
 CI 与本地完整包均产出 **三份 artifact**（GUI ∥ headless ∥ web-embed）。GUI / 无头包内**没有** `ET-web-embed`。
@@ -84,12 +84,12 @@ script\easytier-windows-release.cmd    REM 正式：三端都 --release（更接
 | `artifacts\*.exe` | **2 桌面** | GUI **NSIS**（`ET.exe` 内嵌 core + **`ET-cli.exe`** sidecar） |
 | `artifacts\ET-windows-x86_64\` | **3 无头节点** | `ET-core.exe` / `ET-cli.exe` + 驱动（**无** embed） |
 | `artifacts\ET-windows-x86_64.zip` | 同上 | 上述目录的 zip（可用 `-NoZip` 跳过） |
-| `artifacts\ET-web-windows-x86_64\` | **1 Web** | `ET-web-embed.exe` |
-| `artifacts\ET-web-windows-x86_64.zip` | 同上 | Web 目录 zip |
+| `artifacts\ET-windows-x86_64-web\` | **1 Web** | `ET-web-embed.exe` |
+| `artifacts\ET-windows-x86_64-web.zip` | 同上 | Web 目录 zip |
 
-架构目录名随主机：`x86_64` / `arm64` / `i686`（来自 `easytier/third_party/<arch>`）。
+架构目录名随主机：`x86_64` / `arm64` / `i686`（来自 `easytier/third_party/<arch>`）。命名约定：`ET-{os}-{arch}`，产品后缀 `-web` / `-gui`（无头无后缀）。NSIS 安装器仍为 Tauri 默认 `ET_*_setup.exe`。
 
-桌面 GUI（Win / macOS / Linux）通过各平台 conf 的 Tauri `externalBin`（`tauri.windows.conf.json` / `tauri.macos.conf.json` / `tauri.linux.conf.json` → `binaries/ET-cli`）附带 CLI；**不要**写进共享 `tauri.conf.json`，以免 Android 构建也去找 sidecar。打包装前须先 `Stage-GuiEtCliSidecar` / CI「Stage ET-cli sidecar」。Windows NSIS 安装后一般为 `C:\Program Files\ET\ET-cli.exe`，安装器会把 **`$INSTDIR` 写入系统 PATH**（幂等；卸载时移除；**需新开终端**才生效）。连 GUI 实例常用 `-p 127.0.0.1:15999`。CI：`windows.yml` → `ET-gui-windows-*`（NSIS）；`linux.yml` → `ET-gui-linux-*`（`.deb`，glibc）。macOS 矩阵行仍预留在 `windows.yml`。
+桌面 GUI（Win / macOS / Linux）通过各平台 conf 的 Tauri `externalBin`（`tauri.windows.conf.json` / `tauri.macos.conf.json` / `tauri.linux.conf.json` → `binaries/ET-cli`）附带 CLI；**不要**写进共享 `tauri.conf.json`，以免 Android 构建也去找 sidecar。打包装前须先 `Stage-GuiEtCliSidecar` / CI「Stage ET-cli sidecar」。Windows NSIS 安装后一般为 `C:\Program Files\ET\ET-cli.exe`，安装器会把 **`$INSTDIR` 写入系统 PATH**（幂等；卸载时移除；**需新开终端**才生效）。连 GUI 实例常用 `-p 127.0.0.1:15999`。CI：`windows.yml` → `ET-windows-*-gui`（NSIS）；`linux.yml` → `ET-linux-*-gui`（`.deb`，glibc）。macOS 矩阵行仍预留在 `windows.yml`。
 
 ---
 
@@ -100,9 +100,9 @@ script\easytier-windows-release.cmd    REM 正式：三端都 --release（更接
 | CI job | 产物 | 说明 |
 |--------|------|------|
 | `build_web`（ubuntu） | `ET-web-dashboard-windows` | web 前端 dist，供 embed |
-| `build-gui`（windows） | `ET-gui-windows-*` | NSIS；与 headless / web **并行** |
+| `build-gui`（windows） | `ET-windows-*-gui` | NSIS；与 headless / web **并行** |
 | `build-headless`（windows） | `ET-windows-*` | **仅** core + cli + 驱动 |
-| `build-web-embed`（windows） | `ET-web-windows-*` | **仅** `ET-web-embed.exe` |
+| `build-web-embed`（windows） | `ET-windows-*-web` | **仅** `ET-web-embed.exe` |
 
 本地大致步骤：
 

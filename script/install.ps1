@@ -244,7 +244,7 @@ Write-Host ''
 Write-Host "  Install dir : $InstallDir" -ForegroundColor White
 Write-Host '  Binaries    : ET-core.exe / ET-cli.exe (+ drivers)' -ForegroundColor White
 Write-Host '  Next        : ET-cli service install' -ForegroundColor DarkGray
-Write-Host '  Web console : separate Release asset ET-web-windows-* (not in this zip)' -ForegroundColor DarkGray
+Write-Host '  Web console : separate Release asset ET-windows-*-web (not in this zip)' -ForegroundColor DarkGray
 Write-Host ''
 Write-Host '  NOTE: If PATH was just updated, please restart your terminal.' -ForegroundColor DarkYellow
 Write-Host ''

@@ -38,7 +38,7 @@
 | 脚本 | 作用 | 产物（默认 `artifacts\`） |
 |------|------|---------------------------|
 | `easytier-windows-debug.cmd` | 调试：`pnpm tauri dev` | 无安装包 |
-| `easytier-windows-fast.cmd` | 日常：GUI NSIS（`--release`）+ 无头 `release-fast` | NSIS `*.exe` + `ET-windows-*` + `.zip` |
+| `easytier-windows-fast.cmd` | 日常：GUI NSIS（`--release`）+ 无头/web `release-fast` | NSIS `*.exe` + `ET-windows-*` + `ET-windows-*-web` + `.zip` |
 | `easytier-windows-release.cmd` | 正式：两端 `--release` | 同上 |
 
 等价 PowerShell：

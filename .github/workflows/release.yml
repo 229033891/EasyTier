@@ -324,11 +324,14 @@ jobs:
           mkdir -p zipped_assets release_assets
 
           if [ -d release_assets_nozip ]; then
-            # Headless + web console dirs from ET Windows → zip like Linux artifacts.
-            # (ET-gui-* NSIS .exe stay as loose files via the find below.)
+            # Headless + web dirs: ET-{os}-{arch} / ET-{os}-{arch}-web → zip like Linux.
+            # GUI (ET-{os}-{arch}-gui) keeps NSIS/deb files loose via the find below.
             shopt -s nullglob
-            for d in release_assets_nozip/ET-windows-* release_assets_nozip/ET-web-windows-*; do
+            for d in release_assets_nozip/ET-windows-*; do
               if [ -d "$d" ]; then
+                case "$(basename "$d")" in
+                  *-gui) continue ;;
+                esac
                 mv "$d" release_assets/
               fi
             done
@@ -339,8 +342,8 @@ jobs:
             # release assets (index.html / index-*.js / index-*.css / *.wasm / ...).
             rm -rf release_assets_nozip/ET-web-dashboard* \
                    release_assets_nozip/ET-openwrt-bins
-            # Keep this recursive: the ET-gui-* NSIS .exe lives one level down in
-            # release_assets_nozip/ET-gui-*/ and must still be published loose.
+            # Keep this recursive: NSIS .exe lives one level down in
+            # release_assets_nozip/ET-windows-*-gui/ and must still be published loose.
             find release_assets_nozip -type f -exec mv {} zipped_assets \;
           fi
           ls -l -R ./zipped_assets || true

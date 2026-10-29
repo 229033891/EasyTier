@@ -257,7 +257,7 @@ jobs:
       - name: Archive web console artifact
         uses: actions/upload-artifact@v7
         with:
-          name: ET-web-${{ matrix.ARTIFACT_NAME }}
+          name: ET-${{ matrix.ARTIFACT_NAME }}-web
           path: |
             ./webconsole/*
 
@@ -342,7 +342,7 @@ jobs:
       - name: Archive GUI artifact
         uses: actions/upload-artifact@v7
         with:
-          name: ET-gui-${{ matrix.ARTIFACT_NAME }}
+          name: ET-${{ matrix.ARTIFACT_NAME }}-gui
           path: |
             ./artifacts/*
 

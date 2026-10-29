@@ -281,7 +281,7 @@ jobs:
           elif [[ $GUI_TARGET =~ darwin ]]; then
               mv ./target/$GUI_TARGET/release/bundle/dmg/*.dmg ./artifacts/objects/
           elif [[ $GUI_TARGET =~ linux ]]; then
-              # Linux desktop GUI ships from ET Linux (linux.yml → ET-gui-linux-*).
+              # Linux desktop GUI ships from ET Linux (linux.yml → ET-linux-*-gui).
               # Kept here if a linux matrix row is re-enabled on this workflow.
               shopt -s nullglob
               for f in \
@@ -305,7 +305,7 @@ jobs:
       - name: Archive GUI artifact
         uses: actions/upload-artifact@v7
         with:
-          name: ET-gui-${{ matrix.ARTIFACT_NAME }}
+          name: ET-${{ matrix.ARTIFACT_NAME }}-gui
           path: |
             ./artifacts/*
 
@@ -447,7 +447,7 @@ jobs:
       - name: Archive web console artifact
         uses: actions/upload-artifact@v7
         with:
-          name: ET-web-${{ matrix.ARTIFACT_NAME }}
+          name: ET-${{ matrix.ARTIFACT_NAME }}-web
           path: |
             ./webconsole/*
 
