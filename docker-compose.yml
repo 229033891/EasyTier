@@ -41,7 +41,8 @@ services:
       - /dev/net/tun:/dev/net/tun
     volumes:
       - /etc/machine-id:/etc/machine-id:ro
-      - /vol1/1000/docker/easytier/config:/config
+      # 飞牛 FNNAS 现网：/vol1/1000/docker/et（容器名常为 fnnas_et）
+      - /vol1/1000/docker/et/config:/config
     # ENTRYPOINT: /sbin/tini -- ET-core
     command:
       - --daemon

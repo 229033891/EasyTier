@@ -4,13 +4,13 @@
 #
 # 用法:
 #   bash docker-up.sh                    # 默认：只启动 node
-#   bash docker-up.sh node --dir /vol1/1000/docker/easytier
+#   bash docker-up.sh node --dir /vol1/1000/docker/et   # 飞牛 FNNAS 现网路径
 #   bash docker-up.sh console --pull
 #   bash docker-up.sh all
 #
 # 远程（需已有 docker-compose.yml 或同目录 clone）:
 #   curl -fsSL https://github.com/229033891/EasyTier/raw/main/script/docker-up.sh \
-#     | bash -s node --dir /vol1/1000/docker/easytier
+#     | bash -s node --dir /vol1/1000/docker/et
 #
 set -euo pipefail
 
@@ -41,7 +41,7 @@ usage() {
   ET_DOCKER_DIR  同 --dir
 
 示例:
-  bash docker-up.sh node --dir /vol1/1000/docker/easytier --pull
+  bash docker-up.sh node --dir /vol1/1000/docker/et --pull
 EOF
 }
 
