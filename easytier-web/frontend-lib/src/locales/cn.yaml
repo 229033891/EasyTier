@@ -773,10 +773,9 @@ status:
   # 隧道级流量（见 docs/roadmap/tunnel-ip-flow-observability.md）
   flow_panel: 实时流量
   flow_panel_empty: 暂无流量明细。请在节点配置中开启流量统计并保存；仅统计本节点收发的隧道流量（转发不计），有业务流量后才会出现记录。字节数为隧道内层 IP 字节，与「上传/下载」列的链路字节不是同一口径。
-  flow_filter_placeholder: 搜索对端 / IP / 方向…
+  flow_filter_placeholder: 搜索对端 / IP…
   flow_filter_clear: 清空搜索
-  flow_filter_all: 全部
-  flow_filter_empty: 无匹配流量。可改方向筛选或清空搜索框查看全部。
+  flow_filter_empty: 无匹配流量。可切换发送/接收或清空搜索框。
   flow_peer: 对端
   flow_direction: 方向
   flow_ip: IP / 网段

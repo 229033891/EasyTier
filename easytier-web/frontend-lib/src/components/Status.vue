@@ -39,7 +39,7 @@ import {
   type RouteTableKind,
   type VipStateKey,
 } from '../modules/statusDisplay';
-import { Badge, DataTable, Column, Tag, Card, Panel, InputText, SelectButton } from 'primevue';
+import { Badge, DataTable, Column, Tag, Card, Panel, InputText, Select } from 'primevue';
 import NetworkChart from './NetworkChart.vue';
 import PeerConnHistoryChart from './PeerConnHistoryChart.vue';
 import FlowHistoryChart from './FlowHistoryChart.vue';
@@ -282,7 +282,6 @@ const flowFilterQuery = ref('')
 /** Default TX: policy-route checks care about outbound paths first. */
 const flowDirectionFilter = ref<FlowPanelDirectionFilter>('tx')
 const flowDirectionOptions = computed(() => [
-  { label: t('status.flow_filter_all'), value: 'all' as const },
   { label: t('status.flow_tx'), value: 'tx' as const },
   { label: t('status.flow_rx'), value: 'rx' as const },
 ])
@@ -1203,12 +1202,11 @@ const eventLogContent = computed(() => {
                 @click.stop
                 @mousedown.stop
               >
-                <SelectButton
+                <Select
                   v-model="flowDirectionFilter"
                   :options="flowDirectionOptions"
                   option-label="label"
                   option-value="value"
-                  :allow-empty="false"
                   class="flow-dir-select"
                   :aria-label="t('status.flow_direction')"
                 />
@@ -1230,10 +1228,7 @@ const eventLogContent = computed(() => {
                     <i class="pi pi-times" aria-hidden="true" />
                   </button>
                 </div>
-                <span
-                  v-if="flowFilterQuery.trim() || flowDirectionFilter !== 'all'"
-                  class="flow-filter-count"
-                >
+                <span class="flow-filter-count">
                   {{ filteredFlowPanelRows.length }}/{{ flowPanelRows.length }}
                 </span>
               </div>
@@ -1256,7 +1251,6 @@ const eventLogContent = computed(() => {
                   <Column field="peer" :header="t('status.flow_peer')" />
                   <Column field="proto" :header="t('tunnel_proto')"
                     header-class="peer-col-secondary" body-class="peer-col-secondary" />
-                  <Column field="direction" :header="t('status.flow_direction')" />
                   <Column field="ip" :header="t('status.flow_ip')" />
                   <Column :header="t('status.flow_bytes')">
                     <template #body="{ data }">
@@ -1751,10 +1745,12 @@ const eventLogContent = computed(() => {
 
 .status-panels :deep(.p-panel .p-panel-header .flow-dir-select) {
   flex: 0 0 auto;
+  width: 5.5rem;
 }
 
-.status-panels :deep(.p-panel .p-panel-header .flow-dir-select .p-togglebutton) {
-  padding: 0.1rem 0.45rem;
+.status-panels :deep(.p-panel .p-panel-header .flow-dir-select .p-select-label) {
+  padding-block: 0.15rem;
+  padding-inline: 0.5rem;
   font-size: var(--et-fs-meta, 0.8125rem);
   font-weight: 500;
   line-height: 1.35;

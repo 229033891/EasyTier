@@ -25,7 +25,7 @@
 | 速率 | 节点侧固定约 1s 窗口算 `rate_bytes_per_sec`（D11）；**不**对累计 `bytes` 做差分求速 |
 | 回传条数 | 节点侧每隧道最多回传 **top-10**（`FLOW_TOP_N_PER_CONN`）：TX/RX **各约一半槽位**（`ceil/floor`；一侧不足则另一侧补满），方向内按累计 `bytes` 降序，合并后再按 bytes 排序。避免下行把发送挤出回传（策略验证依赖发送行） |
 | 条目存活 | 无流量超过 `ttl`（固定 **600s，不可配**）的条目由 `gc()` 回收；`max_per_conn`（256）/ `max_total`（8192）限额另做兜底淘汰，按 `last_seen_ms` 最旧优先 |
-| 运行页 | `Status.vue` 独立折叠面板「实时流量」（不嵌在 Peer 表内）：扁平表（对端 / 协议 / 方向 / IP / 字节 / 速率），按累计字节降序；标题栏右侧有 **全部/发送/接收** 方向筛选（**默认发送**，便于核对策略网关）+ 文本搜索（对端/IP/方向，框内可一键清空）。IP 走 `{{ }}` 文本插值（勿在 `flowIpLabel` 内转义）。历史曲线仍是另一块「流量历史」面板 |
+| 运行页 | `Status.vue` 独立折叠面板「实时流量」（不嵌在 Peer 表内）：扁平表（对端 / 协议 / IP / 字节 / 速率；**无方向列**——方向由筛选决定），按累计字节降序；标题栏右侧有 **发送/接收** 下拉（**默认发送**，便于核对策略网关）+ 文本搜索（对端/IP，框内可一键清空）。IP 走 `{{ }}` 文本插值（勿在 `flowIpLabel` 内转义）。历史曲线仍是另一块「流量历史」面板 |
 | CLI | `easytier-cli peer` 的 `flows` 列：按 **`rate_bytes_per_sec` 降序** 取 top-2（当前最忙，**非**累计最大 —— 与上表的 top-10 排序口径不同） |
 | 控制台历史 | `easytier-web` 采样器顺带写 `flow_history`（与 `CollectNetworkInfo` 同次 RPC，只收 MASKED）；API `/api/v1/machines/{machine-id}/flow-history/{inst-id}`（需登录）；曲线按窗口内总流量截断到 40 条 |
 | 历史节奏 | 每 **60s** 采样一次（`DEFAULT_SAMPLE_INTERVAL_SECS`），保留 **7 天**，清理任务每 10 分钟扫一次；节点没开 `flow_stats` 则零写入 |

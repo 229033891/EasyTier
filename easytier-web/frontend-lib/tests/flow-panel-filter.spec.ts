@@ -26,30 +26,29 @@ describe('flowPanelRowMatchesQuery', () => {
 })
 
 describe('flowPanelRowMatchesDirection', () => {
-  it('keeps all when filter is all', () => {
-    expect(flowPanelRowMatchesDirection('tx', 'all')).toBe(true)
-    expect(flowPanelRowMatchesDirection('rx', 'all')).toBe(true)
-  })
-
   it('keeps only the selected direction', () => {
     expect(flowPanelRowMatchesDirection('tx', 'tx')).toBe(true)
     expect(flowPanelRowMatchesDirection('rx', 'tx')).toBe(false)
+    expect(flowPanelRowMatchesDirection('rx', 'rx')).toBe(true)
   })
 })
 
 describe('filterFlowPanelRows', () => {
-  it('filters the list by the shared query', () => {
-    expect(filterFlowPanelRows(rows, '接收').map(r => r.peer)).toEqual([
+  it('filters the list by the shared query within the selected direction', () => {
+    expect(filterFlowPanelRows(rows, '接收', 'rx', r => r.dirKey).map(r => r.peer)).toEqual([
       'node-a (10.10.10.1)',
       'relay (10.10.10.3)',
     ])
-    expect(filterFlowPanelRows(rows, '')).toHaveLength(3)
+    expect(filterFlowPanelRows(rows, '', 'rx', r => r.dirKey)).toHaveLength(2)
   })
 
-  it('defaults to all directions and can prefer tx', () => {
-    expect(filterFlowPanelRows(rows, '', 'all', r => r.dirKey)).toHaveLength(3)
+  it('defaults to tx and can switch to rx', () => {
     expect(filterFlowPanelRows(rows, '', 'tx', r => r.dirKey).map(r => r.peer)).toEqual([
       'node-b (10.10.10.2)',
+    ])
+    expect(filterFlowPanelRows(rows, '', 'rx', r => r.dirKey).map(r => r.peer)).toEqual([
+      'node-a (10.10.10.1)',
+      'relay (10.10.10.3)',
     ])
   })
 })

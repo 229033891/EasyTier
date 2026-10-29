@@ -2,11 +2,12 @@
 export type FlowPanelFilterFields = {
   peer: string
   ip: string
+  /** Localized TX/RX label; kept for text search, not shown as a table column. */
   direction: string
 }
 
-/** Stable direction key for the panel chip filter (not the localized label). */
-export type FlowPanelDirectionFilter = 'all' | 'tx' | 'rx'
+/** Direction selected in the panel dropdown (no “all” — list is always one-sided). */
+export type FlowPanelDirectionFilter = 'tx' | 'rx'
 
 export type FlowPanelDirectionKey = 'tx' | 'rx'
 
@@ -22,15 +23,13 @@ export function flowPanelRowMatchesDirection(
   dirKey: FlowPanelDirectionKey,
   directionFilter: FlowPanelDirectionFilter,
 ): boolean {
-  if (directionFilter === 'all')
-    return true
   return dirKey === directionFilter
 }
 
 export function filterFlowPanelRows<T extends FlowPanelFilterFields>(
   rows: T[],
   query: string,
-  directionFilter: FlowPanelDirectionFilter = 'all',
+  directionFilter: FlowPanelDirectionFilter = 'tx',
   dirKeyOf: (row: T) => FlowPanelDirectionKey = () => 'tx',
 ): T[] {
   return rows.filter((row) => {
