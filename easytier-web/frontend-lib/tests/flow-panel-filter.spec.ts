@@ -3,6 +3,7 @@ import {
   filterFlowPanelRows,
   flowPanelRowMatchesDirection,
   flowPanelRowMatchesQuery,
+  wireFlowDirectionKey,
   type FlowPanelDirectionKey,
 } from '../src/modules/flowPanelFilter'
 
@@ -22,6 +23,18 @@ describe('flowPanelRowMatchesQuery', () => {
     expect(flowPanelRowMatchesQuery(rows[1], '10.10.10.51')).toBe(true)
     expect(flowPanelRowMatchesQuery(rows[1], '发送')).toBe(true)
     expect(flowPanelRowMatchesQuery(rows[0], '发送')).toBe(false)
+  })
+})
+
+describe('wireFlowDirectionKey', () => {
+  it('treats 0 and omitted direction as tx (pbjson drops proto3 defaults)', () => {
+    expect(wireFlowDirectionKey(0)).toBe('tx')
+    expect(wireFlowDirectionKey(undefined)).toBe('tx')
+    expect(wireFlowDirectionKey(null)).toBe('tx')
+    expect(wireFlowDirectionKey('')).toBe('tx')
+    expect(wireFlowDirectionKey('0')).toBe('tx')
+    expect(wireFlowDirectionKey(1)).toBe('rx')
+    expect(wireFlowDirectionKey('1')).toBe('rx')
   })
 })
 

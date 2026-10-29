@@ -56,7 +56,10 @@ describe('flowIpLabel / flowSeriesLabel', () => {
     expect(flowSeriesLabel(series({ direction: 0 }))).toBe('↑ 10.0.0.0/24 · peer-b')
     expect(flowSeriesLabel(series({ peer_hostname: '' }))).toBe('↓ 10.0.0.0/24')
     expect(flowDirectionArrow(0)).toBe('↑')
+    expect(flowDirectionArrow(undefined)).toBe('↑')
+    expect(flowDirectionArrow('0')).toBe('↑')
     expect(flowDirectionArrow(1)).toBe('↓')
+    expect(flowDirectionArrow('1')).toBe('↓')
   })
 })
 

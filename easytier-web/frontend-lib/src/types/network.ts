@@ -740,8 +740,12 @@ export interface PeerConnFlow {
   conn_id: string
   peer_id: number
   ip: string
-  /** 0 = tx, 1 = rx. */
-  direction: number
+  /**
+   * 0 = tx, 1 = rx. Optional because pbjson omits proto3 default `0`, so TX
+   * rows often arrive without this field over JSON RPC — treat missing as tx
+   * via `wireFlowDirectionKey`. May also arrive as a numeric string.
+   */
+  direction?: number | string
   bytes: number | string
   packets: number | string
   /** Bytes per second over the last closed rate window (node-side). */

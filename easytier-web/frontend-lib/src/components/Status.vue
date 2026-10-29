@@ -45,6 +45,7 @@ import PeerConnHistoryChart from './PeerConnHistoryChart.vue';
 import FlowHistoryChart from './FlowHistoryChart.vue';
 import {
   filterFlowPanelRows,
+  wireFlowDirectionKey,
   type FlowPanelDirectionFilter,
   type FlowPanelDirectionKey,
 } from '../modules/flowPanelFilter';
@@ -211,7 +212,7 @@ function flowIpLabel(flow: PeerConnFlow): string {
 }
 
 function flowDirectionKey(flow: PeerConnFlow): FlowPanelDirectionKey {
-  return flow.direction === 0 ? 'tx' : 'rx'
+  return wireFlowDirectionKey(flow.direction)
 }
 
 function flowDirectionLabel(flow: PeerConnFlow): string {
@@ -260,7 +261,7 @@ const flowPanelRows = computed((): FlowPanelRow[] => {
     for (let i = 0; i < flows.length; i++) {
       const flow = flows[i]
       rows.push({
-        key: `${row.key}-${flow.direction}-${flow.ip}-${i}`,
+        key: `${row.key}-${flowDirectionKey(flow)}-${flow.ip}-${i}`,
         peer,
         proto,
         direction: flowDirectionLabel(flow),

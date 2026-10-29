@@ -657,6 +657,39 @@ mod tests {
         assert_eq!(pair.get_loss_rate(), Some(0.0));
     }
 
+    /// pbjson omits proto3 default scalars. `PeerConnFlow.direction == 0` means
+    /// TX; if the web UI treats a missing field as RX, every send row vanishes
+    /// from the default「发送」filter. Keep this assertion so a future
+    /// always-serialize change is intentional, and the frontend must keep
+    /// treating omitted direction as tx (`wireFlowDirectionKey`).
+    #[cfg(feature = "json-rpc")]
+    #[test]
+    fn peer_conn_flow_json_omits_tx_direction_zero() {
+        use super::instance::PeerConnFlow;
+
+        let tx = PeerConnFlow {
+            conn_id: "c".into(),
+            peer_id: 1,
+            ip: "10.0.0.1".into(),
+            direction: 0,
+            bytes: 100,
+            ..Default::default()
+        };
+        let rx = PeerConnFlow {
+            direction: 1,
+            bytes: 50,
+            ..tx.clone()
+        };
+
+        let tx_json = serde_json::to_value(tx).unwrap();
+        let rx_json = serde_json::to_value(rx).unwrap();
+        assert!(
+            !tx_json.as_object().unwrap().contains_key("direction"),
+            "TX direction=0 must stay omitted under pbjson (frontend maps missing→tx)"
+        );
+        assert_eq!(rx_json["direction"], serde_json::json!(1));
+    }
+
     #[cfg(feature = "json-rpc")]
     #[test]
     fn peer_route_pair_json_omits_zero_loss_rate_and_preserves_nonzero_loss_rate() {

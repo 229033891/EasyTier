@@ -1,4 +1,5 @@
 import type { FlowHistoryPoint, FlowHistorySeries } from './api'
+import { wireFlowDirectionKey } from './flowPanelFilter'
 
 /**
  * 隧道级 IP 流量历史的纯函数工具。
@@ -10,12 +11,14 @@ import type { FlowHistoryPoint, FlowHistorySeries } from './api'
 
 /** 一条曲线在响应里的唯一键（conn + peer + IP/网段 + 方向，与后端 series key 对齐） */
 export function flowSeriesKey(series: FlowHistorySeries): string {
-    return `${series.conn_id}:${series.peer_id}:${series.ip}:${series.prefix_len}:${series.direction}`
+    // Normalize so omitted / "0" TX does not diverge from explicit 0 in the key.
+    const dir = wireFlowDirectionKey(series.direction) === 'tx' ? 0 : 1
+    return `${series.conn_id}:${series.peer_id}:${series.ip}:${series.prefix_len}:${dir}`
 }
 
-/** 0 = tx（发往该 IP），1 = rx（来自该 IP） */
-export function flowDirectionArrow(direction: number): string {
-    return direction === 0 ? '↑' : '↓'
+/** 0 / omitted = tx（发往该 IP），1 = rx（来自该 IP）；与实时面板同一套解析. */
+export function flowDirectionArrow(direction: number | string | null | undefined): string {
+    return wireFlowDirectionKey(direction) === 'tx' ? '↑' : '↓'
 }
 
 /** `10.0.0.0` + prefix_len 24 → `10.0.0.0/24`；精确 IP 原样返回 */
