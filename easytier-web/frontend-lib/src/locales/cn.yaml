@@ -578,7 +578,6 @@ policy_routes_help: |-
 policy_routes_dns_observe_off: 域名规则靠本机 MagicDNS 解析学到目标 IP；本网络未开启「启用魔法 DNS」，规则不会学到 IP。
 policy_routes_dns_observe_unsupported: 本网络开启了 no_tun，MagicDNS 不会接线，域名规则不会学到目标 IP；请改用网段规则。
 policy_routes_dns_observe_version: 目标设备 EasyTier 版本低于 2.7.4，不识别域名策略，域名规则不会生效。
-policy_routes_dns_observe_manual: 域名规则要在目标机器上由 MagicDNS 接线才会学到 IP。此页无法判断设备系统 —— 桌面端通常自动接线，Linux（非桌面）/ 移动端需手动确认，否则规则不生效。
 policy_routes_add: 添加路由
 policy_routes_remove: 删除此路由
 policy_routes_cidr: 目标网段

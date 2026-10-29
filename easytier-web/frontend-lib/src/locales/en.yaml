@@ -582,7 +582,6 @@ policy_routes_help: |-
 policy_routes_dns_observe_off: Domain rules learn target IPs via this host's MagicDNS. Magic DNS is off for this network, so no IP is learned.
 policy_routes_dns_observe_unsupported: This network enables no_tun, so MagicDNS is not wired and domain rules will not learn any IP — use CIDR rules instead.
 policy_routes_dns_observe_version: The target device runs EasyTier older than 2.7.4, which ignores domain policy, so domain rules never take effect.
-policy_routes_dns_observe_manual: Domain rules learn IPs only when MagicDNS is wired on the target machine. This page cannot detect the device OS — desktops are usually automatic, while Linux (non-desktop) and mobile may need manual wiring, otherwise the rules never take effect.
 policy_routes_add: Add route
 policy_routes_remove: Remove this route
 policy_routes_cidr: Target CIDR
