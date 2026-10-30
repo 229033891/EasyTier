@@ -1236,10 +1236,7 @@ const eventLogContent = computed(() => {
             </div>
           </template>
           <div class="status-panel-body">
-            <div v-if="!flowPanelRows.length" class="status-empty">
-              {{ t('status.flow_panel_empty') }}
-            </div>
-            <template v-else>
+            <template v-if="flowPanelRows.length">
               <div v-if="!filteredFlowPanelRows.length" class="status-empty">
                 {{ t('status.flow_filter_empty') }}
               </div>

@@ -776,7 +776,6 @@ status:
   p2p: Direct
   # Per-tunnel flows (see docs/roadmap/tunnel-ip-flow-observability.md)
   flow_panel: Live Traffic
-  flow_panel_empty: "No flow details yet. Enable flow stats in node config and save; only traffic this node sends or receives is counted (forwarded traffic is not). Records appear after there is some application traffic. Bytes here are inner IP bytes, not the link bytes of the Upload/Download columns."
   flow_filter_placeholder: Search peer / IP…
   flow_filter_clear: Clear search
   flow_filter_empty: No matching flows. Switch TX/RX or clear the search.
