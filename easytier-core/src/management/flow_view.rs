@@ -88,7 +88,8 @@ pub fn attach_conn_flows(conns: &mut [PeerConnInfo], by_conn: &ConnFlowsById) {
 
 /// Snapshot the table once and fill every peer's tunnels.
 ///
-/// Prefer this over calling [`fill_conn_flows`] inside a per-peer map.
+/// This is the only path production code uses: do **not** snapshot the table
+/// inside a per-peer map (that re-scans it once per peer).
 pub fn fill_peers_conn_flows(peers: &mut [PeerInfo], table: &FlowTable, view: FlowView) {
     let by_conn = snapshot_conn_flows(table, view);
     if by_conn.is_empty() {
@@ -99,11 +100,15 @@ pub fn fill_peers_conn_flows(peers: &mut [PeerInfo], table: &FlowTable, view: Fl
     }
 }
 
-/// Attach the recorded flows of every tunnel to its `PeerConnInfo`.
+/// Attach the recorded flows of every tunnel to one `PeerConnInfo` list.
 ///
-/// Convenience for a **single** conn list (tests / one-off). For multi-peer
-/// collects use [`fill_peers_conn_flows`] so the table is scanned only once.
-pub fn fill_conn_flows(conns: &mut [PeerConnInfo], table: &FlowTable, view: FlowView) {
+/// Test-only convenience for a **single** conn list: every production caller
+/// (CollectNetworkInfo / ListPeer) fills a whole peer list, so it goes through
+/// [`fill_peers_conn_flows`] and snapshots the table once per response. Keeping
+/// this wrapper out of production builds also avoids a dead-code warning in the
+/// non-test lib (`flow_view` is a crate-private module).
+#[cfg(test)]
+fn fill_conn_flows(conns: &mut [PeerConnInfo], table: &FlowTable, view: FlowView) {
     let by_conn = snapshot_conn_flows(table, view);
     attach_conn_flows(conns, &by_conn);
 }
