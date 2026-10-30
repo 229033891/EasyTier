@@ -2,6 +2,9 @@ name: ET Release
 
 # Auto: when ET Linux / Windows / Android succeed on releases/v*,
 #        wait until all three share the same head SHA, then Publish a Release.
+#        ET OpenWrt is picked up when it is already done; otherwise the job
+#        waits for the in-flight run (bounded by OPENWRT_WAIT_SECONDS) so the
+#        .apk package is not silently dropped from the release.
 # Manual: workflow_dispatch still works (optional draft).
 #
 # Note: workflow_run uses the workflow file from the default branch (main).
@@ -86,6 +89,8 @@ jobs:
           GUI_RUN_ID: ${{ github.event.inputs.gui_run_id || 0 }}
           MOBILE_RUN_ID: ${{ github.event.inputs.mobile_run_id || 0 }}
           OPENWRT_RUN_ID: ${{ github.event.inputs.openwrt_run_id || 0 }}
+          # Max seconds to wait for an in-flight ET OpenWrt run on the same SHA.
+          OPENWRT_WAIT_SECONDS: '1800'
           PUBLISH_INPUT: ${{ github.event.inputs.publish }}
         run: |
           set -euo pipefail
@@ -178,6 +183,54 @@ jobs:
             echo ""
           }
 
+          # Poll the newest ET OpenWrt run for a given SHA until it completes,
+          # bounded by OPENWRT_WAIT_SECONDS. Prints the run id when it succeeded
+          # with ET-* artifacts, prints nothing when there is no run for this SHA
+          # or the wait timed out.
+          #
+          # Rationale (v2.7.10): OpenWrt builds through the SDK container and is
+          # routinely slower than Linux/Windows/Android (Windows finished 07:22,
+          # OpenWrt 07:29 UTC). The release is triggered by the *first* of
+          # Linux/Windows/Android to complete that finds all three green, so a
+          # one-shot lookup misses the still-running OpenWrt run and the
+          # published release silently ships without the .apk package.
+          wait_for_openwrt() {
+            local want_sha="$1"
+            local wait_s="${OPENWRT_WAIT_SECONDS:-1800}"
+            local deadline=$(( $(date +%s) + wait_s ))
+            local line="" id="" status=""
+            while :; do
+              line="$(gh run list \
+                --workflow "ET OpenWrt" \
+                --branch "$branch" \
+                --commit "$want_sha" \
+                --limit 1 \
+                --json databaseId,status \
+                --jq '.[0] | "\(.databaseId) \(.status)"' 2>/dev/null || true)"
+              id="${line%% *}"
+              status="${line##* }"
+              if [ -z "$line" ] || [ -z "$id" ] || [ "$id" = "null" ]; then
+                echo "No ET OpenWrt run for ${want_sha}; releasing without it." >&2
+                return 0
+              fi
+              if [ "$status" = "completed" ]; then
+                if run_has_et_artifacts "$id"; then
+                  echo "ET OpenWrt run ${id} completed with artifacts." >&2
+                  echo "$id"
+                else
+                  echo "ET OpenWrt run ${id} completed without ET-* artifacts; releasing without it." >&2
+                fi
+                return 0
+              fi
+              if [ "$(date +%s)" -ge "$deadline" ]; then
+                echo "::warning::ET OpenWrt run ${id} still ${status} after ${wait_s}s; releasing without it."
+                return 0
+              fi
+              echo "Waiting for ET OpenWrt run ${id} (${status})..." >&2
+              sleep 30
+            done
+          }
+
           describe_run() {
             local id="$1"
             gh run view "$id" --json databaseId,headSha,displayTitle,url,workflowName \
@@ -204,8 +257,12 @@ jobs:
               exit 0
             fi
 
-            # Optional OpenWrt (same SHA); do not block release
+            # Optional OpenWrt (same SHA); do not block release forever, but do
+            # wait for an in-flight run so the .apk package is not dropped.
             OPENWRT_RUN_ID="$(resolve_run "ET OpenWrt" "$sha" || true)"
+            if [ -z "${OPENWRT_RUN_ID}" ]; then
+              OPENWRT_RUN_ID="$(wait_for_openwrt "$sha" || true)"
+            fi
             [ -n "${OPENWRT_RUN_ID}" ] || OPENWRT_RUN_ID="0"
           else
             # Manual overrides / latest success on branch
