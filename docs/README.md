@@ -215,6 +215,7 @@ export CARGO_PROFILE_DEV_DEBUG=0 CARGO_INCREMENTAL=0 CARGO_TARGET_DIR='D:\EasyTi
 | `cl: 命令行 error D8050: 无法执行 …\c1.dll: 未能将命令行放入调试记录中` | MSVC 在 `-Z7` + 长路径下写 PDB 失败。**不要**改用 `--release` 瞎试：设 `CARGO_PROFILE_DEV_DEBUG=0` 并用短 `CARGO_TARGET_DIR`（如 `.cache/cargo-target`）；打包场景直接用 `script\` 脚本（已内置）。详见上文「⛔ 打包」 |
 | `--features full` 失败：`openssl-sys: Command 'perl' not found` | `full` 含 `openssl-crypto`，要从源码构建 OpenSSL。CI 的 `cargo clippy --all-targets --features full -- -D warnings` **本地无法复现**；要跑需先装 Strawberry Perl |
 | 默认 features 下出现一批「never used」告警 | 多数是 feature 门控造成的**假死代码**，**不要盲删** |
+| 前端 `vite build` 报 `[vite:esbuild-transpile] remove C:\Users\…\AppData\Local\Temp\…: Access is denied.` | esbuild 收尾删自己的临时文件被拦（TEMP 目录的策略/杀软锁，**与代码无关**）。把 `TMP`/`TEMP` 指到工作区内可写目录再跑：`$env:TMP=$env:TEMP="D:\EasyTier\.tmpbuild"`。**2026-10-30 已踩过**；同一现象也会出现在 `script\` 脚本之外的手搓构建里 |
 
 ### 前端 / proto（不必走 pnpm）
 
@@ -223,4 +224,16 @@ export CARGO_PROFILE_DEV_DEBUG=0 CARGO_INCREMENTAL=0 CARGO_TARGET_DIR='D:\EasyTi
 - proto TS 生成：`node easytier-web/frontend-lib/scripts/codegen-proto.mjs`（注意在 `frontend-lib/` 下，**不是**仓库根的 `scripts/`；`@protobuf-ts/protoc` 自带 protoc，无需系统安装）
 - Rust 侧 proto：由 `easytier-proto/build/main.rs` 自动下载 protoc（Windows 走 GitHub release）
 - 不跑 cargo 时的替代校验：`rustfmt --edition 2024 --check <file>`（edition 必须写 2024，否则 let-chains 会误报「only allowed in Rust 2024」）
+
+**`frontend-lib/dist/` 是 gitignored 但必须有产物**：`easytier-gui`（以及 Web 控制台）通过 `easytier-frontend-lib` 包解析到 `dist/`。
+`dist/` 缺失或只有 `vite.svg` 时，GUI 侧的类型检查会报一批 **`TS2307: Cannot find module 'easytier-frontend-lib'`** ——
+那是产物没生成，**不是** workspace link 坏了，也不是缺依赖。先重建再判断：
+
+```powershell
+cd easytier-web\frontend-lib
+$env:TMP=$env:TEMP="D:\EasyTier\.tmpbuild"   # 见上一节「已知坑」的 esbuild 条目
+node node_modules\vite\bin\vite.js build      # 产出 dist/easytier-frontend-lib.{js,umd.cjs,d.ts} + style.css
+```
+
+注意构建**失败**时 vite 会先清空 `dist/`，所以半途失败会把手上的可用产物一起带走 —— 失败后请重跑到成功为止（`2026-10-30` 已踩过）。
 

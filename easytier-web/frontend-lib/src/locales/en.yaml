@@ -138,7 +138,7 @@ hide_dock_icon: Hide Dock Icon
 show_dock_icon: Show Dock Icon
 exit: Exit
 exit_app: Exit App
-exit_stops_service_confirm: Exiting stops the EasyTier service first, so running networks are disconnected immediately. Exit anyway?
+exit_stops_service_confirm: "Exiting stops the EasyTier service first: all running instances are disconnected and networks drop immediately. Hiding the window to the tray affects nothing. Exit anyway?"
 use_latency_first: Quality-First Routing
 show_node_details: Show Node Details
 hide_node_details: Hide Node Details
@@ -839,6 +839,16 @@ tray:
   state_running: "Connected: {count} network(s) running"
   state_core_unreachable: Core unreachable — check the runtime mode / service
   state_instance_failed: "{count} network(s) failed to start"
+  # "Network configs" submenu: ● = running (click to stop), ○ = stopped (click to start).
+  configs: Network configs
+  configs_title: "Network configs ({running}/{total} running)"
+  configs_empty: No configs yet
+  configs_offline: Core not connected
+  configs_more: "{count} more not listed…"
+  open_window: Open main window…
+  config_untitled: Untitled config
+  config_start_failed: "Failed to start {name}"
+  config_stop_failed: "Failed to stop {name}"
 
 about:
   title: About

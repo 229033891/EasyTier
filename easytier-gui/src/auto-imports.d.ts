@@ -9,6 +9,8 @@ declare global {
   const EffectScope: typeof import('vue')['EffectScope']
   const MenuItemExit: typeof import('./composables/tray')['MenuItemExit']
   const MenuItemShow: typeof import('./composables/tray')['MenuItemShow']
+  const TRAY_CONFIG_LABEL_MAX: typeof import('./composables/tray_config_menu')['TRAY_CONFIG_LABEL_MAX']
+  const TRAY_CONFIG_MENU_MAX: typeof import('./composables/tray_config_menu')['TRAY_CONFIG_MENU_MAX']
   const WINDOW_EVENTS: typeof import('./composables/event')['WINDOW_EVENTS']
   const acceptHMRUpdate: typeof import('pinia')['acceptHMRUpdate']
   const addVpnPortalClient: typeof import('./composables/backend')['addVpnPortalClient']
@@ -16,6 +18,7 @@ declare global {
   const annotateNetworkInfoWithMobileVpnRoutes: typeof import('./composables/mobile_vpn')['annotateNetworkInfoWithMobileVpnRoutes']
   const armUnderlayReconnectGrace: typeof import('./composables/backend')['armUnderlayReconnectGrace']
   const beginTrayConnecting: typeof import('./composables/tray')['beginTrayConnecting']
+  const buildTrayConfigMenu: typeof import('./composables/tray_config_menu')['buildTrayConfigMenu']
   const buildTrayMenuItems: typeof import('./composables/tray')['buildTrayMenuItems']
   const clearLastNetworkInstanceId: typeof import('./composables/config')['clearLastNetworkInstanceId']
   const clearLogFiles: typeof import('./composables/backend')['clearLogFiles']
@@ -146,6 +149,8 @@ declare global {
   const toRef: typeof import('vue')['toRef']
   const toRefs: typeof import('vue')['toRefs']
   const toValue: typeof import('vue')['toValue']
+  const trayConfigActionIsNoop: typeof import('./composables/tray_config_menu')['trayConfigActionIsNoop']
+  const trayConfigMenuKey: typeof import('./composables/tray_config_menu')['trayConfigMenuKey']
   const triggerRef: typeof import('vue')['triggerRef']
   const unref: typeof import('vue')['unref']
   const updateNetworkConfigState: typeof import('./composables/backend')['updateNetworkConfigState']
@@ -182,6 +187,8 @@ declare module 'vue' {
     readonly EffectScope: UnwrapRef<typeof import('vue')['EffectScope']>
     readonly MenuItemExit: UnwrapRef<typeof import('./composables/tray')['MenuItemExit']>
     readonly MenuItemShow: UnwrapRef<typeof import('./composables/tray')['MenuItemShow']>
+    readonly TRAY_CONFIG_LABEL_MAX: UnwrapRef<typeof import('./composables/tray_config_menu')['TRAY_CONFIG_LABEL_MAX']>
+    readonly TRAY_CONFIG_MENU_MAX: UnwrapRef<typeof import('./composables/tray_config_menu')['TRAY_CONFIG_MENU_MAX']>
     readonly WINDOW_EVENTS: UnwrapRef<typeof import('./composables/event')['WINDOW_EVENTS']>
     readonly acceptHMRUpdate: UnwrapRef<typeof import('pinia')['acceptHMRUpdate']>
     readonly addVpnPortalClient: UnwrapRef<typeof import('./composables/backend')['addVpnPortalClient']>
@@ -189,6 +196,7 @@ declare module 'vue' {
     readonly annotateNetworkInfoWithMobileVpnRoutes: UnwrapRef<typeof import('./composables/mobile_vpn')['annotateNetworkInfoWithMobileVpnRoutes']>
     readonly armUnderlayReconnectGrace: UnwrapRef<typeof import('./composables/backend')['armUnderlayReconnectGrace']>
     readonly beginTrayConnecting: UnwrapRef<typeof import('./composables/tray')['beginTrayConnecting']>
+    readonly buildTrayConfigMenu: UnwrapRef<typeof import('./composables/tray_config_menu')['buildTrayConfigMenu']>
     readonly buildTrayMenuItems: UnwrapRef<typeof import('./composables/tray')['buildTrayMenuItems']>
     readonly clearLastNetworkInstanceId: UnwrapRef<typeof import('./composables/config')['clearLastNetworkInstanceId']>
     readonly clearLogFiles: UnwrapRef<typeof import('./composables/backend')['clearLogFiles']>
@@ -319,6 +327,8 @@ declare module 'vue' {
     readonly toRef: UnwrapRef<typeof import('vue')['toRef']>
     readonly toRefs: UnwrapRef<typeof import('vue')['toRefs']>
     readonly toValue: UnwrapRef<typeof import('vue')['toValue']>
+    readonly trayConfigActionIsNoop: UnwrapRef<typeof import('./composables/tray_config_menu')['trayConfigActionIsNoop']>
+    readonly trayConfigMenuKey: UnwrapRef<typeof import('./composables/tray_config_menu')['trayConfigMenuKey']>
     readonly triggerRef: UnwrapRef<typeof import('vue')['triggerRef']>
     readonly unref: UnwrapRef<typeof import('vue')['unref']>
     readonly updateNetworkConfigState: UnwrapRef<typeof import('./composables/backend')['updateNetworkConfigState']>

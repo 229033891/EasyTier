@@ -50,9 +50,17 @@ import {
   registerTrayExitHandler,
   setTrayMenu,
   setTrayRunState,
+  setTrayTooltip,
   showMainWindow,
   useTray,
 } from '~/composables/tray'
+import {
+  buildTrayConfigMenu,
+  trayConfigActionIsNoop,
+  trayConfigMenuKey,
+  type TrayConfigMenuModel,
+  type TrayConfigMenuSource,
+} from '~/composables/tray_config_menu'
 import {
   deriveTrayRunState,
   isRunFault,
@@ -88,6 +96,8 @@ const manualDisconnect = ref(false)
 let lastTrayServiceStatus: ServiceStatus | undefined
 /** Monotonic token so concurrent refreshTrayMenu calls cannot apply stale menus. */
 let trayMenuGeneration = 0
+/** Config fingerprint the current tray menu was built from (see `trayMenuConfigKeyNow`). */
+let lastTrayMenuConfigKey: string | undefined
 /** Service mode: owner process is stopped / not installed (not a config-server outage). */
 const configServerOwnerDown = ref(false)
 /** Fingerprint of last applied console W prune (sorted ids joined). */
@@ -113,6 +123,35 @@ let trayRefreshDirty = false
 const TRAY_PROBE_MAX = 8
 
 /**
+ * Device instance lists from the last successful RPC.
+ *
+ * Cached so the tray *menu* can be rebuilt from the same snapshot the icon was
+ * derived from instead of firing a second `list_network_instance_ids`.
+ */
+interface TrayDeviceListing {
+  /** `running_inst_ids`: the core's live instance map (includes failed starts). */
+  runningIds: string[]
+  /** `disabled_inst_ids`: storage rows not running right now — i.e. startable. */
+  disabledIds: string[]
+}
+
+let lastTrayListing: TrayDeviceListing | undefined
+
+async function loadTrayDeviceListing(): Promise<TrayDeviceListing | undefined> {
+  const listed = await remoteClient.value.list_network_instance_ids().catch(() => undefined)
+  if (!listed) {
+    lastTrayListing = undefined
+    return undefined
+  }
+  const listing: TrayDeviceListing = {
+    runningIds: (listed.running_inst_ids ?? []).map(Utils.UuidToStr),
+    disabledIds: (listed.disabled_inst_ids ?? []).map(Utils.UuidToStr),
+  }
+  lastTrayListing = listing
+  return listing
+}
+
+/**
  * Per-instance snapshots for the tray aggregate.
  *
  * `running_inst_ids` is the manager's live map, which also holds instances that
@@ -122,11 +161,10 @@ const TRAY_PROBE_MAX = 8
  * list is non-empty, so an idle device costs nothing beyond the list call.
  */
 async function collectTrayInstances(): Promise<TrayInstanceSnapshot[] | undefined> {
-  const listed = await remoteClient.value.list_network_instance_ids().catch(() => undefined)
-  if (!listed)
+  const listing = await loadTrayDeviceListing()
+  if (!listing)
     return undefined
-  const runningIds = (listed.running_inst_ids ?? []).map(Utils.UuidToStr)
-  return await Promise.all(runningIds.slice(0, TRAY_PROBE_MAX).map(async (instanceId) => {
+  return await Promise.all(listing.runningIds.slice(0, TRAY_PROBE_MAX).map(async (instanceId) => {
     try {
       const info = await remoteClient.value.get_network_info(instanceId)
       return { instanceId, running: info?.running, errorMsg: info?.error_msg ?? '' }
@@ -137,6 +175,210 @@ async function collectTrayInstances(): Promise<TrayInstanceSnapshot[] | undefine
       return { instanceId }
     }
   }))
+}
+
+/**
+ * Names from the GUI-local cache (`networkList`).
+ *
+ * Free fallback for the ids whose device meta is missing (older core, meta RPC
+ * failed): a config the user just created locally still gets its real name.
+ */
+function storedConfigNames(): Map<string, string> {
+  const names = new Map<string, string>()
+  for (const stored of parseStoredConfigs(localStorage.getItem('networkList'))) {
+    const id = stored.config?.instance_id
+    if (id)
+      names.set(id, stored.config.network_name ?? '')
+  }
+  return names
+}
+
+/**
+ * Cheap menu fingerprint — no RPC. Compared against the key the current menu was
+ * built from so the 30s poll does not rebuild a muda menu tree for nothing.
+ *
+ * Names only come from the local cache here; a rename applied only on the device
+ * (console) is picked up on the next rebuild triggered by other means.
+ */
+function trayMenuConfigKeyNow(): string | undefined {
+  if (!lastTrayListing)
+    return undefined
+  const runningIds = new Set(lastTrayListing.runningIds)
+  const names = storedConfigNames()
+  return trayConfigMenuKey(
+    [...new Set([...lastTrayListing.runningIds, ...lastTrayListing.disabledIds])]
+      .map(instanceId => ({
+        instanceId,
+        name: names.get(instanceId) ?? '',
+        running: runningIds.has(instanceId),
+      })),
+  )
+}
+
+/**
+ * Everything the「网络配置」submenu needs, from the cached listing + one batched
+ * meta call (per-id fetches would put N RPCs behind every menu rebuild).
+ */
+async function collectTrayConfigMenu(): Promise<{ model: TrayConfigMenuModel, ready: boolean }> {
+  const listing = lastTrayListing ?? await loadTrayDeviceListing()
+  const runningIds = new Set(listing?.runningIds ?? [])
+  const names = storedConfigNames()
+  const instanceIds = listing
+    ? [...new Set([...listing.runningIds, ...listing.disabledIds])]
+    : []
+
+  if (instanceIds.length) {
+    let metas: Record<string, { network_name?: string }> = {}
+    try {
+      metas = (await getNetworkMetas(instanceIds)).metas ?? {}
+    }
+    catch (e) {
+      // Names degrade to the local cache / placeholder; the menu is still usable.
+      console.warn('Failed to load metas for the tray config menu', e)
+    }
+    for (const instanceId of instanceIds) {
+      const name = metas[instanceId]?.network_name?.trim()
+      if (name)
+        names.set(instanceId, name)
+    }
+  }
+
+  const sources: TrayConfigMenuSource[] = instanceIds.map(instanceId => ({
+    instanceId,
+    name: names.get(instanceId) ?? '',
+    running: runningIds.has(instanceId),
+  }))
+
+  return {
+    model: buildTrayConfigMenu({ entries: sources, untitledLabel: t('tray.config_untitled') }),
+    ready: listing !== undefined,
+  }
+}
+
+/** Ids with a tray start/stop in flight (see `runTrayConfigAction`). */
+const trayConfigActionInFlight = new Set<string>()
+
+/**
+ * Start / stop one config straight from the tray.
+ *
+ * Two guards, both about the same failure mode — the core tears WinTun down and
+ * rebuilds it per start attempt (`docs/roadmap/connection-stability-todo.md`
+ * P-WIN.1), so a tray hot path must never pile attempts up:
+ * 1. **In-flight**: one action per id at a time (burst clicks, double-tap).
+ * 2. **Live re-check**: the row came from a snapshot, so skip when the config is
+ *    already in the requested state (see `trayConfigActionIsNoop`).
+ *
+ * No confirmation on stop — the tray menu's value is one click; the icon (and the
+ * tooltip on failure) is the feedback channel when the window is hidden.
+ */
+async function runTrayConfigAction(instanceId: string, label: string, action: 'start' | 'stop') {
+  if (trayConfigActionInFlight.has(instanceId))
+    return
+  if (!clientRunning.value) {
+    // Nothing to talk to. The window shows the real reason (mode / service status).
+    await showMainWindow()
+    return
+  }
+
+  trayConfigActionInFlight.add(instanceId)
+
+  // Re-check the live state before acting: the row was rendered from a snapshot, and
+  // the enable path runs `run_network_instance(overwrite: true)` — for a network that
+  // is already up that is *stop + start* (WinTun torn down and rebuilt, P-WIN.1), and
+  // for one that is already stopped it is a pointless error toast. This must happen
+  // before `beginTrayConnecting` so the connecting hold stays balanced on the no-op
+  // path (a stray `endTrayConnecting` would steal another flow's yellow icon).
+  let noop = false
+  try {
+    const listing = await loadTrayDeviceListing()
+    if (listing) {
+      const inInstanceTable = listing.runningIds.includes(instanceId)
+      let reallyRunning: boolean | undefined
+      if (action === 'start' && inInstanceTable) {
+        // "In the table" includes failed / cancelled starts, so probe the real flag.
+        reallyRunning = await remoteClient.value
+          .get_network_info(instanceId)
+          .then(info => info?.running)
+          .catch(() => undefined)
+      }
+      noop = trayConfigActionIsNoop(action, inInstanceTable, reallyRunning)
+    }
+    // Listing unavailable: fall through and let the RPC fail loudly instead of
+    // silently swallowing the click.
+  }
+  catch (e) {
+    console.warn('Failed to re-check the live state before a tray config action', e)
+  }
+
+  if (noop) {
+    trayConfigActionInFlight.delete(instanceId)
+    // The row was stale — repaint it from the state we just read.
+    await refreshTrayMenuIfChanged()
+    return
+  }
+
+  const failureLabel = action === 'start'
+    ? t('tray.config_start_failed', { name: label })
+    : t('tray.config_stop_failed', { name: label })
+  let failed = false
+
+  try {
+    await beginTrayConnecting(action === 'start' ? t('tray.state_connecting') : undefined)
+    await remoteClient.value.update_network_instance_state(instanceId, action === 'stop')
+  }
+  catch (e: any) {
+    failed = true
+    console.error(`Tray failed to ${action} network`, instanceId, e)
+    toast.add({
+      severity: 'error',
+      summary: t('web.common.error'),
+      detail: `${failureLabel}: ${Utils.formatApiErrorDetail(e, t)}`,
+      life: TOAST_LIFE.severe,
+    })
+  }
+  finally {
+    trayConfigActionInFlight.delete(instanceId)
+    try {
+      await endTrayConnecting(await refreshTrayRunState())
+    }
+    catch (e) {
+      console.warn('Failed to settle tray icon after a tray config action', e)
+    }
+    if (failed) {
+      // Applied after the settle: `endTrayConnecting` would otherwise overwrite it
+      // with the aggregate tooltip. Survives until the next refresh (~30s poll).
+      try {
+        await setTrayTooltip(failureLabel)
+      }
+      catch (e) {
+        console.warn('Failed to write the tray failure tooltip', e)
+      }
+    }
+    // The listing just changed — rebuild only if nothing else already did.
+    await refreshTrayMenuIfChanged()
+  }
+}
+
+/**
+ * Rebuild the tray menu only when the config set / run state / cached names changed.
+ *
+ * Safe to call from the 30s poll: it costs no RPC unless a rebuild is needed. Two
+ * things it must not do: rebuild on every tick when the client is down (the key is
+ * `undefined` then — same as after the offline menu was built, so it short-circuits
+ * too), and leak a rejected promise — every caller `void`s it from a timer/event.
+ */
+async function refreshTrayMenuIfChanged() {
+  if (type() === 'android')
+    return
+  if (trayMenuConfigKeyNow() === lastTrayMenuConfigKey)
+    return
+  try {
+    await refreshTrayMenu()
+  }
+  catch (e) {
+    // Menu tree rebuild is best-effort chrome; the next change (or the poll) retries.
+    console.warn('Failed to refresh the tray menu', e)
+  }
 }
 
 function trayStateTooltip(result: TrayRunStateResult): string {
@@ -168,6 +410,10 @@ async function refreshTrayRunStateInner(): Promise<TrayRunState> {
       }
     }
     const instances = clientRunning.value ? await collectTrayInstances() : undefined
+    // Client down: the cached listing is stale by definition — drop it so the menu
+    // stops offering start/stop rows it can no longer act on.
+    if (!clientRunning.value)
+      lastTrayListing = undefined
     // List unavailable: keep the previous icon rather than inventing a grey one.
     if (clientRunning.value && instances === undefined)
       return lastTrayState
@@ -221,7 +467,12 @@ function scheduleTrayRunStateRefresh() {
     window.clearTimeout(trayRefreshTimer)
   trayRefreshTimer = window.setTimeout(() => {
     trayRefreshTimer = undefined
-    void refreshTrayRunState()
+    void (async () => {
+      await refreshTrayRunState()
+      // Window-driven start/stop (GUIRemoteClient pushes here) must reach the submenu
+      // too; the fingerprint check keeps the 30s poll from rebuilding the menu.
+      await refreshTrayMenuIfChanged()
+    })()
   }, TRAY_REFRESH_DEBOUNCE_MS)
 }
 
@@ -819,9 +1070,31 @@ async function refreshTrayMenu(forceStatus?: ServiceStatus) {
     lastTrayServiceStatus = undefined
   }
 
+  const { model, ready } = await collectTrayConfigMenu()
+  if (generation !== trayMenuGeneration)
+    return
+
   const items = await buildTrayMenuItems({
     showLabel: t('tray.show'),
     exitLabel: t('tray.exit'),
+    configMenu: {
+      entries: model.entries,
+      hidden: model.hidden,
+      ready,
+      labels: {
+        // Counts only when there is something to count; "0/0 running" is noise.
+        title: model.total
+          ? t('tray.configs_title', { running: model.runningCount, total: model.total })
+          : t('tray.configs'),
+        empty: t('tray.configs_empty'),
+        offline: t('tray.configs_offline'),
+        more: t('tray.configs_more', { count: model.hidden }),
+        openWindow: t('tray.open_window'),
+      },
+      onStart: (instanceId, label) => void runTrayConfigAction(instanceId, label, 'start'),
+      onStop: (instanceId, label) => void runTrayConfigAction(instanceId, label, 'stop'),
+      onOpenWindow: () => void showMainWindow(),
+    },
     serviceMode,
     serviceStatus,
     serviceLabels: serviceMode && serviceStatus
@@ -844,6 +1117,8 @@ async function refreshTrayMenu(forceStatus?: ServiceStatus) {
   if (generation !== trayMenuGeneration)
     return
   await setTrayMenu(items)
+  // Remember what this menu reflects, so the poll can skip identical rebuilds.
+  lastTrayMenuConfigKey = trayMenuConfigKeyNow()
 }
 
 async function reconnectServiceRpc() {
@@ -1531,6 +1806,9 @@ async function refreshClientRunningAndTray() {
     }
   }
   await refreshTrayRunState()
+  // Covers console-side changes with no event to the GUI: cheap no-op unless the
+  // config set / run state / names actually moved.
+  await refreshTrayMenuIfChanged()
 }
 
 onMounted(async () => {

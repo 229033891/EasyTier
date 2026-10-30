@@ -138,7 +138,7 @@ hide_dock_icon: 隐藏 Dock 图标
 show_dock_icon: 显示 Dock 图标
 exit: 退出
 exit_app: 退出程序
-exit_stops_service_confirm: 退出会先停止 EasyTier 服务，正在运行的组网会立即断开。确定退出？
+exit_stops_service_confirm: "退出会先停止 EasyTier 服务：所有运行中的实例都会断开，网络立即中断。仅隐藏窗口到托盘不影响组网。确定退出？"
 chips_placeholder: 例如： {0}，回车、逗号或点别处添加
 chips_placeholder_typeahead: 例如： {0}，回车或逗号添加
 show_node_details: 显示节点详细信息
@@ -834,6 +834,16 @@ tray:
   state_running: "已联网：{count} 个网络在运行"
   state_core_unreachable: 无法连接内核，请检查运行模式 / 服务状态
   state_instance_failed: "{count} 个网络启动失败"
+  # 「网络配置」子菜单：● = 运行中（点一下停止），○ = 未运行（点一下启动）
+  configs: 网络配置
+  configs_title: "网络配置（{running}/{total} 运行中）"
+  configs_empty: 暂无配置
+  configs_offline: 内核未连接
+  configs_more: 还有 {count} 个未列出…
+  open_window: 打开主窗口…
+  config_untitled: 未命名配置
+  config_start_failed: "启动 {name} 失败"
+  config_stop_failed: "停止 {name} 失败"
 
 about:
   title: 关于

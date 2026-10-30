@@ -3,7 +3,7 @@
 ## Status
 
 - Status: **Current**
-- 最近审阅：2026-10-22（§2.3.1：note 提前到 save/run 前；抑制预算 **2**（reconcile + AdoptRuntime）；另源下发仍提示；同步 tip 文案缩短）；2026-10-14（§2.5 存储优先 + 热更写回 + Service/Remote Web 运行态指纹采纳；徽章/RPC warn）
+- 最近审阅：2026-10-30（新增 §1.1 启停/退出语义：停服务=全停、关窗口≠退出、托盘退出在 service 模式会先停服务）；2026-10-22（§2.3.1：note 提前到 save/run 前；抑制预算 **2**（reconcile + AdoptRuntime）；另源下发仍提示；同步 tip 文案缩短）；2026-10-14（§2.5 存储优先 + 热更写回 + Service/Remote Web 运行态指纹采纳；徽章/RPC warn）
 - 上次审阅：2026-10-09（补 §2.5：读配置权威；GUI RPC 优先 vs Web 存储优先；补 §6：配置页 / 运行页职责）
 - 范围：Windows/Linux/macOS 桌面 `easytier-gui`、可选后台服务 `ET-Gui`、config-server 会话与 web-owned 配置回写
 - 索引：[`../README.md`](../README.md)
@@ -55,6 +55,49 @@
 
 **Service 与 Remote 下 GUI 本地 `source` 缓存可能缺失或过期**（`GuiHooks` 只在持有
 `WebClient` 的进程安装）。判断 web-owned 一律以权威侧为准，见 §2.3 第 0 步。
+
+### 1.1 启停与退出语义：谁停谁（2026-10-30）
+
+「服务」不是一个抽象开关，而是 `easytier-core --daemon` **进程本体**：所有实例、所有隧道、
+所有虚拟网卡都在它里面（`InstanceManager` 持有 `HashMap<Uuid, Arc<Instance>>`）。
+据此三条语义固定如下，改代码或改文案前先对齐这张表：
+
+| 用户动作 | 运行中的实例 | `ET-Gui` 服务进程 | GUI 进程 |
+|----------|--------------|-------------------|----------|
+| 点窗口 **X / 关闭** | **不受影响** | 不受影响 | 只隐藏（`lib.rs:1666` `CloseRequested` → `hide()` + `prevent_close()`） |
+| 「**停止服务**」（设置页 / 托盘） | **全部停掉**（进程退出，网卡/路由随之撤销） | 停 | 保持运行，仅 RPC 不可达（徽章「未连接」） |
+| 「**退出程序**」（窗口菜单 / 托盘退出） | service：**全部停掉**；normal：**全部停掉**；**remote：不停**（远端节点继续跑） | 仅 service 模式先被停（见下） | 退出 |
+| normal 模式直接杀 GUI 进程 | 全部停掉（核在本进程内） | 无服务 | — |
+
+- **停服务 = 全停**：`service.rs:78` `set_status(false)` → `service.stop()`（:85）→ SCM/launchd/systemd 终止 core 进程，
+  进程消失即所有实例销毁。托盘项 `stop-service` 与设置页走同一命令。
+  GUI 侧因此看不到任何运行态 —— 托盘配置子菜单在 `clientRunning == false` 时整段置灰（`configs_offline`），
+  并清空 `lastTrayListing`，不留点了必然失败的条目。
+- **退出 = 可能断网，且是设计行为**：`index.vue` `exitApp()` 在 service 模式下先
+  `confirmExitServiceMode()`（窗口隐藏时必须先 `showMainWindow()`，否则对话框看不见）→
+  `setServiceStatus(false)` → `waitForServiceStatus('Stopped', 40, 250)`（最长 10s）→
+  仍为 Running 则报 `mode.service_stop_before_exit_failed` 并**取消退出**（fail closed）→ 成功才 `exit(0)`。
+  文案 `exit_stops_service_confirm` 需明确「所有运行中的实例都会断开」+「仅隐藏窗口不影响」。
+- **托盘退出兜底**：页面还没注册 `registerTrayExitHandler` 时走 `defaultExitAction()` →
+  `stopRunningServiceBestEffort()`，同样是 fail closed，绝不带着 Running 服务硬退。
+- **停服务 ≠ 删配置**：`disabled` 只改启用标记（`remote_client.rs:203` `handle_update_network_state`：
+  `insert_or_update_user_network_config` + `delete_network_instance(keep_local_config: true)` + 落 disabled）。
+  停止的实例配置仍在 `--config-dir` / 本地存储里，可再启动；反过来，**停服务本身不改任何 enabled/disabled 标记**。
+- **重启服务 = 重新自启动已启用配置**：daemon 启动时扫 `--config-dir` 下全部 `*.toml`
+  （`easytier/src/core.rs:1797` 扫目录 → `:1823` 逐个 `load_config_from_file` 后运行），
+  跳过被标记 user-disabled 的 web 托管实例。因此**强杀/断电**后重启可能把目录里所有 toml 全部拉起 —— 
+  需要「保持停止」就必须让 disabled 正常落盘（normal 走 `enabled_networks`，service 走存储的 disabled），
+  不能只依赖「进程已经没了」。
+
+> 已知边界：Remote 模式「退出」只退出 GUI，**不会**去停远端节点（`confirmExitServiceMode` 只在
+> `mode === 'service'` 分支），远端组网继续运行 —— 这符合预期，但不要在文案里说成「退出会断开网络」。
+
+**托盘「启动」不是幂等操作**（写代码/加菜单项前必须知道）：`update_network_state(disabled=false)`
+最终走 `run_network_instance(overwrite: true)`，对**已在跑**的实例等于「先停后起」——
+`easytier-core/src/instance/manager.rs:275` 的 overwrite 分支会拆掉 TUN/WinTun 再重建，
+网络会闪断一次（P-WIN.1 的放大器）。所以托盘的行不是「点了就好」的按钮语义，页面侧必须先复核实时态：
+`trayConfigActionIsNoop()` 挡掉「stop 已在停 / start 已在跑」，而启动失败（仍在实例表里但 `running=false`）
+必须放过，好让同一个入口能当重试用。
 
 ---
 
