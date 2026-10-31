@@ -2447,6 +2447,11 @@ impl VersionAndTouchTime {
 // restarted) without telling us.
 const INITIATOR_SESSION_LIVENESS_TIMEOUT: Duration = Duration::from_secs(45);
 
+/// How often a *failing* `sync_route_info` run re-states itself at WARN.
+/// One line per failed retry (every ~3s during an outage) flooded the log with
+/// identical payloads; see [`SyncRouteSession::note_sync_failure`].
+const SYNC_FAILURE_RESTATE_EVERY: u32 = 30;
+
 // if we need to sync route info with one peer, we create a SyncRouteSession with that peer.
 #[derive(Debug)]
 #[allow(dead_code)]
@@ -2488,6 +2493,11 @@ struct SyncRouteSession {
     rpc_tx_count: AtomicU32,
     rpc_rx_count: AtomicU32,
 
+    /// Consecutive failed `sync_route_info` rounds, for log de-duplication only.
+    /// A broken path fails this RPC every few seconds with an identical payload,
+    /// so one ERROR per retry flooded exactly during the incident it explains.
+    consecutive_sync_failures: AtomicU32,
+
     task: SessionTask,
 
     lock: parking_lot::Mutex<()>,
@@ -2523,9 +2533,60 @@ impl SyncRouteSession {
             rpc_tx_count: AtomicU32::new(0),
             rpc_rx_count: AtomicU32::new(0),
 
+            consecutive_sync_failures: AtomicU32::new(0),
+
             task: SessionTask::new(my_peer_id),
 
             lock: parking_lot::Mutex::new(()),
+        }
+    }
+
+    /// Records one failed `sync_route_info` round and logs it without flooding.
+    ///
+    /// A dead path fails this RPC every few seconds with an identical payload, so
+    /// one ERROR per retry flooded the log exactly during the incident it was
+    /// meant to explain. The first failure of a run keeps full detail at WARN,
+    /// repeats fall to DEBUG, and every [`SYNC_FAILURE_RESTATE_EVERY`]-th repeat
+    /// re-states the run length so a long outage stays visible at the default
+    /// level.
+    fn note_sync_failure(&self, error: &rpc_types::error::Error) {
+        let failures = self.consecutive_sync_failures.fetch_add(1, Ordering::Relaxed) + 1;
+        if failures == 1 {
+            tracing::warn!(
+                my_peer_id = self.my_peer_id,
+                dst_peer_id = self.dst_peer_id,
+                ?error,
+                "sync_route_info failed, will keep retrying"
+            );
+        } else if failures % SYNC_FAILURE_RESTATE_EVERY == 0 {
+            tracing::warn!(
+                my_peer_id = self.my_peer_id,
+                dst_peer_id = self.dst_peer_id,
+                ?error,
+                consecutive_failures = failures,
+                "sync_route_info still failing"
+            );
+        } else {
+            tracing::debug!(
+                my_peer_id = self.my_peer_id,
+                dst_peer_id = self.dst_peer_id,
+                ?error,
+                consecutive_failures = failures,
+                "sync_route_info failed"
+            );
+        }
+    }
+
+    /// Ends a failure run; one INFO line reports how many rounds it lasted.
+    fn note_sync_success(&self) {
+        let failures = self.consecutive_sync_failures.swap(0, Ordering::Relaxed);
+        if failures > 0 {
+            tracing::info!(
+                my_peer_id = self.my_peer_id,
+                dst_peer_id = self.dst_peer_id,
+                failed_rounds = failures,
+                "sync_route_info recovered"
+            );
         }
     }
 
@@ -2665,11 +2726,32 @@ impl SyncRouteSession {
 
     // Must be called with the session lock held.
     fn update_remote_state_locked(&self, session_id: SessionId, is_initiator: bool) {
-        let session_id_changed = session_id != self.dst_session_id.load(Ordering::Relaxed);
+        let prev_session_id = self.dst_session_id.load(Ordering::Relaxed);
+        let session_id_changed = session_id != prev_session_id;
         let initiator_changed = is_initiator != self.dst_is_initiator.load(Ordering::Relaxed);
 
         if session_id_changed {
-            tracing::warn!(?self, ?session_id, "session id mismatch, clear saved info.");
+            // 0 is the "we have not learned the remote session id yet" sentinel
+            // set by `SyncRouteSession::new`, not a previous generation. Every
+            // healthy session therefore takes this branch once (0 -> X) when its
+            // first message arrives; reporting that as a mismatch made a WARN
+            // land on every new session and read like a session conflict.
+            if prev_session_id == 0 {
+                tracing::debug!(
+                    my_peer_id = self.my_peer_id,
+                    dst_peer_id = self.dst_peer_id,
+                    session_id,
+                    "session established, saved info initialised."
+                );
+            } else {
+                tracing::warn!(
+                    my_peer_id = self.my_peer_id,
+                    dst_peer_id = self.dst_peer_id,
+                    prev_session_id,
+                    session_id,
+                    "session id mismatch, clear saved info."
+                );
+            }
             self.dst_session_id.store(session_id, Ordering::Relaxed);
             self.dst_saved_conn_info_version.clear();
             self.dst_saved_peer_info_versions.clear();
@@ -4148,13 +4230,9 @@ impl PeerRouteServiceImpl {
 
         match ret.as_ref() {
             Err(e) => {
-                tracing::error!(
-                    ?ret,
-                    ?my_peer_id,
-                    ?dst_peer_id,
-                    ?e,
-                    "sync_route_info failed"
-                );
+                // De-duplicated: this repeats every sync round for as long as the
+                // path to `dst_peer_id` is broken.
+                session.note_sync_failure(e);
                 session
                     .need_sync_initiator_info
                     .store(true, Ordering::Relaxed);
@@ -4196,7 +4274,28 @@ impl PeerRouteServiceImpl {
                             );
                         }
                     } else {
-                        tracing::error!(?ret, ?my_peer_id, ?dst_peer_id, "sync_route_info failed");
+                        // Remote-reported protocol error. Recoverable, but it
+                        // repeats every sync round until the peer cooperates, so
+                        // it gets the same de-duplication as a transport failure.
+                        let failures =
+                            session.consecutive_sync_failures.fetch_add(1, Ordering::Relaxed) + 1;
+                        if failures == 1 || failures % SYNC_FAILURE_RESTATE_EVERY == 0 {
+                            tracing::warn!(
+                                ?my_peer_id,
+                                ?dst_peer_id,
+                                remote_error_code = err,
+                                consecutive_failures = failures,
+                                "sync_route_info rejected by peer"
+                            );
+                        } else {
+                            tracing::debug!(
+                                ?my_peer_id,
+                                ?dst_peer_id,
+                                remote_error_code = err,
+                                consecutive_failures = failures,
+                                "sync_route_info rejected by peer"
+                            );
+                        }
                         session
                             .need_sync_initiator_info
                             .store(true, Ordering::Relaxed);
@@ -4220,6 +4319,8 @@ impl PeerRouteServiceImpl {
                             .update_dst_saved_foreign_network_version(foreign_network, dst_peer_id);
                     }
                     session.update_last_sync_succ_timestamp(next_last_sync_succ_timestamp);
+                    // Clears the failure run and, after an outage, reports it once.
+                    session.note_sync_success();
                     self.request_missing_peer_infos(&session, resp);
                 }
             }

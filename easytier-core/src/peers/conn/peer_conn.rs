@@ -1427,8 +1427,29 @@ impl PeerConn {
                         }
                     } else if peer_mgr_hdr.packet_type == PacketType::Pong as u8 {
                         context.record_control_rx(&control_network_name, buf_len);
-                        if let Err(e) = ctrl_sender.send(zc_packet) {
-                            tracing::error!(?e, "peer conn send ctrl resp error");
+                        // `ctrl_resp_sender` is a **broadcast** whose only
+                        // subscribers are the keepalive / fast-probe round
+                        // currently in flight (they subscribe for the duration of
+                        // `do_pingpong_once`). A Pong arriving with no subscriber
+                        // is the *normal* case — the round that sent the Ping has
+                        // already given up, typically because it timed out and
+                        // this Pong came back late. tokio reports "no receiver"
+                        // through `SendError`, so this used to be logged at ERROR
+                        // with the whole `ZCPacket` dumped, which read like a
+                        // socket write failure while nothing was ever written.
+                        if ctrl_sender.receiver_count() == 0 {
+                            tracing::trace!(
+                                %control_network_name,
+                                packet_len = buf_len,
+                                "peer conn dropped late Pong: no probe waiting"
+                            );
+                        } else if let Err(_e) = ctrl_sender.send(zc_packet) {
+                            // Lost the race with the last waiting probe.
+                            tracing::trace!(
+                                %control_network_name,
+                                packet_len = buf_len,
+                                "peer conn dropped late Pong: probe stopped waiting first"
+                            );
                         }
                     } else if send_peer_packet_to_chan(&sender, zc_packet, ingress)
                         .await

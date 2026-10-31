@@ -106,7 +106,11 @@ impl CoreEventSink for GlobalCtx {
                 format!("error: {error}, retry listen later..."),
             ),
             CoreEvent::ListenerAcceptedSocketHandleFailed { url, error } => {
-                tracing::error!(%url, %error, "accepted socket handler failed");
+                // Debug, not ERROR: the admission layer already reported this
+                // failure with the peer address (`handle conn error`), so this is
+                // a duplicate that only adds the *listener* url — which is what
+                // used to make the line look like "0.0.0.0:11010 failed".
+                tracing::debug!(%url, %error, "accepted socket handler failed");
                 return;
             }
             CoreEvent::TunnelAccepted {

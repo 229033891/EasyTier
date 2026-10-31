@@ -57,6 +57,15 @@ impl WindowLatency {
         }
     }
 
+    /// How many RTT samples the window currently holds.
+    ///
+    /// `get_latency_us()` returns 0 both for "no sample yet" and for "measured,
+    /// but the sample was 0µs", so callers that must distinguish an unmeasured
+    /// conn from a measured one have to ask this separately.
+    pub fn sample_count(&self) -> u32 {
+        self.count.load(Relaxed)
+    }
+
     /// Mean absolute consecutive RTT delta over the current window (microseconds).
     /// Returns 0 until at least two samples are present.
     pub fn get_jitter_us(&self) -> u64 {

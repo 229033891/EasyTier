@@ -95,6 +95,17 @@ const LOCAL_CONGESTION_CLOSE_AFTER: Duration = Duration::from_secs(30);
 const FAST_PROBE_INTERVAL: Duration = Duration::from_millis(333);
 /// Consecutive misses before the conn is published as degraded (100% loss).
 const FAST_PROBE_MISSES_TO_DEGRADE: u32 = 3;
+/// Consecutive **successful** probes needed to clear a published degradation.
+///
+/// Detection stays at [`FAST_PROBE_MISSES_TO_DEGRADE`]; only the way back is
+/// slower. `misses` restarts at 0 on any single success, so under bursty loss
+/// (miss, miss, ok, miss, miss, ok …) the old rule cleared `degraded` on that
+/// lone ok and re-set it three probes later — forever, several times a second.
+/// Each flip re-prices our edge (`loss_rate()` → `score_conn` →
+/// `ospf_edge_cost`) and re-runs SPF, so a flapping link produced continuous
+/// route churn on top of the packet loss. Three clean rounds ≈ 1s of proof
+/// before traffic is moved back onto the link.
+const FAST_PROBE_RECOVER_ROUNDS: u32 = 3;
 /// Consecutive missed probe rounds before the degradation is allowed to drive the
 /// **local** routing view (see `PeerConn::is_fast_probe_sustainedly_degraded`).
 ///
@@ -116,10 +127,36 @@ const FAST_PROBE_SUSTAINED_ROUNDS: u32 = 9;
 fn fast_probe_is_sustained(consecutive_misses: u32) -> bool {
     consecutive_misses >= FAST_PROBE_SUSTAINED_ROUNDS
 }
+
+/// What the fast probe publishes this round.
+///
+/// Going *in* takes `FAST_PROBE_MISSES_TO_DEGRADE` consecutive misses; coming
+/// *out* takes `FAST_PROBE_RECOVER_ROUNDS` consecutive successes (see that
+/// constant for why the asymmetry exists).
+fn fast_probe_publish_degraded(
+    consecutive_misses: u32,
+    consecutive_hits: u32,
+    was_degraded: bool,
+) -> bool {
+    consecutive_misses >= FAST_PROBE_MISSES_TO_DEGRADE
+        || (was_degraded && consecutive_hits < FAST_PROBE_RECOVER_ROUNDS)
+}
+
 /// Per-probe wait budget derived from the measured RTT, clamped to this range.
 const FAST_PROBE_TIMEOUT_MIN: Duration = Duration::from_millis(300);
 const FAST_PROBE_TIMEOUT_MAX: Duration = Duration::from_secs(2);
 const FAST_PROBE_TIMEOUT_RTT_MULT: u32 = 3;
+
+/// Wait budget for a conn that has **never** produced an RTT sample.
+///
+/// `get_latency_us()` returns 0 both for "no sample yet" and for "measured, but
+/// every sample in the window was lost", and the old code treated both as
+/// `0µs` -> the 300ms floor. The second case is fine (the link *was* fast, so a
+/// short budget detects the outage quickly), but the first is not: 300ms is below
+/// the RTT of a relayed or long-haul path, so a brand-new slow-but-healthy conn
+/// missed its first three probes and was published as 100% loss — the exact
+/// opposite of what the probe is for.
+const FAST_PROBE_TIMEOUT_UNMEASURED: Duration = Duration::from_secs(1);
 
 /// Top bit of the ping sequence, reserved for the fast probe.
 ///
@@ -144,11 +181,15 @@ fn fast_probe_seq(next: u32) -> u32 {
 
 /// Wait budget for one fast probe: `max(MIN, MULT × measured RTT)`, capped.
 ///
-/// The floor covers a fresh conn with no sample yet (see `get_latency_us`
-/// returning 0), so an unmeasured link is not declared dead on its first probe.
+/// `rtt_us` is `None` until the conn has produced its first sample; that case
+/// gets [`FAST_PROBE_TIMEOUT_UNMEASURED`] instead of the floor, because an
+/// unmeasured link must not be judged by a budget shorter than its own RTT.
 /// The cap exists because a probe cannot conclude faster than the RTT allows;
 /// on a very high-RTT link detection is slower than the typical case by design.
-fn fast_probe_timeout(rtt_us: u32) -> Duration {
+fn fast_probe_timeout(rtt_us: Option<u32>) -> Duration {
+    let Some(rtt_us) = rtt_us else {
+        return FAST_PROBE_TIMEOUT_UNMEASURED;
+    };
     let scaled = Duration::from_micros(u64::from(rtt_us) * u64::from(FAST_PROBE_TIMEOUT_RTT_MULT));
     scaled.clamp(FAST_PROBE_TIMEOUT_MIN, FAST_PROBE_TIMEOUT_MAX)
 }
@@ -613,23 +654,23 @@ impl PeerConnPinger {
                     // gate (an alternative may appear) or expires the hold.
                     continue;
                 }
-                if hold_applies && hold_expired {
-                    tracing::warn!(
-                        ?ret,
-                        ?self,
-                        ?loss_counter,
-                        fail_close_count,
-                        hold_ms = LAST_PATH_HOLD_MAX.as_millis() as u64,
-                        "last path hold expired, closing the connection",
-                    );
-                }
+                // One line per close, not two: the hold expiry used to emit its
+                // own "closing the connection" warn right before this one, which
+                // read like two separate events. `hold_*` are fields here so the
+                // decision (consecutive misses + gate + hold) stays visible.
                 tracing::warn!(
                     ?ret,
                     ?self,
-                    ?loss_rate_1,
                     ?loss_counter,
                     fail_close_count,
                     held_last_path = hold_applies,
+                    hold_expired = hold_applies && hold_expired,
+                    hold_ms = hold_applies.then(|| LAST_PATH_HOLD_MAX.as_millis() as u64),
+                    // Windowed loss over the last 100 keepalive rounds. The close
+                    // is decided by `fail_close_count` *consecutive* misses, so
+                    // this percentage can legitimately be low when the path is
+                    // flapping — do not read it as the close trigger.
+                    windowed_loss_rate_1 = loss_rate_1,
                     "too many consecutive pingpong failures, closing the connection",
                 );
                 break;
@@ -664,6 +705,7 @@ impl PeerConnPinger {
     pub async fn fast_probe(&mut self) {
         let mut seq = 0u32;
         let mut misses = 0u32;
+        let mut hits = 0u32;
         let mut was_degraded = false;
         let mut was_sustained = false;
         loop {
@@ -678,12 +720,16 @@ impl PeerConnPinger {
                 self.fast_probe_degraded.store(false, Ordering::Relaxed);
                 self.fast_probe_sustained.store(false, Ordering::Relaxed);
                 misses = 0;
+                hits = 0;
                 was_degraded = false;
                 continue;
             }
 
             let mut receiver = self.ctrl_sender.subscribe();
-            let rtt_us = self.latency_stats.get_latency_us::<u32>();
+            // `None` until the conn has produced its first sample: an unmeasured
+            // link must not be timed with a budget shorter than its own RTT.
+            let rtt_us = (self.latency_stats.sample_count() > 0)
+                .then(|| self.latency_stats.get_latency_us::<u32>());
             // No liveness token: the echo slot is single-slot and shared with the
             // keepalive, and a plain Ping/Pong answers the same question.
             let probe = self
@@ -696,13 +742,20 @@ impl PeerConnPinger {
                 .await;
             seq = seq.wrapping_add(1);
 
-            // LocalCongestion: leave `misses` unchanged (not a path miss).
-            misses = match &probe {
-                Ok(PingResponse::LocalCongestion) => misses,
-                Ok(_) => 0,
-                Err(_) => misses + 1,
-            };
-            let degraded = misses >= FAST_PROBE_MISSES_TO_DEGRADE;
+            // LocalCongestion leaves both counters alone: the ping never left the
+            // box, so it is evidence of neither a path miss nor a round trip.
+            match &probe {
+                Ok(PingResponse::LocalCongestion) => {}
+                Ok(_) => {
+                    misses = 0;
+                    hits = hits.saturating_add(1);
+                }
+                Err(_) => {
+                    misses = misses.saturating_add(1);
+                    hits = 0;
+                }
+            }
+            let degraded = fast_probe_publish_degraded(misses, hits, was_degraded);
             self.fast_probe_degraded.store(degraded, Ordering::Relaxed);
             // `misses` already restarts at 0 on any success, so the sustained
             // flag can only be reached by one unbroken run of misses, and is
@@ -717,13 +770,13 @@ impl PeerConnPinger {
                 tracing::warn!(
                     peer_id = self.peer_id,
                     misses,
-                    rtt_us,
+                    ?rtt_us,
                     "fast liveness probe: link not round-tripping, publishing degraded loss"
                 );
             } else if !degraded && was_degraded {
                 tracing::info!(
                     peer_id = self.peer_id,
-                    rtt_us,
+                    ?rtt_us,
                     "fast liveness probe: link round-trips again"
                 );
             }
@@ -735,14 +788,14 @@ impl PeerConnPinger {
                     tracing::warn!(
                         peer_id = self.peer_id,
                         misses,
-                        rtt_us,
+                        ?rtt_us,
                         "fast liveness probe: degradation sustained, local edge cost will be overridden"
                     );
                 } else {
                     tracing::info!(
                         peer_id = self.peer_id,
                         misses,
-                        rtt_us,
+                        ?rtt_us,
                         "fast liveness probe: sustained degradation cleared, restoring local edge cost"
                     );
                 }
@@ -1068,23 +1121,61 @@ mod tests {
 
     #[test]
     fn fast_probe_timeout_scales_with_rtt_and_is_clamped() {
-        // No sample yet (fresh conn): the floor, so a link is never declared dead
-        // before it has been measured.
-        assert_eq!(fast_probe_timeout(0), FAST_PROBE_TIMEOUT_MIN);
+        // No sample yet (fresh conn): a conservative fixed budget, NOT the floor.
+        // A relayed or long-haul path has a first-probe RTT far above 300ms, and
+        // timing it with the floor published a healthy new link as 100% loss.
+        assert_eq!(fast_probe_timeout(None), FAST_PROBE_TIMEOUT_UNMEASURED);
+        assert!(FAST_PROBE_TIMEOUT_UNMEASURED > FAST_PROBE_TIMEOUT_MIN);
+        // Measured at ~0µs (a real sample from a LAN): the floor is correct now.
+        assert_eq!(fast_probe_timeout(Some(0)), FAST_PROBE_TIMEOUT_MIN);
         // Sub-millisecond link: still the floor.
-        assert_eq!(fast_probe_timeout(500), FAST_PROBE_TIMEOUT_MIN);
+        assert_eq!(fast_probe_timeout(Some(500)), FAST_PROBE_TIMEOUT_MIN);
         // 200ms RTT -> 3x, above the floor and below the cap.
-        assert_eq!(fast_probe_timeout(200_000), Duration::from_millis(600));
+        assert_eq!(fast_probe_timeout(Some(200_000)), Duration::from_millis(600));
         // Very high RTT: capped, because a probe cannot conclude faster than the
         // RTT allows.
-        assert_eq!(fast_probe_timeout(2_000_000), FAST_PROBE_TIMEOUT_MAX);
+        assert_eq!(fast_probe_timeout(Some(2_000_000)), FAST_PROBE_TIMEOUT_MAX);
 
-        // Detection budget for the common case stays inside the Phase F target.
-        let worst_miss = FAST_PROBE_INTERVAL + fast_probe_timeout(0);
+        // Detection budget for the common case (an established, measured link)
+        // stays inside the Phase F target.
+        let worst_miss = FAST_PROBE_INTERVAL + fast_probe_timeout(Some(0));
         assert!(
             worst_miss * FAST_PROBE_MISSES_TO_DEGRADE < Duration::from_secs(2),
             "3 misses should land under 2s: {worst_miss:?} each"
         );
+    }
+
+    /// Going degraded must be as fast as before; coming back must need proof, so a
+    /// lossy-but-usable link cannot flip the published loss rate (and therefore
+    /// our edge cost) on nearly every probe.
+    #[test]
+    fn recovery_from_degraded_needs_a_run_of_successes() {
+        // Unchanged detection: three consecutive misses, from a healthy state.
+        assert!(!fast_probe_publish_degraded(0, 99, false));
+        assert!(!fast_probe_publish_degraded(2, 0, false));
+        assert!(fast_probe_publish_degraded(3, 0, false));
+
+        // Recovery needs FAST_PROBE_RECOVER_ROUNDS consecutive successes.
+        for hits in 0..FAST_PROBE_RECOVER_ROUNDS {
+            assert!(
+                fast_probe_publish_degraded(0, hits, true),
+                "{hits} successes must not declare the link healthy again"
+            );
+        }
+        assert!(!fast_probe_publish_degraded(0, FAST_PROBE_RECOVER_ROUNDS, true));
+
+        // The guarantee that matters at ~3 probes/s: while successes never run to
+        // FAST_PROBE_RECOVER_ROUNDS, a degraded link stays degraded. Bursty loss
+        // (miss, miss, ok, miss, miss, ok …) used to clear it on the first ok and
+        // re-degrade three probes later, forever.
+        for hits in 0..FAST_PROBE_RECOVER_ROUNDS {
+            for misses in 0..FAST_PROBE_MISSES_TO_DEGRADE {
+                assert!(
+                    fast_probe_publish_degraded(misses, hits, true),
+                    "{misses} misses / {hits} hits must not clear a degraded link"
+                );
+            }
+        }
     }
 
     /// The gate that lets degradation re-price our **own** outgoing edge must be

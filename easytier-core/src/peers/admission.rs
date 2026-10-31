@@ -64,19 +64,38 @@ impl AcceptedTunnelHandler for PeerAcceptedTunnelHandler {
             return Err(anyhow::anyhow!(error));
         };
         if let Err(error) = peer_manager.add_tunnel_as_server(tunnel, true).await {
+            let message = error.to_string();
+            // Classify instead of shouting everything at ERROR. A first-handshake
+            // timeout is routine on a public listener (a half-open NAT path, a
+            // peer that gave up, a scanner) and "same network" errors are
+            // expected in some configurations (e.g. routing loops when no-tun is
+            // disabled). Both are logged with the *peer* address, which the
+            // listener-level report cannot show.
+            let is_same_network = message.contains("is from the same network");
+            let is_handshake_timeout =
+                message.contains("timed out waiting for first handshake packet");
+            if is_same_network {
+                tracing::warn!(
+                    %remote_url,
+                    %local_url,
+                    ?error,
+                    "handle conn error (same network, ignored)"
+                );
+            } else if is_handshake_timeout {
+                tracing::warn!(
+                    %remote_url,
+                    %local_url,
+                    ?error,
+                    "handle conn error (inbound handshake timeout, ignored)"
+                );
+            } else {
+                tracing::error!(%remote_url, %local_url, ?error, "handle conn error");
+            }
             self.events.emit(CoreEvent::TunnelAdmissionFailed {
                 local_url,
                 remote_url,
-                error: error.to_string(),
+                error: message,
             });
-            // "same network" errors are expected in some configurations (e.g., routing loops
-            // when no-tun is disabled), so log as warn instead of error.
-            let is_same_network = error.to_string().contains("is from the same network");
-            if is_same_network {
-                tracing::warn!(?error, "handle conn error (same network, ignored)");
-            } else {
-                tracing::error!(?error, "handle conn error");
-            }
             return Err(error.into());
         }
         Ok(())
