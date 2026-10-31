@@ -1245,6 +1245,11 @@ async fn reconcile_running_web_config(
 
     let operation_started_at = std::time::Instant::now();
     let client_version = round.req.easytier_version.as_str();
+    // Steady state for a healthy console: the cached plan already matches, so the
+    // round changes nothing. That happens once per instance per heartbeat, which
+    // makes it the loudest line in the log while carrying no information — keep it
+    // at DEBUG and log only real applies (and failures) at INFO.
+    let mut plan_was_unchanged = false;
     let ret = async {
         let action = match runtime_config_cache.plan(
             &config.network_instance_id,
@@ -1263,13 +1268,15 @@ async fn reconcile_running_web_config(
                 .await?
             }
         };
+        plan_was_unchanged = matches!(
+            action,
+            runtime_reconcile::RuntimeReconcileAction::Unchanged(_)
+        );
         if !SessionRpcService::runtime_heartbeat_is_current(session_data, &round.req).await {
             anyhow::bail!("webhook session is no longer current before runtime reconcile apply");
         }
-        if !matches!(
-            action,
-            runtime_reconcile::RuntimeReconcileAction::Unchanged(_)
-        ) && !begin_managed_runtime_mutation(session_data, round, mutation_fence).await
+        if !plan_was_unchanged
+            && !begin_managed_runtime_mutation(session_data, round, mutation_fence).await
         {
             anyhow::bail!("managed runtime mutation fence is no longer current");
         }
@@ -1286,14 +1293,24 @@ async fn reconcile_running_web_config(
         Ok::<(), anyhow::Error>(())
     }
     .await;
-    tracing::info!(
-        user_id = ?round.user_id,
-        machine_id = ?round.machine_id,
-        instance_id = %config.network_instance_id,
-        elapsed_ms = operation_started_at.elapsed().as_millis(),
-        "Reconcile running web-source network instance: {:?}",
-        ret
-    );
+    if ret.is_ok() && plan_was_unchanged {
+        tracing::debug!(
+            user_id = ?round.user_id,
+            machine_id = ?round.machine_id,
+            instance_id = %config.network_instance_id,
+            elapsed_ms = operation_started_at.elapsed().as_millis(),
+            "Reconcile running web-source network instance: unchanged"
+        );
+    } else {
+        tracing::info!(
+            user_id = ?round.user_id,
+            machine_id = ?round.machine_id,
+            instance_id = %config.network_instance_id,
+            elapsed_ms = operation_started_at.elapsed().as_millis(),
+            "Reconcile running web-source network instance: {:?}",
+            ret
+        );
+    }
 
     if ret.is_ok() {
         ConfigActionResult::Success
