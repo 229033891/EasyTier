@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { useToast, useConfirm } from 'primevue'
+import { useToast } from 'primevue'
 import Button from 'primevue/button'
 import Dialog from 'primevue/dialog'
 import InputText from 'primevue/inputtext'
@@ -19,7 +19,6 @@ const visible = defineModel<boolean>('visible', { default: false })
 
 const { t } = useI18n()
 const toast = useToast()
-const confirm = useConfirm()
 
 const loggingLevel = ref('warn')
 const loggingLevelLive = ref(true)
@@ -249,33 +248,19 @@ async function onCopyRecentLogs() {
 
 /**
  * Destructive: clears the active log and deletes rotated files (service mode
- * clears the service log directory too). Ask first — the button is
- * `severity="danger"` and there is no undo.
+ * clears the service log directory too).
  *
- * 该守卫只覆盖确认前的窗口：`ConfirmationService.require` 是「替换」而非「入队」，
- * 连点两次不会叠加确认框，因此 runClearLogs 不会被重复触发。
+ * No confirmation prompt: the click already comes from an explicit
+ * `severity="danger"` button labelled "Delete", and a second modal to re-ask the
+ * same question just makes routine log cleanup a two-click chore. The guard below
+ * still stops a double-click from firing `runClearLogs` twice — `isClearing` is
+ * set synchronously before the first `await`, so the second click sees it.
  */
 function onClearLogs() {
   if (!canClearLogs.value || isClearing.value || isSaving.value) {
     return
   }
-  confirm.require({
-    message: t('logging_clear_confirm'),
-    header: t('logging_clear'),
-    icon: 'pi pi-exclamation-triangle',
-    rejectProps: {
-      label: t('web.common.cancel'),
-      severity: 'secondary',
-      outlined: true,
-    },
-    acceptProps: {
-      label: t('logging_clear'),
-      severity: 'danger',
-    },
-    accept: () => {
-      void runClearLogs()
-    },
-  })
+  void runClearLogs()
 }
 
 async function runClearLogs() {

@@ -315,9 +315,17 @@ pub fn create_encryptor(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::packet::{StandardAeadTail, ZCPacket};
 
+    #[cfg(any(
+        all(feature = "ring-crypto", feature = "aes-gcm"),
+        all(feature = "ring-crypto", feature = "chacha20"),
+        all(feature = "openssl-crypto", feature = "aes-gcm"),
+        all(feature = "openssl-crypto", feature = "chacha20"),
+        all(feature = "openssl-crypto", feature = "ring-crypto"),
+    ))]
     fn assert_interoperable(left: &dyn Encryptor, right: &dyn Encryptor) {
+        use crate::packet::{StandardAeadTail, ZCPacket};
+
         let plaintext = b"cross-backend compatibility";
         let nonce = [9; StandardAeadTail::NONCE_SIZE];
         let mut left_packet = ZCPacket::new_with_payload(plaintext);

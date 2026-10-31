@@ -2550,7 +2550,10 @@ impl SyncRouteSession {
     /// re-states the run length so a long outage stays visible at the default
     /// level.
     fn note_sync_failure(&self, error: &rpc_types::error::Error) {
-        let failures = self.consecutive_sync_failures.fetch_add(1, Ordering::Relaxed) + 1;
+        let failures = self
+            .consecutive_sync_failures
+            .fetch_add(1, Ordering::Relaxed)
+            + 1;
         if failures == 1 {
             tracing::warn!(
                 my_peer_id = self.my_peer_id,
@@ -4277,8 +4280,10 @@ impl PeerRouteServiceImpl {
                         // Remote-reported protocol error. Recoverable, but it
                         // repeats every sync round until the peer cooperates, so
                         // it gets the same de-duplication as a transport failure.
-                        let failures =
-                            session.consecutive_sync_failures.fetch_add(1, Ordering::Relaxed) + 1;
+                        let failures = session
+                            .consecutive_sync_failures
+                            .fetch_add(1, Ordering::Relaxed)
+                            + 1;
                         if failures == 1 || failures % SYNC_FAILURE_RESTATE_EVERY == 0 {
                             tracing::warn!(
                                 ?my_peer_id,

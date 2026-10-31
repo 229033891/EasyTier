@@ -23,7 +23,8 @@
 2. **真正的问题是「重复」与「重复频率」**，不是数量：
    - **同一事实两处播报**：错误同时 toast + 内联（首屏加载失败）、同一 promise 的多个 `catch` 各弹一条、同一失败 toast + confirm 复读错误原文、复制成功既改按钮文案又弹 toast、库与宿主对同一事件各弹一次。
    - **在轮询循环里无节流播报**：5s 轮询失败**每轮一条** error（`Dashboard`、`DeviceManagement`），而 `usePollingList` / `deviceArchive` 早已各自手写 30s 窗口——同一策略被抄了两遍，另外两处漏抄。
-3. **确实缺的确认**只有少数几处，且都是**不可逆**操作：重置他人密码（无确认）、清空日志（无确认，且 `logging_clear_confirm` 文案已存在却零引用）、配置生成器「保存并重启」（`ConfirmDialog` 已挂载却零调用）。
+3. **确实缺的确认**只有少数几处，且都是**不可逆**操作：重置他人密码（无确认）、配置生成器「保存并重启」（`ConfirmDialog` 已挂载却零调用）。
+   - 清空日志曾按本项补过 confirm（复用当时零引用的 `logging_clear_confirm`），后按需求**撤除**：入口本身就是 `severity="danger"` 的「删除」按钮，再弹一层只是把同一句话问第二遍；文案 key 一并删除。
 4. **顺带发现一个真实可见缺陷**：`t('error')` 在 cn/en 两个 locale 里**不存在**（只有 `web.common.error`），共 19 处 toast 标题实际渲染成字面量 `error`。
 
 ---
@@ -114,7 +115,7 @@
 | 位置 | 现状 | 处理 |
 |------|------|------|
 | `easytier-web/frontend/src/components/UserList.vue` 重置用户密码 | 输入新密码点一下即生效，旧密码立即失效 | **已加 confirm**（复用 `reset_confirm`，新增中英文案） |
-| `frontend-lib/.../LoggingSettingsDialog.vue` 清空日志 | 直接执行；`logging_clear_confirm` 文案**已存在且全仓零引用** | **已加 confirm**（复用现成 key） |
+| `frontend-lib/.../LoggingSettingsDialog.vue` 清空日志 | 直接执行；`logging_clear_confirm` 文案曾存在但全仓零引用 | 曾加 confirm（复用现成 key），**现已撤除**：入口已是 danger「删除」按钮，二次确认属重复提问；key 已删 |
 | `config-generator/src/App.vue:174-184` 「保存并重启」 | 一键重启（断流）；`main.ts` 已装 `ConfirmationService`、`App.vue:215` 已挂 `<ConfirmDialog>`，却零调用 | **已加 confirm**（`magisk_save_restart_confirm`）；⚠️ 包装 Promise 时必须补 `onHide`，见 §5.1 |
 | `RemoteManagement.vue:2017` 放弃修改（丢草稿） | 无确认 | **已加 confirm**（`confirm_discard_changes`） |
 | `easytier-gui` 托盘退出（service 模式 = 断网） | 无确认 | **已加 confirm**（`exit_stops_service_confirm`）；确认前先 `showMainWindow()`，否则窗口隐藏时看不到对话框；同样需 `onHide` 落定 |
@@ -154,7 +155,7 @@
 | 4 | 删除与内联错误**必然重复**的 toast | `frontend/src/components/SystemDiagnostics.vue` |
 | 5 | 纯前端校验的 toast 仅在**内联不可见**时发（已有日志行时） | `frontend/src/components/RuntimeLogs.vue` |
 | 6 | 重置用户密码补 `confirm.require`（danger），并写清「旧密码立即失效」 | `frontend/src/components/UserList.vue` + 中英文案 `reset_confirm` |
-| 7 | 清空日志补 `confirm.require`，直接接线**已存在但零引用**的 `logging_clear_confirm` | `frontend-lib/src/components/LoggingSettingsDialog.vue` |
+| 7 | ~~清空日志补 `confirm.require`~~ — **已撤回**，恢复为点击即清空（`danger` 按钮 + `isClearing` 双击守卫已足够） | `frontend-lib/src/components/LoggingSettingsDialog.vue`、中英文案删除 `logging_clear_confirm` |
 | 8 | `initWithMode` 已带上下文报错时，`onModeSave` 兜底 catch 不再重复弹（仍保留回滚与日志） | `easytier-gui/src/pages/index.vue` |
 | 9 | 修复 `t('error')` 键缺失：19 处改用 `web.common.error` | `LoggingSettingsDialog.vue`、`easytier-gui/src/pages/index.vue` |
 | 10 | 单测覆盖门控语义（首报放行 / 窗口内抑制 / 按 key 独立 / reset） | `frontend-lib/tests/toast-repeat-gate.spec.ts` |

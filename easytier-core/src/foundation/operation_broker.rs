@@ -17,6 +17,7 @@ impl OperationId {
         (value != 0).then_some(Self(value))
     }
 
+    #[cfg(feature = "proxy-smoltcp-stack")]
     pub(crate) fn get(self) -> u64 {
         self.0
     }
@@ -323,6 +324,7 @@ where
         }))
     }
 
+    #[cfg(feature = "proxy-smoltcp-stack")]
     pub(crate) fn pending_ids(&self) -> Vec<OperationId> {
         self.operations
             .iter()

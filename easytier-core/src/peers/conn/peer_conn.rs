@@ -317,6 +317,12 @@ pub struct PeerConn {
     /// only this one, is allowed to re-price **our own** outgoing edge in the local
     /// SPF — see `FAST_PROBE_SUSTAINED_ROUNDS` for why that needs more evidence.
     fast_probe_sustained: Arc<AtomicBool>,
+    /// Every proven round trip on the keepalive path, as a monotonically
+    /// increasing counter. The fast probe is the sole writer of the two flags
+    /// above; the keepalive contributes evidence through this epoch instead of
+    /// clearing them directly (which used to flip the published loss rate on
+    /// every keepalive pong, re-pricing the edge and re-running SPF).
+    fast_probe_roundtrip_epoch: Arc<AtomicU32>,
     liveness: PeerConnLiveness,
 
     peer_session_store: Arc<PeerSessionStore>,
@@ -424,6 +430,7 @@ impl PeerConn {
             loss_rate_stats: Arc::new(AtomicU32::new(0)),
             fast_probe_degraded: Arc::new(AtomicBool::new(false)),
             fast_probe_sustained: Arc::new(AtomicBool::new(false)),
+            fast_probe_roundtrip_epoch: Arc::new(AtomicU32::new(0)),
             liveness,
 
             peer_session_store,
@@ -1492,6 +1499,7 @@ impl PeerConn {
             self.liveness.clone(),
             self.fast_probe_degraded.clone(),
             self.fast_probe_sustained.clone(),
+            self.fast_probe_roundtrip_epoch.clone(),
             self.close_event_notifier.clone(),
             self.max_ping_interval(),
             self.ping_fail_close_count(),
@@ -1514,6 +1522,7 @@ impl PeerConn {
             self.liveness.clone(),
             self.fast_probe_degraded.clone(),
             self.fast_probe_sustained.clone(),
+            self.fast_probe_roundtrip_epoch.clone(),
             self.close_event_notifier.clone(),
             self.max_ping_interval(),
             self.ping_fail_close_count(),
@@ -1639,6 +1648,18 @@ impl PeerConn {
     /// That is what makes the degradation visible to OSPF in time to re-route —
     /// and it also means the status surface stops claiming "connected, 0% loss"
     /// for a conn that is silently black-holing traffic.
+    ///
+    /// **Transition-driven, not sample-driven.** The degradation flag has exactly
+    /// one writer (the fast probe, gated by `FAST_PROBE_MISSES_TO_DEGRADE` /
+    /// `FAST_PROBE_RECOVER_ROUNDS`), so this function returns the same value for
+    /// as long as the verdict holds, and every consumer downstream re-derives on
+    /// its own clock and acts only on a change: `score_conn` →
+    /// `ospf_edge_cost_from_score` → `best_edge_cost`/`direct_peer_info` (with the
+    /// publisher hysteresis) → `report_can_be_skipped` → the center's global map
+    /// digest → `RouteCostCalculatorImpl::need_update` → SPF. No notification
+    /// channel is needed between the two; what was needed was to stop the keepalive
+    /// from writing this flag directly, which silently changed the sampled value
+    /// between two unchanged verdicts and re-ran SPF for it.
     pub fn loss_rate(&self) -> f32 {
         if self.fast_probe_degraded.load(Ordering::Relaxed) {
             return 1.0;

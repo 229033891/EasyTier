@@ -93,18 +93,29 @@ const LOCAL_CONGESTION_CLOSE_AFTER: Duration = Duration::from_secs(30);
 /// keepalive and its `ping_fail_close_count`, so the deliberate flap tolerance
 /// around a reconnect (which costs ~30s to rebuild) is unchanged.
 const FAST_PROBE_INTERVAL: Duration = Duration::from_millis(333);
-/// Consecutive misses before the conn is published as degraded (100% loss).
+/// Misses without an intervening proven round trip before the conn is published
+/// as degraded (100% loss).
+///
+/// "Intervening" includes the keepalive: a pong (or liveness echo) that lands in
+/// the same round ends the miss run — see [`fast_probe_apply_round_evidence`] —
+/// because it proves the path is carrying packets right now even though this
+/// probe got no answer within its own budget.
 const FAST_PROBE_MISSES_TO_DEGRADE: u32 = 3;
-/// Consecutive **successful** probes needed to clear a published degradation.
+/// Consecutive **rounds of proof** needed to clear a published degradation.
 ///
 /// Detection stays at [`FAST_PROBE_MISSES_TO_DEGRADE`]; only the way back is
-/// slower. `misses` restarts at 0 on any single success, so under bursty loss
-/// (miss, miss, ok, miss, miss, ok …) the old rule cleared `degraded` on that
-/// lone ok and re-set it three probes later — forever, several times a second.
-/// Each flip re-prices our edge (`loss_rate()` → `score_conn` →
-/// `ospf_edge_cost`) and re-runs SPF, so a flapping link produced continuous
+/// slower. `misses` restarts at 0 on any single piece of proof, so under bursty
+/// loss (miss, miss, ok, miss, miss, ok …) the old rule cleared `degraded` on
+/// that lone ok and re-set it three probes later — forever, several times a
+/// second. Each flip re-prices our edge (`loss_rate()` → `score_conn` →
+/// `ospf_edge_cost_from_score`) and re-runs SPF, so a flapping link produced continuous
 /// route churn on top of the packet loss. Three clean rounds ≈ 1s of proof
 /// before traffic is moved back onto the link.
+///
+/// A round of proof is one probe round in which the path was shown to carry a
+/// packet: the probe's own round trip **or** a keepalive round trip that landed
+/// during that round. When both happen they still count once — this constant is
+/// about rounds, not samples.
 const FAST_PROBE_RECOVER_ROUNDS: u32 = 3;
 /// Consecutive missed probe rounds before the degradation is allowed to drive the
 /// **local** routing view (see `PeerConn::is_fast_probe_sustainedly_degraded`).
@@ -130,9 +141,9 @@ fn fast_probe_is_sustained(consecutive_misses: u32) -> bool {
 
 /// What the fast probe publishes this round.
 ///
-/// Going *in* takes `FAST_PROBE_MISSES_TO_DEGRADE` consecutive misses; coming
-/// *out* takes `FAST_PROBE_RECOVER_ROUNDS` consecutive successes (see that
-/// constant for why the asymmetry exists).
+/// Going *in* takes [`FAST_PROBE_MISSES_TO_DEGRADE`] consecutive misses; coming
+/// *out* takes [`FAST_PROBE_RECOVER_ROUNDS`] consecutive rounds of proof (see
+/// that constant for why the asymmetry exists).
 fn fast_probe_publish_degraded(
     consecutive_misses: u32,
     consecutive_hits: u32,
@@ -140,6 +151,72 @@ fn fast_probe_publish_degraded(
 ) -> bool {
     consecutive_misses >= FAST_PROBE_MISSES_TO_DEGRADE
         || (was_degraded && consecutive_hits < FAST_PROBE_RECOVER_ROUNDS)
+}
+
+/// Folds one fast-probe round — the probe's own outcome plus any keepalive proof
+/// that landed during it — into the miss/hit window.
+///
+/// This is the only place either counter moves, and the only way keepalive
+/// evidence may affect the published flag: writing `false` into
+/// `fast_probe_degraded` directly is what used to bypass
+/// [`FAST_PROBE_RECOVER_ROUNDS`] and make the edge cost flip on every keepalive.
+///
+/// * The probe's outcome moves the counters the obvious way: a round trip is a
+///   hit, a timeout (or a failed send) is a miss, local congestion is neither —
+///   the ping never left the box, so it is evidence of nothing.
+/// * A keepalive round trip that happened during this round outranks a probe
+///   miss: the probe only proved "no answer within 3×RTT" while the pong proved
+///   the path carries packets *now*, so the miss run ends here instead of
+///   counting toward [`FAST_PROBE_MISSES_TO_DEGRADE`]. A real black hole
+///   produces no pong either, so the probe still reaches three misses on its own.
+/// * That keepalive hit is **not** wiped by the same round's probe miss, and it
+///   is **not** added on top of the probe's own hit. The first matters because
+///   the probe budget is `3 × EWMA RTT`: on a link whose jitter keeps putting
+///   the real RTT above that (while the keepalive's fixed 2s budget still
+///   answers every second) the probe can miss every single round, and if each
+///   miss zeroed `consecutive_hits` the count could never climb past 1 — a link
+///   proven alive every second would stay published as 100% loss forever. The
+///   second matters because [`FAST_PROBE_RECOVER_ROUNDS`] counts *rounds*: two
+///   hits per round would shorten recovery to two rounds and quietly weaken the
+///   anti-flap gate this whole mechanism exists for.
+fn fast_probe_apply_round_evidence(
+    probe: &Result<PingResponse, Error>,
+    roundtrip_epoch: u32,
+    seen_epoch: &mut u32,
+    consecutive_misses: &mut u32,
+    consecutive_hits: &mut u32,
+) {
+    // The epoch is bumped on the keepalive path for every proven round trip. An
+    // unchanged value means nothing was proven since the previous round (or the
+    // epoch wrapped all the way back, in which case treating it as "nothing new"
+    // only delays recovery by one round).
+    let roundtrip_proven = *seen_epoch != roundtrip_epoch;
+    if roundtrip_proven {
+        *seen_epoch = roundtrip_epoch;
+    }
+
+    let probe_round_tripped = matches!(probe, Ok(PingResponse::Pong(_)));
+    match probe {
+        Ok(PingResponse::LocalCongestion) => {}
+        Ok(_) => {
+            *consecutive_misses = 0;
+            *consecutive_hits = consecutive_hits.saturating_add(1);
+        }
+        Err(_) => {
+            *consecutive_misses = consecutive_misses.saturating_add(1);
+            if !roundtrip_proven {
+                *consecutive_hits = 0;
+            }
+        }
+    }
+
+    if roundtrip_proven {
+        *consecutive_misses = 0;
+        // One round is one unit of evidence, whichever side reported it.
+        if !probe_round_tripped {
+            *consecutive_hits = consecutive_hits.saturating_add(1);
+        }
+    }
 }
 
 /// Per-probe wait budget derived from the measured RTT, clamped to this range.
@@ -315,6 +392,21 @@ pub struct PeerConnPinger {
     /// this one may re-price our own outgoing edge in the local SPF; see that
     /// constant for why that needs a stricter gate than the metric does.
     fast_probe_sustained: Arc<AtomicBool>,
+    /// Bumped by every **proven** round trip on the keepalive path (Pong or
+    /// liveness echo). Evidence only — never a verdict.
+    ///
+    /// `fast_probe_degraded` must have exactly one writer: the fast probe, which
+    /// owns the miss/hit window and the hysteresis gate. The keepalive used to
+    /// `store(false)` into it directly on every successful pong, which bypassed
+    /// that gate completely: on a lossy link the probe collected three misses and
+    /// published `degraded`, the next keepalive pong cleared it, and three probes
+    /// later it was published again. That is two flips per keepalive interval,
+    /// each one a new `loss_rate()` → a new edge cost → a new `report_peers`
+    /// payload → another SPF run, no matter how much hysteresis the probe had.
+    ///
+    /// So the keepalive now just bumps this counter, and the fast probe folds it
+    /// into the same gate as one of its own hits.
+    roundtrip_epoch: Arc<AtomicU32>,
     close_notify: Arc<PeerConnCloseNotify>,
     max_interval: Duration,
     /// Consecutive ping failures before closing; default 10 (see `DEFAULT_PING_FAIL_CLOSE_COUNT`).
@@ -351,6 +443,7 @@ impl PeerConnPinger {
         liveness: PeerConnLiveness,
         fast_probe_degraded: Arc<AtomicBool>,
         fast_probe_sustained: Arc<AtomicBool>,
+        roundtrip_epoch: Arc<AtomicU32>,
         close_notify: Arc<PeerConnCloseNotify>,
         max_interval: Duration,
         fail_close_count: u32,
@@ -369,6 +462,7 @@ impl PeerConnPinger {
             liveness,
             fast_probe_degraded,
             fast_probe_sustained,
+            roundtrip_epoch,
             close_notify,
             max_interval,
             fail_close_count: fail_close_count.max(1),
@@ -567,8 +661,9 @@ impl PeerConnPinger {
                         loss_counter.store(0, Ordering::Relaxed);
                         had_roundtrip = true;
                         last_path_hold = None;
-                        self.fast_probe_degraded.store(false, Ordering::Relaxed);
-                        self.fast_probe_sustained.store(false, Ordering::Relaxed);
+                        // Evidence, not a verdict: the fast probe owns
+                        // `fast_probe_degraded` (see `roundtrip_epoch`).
+                        self.roundtrip_epoch.fetch_add(1, Ordering::Relaxed);
                     }
                     PingResponse::LivenessEcho => {
                         congestion_since = None;
@@ -579,8 +674,9 @@ impl PeerConnPinger {
                         loss_counter.store(0, Ordering::Relaxed);
                         had_roundtrip = true;
                         last_path_hold = None;
-                        self.fast_probe_degraded.store(false, Ordering::Relaxed);
-                        self.fast_probe_sustained.store(false, Ordering::Relaxed);
+                        // Evidence, not a verdict: the fast probe owns
+                        // `fast_probe_degraded` (see `roundtrip_epoch`).
+                        self.roundtrip_epoch.fetch_add(1, Ordering::Relaxed);
                     }
                 }
             } else {
@@ -702,12 +798,24 @@ impl PeerConnPinger {
     /// other way round matters: without an echo the far side may legitimately be
     /// slower than our shortened timeout, so an un-negotiated peer is never
     /// judged by it.
+    ///
+    /// **Sole writer of `fast_probe_degraded` / `fast_probe_sustained`.** The
+    /// published value therefore only ever changes on a real decision flip, which
+    /// is what keeps the whole downstream chain transition-driven: `loss_rate()`
+    /// → `score_conn` → `ospf_edge_cost_from_score` → `direct_peer_info` (with its
+    /// publisher hysteresis) → `report_can_be_skipped` → the center's global map
+    /// digest → `RouteCostCalculatorImpl::need_update` → SPF. Those consumers all
+    /// re-derive and diff, so they already do nothing when the cost is unchanged;
+    /// what used to defeat them was the *value* flipping underneath a single
+    /// keepalive pong, not the polling. Keepalive evidence now arrives through
+    /// `roundtrip_epoch` and is folded in below as one hit.
     pub async fn fast_probe(&mut self) {
         let mut seq = 0u32;
         let mut misses = 0u32;
         let mut hits = 0u32;
         let mut was_degraded = false;
         let mut was_sustained = false;
+        let mut seen_roundtrip_epoch = self.roundtrip_epoch.load(Ordering::Relaxed);
         loop {
             sleep(FAST_PROBE_INTERVAL).await;
 
@@ -721,6 +829,9 @@ impl PeerConnPinger {
                 self.fast_probe_sustained.store(false, Ordering::Relaxed);
                 misses = 0;
                 hits = 0;
+                // Don't bank proof the keepalive earned while we weren't
+                // probing: only round trips that land during a probe round count.
+                seen_roundtrip_epoch = self.roundtrip_epoch.load(Ordering::Relaxed);
                 was_degraded = false;
                 continue;
             }
@@ -742,19 +853,22 @@ impl PeerConnPinger {
                 .await;
             seq = seq.wrapping_add(1);
 
-            // LocalCongestion leaves both counters alone: the ping never left the
-            // box, so it is evidence of neither a path miss nor a round trip.
-            match &probe {
-                Ok(PingResponse::LocalCongestion) => {}
-                Ok(_) => {
-                    misses = 0;
-                    hits = hits.saturating_add(1);
-                }
-                Err(_) => {
-                    misses = misses.saturating_add(1);
-                    hits = 0;
-                }
-            }
+            // One round of evidence: the probe's own outcome plus any keepalive
+            // proof that landed while it was in flight. Folded through the same
+            // gate rather than written straight into the flag — without this, one
+            // pong cleared a published degradation outright and the probe
+            // re-published it three rounds later, the flip-flop that kept
+            // re-pricing the edge. See `fast_probe_apply_round_evidence` for why
+            // a pong outranks this round's probe miss and why both together still
+            // count as a single hit.
+            fast_probe_apply_round_evidence(
+                &probe,
+                self.roundtrip_epoch.load(Ordering::Relaxed),
+                &mut seen_roundtrip_epoch,
+                &mut misses,
+                &mut hits,
+            );
+
             let degraded = fast_probe_publish_degraded(misses, hits, was_degraded);
             self.fast_probe_degraded.store(degraded, Ordering::Relaxed);
             // `misses` already restarts at 0 on any success, so the sustained
@@ -856,6 +970,7 @@ mod tests {
             PeerConnLiveness::new(),
             Arc::new(AtomicBool::new(false)),
             Arc::new(AtomicBool::new(false)),
+            Arc::new(AtomicU32::new(0)),
             Arc::new(PeerConnCloseNotify::new(PeerConnId::new_v4())),
             Duration::from_secs(1),
             5,
@@ -950,6 +1065,7 @@ mod tests {
             PeerConnLiveness::new(),
             Arc::new(AtomicBool::new(false)),
             Arc::new(AtomicBool::new(false)),
+            Arc::new(AtomicU32::new(0)),
             Arc::new(PeerConnCloseNotify::new(PeerConnId::new_v4())),
             Duration::from_secs(32),
             5,
@@ -1014,6 +1130,7 @@ mod tests {
             local_liveness,
             Arc::new(AtomicBool::new(false)),
             Arc::new(AtomicBool::new(false)),
+            Arc::new(AtomicU32::new(0)),
             Arc::new(PeerConnCloseNotify::new(PeerConnId::new_v4())),
             Duration::from_secs(32),
             5,
@@ -1057,6 +1174,7 @@ mod tests {
             PeerConnLiveness::new(),
             Arc::new(AtomicBool::new(false)),
             Arc::new(AtomicBool::new(false)),
+            Arc::new(AtomicU32::new(0)),
             Arc::new(PeerConnCloseNotify::new(PeerConnId::new_v4())),
             Duration::from_secs(32),
             2,
@@ -1131,7 +1249,10 @@ mod tests {
         // Sub-millisecond link: still the floor.
         assert_eq!(fast_probe_timeout(Some(500)), FAST_PROBE_TIMEOUT_MIN);
         // 200ms RTT -> 3x, above the floor and below the cap.
-        assert_eq!(fast_probe_timeout(Some(200_000)), Duration::from_millis(600));
+        assert_eq!(
+            fast_probe_timeout(Some(200_000)),
+            Duration::from_millis(600)
+        );
         // Very high RTT: capped, because a probe cannot conclude faster than the
         // RTT allows.
         assert_eq!(fast_probe_timeout(Some(2_000_000)), FAST_PROBE_TIMEOUT_MAX);
@@ -1162,7 +1283,11 @@ mod tests {
                 "{hits} successes must not declare the link healthy again"
             );
         }
-        assert!(!fast_probe_publish_degraded(0, FAST_PROBE_RECOVER_ROUNDS, true));
+        assert!(!fast_probe_publish_degraded(
+            0,
+            FAST_PROBE_RECOVER_ROUNDS,
+            true
+        ));
 
         // The guarantee that matters at ~3 probes/s: while successes never run to
         // FAST_PROBE_RECOVER_ROUNDS, a degraded link stays degraded. Bursty loss
@@ -1176,6 +1301,132 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// A link whose keepalive keeps answering but whose probe keeps timing out
+    /// must still be able to recover.
+    ///
+    /// The probe budget is `3 × EWMA RTT` (clamped), the keepalive's is a flat
+    /// `PING_WAIT_TIMEOUT`, so sustained jitter above that multiple leaves the
+    /// probe failing every round while the pong arrives every round. The probe
+    /// miss must not zero the hit that round earned: with that bug the count
+    /// could never exceed 1, and the link stayed published at 100% loss for as
+    /// long as the jitter lasted.
+    #[test]
+    fn keepalive_proof_alone_clears_a_published_degradation() {
+        let timeout: Result<PingResponse, Error> = Err(Error::WaitRespError(
+            "wait ping response timeout".to_owned(),
+        ));
+        let mut misses = 0;
+        let mut hits = 0;
+        let mut seen_epoch = 10;
+        let mut published = true;
+
+        for round in 1..=FAST_PROBE_RECOVER_ROUNDS {
+            // The probe times out, but the keepalive proved a round trip during
+            // the same round.
+            let epoch = seen_epoch + 1;
+            fast_probe_apply_round_evidence(
+                &timeout,
+                epoch,
+                &mut seen_epoch,
+                &mut misses,
+                &mut hits,
+            );
+
+            assert_eq!(hits, round, "each proven round must earn exactly one hit");
+            assert_eq!(misses, 0, "a proven round ends the miss run");
+
+            published = fast_probe_publish_degraded(misses, hits, published);
+            if round < FAST_PROBE_RECOVER_ROUNDS {
+                assert!(
+                    published,
+                    "{round} rounds of keepalive proof must not clear it yet"
+                );
+            } else {
+                assert!(
+                    !published,
+                    "a full run of keepalive proof must clear it, not latch forever"
+                );
+            }
+        }
+    }
+
+    /// A round in which the probe *and* the keepalive both report a round trip is
+    /// still **one** round of proof.
+    ///
+    /// Counting both would clear a degradation in two rounds instead of
+    /// `FAST_PROBE_RECOVER_ROUNDS`, quietly weakening the anti-flap gate.
+    #[test]
+    fn a_round_counts_once_even_when_both_paths_prove_it() {
+        let pong: Result<PingResponse, Error> = Ok(PingResponse::Pong(1_000));
+        let mut misses = 0;
+        let mut hits = 0;
+        let mut seen_epoch = 41;
+
+        for round in 1..=FAST_PROBE_RECOVER_ROUNDS {
+            let epoch = seen_epoch + 1;
+            fast_probe_apply_round_evidence(&pong, epoch, &mut seen_epoch, &mut misses, &mut hits);
+            assert_eq!(hits, round, "one round must be worth one hit, not two");
+            assert_eq!(misses, 0);
+            assert!(fast_probe_publish_degraded(misses, hits, true) == (round < 3));
+        }
+    }
+
+    /// Nothing proven is still a black hole: a still epoch must not delay
+    /// detection, and a miss with no keepalive round trip must reset the hit run.
+    #[test]
+    fn nothing_proven_reaches_degraded_and_earns_no_hit() {
+        let timeout: Result<PingResponse, Error> = Err(Error::WaitRespError(
+            "wait ping response timeout".to_owned(),
+        ));
+        let mut misses = 0;
+        let mut hits = FAST_PROBE_RECOVER_ROUNDS;
+        let mut seen_epoch = 5;
+        let mut published = false;
+
+        for round in 1..=FAST_PROBE_MISSES_TO_DEGRADE {
+            fast_probe_apply_round_evidence(
+                &timeout,
+                seen_epoch,
+                &mut seen_epoch,
+                &mut misses,
+                &mut hits,
+            );
+            assert_eq!(misses, round);
+            assert_eq!(
+                hits, 0,
+                "a miss with no proven round trip must reset the hit run"
+            );
+            published = fast_probe_publish_degraded(misses, hits, published);
+        }
+        assert!(
+            published,
+            "three unproven misses must publish the degradation"
+        );
+        // Detection must not jump the local-routing gate, which needs a longer run.
+        assert!(!fast_probe_is_sustained(misses));
+    }
+
+    /// Local congestion is evidence of nothing: it must not count as a miss, and
+    /// a keepalive round proven in the same round still earns its hit.
+    #[test]
+    fn local_congestion_is_neutral_and_still_credits_a_proven_round() {
+        let congested: Result<PingResponse, Error> = Ok(PingResponse::LocalCongestion);
+        let mut misses = 2;
+        let mut hits = 0;
+        let mut seen_epoch = 7;
+
+        fast_probe_apply_round_evidence(&congested, 7, &mut seen_epoch, &mut misses, &mut hits);
+        assert_eq!(
+            misses, 2,
+            "a ping that never left the box is not a path miss"
+        );
+        assert_eq!(hits, 0);
+
+        fast_probe_apply_round_evidence(&congested, 8, &mut seen_epoch, &mut misses, &mut hits);
+        assert_eq!(misses, 0, "the proven round ends the miss run");
+        assert_eq!(hits, 1, "the proven round earns its hit");
     }
 
     /// The gate that lets degradation re-price our **own** outgoing edge must be
@@ -1209,8 +1460,14 @@ mod tests {
         // Assert the real figure so a future retune cannot quietly make the local
         // override slower than the keepalive teardown it exists to avoid waiting
         // for (~15s).
-        let worst_round = FAST_PROBE_INTERVAL + fast_probe_timeout(0);
-        let gate_cost = worst_round * to_gate_local;
+        //
+        // Two budgets, because the gate can fire in both states. `Some(0)` is a
+        // measured link clamped to the floor — the steady state. `None` is the
+        // fresh conn, which is precisely when this gate is reachable: no RTT
+        // sample means no successful round trip yet, so every one of the nine
+        // rounds probes with the 1s unmeasured budget rather than the floor.
+        let measured_round = FAST_PROBE_INTERVAL + fast_probe_timeout(Some(0));
+        let gate_cost = measured_round * to_gate_local;
         assert!(
             gate_cost < Duration::from_secs(10),
             "sustained gate takes {gate_cost:?}, which no longer beats keepalive teardown"
@@ -1218,6 +1475,13 @@ mod tests {
         assert!(
             gate_cost > Duration::from_secs(3),
             "gate got cheaper than documented ({gate_cost:?})"
+        );
+        let unmeasured_round = FAST_PROBE_INTERVAL + fast_probe_timeout(None);
+        let fresh_conn_gate = unmeasured_round * to_gate_local;
+        assert!(
+            fresh_conn_gate < Duration::from_secs(15),
+            "sustained gate takes {fresh_conn_gate:?} before any RTT sample, which no \
+             longer beats the keepalive teardown it races"
         );
     }
 

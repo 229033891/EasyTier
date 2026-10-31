@@ -118,7 +118,6 @@ logging_file: 日志文件
 logging_retention_hint: 最多保留 3 个滚动日志文件（按天切分；正常日志量下约 3 天，非固定时间窗口）。
 logging_remote_hint: 日志级别会应用到远端 EasyTier 进程；查看最近日志请在设备上打开日志文件。
 logging_clear: 删除
-logging_clear_confirm: 确定删除日志目录中的 EasyTier 日志文件吗？当前正在写入的日志会被清空，滚动日志会被删除。服务模式下会同时清理服务日志目录。
 logging_clear_success: 已清理 {count} 个日志文件
 logging_clear_partial: 已清理 {count} 个文件，但仍有失败：{error}
 logging_clear_failed: 删除日志失败

@@ -105,10 +105,9 @@ codegen-units = 1
 opt-level = 3
 strip = true
 
-# criterion 基准需要 unwind：libtest / 测试 harness 与 panic=abort 不兼容。
-# 仅影响 bench target；其余档位继承 release，保证基准数据与发版一致。
-[profile.bench]
-panic = "unwind"
+# criterion 基准需要 unwind：libtest / 测试 harness 与 panic=abort 不兼容；
+# cargo 已对 bench/test 档位强制 unwind 并忽略 [profile.bench] 的 panic 键，故此处不再声明。
+# 其余档位继承 release，保证基准数据与发版一致。
 
 # 本地迭代用：链接更快，体�?极致优化略弱�?release；正式发版仍�?--release
 [profile.release-fast]

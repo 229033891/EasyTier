@@ -118,7 +118,6 @@ logging_file: Log File
 logging_retention_hint: Up to 3 rotated log files are kept (daily rotation; ~3 days at normal volume, not a fixed time window).
 logging_remote_hint: Log level applies to the remote EasyTier process. Open log files on the device to view recent content.
 logging_clear: Delete
-logging_clear_confirm: Delete EasyTier log files in the log directory? The active log will be cleared and rotated logs will be removed. In service mode the service log directory is cleared too.
 logging_clear_success: Cleared {count} log file(s)
 logging_clear_partial: 'Cleared {count} file(s), but some failed: {error}'
 logging_clear_failed: Failed to delete logs
