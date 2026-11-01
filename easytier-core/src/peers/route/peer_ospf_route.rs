@@ -2561,7 +2561,7 @@ impl SyncRouteSession {
                 ?error,
                 "sync_route_info failed, will keep retrying"
             );
-        } else if failures % SYNC_FAILURE_RESTATE_EVERY == 0 {
+        } else if failures.is_multiple_of(SYNC_FAILURE_RESTATE_EVERY) {
             tracing::warn!(
                 my_peer_id = self.my_peer_id,
                 dst_peer_id = self.dst_peer_id,
@@ -4284,7 +4284,7 @@ impl PeerRouteServiceImpl {
                             .consecutive_sync_failures
                             .fetch_add(1, Ordering::Relaxed)
                             + 1;
-                        if failures == 1 || failures % SYNC_FAILURE_RESTATE_EVERY == 0 {
+                        if failures == 1 || failures.is_multiple_of(SYNC_FAILURE_RESTATE_EVERY) {
                             tracing::warn!(
                                 ?my_peer_id,
                                 ?dst_peer_id,
