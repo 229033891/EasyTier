@@ -13,7 +13,7 @@ use crate::{
     },
     packet::PacketType,
     proto::rpc_types::error::Error,
-    tunnel::{Tunnel, ring::create_ring_tunnel_pair},
+    tunnel::{Tunnel, TunnelError, ring::create_ring_tunnel_pair},
 };
 
 use super::{client::Client, server::Server, service_registry::ServiceRegistry};
@@ -140,7 +140,9 @@ impl BidirectRpcManager {
                         packet
                     }
                     else => {
-                        tracing::warn!("rpc transport read aborted, exiting");
+                        // Both local RPC streams ended: this is our own teardown
+                        // (session stopped / manager dropped), not a peer fault.
+                        tracing::debug!("rpc transport read aborted, exiting");
                         r_clone.store(false, Ordering::Relaxed);
                         break;
                     }
@@ -176,13 +178,20 @@ impl BidirectRpcManager {
                 let o = match ret {
                     Some(Ok(o)) => o,
                     Some(Err(e)) => {
-                        tracing::error!(error = ?e, "recv from peer failed");
+                        if is_expected_remote_close(&e) {
+                            tracing::debug!(error = ?e, "peer rpc transport closed by remote");
+                        } else {
+                            tracing::error!(error = ?e, "recv from peer failed");
+                        }
                         e_clone.lock().unwrap().replace(Error::from(e));
                         r_clone.store(false, Ordering::Relaxed);
                         break;
                     }
                     None => {
-                        tracing::warn!("peer rpc transport read aborted, exiting");
+                        // The remote ended the stream cleanly. Mesh members come
+                        // and go constantly (reconnects, NAT aging, console
+                        // redials), so this is churn, not a defect.
+                        tracing::debug!("peer rpc transport read aborted, exiting");
                         e_clone.lock().unwrap().replace(Error::Shutdown);
                         r_clone.store(false, Ordering::Relaxed);
                         break;
@@ -255,5 +264,57 @@ impl BidirectRpcManager {
 
     pub fn is_running(&self) -> bool {
         self.running.load(Ordering::Relaxed)
+    }
+}
+
+/// Whether a receive failure is the remote end going away rather than a defect
+/// in the local stack.
+///
+/// Members of a mesh disconnect and come back all the time: the peer reboots,
+/// its NAT mapping ages out, the console closes the session and redials. Those
+/// arrive here as reset / broken pipe / eof, and one `error!` per occurrence
+/// turned ordinary churn into an alarming console log.
+fn is_expected_remote_close(error: &TunnelError) -> bool {
+    match error {
+        TunnelError::IOError(err) => matches!(
+            err.kind(),
+            std::io::ErrorKind::ConnectionReset
+                | std::io::ErrorKind::ConnectionAborted
+                | std::io::ErrorKind::BrokenPipe
+                | std::io::ErrorKind::UnexpectedEof
+                | std::io::ErrorKind::NotConnected
+        ),
+        TunnelError::Shutdown => true,
+        _ => false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn classifies_expected_remote_close() {
+        for kind in [
+            std::io::ErrorKind::ConnectionReset,
+            std::io::ErrorKind::ConnectionAborted,
+            std::io::ErrorKind::BrokenPipe,
+            std::io::ErrorKind::UnexpectedEof,
+            std::io::ErrorKind::NotConnected,
+        ] {
+            assert!(is_expected_remote_close(&TunnelError::IOError(kind.into())));
+        }
+        assert!(is_expected_remote_close(&TunnelError::Shutdown));
+    }
+
+    #[test]
+    fn keeps_unexpected_failures_alarming() {
+        assert!(!is_expected_remote_close(&TunnelError::IOError(
+            std::io::ErrorKind::PermissionDenied.into()
+        )));
+        assert!(!is_expected_remote_close(&TunnelError::InvalidPacket(
+            "body too long".to_string()
+        )));
+        assert!(!is_expected_remote_close(&TunnelError::BufferFull));
     }
 }
