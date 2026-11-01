@@ -62,6 +62,26 @@ const MIN_HEARTBEAT_TIMEOUT_MARGIN_MS: u32 = 5_000;
 /// Without this, a slow console makes the client spin at ~1/RTT and amplify load.
 const MIN_HEARTBEAT_SUCCESS_GAP: std::time::Duration = std::time::Duration::from_millis(500);
 
+/// Consecutive *transient* heartbeat failures tolerated before the session is torn down.
+///
+/// A session end costs a full rebuild (re-dial + secure handshake + a new
+/// `session_epoch` on the console + a cold reconcile cache). Letting one lost
+/// heartbeat pay that price turned ordinary jitter into a reconnect loop: a
+/// single RPC timeout ended the session even though the tunnel was fine a
+/// moment later. Retrying first, and only giving up after several failures,
+/// keeps a blip a blip while still failing fast on a path that is genuinely gone.
+const MAX_CONSECUTIVE_HEARTBEAT_FAILURES: u32 = 3;
+
+/// Per-attempt timeout for the retries after a transient heartbeat failure.
+///
+/// The negotiated policy timeout (default 15s) is far too long to pay up to
+/// three times on a dead path; a short probe separates "blip" from "path gone"
+/// quickly, and the successful attempt restores the normal policy timeout.
+const HEARTBEAT_RETRY_TIMEOUT_MS: i32 = 3_000;
+
+/// Gap between a failed heartbeat and the retry attempt.
+const HEARTBEAT_RETRY_GAP: std::time::Duration = std::time::Duration::from_millis(800);
+
 /// Recover from a poisoned `StdMutex` instead of silently dropping updates.
 /// Poison means a prior holder paniced while holding the lock; the inner state
 /// is still the best available process truth for revision / RPC bookkeeping.
@@ -81,6 +101,22 @@ fn next_backoff(current: std::time::Duration) -> std::time::Duration {
         .checked_mul(2)
         .unwrap_or(MAX_RETRY_INTERVAL)
         .min(MAX_RETRY_INTERVAL)
+}
+
+/// Whether a heartbeat failure is a transport-level blip a retry can ride out.
+///
+/// A server-side `Err` (invalid token, superseded session, webhook rejection)
+/// means the session itself is unusable and must be rebuilt immediately —
+/// retrying it would only delay the reconnect the console is waiting for.
+fn is_transient_heartbeat_error(error: &easytier_proto::rpc_types::error::Error) -> bool {
+    matches!(
+        error,
+        easytier_proto::rpc_types::error::Error::Timeout(_)
+            | easytier_proto::rpc_types::error::Error::TunnelError(_)
+            // The callee asked the caller to retry later; that is exactly what
+            // the heartbeat loop does next, so it must not end the session.
+            | easytier_proto::rpc_types::error::Error::ServiceUnavailable(_)
+    )
 }
 
 /// Uptime after which a session is treated as stable: the next session-end
@@ -153,6 +189,15 @@ impl HeartbeatPolicy {
     fn controller(self) -> BaseController {
         BaseController {
             timeout_ms: self.timeout_ms,
+            ..Default::default()
+        }
+    }
+
+    /// Controller for a retry after a transient failure: short, so three
+    /// attempts on a dead path cost seconds instead of the full policy timeout.
+    fn retry_controller(self) -> BaseController {
+        BaseController {
+            timeout_ms: self.timeout_ms.min(HEARTBEAT_RETRY_TIMEOUT_MS),
             ..Default::default()
         }
     }
@@ -1188,6 +1233,7 @@ impl WebClientSession {
 
         tasks.spawn(async move {
             let mut heartbeat_policy = HeartbeatPolicy::default();
+            let mut consecutive_failures: u32 = 0;
             loop {
                 let heartbeat_started_at = std::time::Instant::now();
                 let Some(controller) = controller.upgrade() else {
@@ -1218,11 +1264,16 @@ impl WebClientSession {
                     support_user_disabled_instances,
                 );
 
-                match client
-                    .heartbeat(heartbeat_policy.controller(), request)
-                    .await
-                {
+                // A retry after a transient failure uses a short timeout so a
+                // dead path costs seconds, not one full policy timeout per try.
+                let heartbeat_controller = if consecutive_failures == 0 {
+                    heartbeat_policy.controller()
+                } else {
+                    heartbeat_policy.retry_controller()
+                };
+                match client.heartbeat(heartbeat_controller, request).await {
                     Ok(response) => {
+                        consecutive_failures = 0;
                         tracing::debug!(?response, "config-server heartbeat response");
                         // Skip stale heartbeats that raced a successful local report.
                         controller.store_heartbeat_revision(
@@ -1258,8 +1309,26 @@ impl WebClientSession {
                         .await;
                     }
                     Err(error) => {
-                        tracing::error!(?error, "config-server heartbeat failed");
-                        break;
+                        let failed_attempts = consecutive_failures.saturating_add(1);
+                        if failed_attempts >= MAX_CONSECUTIVE_HEARTBEAT_FAILURES
+                            || !is_transient_heartbeat_error(&error)
+                        {
+                            tracing::error!(
+                                ?error,
+                                failed_attempts,
+                                "config-server heartbeat failed; ending session"
+                            );
+                            break;
+                        }
+                        consecutive_failures = failed_attempts;
+                        tracing::warn!(
+                            ?error,
+                            failed_attempts,
+                            max_attempts = MAX_CONSECUTIVE_HEARTBEAT_FAILURES,
+                            retry_gap_ms = HEARTBEAT_RETRY_GAP.as_millis(),
+                            "config-server heartbeat failed; retrying before ending session"
+                        );
+                        time::sleep(HEARTBEAT_RETRY_GAP).await;
                     }
                 }
             }
@@ -1824,5 +1893,42 @@ mod tests {
             b,
             "clearing instance-a must not drop instance-b pending"
         );
+    }
+
+    #[test]
+    fn transient_heartbeat_errors_are_retried_but_session_errors_are_not() {
+        use easytier_proto::rpc_types::error::Error;
+
+        assert!(is_transient_heartbeat_error(&Error::TunnelError(
+            "rpc transport read aborted".to_string()
+        )));
+        assert!(is_transient_heartbeat_error(&Error::ServiceUnavailable(
+            "server at capacity".to_string()
+        )));
+        // The console rejected the session itself; a retry only delays reconnect.
+        assert!(!is_transient_heartbeat_error(&Error::ExecutionError(
+            anyhow::anyhow!("invalid token")
+        )));
+        assert!(!is_transient_heartbeat_error(&Error::Shutdown));
+        assert!(!is_transient_heartbeat_error(&Error::DecodeError));
+    }
+
+    #[test]
+    fn heartbeat_retry_shrinks_the_policy_timeout() {
+        let policy = HeartbeatPolicy {
+            interval: std::time::Duration::from_millis(3_500),
+            timeout_ms: 15_000,
+        };
+        assert_eq!(
+            policy.retry_controller().timeout_ms,
+            HEARTBEAT_RETRY_TIMEOUT_MS
+        );
+
+        // A policy that is already shorter than the retry probe keeps its value.
+        let tight = HeartbeatPolicy {
+            interval: std::time::Duration::from_millis(1_000),
+            timeout_ms: 2_000,
+        };
+        assert_eq!(tight.retry_controller().timeout_ms, 2_000);
     }
 }
