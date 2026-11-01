@@ -23,6 +23,11 @@ use crate::{
     instance::virtual_nic::NicCtx,
 };
 
+/// Number of consecutive TUN recreate failures after which the outage is
+/// escalated to the UI/CLI (`GlobalCtxEvent::TunDeviceError`) instead of only
+/// being logged once per attempt.
+const MAX_FAST_RECREATE_ATTEMPTS: u32 = 5;
+
 pub(super) struct NativeTunRuntime {
     global_ctx: ArcGlobalCtx,
     cancel: CancellationToken,
@@ -58,6 +63,19 @@ impl NativeTunRuntime {
         }
     }
 
+    /// Backoff between attempts to recreate a TUN device that failed to come up.
+    ///
+    /// The first retry happens after 1s, so a transient device loss (interface
+    /// deleted or brought down by a netifd reload, `ip link del`, …) is a
+    /// sub-second blip. The delay then doubles up to a 10s cap: a persistent
+    /// failure settles at one attempt per 10s instead of the unbounded 1/s
+    /// busy retry that used to spam the log (and the event bus) forever.
+    fn recreate_backoff(failed_attempts: u32) -> Duration {
+        const CAP: Duration = Duration::from_secs(10);
+        let shift = failed_attempts.saturating_sub(1).min(4);
+        Duration::from_secs(1u64 << shift).min(CAP)
+    }
+
     async fn start_static_ip(&self, packet_plane: Arc<CorePacketPlane>) -> anyhow::Result<()> {
         let ipv4 = self.global_ctx.get_ipv4();
         let ipv6 = self.global_ctx.get_ipv6();
@@ -72,11 +90,27 @@ impl NativeTunRuntime {
         let (output, first_round) = oneshot::channel();
         let task = tokio::spawn(async move {
             let mut output = Some(output);
+            // Consecutive failed recreate attempts since the last successful
+            // install. Drives the retry backoff and the escalated error report.
+            let mut failed_attempts: u32 = 0;
             loop {
                 if cancel.is_cancelled() {
                     Self::report_static_ip_cancelled(&mut output);
                     return;
                 }
+                // Release the previous NIC *before* creating the replacement.
+                //
+                // The previous NicCtx is installed in `nic_state` and keeps its
+                // forwarding tasks alive; those tasks hold the TUN fd, so on
+                // Linux the configured device name (default `tun0`) stays busy
+                // and `tun::create` fails with EBUSY (os error 16) on every
+                // retry — forever. The instance then keeps reporting "online"
+                // while its data plane is dead. `drain()` stops the old NicCtx
+                // (A10: abort + join, so the fd is really closed) and swallows
+                // packets that arrive while no TUN exists, which is exactly
+                // what `tun_mobile` already does before each attach.
+                nic_state.drain().await;
+
                 let closed = Arc::new(Notify::new());
                 let mut nic = NicCtx::new(
                     global_ctx.clone(),
@@ -97,13 +131,41 @@ impl NativeTunRuntime {
                         let _ = output.send(Err(error));
                         return;
                     }
-                    tracing::error!(?error, "failed to create native interface");
+                    // `run()` may have created the device and then failed on a
+                    // later step (IP assignment, route updaters). Release that
+                    // half-initialised NIC eagerly so the next attempt does not
+                    // inherit the same name conflict.
+                    nic.shutdown().await;
+                    failed_attempts = failed_attempts.saturating_add(1);
+                    let delay = Self::recreate_backoff(failed_attempts);
+                    tracing::error!(
+                        ?error,
+                        failed_attempts,
+                        ?delay,
+                        "failed to create native interface; retrying"
+                    );
+                    if failed_attempts == MAX_FAST_RECREATE_ATTEMPTS {
+                        // Keep retrying (a device that is only temporarily gone
+                        // must not kill the whole instance), but stop reporting
+                        // a "healthy" node: surface the prolonged outage with an
+                        // actionable message instead of only a per-attempt log.
+                        global_ctx.set_tun_device_error(format!(
+                            "TUN device unavailable after {failed_attempts} consecutive \
+                             recreate attempts: {error}; data plane is down, restart the \
+                             instance if it does not recover"
+                        ));
+                    }
                     tokio::select! {
                         _ = cancel.cancelled() => return,
-                        _ = tokio::time::sleep(Duration::from_secs(1)) => {}
+                        _ = tokio::time::sleep(delay) => {}
                     }
                     continue;
                 }
+
+                if failed_attempts > 0 {
+                    tracing::info!(failed_attempts, "native interface recreated after failures");
+                }
+                failed_attempts = 0;
 
                 let magic_dns = if let Some(ip) = ipv4 {
                     MagicDnsRuntime::start(
@@ -260,5 +322,40 @@ impl DhcpIpv4Host for NativeDhcpIpv4Host {
             GlobalCtxEvent::DhcpIpv4Changed(previous, actual)
         };
         self.global_ctx.issue_event(event);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use super::*;
+
+    #[test]
+    fn recreate_backoff_doubles_then_caps() {
+        assert_eq!(
+            NativeTunRuntime::recreate_backoff(1),
+            Duration::from_secs(1)
+        );
+        assert_eq!(
+            NativeTunRuntime::recreate_backoff(2),
+            Duration::from_secs(2)
+        );
+        assert_eq!(
+            NativeTunRuntime::recreate_backoff(3),
+            Duration::from_secs(4)
+        );
+        assert_eq!(
+            NativeTunRuntime::recreate_backoff(4),
+            Duration::from_secs(8)
+        );
+        assert_eq!(
+            NativeTunRuntime::recreate_backoff(5),
+            Duration::from_secs(10)
+        );
+        assert_eq!(
+            NativeTunRuntime::recreate_backoff(u32::MAX),
+            Duration::from_secs(10)
+        );
     }
 }
