@@ -1736,8 +1736,6 @@ async fn run_main(cli: Cli) -> anyhow::Result<()> {
                 server = config_server_url_s,
                 "Web client started successfully...",
             );
-
-            log::info!("Official config website: https://easytier.cn/web");
         })?;
 
         let got_heartbeat = wc.wait_first_heartbeat(BOOT_CONFIG_SERVER_WAIT).await;
