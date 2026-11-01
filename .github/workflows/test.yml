@@ -209,7 +209,17 @@ jobs:
           pnpm: true
           token: ${{ secrets.GITHUB_TOKEN }}
 
+      # Registry-only cache, same as every other workflow in this repo.
+      # Caching `target/` here restored a half-built tree after cancelled runs
+      # (concurrency.cancel-in-progress) and made cargo treat `easytier` as
+      # Fresh while libeasytier-*.rmeta was gone -> the bins failed with
+      # E0463 "can't find crate for `easytier`". Build artifacts are sccache's
+      # job; GHA caches are immutable per key, so a poisoned one never heals.
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          prefix-key: ""
+          shared-key: "test-registry"
+          cache-targets: "false"
 
       - uses: taiki-e/install-action@e407f7bafb71fd004bc5c2da3032e5470cbb6ef0 # v2.87.24
         with:
