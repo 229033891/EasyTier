@@ -20,6 +20,13 @@ use crate::{
 pub struct MpscTunnelSender(Sender<ZCPacket>);
 
 impl MpscTunnelSender {
+    /// Test-only: wrap a raw tokio sender (e.g. for unit-testing drain tasks
+    /// that own a sink without a full [`MpscTunnel`] setup).
+    #[cfg(test)]
+    pub(crate) fn from_tokio_sender(sender: Sender<ZCPacket>) -> Self {
+        Self(sender)
+    }
+
     pub async fn send(&self, item: ZCPacket) -> Result<(), TunnelError> {
         match self.0.try_send(item) {
             Ok(()) => Ok(()),

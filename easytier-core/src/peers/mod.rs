@@ -19,6 +19,11 @@ pub(crate) mod traffic_metrics;
 mod util;
 pub(crate) mod whitelist;
 
+// Re-exported for the TUN reader in the `easytier` lib crate: per-flow
+// dispatch bridges (see peers/conn/egress_fq.rs and
+// docs/current/egress-fair-queue.md).
+pub use conn::egress_fq::{FlowHashDispatcher, egress_flow_key_for_payload};
+
 #[cfg(any(test, feature = "test-utils"))]
 #[allow(dead_code)]
 pub(crate) mod test_support;

@@ -153,6 +153,18 @@ message FlagsInConfig {
   // OSPF read site — larger values would corrupt the established
   // policy-veto cost semantics (see peers/route/peer_ospf_route.rs).
   uint32 relay_hop_penalty = 59;
+
+  // Per-connection egress fair queueing: packets leaving a PeerConn are placed
+  // into per-flow lanes (keyed by the same inner IP 5-tuple hash the bond uses)
+  // drained round-robin, instead of a single FIFO ring. Control packets
+  // (everything but Data) take a dedicated priority lane. This stops a bulk
+  // transfer from monopolizing the 32-slot egress ring and stalling
+  // latency-sensitive traffic (RDP, VoIP) on slow/congested tunnels. Ordering
+  // within one flow is strictly preserved (same flow -> same lane -> FIFO).
+  // Purely local scheduling: no wire-protocol impact, disable to restore the
+  // exact historical FIFO egress. Takes effect for conns created after the
+  // flag is read.
+  bool enable_egress_fair_queue = 60;
 }
 
 message RpcDescriptor {

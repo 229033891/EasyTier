@@ -232,6 +232,12 @@ pub fn gen_default_flags() -> Flags {
         // historical, penalty-free behavior; see common.proto
         // `relay_hop_penalty` for the model and the hard upper bound.
         relay_hop_penalty: 5,
+        // Per-conn egress fair queueing on by default: per-flow lanes stop a
+        // bulk transfer from stalling interactive traffic behind it in the
+        // 32-slot FIFO ring on slow tunnels. See
+        // docs/current/egress-fair-queue.md; false restores the historical
+        // single-FIFO egress.
+        enable_egress_fair_queue: true,
     }
 }
 
@@ -340,6 +346,7 @@ define_flags_diff! {
         peer_link_replica_fill_max,
         disable_vip_reachability_probe,
         relay_hop_penalty,
+        enable_egress_fair_queue,
     ],
     u64s: [foreign_relay_bps_limit, instance_recv_bps_limit],
     enums: [data_compress_algo]

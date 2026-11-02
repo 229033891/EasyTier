@@ -3,6 +3,7 @@
 
 pub(crate) mod conn_bond;
 pub(crate) mod conn_select;
+pub(crate) mod egress_fq;
 pub(crate) mod peer;
 pub(crate) mod peer_conn;
 pub(crate) mod peer_conn_liveness;

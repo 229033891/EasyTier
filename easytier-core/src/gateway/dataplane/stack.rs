@@ -16,6 +16,7 @@ use crate::{
     gateway::smoltcp::{BufferSize, Net, NetConfig, channel_device},
     packet::ZCPacket,
     peers::peer_manager::PeerManagerCore,
+    peers::{conn::egress_fq::FlowHashDispatcher, conn::egress_fq::egress_flow_key_for_payload},
 };
 
 use super::{DataPlaneErrorKind, DataPlaneIoGuard};
@@ -53,25 +54,45 @@ impl SmoltcpPlane {
         });
 
         forward_tasks.spawn(async move {
+            // Flow-hash partitioned egress: one saturated flow parks only its
+            // own worker, not every flow crossing the smoltcp plane (the old
+            // single `read → send().await` loop turned any full conn ring
+            // into a plane-wide stall). Same flow ⇒ same worker ⇒ ordering
+            // preserved. See docs/current/egress-fair-queue.md.
+            let peer_manager_for_worker = peer_manager.clone();
+            // `worker` is FnMut (invoked once per worker): clone the handle
+            // per invocation inside the closure body — moving it straight
+            // into `async move` would try to move out of the FnMut closure
+            // (E0507). Weak/Arc clones are pointer copies.
+            let dispatcher = FlowHashDispatcher::new(move |mut rx| {
+                let peer_manager_for_worker = peer_manager_for_worker.clone();
+                async move {
+                    while let Some((destination, packet)) = rx.recv().await {
+                        let Some(peer_manager) = peer_manager_for_worker.upgrade() else {
+                            return;
+                        };
+                        if let Err(error) = peer_manager
+                            .send_msg_by_ip(packet, IpAddr::V4(destination), false)
+                            .await
+                        {
+                            tracing::error!(?error, "deliver smoltcp packet to peer failed");
+                        }
+                    }
+                }
+            });
             while let Some(data) = stack_stream.recv().await {
                 let Ok(ipv4) = Ipv4Packet::new_checked(&data) else {
                     tracing::error!(?data, "smoltcp emitted a non-IPv4 packet");
                     continue;
                 };
                 let destination = ipv4.dst_addr();
-                let Some(peer_manager) = peer_manager.upgrade() else {
-                    tracing::debug!("smoltcp-to-peer bridge lost PeerManager");
-                    return;
-                };
-                if let Err(error) = peer_manager
-                    .send_msg_by_ip(
-                        ZCPacket::new_with_payload(&data),
-                        IpAddr::V4(destination),
-                        false,
-                    )
+                let flow_key = egress_flow_key_for_payload(&data);
+                if let Err(error) = dispatcher
+                    .dispatch(flow_key, (destination, ZCPacket::new_with_payload(&data)))
                     .await
                 {
-                    tracing::error!(?error, "deliver smoltcp packet to peer failed");
+                    tracing::error!(?error, "smoltcp egress dispatcher closed");
+                    return;
                 }
             }
             tracing::debug!("smoltcp-to-peer bridge stopped");

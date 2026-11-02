@@ -23,6 +23,7 @@ use crate::{
     },
     tunnel::ring::create_ring_tunnel_pair,
 };
+use easytier_proto::common::FlagsInConfig;
 
 /// Build a `PeerMap` for tests (flow accounting disabled).
 fn new_test_peer_map(
@@ -667,5 +668,75 @@ async fn peer_map_reselects_cached_connection_after_close() {
     assert_ne!(
         client_map.get_peer_default_conn_id(2).await,
         Some(first_conn_id)
+    );
+}
+
+/// Integration guard for the egress fair-queue wiring (`enable_egress_fair_queue`
+/// defaults to false in `FlagsInConfig::default()`, so every other test in this
+/// file exercises the legacy direct-sink path only). With the flag on, the drain
+/// task spawned in `PeerConn::new` must actually forward every pushed packet to
+/// the sink — if it is ever dropped again (JoinSet aborted on construction),
+/// pushes fill the lanes and packets stop arriving, which fails this test.
+#[tokio::test]
+async fn peer_conn_egress_fair_queue_delivers_all_packets_in_order() {
+    const PACKET_COUNT: usize = 40;
+
+    let fq_flags = FlagsInConfig {
+        enable_egress_fair_queue: true,
+        ..FlagsInConfig::default()
+    };
+    let client_ctx = Arc::new(NoopPeerContext::default().with_flags(fq_flags.clone()));
+    let server_ctx = Arc::new(NoopPeerContext::default().with_flags(fq_flags));
+
+    let peer_session_store = Arc::new(PeerSessionStore::new());
+    let (client_tunnel, server_tunnel) = create_ring_tunnel_pair();
+
+    let mut client_conn = PeerConn::new(
+        1,
+        client_ctx.clone(),
+        client_tunnel,
+        peer_session_store.clone(),
+    );
+    let mut server_conn = PeerConn::new(2, server_ctx.clone(), server_tunnel, peer_session_store);
+
+    let (client_ret, server_ret) = tokio::join!(
+        client_conn.do_handshake_as_client(),
+        server_conn.do_handshake_as_server()
+    );
+    client_ret.unwrap();
+    server_ret.unwrap();
+
+    let (client_tx, _client_rx) = create_packet_recv_chan();
+    let (server_tx, mut server_rx) = create_packet_recv_chan();
+    let client_map = new_test_peer_map(client_tx, client_ctx, 1);
+    let server_map = new_test_peer_map(server_tx, server_ctx, 2);
+
+    client_map.add_new_peer_conn(client_conn).await.unwrap();
+    server_map.add_new_peer_conn(server_conn).await.unwrap();
+
+    for seq in 0..PACKET_COUNT {
+        let mut packet = ZCPacket::new_with_payload(b"fq");
+        packet.fill_peer_manager_hdr(1, 2, PacketType::Data as u8);
+        packet.set_bond_flow_key(seq as u64);
+        client_map
+            .send_msg_directly(packet, 2)
+            .await
+            .unwrap_or_else(|e| panic!("push {seq} through FQ failed: {e}"));
+    }
+
+    for seq in 0..PACKET_COUNT {
+        let received = timeout(Duration::from_secs(5), server_rx.recv())
+            .await
+            .unwrap_or_else(|_| panic!("packet {seq} never arrived through the FQ drain"))
+            .unwrap();
+        assert_eq!(received.payload(), b"fq", "packet {seq} payload mismatch");
+    }
+
+    // Nothing extra may leak out behind the last packet.
+    assert!(
+        timeout(Duration::from_millis(50), server_rx.recv())
+            .await
+            .is_err(),
+        "server received more packets than were sent"
     );
 }

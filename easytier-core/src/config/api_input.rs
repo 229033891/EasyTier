@@ -240,6 +240,7 @@ const FORM_MANAGED_FLAG_FIELDS: &[&str] = &[
     "peer_link_bond_count",
     "peer_link_replica_fill_max",
     "relay_hop_penalty",
+    "enable_egress_fair_queue",
 ];
 
 #[cfg(all(
@@ -677,6 +678,10 @@ impl NetworkConfigExt for NetworkConfig {
             flags.relay_hop_penalty = relay_hop_penalty;
         }
 
+        if let Some(enable_egress_fair_queue) = self.enable_egress_fair_queue {
+            flags.enable_egress_fair_queue = enable_egress_fair_queue;
+        }
+
         if let Some(dev_name) = self.dev_name.clone() {
             flags.dev_name = dev_name;
         }
@@ -1084,6 +1089,7 @@ impl NetworkConfigExt for NetworkConfig {
         // leave the browser form unable to save until the operator edits a
         // field the form does not even expose).
         result.relay_hop_penalty = Some(clamp_relay_hop_penalty(flags.relay_hop_penalty));
+        result.enable_egress_fair_queue = Some(flags.enable_egress_fair_queue);
         result.dev_name = Some(flags.dev_name.clone());
         result.use_smoltcp = Some(flags.use_smoltcp);
         result.disable_ipv6 = Some(!flags.enable_ipv6);

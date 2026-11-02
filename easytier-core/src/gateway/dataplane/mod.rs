@@ -40,7 +40,7 @@ use crate::{
         },
         smoltcp::{Net, UdpSocket},
     },
-    packet::{PacketType, ZCPacket},
+    packet::ZCPacket,
     peers::{
         PeerPacketFilter, PeerPacketFilterResult,
         conn::conn_bond::flow_key_from_ipv4_tuple,
@@ -227,12 +227,7 @@ where
         if self.entries.is_idle() && !packet::is_udp_fragment(&packet) {
             if tracing::enabled!(tracing::Level::TRACE)
                 && let Some(hdr) = packet.peer_manager_header()
-                && matches!(
-                    hdr.packet_type,
-                    x if x == PacketType::Data as u8
-                        || x == PacketType::DataWithKcpSrcModified as u8
-                        || x == PacketType::DataWithQuicSrcModified as u8
-                )
+                && crate::packet::is_data_packet(hdr.packet_type)
             {
                 if let Ok(ipv4) = Ipv4Packet::new_checked(packet.payload()) {
                     let (tcp_src_port, tcp_dst_port, tcp_flags) =

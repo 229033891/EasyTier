@@ -59,6 +59,8 @@ use crate::{
     },
 };
 
+use super::egress_fq::{EGRESS_FLOW_LANES, EGRESS_LANE_CAP, EGRESS_PRIORITY_CAP, EgressFairQueue};
+
 pub type PeerConnId = uuid::Uuid;
 
 const MAGIC: u32 = 0xd1e1a5e1;
@@ -290,6 +292,10 @@ pub struct PeerConn {
     sink: MpscTunnelSender,
     recv: Mutex<Option<Pin<Box<dyn ZCPacketStream>>>>,
     tunnel_info: Option<TunnelInfo>,
+    /// Per-flow egress fair queue (`enable_egress_fair_queue`, default on).
+    /// `None` restores the direct-sink FIFO path. The drain task lives in
+    /// `tasks` and owns a clone of `sink`.
+    egress_fq: Option<std::sync::Arc<EgressFairQueue>>,
 
     tasks: JoinSet<Result<(), TunnelError>>,
 
@@ -393,6 +399,37 @@ impl PeerConn {
         let conn_id = PeerConnId::new_v4();
         let my_encrypt_algo = flags.encryption_algorithm;
 
+        // Egress fair queue: per-flow lanes so a bulk transfer cannot hog the
+        // tunnel sink ahead of interactive flows (RDP, VoIP). Control packets
+        // take a priority lane. Disable via `enable_egress_fair_queue = false`
+        // to restore the exact historical direct-sink FIFO. The flag is read
+        // per conn, so a runtime change applies to newly created conns.
+        let egress_fq = if flags.enable_egress_fair_queue {
+            // Grace-period observability: without this line there is nothing in
+            // the log that distinguishes "FQ is on and the tunnel is slow" from
+            // "FQ never got enabled on this conn".
+            tracing::debug!(
+                ?conn_id,
+                ?peer_id_hint,
+                priority_cap = EGRESS_PRIORITY_CAP,
+                lane_cap = EGRESS_LANE_CAP,
+                lanes = EGRESS_FLOW_LANES,
+                "egress fair queue enabled for new peer conn"
+            );
+            Some(std::sync::Arc::new(EgressFairQueue::new()))
+        } else {
+            None
+        };
+        let mut tasks = JoinSet::new();
+        if let Some(fq) = &egress_fq {
+            let fq = fq.clone();
+            let sink_for_drain = sink.clone();
+            tasks.spawn(async move {
+                fq.run(sink_for_drain).await;
+                Ok(())
+            });
+        }
+
         PeerConn {
             conn_id,
             origin,
@@ -412,8 +449,9 @@ impl PeerConn {
             sink,
             recv: Mutex::new(Some(recv)),
             tunnel_info,
+            egress_fq,
 
-            tasks: JoinSet::new(),
+            tasks,
 
             info: None,
             is_client: None,
@@ -437,7 +475,6 @@ impl PeerConn {
             my_encrypt_algo,
         }
     }
-
     fn get_peer_session_store(&self) -> &Arc<PeerSessionStore> {
         &self.peer_session_store
     }
@@ -1553,22 +1590,33 @@ impl PeerConn {
 
     pub async fn send_msg(&self, msg: ZCPacket) -> Result<(), Error> {
         // Bounded egress wait (not unbounded `send`, not pure `try_send`):
-        // - `MpscTunnelSender::send` tries non-blocking first, so the common
-        //   empty-ring path never parks the shared PeerPacketRouter.
-        // - On a full ring we wait briefly for the forwarder to drain — enough
-        //   for in-process / lightly loaded tunnels to absorb TCP segments and
-        //   UDP fragments, short enough that a stuck peer surfaces as
-        //   `BufferFull` instead of HOL-blocking every other conn.
+        // - The fair queue (when enabled) enqueues into a per-flow lane first;
+        //   the common empty-lane path never parks the caller.
+        // - On a full lane/ring we wait briefly for the forwarder to drain —
+        //   enough for in-process / lightly loaded tunnels to absorb TCP
+        //   segments and UDP fragments, short enough that a stuck peer
+        //   surfaces as `BufferFull` instead of HOL-blocking every other conn.
         // - BufferFull is counted at the router and must not tear the conn
         //   down; only Shutdown / hard errors do.
         const EGRESS_WAIT: Duration = Duration::from_millis(100);
-        match timeout(EGRESS_WAIT, self.sink.send(msg)).await {
-            Ok(Ok(())) => Ok(()),
-            Ok(Err(error)) => {
+        let Some(fq) = &self.egress_fq else {
+            // Historical direct-sink path (`enable_egress_fair_queue = false`).
+            return match timeout(EGRESS_WAIT, self.sink.send(msg)).await {
+                Ok(Ok(())) => Ok(()),
+                Ok(Err(error)) => {
+                    self.close_event_notifier.notify_close();
+                    Err(error.into())
+                }
+                Err(_) => Err(TunnelError::BufferFull.into()),
+            };
+        };
+        match fq.push(msg, EGRESS_WAIT).await {
+            Ok(()) => Ok(()),
+            Err(TunnelError::Shutdown) => {
                 self.close_event_notifier.notify_close();
-                Err(error.into())
+                Err(TunnelError::Shutdown.into())
             }
-            Err(_) => Err(TunnelError::BufferFull.into()),
+            Err(e) => Err(e.into()),
         }
     }
 

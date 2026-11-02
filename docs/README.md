@@ -44,6 +44,7 @@ crate 内设计稿（非本索引）：`easytier/docs/`（凭据计划已标 Arc
 | [relay-hop-penalty.md](./current/relay-hop-penalty.md) | **relay_hop_penalty（中继跳惩罚）**：opt-in 的 LeastCost 模型校正（每中转跳 +N 代价，默认 0 契约不变）；上界 `RELAY_HOP_PENALTY_MAX` 双重 clamp；管理 API 字段贯穿（Full 下发不清零）；LeastHop 选路不变但 `path_latency` 含惩罚；与 B14 撤回/`live-next-hop.md` 负例的口径边界见 §0 |
 | [p2p-direct-throughput-audit.md](./current/p2p-direct-throughput-audit.md) | **P2P 直连吞吐瓶颈审查**（逐行核实出站通路；3 处瓶颈 / 3 处已排除；未压测） |
 | [p2p-direct-stability-audit.md](./current/p2p-direct-stability-audit.md) | **P2P 直连稳定性审查**（RDP 卡顿五机制 + 配置层缓解清单；混淆因素待排除） |
+| [egress-fair-queue.md](./current/egress-fair-queue.md) | **隧道出口公平队列**：PeerConn 出口 per-flow 分桶（优先桶 16 + 8×32 流桶，drain 任务挂 `PeerConn::tasks`）+ TUN/smoltcp 桥按流分片并行（`FlowHashDispatcher`）；flag `enable_egress_fair_queue` 仅回退 PeerConn 侧；平面级 HOL 只缓解非消除（§2.3 边界） |
 | [tailscale-gap-and-conflict-audit.md](./current/tailscale-gap-and-conflict-audit.md) | **vs Tailscale 代码层审查**（Bug/冲突 C1–C6 vs 设计 S1–S5；UI 已连≠VIP；P-AUDIT 修复清单未落地） |
 | [packet-loss-investigation-2026-10.md](./current/packet-loss-investigation-2026-10.md) | **现网偶发丢包实测记录**（三轮 ping 原始数据；证伪「ET 控制面」「bond 切路」两个假设；证实代理 TUN 与 ET 隧道**双向互抢路由**；尖峰落点待双侧取证） |
 | [console-and-client-interaction-performance.md](./current/console-and-client-interaction-performance.md) | **控制台与客户端交互性能审查**（Web 控制台 / 安卓 GUI 交互慢的根因；OpenWrt LuCI 见外部仓文档） |
@@ -169,7 +170,8 @@ export CARGO_PROFILE_DEV_DEBUG=0 CARGO_INCREMENTAL=0 CARGO_TARGET_DIR='D:\EasyTi
 | 类型检查（**全链路**，含 TUN / CLI） | `cargo check -p easytier` |
 | 单测（**默认 features**） | `cargo test -p easytier-core --lib` → **986** |
 | 单测（含数据面 / TCP 代理） | `cargo test -p easytier-core --lib --features proxy-smoltcp-stack` → **1150** |
-| lint | `cargo clippy -p easytier-core -p easytier-proto --tests` |
+| lint（快速，本地 Windows 可跑） | `cargo clippy -p easytier -p easytier-core -p easytier-web -p easytier-proto` |
+| lint（**CI 对齐口径，提交前必跑**） | `cargo clippy --all-targets --features full --all -- -D warnings`（本地需 Strawberry Perl，见「已知坑」；装了 Perl 就用它，否则至少补 `--all-targets --features proxy-smoltcp-stack` 覆盖 tests + 数据面） |
 | 格式（CI 会卡） | `cargo fmt --check` |
 | 前端单测 | `cd easytier-web/frontend-lib && node node_modules/vitest/vitest.mjs run --config vitest.config.ts` → **192** |
 
@@ -181,6 +183,8 @@ export CARGO_PROFILE_DEV_DEBUG=0 CARGO_INCREMENTAL=0 CARGO_TARGET_DIR='D:\EasyTi
 - 叠加 `--features proxy-smoltcp-stack` → **1150** passed（`gateway/dataplane/tests.rs` 一个文件就 19 条）
 
 两者**不是同一口径，不能相减**。同理，`proxy-packet` 门控的代码（`gateway/magic_dns/{packet,observe}.rs`、`instance/packet_plane` 的 `register_magic_dns_resolver` 等）在裸 `cargo check -p easytier-core` 下**静默跳过、不报错** —— 改到这些文件时必须显式加 `--features proxy-packet`，或直接 `cargo check -p easytier`（该 crate 经 `quic`/`kcp`/`icmp-proxy` 默认开 `proxy-packet`）。
+
+**⚠️ 2026-11-02 踩坑实录**：egress fair-queue 一轮改动 16 个编译/lint 错误（tests.rs 缺 import、类型不匹配、clippy useless-vec 等）全部漏过本地验证——因为本地跑的是「裸 check（默认 features，跳过整个 `gateway/dataplane`）+ Windows 版 clippy（lib+bins、**不带 `--tests`**，跳过所有测试代码）」。教训：**改动的文件落在哪个 feature 门控/哪个 target 下，本地验证就必须显式覆盖那个组合**；拿不准就跑 CI 对齐口径 `cargo clippy --all-targets --features full --all -- -D warnings`，或装 Strawberry Perl 后用 `script\easytier-test-fast.cmd`（Windows 上其 clippy 步骤是降级的，见 `script/test-easytier.ps1`）。
 
 ### ⛔ 打包 / 出安装包：**必须**走 `script/` 里的脚本，不要手搓命令
 

@@ -105,6 +105,23 @@ pub enum PacketType {
     DataWithQuicSrcModified = 19,
 }
 
+/// Single source of truth for "this packet carries end-user data-plane
+/// payload" (an IP packet, or a wrapped transport stream carrying them).
+/// Keepalives / RPCs / handshakes are control traffic.
+///
+/// Used by egress scheduling (`peers::conn::egress_fq`) to keep bulk flows
+/// out of the control-priority lane, and by data-plane trace logging.
+pub(crate) fn is_data_packet(t: u8) -> bool {
+    t == PacketType::Data as u8
+        || t == PacketType::ForeignNetworkPacket as u8
+        || t == PacketType::KcpSrc as u8
+        || t == PacketType::KcpDst as u8
+        || t == PacketType::QuicSrc as u8
+        || t == PacketType::QuicDst as u8
+        || t == PacketType::DataWithKcpSrcModified as u8
+        || t == PacketType::DataWithQuicSrcModified as u8
+}
+
 bitflags::bitflags! {
     struct PeerManagerHeaderFlags: u8 {
         const ENCRYPTED = 0b0000_0001;

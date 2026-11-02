@@ -11,6 +11,7 @@ use crate::{
         packet::{HostPacketReceiver, host_packet_channel},
         testkit::TestHost,
     },
+    packet::PacketType,
     peers::peer_manager::PortablePeerManagerConfig,
     tunnel::ring::RingTunnelRegistry,
 };

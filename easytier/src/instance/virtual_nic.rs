@@ -24,6 +24,7 @@ use easytier_core::{
     host::packet::{HostPacket, HostPacketReceiver},
     instance::CorePacketPlane,
     packet::{TAIL_RESERVED_SIZE, ZCPacket, ZCPacketType},
+    peers::{FlowHashDispatcher, egress_flow_key_for_payload},
     tunnel::{
         StreamItem, Tunnel, TunnelError, ZCPacketSink, ZCPacketStream,
         framed::{FramedWriter, ZCPacketToBytes, reserve_buf},
@@ -986,8 +987,24 @@ impl NicCtx {
         &mut self,
         mut stream: Pin<Box<dyn ZCPacketStream>>,
     ) -> Result<(), Error> {
-        // read from nic and write to corresponding tunnel
+        // read from nic and write to corresponding tunnel.
+        // Flow-hash partitioned across workers: a full egress ring on one
+        // flow's conn parks only that flow's worker instead of the whole TUN
+        // plane (the old single loop stalled every flow for up to one
+        // EGRESS_WAIT). Same flow ⇒ same worker ⇒ ordering preserved. See
+        // easytier-core docs/current/egress-fair-queue.md.
         let packet_plane = self.packet_plane.clone();
+        // `worker` is FnMut (invoked once per worker): clone the handle per
+        // invocation inside the closure body — moving it straight into
+        // `async move` would try to move out of the FnMut closure (E0507).
+        let dispatcher = FlowHashDispatcher::new(move |mut rx| {
+            let packet_plane = packet_plane.clone();
+            async move {
+                while let Some(ret) = rx.recv().await {
+                    Self::do_forward_nic_to_peers(ret, packet_plane.as_ref()).await;
+                }
+            }
+        });
         let close_notifier = self.close_notifier.clone();
         let global_ctx = self.global_ctx.clone();
         self.tasks.spawn(async move {
@@ -996,7 +1013,11 @@ impl NicCtx {
                     tracing::error!("read from nic failed: {:?}", ret);
                     break;
                 }
-                Self::do_forward_nic_to_peers(ret.unwrap(), packet_plane.as_ref()).await;
+                let ret = ret.unwrap();
+                let flow_key = egress_flow_key_for_payload(ret.payload());
+                if dispatcher.dispatch(flow_key, ret).await.is_err() {
+                    break;
+                }
             }
             // Surface TUN death so runtime/UI can recover (A7). Intentional
             // JoinSet abort on shutdown cancels before this path runs.

@@ -169,6 +169,12 @@ message NetworkConfig {
   // fields it knows). Clamped to RELAY_HOP_PENALTY_MAX at the config boundary.
   // See FlagsInConfig.relay_hop_penalty and docs/current/relay-hop-penalty.md.
   optional uint32 relay_hop_penalty = 98;
+
+  // Per-connection egress fair queueing (per-flow lanes drained round-robin).
+  // Must be carried here so a FULL config push does not silently reset the
+  // operator's TOML value to false. See FlagsInConfig.enable_egress_fair_queue
+  // and docs/current/egress-fair-queue.md.
+  optional bool enable_egress_fair_queue = 99;
 }
 
 // One `[[policy_routes]]` entry: a CIDR and/or domain match, plus the candidate
