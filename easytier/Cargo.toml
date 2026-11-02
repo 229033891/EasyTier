@@ -287,12 +287,20 @@ thunk-rs = { workspace = true, features = [
 
 
 [dev-dependencies]
-# Criterion benchmarks live in the `easytier-benches` workspace crate now:
-# keeping them here required `easytier-core` with the extra `test-utils`
-# feature as a dev-dependency, and that second rlib+cdylib variant of
-# easytier-core wrote the same unhashed `libeasytier_core.rlib`/`.so` as the
-# normal variant (rust-lang/cargo#6313), clobbering it — `cargo bench` died
-# with E0463 `can't find crate for easytier`.
+# The `test-utils` feature of easytier-core exposes the test-only helpers
+# (`connected_peers`, `admit_client_tunnel_for_test`, `bound_socket`, ...) that
+# this package's own integration tests use — they live in `easytier-core`'s
+# `#[cfg(any(test, feature = "test-utils"))]` modules, and `cfg(test)` does not
+# apply across crates. Removing this dev-dependency made `easytier`'s tests
+# fail to compile with E0599 "no method named ...".
+#
+# It does NOT reintroduce the old `cargo bench` E0463: the criterion benches
+# now live in the separate `easytier-benches` crate, so `cargo bench
+# -p easytier-benches` never builds this package and never sees a second
+# `easytier-core` feature variant in its dependency graph.
+easytier-core = { workspace = true, features = [
+    "test-utils",
+] }
 serial_test = "4.0.1"
 rstest = "0.27.0"
 maplit = "1.0.2"
