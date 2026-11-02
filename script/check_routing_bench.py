@@ -3,7 +3,7 @@
 
 Reads criterion's `estimates.json` after
 
-    cargo bench -p easytier --bench routing_lookup -- --noplot
+    cargo bench -p easytier-benches --bench routing_lookup -- --noplot
 
 and enforces two **machine-independent** bounds:
 
@@ -44,7 +44,7 @@ EMPTY_MEDIAN_LIMIT_NS = 1_000.0
 # expected from same-prefix-length binary search (see module docstring).
 SCALE_DEGRADATION_LIMIT = 1.50
 
-# Scale points defined by `easytier/benches/routing_lookup.rs`.
+# Scale points defined by `easytier-benches/benches/routing_lookup.rs`.
 SMALL_SCALE = "1000"
 LARGE_SCALE = "10000"
 

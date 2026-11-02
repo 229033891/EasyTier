@@ -20,7 +20,7 @@
 //! 用 mock route（`HashMap` 精确查找）模拟真实 DashMap，测的是**每包固定成本**
 //! （`routes` 锁 + async trait 分发），而非线性扫描。
 //!
-//! 运行：`cargo bench -p easytier --bench routing_lookup`
+//! 运行：`cargo bench -p easytier-benches --bench routing_lookup`
 
 use std::hint::black_box;
 use std::net::{IpAddr, Ipv4Addr};

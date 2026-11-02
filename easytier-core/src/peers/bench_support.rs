@@ -1,4 +1,4 @@
-//! criterion 基准（`easytier/benches/routing_lookup.rs`）专用构造辅助。
+//! criterion 基准（`easytier-benches/benches/routing_lookup.rs`）专用构造辅助。
 //!
 //! 仅在 `test-utils` feature 下编译，不进入默认构建。
 //!

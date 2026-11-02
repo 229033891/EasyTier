@@ -19,13 +19,8 @@ build = "build/main.rs"
 name = "easytier-core"
 path = "src/easytier-core.rs"
 test = false
-# Bins are not benchmarks. `cargo bench` builds a bench unit for every bin
-# with `bench` enabled, and in this workspace that unit raced with the
-# `easytier-core` lib target, which emits the *unhashed* `libeasytier_core.rlib`
-# / `.so` for both of its feature variants (default + the `test-utils`
-# dev-dependency; see rust-lang/cargo#6313). The collision left the bench run
-# unable to resolve the `easytier` crate: `cargo bench -p easytier --bench
-# routing_lookup` failed with E0463 `can't find crate for easytier`.
+# Not a benchmark. cargo 1.95 still compiles this bin during `cargo bench`
+# (E0463 remains). The fix is CARGO_PROFILE_BENCH_PANIC=unwind on that step.
 bench = false
 required-features = ["management"]
 
@@ -297,10 +292,12 @@ thunk-rs = { workspace = true, features = [
 
 
 [dev-dependencies]
-criterion = { version = "0.8.2", features = ["async_tokio"] }
-easytier-core = { workspace = true, features = [
-    "test-utils",
-] }
+# Criterion benchmarks live in the `easytier-benches` workspace crate now:
+# keeping them here required `easytier-core` with the extra `test-utils`
+# feature as a dev-dependency, and that second rlib+cdylib variant of
+# easytier-core wrote the same unhashed `libeasytier_core.rlib`/`.so` as the
+# normal variant (rust-lang/cargo#6313), clobbering it — `cargo bench` died
+# with E0463 `can't find crate for easytier`.
 serial_test = "4.0.1"
 rstest = "0.27.0"
 maplit = "1.0.2"

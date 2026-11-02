@@ -162,14 +162,9 @@ jobs:
           # Only the core crates are built; skip the GUI apt deps + pnpm.
           gui: false
           pnpm: false
-          # No sccache here. This is the only job that builds the `bench`
-          # profile (LTO + panic=unwind) with two feature variants of
-          # `easytier-core` (default + the `test-utils` dev-dependency), and
-          # the GHA cache backend kept handing back an artifact set that made
-          # the bins die with `can't find crate for easytier` (E0463) on an
-          # unchanged tree (20 cache_write_errors / 8 compile_fails in the
-          # failing run's sccache stats). A cold build every run costs a few
-          # minutes but is deterministic.
+          # Cold build. This is the only job on the bench profile, and sccache
+          # has returned a mismatched artifact set for it before. Disabling
+          # sccache does not fix E0463; the bench step forces panic=unwind.
           sccache: false
           token: ${{ secrets.GITHUB_TOKEN }}
 
@@ -182,9 +177,19 @@ jobs:
 
       # `--noplot` skips the gnuplot HTML report. Criterion still writes
       # `target/criterion/**/new/estimates.json`, which the gate script reads.
+      # harness=false inherits [profile.release] panic=abort. Cargo builds the
+      # lib a bench depends on as unwind (rust-lang/cargo#13894), so an abort
+      # unit dies with E0463; the env var is the setting we verified locally.
+      # The benches live in the dedicated `easytier-benches` crate: a plain
+      # `cargo bench -p easytier` pulls in the `easytier` package's bins (cargo
+      # 1.95 still builds them despite `bench = false`) and a second
+      # `test-utils` variant of `easytier-core` via dev-dependencies, whose
+      # unhashed rlib clobbers the normal one (rust-lang/cargo#6313).
       - name: Run the routing benchmark
+        env:
+          CARGO_PROFILE_BENCH_PANIC: unwind
         run: >-
-          cargo bench --package easytier --bench routing_lookup -- --noplot
+          cargo bench --package easytier-benches --bench routing_lookup -- --noplot
 
       - name: Enforce hot-path thresholds
         run: python3 script/check_routing_bench.py

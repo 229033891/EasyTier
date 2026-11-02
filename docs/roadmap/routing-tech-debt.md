@@ -197,17 +197,17 @@ smallvec = "1.16"              # 根 Cargo.toml [workspace.dependencies]；easyt
 
 **基准落地约束（重要）**：
 
-- `PeerOutboundPacketRouter` 为 `pub(crate)`，挂在 `easytier-core`；现有 criterion 只在 **`easytier`** crate（`easytier/benches/`）
+- `PeerOutboundPacketRouter` 为 `pub(crate)`，挂在 `easytier-core`；现有 criterion 只在 **`easytier-benches`** crate（`easytier-benches/benches/`）
 - 可选方案（择一）：
   1. 在 **`easytier-core`** 增加 `[[bench]]`，直接测 `pub(crate)` API；或
   2. 经公开 `PeerManager::get_msg_dst_peer_ipv4` 测（更重，需搭实例）；或
   3. 抽出可 `pub` 的纯查找辅助供 bench 调用
-- 勿默认「丢一个 `easytier/benches/routing_lookup.rs` 就能直接调用 router」
+- 勿默认「丢一个 `easytier-benches/benches/routing_lookup.rs` 就能直接调用 router」
 
 > **实际落地（2026-10-13）**：**选项 1 不可行** —— bench target 是独立 crate，拿不到 `pub(crate)` 项。
 > 采用「选项 3 的轻量版」：在 `easytier-core` 加 feature-gated 的 `pub mod peers::bench_support`
 > （`feature = "test-utils"`），只暴露 `new_peer_map()` + mock `BenchRoute`（不改生产逻辑）；
-> 基准文件仍放在 `easytier/benches/`（criterion 与 `[[bench]]` 都在该 crate）。
+> 基准文件仍放在 `easytier-benches/benches/`（criterion 与 `[[bench]]` 都在该 crate）。
 - T1-2 的「10 / 100 / 1000」指 **VIP/CIDR 条目数**，不是 `PeerMap` 里 1000 个 route 对象（实践通常只有 1 个）
 
 **SmallVec 约束**：优先 **内部 `SmallVec`、公开 API 保持 `Vec`**，避免类型泄漏到 dataplane / 外部调用方。广播路径本身会多 peer，堆分配仍属预期。
@@ -220,7 +220,7 @@ smallvec = "1.16"              # 根 Cargo.toml [workspace.dependencies]；easyt
 
 **实施进度（2026-10-13）**
 
-- ✅ **T1-1 / T1-2 / T1-3**：新增 `easytier/benches/routing_lookup.rs`（criterion + `async_tokio`）。
+- ✅ **T1-1 / T1-2 / T1-3**：新增 `easytier-benches/benches/routing_lookup.rs`（criterion + `async_tokio`）。
   覆盖四条路径 `vip_hit` / `vip_miss` / `proxy_default_hit` / `exit_node`；规模档位 10 / 100 / 1000（VIP 条目数）。
 - ✅ **T1-5**：`PeerOutboundPacketRouter::get_msg_dst_peer{,_ipv4,_ipv6}` 返回 `SmallVec<[PeerId; 1]>`；
   公开 `PeerManagerCore` API 仍返回 `Vec`（`into_vec()` 边界转换），未泄漏到 dataplane。
@@ -232,7 +232,7 @@ smallvec = "1.16"              # 根 Cargo.toml [workspace.dependencies]；easyt
 - ❌ **T1-6**：不做。harness 只测延迟；基线已在 T1-5 之后，无 SmallVec 前后 A/B；
   单目的地零堆分配由 `SmallVec<[PeerId; 1]>` 类型不变量保证。
 
-**基线（2026-10-13，`cargo bench -p easytier --bench routing_lookup -- --save-baseline before`）**
+**基线（2026-10-13，`cargo bench -p easytier-benches --bench routing_lookup -- --save-baseline before`）**
 
 | 环境 | 值 |
 |---|---|
@@ -256,7 +256,7 @@ criterion 报告中位数（ns/iter；`[low mean high]` 取 mean）：
 - 本基线 = **T1-5 之后**（已含内部 SmallVec）；用作 P-T2 / P-T3 对比锚点
 - **解读约束**：mock `BenchRoute`（HashMap），量的是每包 `routes` 锁 + async trait 固定成本；
   `exit_node` 在 mock 下基本走未命中路径（无真实 gateway）。勿当成真实 OSPF DashMap/LPM 吞吐
-- 复跑：`cargo bench -p easytier --bench routing_lookup -- --save-baseline before`
+- 复跑：`cargo bench -p easytier-benches --bench routing_lookup -- --save-baseline before`
   （对比：`--baseline before`）
 
 ---
@@ -352,7 +352,7 @@ routes: ArcSwap<Vec<ArcRoute>>,  // load() 同步；查找仍进 ArcRoute 内部
 | P-T2 缓存跳过 gateway 检查 | 保留 `get_gateway_peer_id`；配置/拓扑变更时失效 |
 | `exit_nodes` 与 `routes` 绑同一快照 | 分属 Router / PeerMap，分别 ArcSwap |
 | `SmallVec` 泄漏到公开 API | **内部 SmallVec，公开仍 `Vec`** |
-| 基准无法碰到 `pub(crate)` router | ✅ 已用 `peers::bench_support`（`feature = "test-utils"`）+ `easytier/benches/routing_lookup.rs`；测 PeerMap 固定成本，非真实 OSPF DashMap/LPM |
+| 基准无法碰到 `pub(crate)` router | ✅ 已用 `peers::bench_support`（`feature = "test-utils"`）+ `easytier-benches/benches/routing_lookup.rs`；测 PeerMap 固定成本，非真实 OSPF DashMap/LPM |
 | 基准无法复现 | 记录环境与 `Cargo.lock`；报告附硬件信息 |
 | P-T3 收益不明显 | **由 P-T1 基准决定是否继续**，避免无效投入 |
 | 热路径误用 `block_on` | 设计评审明确禁止；回退保持 async |

@@ -1,0 +1,30 @@
+[package]
+name = "easytier-benches"
+version = "2.7.10"
+edition.workspace = true
+rust-version.workspace = true
+description = "Criterion benchmarks for EasyTier hot paths"
+publish = false
+
+[[bench]]
+name = "packet_bytes_extraction"
+harness = false
+
+[[bench]]
+name = "routing_lookup"
+harness = false
+
+[dependencies]
+# Benches import `easytier_core::peers::bench_support` directly, which is
+# gated behind this feature. Declaring it as the single (normal) dependency
+# keeps exactly ONE feature variant of `easytier-core` in this package's
+# build graph — the historical in-`easytier` benches needed a second
+# `test-utils` variant via [dev-dependencies], and the two rlib+cdylib
+# variants wrote the same unhashed `libeasytier_core.rlib`/`.so`
+# (rust-lang/cargo#6313), clobbering each other and killing `cargo bench`
+# with E0463 `can't find crate for easytier`.
+easytier-core = { workspace = true, features = ["test-utils"] }
+
+[dev-dependencies]
+criterion = { version = "0.8.2", features = ["async_tokio"] }
+tokio = { workspace = true, features = ["rt-multi-thread"] }

@@ -18,7 +18,7 @@ extraction call.
 ### Quick start
 
 ```bash
-cargo bench --bench packet_bytes_extraction
+cargo bench -p easytier-benches --bench packet_bytes_extraction
 ```
 
 Smoke run:
@@ -27,7 +27,7 @@ Smoke run:
 PACKET_BYTES_MEASUREMENT_SECS=2 \
 PACKET_BYTES_WARMUP_SECS=1 \
 PACKET_BYTES_SAMPLE_SIZE=10 \
-cargo bench --bench packet_bytes_extraction -- --quiet
+cargo bench -p easytier-benches --bench packet_bytes_extraction -- --quiet
 ```
 
 ### Environment variables
