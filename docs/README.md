@@ -41,6 +41,7 @@ crate 内设计稿（非本索引）：`easytier/docs/`（凭据计划已标 Arc
 | [latency-measurement-and-display-audit.md](./current/latency-measurement-and-display-audit.md) | **延迟测量与展示审查**（2 个真实测量点 + 派生链；「延迟」列双口径等缺陷；展示侧修法以专题下钻 §5 为准；出口端到端探测已撤回；关联选路修复**已合入、待验收**） |
 | [latency-scope-and-relay-visibility.md](./current/latency-scope-and-relay-visibility.md) | **「延迟」vs「VIP可达」口径边界**（Q5/§3.9；两表六种分叉；**§5 序1–5/7/11 前端已改、待验收**；P0×5 / P1×5 / P2×2） |
 | [routing-bug-audit-2026-10.md](./current/routing-bug-audit-2026-10.md) | **节点间选路审查**（净确认 **19** 条 + 4 存疑；修复**工作区待合入 / 待验收**：已落地 11 条 —— **B1**/**B5**/**B6**/**B7**/**B8**/**B9**/**B11**/**B13**/**B18**/**B19**/**B20**；部分修 **B2**/**B10**；B3/B4/B17/B12/B15/B16 待决；B14 撤回；见文内 §1e/§1f 与 §5.1 的行为变更/迁移提示） |
+| [relay-hop-penalty.md](./current/relay-hop-penalty.md) | **relay_hop_penalty（中继跳惩罚）**：opt-in 的 LeastCost 模型校正（每中转跳 +N 代价，默认 0 契约不变）；上界 `RELAY_HOP_PENALTY_MAX` 双重 clamp；管理 API 字段贯穿（Full 下发不清零）；LeastHop 选路不变但 `path_latency` 含惩罚；与 B14 撤回/`live-next-hop.md` 负例的口径边界见 §0 |
 | [p2p-direct-throughput-audit.md](./current/p2p-direct-throughput-audit.md) | **P2P 直连吞吐瓶颈审查**（逐行核实出站通路；3 处瓶颈 / 3 处已排除；未压测） |
 | [p2p-direct-stability-audit.md](./current/p2p-direct-stability-audit.md) | **P2P 直连稳定性审查**（RDP 卡顿五机制 + 配置层缓解清单；混淆因素待排除） |
 | [tailscale-gap-and-conflict-audit.md](./current/tailscale-gap-and-conflict-audit.md) | **vs Tailscale 代码层审查**（Bug/冲突 C1–C6 vs 设计 S1–S5；UI 已连≠VIP；P-AUDIT 修复清单未落地） |

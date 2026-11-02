@@ -60,7 +60,7 @@
 | ③ | `peers/conn/conn_select.rs`（`conn_quality_score`） | ①的加权变换 |
 | ④ | `peers/conn/conn_select.rs`（`ospf_edge_cost_from_score`） | ③的整数编码（`OSPF_EDGE_COST_MAX = 1_000_000`） |
 | ④b | `peers/conn/peer_map.rs`（`best_edge_cost`） | 未测量 conn 的代价抬到 500（`OSPF_EDGE_COST_UNMEASURED`） |
-| ⑤ | `peers/route/peer_ospf_route.rs` | ④沿路径累加；含 `AVOID_RELAY_COST = 1_000_000_000` 的策略绕行惩罚 |
+| ⑤ | `peers/route/peer_ospf_route.rs` | ④沿路径累加 + (k−1)×`relay_hop_penalty`（opt-in 中继跳惩罚，默认 0）；含 `AVOID_RELAY_COST = 1_000_000_000` 的策略绕行惩罚。见 docs/current/relay-hop-penalty.md §4 |
 
 **量纲提示**：③ 内部把 µs 除以 `1e6` 得到「秒」，④ 再 `×1000` 变回「毫秒当量」。所以 ⑤ 的 `path_latency` **读起来像毫秒，但不是实测毫秒**——它含丢包与抖动加权，且是**路径累加**。
 

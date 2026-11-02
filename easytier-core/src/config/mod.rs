@@ -369,6 +369,46 @@ pub fn validate_tunnel_mtu(mtu: u32) -> Result<u32, ConfigError> {
     Ok(mtu)
 }
 
+/// Upper bound for the operator-supplied `FlagsInConfig::relay_hop_penalty`
+/// (per-transit-hop routing penalty, see `docs/current/relay-hop-penalty.md`).
+///
+/// Lives in the config layer (not the OSPF route module) so every consumer of
+/// the flag — config validation, the OSPF read site — depends on one definition
+/// here rather than the config layer reaching into routing internals.
+///
+/// The penalty is a plain additive term with no clamp in the OSPF graph
+/// builder, so an unbounded value would collide with two established cost
+/// invariants there:
+///
+/// 1. A `path_latency` far above `OSPF_EDGE_COST_MAX` (1e6) is the established
+///    signal for "this leg was policy-forced" (fuse bonus / `AVOID_RELAY_COST`
+///    classification). A careless operator value (e.g. a slipped decimal point
+///    producing 3e9) would make ordinary multi-hop paths read as policy vetoes.
+/// 2. A per-path total approaching `AVOID_RELAY_COST` (1e9) would make
+///    merit-chosen paths indistinguishable from vetoed ones — and overflow the
+///    `i32` `Route.cost` reported to the frontend at ~3 hops.
+///
+/// `OSPF_EDGE_COST_MAX / 8` (= 125,000) keeps even a worst-case multi-hop path
+/// bounded around the 1e7 scale, orders of magnitude below the veto band,
+/// while still being ~125,000x any meaningful quality gap: at the cap the value
+/// no longer expresses "transit overhead" but "misconfiguration", which the
+/// management-API boundary rejects outright and [`clamp_relay_hop_penalty`]
+/// bounds for every other source.
+pub const RELAY_HOP_PENALTY_MAX: u32 = 125_000;
+
+/// Clamp the operator-supplied relay hop penalty to
+/// [`RELAY_HOP_PENALTY_MAX`].
+///
+/// The management-API boundary (`config::api_input`) *rejects* values above the
+/// cap with a clear error. TOML `[flags]` values are not validated at startup
+/// (same as every other flag) and flags can also arrive through paths this crate
+/// does not control (e.g. an older manager pushing a raw `FlagsInConfig`), so
+/// this clamp is the last-line defense: a bad value degrades to a bounded,
+/// diagnosable state instead of corrupting the OSPF cost semantics.
+pub fn clamp_relay_hop_penalty(raw: u32) -> u32 {
+    raw.min(RELAY_HOP_PENALTY_MAX)
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum ConfigError {
     #[error("missing required field: {0}")]

@@ -1964,6 +1964,431 @@ fn torn_down_direct_edge_hands_over_to_a_costlier_relay() {
     assert_eq!(next_hop.path_len, 2);
 }
 
+/// A marginal relay win flips to direct once the relay hop penalty covers the
+/// transit overhead the linear cost model ignores.
+///
+/// Topology calibrated from a live network (2026-11-02): 1 (DEV) has a direct
+/// edge to 2 (APP-SERVER) costing 9 (~7.9ms RTT + jitter/loss), while the
+/// same-LAN relay 3 (shdx, ~0.2ms away) reaches 2 for 6 — so the two-hop path
+/// sums to 7 and LeastCost routes via the relay even though a direct conn
+/// exists. `relay_hop_penalty` charges one intermediate hop for that transit:
+/// 3 flips this exact case (1+3+6=10 > 9) without resurrecting a genuinely
+/// worse direct edge (100ms direct still loses to 30+30ms relay: 63 < 100).
+#[test]
+fn relay_hop_penalty_flips_marginal_relay_win_to_direct() {
+    let costs = FixedEdgeCosts::new(&[
+        (1, 2, 9),
+        (1, 3, 1),
+        (2, 1, 9),
+        (2, 3, 6),
+        (3, 1, 1),
+        (3, 2, 6),
+    ]);
+    let snapshot = OspfRouteSnapshot {
+        peer_infos: vec![peer(1), peer(2), peer(3)],
+        conn_map: vec![
+            connected(1, [2, 3]),
+            connected(2, [1, 3]),
+            connected(3, [1, 2]),
+        ],
+        suppressed_peer_ids: BTreeSet::new(),
+        version: 1,
+    };
+
+    // Penalty 0: historical behavior — the two-hop relay path (1+6=7) beats
+    // the direct edge (9), and the reported path_latency is the raw sum.
+    let table = OspfRouteTable::new();
+    table.build_from_snapshot_with_unusable(
+        1,
+        &snapshot,
+        NextHopPolicy::LeastCost,
+        &costs,
+        &BTreeSet::new(),
+        0,
+    );
+    assert_eq!(
+        table.get_next_hop(2).unwrap().next_hop_peer_id,
+        3,
+        "penalty 0 must keep the historical marginal relay win"
+    );
+    assert_eq!(table.get_next_hop(2).unwrap().path_latency, 7);
+
+    // Penalty 3: the relayed path pays one intermediate hop, 1+3+6=10 > 9, so
+    // the direct edge wins again.
+    let table = OspfRouteTable::new();
+    table.build_from_snapshot_with_unusable(
+        1,
+        &snapshot,
+        NextHopPolicy::LeastCost,
+        &costs,
+        &BTreeSet::new(),
+        3,
+    );
+    assert_eq!(
+        table.get_next_hop(2).unwrap().next_hop_peer_id,
+        2,
+        "penalty 3 must flip the marginal relay win back to the direct edge"
+    );
+    assert_eq!(table.get_next_hop(2).unwrap().path_latency, 9);
+    // The first hop out of us never carries the penalty: 1->3 is unchanged.
+    assert_eq!(table.get_next_hop(3).unwrap().next_hop_peer_id, 3);
+    assert_eq!(table.get_next_hop(3).unwrap().path_latency, 1);
+
+    // A genuinely better relay path must keep winning: the penalty cannot
+    // resurrect a 100ms direct edge against a 30+30ms relay (63 < 100).
+    let slow_direct = FixedEdgeCosts::new(&[
+        (1, 2, 100),
+        (1, 3, 1),
+        (2, 1, 100),
+        (2, 3, 30),
+        (3, 1, 1),
+        (3, 2, 30),
+    ]);
+    let table = OspfRouteTable::new();
+    table.build_from_snapshot_with_unusable(
+        1,
+        &snapshot,
+        NextHopPolicy::LeastCost,
+        &slow_direct,
+        &BTreeSet::new(),
+        3,
+    );
+    assert_eq!(
+        table.get_next_hop(2).unwrap().next_hop_peer_id,
+        3,
+        "a much better relay path must still beat a much worse direct edge"
+    );
+
+    // LeastHop is untouched: the direct edge answers both penalty settings,
+    // and the second-phase least-cost comparison among equal-hop paths cannot
+    // reorder (identical intermediate-hop counts cancel the penalty out).
+    let table = OspfRouteTable::new();
+    table.build_from_snapshot_with_unusable(
+        1,
+        &snapshot,
+        NextHopPolicy::LeastHop,
+        &costs,
+        &BTreeSet::new(),
+        3,
+    );
+    assert_eq!(table.get_next_hop(2).unwrap().next_hop_peer_id, 2);
+}
+
+/// The penalty must charge **every** intermediate hop, not once per path: a
+/// 3-edge path has two transit peers and therefore pays 2x. This is what keeps
+/// longer detours strictly worse than shorter ones at equal edge quality.
+#[test]
+fn relay_hop_penalty_accumulates_per_intermediate_hop() {
+    // Diamond-free chain: 1 -> 3 -> 4 -> 2 (two transit hops) vs direct 1 -> 2.
+    let costs = FixedEdgeCosts::new(&[
+        (1, 2, 70),
+        (2, 1, 70),
+        (1, 3, 20),
+        (3, 1, 20),
+        (3, 4, 20),
+        (4, 3, 20),
+        (4, 2, 20),
+        (2, 4, 20),
+    ]);
+    let snapshot = OspfRouteSnapshot {
+        peer_infos: vec![peer(1), peer(2), peer(3), peer(4)],
+        conn_map: vec![
+            connected(1, [2, 3]),
+            connected(2, [1, 4]),
+            connected(3, [1, 4]),
+            connected(4, [2, 3]),
+        ],
+        suppressed_peer_ids: BTreeSet::new(),
+        version: 1,
+    };
+
+    // Penalty 0: the three-edge relay path (20+20+20=60) beats the direct
+    // edge (70).
+    let table = OspfRouteTable::new();
+    table.build_from_snapshot_with_unusable(
+        1,
+        &snapshot,
+        NextHopPolicy::LeastCost,
+        &costs,
+        &BTreeSet::new(),
+        0,
+    );
+    assert_eq!(table.get_next_hop(2).unwrap().next_hop_peer_id, 3);
+    assert_eq!(table.get_next_hop(2).unwrap().path_latency, 60);
+
+    // Penalty 3: two transit hops pay 2x3, so the relay path reports exactly
+    // 60 + 2*3 = 66 — a once-per-path implementation would report 63.
+    let table = OspfRouteTable::new();
+    table.build_from_snapshot_with_unusable(
+        1,
+        &snapshot,
+        NextHopPolicy::LeastCost,
+        &costs,
+        &BTreeSet::new(),
+        3,
+    );
+    assert_eq!(table.get_next_hop(2).unwrap().next_hop_peer_id, 3);
+    assert_eq!(
+        table.get_next_hop(2).unwrap().path_latency,
+        66,
+        "each of the two transit hops must be charged, not the path once"
+    );
+
+    // Penalty 6: 60 + 2*6 = 72 > 70, the direct edge takes over.
+    let table = OspfRouteTable::new();
+    table.build_from_snapshot_with_unusable(
+        1,
+        &snapshot,
+        NextHopPolicy::LeastCost,
+        &costs,
+        &BTreeSet::new(),
+        6,
+    );
+    assert_eq!(
+        table.get_next_hop(2).unwrap().next_hop_peer_id,
+        2,
+        "a penalty beyond the detour's quality advantage must restore the direct edge"
+    );
+}
+
+/// An operator typo (`relay_hop_penalty = 3000000000`) must degrade to a
+/// bounded, diagnosable state — never into the established cost semantics:
+/// `path_latency` above `OSPF_EDGE_COST_MAX` means "policy-forced leg" and a
+/// total near `AVOID_RELAY_COST` would break the veto classification (and the
+/// i32 `Route.cost` surface at ~3 hops).
+#[test]
+fn relay_hop_penalty_clamped_to_max_and_stays_below_policy_veto_band() {
+    // Compile-time: the cap must stay within the measured-quality band, far
+    // below AVOID_RELAY_COST (clippy flags a runtime assert on constants).
+    const _: () = assert!(crate::config::RELAY_HOP_PENALTY_MAX < 1_000_000);
+
+    // Boundary function: identity in range, hard cap outside.
+    assert_eq!(crate::config::clamp_relay_hop_penalty(0), 0);
+    assert_eq!(crate::config::clamp_relay_hop_penalty(3), 3);
+    assert_eq!(
+        crate::config::clamp_relay_hop_penalty(crate::config::RELAY_HOP_PENALTY_MAX),
+        crate::config::RELAY_HOP_PENALTY_MAX
+    );
+    assert_eq!(
+        crate::config::clamp_relay_hop_penalty(u32::MAX),
+        crate::config::RELAY_HOP_PENALTY_MAX
+    );
+
+    // Graph-level: even maximal per-edge costs plus the capped penalty on a
+    // 3-edge path remain an order of magnitude below the veto band.
+    let edge_max = super::OSPF_EDGE_COST_MAX;
+    let costs = FixedEdgeCosts::new(&[
+        (1, 2, edge_max),
+        (2, 1, edge_max),
+        (1, 3, edge_max),
+        (3, 1, edge_max),
+        (3, 2, edge_max),
+        (2, 3, edge_max),
+    ]);
+    let snapshot = OspfRouteSnapshot {
+        peer_infos: vec![peer(1), peer(2), peer(3)],
+        conn_map: vec![
+            connected(1, [2, 3]),
+            connected(2, [1, 3]),
+            connected(3, [1, 2]),
+        ],
+        suppressed_peer_ids: BTreeSet::new(),
+        version: 1,
+    };
+    let table = OspfRouteTable::new();
+    table.build_from_snapshot_with_unusable(
+        1,
+        &snapshot,
+        NextHopPolicy::LeastCost,
+        &costs,
+        &BTreeSet::new(),
+        crate::config::RELAY_HOP_PENALTY_MAX,
+    );
+    let latency = table.get_next_hop(2).unwrap().path_latency;
+    assert!(
+        latency < super::AVOID_RELAY_COST as i32,
+        "a penalised-but-merit path ({latency}) must never be classifiable as policy-vetoed"
+    );
+}
+
+/// Interaction with the relay-refusal veto: the hop penalty must not shift the
+/// relative order between a vetoed leg and a merit-chosen one. The penalty
+/// prices honest transit; it can never buy off a policy refusal.
+#[test]
+fn avoid_relay_veto_still_dominates_under_hop_penalty() {
+    // 1 reaches 2 directly (cost 500) or via peer 3 (edges 1+1). Peer 3
+    // refuses relay duty, so every edge sourced by 3 carries the veto.
+    let costs = FixedEdgeCosts::new(&[
+        (1, 2, 500),
+        (2, 1, 500),
+        (1, 3, 1),
+        (3, 1, 1),
+        (3, 2, 1),
+        (2, 3, 1),
+    ]);
+    let avoid_peer = |peer_id: PeerId| OspfPeerInfo {
+        peer_id,
+        info: RoutePeerInfo {
+            peer_id,
+            version: 1,
+            feature_flag: Some(crate::proto::common::PeerFeatureFlag {
+                avoid_relay_data: true,
+                ..Default::default()
+            }),
+            ..Default::default()
+        },
+    };
+    let snapshot = |avoid: bool| OspfRouteSnapshot {
+        peer_infos: if avoid {
+            vec![peer(1), peer(2), avoid_peer(3)]
+        } else {
+            vec![peer(1), peer(2), peer(3)]
+        },
+        conn_map: vec![
+            connected(1, [2, 3]),
+            connected(2, [1, 3]),
+            connected(3, [1, 2]),
+        ],
+        suppressed_peer_ids: BTreeSet::new(),
+        version: 1,
+    };
+
+    // Control: peer 3 relays, penalty 3 — the two-leg path (1+1+3=5) beats
+    // the direct edge (500).
+    let table = OspfRouteTable::new();
+    table.build_from_snapshot_with_unusable(
+        1,
+        &snapshot(false),
+        NextHopPolicy::LeastCost,
+        &costs,
+        &BTreeSet::new(),
+        3,
+    );
+    let hop = table.get_next_hop(2).unwrap();
+    assert_eq!(hop.next_hop_peer_id, 3);
+    assert_eq!(hop.path_latency, 5);
+
+    // With peer 3 refusing relay duty, the veto must keep the direct edge in
+    // charge despite the penalty being active — and the winning path must
+    // stay in the merit band, not read as policy-forced.
+    let table = OspfRouteTable::new();
+    table.build_from_snapshot_with_unusable(
+        1,
+        &snapshot(true),
+        NextHopPolicy::LeastCost,
+        &costs,
+        &BTreeSet::new(),
+        3,
+    );
+    let hop = table.get_next_hop(2).unwrap();
+    assert_eq!(
+        hop.next_hop_peer_id, 2,
+        "the hop penalty must not outweigh a relay-refusal veto"
+    );
+    assert!(
+        (0..1_000_000).contains(&hop.path_latency),
+        "the winning path must be a merit-chosen one, got {}",
+        hop.path_latency
+    );
+}
+
+/// LeastHop: the *choice* (next hop, hop count) is untouched by the penalty —
+/// equal-hop candidates carry an identical number of transit peers so the
+/// constant offset cancels in the second-phase comparison — but the
+/// `path_latency` the least-hop table reports (and feeds into address
+/// arbitration) does include it. Both facts are pinned here.
+#[test]
+fn least_hop_diamond_choice_unchanged_but_path_latency_includes_penalty() {
+    // Diamond: 1 -> 2 -> 4 (sum 7) vs 1 -> 3 -> 4 (sum 6), equal hop count.
+    let costs = FixedEdgeCosts::new(&[
+        (1, 2, 2),
+        (2, 1, 2),
+        (1, 3, 5),
+        (3, 1, 5),
+        (2, 4, 5),
+        (4, 2, 5),
+        (3, 4, 1),
+        (4, 3, 1),
+    ]);
+    let snapshot = OspfRouteSnapshot {
+        peer_infos: vec![peer(1), peer(2), peer(3), peer(4)],
+        conn_map: vec![
+            connected(1, [2, 3]),
+            connected(2, [1, 4]),
+            connected(3, [1, 4]),
+            connected(4, [2, 3]),
+        ],
+        suppressed_peer_ids: BTreeSet::new(),
+        version: 1,
+    };
+
+    for penalty in [0, 5] {
+        let table = OspfRouteTable::new();
+        table.build_from_snapshot_with_unusable(
+            1,
+            &snapshot,
+            NextHopPolicy::LeastHop,
+            &costs,
+            &BTreeSet::new(),
+            penalty,
+        );
+        assert_eq!(
+            table.get_next_hop(4).unwrap().next_hop_peer_id,
+            3,
+            "penalty {penalty}: the cheaper equal-hop leg must still win"
+        );
+        assert_eq!(
+            table.get_next_hop(4).unwrap().path_latency,
+            6 + penalty as i32,
+            "penalty {penalty}: the reported path_latency includes the transit charge"
+        );
+    }
+}
+
+/// Production wiring: `update_route_table` must actually read the penalty from
+/// the context flags and clamp an oversized operator value on that path (the
+/// table-level tests above feed the value as a parameter, which proves the
+/// graph math but not the read path).
+#[test]
+fn service_route_rebuild_reads_and_clamps_penalty_from_context_flags() {
+    // Chain 1 -> 2 -> 3 with no direct edge: with the uniform fixture cost of
+    // 1 per edge, the reported path latency isolates exactly the penalty term.
+    let build = |penalty: u32| -> i32 {
+        let flags = crate::proto::common::FlagsInConfig {
+            relay_hop_penalty: penalty,
+            ..Default::default()
+        };
+        let service = PeerRouteServiceImpl::new(
+            1,
+            std::sync::Arc::new(NoopPeerContext::default().with_flags(flags)),
+        );
+        install_peer_info(&service, 1, Vec::new(), false);
+        install_peer_info(&service, 2, Vec::new(), false);
+        install_peer_info(&service, 3, Vec::new(), false);
+        install_conn_row(&service, 1, [2]);
+        install_conn_row(&service, 2, [1, 3]);
+        install_conn_row(&service, 3, [2]);
+        service.update_route_table_and_cached_local_conn_bitmap();
+        service
+            .route_table
+            .get_topology_next_hop(3)
+            .expect("3 should be reachable via 2")
+            .path_latency
+    };
+
+    // Control: default flags (penalty 0) — two edges of cost 1.
+    assert_eq!(build(0), 2);
+    // A context-provided penalty 3 is consumed by the rebuild.
+    assert_eq!(build(3), 2 + 3);
+    // An oversized operator value is clamped on the read path instead of
+    // corrupting the cost semantics.
+    assert_eq!(
+        build(u32::MAX),
+        2 + crate::config::RELAY_HOP_PENALTY_MAX as i32,
+        "the service read path must apply RELAY_HOP_PENALTY_MAX"
+    );
+}
+
 /// The counterpart, and the real remaining gap: while the conn is *open* the
 /// advertised set does not change, so nothing local can notice it stopped
 /// carrying traffic. `calculate_cost` keeps reporting the pre-failure number,
@@ -2049,6 +2474,7 @@ fn sustainedly_degraded_own_edge_is_outpriced_by_a_costlier_relay() {
         NextHopPolicy::LeastCost,
         &costs,
         &BTreeSet::from([3]),
+        0,
     );
 
     let next_hop = table.get_next_hop(3).unwrap();
@@ -2085,6 +2511,7 @@ fn outpricing_a_degraded_own_edge_keeps_the_peer_reachable() {
         NextHopPolicy::LeastCost,
         &costs,
         &BTreeSet::from([3]),
+        0,
     );
 
     assert!(
@@ -2131,6 +2558,7 @@ fn the_override_only_touches_edges_leaving_us() {
         NextHopPolicy::LeastCost,
         &costs,
         &BTreeSet::from([2]),
+        0,
     );
     assert_eq!(table.get_next_hop(3).unwrap().next_hop_peer_id, 3);
 }

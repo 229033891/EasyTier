@@ -6,7 +6,8 @@ use anyhow::Context;
 use easytier_proto::api::manage;
 
 use crate::config::{
-    ConfigError, MappedListenerPolicy, normalize_secure_mode_config,
+    ConfigError, MappedListenerPolicy, RELAY_HOP_PENALTY_MAX, clamp_relay_hop_penalty,
+    normalize_secure_mode_config,
     toml::{
         ConfigLoader, ManagedCredentialConfig, NetworkIdentity, PeerConfig, PortForwardConfig,
         TomlConfigLoader, VpnPortalClientConfig, VpnPortalConfig, gen_default_flags,
@@ -238,6 +239,7 @@ const FORM_MANAGED_FLAG_FIELDS: &[&str] = &[
     "conn_select_switch_windows",
     "peer_link_bond_count",
     "peer_link_replica_fill_max",
+    "relay_hop_penalty",
 ];
 
 #[cfg(all(
@@ -653,6 +655,28 @@ impl NetworkConfigExt for NetworkConfig {
             flags.latency_first = latency_first;
         }
 
+        // CRITICAL: the flags above start from `gen_default_flags()`, so every
+        // field this conversion does not backfill is silently reset to its
+        // default on a FULL config push — including values an operator set in
+        // TOML that the manager then overwrites and persists. `relay_hop_penalty`
+        // must therefore be carried here (same reason as latency_first etc.).
+        //
+        // Out-of-range values are *rejected*, not clamped — same style as the
+        // MTU boundary (CR-13): a value above RELAY_HOP_PENALTY_MAX would
+        // corrupt the OSPF policy-veto cost semantics, and the caller should
+        // see a config error instead of a silently rewritten number.
+        if let Some(relay_hop_penalty) = self.relay_hop_penalty {
+            if relay_hop_penalty > RELAY_HOP_PENALTY_MAX {
+                return Err(anyhow::anyhow!(
+                    "relay_hop_penalty {} exceeds the maximum {} (edge-cost units, ~1ms RTT each); \
+                     see docs/current/relay-hop-penalty.md §3.1",
+                    relay_hop_penalty,
+                    RELAY_HOP_PENALTY_MAX
+                ));
+            }
+            flags.relay_hop_penalty = relay_hop_penalty;
+        }
+
         if let Some(dev_name) = self.dev_name.clone() {
             flags.dev_name = dev_name;
         }
@@ -1054,6 +1078,12 @@ impl NetworkConfigExt for NetworkConfig {
         let flags = config.get_flags();
         let default_flags = default_config.get_flags();
         result.latency_first = Some(flags.latency_first);
+        // Echo the *effective* value: an out-of-range TOML value is clamped at
+        // the OSPF read site, so the management surface must not show a number
+        // that this conversion would then reject on the next FULL push (and
+        // leave the browser form unable to save until the operator edits a
+        // field the form does not even expose).
+        result.relay_hop_penalty = Some(clamp_relay_hop_penalty(flags.relay_hop_penalty));
         result.dev_name = Some(flags.dev_name.clone());
         result.use_smoltcp = Some(flags.use_smoltcp);
         result.disable_ipv6 = Some(!flags.enable_ipv6);
@@ -1205,6 +1235,66 @@ mod tests {
         let output = NetworkConfig::new_from_config(config).unwrap();
         assert_eq!(output.dns_config, input.dns_config);
         assert_eq!(output.enable_magic_dns, Some(true));
+    }
+
+    /// A FULL config push rebuilds flags from `gen_default_flags()` and only
+    /// backfills fields this conversion knows (see the CRITICAL note at the
+    /// backfill site). If `relay_hop_penalty` were dropped here, every FULL
+    /// push from a manager would silently reset the operator's TOML value to
+    /// 0 and persist it. This pins the backfill, the round-trip and the
+    /// boundary rejection.
+    #[test]
+    fn relay_hop_penalty_survives_full_config_generation_with_boundary_check() {
+        let input = NetworkConfig {
+            relay_hop_penalty: Some(3),
+            ..standalone_config()
+        };
+        let config = input.gen_config().unwrap();
+        assert_eq!(config.get_flags().relay_hop_penalty, 3);
+
+        // Round-trips back onto the management surface.
+        let output = NetworkConfig::new_from_config(config).unwrap();
+        assert_eq!(output.relay_hop_penalty, Some(3));
+
+        // Out-of-range caller values are rejected with a config error (same
+        // style as the MTU boundary, CR-13) instead of being silently clamped
+        // — the caller must see that their value cannot be honored.
+        let oversized = NetworkConfig {
+            relay_hop_penalty: Some(u32::MAX),
+            ..standalone_config()
+        };
+        let err = oversized
+            .gen_config()
+            .expect_err("an oversized relay_hop_penalty must be rejected");
+        assert!(
+            err.to_string().contains("relay_hop_penalty"),
+            "the error must name the offending field, got: {err}"
+        );
+
+        // The boundary value itself is accepted.
+        let at_cap = NetworkConfig {
+            relay_hop_penalty: Some(crate::config::RELAY_HOP_PENALTY_MAX),
+            ..standalone_config()
+        };
+        let config = at_cap.gen_config().unwrap();
+        assert_eq!(
+            config.get_flags().relay_hop_penalty,
+            crate::config::RELAY_HOP_PENALTY_MAX
+        );
+
+        // A stored value that bypassed the API boundary (an out-of-range TOML
+        // value: TOML `[flags]` are not validated at startup) must be echoed
+        // clamped, or the form would show a number this conversion rejects and
+        // the operator could not save until they found the unexposed field.
+        let mut flags = config.get_flags();
+        flags.relay_hop_penalty = u32::MAX;
+        config.set_flags(flags);
+        let echoed = NetworkConfig::new_from_config(config).unwrap();
+        assert_eq!(
+            echoed.relay_hop_penalty,
+            Some(crate::config::RELAY_HOP_PENALTY_MAX),
+            "the management surface must show the effective (clamped) penalty"
+        );
     }
 
     #[test]

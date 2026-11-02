@@ -224,6 +224,11 @@ pub fn gen_default_flags() -> Flags {
         peer_link_replica_fill_max: 2,
         // VIP reachability probe on by default (GUI "connected vs reachable").
         disable_vip_reachability_probe: false,
+        // Per-intermediate-hop relay penalty, added by the OSPF route calculator
+        // (peer_ospf_route.rs) to every edge sourced by a peer other than us.
+        // 0 = disabled; see common.proto `relay_hop_penalty` for the model and
+        // recommended values (3-5 flips marginal relay-wins-over-direct).
+        relay_hop_penalty: 0,
     }
 }
 
@@ -331,6 +336,7 @@ define_flags_diff! {
         peer_link_bond_count,
         peer_link_replica_fill_max,
         disable_vip_reachability_probe,
+        relay_hop_penalty,
     ],
     u64s: [foreign_relay_bps_limit, instance_recv_bps_limit],
     enums: [data_compress_algo]

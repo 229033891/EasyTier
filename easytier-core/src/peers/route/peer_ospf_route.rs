@@ -104,6 +104,14 @@ pub type Version = u32;
 /// policy-forced", which is the signal the status page can key on.
 const AVOID_RELAY_COST: usize = 1_000_000_000;
 
+/// The operator-supplied relay hop penalty (`FlagsInConfig::relay_hop_penalty`,
+/// clamped to [`crate::config::RELAY_HOP_PENALTY_MAX`]) is a plain additive
+/// term in the graph builder below, so the cap must keep worst-case paths out
+/// of the policy-veto band. Pin the derivation to `OSPF_EDGE_COST_MAX` so the
+/// two cannot drift: the cap is defined in the config layer (single source for
+/// every consumer), derived as `OSPF_EDGE_COST_MAX / 8`.
+const _: () = assert!(crate::config::RELAY_HOP_PENALTY_MAX == (OSPF_EDGE_COST_MAX / 8) as u32);
+
 /// Convert a possibly-negative, peer-influenced `i32` route cost into a
 /// Dijkstra-safe edge weight.
 ///
@@ -451,12 +459,14 @@ impl OspfRouteTable {
     }
 
     // return graph and start node index (node of my peer id).
+    #[allow(clippy::too_many_arguments)]
     fn build_peer_graph_from_snapshot<T: RouteCostCalculatorInterface>(
         my_peer_id: PeerId,
         snapshot: &OspfRouteSnapshot,
         lookup: &OspfRouteSnapshotLookup<'_>,
         cost_calc: &T,
         locally_unusable: &BTreeSet<PeerId>,
+        relay_hop_penalty: u32,
     ) -> (PeerGraph, NodeIndex) {
         let mut graph: PeerGraph = PeerGraph::new();
 
@@ -531,6 +541,22 @@ impl OspfRouteTable {
                 if peer_avoid_relay_data {
                     // Saturating: the policy penalty must dominate but never wrap.
                     cost = cost.saturating_add(AVOID_RELAY_COST);
+                }
+
+                // Relay hop penalty (`flags.relay_hop_penalty`): every edge
+                // sourced by a peer other than us is a hop the path *transits*,
+                // and the transit peer pays real forwarding overhead
+                // (decap/encap, crypto, scheduling, its own uplink) that the
+                // linear sum-of-edge-costs model otherwise ignores. Charging it
+                // here keeps the penalty purely local — nothing is published,
+                // LeastHop's `normalize_edge_cost` collapses it away, and
+                // equal-hop comparisons under LeastHop carry an identical
+                // number of intermediate hops so their order cannot move.
+                // Pure addition, never a decode trick (CR-09 / path_latency
+                // history): `path_latency` honestly includes the penalty, same
+                // precedent as the fuse bonus and the policy veto above.
+                if relay_hop_penalty > 0 && src_peer_id != my_peer_id {
+                    cost = cost.saturating_add(relay_hop_penalty as usize);
                 }
 
                 graph.add_edge(*src_node_idx, *dst_node_idx, cost);
@@ -726,6 +752,7 @@ impl OspfRouteTable {
             policy,
             cost_calc,
             &BTreeSet::new(),
+            0,
         )
     }
 
@@ -736,6 +763,11 @@ impl OspfRouteTable {
     /// **out of us** is re-priced, and only that one: everything else in the graph
     /// still comes from the peer-center, so this cannot change what we advertise
     /// to other nodes.
+    ///
+    /// `relay_hop_penalty` (`flags.relay_hop_penalty`) prices each intermediate
+    /// hop; 0 keeps the historical sum-of-edge-costs behavior. See
+    /// `build_peer_graph_from_snapshot`.
+    #[allow(clippy::too_many_arguments)]
     pub fn build_from_snapshot_with_unusable<T: RouteCostCalculatorInterface>(
         &self,
         my_peer_id: PeerId,
@@ -743,6 +775,7 @@ impl OspfRouteTable {
         policy: NextHopPolicy,
         cost_calc: &T,
         locally_unusable: &BTreeSet<PeerId>,
+        relay_hop_penalty: u32,
     ) {
         let version = snapshot.version;
         self.sync_suppressed_peer_ids(snapshot);
@@ -762,6 +795,7 @@ impl OspfRouteTable {
             &lookup,
             cost_calc,
             locally_unusable,
+            relay_hop_penalty,
         );
 
         if graph.node_count() == 0 {
@@ -2927,6 +2961,18 @@ struct PeerRouteServiceImpl {
     /// round-tripping. Their edge out of us is re-priced during the build; see
     /// `build_from_snapshot_with_unusable`.
     locally_unusable_edges: std::sync::Mutex<BTreeSet<PeerId>>,
+    /// Dedupe key for the clamped-penalty warn in `update_route_table` (the
+    /// rebuild runs at per-second scale; warn once per distinct offending
+    /// raw value). `0` = armed — a valid penalty is never clamped, so `0`
+    /// cannot collide with a value that should warn (unlike `u32::MAX`, which
+    /// an older manager can push verbatim through a raw `FlagsInConfig`).
+    last_warned_relay_hop_penalty: std::sync::atomic::AtomicU32,
+    /// Penalty applied at the last runtime-change-triggered rebuild. Runtime
+    /// change notifications also fire for unrelated peer-runtime updates
+    /// (DHCP lease, VPN portal, ACL group refresh); when the penalty did not
+    /// move, the rebuild + version bump is skipped so peers are not made to
+    /// re-sync their route delta for nothing. `u32::MAX` = not yet applied.
+    last_applied_relay_hop_penalty: std::sync::atomic::AtomicU32,
     self_conn_info_withdrawn: AtomicBool,
 
     last_update_my_foreign_network: AtomicCell<Option<Instant>>,
@@ -3042,6 +3088,8 @@ impl PeerRouteServiceImpl {
             applied_interface_peers_generation: AtomicU64::new(0),
             applied_interface_peers: std::sync::Mutex::new(BTreeSet::new()),
             locally_unusable_edges: std::sync::Mutex::new(BTreeSet::new()),
+            last_warned_relay_hop_penalty: std::sync::atomic::AtomicU32::new(0),
+            last_applied_relay_hop_penalty: std::sync::atomic::AtomicU32::new(u32::MAX),
             self_conn_info_withdrawn: AtomicBool::new(false),
 
             last_update_my_foreign_network: AtomicCell::new(None),
@@ -3421,6 +3469,44 @@ impl PeerRouteServiceImpl {
         let calc_locked = self.cost_calculator.read().unwrap();
         let route_snapshot = self.local_route_snapshot();
         let locally_unusable = self.locally_unusable_edges.lock().unwrap().clone();
+        // Read per rebuild, so a runtime flags update takes effect without
+        // restarting the OSPF service. `PeerContext::flags()` on a context
+        // without a config store returns defaults (penalty 0 = disabled).
+        //
+        // Clamp here as the last line of defense: the config boundary rejects
+        // oversized values with an error, but flags can also arrive through
+        // paths that bypass it (e.g. an older manager pushing a raw
+        // FlagsInConfig) — see `config::clamp_relay_hop_penalty`.
+        //
+        // The warn is deduplicated by raw value: `update_route_table` runs on
+        // every topology/cost update (per-second scale), so warning on every
+        // rebuild would flood the log while the misconfiguration persists.
+        let raw_penalty = self.context.flags().relay_hop_penalty;
+        let relay_hop_penalty = crate::config::clamp_relay_hop_penalty(raw_penalty);
+        if relay_hop_penalty != raw_penalty {
+            if self
+                .last_warned_relay_hop_penalty
+                .swap(raw_penalty, std::sync::atomic::Ordering::Relaxed)
+                != raw_penalty
+            {
+                tracing::warn!(
+                    raw_penalty,
+                    clamped = crate::config::RELAY_HOP_PENALTY_MAX,
+                    "relay_hop_penalty exceeds RELAY_HOP_PENALTY_MAX; clamped to preserve path-cost invariants (warned once per distinct value)"
+                );
+            }
+        } else {
+            // Re-arm: a later recurrence of an offending value warns again.
+            // `0` is the armed sentinel (0 is in range and never clamped).
+            self.last_warned_relay_hop_penalty
+                .store(0, std::sync::atomic::Ordering::Relaxed);
+        }
+        if relay_hop_penalty > 0 {
+            tracing::debug!(
+                relay_hop_penalty,
+                "ospf route rebuild: every transit hop will be charged the relay hop penalty"
+            );
+        }
 
         self.route_table.build_from_snapshot_with_unusable(
             self.my_peer_id,
@@ -3428,6 +3514,7 @@ impl PeerRouteServiceImpl {
             NextHopPolicy::LeastHop,
             calc_locked.as_ref().unwrap(),
             &locally_unusable,
+            relay_hop_penalty,
         );
 
         self.route_table_with_cost
@@ -3437,6 +3524,7 @@ impl PeerRouteServiceImpl {
                 NextHopPolicy::LeastCost,
                 calc_locked.as_ref().unwrap(),
                 &locally_unusable,
+                relay_hop_penalty,
             );
 
         drop(calc_locked);
@@ -5302,6 +5390,36 @@ impl PeerRoute {
                     if change.is_err() {
                         runtime_change_receiver =
                             service_impl.context.subscribe_runtime_changes();
+                    } else {
+                        // A runtime flags update can carry route-affecting
+                        // values (e.g. `relay_hop_penalty`). Nothing else
+                        // bumps the route version on a config-only change —
+                        // the 1s tick is gated by
+                        // `cost_calculator_need_update()`, which only tracks
+                        // peer-center table updates — so rebuild now, or the
+                        // new value would sit unused until the next route
+                        // sync arrives from the network.
+                        //
+                        // But these notifications also fire for unrelated
+                        // peer-runtime updates (DHCP lease renewal, VPN
+                        // portal runtime, ACL group refresh — anything that
+                        // calls `update_peer_with` / `replace_with_current`,
+                        // which notify unconditionally). Rebuilding + bumping
+                        // the version on each of those would make every peer
+                        // re-sync its route delta for nothing, so rebuild
+                        // only when the penalty actually moved. If another
+                        // route-affecting flag is ever added, it must join
+                        // this change check.
+                        let raw = service_impl.context.flags().relay_hop_penalty;
+                        let penalty = crate::config::clamp_relay_hop_penalty(raw);
+                        if service_impl
+                            .last_applied_relay_hop_penalty
+                            .swap(penalty, std::sync::atomic::Ordering::Relaxed)
+                            != penalty
+                        {
+                            service_impl.synced_route_info.version.inc();
+                            service_impl.update_route_table();
+                        }
                     }
                 }
                 _ = crate::foundation::time::sleep(Duration::from_secs(1)) => {}
