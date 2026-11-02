@@ -491,19 +491,23 @@ pub(crate) mod tests {
         }
     }
 
+    /// Netns TCP throughput bench. Returns `Err` when the listener cannot be
+    /// bound (e.g. `EADDRINUSE` from a previous run's TIME_WAIT socket on the
+    /// same port) so the caller can retry with a different port instead of
+    /// panicking on `unwrap()`.
     pub(crate) async fn _tunnel_bench_netns<L, C>(
         mut listener: L,
         connector: C,
         netns_l: NetNS,
         netns_c: NetNS,
-    ) -> usize
+    ) -> anyhow::Result<usize>
     where
         L: SocketListener<Accepted = Box<dyn Tunnel>> + Sync + 'static,
         C: TunnelDialer,
     {
         {
             let _g = netns_l.guard();
-            listener.listen().await.unwrap();
+            listener.listen().await?;
         }
 
         let bps = Arc::new(AtomicU64::new(0));
@@ -559,7 +563,7 @@ pub(crate) mod tests {
         println!("bps: {}", bps);
 
         lis.abort();
-        bps as usize
+        Ok(bps as usize)
     }
 
     pub async fn wait_for_condition<F, FRet>(mut condition: F, timeout: std::time::Duration)

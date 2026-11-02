@@ -1237,8 +1237,9 @@ async fn subnet_proxy_test_tcp(listen_ip: &str, connect_ip: &str, timeout: Durat
     use crate::tunnel::common::tests::_tunnel_pingpong_netns_with_timeout;
     use rand::RngExt;
 
-    let tcp_listener = core_tcp_listener(format!("tcp://{listen_ip}:22223").parse().unwrap());
-    let tcp_connector = core_tcp_dialer(format!("tcp://{}:22223", connect_ip).parse().unwrap());
+    let port = next_netns_bench_port();
+    let tcp_listener = core_tcp_listener(format!("tcp://{listen_ip}:{port}").parse().unwrap());
+    let tcp_connector = core_tcp_dialer(format!("tcp://{}:{port}", connect_ip).parse().unwrap());
 
     let mut buf = vec![0; 32];
     rand::rng().fill(&mut buf[..]);
@@ -3053,21 +3054,46 @@ fn assert_limited_payload_bps(bps: u64, bps_limit: u64) {
     );
 }
 
+/// Allocates a unique TCP port for the netns throughput benches.
+///
+/// The bench listener binds inside a shared netns, so a socket accepted by a
+/// previous bench keeps its local port in TIME_WAIT (Linux: 60s). Re-binding
+/// that port fails with `EADDRINUSE`, which used to abort the whole test
+/// (`listener.listen().await.unwrap()`). Handing out a fresh port per bench
+/// removes the coupling between consecutive benches and test cases.
+static NETNS_BENCH_PORT: std::sync::atomic::AtomicU16 = std::sync::atomic::AtomicU16::new(22223);
+
+fn next_netns_bench_port() -> u16 {
+    NETNS_BENCH_PORT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+}
+
 /// Run the netns TCP bench, retrying on CI timing noise before asserting.
 async fn measure_limited_payload_bps(bps_limit: u64) -> u64 {
     const ATTEMPTS: usize = 3;
     let (min_bps, max_bps) = limited_payload_bps_range(bps_limit);
     let mut last = 0u64;
     for attempt in 1..=ATTEMPTS {
-        let tcp_listener = core_tcp_listener("tcp://0.0.0.0:22223".parse().unwrap());
-        let tcp_connector = core_tcp_dialer("tcp://10.144.144.3:22223".parse().unwrap());
-        let raw = _tunnel_bench_netns(
+        // A fresh port per attempt: the previous attempt's accepted connection
+        // would otherwise hold the old port in TIME_WAIT.
+        let port = next_netns_bench_port();
+        let tcp_listener = core_tcp_listener(format!("tcp://0.0.0.0:{port}").parse().unwrap());
+        let tcp_connector = core_tcp_dialer(format!("tcp://10.144.144.3:{port}").parse().unwrap());
+        let raw = match _tunnel_bench_netns(
             tcp_listener,
             tcp_connector,
             NetNS::new(Some("net_c".into())),
             NetNS::new(Some("net_a".into())),
         )
-        .await;
+        .await
+        {
+            Ok(raw) => raw,
+            Err(e) => {
+                // Bind failures (EADDRINUSE and friends) are transient here;
+                // fall through to the next attempt instead of panicking.
+                println!("bps attempt {attempt}/{ATTEMPTS}: bench setup failed: {e:?}");
+                continue;
+            }
+        };
         let bps = raw as u64 / 1024;
         println!(
             "bps attempt {attempt}/{ATTEMPTS}: {bps} (limit {bps_limit}, expect {min_bps}..={max_bps})"
