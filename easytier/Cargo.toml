@@ -19,8 +19,11 @@ build = "build/main.rs"
 name = "easytier-core"
 path = "src/easytier-core.rs"
 test = false
-# Not a benchmark. cargo 1.95 still compiles this bin during `cargo bench`
-# (E0463 remains). The fix is CARGO_PROFILE_BENCH_PANIC=unwind on that step.
+# Not a benchmark. `cargo bench` would otherwise build a bench unit per bin,
+# and cargo 1.95 compiles these bins even with `bench = false` — with the
+# bench profile's panic=abort inherited from [profile.release] that yields
+# E0463 `can't find crate for easytier`. The criterion benchmarks now live in
+# the separate `easytier-benches` crate and never touch these bins.
 bench = false
 required-features = ["management"]
 
@@ -33,14 +36,6 @@ required-features = ["management", "cli"]
 [lib]
 name = "easytier"
 path = "src/lib.rs"
-
-[[bench]]
-name = "packet_bytes_extraction"
-harness = false
-
-[[bench]]
-name = "routing_lookup"
-harness = false
 
 [dependencies]
 easytier-core.workspace = true
