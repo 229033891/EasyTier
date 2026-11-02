@@ -162,6 +162,15 @@ jobs:
           # Only the core crates are built; skip the GUI apt deps + pnpm.
           gui: false
           pnpm: false
+          # No sccache here. This is the only job that builds the `bench`
+          # profile (LTO + panic=unwind) with two feature variants of
+          # `easytier-core` (default + the `test-utils` dev-dependency), and
+          # the GHA cache backend kept handing back an artifact set that made
+          # the bins die with `can't find crate for easytier` (E0463) on an
+          # unchanged tree (20 cache_write_errors / 8 compile_fails in the
+          # failing run's sccache stats). A cold build every run costs a few
+          # minutes but is deterministic.
+          sccache: false
           token: ${{ secrets.GITHUB_TOKEN }}
 
       # Deterministic gate: the per-packet lookup must not allocate (§12.1).

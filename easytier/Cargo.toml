@@ -19,11 +19,20 @@ build = "build/main.rs"
 name = "easytier-core"
 path = "src/easytier-core.rs"
 test = false
+# Bins are not benchmarks. `cargo bench` builds a bench unit for every bin
+# with `bench` enabled, and in this workspace that unit raced with the
+# `easytier-core` lib target, which emits the *unhashed* `libeasytier_core.rlib`
+# / `.so` for both of its feature variants (default + the `test-utils`
+# dev-dependency; see rust-lang/cargo#6313). The collision left the bench run
+# unable to resolve the `easytier` crate: `cargo bench -p easytier --bench
+# routing_lookup` failed with E0463 `can't find crate for easytier`.
+bench = false
 required-features = ["management"]
 
 [[bin]]
 name = "easytier-cli"
 path = "src/easytier-cli/main.rs"
+bench = false
 required-features = ["management", "cli"]
 
 [lib]
