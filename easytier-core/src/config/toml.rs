@@ -226,9 +226,12 @@ pub fn gen_default_flags() -> Flags {
         disable_vip_reachability_probe: false,
         // Per-intermediate-hop relay penalty, added by the OSPF route calculator
         // (peer_ospf_route.rs) to every edge sourced by a peer other than us.
-        // 0 = disabled; see common.proto `relay_hop_penalty` for the model and
-        // recommended values (3-5 flips marginal relay-wins-over-direct).
-        relay_hop_penalty: 0,
+        // Default 5: keeps genuinely-better relay paths ahead (13ms direct vs
+        // 1+3=4 two-hop still picks the relay) while flipping marginal relay
+        // wins (two-hop sum 7 vs direct 9) back to direct. 0 restores the
+        // historical, penalty-free behavior; see common.proto
+        // `relay_hop_penalty` for the model and the hard upper bound.
+        relay_hop_penalty: 5,
     }
 }
 
@@ -1809,6 +1812,17 @@ source = "web"
 mod compatibility_tests {
     use super::*;
     use base64::{Engine as _, prelude::BASE64_STANDARD};
+
+    /// Pins the shipped default: 5 keeps the live-next-hop negative case
+    /// intact (13ms direct vs 1+3=4 two-hop: 4+5=9 still picks the relay)
+    /// while flipping marginal relay wins (two-hop sum 7 vs direct 9).
+    /// Changing this value is a routing-behavior change for every default
+    /// deployment — it must go through docs/current/relay-hop-penalty.md §0.
+    #[test]
+    fn default_relay_hop_penalty_is_five() {
+        assert_eq!(gen_default_flags().relay_hop_penalty, 5);
+        assert!(gen_default_flags().relay_hop_penalty < crate::config::RELAY_HOP_PENALTY_MAX);
+    }
 
     #[cfg(feature = "config-write")]
     #[test]

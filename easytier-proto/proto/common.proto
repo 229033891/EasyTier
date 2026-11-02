@@ -136,17 +136,19 @@ message FlagsInConfig {
   // peer actually pays (decap/encap, crypto, scheduling, its own uplink
   // bandwidth), which the linear "sum of edge costs" model otherwise ignores.
   //
-  // 0 = disabled (historical behavior). Applied locally at route-table
-  // rebuild time only: never published, so it needs no wire-protocol
-  // coordination. LeastHop's next-hop/hop-count choice is unaffected (its
+  // Default 5 (gen_default_flags); 0 restores the historical, penalty-free
+  // behavior. Applied locally at route-table rebuild time only: never
+  // published, so it needs no wire-protocol coordination. LeastHop's
+  // next-hop/hop-count choice is unaffected (its
   // normalize_edge_cost collapses every edge to 1; equal-hop paths carry an
   // identical number of intermediate hops, so their relative order cannot
   // move) — but the `path_latency` the least-hop table reports and feeds
   // into address arbitration DOES include the penalty.
   // Units: edge-cost units, ~1ms RTT equivalent (defined here, once).
-  // Recommended 3-5: flips marginal relay wins (e.g. two-hop sum 7 vs direct
-  // 9) while genuinely better relay paths stay ahead (100ms direct vs
-  // 30+30ms relay: 63 < 100). Values above RELAY_HOP_PENALTY_MAX
+  // Default 5 keeps the live-next-hop negative case intact (13ms direct vs
+  // 1+3=4 two-hop: 4+5=9 still picks the relay) while flipping marginal
+  // relay wins (two-hop sum 7 vs direct 9). Values above
+  // RELAY_HOP_PENALTY_MAX
   // (OSPF_EDGE_COST_MAX / 8) are clamped at the config boundary and at the
   // OSPF read site — larger values would corrupt the established
   // policy-veto cost semantics (see peers/route/peer_ospf_route.rs).
