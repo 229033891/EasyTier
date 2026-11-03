@@ -3,7 +3,7 @@
 ## Status
 
 - Status: **Current**
-- 最近审阅：2026-10-16（续修 R1–R4：分流按行 skip、主上游全坏回落系统 DNS、热重载硬失败可重试、retain zone 不装 Split、跨 client 才 warn；前端 **C1 编辑器灰化**（§3 控制台段）与 **C4 观测内联提示**；此前：route 后到 reapply、上游逐条 skip、hosts/Split 账本、本机优先、域名预检）；2026-10-13（**域名路由（`[[policy_routes]]`）已落地**，其 DNS 侧观测与泄漏面见 [`traffic-steering.md`](./traffic-steering.md) §5.1；`domain-proxy` 旧草案已被取代）；2026-10-09（静态 hosts 支持 `*.suffix` 通配；**修正**通配匹配语义为 RFC 4592 多级；**补齐守卫**：单标签 zone 拒绝、route zone 冲突对精确条目也生效，见 §3）
+- 最近审阅：2026-11-03（P1-1 MagicDNS UDP/53 absorb+异步回注，待 P3 现网验收）；2026-10-16（续修 R1–R4：分流按行 skip、主上游全坏回落系统 DNS、热重载硬失败可重试、retain zone 不装 Split、跨 client 才 warn；前端 **C1 编辑器灰化**（§3 控制台段）与 **C4 观测内联提示**；此前：route 后到 reapply、上游逐条 skip、hosts/Split 账本、本机优先、域名预检）；2026-10-13（**域名路由（`[[policy_routes]]`）已落地**，其 DNS 侧观测与泄漏面见 [`traffic-steering.md`](./traffic-steering.md) §5.1；`domain-proxy` 旧草案已被取代）；2026-10-09（静态 hosts 支持 `*.suffix` 通配；**修正**通配匹配语义为 RFC 4592 多级；**补齐守卫**：单标签 zone 拒绝、route zone 冲突对精确条目也生效，见 §3）
 - 范围：进程内 MagicDNS、`DnsConfig`（hosts / Split DNS / 上游）、OS 接线与控制台覆盖信号
 - 手工接线（OpenWrt / 非 systemd）：[`magic-dns-manual-wiring.md`](./magic-dns-manual-wiring.md)
 - 剩余缺口 / 决策留档：[`../roadmap/dns-policy.md`](../roadmap/dns-policy.md)
@@ -97,14 +97,16 @@ CLI 示例：`--dns-host 'app.internal.=10.1.2.3'`、`--dns-host '*.corp.example
 
 > ⚠️ **已知问题（2026-11-03 定案；代码已落地，待 P3 现网验收）**：
 > 根因是物理默认路由查询曾在 tokio worker 上做同步 Win32 网卡枚举（尾延迟 ~914ms）；
-> MagicDNS filter 挂在统一 NIC pipeline，但**仅** `fake_ip:53` 才 await DNS——
+> MagicDNS filter 挂在统一 NIC pipeline；历史上 `fake_ip:53` 会在数据面 await DNS。
 > overlay ICMP 本身不走解析；尖刺来自同 worker 被占死。详见
 > [`windows-dns-bind-blocking-jitter-audit-2026-11.md`](./windows-dns-bind-blocking-jitter-audit-2026-11.md)。
 >
-> ✅ **修复代码（第三轮收尾，P3 未过前勿当「尖刺已消失」依赖）**：
-> P0 `spawn_blocking` + 一次枚举；P1-1 数据面 3s timeout；P1-2 catalog 快照 + zone-key 补强；
-> P2-1 stale-while-revalidate；P2-2 系统转发 / STUN opts 预算对齐 + hickory 5s 外层超时。
-> 遗留演进：P1-1 真异步回注；P3 用户机复测（审计 §7）。
+> ✅ **修复代码（第四轮 P1-1 真异步；P3 未过前勿当「尖刺已消失」依赖）**：
+> P0 `spawn_blocking` + 一次枚举；P1-1 UDP/53 absorb + 有界队列/worker + after_pipeline 回注
+>（ICMP 仍同步 Rewrite；`EASYTIER_MAGIC_DNS_DATAPLANE_INLINE=1` 可回退）；
+> P1-2 catalog 快照 + zone-key 补强；P2-1 stale-while-revalidate；
+> P2-2 系统转发 / STUN opts 预算对齐 + hickory 5s 外层超时。
+> 遗留：P3 用户机 10min 复测（审计 §7）。
 
 ---
 

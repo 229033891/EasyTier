@@ -4,7 +4,7 @@
 
 - Status: **Current**
 - 日期：2026-11-03
-- 最近审阅：2026-11-03（第三轮收尾：复核根因表述；P1-2 补强 / P2-1 后台刷新 / P2-2 上游预算已落地；**P3 现网复测仍待用户机验收** —— 详见 §6）
+- 最近审阅：2026-11-03（第四轮：P1-1 真异步 absorb+回注已落地；**P3 现网复测仍待用户机验收** —— 详见 §6）
 - 范围：**Windows 平台**的 `find_physical_default` 阻塞调用链，以及跨平台的
   MagicDNS filter 数据面耦合。现象观测机为 Windows 11（10 逻辑核），本机并存 3 个隧道适配器
   （另两个第三方 VPN 软件 + ET 自身的 wintun 网卡）
@@ -35,7 +35,7 @@
 - **量级吻合**：实测阻塞尾延迟 857–914ms，观测到的尖刺为 212 / 247 / 418 / 490ms，
   属**概率性长尾**，与"偶发毛刺"形态一致。
 - **评审（2026-11-03 第三轮）**：主因正确；首版「每个上行包 await DNS」表述过重。
-  P0 止血企业级合格；P1-1 仍为数据面 timeout（真异步回注未做，记为后续演进）。
+  P0 止血企业级合格；P1-1 已演进为 UDP/53 absorb + 有界队列/worker + `inject_self_delivered_nic_packet` 回注（ICMP 仍同步 Rewrite；`EASYTIER_MAGIC_DNS_DATAPLANE_INLINE=1` 可回退）。
 
 ---
 
@@ -333,7 +333,7 @@ MagicDnsServerInstanceData::resolve            dns_server/server_instance.rs
 | 项 | 状态 | 落地位置 |
 |---|---|---|
 | P0 | ✅ 已实施（P0-1/2/3 合并） | `ifcfg/{windows,netlink,darwin}.rs`：`find_physical_default` 全平台改 async + `spawn_blocking`；Windows 侧 `InterfaceSnapshot` 一次枚举建双索引（iface_name ↔ index），循环内 O(1) 查 |
-| P1-1 | ✅ 已实施（方案微调） | `easytier-core/src/gateway/magic_dns/packet.rs`：`DATA_PLANE_RESOLVE_TIMEOUT = 3s`，filter 内 `tokio::time::timeout` 包裹 resolver，超时 WARN + 丢包。**与原方案差异**：未做「spawn 独立任务 + 结果写缓存」，而是直接给数据面解析设硬上限 —— 抖动最坏占住 lane 3s 而非无限期；真异步回注留作后续演进 |
+| P1-1 | ✅ 已实施（第四轮真异步） | `NicFilterOutcome::{Pass,Rewrite,Absorb}`；pipeline Absorb 即停发。MagicDNS：UDP/53 `try_send` 有界队列（cap 256 / 2 workers）→ 离线 `RESOLVE_TIMEOUT=3s` → `inject_self_delivered_nic_packet`（跳过 NIC pipeline）；ICMP Echo 仍同步 Rewrite。逃逸：`EASYTIER_MAGIC_DNS_DATAPLANE_INLINE=1` |
 | P1-2 | ✅ 已实施 | `dns_server/server_instance.rs`：`MAGIC_DNS_RESOLVE_TIMEOUT = 3s`；`resolve_query_inner` 改为 `snapshot_catalog_for`（读锁内只做 Catalog 查找 + clone，解析在锁外）+ 3s 超时；上游列表排除 fake_ip |
 | P1-2 补强 | ✅ 已实施 | `server.rs`：`catalog_zone_key` 从 query 名向上反推 Catalog 注册 key；`snapshot_catalog_for` 不再用 `authority.origin()`（ForwardAuthority origin 恒为 `.`） |
 | P2-1 | ✅ 已实施 | `common/dns.rs`：TTL 5s 新鲜命中直接返回；过期则 **stale-while-revalidate**（立即返回 stale + `AtomicBool` 单飞后台刷新）；冷启动仍 await；查找失败继续 stale 兜底 |
@@ -360,10 +360,11 @@ MagicDnsServerInstanceData::resolve            dns_server/server_instance.rs
 
 ### P1 — 解耦数据面与 DNS 解析（✅ P1-1 / P1-2 已实施）
 
-**P1-1** MagicDNS filter **不应在数据面 await DNS**。改为：命中假 IP 时立即放行/丢弃该
-DNS 包并 `spawn` 到独立任务解析，结果写回缓存；后续同域名查询走缓存。
-→ DNS 抖动不再传导到 overlay 数据面。
-> 实际落地为「timeout 3s 上限 + 超时丢包」（见进度表），spawn+缓存方案留作后续演进。
+**P1-1** MagicDNS filter **不应在数据面 await DNS**。改为：命中假 IP UDP/53 时
+`Absorb`（NIC pipeline 停发）并把 query 入有界队列；独立 worker 解析后经
+`inject_self_delivered_nic_packet` 回注（跳过 NIC pipeline，避免二次 absorb）。
+ICMP Echo 仍同步 `Rewrite`。→ DNS 上游抖动不再占住 overlay 同 worker。
+> 第四轮已落地真异步；第三轮「数据面 3s timeout」保留为 worker 内预算与 inline 逃逸。
 
 **P1-2** `resolve_query_inner`（`dns_server/server_instance.rs:734`）里的 `read_catalog().await`
 在整个 DNS 解析期间持有 `tokio::RwLock` **读锁** → 根转发器热重载

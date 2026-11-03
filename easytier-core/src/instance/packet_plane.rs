@@ -179,15 +179,22 @@ impl CorePacketPlane {
             Arc::downgrade(&self.peer_manager),
         ));
         let runtime = tokio::runtime::Handle::current();
+        let (filter, absorb_cancel) = magic_dns_packet_filter(
+            fake_ip,
+            self.peer_manager.my_peer_id(),
+            resolver,
+            Arc::downgrade(&self.peer_manager),
+        );
         let pipeline = self
             .peer_manager
-            .add_managed_nic_packet_process_pipeline(magic_dns_packet_filter(
-                fake_ip,
-                self.peer_manager.my_peer_id(),
-                resolver,
-            ))
+            .add_managed_nic_packet_process_pipeline(filter)
             .await;
-        MagicDnsResolverRegistration::new(Arc::downgrade(&self.peer_manager), pipeline, runtime)
+        MagicDnsResolverRegistration::new(
+            Arc::downgrade(&self.peer_manager),
+            pipeline,
+            absorb_cancel,
+            runtime,
+        )
     }
 }
 

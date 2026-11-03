@@ -94,8 +94,11 @@ impl Drop for DropCountingNicFilter {
 
 #[async_trait::async_trait]
 impl super::super::NicPacketFilter for DropCountingNicFilter {
-    async fn try_process_packet_from_nic(&self, _data: &mut ZCPacket) -> bool {
-        true
+    async fn try_process_packet_from_nic(
+        &self,
+        _data: &mut ZCPacket,
+    ) -> super::super::NicFilterOutcome {
+        super::super::NicFilterOutcome::Pass
     }
 }
 
@@ -1512,11 +1515,14 @@ struct DestinationRewriteNicFilter(IpAddr);
 
 #[async_trait::async_trait]
 impl super::super::NicPacketFilter for DestinationRewriteNicFilter {
-    async fn try_process_packet_from_nic(&self, packet: &mut ZCPacket) -> bool {
+    async fn try_process_packet_from_nic(
+        &self,
+        packet: &mut ZCPacket,
+    ) -> super::super::NicFilterOutcome {
         // Leave to_peer_id unset: the router must use the rewritten IP header.
         assert_eq!(packet.peer_manager_header().unwrap().to_peer_id.get(), 0);
         set_packet_destination(packet.mut_payload(), self.0);
-        true
+        super::super::NicFilterOutcome::Rewrite
     }
 }
 
@@ -1629,6 +1635,161 @@ async fn nic_filter_rewritten_ipv4_destination_controls_routing() {
         "10.82.0.99".parse().unwrap(),
     ])
     .await;
+}
+
+struct AbsorbNicFilter;
+
+#[async_trait::async_trait]
+impl super::super::NicPacketFilter for AbsorbNicFilter {
+    async fn try_process_packet_from_nic(
+        &self,
+        _packet: &mut ZCPacket,
+    ) -> super::super::NicFilterOutcome {
+        super::super::NicFilterOutcome::Absorb
+    }
+}
+
+#[tokio::test]
+async fn nic_filter_absorb_stops_outbound_delivery() {
+    let source: IpAddr = "10.83.0.1".parse().unwrap();
+    let destination: IpAddr = "10.83.0.2".parse().unwrap();
+    let mut peers = Vec::new();
+    let mut receivers = Vec::new();
+    for address in [source, destination] {
+        let mut runtime = portable_runtime_config("nic-filter-absorb");
+        runtime.core.routes.ipv4 = Some(IpPrefix::new(address, 24).unwrap());
+        let (sender, receiver) = host_packet_channel();
+        let peer =
+            PeerManagerCore::new_portable_for_test(PortablePeerManagerConfig::new(runtime), sender)
+                .unwrap();
+        peer.run().await.unwrap();
+        peers.push(peer);
+        receivers.push(receiver);
+    }
+    let (client, server) = crate::tunnel::ring::create_ring_tunnel_pair();
+    let (client_result, server_result) = tokio::join!(
+        peers[0].add_client_tunnel(client, true),
+        peers[1].add_tunnel_as_server(server, true),
+    );
+    client_result.unwrap();
+    server_result.unwrap();
+    tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            if peers[0].get_msg_dst_peer(&destination).await == (vec![peers[1].my_peer_id()], false)
+            {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("destination route must be ready");
+
+    peers[0]
+        .add_nic_packet_process_pipeline(Box::new(AbsorbNicFilter))
+        .await;
+
+    let mut payload = vec![0u8; 20];
+    payload[0] = 0x45;
+    payload[2..4].copy_from_slice(&20u16.to_be_bytes());
+    payload[8] = 64;
+    payload[9] = 253;
+    if let IpAddr::V4(src) = source {
+        payload[12..16].copy_from_slice(&src.octets());
+    }
+    set_packet_destination(&mut payload, destination);
+    peers[0]
+        .send_msg_by_ip(ZCPacket::new_with_payload(&payload), destination, false)
+        .await
+        .unwrap();
+
+    assert!(
+        tokio::time::timeout(Duration::from_millis(200), receivers[1].recv())
+            .await
+            .is_err(),
+        "Absorb must prevent delivery to the destination peer"
+    );
+
+    for peer in &peers {
+        peer.clear_resources().await;
+    }
+}
+
+#[cfg(feature = "proxy-packet")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn magic_dns_absorb_injects_udp_response_to_nic() {
+    use crate::gateway::magic_dns::{
+        MagicDnsQuery, MagicDnsQueryResolver, magic_dns_packet_filter,
+    };
+    use smoltcp::wire::{IpProtocol, Ipv4Packet, UdpPacket};
+    use std::net::Ipv4Addr;
+    use std::sync::Arc;
+
+    struct EchoResolver;
+    #[async_trait::async_trait]
+    impl MagicDnsQueryResolver for EchoResolver {
+        async fn resolve(&self, query: MagicDnsQuery) -> Option<Vec<u8>> {
+            Some(format!("echo:{}", String::from_utf8_lossy(&query.payload)).into_bytes())
+        }
+    }
+
+    let fake_ip: Ipv4Addr = "10.255.255.254".parse().unwrap();
+    let local_ip: Ipv4Addr = "10.0.0.2".parse().unwrap();
+    let mut runtime = portable_runtime_config("magic-dns-absorb-inject");
+    runtime.core.routes.ipv4 = Some(IpPrefix::new(IpAddr::V4(local_ip), 24).unwrap());
+    let (sender, mut receiver) = host_packet_channel();
+    let peer = Arc::new(
+        PeerManagerCore::new_portable_for_test(PortablePeerManagerConfig::new(runtime), sender)
+            .unwrap(),
+    );
+    peer.run().await.unwrap();
+
+    let (filter, _cancel) = magic_dns_packet_filter(
+        fake_ip,
+        peer.my_peer_id(),
+        Arc::new(EchoResolver),
+        Arc::downgrade(&peer),
+    );
+    peer.add_nic_packet_process_pipeline(filter).await;
+
+    let dns_payload = b"query";
+    let mut bytes = vec![0; 20 + 8 + dns_payload.len()];
+    {
+        let mut ip = Ipv4Packet::new_unchecked(&mut bytes);
+        ip.set_version(4);
+        ip.set_header_len(20);
+        ip.set_total_len((20 + 8 + dns_payload.len()) as u16);
+        ip.set_next_header(IpProtocol::Udp);
+        ip.set_src_addr(local_ip);
+        ip.set_dst_addr(fake_ip);
+        let mut udp = UdpPacket::new_unchecked(ip.payload_mut());
+        udp.set_src_port(53000);
+        udp.set_dst_port(53);
+        udp.set_len((8 + dns_payload.len()) as u16);
+        udp.payload_mut().copy_from_slice(dns_payload);
+    }
+
+    peer.send_msg_by_ip(
+        ZCPacket::new_with_payload(&bytes),
+        IpAddr::V4(fake_ip),
+        false,
+    )
+    .await
+    .unwrap();
+
+    let host_pkt = tokio::time::timeout(Duration::from_secs(2), receiver.recv())
+        .await
+        .expect("DNS response inject timed out")
+        .expect("nic channel closed");
+    let ip = Ipv4Packet::new_checked(host_pkt.payload()).unwrap();
+    assert_eq!(ip.src_addr(), fake_ip);
+    assert_eq!(ip.dst_addr(), local_ip);
+    let udp = UdpPacket::new_checked(ip.payload()).unwrap();
+    assert_eq!(udp.src_port(), 53);
+    assert_eq!(udp.dst_port(), 53000);
+    assert_eq!(udp.payload(), b"echo:query");
+
+    peer.clear_resources().await;
 }
 
 #[tokio::test]

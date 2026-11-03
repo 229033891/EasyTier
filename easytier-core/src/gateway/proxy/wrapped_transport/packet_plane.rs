@@ -344,11 +344,18 @@ impl<H> crate::peers::NicPacketFilter for WrappedTransportSourceFilter<H>
 where
     H: DirectConnectorHost + TcpHolePunchHost,
 {
-    async fn try_process_packet_from_nic(&self, packet: &mut ZCPacket) -> bool {
+    async fn try_process_packet_from_nic(
+        &self,
+        packet: &mut ZCPacket,
+    ) -> crate::peers::NicFilterOutcome {
         let Some(source) = self.source.upgrade() else {
-            return false;
+            return crate::peers::NicFilterOutcome::Pass;
         };
-        source.try_process_nic_packet(packet).await
+        if source.try_process_nic_packet(packet).await {
+            crate::peers::NicFilterOutcome::Rewrite
+        } else {
+            crate::peers::NicFilterOutcome::Pass
+        }
     }
 }
 

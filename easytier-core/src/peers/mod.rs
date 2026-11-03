@@ -193,10 +193,27 @@ pub trait PeerPacketFilter {
     }
 }
 
+/// Result of a NIC uplink filter.
+///
+/// The packet pipeline must honour these outcomes: historically the `bool`
+/// return was ignored, so filters could only rewrite in place and never
+/// *absorb* a packet (required for MagicDNS off-data-plane resolve).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NicFilterOutcome {
+    /// Filter did not handle the packet; continue with later filters / routing.
+    Pass,
+    /// Packet was rewritten in place; continue routing with the new contents
+    /// (and re-parse destination IP after the pipeline).
+    Rewrite,
+    /// Packet must not be forwarded. The filter has taken ownership of the
+    /// work (e.g. queued a DNS query for async resolve + inject).
+    Absorb,
+}
+
 #[async_trait::async_trait]
 #[auto_impl::auto_impl(Arc)]
 pub trait NicPacketFilter {
-    async fn try_process_packet_from_nic(&self, data: &mut ZCPacket) -> bool;
+    async fn try_process_packet_from_nic(&self, data: &mut ZCPacket) -> NicFilterOutcome;
 
     fn id(&self) -> String {
         format!("{:p}", self)

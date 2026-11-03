@@ -1,15 +1,24 @@
-use std::{future::Future, net::Ipv4Addr};
+use std::{
+    future::Future,
+    net::Ipv4Addr,
+    sync::{
+        Arc, Weak,
+        atomic::{AtomicU64, Ordering},
+    },
+};
 
 use async_trait::async_trait;
 use smoltcp::wire::{
     IPV4_HEADER_LEN, Icmpv4Message, Icmpv4Packet, IpAddress, IpProtocol, Ipv4Packet,
     UDP_HEADER_LEN, UdpPacket,
 };
+use tokio::sync::mpsc;
+use tokio_util::sync::CancellationToken;
 
 use crate::{
     config::PeerId,
     packet::ZCPacket,
-    peers::{BoxNicPacketFilter, NicPacketFilter},
+    peers::{BoxNicPacketFilter, NicFilterOutcome, NicPacketFilter, peer_manager::PeerManagerCore},
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -25,28 +34,33 @@ pub trait MagicDnsQueryResolver: Send + Sync + 'static {
 
 /// Owns one Magic DNS resolver installed in the core NIC pipeline.
 ///
-/// `close` waits until readers that may already be invoking the resolver have
-/// finished, then removes the entry so the resolver can be dropped promptly.
+/// `close` cancels absorb workers (so queued/in-flight queries are not injected
+/// after teardown), then removes the NIC pipeline entry. Workers may still hold
+/// the resolver `Arc` briefly while unwinding an in-flight `select!`.
 pub struct MagicDnsResolverRegistration {
-    peer_manager: std::sync::Weak<crate::peers::peer_manager::PeerManagerCore>,
+    peer_manager: Weak<PeerManagerCore>,
     pipeline: crate::peers::peer_manager::PipelineRegistrationGuard,
+    absorb_cancel: CancellationToken,
     runtime: tokio::runtime::Handle,
 }
 
 impl MagicDnsResolverRegistration {
     pub(crate) fn new(
-        peer_manager: std::sync::Weak<crate::peers::peer_manager::PeerManagerCore>,
+        peer_manager: Weak<PeerManagerCore>,
         pipeline: crate::peers::peer_manager::PipelineRegistrationGuard,
+        absorb_cancel: CancellationToken,
         runtime: tokio::runtime::Handle,
     ) -> Self {
         Self {
             peer_manager,
             pipeline,
+            absorb_cancel,
             runtime,
         }
     }
 
     pub async fn close(&self) {
+        self.absorb_cancel.cancel();
         self.pipeline.close();
         if let Some(peer_manager) = self.peer_manager.upgrade() {
             peer_manager
@@ -58,6 +72,7 @@ impl MagicDnsResolverRegistration {
 
 impl Drop for MagicDnsResolverRegistration {
     fn drop(&mut self) {
+        self.absorb_cancel.cancel();
         self.pipeline.close();
         let Some(peer_manager) = self.peer_manager.upgrade() else {
             return;
@@ -71,56 +86,326 @@ impl Drop for MagicDnsResolverRegistration {
     }
 }
 
-struct MagicDnsPacketFilter {
-    fake_ip: Ipv4Addr,
-    my_peer_id: PeerId,
-    resolver: std::sync::Arc<dyn MagicDnsQueryResolver>,
-}
+/// Bound for one MagicDNS resolution (inline fallback or async worker).
+///
+/// Async mode absorbs the UDP query off the NIC pipeline first, so this budget
+/// no longer stalls overlay traffic sharing the same worker — it only bounds
+/// how long a single query waits before the client must retry.
+const RESOLVE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(3);
 
-pub(crate) fn magic_dns_packet_filter(
-    fake_ip: Ipv4Addr,
-    my_peer_id: PeerId,
-    resolver: std::sync::Arc<dyn MagicDnsQueryResolver>,
-) -> BoxNicPacketFilter {
-    Box::new(MagicDnsPacketFilter {
-        fake_ip,
-        my_peer_id,
-        resolver,
+/// Pending UDP/53 queries waiting for off-pipeline resolve + inject.
+const ABSORB_QUEUE_CAP: usize = 256;
+
+/// Concurrent DNS resolve workers per MagicDNS NIC filter.
+const ABSORB_WORKERS: usize = 2;
+
+/// Escape hatch: force the pre-absorb inline await path
+/// (`EASYTIER_MAGIC_DNS_DATAPLANE_INLINE=1`).
+fn dataplane_inline_enabled() -> bool {
+    static INLINE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *INLINE.get_or_init(|| {
+        std::env::var("EASYTIER_MAGIC_DNS_DATAPLANE_INLINE")
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false)
     })
 }
 
-/// Upper bound for one MagicDNS resolution performed **on the data plane**.
-///
-/// This filter runs on the packet path that carries overlay traffic, so a
-/// stalled upstream must not hold the packet for an unbounded time: the
-/// delay would be visible as overlay latency, not just as a slow DNS answer.
-/// The packet is dropped when the budget is exhausted; the client retries
-/// against the real upstream.
-const DATA_PLANE_RESOLVE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(3);
+#[derive(Default)]
+struct MagicDnsDataplaneMetrics {
+    absorb: AtomicU64,
+    queue_overflow: AtomicU64,
+    resolve_ok: AtomicU64,
+    resolve_timeout: AtomicU64,
+    resolve_none: AtomicU64,
+    inject_ok: AtomicU64,
+    inject_fail: AtomicU64,
+}
+
+#[cfg(test)]
+impl MagicDnsDataplaneMetrics {
+    fn snapshot(&self) -> MagicDnsDataplaneMetricSnapshot {
+        MagicDnsDataplaneMetricSnapshot {
+            absorb: self.absorb.load(Ordering::Relaxed),
+            queue_overflow: self.queue_overflow.load(Ordering::Relaxed),
+            resolve_ok: self.resolve_ok.load(Ordering::Relaxed),
+            resolve_timeout: self.resolve_timeout.load(Ordering::Relaxed),
+            resolve_none: self.resolve_none.load(Ordering::Relaxed),
+            inject_ok: self.inject_ok.load(Ordering::Relaxed),
+            inject_fail: self.inject_fail.load(Ordering::Relaxed),
+        }
+    }
+}
+
+#[cfg(test)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+struct MagicDnsDataplaneMetricSnapshot {
+    absorb: u64,
+    queue_overflow: u64,
+    resolve_ok: u64,
+    resolve_timeout: u64,
+    resolve_none: u64,
+    inject_ok: u64,
+    inject_fail: u64,
+}
+
+struct AbsorbedDnsQuery {
+    packet: ZCPacket,
+    query: MagicDnsQuery,
+    source_ip: Ipv4Addr,
+    destination_ip: Ipv4Addr,
+    source_port: u16,
+    destination_port: u16,
+    ip_header_length: usize,
+}
+
+struct MagicDnsPacketFilter {
+    fake_ip: Ipv4Addr,
+    my_peer_id: PeerId,
+    resolver: Arc<dyn MagicDnsQueryResolver>,
+    queue_tx: mpsc::Sender<AbsorbedDnsQuery>,
+    metrics: Arc<MagicDnsDataplaneMetrics>,
+}
+
+/// Builds the NIC filter and returns a cancel token that registration must
+/// cancel on close so queued / in-flight absorb work does not inject afterward.
+pub(crate) fn magic_dns_packet_filter(
+    fake_ip: Ipv4Addr,
+    my_peer_id: PeerId,
+    resolver: Arc<dyn MagicDnsQueryResolver>,
+    peer_manager: Weak<PeerManagerCore>,
+) -> (BoxNicPacketFilter, CancellationToken) {
+    let (queue_tx, queue_rx) = mpsc::channel(ABSORB_QUEUE_CAP);
+    let metrics = Arc::new(MagicDnsDataplaneMetrics::default());
+    let absorb_cancel = CancellationToken::new();
+    spawn_absorb_workers(
+        queue_rx,
+        resolver.clone(),
+        peer_manager,
+        my_peer_id,
+        metrics.clone(),
+        absorb_cancel.clone(),
+    );
+    (
+        Box::new(MagicDnsPacketFilter {
+            fake_ip,
+            my_peer_id,
+            resolver,
+            queue_tx,
+            metrics,
+        }),
+        absorb_cancel,
+    )
+}
+
+fn spawn_absorb_workers(
+    queue_rx: mpsc::Receiver<AbsorbedDnsQuery>,
+    resolver: Arc<dyn MagicDnsQueryResolver>,
+    peer_manager: Weak<PeerManagerCore>,
+    my_peer_id: PeerId,
+    metrics: Arc<MagicDnsDataplaneMetrics>,
+    cancel: CancellationToken,
+) {
+    let queue_rx = Arc::new(tokio::sync::Mutex::new(queue_rx));
+    for worker_id in 0..ABSORB_WORKERS {
+        let queue_rx = queue_rx.clone();
+        let resolver = resolver.clone();
+        let peer_manager = peer_manager.clone();
+        let metrics = metrics.clone();
+        let cancel = cancel.clone();
+        tokio::spawn(async move {
+            loop {
+                if cancel.is_cancelled() {
+                    tracing::debug!(worker_id, "magic dns absorb worker cancelled");
+                    break;
+                }
+                let next = {
+                    let mut guard = queue_rx.lock().await;
+                    tokio::select! {
+                        biased;
+                        _ = cancel.cancelled() => None,
+                        next = guard.recv() => next,
+                    }
+                };
+                let Some(job) = next else {
+                    tracing::debug!(worker_id, "magic dns absorb worker exiting");
+                    break;
+                };
+                handle_absorbed_query(
+                    job,
+                    resolver.as_ref(),
+                    &peer_manager,
+                    my_peer_id,
+                    &metrics,
+                    &cancel,
+                )
+                .await;
+            }
+            // Dropping the last receiver discards any remaining queued jobs.
+        });
+    }
+}
+
+async fn handle_absorbed_query(
+    mut job: AbsorbedDnsQuery,
+    resolver: &dyn MagicDnsQueryResolver,
+    peer_manager: &Weak<PeerManagerCore>,
+    my_peer_id: PeerId,
+    metrics: &MagicDnsDataplaneMetrics,
+    cancel: &CancellationToken,
+) {
+    if cancel.is_cancelled() {
+        return;
+    }
+
+    let timed = tokio::select! {
+        biased;
+        _ = cancel.cancelled() => return,
+        result = tokio::time::timeout(RESOLVE_TIMEOUT, resolver.resolve(job.query)) => result,
+    };
+
+    let response = match timed {
+        Ok(Some(response)) => {
+            metrics.resolve_ok.fetch_add(1, Ordering::Relaxed);
+            response
+        }
+        Ok(None) => {
+            metrics.resolve_none.fetch_add(1, Ordering::Relaxed);
+            return;
+        }
+        Err(_) => {
+            metrics.resolve_timeout.fetch_add(1, Ordering::Relaxed);
+            tracing::warn!(
+                timeout = ?RESOLVE_TIMEOUT,
+                "magic dns resolve timed out off data plane; dropping query"
+            );
+            return;
+        }
+    };
+
+    if cancel.is_cancelled() {
+        return;
+    }
+
+    if !apply_udp_response(
+        &mut job.packet,
+        job.source_ip,
+        job.destination_ip,
+        job.source_port,
+        job.destination_port,
+        job.ip_header_length,
+        &response,
+    ) {
+        metrics.inject_fail.fetch_add(1, Ordering::Relaxed);
+        return;
+    }
+    if !finalize_reply_headers(
+        &mut job.packet,
+        job.source_ip,
+        job.destination_ip,
+        my_peer_id,
+    ) {
+        metrics.inject_fail.fetch_add(1, Ordering::Relaxed);
+        return;
+    }
+
+    if cancel.is_cancelled() {
+        return;
+    }
+
+    let Some(pm) = peer_manager.upgrade() else {
+        metrics.inject_fail.fetch_add(1, Ordering::Relaxed);
+        return;
+    };
+    match pm.inject_self_delivered_nic_packet(job.packet).await {
+        Ok(()) => {
+            metrics.inject_ok.fetch_add(1, Ordering::Relaxed);
+        }
+        Err(err) => {
+            metrics.inject_fail.fetch_add(1, Ordering::Relaxed);
+            tracing::warn!(?err, "magic dns inject after resolve failed");
+        }
+    }
+}
 
 #[async_trait]
 impl NicPacketFilter for MagicDnsPacketFilter {
-    async fn try_process_packet_from_nic(&self, packet: &mut ZCPacket) -> bool {
-        process_magic_dns_packet(packet, self.fake_ip, self.my_peer_id, |query| {
-            // The resolver runs inline on the data plane; bound it so a slow
-            // upstream cannot stall the packet (and with it the overlay
-            // traffic sharing this worker).
-            async move {
-                match tokio::time::timeout(DATA_PLANE_RESOLVE_TIMEOUT, self.resolver.resolve(query))
-                    .await
-                {
-                    Ok(response) => response,
-                    Err(_) => {
+    async fn try_process_packet_from_nic(&self, packet: &mut ZCPacket) -> NicFilterOutcome {
+        match classify_magic_dns_packet(packet, self.fake_ip) {
+            MagicDnsClassify::Pass => NicFilterOutcome::Pass,
+            MagicDnsClassify::IcmpEcho {
+                source_ip,
+                destination_ip,
+                ip_header_length,
+            } => {
+                let Ok(mut icmp_packet) =
+                    Icmpv4Packet::new_checked(&mut packet.mut_payload()[ip_header_length..])
+                else {
+                    return NicFilterOutcome::Pass;
+                };
+                if icmp_packet.msg_type() != Icmpv4Message::EchoRequest {
+                    return NicFilterOutcome::Pass;
+                }
+                icmp_packet.set_msg_type(Icmpv4Message::EchoReply);
+                icmp_packet.fill_checksum();
+                if !finalize_reply_headers(packet, source_ip, destination_ip, self.my_peer_id) {
+                    return NicFilterOutcome::Pass;
+                }
+                NicFilterOutcome::Rewrite
+            }
+            MagicDnsClassify::UdpDns {
+                source_ip,
+                destination_ip,
+                source_port,
+                destination_port,
+                ip_header_length,
+                query,
+            } => {
+                if dataplane_inline_enabled() {
+                    return inline_resolve_udp(
+                        packet,
+                        self.resolver.as_ref(),
+                        self.my_peer_id,
+                        source_ip,
+                        destination_ip,
+                        source_port,
+                        destination_port,
+                        ip_header_length,
+                        query,
+                        &self.metrics,
+                    )
+                    .await;
+                }
+
+                let absorbed = AbsorbedDnsQuery {
+                    packet: packet.clone(),
+                    query,
+                    source_ip,
+                    destination_ip,
+                    source_port,
+                    destination_port,
+                    ip_header_length,
+                };
+                match self.queue_tx.try_send(absorbed) {
+                    Ok(()) => {
+                        self.metrics.absorb.fetch_add(1, Ordering::Relaxed);
+                        NicFilterOutcome::Absorb
+                    }
+                    Err(mpsc::error::TrySendError::Full(_)) => {
+                        self.metrics.queue_overflow.fetch_add(1, Ordering::Relaxed);
                         tracing::warn!(
-                            timeout = ?DATA_PLANE_RESOLVE_TIMEOUT,
-                            "magic dns resolve timed out on the data plane; dropping query"
+                            cap = ABSORB_QUEUE_CAP,
+                            "magic dns absorb queue full; dropping query"
                         );
-                        None
+                        // Still Absorb so the raw query is not forwarded as data.
+                        NicFilterOutcome::Absorb
+                    }
+                    Err(mpsc::error::TrySendError::Closed(_)) => {
+                        tracing::warn!("magic dns absorb queue closed; dropping query");
+                        NicFilterOutcome::Absorb
                     }
                 }
             }
-        })
-        .await
+        }
     }
 
     fn id(&self) -> String {
@@ -128,25 +413,81 @@ impl NicPacketFilter for MagicDnsPacketFilter {
     }
 }
 
-pub async fn process_magic_dns_packet<F, Fut>(
+#[allow(clippy::too_many_arguments)]
+async fn inline_resolve_udp(
     packet: &mut ZCPacket,
-    fake_ip: Ipv4Addr,
+    resolver: &dyn MagicDnsQueryResolver,
     my_peer_id: PeerId,
-    resolve: F,
-) -> bool
-where
-    F: FnOnce(MagicDnsQuery) -> Fut,
-    Fut: Future<Output = Option<Vec<u8>>>,
-{
+    source_ip: Ipv4Addr,
+    destination_ip: Ipv4Addr,
+    source_port: u16,
+    destination_port: u16,
+    ip_header_length: usize,
+    query: MagicDnsQuery,
+    metrics: &MagicDnsDataplaneMetrics,
+) -> NicFilterOutcome {
+    let response = match tokio::time::timeout(RESOLVE_TIMEOUT, resolver.resolve(query)).await {
+        Ok(Some(response)) => {
+            metrics.resolve_ok.fetch_add(1, Ordering::Relaxed);
+            response
+        }
+        Ok(None) => {
+            metrics.resolve_none.fetch_add(1, Ordering::Relaxed);
+            return NicFilterOutcome::Pass;
+        }
+        Err(_) => {
+            metrics.resolve_timeout.fetch_add(1, Ordering::Relaxed);
+            tracing::warn!(
+                timeout = ?RESOLVE_TIMEOUT,
+                "magic dns resolve timed out on the data plane; dropping query"
+            );
+            return NicFilterOutcome::Pass;
+        }
+    };
+    if !apply_udp_response(
+        packet,
+        source_ip,
+        destination_ip,
+        source_port,
+        destination_port,
+        ip_header_length,
+        &response,
+    ) {
+        return NicFilterOutcome::Pass;
+    }
+    if !finalize_reply_headers(packet, source_ip, destination_ip, my_peer_id) {
+        return NicFilterOutcome::Pass;
+    }
+    NicFilterOutcome::Rewrite
+}
+
+enum MagicDnsClassify {
+    Pass,
+    IcmpEcho {
+        source_ip: Ipv4Addr,
+        destination_ip: Ipv4Addr,
+        ip_header_length: usize,
+    },
+    UdpDns {
+        source_ip: Ipv4Addr,
+        destination_ip: Ipv4Addr,
+        source_port: u16,
+        destination_port: u16,
+        ip_header_length: usize,
+        query: MagicDnsQuery,
+    },
+}
+
+fn classify_magic_dns_packet(packet: &ZCPacket, fake_ip: Ipv4Addr) -> MagicDnsClassify {
     if packet.peer_manager_header().is_none() {
-        return false;
+        return MagicDnsClassify::Pass;
     }
     if packet.payload().len() < IPV4_HEADER_LEN {
-        return false;
+        return MagicDnsClassify::Pass;
     }
     let ip_packet = Ipv4Packet::new_unchecked(packet.payload());
     if ip_packet.version() != 4 || ip_packet.dst_addr() != fake_ip {
-        return false;
+        return MagicDnsClassify::Pass;
     }
 
     let ip_header_length = ip_packet.header_len() as usize;
@@ -157,7 +498,7 @@ where
         || ip_packet.frag_offset() != 0
         || ip_packet.more_frags()
     {
-        return false;
+        return MagicDnsClassify::Pass;
     }
 
     let protocol = ip_packet.next_header();
@@ -168,22 +509,99 @@ where
         IpProtocol::Udp => {
             let ip_payload = &packet.payload()[ip_header_length..ip_total_length];
             if ip_payload.len() < UDP_HEADER_LEN {
-                return false;
+                return MagicDnsClassify::Pass;
             }
             let udp_packet = UdpPacket::new_unchecked(ip_payload);
             let udp_length = udp_packet.len() as usize;
             if udp_length != ip_payload.len() || udp_length < UDP_HEADER_LEN {
-                return false;
+                return MagicDnsClassify::Pass;
             }
             if udp_packet.dst_port() != 53 {
-                return false;
+                return MagicDnsClassify::Pass;
             }
             let source_port = udp_packet.src_port();
             let destination_port = udp_packet.dst_port();
-            let query = MagicDnsQuery {
-                source: std::net::SocketAddr::from((source_ip, source_port)),
-                payload: udp_packet.payload().to_vec(),
+            MagicDnsClassify::UdpDns {
+                source_ip,
+                destination_ip,
+                source_port,
+                destination_port,
+                ip_header_length,
+                query: MagicDnsQuery {
+                    source: std::net::SocketAddr::from((source_ip, source_port)),
+                    payload: udp_packet.payload().to_vec(),
+                },
+            }
+        }
+        IpProtocol::Icmp => MagicDnsClassify::IcmpEcho {
+            source_ip,
+            destination_ip,
+            ip_header_length,
+        },
+        _ => MagicDnsClassify::Pass,
+    }
+}
+
+fn finalize_reply_headers(
+    packet: &mut ZCPacket,
+    source_ip: Ipv4Addr,
+    destination_ip: Ipv4Addr,
+    my_peer_id: PeerId,
+) -> bool {
+    let mut ip_packet = Ipv4Packet::new_unchecked(packet.mut_payload());
+    ip_packet.set_src_addr(destination_ip);
+    ip_packet.set_dst_addr(source_ip);
+    ip_packet.fill_checksum();
+    let payload_length = packet.payload().len() as u32;
+    let Some(header) = packet.mut_peer_manager_header() else {
+        return false;
+    };
+    header.to_peer_id = my_peer_id.into();
+    header.len.set(payload_length);
+    true
+}
+
+/// Test / inline helper: await resolve on the calling task and rewrite in place.
+///
+/// Production NIC path uses absorb + workers instead (unless the inline env
+/// escape hatch is set).
+pub async fn process_magic_dns_packet<F, Fut>(
+    packet: &mut ZCPacket,
+    fake_ip: Ipv4Addr,
+    my_peer_id: PeerId,
+    resolve: F,
+) -> bool
+where
+    F: FnOnce(MagicDnsQuery) -> Fut,
+    Fut: Future<Output = Option<Vec<u8>>>,
+{
+    match classify_magic_dns_packet(packet, fake_ip) {
+        MagicDnsClassify::Pass => false,
+        MagicDnsClassify::IcmpEcho {
+            source_ip,
+            destination_ip,
+            ip_header_length,
+        } => {
+            let Ok(mut icmp_packet) =
+                Icmpv4Packet::new_checked(&mut packet.mut_payload()[ip_header_length..])
+            else {
+                return false;
             };
+            if icmp_packet.msg_type() != Icmpv4Message::EchoRequest {
+                return false;
+            }
+            icmp_packet.set_msg_type(Icmpv4Message::EchoReply);
+            icmp_packet.fill_checksum();
+            finalize_reply_headers(packet, source_ip, destination_ip, my_peer_id)
+        }
+        MagicDnsClassify::UdpDns {
+            source_ip,
+            destination_ip,
+            source_port,
+            destination_port,
+            ip_header_length,
+            query,
+        } => {
             let Some(response) = resolve(query).await else {
                 return false;
             };
@@ -198,34 +616,9 @@ where
             ) {
                 return false;
             }
+            finalize_reply_headers(packet, source_ip, destination_ip, my_peer_id)
         }
-        IpProtocol::Icmp => {
-            let Ok(icmp_packet) = Icmpv4Packet::new_checked(&packet.payload()[ip_header_length..])
-            else {
-                return false;
-            };
-            if icmp_packet.msg_type() != Icmpv4Message::EchoRequest {
-                return false;
-            }
-            let mut icmp_packet =
-                Icmpv4Packet::new_unchecked(&mut packet.mut_payload()[ip_header_length..]);
-            icmp_packet.set_msg_type(Icmpv4Message::EchoReply);
-            icmp_packet.fill_checksum();
-        }
-        _ => return false,
     }
-
-    let mut ip_packet = Ipv4Packet::new_unchecked(packet.mut_payload());
-    ip_packet.set_src_addr(destination_ip);
-    ip_packet.set_dst_addr(source_ip);
-    ip_packet.fill_checksum();
-    let payload_length = packet.payload().len() as u32;
-    let Some(header) = packet.mut_peer_manager_header() else {
-        return false;
-    };
-    header.to_peer_id = my_peer_id.into();
-    header.len.set(payload_length);
-    true
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -278,6 +671,7 @@ fn apply_udp_response(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::AtomicBool;
 
     fn udp_query(payload: &[u8], destination_port: u16) -> ZCPacket {
         let mut bytes = vec![0; 20 + 8 + payload.len()];
@@ -313,6 +707,30 @@ mod tests {
         }
         ZCPacket::new_with_payload(&bytes)
     }
+
+    struct ImmediateResolver;
+
+    #[async_trait]
+    impl MagicDnsQueryResolver for ImmediateResolver {
+        async fn resolve(&self, query: MagicDnsQuery) -> Option<Vec<u8>> {
+            Some(format!("echo:{}", String::from_utf8_lossy(&query.payload)).into_bytes())
+        }
+    }
+
+    struct BlockingResolver {
+        entered: Arc<AtomicBool>,
+        release: Arc<tokio::sync::Notify>,
+    }
+
+    #[async_trait]
+    impl MagicDnsQueryResolver for BlockingResolver {
+        async fn resolve(&self, _query: MagicDnsQuery) -> Option<Vec<u8>> {
+            self.entered.store(true, Ordering::SeqCst);
+            self.release.notified().await;
+            Some(b"slow".to_vec())
+        }
+    }
+
     #[tokio::test]
     async fn packet_engine_rewrites_dns_query_response() {
         let mut packet = udp_query(b"query", 53);
@@ -464,5 +882,107 @@ mod tests {
             )
             .await
         );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn nic_filter_absorbs_udp53_without_awaiting_resolver() {
+        let entered = Arc::new(AtomicBool::new(false));
+        let release = Arc::new(tokio::sync::Notify::new());
+        let resolver: Arc<dyn MagicDnsQueryResolver> = Arc::new(BlockingResolver {
+            entered: entered.clone(),
+            release: release.clone(),
+        });
+        let (queue_tx, mut queue_rx) = mpsc::channel(ABSORB_QUEUE_CAP);
+        let metrics = Arc::new(MagicDnsDataplaneMetrics::default());
+        let filter = MagicDnsPacketFilter {
+            fake_ip: "10.255.255.254".parse().unwrap(),
+            my_peer_id: 1,
+            resolver,
+            queue_tx,
+            metrics: metrics.clone(),
+        };
+
+        let mut packet = udp_query(b"query", 53);
+        let outcome = filter.try_process_packet_from_nic(&mut packet).await;
+        assert_eq!(outcome, NicFilterOutcome::Absorb);
+        assert!(
+            !entered.load(Ordering::SeqCst),
+            "resolver must not run on the NIC filter task"
+        );
+        assert_eq!(metrics.snapshot().absorb, 1);
+
+        let job = tokio::time::timeout(std::time::Duration::from_millis(200), queue_rx.recv())
+            .await
+            .expect("queue recv timed out")
+            .expect("absorbed job");
+        assert_eq!(job.query.payload, b"query");
+        release.notify_one();
+    }
+
+    #[tokio::test]
+    async fn nic_filter_rewrites_icmp_synchronously() {
+        let (queue_tx, _queue_rx) = mpsc::channel(ABSORB_QUEUE_CAP);
+        let filter = MagicDnsPacketFilter {
+            fake_ip: "10.255.255.254".parse().unwrap(),
+            my_peer_id: 9,
+            resolver: Arc::new(ImmediateResolver),
+            queue_tx,
+            metrics: Arc::new(MagicDnsDataplaneMetrics::default()),
+        };
+        let mut packet = icmp_echo_request();
+        let outcome = filter.try_process_packet_from_nic(&mut packet).await;
+        assert_eq!(outcome, NicFilterOutcome::Rewrite);
+        assert_eq!(packet.get_dst_peer_id(), Some(9));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn absorb_cancel_aborts_in_flight_resolve_without_inject() {
+        let entered = Arc::new(AtomicBool::new(false));
+        let release = Arc::new(tokio::sync::Notify::new());
+        let resolver: Arc<dyn MagicDnsQueryResolver> = Arc::new(BlockingResolver {
+            entered: entered.clone(),
+            release: release.clone(),
+        });
+        let metrics = Arc::new(MagicDnsDataplaneMetrics::default());
+        let cancel = CancellationToken::new();
+        let (tx, rx) = mpsc::channel(ABSORB_QUEUE_CAP);
+        spawn_absorb_workers(
+            rx,
+            resolver,
+            Weak::new(),
+            1,
+            metrics.clone(),
+            cancel.clone(),
+        );
+
+        tx.try_send(AbsorbedDnsQuery {
+            packet: udp_query(b"query", 53),
+            query: MagicDnsQuery {
+                source: "10.0.0.2:53000".parse().unwrap(),
+                payload: b"query".to_vec(),
+            },
+            source_ip: "10.0.0.2".parse().unwrap(),
+            destination_ip: "10.255.255.254".parse().unwrap(),
+            source_port: 53000,
+            destination_port: 53,
+            ip_header_length: 20,
+        })
+        .unwrap();
+
+        tokio::time::timeout(std::time::Duration::from_secs(1), async {
+            while !entered.load(Ordering::SeqCst) {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("resolver should start before cancel");
+
+        cancel.cancel();
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        let snap = metrics.snapshot();
+        assert_eq!(snap.resolve_ok, 0, "cancel must abort before resolve completes");
+        assert_eq!(snap.inject_ok, 0);
+        assert_eq!(snap.inject_fail, 0);
+        release.notify_one();
     }
 }

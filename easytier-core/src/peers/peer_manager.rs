@@ -2579,6 +2579,19 @@ impl PeerManagerCore {
             .await
     }
 
+    /// Inject a NIC-filter response prepared for self-delivery (MagicDNS).
+    ///
+    /// Skips the NIC filter pipeline; see
+    /// [`PeerOutboundPacketRouter::inject_self_delivered_nic_packet`].
+    pub(crate) async fn inject_self_delivered_nic_packet(
+        &self,
+        msg: ZCPacket,
+    ) -> Result<(), Error> {
+        self.outbound_packet_router
+            .inject_self_delivered_nic_packet(msg)
+            .await
+    }
+
     /// Display-only send used by the VIP reachability prober. See
     /// [`PeerOutboundPacketRouter::send_probe_msg_by_ip`].
     pub async fn send_probe_msg_by_ip(
@@ -3951,7 +3964,18 @@ impl PeerOutboundPacketRouter {
         let pipelines = self.nic_packet_process_pipeline.load_full();
         for pipeline in pipelines.iter().rev() {
             if let Some(filter) = pipeline.filter_if_active() {
-                let _ = filter.try_process_packet_from_nic(data).await;
+                match filter.try_process_packet_from_nic(data).await {
+                    crate::peers::NicFilterOutcome::Pass => {}
+                    crate::peers::NicFilterOutcome::Rewrite => {
+                        // Keep running later filters so NAT / proxy can still
+                        // see the rewritten packet; destination is re-parsed
+                        // after the whole pipeline in `send_msg_by_ip`.
+                    }
+                    crate::peers::NicFilterOutcome::Absorb => {
+                        // Filter took ownership (e.g. MagicDNS async resolve).
+                        return false;
+                    }
+                }
             }
         }
 
@@ -4587,6 +4611,24 @@ impl PeerOutboundPacketRouter {
             tracing::error!(?errs, "send_msg has error");
             Err(anyhow::anyhow!("send_msg has error: {:?}", errs).into())
         }
+    }
+
+    /// Inject a packet that a NIC filter already prepared for self-delivery
+    /// (e.g. MagicDNS UDP/53 response with `to_peer_id = my_peer_id`).
+    ///
+    /// Skips the NIC filter pipeline so the same filter cannot re-absorb the
+    /// response. Destination IP is taken from the rewritten inner header.
+    pub(crate) async fn inject_self_delivered_nic_packet(
+        &self,
+        msg: ZCPacket,
+    ) -> Result<(), Error> {
+        let Some(dst_ip) = crate::packet::ip::parse_ip_packet(msg.payload()).map(|m| m.dst_ip)
+        else {
+            return Err(anyhow::anyhow!("inject_self_delivered_nic_packet: no dst IP").into());
+        };
+        self.send_msg_by_ip_after_pipeline(msg, dst_ip, false, false)
+            .await
+            .map(|_| ())
     }
 
     /// Park a packet whose destination has no route yet (P-AUDIT.12).

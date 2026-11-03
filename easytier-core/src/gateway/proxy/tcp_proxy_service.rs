@@ -556,11 +556,18 @@ impl<R: TcpProxyRuntime + 'static, F: VirtualTcpListenerFactory, C: TcpProxyDest
 impl<R: TcpProxyRuntime + 'static, F: VirtualTcpListenerFactory, C: TcpProxyDestinationConnector>
     NicPacketFilter for TcpProxyServiceFilter<R, F, C>
 {
-    async fn try_process_packet_from_nic(&self, packet: &mut ZCPacket) -> bool {
+    async fn try_process_packet_from_nic(
+        &self,
+        packet: &mut ZCPacket,
+    ) -> crate::peers::NicFilterOutcome {
         let Some(service) = self.service.upgrade() else {
-            return false;
+            return crate::peers::NicFilterOutcome::Pass;
         };
-        service.handle_nic_packet(packet).await
+        if service.handle_nic_packet(packet).await {
+            crate::peers::NicFilterOutcome::Rewrite
+        } else {
+            crate::peers::NicFilterOutcome::Pass
+        }
     }
 }
 
