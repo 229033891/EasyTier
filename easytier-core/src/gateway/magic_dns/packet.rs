@@ -980,7 +980,10 @@ mod tests {
         cancel.cancel();
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
         let snap = metrics.snapshot();
-        assert_eq!(snap.resolve_ok, 0, "cancel must abort before resolve completes");
+        assert_eq!(
+            snap.resolve_ok, 0,
+            "cancel must abort before resolve completes"
+        );
         assert_eq!(snap.inject_ok, 0);
         assert_eq!(snap.inject_fail, 0);
         release.notify_one();
