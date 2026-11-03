@@ -105,5 +105,9 @@ go.sum
 # tooling scratch (tgrep index / logs)
 .tgrep/
 
+# Python bytecode cache (script/*.py helpers)
+__pycache__/
+*.pyc
+
 # local research scratch (agent notes, transcripts, reference dumps)
 /_cursor_research/

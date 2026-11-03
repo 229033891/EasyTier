@@ -35,10 +35,13 @@ jobs:
     runs-on: ubuntu-latest
     if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     env:
+      # `easytier-benches/**` is intentionally NOT listed here: the crate is
+      # `publish = false` and only holds Criterion benchmarks, so a bench-only
+      # change cannot alter any released binary. Bench changes still gate
+      # `test.yml` (compile + `cargo bench` threshold gate).
       RELEVANT_PATHS: >-
         ["Cargo.toml", "Cargo.lock", "rust-toolchain.toml", ".cargo/**",
         "easytier/**", "easytier-core/**", "easytier-proto/**",
-        "easytier-benches/**",
         "easytier-rpc-build/**", "easytier-web/**",
         ".github/workflows/openwrt.yml", ".github/actions/**"]
     outputs:

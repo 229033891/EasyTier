@@ -347,7 +347,7 @@ cursor 按 3 前进 → 公平轮转（覆盖性有保证，但周期随链路�
         │
         ▼ Dijkstra 沿路径累加（LeastCost 选最省；LeastHop 只按跳数选路，累加仍是真实边权）
   path_latency = Σ edge_cost + (k−1)×relay_hop_penalty                peer_ospf_route.rs
-  （relay_hop_penalty：opt-in 中继跳惩罚，默认 0；见 docs/current/relay-hop-penalty.md §4）
+  （relay_hop_penalty：中继跳惩罚，出厂默认 5，设 `0` 关闭；见 docs/current/relay-hop-penalty.md §4）
         │
         ▼ 前端（改前）Math.ceil(path_latency) + "ms"
         ▼ 前端（待验收）latencyMs：VIP ≈Nms / pathCostLabel / 政策绕行；代价可进 tip

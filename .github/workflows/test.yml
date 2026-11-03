@@ -181,11 +181,22 @@ jobs:
       # harness=false inherits [profile.release] panic=abort. Cargo builds the
       # lib a bench depends on as unwind (rust-lang/cargo#13894), so an abort
       # unit dies with E0463; the env var is the setting we verified locally.
-      # The benches live in the dedicated `easytier-benches` crate: a plain
-      # `cargo bench -p easytier` pulls in the `easytier` package's bins (cargo
-      # 1.95 still builds them despite `bench = false`) and a second
+      # The benches live in the dedicated `easytier-benches` crate.
+      #
+      # History (why the crate exists): the benches used to live in `easytier`,
+      # where `cargo bench -p easytier` also builds the package's bins (cargo
+      # 1.95 still builds them despite `bench = false`) and pulled in a second
       # `test-utils` variant of `easytier-core` via dev-dependencies, whose
-      # unhashed rlib clobbers the normal one (rust-lang/cargo#6313).
+      # unhashed rlib clobbered the normal one (rust-lang/cargo#6313) and
+      # killed the run with E0463.
+      #
+      # Now: `cargo bench -p easytier-benches` never builds the `easytier`
+      # package, so its dependency graph holds exactly ONE `easytier-core`
+      # feature variant (`test-utils`) and no unhashed-rlib collision is
+      # possible. Note that `easytier` itself still carries a `test-utils`
+      # dev-dependency (restored in 6bad5ae6 for its own integration tests) —
+      # that is harmless here precisely because the bench job does not build
+      # that package. Do not move the benches back into `easytier`.
       - name: Run the routing benchmark
         env:
           CARGO_PROFILE_BENCH_PANIC: unwind

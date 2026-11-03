@@ -63,17 +63,54 @@ pub fn del_netns(name: &str) {
         .args(["link", "del", get_host_veth_name(name)])
         .output();
 
-    let _ = std::process::Command::new("ip")
-        .args(["netns", "del", name])
-        .output();
+    // `ip netns del` can fail while the namespace file is still mounted
+    // ("Device or resource busy"). Retry once: a namespace that survives the
+    // delete keeps the previous test case's sockets — and their TIME_WAIT
+    // ports — alive, and the following `ip netns add` then fails with
+    // "File exists", leaving a stale namespace behind.
+    for _ in 0..2 {
+        let Ok(out) = std::process::Command::new("ip")
+            .args(["netns", "del", name])
+            .output()
+        else {
+            return;
+        };
+        if out.status.success() {
+            return;
+        }
+    }
 }
 
 pub fn create_netns(name: &str, ipv4: &str, ipv6: &str) {
     // create netns
-    let _ = std::process::Command::new("ip")
-        .args(["netns", "add", name])
-        .output()
-        .unwrap();
+    //
+    // `ip netns add` fails with "File exists" when the namespace file was not
+    // removed by `del_netns`. Retry once after forcing the removal instead of
+    // silently continuing with the stale namespace, which would keep the
+    // previous case's sockets bound.
+    let mut added = false;
+    for attempt in 0..2 {
+        let out = std::process::Command::new("ip")
+            .args(["netns", "add", name])
+            .output()
+            .unwrap();
+        if out.status.success() {
+            added = true;
+            break;
+        }
+        if attempt == 0 {
+            println!(
+                "netns {name}: `ip netns add` failed ({}), forcing a delete and retrying",
+                String::from_utf8_lossy(&out.stderr).trim()
+            );
+            let _ = std::process::Command::new("ip")
+                .args(["netns", "delete", name])
+                .output();
+        }
+    }
+    if !added {
+        println!("netns {name}: `ip netns add` failed, reusing the existing namespace");
+    }
 
     // set lo up
     let _ = std::process::Command::new("ip")

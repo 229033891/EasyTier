@@ -4,6 +4,7 @@ version = "2.7.10"
 edition.workspace = true
 rust-version.workspace = true
 description = "Criterion benchmarks for EasyTier hot paths"
+license-file = "../LICENSE"
 publish = false
 
 [[bench]]

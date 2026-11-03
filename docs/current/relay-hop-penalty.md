@@ -1,6 +1,6 @@
 # relay_hop_penalty（中继跳惩罚）变更说明
 
-**Status: Current** ｜ 最近审阅：2026-11-02 ｜ 关联：`docs/current/routing-bug-audit-2026-10.md` §1d（B14 撤回）、`docs/roadmap/live-next-hop.md:443/484`（选路契约与负例）
+**Status: Current** ｜ 最近审阅：2026-11-03 ｜ 关联：`docs/current/routing-bug-audit-2026-10.md` §1d（B14 撤回）、`docs/roadmap/live-next-hop.md:443/484`（选路契约与负例）、`docs/current/egress-fair-queue.md`（同版放开的出口公平队列）
 
 ---
 
@@ -43,7 +43,7 @@ relay_hop_penalty = 5
 |---|---|
 | `easytier-proto/proto/common.proto` | `FlagsInConfig` 新增 `uint32 relay_hop_penalty = 59;`（单位单一出处 + 上界说明） |
 | `easytier-proto/proto/api_manage.proto` | `NetworkConfig` 新增 `optional uint32 relay_hop_penalty = 98;`——**必须**，否则 Full 全量下发会把 TOML 值静默清零（见 §3.2） |
-| `easytier-core/src/config/toml.rs` | `gen_default_flags()` 默认 0；`define_flags_diff` 字段表同步 |
+| `easytier-core/src/config/toml.rs` | `gen_default_flags()` 默认 **5**（2026-11-02 起出厂默认；守卫测试 `default_relay_hop_penalty_is_five` 钉死该值）；`define_flags_diff` 字段表同步 |
 | `easytier-core/src/config/mod.rs` | `RELAY_HOP_PENALTY_MAX` + `clamp_relay_hop_penalty`（**定义在 config 层**，所有消费者单一出处；OSPF 侧编译期断言钉死与 `OSPF_EDGE_COST_MAX/8` 的推导关系） |
 | `easytier-core/src/config/api_input.rs` | ① Full→TomlConfigLoader 路径回填该字段（**超界报错**）；② TOML→proto 回显**生效值**（clamp 后，保证控制台不会显示一个自己保存时会被拒绝的数）；③ `FORM_MANAGED_FLAG_FIELDS` 登记 |
 | `easytier-core/src/peers/route/peer_ospf_route.rs` | 核心：建图循环对 `src != my` 的边 `saturating_add` 惩罚；`update_route_table` 每次重建从 `context.flags()` 读取（**签名未变**），兜底 clamp + 按值去重 warn；runtime 变更分支触发重建（**带变更检测**，惩罚未变跳过）；>0 时 debug 日志 |
@@ -82,7 +82,8 @@ OSPF 现有代价模型是**纯边代价线性相加**：k 边路径代价 = k �
 
 - 能表达「每多一跳就多一份开销」，让 marginal 中继胜出可被翻转为直连；
 - **不破坏质量选路的核心能力**：真正大的质量差距（如 100ms 烂直连 vs 30+30ms 中继路径）下，中继依然必须能赢；
-- 默认关闭、向后兼容、无需全网协议升级。
+- **协议层零改动**（惩罚是本节点计算侧的纯加法项，不进 wire 协议）——因此**不需要全网协议版本升级**，只需要**全网节点取同一惩罚值**（§3.3）；
+- **默认开启**（出厂默认 5，见 §0 与 §1）：这不是 opt-in，**升级即行为变更**——不改任何配置也会生效。发版级升级口径与滚动升级纪律见 **§7**。
 
 ---
 
@@ -121,7 +122,8 @@ OSPF 现有代价模型是**纯边代价线性相加**：k 边路径代价 = k �
 惩罚是**每节点独立的选路权重**。各节点取值不一致时，不同节点对「最优路径」的判断不再自洽——这是经典的前缀树不自洽 / 微环来源。因此：
 
 - **全网节点必须设置相同值**（不是「建议」）；
-- 值只需在一处定义（proto 注释），改值走与 `latency_first` 相同的全网配置流程。
+- 值只需在一处定义（proto 注释），改值走与 `latency_first` 相同的全网配置流程；
+- **滚动升级期间尤其要注意**：升级窗口内新旧节点并存，新节点按出厂默认 **5** 计算、旧节点按历史默认 **0** 计算——**同一张拓扑在两侧会得出不同的路径代价判断**，可能表现为「marginal 中继在新节点上突然不被选」「`ET-cli route` 在不同节点上给出的 `path_latency` 对不上」。这不是配置错误，是升级窗口的必然过渡态。**处置：升级窗口尽量收短，尽快全网统一到同一值**（统一后若需保留旧行为，把所有节点的 `relay_hop_penalty` 一起显式设为 `0`，而不是只在新节点上设）。升级期的完整口径见 §7。
 
 ### 3.4 关键设计决策
 
@@ -188,3 +190,45 @@ relay_hop_penalty = 5
 
 - 该网络直连建立链路（防火墙、11010 监听、NAT 打洞）经实测全部正常，「走中继」纯属选路结果；
 - 若业务上要求「有直连必走直连」，更简单的手段是 `latency_first = false`（LeastHop）；`relay_hop_penalty` 的定位是**保留质量选路能力的前提下，让运维能校正模型对中转开销的低估**。
+
+---
+
+## 7. 升级说明（发版级行为变更）
+
+> **本节是运维升级时的第一读文档。两个 flag 在同一版本一起放开，务必合并理解。**
+
+### 7.1 变更摘要
+
+| 配置项 | 旧默认 | 新默认（出厂） | 影响面 | 兼容性 |
+|--------|--------|----------------|--------|--------|
+| `relay_hop_penalty` | `0` | **`5`** | **全网选路**（LeastCost 路径代价） | **行为变更**——升级即生效，不改配置也会变 |
+| `enable_egress_fair_queue` | `false` | **`true`** | **本节点出口队列**（PeerConn 出口） | **行为变更**——升级即生效，不改配置也会变 |
+
+两个默认值都是**出厂即生效**，**不需要运维改任何配置**。反过来，任何「升级后行为变了」的反馈，都应先怀疑这两项，而不是先怀疑 bug。
+
+### 7.2 排障口径：升级后「行为变了」先看这里
+
+| 观察到的现象 | 最可能的原因 | 处置 |
+|---|---|---|
+| **marginal 中继突然不被选了**（如两跳和 7 vs 直连 9，现在选了直连 9） | `relay_hop_penalty` 默认 0→5，两跳路径代价变成 `7+5=12 > 9` | **这是预期行为**。若要保留旧选路，全网显式设 `relay_hop_penalty = 0` |
+| `ET-cli route` 的 `path_latency` 比升级前大 | 该路径含中间节点，`path_latency` 含 `(k−1)×惩罚` | 预期行为，差值应恰好等于 `(k−1)×penalty` |
+| `path_latency` 在**不同节点上对不上** | **升级窗口内新旧节点混跑**：新节点按 5、旧节点按 0 | 尽快全网统一（见 §7.3），这是升级窗口的必然过渡态 |
+| 交互流尾延迟改善 / bulk 流不再拖住小包 | `enable_egress_fair_queue` 默认开启 | 预期行为。回退：`enable_egress_fair_queue = false`（**仅回退 PeerConn 出口侧**，TUN/smoltcp 桥的 dispatcher 改造无条件生效，见 `egress-fair-queue.md` §3.2） |
+| 出口排队内存变大（每 conn 最多 288 个包） | 同上，FQ 的排队深度高于旧单 FIFO | 预期行为；低配设备（OpenWrt 等）建议灰度并留意内存 |
+| 升级后所有节点同时出现上述任一现象 | 出厂默认生效 | **正常**。只有「部分节点变了、部分没变」才是需要排查的状态（配置不一致或混跑窗口） |
+
+### 7.3 滚动升级纪律（重申，必须遵守）
+
+两个 flag 的**兼容性质完全不同**，运维动作也不同：
+
+- **`relay_hop_penalty`（全网选路）——必须全网统一**。它是每节点独立的选路权重，新旧节点并存时同一拓扑在两侧算出不同的路径代价判断，可能引发选路不一致 / 微环。**升级窗口要尽量收短，尽快全网统一到同一值**；若决定保留旧行为，**所有节点一起**显式设 `relay_hop_penalty = 0`，不要只在新节点上设——只改一半等于人为制造 §3.3 描述的不自洽。
+- **`enable_egress_fair_queue`（本节点出口）——可以逐节点灰度**。纯本节点行为，无协议改动、无全网协调，新旧节点混跑不影响互通，也不需要全网统一。
+
+一句话：**前者要「全网齐步走」，后者可以「各节点自选」。** 两者同版放开只是发布节奏的巧合，运维上不要混为一谈。
+
+### 7.4 协议与配置面
+
+- **无需全网协议升级**：两个 flag 都是纯本节点配置项，wire 协议未变（`FlagsInConfig` 字段号 59 / 60，`NetworkConfig` 字段号 98 / 99），旧节点不识别新字段只会忽略，不会解析失败。
+- **管理 API 兼容**：两个字段都已登记在 `FORM_MANAGED_FLAG_FIELDS`，Full 下发不清零（`relay_hop_penalty` 见 §3.2，`enable_egress_fair_queue` 同先例），控制台可安全下发。
+- **无需改配置即可获得新行为**——反过来说，**回退才是需要显式改配置的动作**。
+

@@ -1,6 +1,6 @@
 # 隧道出口公平队列（Egress Fair Queue）变更说明
 
-**Status: Current** ｜ 最近审阅：2026-11-02 ｜ 关联：`docs/current/p2p-direct-stability-audit.md`、`peers/forward_egress.rs`（中转侧 per-dst lane，本变更的前置参照）
+**Status: Current** ｜ 最近审阅：2026-11-03 ｜ 关联：`docs/current/p2p-direct-stability-audit.md`、`peers/forward_egress.rs`（中转侧 per-dst lane，本变更的前置参照）、[`relay-hop-penalty.md`](./relay-hop-penalty.md)（同版放开的发版级升级说明 §7）
 
 ---
 
@@ -71,6 +71,7 @@ RDP 等交互式应用对**尾延迟**敏感。ET 的选路层（质量优先 + 
 ### 3.2 行为
 
 - **纯本节点行为**，无协议改动、无全网协调，可按节点灰度。**但回退是部分的**：`enable_egress_fair_queue = false` 只把 **PeerConn 出口**退回原 FIFO 直发；TUN 读取与 smoltcp 桥的 dispatcher 改造是**无条件生效**的（没有独立 flag）。文档 §1/§3.1 中「回退」均只对 PeerConn 成立。
+- **出厂默认 true ⇒ 升级即行为变更**（不需要改配置）。与同版放开的 `relay_hop_penalty`（默认 0→5）**兼容性质不同**：本 flag 是纯本节点行为、可逐节点灰度；`relay_hop_penalty` 改的是全网选路，必须全网统一。两者的发版级升级说明合并在 [`relay-hop-penalty.md` §7](./relay-hop-penalty.md)。
 - flag 在 **conn 建立时**读取（conn 生命周期内固定）；改配置后新连接生效。
 - 慢/拥塞隧道上的交互流尾延迟改善；LAN（µs 级排空）行为基本不变。
 - 内存增量：每 conn 最多 32+8×32=288 个排队包（旧路径 32，≈45KB@MTU1500 → ≈410KB），加上 dispatcher 4×128（≈750KB）。经验上限可按 `conn 数 × 288` 估算；对 128MB 级设备（OpenWrt 等）conn 数通常为个位数，总量可控，但仍建议低配节点灰度时留意。**可观测性**：conn 建立且 FQ 启用时打一条 `debug`（`conn_id`、`peer_id_hint`、优先桶/流桶容量、桶数），可直接判断「FQ 是否在这条 conn 上生效」；`push` 在等待预算内没排上队时按「第 1 次 / 2 的幂 / 每 1000 次」稀疏打 `debug`，并累计 per-conn 的 `buffer_full_drops`——上游 `BufferFull` 计数只能说明「有 conn 饱和」，这一条补上「是哪条 conn」。**仍缺**：各桶实时深度、指标导出、conn 级共享预算选项，属后续项。

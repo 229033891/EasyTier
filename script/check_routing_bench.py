@@ -22,6 +22,13 @@ Criterion stores groups under `target/criterion/<group>/<function>/new/`.
 Group names must not contain `/` (Criterion replaces `/` with `_` in paths);
 the benches use `policy_route_empty` / `policy_route_{scale}`.
 
+Feature fidelity: the bench crate builds `easytier-core` with
+`default-features = false` + `test-utils`, but every benchmarked function
+(`PeerMap::*` lookups and `LocalRouteTable::lookup`) is behind no
+`#[cfg(feature = ...)]` gate — the compiled code is identical to a
+default-feature production build, so these bounds measure the shipped path.
+See `easytier-benches/benches/README.md` ("Feature fidelity").
+
 Absolute latency targets (P99 < 1 us) are tracked by the benchmark itself,
 not gated here.
 

@@ -1190,8 +1190,11 @@ async fn subnet_proxy_test_udp(listen_ip: &str, target_ip: &str, timeout: Durati
     use crate::tunnel::common::tests::_tunnel_pingpong_netns_with_timeout;
     use rand::RngExt;
 
-    let udp_listener = core_udp_listener(format!("udp://{}:22233", listen_ip).parse().unwrap());
-    let udp_connector = core_udp_dialer(format!("udp://{}:22233", target_ip).parse().unwrap());
+    // A dynamic port per round: the named netns are shared across test
+    // processes, so a fixed port can still be held by an earlier case.
+    let port = next_netns_bench_port();
+    let udp_listener = core_udp_listener(format!("udp://{}:{port}", listen_ip).parse().unwrap());
+    let udp_connector = core_udp_dialer(format!("udp://{}:{port}", target_ip).parse().unwrap());
 
     // NOTE: this should not excced udp tunnel max buffer size
     let mut buf = vec![0; 7 * 1024];
@@ -1215,8 +1218,10 @@ async fn subnet_proxy_test_udp(listen_ip: &str, target_ip: &str, timeout: Durati
     assert!(result.is_ok(), "{}", result.unwrap_err());
 
     // no fragment
-    let udp_listener = core_udp_listener(format!("udp://{}:22233", listen_ip).parse().unwrap());
-    let udp_connector = core_udp_dialer(format!("udp://{}:22233", target_ip).parse().unwrap());
+    // A second, distinct port: the first round's socket may still hold its port.
+    let port = next_netns_bench_port();
+    let udp_listener = core_udp_listener(format!("udp://{}:{port}", listen_ip).parse().unwrap());
+    let udp_connector = core_udp_dialer(format!("udp://{}:{port}", target_ip).parse().unwrap());
 
     let mut buf = vec![0; 1024];
     rand::rng().fill(&mut buf[..]);
@@ -1513,9 +1518,12 @@ pub async fn subnet_proxy_half_close_test(
     )
     .await;
 
+    // The listener and the client must agree on the port: the subnet proxy
+    // forwards the connection to the same port number on the far side.
+    let port = next_netns_bench_port();
     let result = tokio::time::timeout(Duration::from_secs(10), async {
         let listener = NetNS::new(Some("net_d".into())).run(|| {
-            let listener = std::net::TcpListener::bind("10.1.2.4:22224").unwrap();
+            let listener = std::net::TcpListener::bind(format!("10.1.2.4:{port}")).unwrap();
             listener.set_nonblocking(true).unwrap();
             tokio::net::TcpListener::from_std(listener).unwrap()
         });
@@ -1525,7 +1533,7 @@ pub async fn subnet_proxy_half_close_test(
             let socket =
                 NetNS::new(Some("net_a".into())).run(|| tokio::net::TcpSocket::new_v4().unwrap());
             let (client, (server, _)) = tokio::try_join!(
-                socket.connect("10.1.3.4:22224".parse().unwrap()),
+                socket.connect(format!("10.1.3.4:{port}").parse().unwrap()),
                 listener.accept(),
             )
             .expect("failed to establish the proxied connection");
@@ -2117,10 +2125,14 @@ pub async fn wireguard_vpn_portal_multi_client() {
     let mut buf = vec![0u8; 1024];
     rand::rng().fill(&mut buf[..]);
     let expected = buf.clone();
+    // The echo listener and the client must agree on the port.
+    let echo_port = next_netns_bench_port();
     let echo_task = tokio::spawn(async move {
         let net_ns = NetNS::new(Some("net_a".into()));
         let _g = net_ns.guard();
-        let socket = TcpListener::bind("0.0.0.0:22222").await.unwrap();
+        let socket = TcpListener::bind(format!("0.0.0.0:{echo_port}"))
+            .await
+            .unwrap();
         let (mut st, addr) = socket.accept().await.unwrap();
         assert_eq!(addr.ip().to_string(), "10.144.144.4".to_string());
         let mut rbuf = vec![0u8; 1024];
@@ -2131,7 +2143,9 @@ pub async fn wireguard_vpn_portal_multi_client() {
     {
         let net_ns = NetNS::new(Some("net_d".into()));
         let _g = net_ns.guard();
-        let mut stream = TcpStream::connect("10.144.144.1:22222").await.unwrap();
+        let mut stream = TcpStream::connect(format!("10.144.144.1:{echo_port}"))
+            .await
+            .unwrap();
         stream.write_all(&buf).await.unwrap();
         let mut rbuf = vec![0u8; 1024];
         stream.read_exact(&mut rbuf).await.unwrap();
@@ -2543,6 +2557,8 @@ pub async fn socks5_vpn_portal(
 
     let buf_clone = buf.clone();
     let dst_addr_clone = dst_addr.to_owned();
+    // The tunnel target and the echo listener must agree on the port.
+    let echo_port = next_netns_bench_port();
     let task = tokio::spawn(async move {
         let net_ns = if dst_addr_clone == "10.144.144.1" {
             NetNS::new(Some("net_a".into()))
@@ -2554,7 +2570,9 @@ pub async fn socks5_vpn_portal(
 
         let _g = net_ns.guard();
 
-        let socket = TcpListener::bind("0.0.0.0:22222").await.unwrap();
+        let socket = TcpListener::bind(format!("0.0.0.0:{echo_port}"))
+            .await
+            .unwrap();
         let (mut st, addr) = socket.accept().await.unwrap();
 
         if dst_addr_clone == "10.144.144.1" {
@@ -2582,7 +2600,7 @@ pub async fn socks5_vpn_portal(
     println!("connect to socks5 portal done");
 
     stream.set_nodelay(true).unwrap();
-    let mut conn = Socks5Stream::connect_with_socket(stream, format!("{}:22222", dst_addr))
+    let mut conn = Socks5Stream::connect_with_socket(stream, format!("{}:{echo_port}", dst_addr))
         .await
         .unwrap();
 
@@ -3004,7 +3022,9 @@ pub async fn relay_bps_limit_test(#[values(100, 200, 400, 800)] bps_limit: u64) 
     .await;
 
     // connect to virtual ip (no tun mode)
-    let bps = measure_limited_payload_bps(bps_limit).await;
+    let bps = measure_limited_payload_bps(bps_limit)
+        .await
+        .unwrap_or_else(|e| panic!("netns bench never ran, throughput was not measured: {e:?}"));
     assert_limited_payload_bps(bps, bps_limit);
 
     drop_insts(insts).await;
@@ -3028,7 +3048,9 @@ pub async fn instance_recv_bps_limit_test(#[values(100, 800)] bps_limit: u64) {
     )
     .await;
 
-    let bps = measure_limited_payload_bps(bps_limit).await;
+    let bps = measure_limited_payload_bps(bps_limit)
+        .await
+        .unwrap_or_else(|e| panic!("netns bench never ran, throughput was not measured: {e:?}"));
     assert_limited_payload_bps(bps, bps_limit);
 
     drop_insts(insts).await;
@@ -3054,24 +3076,58 @@ fn assert_limited_payload_bps(bps: u64, bps_limit: u64) {
     );
 }
 
-/// Allocates a unique TCP port for the netns throughput benches.
+/// Allocates a TCP port for the netns-backed tests.
 ///
-/// The bench listener binds inside a shared netns, so a socket accepted by a
-/// previous bench keeps its local port in TIME_WAIT (Linux: 60s). Re-binding
-/// that port fails with `EADDRINUSE`, which used to abort the whole test
-/// (`listener.listen().await.unwrap()`). Handing out a fresh port per bench
-/// removes the coupling between consecutive benches and test cases.
-static NETNS_BENCH_PORT: std::sync::atomic::AtomicU16 = std::sync::atomic::AtomicU16::new(22223);
+/// A fixed port (or a bare per-process counter) is unsafe here for two
+/// independent reasons:
+///
+/// 1. **Cross-process reuse.** `nextest` runs every test case in its own
+///    process, and the named netns (`/var/run/netns/net_c`) are shared by all
+///    of them. `prepare_linux_namespaces()` recreates them per test, but it
+///    discards the exit status of `ip netns del` / `ip netns add`, so the
+///    recreation can silently fail and leave an earlier case's socket —
+///    still in `TIME_WAIT` for 60s — holding the port. A counter that
+///    restarts at the same value in every process would re-pick exactly that
+///    port. Deriving the base from the PID gives each process its own range.
+/// 2. **Same-process reuse.** The port must also differ from the ports the
+///    tests bind as fixed values (11010-11013, 12345, 22111, 22121) and from
+///    the ports earlier attempts in the same process already used. The
+///    previously hard-coded 22222 / 22224 / 22233 now come from this
+///    allocator as well — do not reintroduce them as literals.
+///
+/// The window is 24000..=32000: above every fixed test port and below Linux's
+/// default ephemeral range (32768+), so a listener never races an outgoing
+/// connection's source port.
+const NETNS_PORT_BASE: u32 = 24_000;
+const NETNS_PORT_SPAN: u32 = 8_000;
+
+static NETNS_PORT_SEQ: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
 
 fn next_netns_bench_port() -> u16 {
-    NETNS_BENCH_PORT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    // Mix the PID so that neighbouring processes — what a parallel test run
+    // looks like — land in far-apart parts of the window instead of
+    // adjacent ones that would overlap after a few allocations.
+    let pid = std::process::id() as u64;
+    let mixed = pid.wrapping_mul(0x9E37_79B9_7F4A_7C15) >> 16;
+    let offset = (mixed as u32) % NETNS_PORT_SPAN;
+    let seq = NETNS_PORT_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    // The modulo keeps the counter inside the window: it can never run past
+    // the last valid port or wrap around to port 0.
+    (NETNS_PORT_BASE + (offset.wrapping_add(seq) % NETNS_PORT_SPAN)) as u16
 }
 
 /// Run the netns TCP bench, retrying on CI timing noise before asserting.
-async fn measure_limited_payload_bps(bps_limit: u64) -> u64 {
+///
+/// Returns the measured payload throughput in KB/s. A *setup* failure (the
+/// bench could not bind its listener) is reported as an error instead of a
+/// throughput reading: a bind fault must never be mistaken for a bandwidth
+/// regression, otherwise the assertion below reports a bogus "bps: 0,
+/// expected 720..=850" and hides the real `EADDRINUSE`.
+async fn measure_limited_payload_bps(bps_limit: u64) -> anyhow::Result<u64> {
     const ATTEMPTS: usize = 3;
     let (min_bps, max_bps) = limited_payload_bps_range(bps_limit);
-    let mut last = 0u64;
+    let mut last: Option<u64> = None;
+    let mut last_err: Option<anyhow::Error> = None;
     for attempt in 1..=ATTEMPTS {
         // A fresh port per attempt: the previous attempt's accepted connection
         // would otherwise hold the old port in TIME_WAIT.
@@ -3091,6 +3147,7 @@ async fn measure_limited_payload_bps(bps_limit: u64) -> u64 {
                 // Bind failures (EADDRINUSE and friends) are transient here;
                 // fall through to the next attempt instead of panicking.
                 println!("bps attempt {attempt}/{ATTEMPTS}: bench setup failed: {e:?}");
+                last_err = Some(e);
                 continue;
             }
         };
@@ -3098,12 +3155,22 @@ async fn measure_limited_payload_bps(bps_limit: u64) -> u64 {
         println!(
             "bps attempt {attempt}/{ATTEMPTS}: {bps} (limit {bps_limit}, expect {min_bps}..={max_bps})"
         );
-        last = bps;
+        last = Some(bps);
         if bps >= min_bps && bps <= max_bps {
-            return bps;
+            return Ok(bps);
         }
     }
-    last
+    match last {
+        // At least one attempt measured a throughput: report it and let the
+        // caller assert on the value.
+        Some(bps) => Ok(bps),
+        // Every attempt died during setup: surface the original bind error.
+        None => Err(last_err
+            .expect("every attempt must have recorded either a measurement or an error")
+            .context(format!(
+                "netns bench setup failed on all {ATTEMPTS} attempts (bps limit {bps_limit})"
+            ))),
+    }
 }
 
 async fn assert_peer_admission_blocked(inst: &Instance, url: url::Url) {
