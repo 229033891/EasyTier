@@ -89,11 +89,36 @@ pub(crate) fn magic_dns_packet_filter(
     })
 }
 
+/// Upper bound for one MagicDNS resolution performed **on the data plane**.
+///
+/// This filter runs on the packet path that carries overlay traffic, so a
+/// stalled upstream must not hold the packet for an unbounded time: the
+/// delay would be visible as overlay latency, not just as a slow DNS answer.
+/// The packet is dropped when the budget is exhausted; the client retries
+/// against the real upstream.
+const DATA_PLANE_RESOLVE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(3);
+
 #[async_trait]
 impl NicPacketFilter for MagicDnsPacketFilter {
     async fn try_process_packet_from_nic(&self, packet: &mut ZCPacket) -> bool {
         process_magic_dns_packet(packet, self.fake_ip, self.my_peer_id, |query| {
-            self.resolver.resolve(query)
+            // The resolver runs inline on the data plane; bound it so a slow
+            // upstream cannot stall the packet (and with it the overlay
+            // traffic sharing this worker).
+            async move {
+                match tokio::time::timeout(DATA_PLANE_RESOLVE_TIMEOUT, self.resolver.resolve(query))
+                    .await
+                {
+                    Ok(response) => response,
+                    Err(_) => {
+                        tracing::warn!(
+                            timeout = ?DATA_PLANE_RESOLVE_TIMEOUT,
+                            "magic dns resolve timed out on the data plane; dropping query"
+                        );
+                        None
+                    }
+                }
+            }
         })
         .await
     }

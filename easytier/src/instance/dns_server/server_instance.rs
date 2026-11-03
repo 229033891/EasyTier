@@ -58,6 +58,18 @@ use std::sync::Mutex;
 use std::{io, net::Ipv4Addr, str::FromStr, sync::Arc, time::Duration};
 use tokio_util::task::AbortOnDropHandle;
 
+/// Upper bound for one MagicDNS resolution.
+///
+/// The resolver is invoked from the **data plane**: the MagicDNS NIC filter
+/// awaits it for every query towards the fake IP, on the same task that also
+/// carries overlay traffic. An unbounded upstream stall would therefore show
+/// up as overlay latency, not just as a slow DNS answer.
+///
+/// The value leaves room for the upstream's own budget (2s per attempt, 2
+/// attempts) while keeping the worst case well below the point where a
+/// user-visible packet delay becomes noticeable.
+const MAGIC_DNS_RESOLVE_TIMEOUT: Duration = Duration::from_secs(3);
+
 pub(super) struct MagicDnsServerInstanceData {
     dns_server: Server,
     tun_dev: Option<String>,
@@ -739,16 +751,32 @@ impl MagicDnsServerInstanceData {
         );
         let response = Arc::new(Mutex::new(Vec::with_capacity(512)));
 
-        self.dns_server
-            .read_catalog()
-            .await
-            .handle_request(
-                &request,
-                ResponseWrapper {
-                    response: response.clone(),
-                },
-            )
-            .await;
+        // Resolve against a **snapshot** of the catalog so the shared read lock
+        // is not held across the (slow) upstream query. Holding it blocks the
+        // write lock that a root forwarder / policy hot-reload needs, so one
+        // slow upstream query could stall a reload.
+        let query_name = request.request_info().ok()?.query.name().clone();
+        let snapshot = self.dns_server.snapshot_catalog_for(&query_name).await?;
+
+        // Bound the wait: this resolver runs on the **data plane** path (the
+        // MagicDNS NIC filter awaits it for every query towards the fake IP),
+        // so an unbounded upstream stall would also stall overlay traffic.
+        let resolve = snapshot.handle_request(
+            &request,
+            ResponseWrapper {
+                response: response.clone(),
+            },
+        );
+        match tokio::time::timeout(MAGIC_DNS_RESOLVE_TIMEOUT, resolve).await {
+            Ok(_) => {}
+            Err(_) => {
+                tracing::warn!(
+                    timeout = ?MAGIC_DNS_RESOLVE_TIMEOUT,
+                    "magic dns resolve timed out"
+                );
+                return None;
+            }
+        }
 
         Arc::into_inner(response)?.into_inner().ok()
     }

@@ -258,18 +258,25 @@ async fn find_darwin_default(
     if ifname == exclude_ifname {
         return Ok(None);
     }
-    let ifindex = {
+    // `NetworkInterface::show()` is a synchronous full-adapter enumeration.
+    // It used to run inline on the tokio worker, blocking every other task
+    // sharing that worker (including the overlay data plane) for the
+    // duration of the enumeration.
+    let lookup_name = ifname.clone();
+    let ifindex = tokio::task::spawn_blocking(move || {
         use network_interface::NetworkInterfaceConfig as _;
         network_interface::NetworkInterface::show()
             .ok()
             .and_then(|ifaces| {
                 ifaces
                     .into_iter()
-                    .find(|iface| iface.name == ifname)
+                    .find(|iface| iface.name == lookup_name)
                     .map(|iface| iface.index)
             })
             .unwrap_or(0)
-    };
+    })
+    .await
+    .unwrap_or(0);
     Ok(Some(super::PhysicalDefaultRoute {
         ifindex,
         ifname,

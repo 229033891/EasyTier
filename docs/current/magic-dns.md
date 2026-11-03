@@ -95,6 +95,17 @@ CLI 示例：`--dns-host 'app.internal.=10.1.2.3'`、`--dns-host '*.corp.example
 
 依据：异构上游下 NXDOMAIN 终局、GeoDNS 抖动、企业过滤合规。转发套接字经 `magic_dns_forward_connector()` 绑物理默认网卡（与 `RuntimeDnsResolver` / TUN exclude 同族），避免上游指 VPN 内地址时进 TUN 成环。与 fake_ip 同址的上游会被排除。
 
+> ⚠️ **已知问题（2026-11-03 定案；代码已落地，待 P3 现网验收）**：
+> 根因是物理默认路由查询曾在 tokio worker 上做同步 Win32 网卡枚举（尾延迟 ~914ms）；
+> MagicDNS filter 挂在统一 NIC pipeline，但**仅** `fake_ip:53` 才 await DNS——
+> overlay ICMP 本身不走解析；尖刺来自同 worker 被占死。详见
+> [`windows-dns-bind-blocking-jitter-audit-2026-11.md`](./windows-dns-bind-blocking-jitter-audit-2026-11.md)。
+>
+> ✅ **修复代码（第三轮收尾，P3 未过前勿当「尖刺已消失」依赖）**：
+> P0 `spawn_blocking` + 一次枚举；P1-1 数据面 3s timeout；P1-2 catalog 快照 + zone-key 补强；
+> P2-1 stale-while-revalidate；P2-2 系统转发 / STUN opts 预算对齐 + hickory 5s 外层超时。
+> 遗留演进：P1-1 真异步回注；P3 用户机复测（审计 §7）。
+
 ---
 
 ## 6. 热重载

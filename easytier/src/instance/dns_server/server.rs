@@ -17,7 +17,9 @@ use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::net::{TcpListener, UdpSocket};
-use tokio::sync::{RwLock, RwLockReadGuard};
+use tokio::sync::RwLock;
+#[cfg(test)]
+use tokio::sync::RwLockReadGuard;
 
 use crate::common::dns::{get_default_resolver_config, magic_dns_forward_connector};
 
@@ -184,7 +186,9 @@ fn build_forward_config_from_servers(
 }
 
 fn build_system_forward_config(excluded: &[IpAddr]) -> Result<ForwardConfig> {
-    // B1: empty / unusable upstream_dns → system DNS (incl. system ResolverOpts).
+    // B1: empty / unusable upstream_dns → system DNS nameservers, but apply the
+    // same failover budget as explicit `upstream_dns` (Windows `read_system_conf`
+    // otherwise returns ResolverOpts::default: 2 concurrent × 5s × 2 attempts).
     let system_conf =
         read_system_conf().unwrap_or((get_default_resolver_config(), ResolverOpts::default()));
     let servers: Vec<_> = system_conf
@@ -199,7 +203,7 @@ fn build_system_forward_config(excluded: &[IpAddr]) -> Result<ForwardConfig> {
     }
     Ok(ForwardConfig {
         name_servers: servers.into(),
-        options: Some(system_conf.1),
+        options: Some(ordered_failover_opts()),
     })
 }
 
@@ -561,8 +565,66 @@ impl Server {
         Ok(())
     }
 
+    /// Test/debug helper: hold a shared catalog read lock. Production resolve
+    /// paths use [`Self::snapshot_catalog_for`] so the lock is not held across
+    /// upstream I/O.
+    #[cfg(test)]
     pub async fn read_catalog(&self) -> RwLockReadGuard<'_, Catalog> {
         self.catalog.read().await
+    }
+
+    /// Snapshot the catalog entries that can answer `name`.
+    ///
+    /// `Catalog::handle_request` keeps the `RwLock` read guard alive for the
+    /// whole lookup, including the forward to the upstream DNS server. A slow
+    /// upstream therefore blocks the write lock that `reload_root_forwarder` /
+    /// `reload_dns_policy` need, so one unlucky query can stall a hot reload.
+    ///
+    /// Here the matching authority is cloned out under a short-lived read lock
+    /// and the guard is dropped immediately; the (slow) lookup then runs
+    /// lock-free. The authority list is `Arc`-based, so cloning it is cheap
+    /// and keeps the same authority instance alive for the lookup.
+    ///
+    /// The snapshot re-registers under the **Catalog map key** that answered
+    /// `name` (see [`catalog_zone_key`]), not [`AuthorityObject::origin`].
+    /// `ForwardAuthority` always reports origin `.`, while split forwarders are
+    /// installed under their zone name — using origin as the key would diverge
+    /// from the shared catalog's longest-match layout.
+    pub async fn snapshot_catalog_for(&self, name: &LowerName) -> Option<Catalog> {
+        let catalog = self.catalog.read().await;
+        let zone_key = catalog_zone_key(&catalog, name)?;
+        let authorities = catalog.find(name)?;
+        if authorities.is_empty() {
+            return None;
+        }
+        let mut snapshot = Catalog::new();
+        snapshot.upsert(zone_key, authorities.clone());
+        Some(snapshot)
+    }
+}
+
+/// Catalog map key that answers `name` (longest registered ancestor).
+///
+/// `Catalog::find` walks `base_name` and returns authorities only — not the
+/// key they were upserted under. `AuthorityObject::origin` is also wrong for
+/// split forwarders (`ForwardAuthority` origin is always root). Walk from
+/// `name` toward root and stop at the first label whose parent resolves to a
+/// different authority set (or to nothing).
+fn catalog_zone_key(catalog: &Catalog, name: &LowerName) -> Option<LowerName> {
+    let matched = catalog.find(name)?;
+    let mut cursor = name.clone();
+    loop {
+        if cursor.is_root() {
+            return Some(cursor);
+        }
+        let parent = cursor.base_name();
+        match catalog.find(&parent) {
+            None => return Some(cursor),
+            Some(parent_auth) if !std::ptr::eq(parent_auth, matched) => {
+                return Some(cursor);
+            }
+            Some(_) => cursor = parent,
+        }
     }
 }
 
@@ -954,6 +1016,72 @@ mod tests {
             .build()?;
         // Must not panic; installs suffix forward zones + root forwarder.
         let _server = Server::new(cfg)?;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn catalog_zone_key_prefers_split_registration_over_forward_origin() -> Result<()> {
+        let cfg = RunConfigBuilder::default()
+            .general(GeneralConfigBuilder::default().build()?)
+            .split_forwarders(vec![SplitForwarderConfig {
+                domains: vec!["hostname.example".to_string()],
+                servers: vec!["1.1.1.1".to_string()],
+            }])
+            .excluded_forward_nameservers(vec!["10.255.255.254".parse()?])
+            .build()?;
+        let server = Server::new(cfg)?;
+        let catalog = server.read_catalog().await;
+        let query: LowerName = rr::Name::from_str("app.hostname.example.")?.into();
+        let key = catalog_zone_key(&catalog, &query).expect("split zone must answer");
+        assert_eq!(
+            key,
+            LowerName::from(rr::Name::from_str("hostname.example.")?)
+        );
+        // ForwardAuthority.origin() is root — must not be used as the Catalog key.
+        let authorities = catalog.find(&query).expect("authorities");
+        assert_ne!(
+            key,
+            authorities[0].origin().clone(),
+            "zone key must be the registration name, not ForwardAuthority origin"
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn snapshot_catalog_for_keeps_split_zone_key() -> Result<()> {
+        let cfg = RunConfigBuilder::default()
+            .general(GeneralConfigBuilder::default().build()?)
+            .split_forwarders(vec![SplitForwarderConfig {
+                domains: vec!["hostname.example".to_string()],
+                servers: vec!["1.1.1.1".to_string()],
+            }])
+            .excluded_forward_nameservers(vec!["10.255.255.254".parse()?])
+            .build()?;
+        let server = Server::new(cfg)?;
+        let query: LowerName = rr::Name::from_str("app.hostname.example.")?.into();
+        let snapshot = server.snapshot_catalog_for(&query).await.expect("snapshot");
+        let expected = LowerName::from(rr::Name::from_str("hostname.example.")?);
+        assert!(
+            snapshot.find(&expected).is_some(),
+            "snapshot must register under the split zone name"
+        );
+        // Longest-match from the query name must still hit the split authority.
+        assert!(snapshot.find(&query).is_some());
+        Ok(())
+    }
+
+    #[test]
+    fn build_system_forward_config_uses_ordered_failover_opts() -> Result<()> {
+        let excluded: Vec<IpAddr> = vec!["10.255.255.254".parse()?];
+        let forward = build_system_forward_config(&excluded)?;
+        let opts = forward.options.expect("system forward must set opts");
+        assert_eq!(
+            opts.server_ordering_strategy,
+            ServerOrderingStrategy::UserProvidedOrder
+        );
+        assert_eq!(opts.num_concurrent_reqs, 1);
+        assert_eq!(opts.timeout, Duration::from_secs(2));
+        assert_eq!(opts.attempts, 2);
         Ok(())
     }
 }

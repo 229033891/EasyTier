@@ -5,7 +5,10 @@ use std::{
     future::Future,
     io,
     pin::Pin,
-    sync::{Arc, LazyLock, RwLock},
+    sync::{
+        Arc, LazyLock, RwLock,
+        atomic::{AtomicBool, AtomicU64, Ordering},
+    },
     time::{Duration, Instant},
 };
 
@@ -50,8 +53,26 @@ static DNS_TUN_EXCLUDES: RwLock<BTreeSet<String>> = RwLock::new(BTreeSet::new())
 #[cfg(feature = "dns-resolver")]
 static PHYSICAL_DNS_IF_CACHE: RwLock<Option<(Instant, bool, String)>> = RwLock::new(None);
 
+/// Single-flight flag for background physical-ifname refresh (stale-while-revalidate).
+#[cfg(feature = "dns-resolver")]
+static PHYSICAL_DNS_IF_REFRESHING: AtomicBool = AtomicBool::new(false);
+
+/// Bumped whenever the physical-ifname cache is intentionally invalidated
+/// (TUN exclude register/unregister). Background refresh must not store into
+/// a generation that is newer than the one it started with.
+#[cfg(feature = "dns-resolver")]
+static PHYSICAL_DNS_IF_CACHE_EPOCH: AtomicU64 = AtomicU64::new(0);
+
 #[cfg(feature = "dns-resolver")]
 const PHYSICAL_DNS_IF_CACHE_TTL: Duration = Duration::from_secs(5);
+
+/// Outer wall-clock budget for a single hickory lookup on the STUN / host path.
+///
+/// Inner ResolverOpts use a 2s timeout × 2 attempts with serial failover; 5s
+/// leaves room for one slow upstream without approaching the multi-tens-of-seconds
+/// worst case of unbounded system defaults.
+#[cfg(feature = "dns-resolver")]
+const HICKORY_LOOKUP_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Register a TUN device so desktop DNS sockets bind to the physical default instead.
 #[cfg(feature = "dns-resolver")]
@@ -64,9 +85,7 @@ pub fn register_dns_tun_exclude(ifname: impl Into<String>) {
         .write()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .insert(ifname);
-    *PHYSICAL_DNS_IF_CACHE
-        .write()
-        .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
+    invalidate_physical_dns_if_cache();
 }
 
 /// Drop a TUN device from the DNS bind exclude set (device gone / failed).
@@ -76,6 +95,14 @@ pub fn unregister_dns_tun_exclude(ifname: &str) {
         .write()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .remove(ifname);
+    invalidate_physical_dns_if_cache();
+}
+
+/// Clear the physical-ifname cache and bump the epoch so in-flight background
+/// refreshes cannot restore a stale / pre-invalidate result.
+#[cfg(feature = "dns-resolver")]
+fn invalidate_physical_dns_if_cache() {
+    PHYSICAL_DNS_IF_CACHE_EPOCH.fetch_add(1, Ordering::AcqRel);
     *PHYSICAL_DNS_IF_CACHE
         .write()
         .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
@@ -90,39 +117,134 @@ fn dns_tun_excludes() -> BTreeSet<String> {
 }
 
 /// Resolve the physical default ifname for underlay-bound DNS sockets.
+///
+/// Fresh cache hits return immediately. Expired entries are served as stale
+/// while a single background refresh runs (stale-while-revalidate), so DNS
+/// socket binds never wait on a route lookup after the first successful fill.
+/// Cold start (no cache) still awaits the lookup.
 #[cfg(feature = "dns-resolver")]
 async fn physical_dns_bind_device(server_addr: SocketAddr) -> Option<String> {
     let want_v4 = server_addr.is_ipv4();
-    {
+    let stale = {
         let cache = PHYSICAL_DNS_IF_CACHE
             .read()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if let Some((at, cached_v4, name)) = cache.as_ref()
-            && *cached_v4 == want_v4
-            && at.elapsed() < PHYSICAL_DNS_IF_CACHE_TTL
-        {
+        cache
+            .as_ref()
+            .filter(|(_, cached_v4, _)| *cached_v4 == want_v4)
+            .map(|(at, _, name)| (*at, name.clone()))
+    };
+
+    if let Some((at, name)) = stale.as_ref() {
+        if at.elapsed() < PHYSICAL_DNS_IF_CACHE_TTL {
             return Some(name.clone());
         }
+        // TTL expired: return stale immediately and refresh in the background.
+        spawn_physical_dns_if_refresh(want_v4);
+        return Some(name.clone());
     }
 
+    let epoch = PHYSICAL_DNS_IF_CACHE_EPOCH.load(Ordering::Acquire);
     let found = lookup_physical_dns_ifname(want_v4).await;
-    if let Some(ref name) = found {
-        *PHYSICAL_DNS_IF_CACHE
-            .write()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) =
-            Some((Instant::now(), want_v4, name.clone()));
+    match found {
+        Some(name) => {
+            // Only cache if excludes did not change while we looked up.
+            if PHYSICAL_DNS_IF_CACHE_EPOCH.load(Ordering::Acquire) == epoch {
+                store_physical_dns_if_cache(want_v4, name.clone());
+            }
+            Some(name)
+        }
+        None => {
+            // The lookup failed. Falling back to the **stale** entry keeps the
+            // DNS socket bound to the physical NIC: returning `None` here
+            // makes the query fall back to the process default, which the TUN
+            // `/0` may swallow (see `prefer_physical_bound_dns`). A stale
+            // interface name is far better than a query that loops into the
+            // tunnel; the next call refreshes it.
+            let stale = {
+                let cache = PHYSICAL_DNS_IF_CACHE
+                    .read()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                cache
+                    .as_ref()
+                    .filter(|(_, cached_v4, _)| *cached_v4 == want_v4)
+                    .map(|(_, _, name)| name.clone())
+            };
+            if stale.is_some() {
+                tracing::debug!(
+                    "physical default route lookup failed; keeping the stale physical interface"
+                );
+            }
+            stale
+        }
     }
-    found
 }
 
+#[cfg(feature = "dns-resolver")]
+fn store_physical_dns_if_cache(want_v4: bool, name: String) {
+    *PHYSICAL_DNS_IF_CACHE
+        .write()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = Some((Instant::now(), want_v4, name));
+}
+
+/// Clears [`PHYSICAL_DNS_IF_REFRESHING`] when the background refresh task ends
+/// (including panic / cancellation), so a stuck flag cannot disable SWR forever.
+#[cfg(feature = "dns-resolver")]
+struct PhysicalDnsIfRefreshGuard;
+
+#[cfg(feature = "dns-resolver")]
+impl Drop for PhysicalDnsIfRefreshGuard {
+    fn drop(&mut self) {
+        PHYSICAL_DNS_IF_REFRESHING.store(false, Ordering::Release);
+    }
+}
+
+/// Kick a single-flight background refresh of the physical DNS bind ifname.
+#[cfg(feature = "dns-resolver")]
+fn spawn_physical_dns_if_refresh(want_v4: bool) {
+    if PHYSICAL_DNS_IF_REFRESHING
+        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+        .is_err()
+    {
+        return;
+    }
+    let epoch = PHYSICAL_DNS_IF_CACHE_EPOCH.load(Ordering::Acquire);
+    tokio::spawn(async move {
+        let _guard = PhysicalDnsIfRefreshGuard;
+        let found = lookup_physical_dns_ifname(want_v4).await;
+        if PHYSICAL_DNS_IF_CACHE_EPOCH.load(Ordering::Acquire) != epoch {
+            tracing::debug!(
+                want_v4,
+                "background physical default route refresh discarded; cache was invalidated"
+            );
+            return;
+        }
+        if let Some(name) = found {
+            store_physical_dns_if_cache(want_v4, name);
+        } else {
+            tracing::debug!(
+                want_v4,
+                "background physical default route refresh found nothing; keeping stale cache"
+            );
+        }
+    });
+}
+
+/// Pick a physical default ifname that is not in the TUN exclude set.
+///
+/// Platform `find_*_physical_default` accepts **one** exclude name. When several
+/// TUNs are registered (or the first exclude misses because the adapter is not
+/// yet visible), the returned route may still be a TUN — retry by feeding that
+/// ifname back as the next platform exclude until a non-excluded iface appears
+/// or the same excluded iface repeats (stuck).
 #[cfg(feature = "dns-resolver")]
 async fn lookup_physical_dns_ifname(want_v4: bool) -> Option<String> {
     let excludes = dns_tun_excludes();
     let ifcfg = IfConfiger {};
-    let mut skip = excludes.clone();
     let mut prefer_v4 = want_v4;
+    let mut platform_exclude = excludes.iter().next().cloned().unwrap_or_default();
+    let mut rejected = BTreeSet::new();
     loop {
-        let platform_exclude = skip.iter().next().cloned().unwrap_or_default();
         let route = if prefer_v4 {
             ifcfg
                 .find_ipv4_physical_default(&platform_exclude)
@@ -140,15 +262,21 @@ async fn lookup_physical_dns_ifname(want_v4: bool) -> Option<String> {
             // No IPv6 default: reuse the IPv4 physical iface on dual-stack hosts.
             if !prefer_v4 {
                 prefer_v4 = true;
-                skip = excludes.clone();
+                platform_exclude = excludes.iter().next().cloned().unwrap_or_default();
+                rejected.clear();
                 continue;
             }
             return None;
         };
-        if excludes.contains(&route.ifname) || skip.contains(&route.ifname) {
-            if !skip.insert(route.ifname) {
+        if excludes.contains(&route.ifname) {
+            // Ask the platform to skip this TUN on the next pass. `insert`
+            // returning false means we already rejected this name and the
+            // platform keeps handing it back (e.g. adapter invisible to the
+            // exclude lookup) — stop rather than spin.
+            if !rejected.insert(route.ifname.clone()) {
                 return None;
             }
+            platform_exclude = route.ifname;
             continue;
         }
         return Some(route.ifname);
@@ -174,6 +302,19 @@ pub fn get_default_resolver_config() -> ResolverConfig {
     default_resolve_config
 }
 
+/// Cap resolver wall-clock risk shared by STUN/host DNS and MagicDNS system
+/// forward paths. Windows `read_system_conf` returns `ResolverOpts::default`
+/// (2 concurrent × 5s × 2 attempts); without this override a single lookup can
+/// approach tens of seconds.
+#[cfg(feature = "dns-resolver")]
+fn apply_bounded_resolver_budget(opts: &mut ResolverOpts) {
+    opts.num_concurrent_reqs = 1;
+    opts.timeout = Duration::from_secs(2);
+    opts.attempts = 2;
+    opts.server_ordering_strategy =
+        hickory_resolver::config::ServerOrderingStrategy::UserProvidedOrder;
+}
+
 #[cfg(feature = "dns-resolver")]
 fn resolver_config() -> (ResolverConfig, ResolverOpts) {
     let system_cfg = read_system_conf();
@@ -185,6 +326,7 @@ fn resolver_config() -> (ResolverConfig, ResolverOpts) {
         }
         options = system.1;
     }
+    apply_bounded_resolver_budget(&mut options);
     options.ip_strategy = LookupIpStrategy::Ipv4AndIpv6;
     (config, options)
 }
@@ -460,10 +602,15 @@ impl RuntimeDnsResolver {
         host: String,
     ) -> anyhow::Result<Vec<IpAddr>> {
         let resolver = Self::contextual_resolver(context);
-        let response = resolver
-            .lookup_ip(&host)
-            .await
-            .with_context(|| format!("contextual hickory lookup_ip failed, host: {host}"))?;
+        let lookup = resolver.lookup_ip(host.clone());
+        let response = match tokio::time::timeout(HICKORY_LOOKUP_TIMEOUT, lookup).await {
+            Ok(result) => result
+                .with_context(|| format!("contextual hickory lookup_ip failed, host: {host}"))?,
+            Err(_) => anyhow::bail!(
+                "contextual hickory lookup_ip timed out after {:?}, host: {host}",
+                HICKORY_LOOKUP_TIMEOUT
+            ),
+        };
         Ok(response.iter().collect())
     }
 
@@ -494,10 +641,17 @@ impl RuntimeDnsResolver {
                     Ok(addresses)
                 },
                 async {
-                    let response = RESOLVER
-                        .lookup_ip(host)
-                        .await
-                        .with_context(|| format!("hickory dns lookup_ip failed, host: {host}"))?;
+                    let lookup = RESOLVER.lookup_ip(host);
+                    let response = match tokio::time::timeout(HICKORY_LOOKUP_TIMEOUT, lookup).await
+                    {
+                        Ok(result) => result.with_context(|| {
+                            format!("hickory dns lookup_ip failed, host: {host}")
+                        })?,
+                        Err(_) => anyhow::bail!(
+                            "hickory dns lookup_ip timed out after {:?}, host: {host}",
+                            HICKORY_LOOKUP_TIMEOUT
+                        ),
+                    };
                     Ok(response.iter().collect())
                 },
             )
@@ -586,10 +740,17 @@ impl DnsRecordResolver for RuntimeDnsResolver {
         }
 
         let resolver = Self::contextual_resolver(context);
-        let response = resolver
-            .txt_lookup(&query.host)
-            .await
-            .with_context(|| format!("txt_lookup failed, domain_name: {}", query.host))?;
+        let lookup = resolver.txt_lookup(query.host.clone());
+        let response = match tokio::time::timeout(HICKORY_LOOKUP_TIMEOUT, lookup).await {
+            Ok(result) => {
+                result.with_context(|| format!("txt_lookup failed, domain_name: {}", query.host))?
+            }
+            Err(_) => anyhow::bail!(
+                "txt_lookup timed out after {:?}, domain_name: {}",
+                HICKORY_LOOKUP_TIMEOUT,
+                query.host
+            ),
+        };
         let record = response
             .iter()
             .next()
@@ -604,11 +765,28 @@ impl DnsRecordResolver for RuntimeDnsResolver {
     async fn resolve_srv(&self, query: DnsQuery) -> anyhow::Result<Vec<DnsSrvRecord>> {
         let context = RuntimeDnsIoContext::from_socket_context(&query.context);
         let response = if context.is_process_default() && !prefer_physical_bound_dns() {
-            RESOLVER.srv_lookup(&query.host).await?
+            match tokio::time::timeout(HICKORY_LOOKUP_TIMEOUT, RESOLVER.srv_lookup(&query.host))
+                .await
+            {
+                Ok(result) => result?,
+                Err(_) => anyhow::bail!(
+                    "srv_lookup timed out after {:?}, domain_name: {}",
+                    HICKORY_LOOKUP_TIMEOUT,
+                    query.host
+                ),
+            }
         } else {
-            Self::contextual_resolver(context)
-                .srv_lookup(&query.host)
-                .await?
+            let resolver = Self::contextual_resolver(context);
+            match tokio::time::timeout(HICKORY_LOOKUP_TIMEOUT, resolver.srv_lookup(&query.host))
+                .await
+            {
+                Ok(result) => result?,
+                Err(_) => anyhow::bail!(
+                    "srv_lookup timed out after {:?}, domain_name: {}",
+                    HICKORY_LOOKUP_TIMEOUT,
+                    query.host
+                ),
+            }
         };
         Ok(response
             .iter()
@@ -637,15 +815,24 @@ impl DnsRecordResolver for RuntimeDnsResolver {
 #[cfg(feature = "dns-resolver")]
 async fn resolve_txt_record(domain_name: &str) -> Result<String, Error> {
     let r = RESOLVER.clone();
-    let response = r
-        .txt_lookup(domain_name)
-        .await
-        .with_context(|| format!("txt_lookup failed, domain_name: {}", domain_name))?;
+    let lookup = r.txt_lookup(domain_name.to_owned());
+    let response = match tokio::time::timeout(HICKORY_LOOKUP_TIMEOUT, lookup).await {
+        Ok(result) => {
+            result.with_context(|| format!("txt_lookup failed, domain_name: {domain_name}"))?
+        }
+        Err(_) => {
+            return Err(anyhow::anyhow!(
+                "txt_lookup timed out after {:?}, domain_name: {domain_name}",
+                HICKORY_LOOKUP_TIMEOUT
+            )
+            .into());
+        }
+    };
 
     let txt_record = response
         .iter()
         .next()
-        .with_context(|| format!("no txt record found, domain_name: {}", domain_name))?;
+        .with_context(|| format!("no txt record found, domain_name: {domain_name}"))?;
 
     let txt_data = String::from_utf8_lossy(&txt_record.txt_data()[0]);
     tracing::info!(?txt_data, ?domain_name, "get txt record");

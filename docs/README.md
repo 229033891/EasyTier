@@ -53,6 +53,7 @@ crate 内设计稿（非本索引）：`easytier/docs/`（凭据计划已标 Arc
 | [magic-dns-manual-wiring.md](./current/magic-dns-manual-wiring.md) | Linux 非 systemd / OpenWrt MagicDNS 手工接线 |
 | [dns-policy-audit.md](./current/dns-policy-audit.md) | **域名策略（DnsConfig）审查**（逐行核对全链路；3 处 BUG / 4 处冲突 / 9 项优化；静态核查未复现） |
 | [windows-wintun-interface-missing.md](./current/windows-wintun-interface-missing.md) | **Windows WinTun 网卡「找不到」**：`find_interface_index` 失配被当致命错误 → 打死绑网卡的 socket 创建 + ERROR 海啸；根因与修复（P1–P3b 已修，P4 记录在案 / 已登记 P-WIN.1） |
+| [windows-dns-bind-blocking-jitter-audit-2026-11.md](./current/windows-dns-bind-blocking-jitter-audit-2026-11.md) | **Windows overlay 偶发 200–500ms 尖峰**：根因 = `find_physical_default` 的同步 Win32 调用（网卡枚举尾延迟 913ms）跑在 async 上下文 + MagicDNS filter 在数据面 await DNS 解析；含 pktmon 抓包方法学、8 条已证伪假设、P0–P3 修复清单。**进度（2026-11-03 第二轮）：P0 / P1-1 / P1-2 / P2-1（部分）已实施未提交；P2-2 经源码核实修正判断（串行 failover 而非并发，治理对象为总耗时预算）待实施；P1-2 快照 origin 隐患待补强** |
 | [windows-installer-reboot-audit.md](./current/windows-installer-reboot-audit.md) | **Windows 安装器重启提示**：Server 不提示 / Win11 提示的根因（NSIS `/REBOOTOK` + `.bak` 残留）；实测推翻「提权不足」旧结论；修复分 A 止血 / B 机器级安装 / C 合规 |
 | [message-popup-audit.md](./current/message-popup-audit.md) | **消息弹窗审查**：约 180 个 toast/confirm；冗余（同一事实两处播报 / 5s 轮询无节流 / `t('error')` 键缺失）与缺失（重置密码、清空日志无确认；轮询失败静默）；第一批 10 项已收敛，余项 P1–P4 待决策 |
 

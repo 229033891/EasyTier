@@ -565,14 +565,14 @@ impl IfConfiguerTrait for NetlinkIfConfiger {
         &self,
         exclude_ifname: &str,
     ) -> Result<Option<super::PhysicalDefaultRoute>, Error> {
-        Self::find_physical_default(libc::AF_INET as u8, exclude_ifname)
+        Self::find_physical_default(libc::AF_INET as u8, exclude_ifname).await
     }
 
     async fn find_ipv6_physical_default(
         &self,
         exclude_ifname: &str,
     ) -> Result<Option<super::PhysicalDefaultRoute>, Error> {
-        Self::find_physical_default(libc::AF_INET6 as u8, exclude_ifname)
+        Self::find_physical_default(libc::AF_INET6 as u8, exclude_ifname).await
     }
 
     async fn add_ipv4_host_route(
@@ -645,11 +645,41 @@ impl IfConfiguerTrait for NetlinkIfConfiger {
 }
 
 impl NetlinkIfConfiger {
-    fn find_physical_default(
+    /// Find the best physical default route, excluding the TUN interface.
+    ///
+    /// The netlink route dump is a synchronous socket round-trip, and the
+    /// adapter enumeration behind [`interface_name_table`] walks every
+    /// adapter on the host. The enumeration used to run **once per route
+    /// row** because it sat inside the loop. Blocking a tokio worker for that
+    /// long stalls every other task sharing the worker — including the
+    /// overlay data plane — so the whole lookup runs on the blocking pool and
+    /// the adapter table is built once up front.
+    async fn find_physical_default(
+        family: u8,
+        exclude_ifname: &str,
+    ) -> Result<Option<super::PhysicalDefaultRoute>, Error> {
+        let exclude_ifname = exclude_ifname.to_owned();
+        // The error is converted to `anyhow::Error` **inside** the closure:
+        // `anyhow::Error` is unconditionally `Send + Sync + 'static`, while the
+        // local `Error` enum embeds `tun::Error` whose `Send`ness we do not
+        // want to depend on for a `spawn_blocking` return type.
+        let result = tokio::task::spawn_blocking(move || {
+            Self::find_physical_default_blocking(family, &exclude_ifname)
+                .map_err(|e| anyhow::anyhow!("{e}"))
+        })
+        .await
+        .map_err(|e| anyhow::anyhow!("physical default route lookup task failed: {e}"))?;
+        result.map_err(Error::AnyhowError)
+    }
+
+    fn find_physical_default_blocking(
         family: u8,
         exclude_ifname: &str,
     ) -> Result<Option<super::PhysicalDefaultRoute>, Error> {
         let exclude_index = Self::get_interface_index(exclude_ifname).ok();
+        // One adapter enumeration for the whole lookup instead of one per
+        // route row.
+        let ifname_by_index = interface_name_table();
         let mut best: Option<(u32, super::PhysicalDefaultRoute)> = None;
         for msg in Self::list_route_messages(family)? {
             // Only source-less defaults. Policy routes like `default from <src>`
@@ -677,8 +707,10 @@ impl NetlinkIfConfiger {
                 continue;
             }
             let metric = msg.priority().unwrap_or(0);
-            let ifname =
-                interface_name_from_index(ifindex).unwrap_or_else(|| format!("if{ifindex}"));
+            let ifname = ifname_by_index
+                .get(&ifindex)
+                .cloned()
+                .unwrap_or_else(|| format!("if{ifindex}"));
             let route = super::PhysicalDefaultRoute {
                 ifindex,
                 ifname,
@@ -693,16 +725,22 @@ impl NetlinkIfConfiger {
     }
 }
 
-fn interface_name_from_index(index: u32) -> Option<String> {
+/// Map interface index -> interface name, built with a single adapter
+/// enumeration.
+///
+/// `network_interface::NetworkInterface::show()` walks every adapter on the
+/// host. Callers must take **one** table and query it — never call `show()`
+/// per route row.
+fn interface_name_table() -> std::collections::HashMap<u32, String> {
     use network_interface::NetworkInterfaceConfig as _;
     network_interface::NetworkInterface::show()
-        .ok()
-        .and_then(|ifaces| {
+        .map(|ifaces| {
             ifaces
                 .into_iter()
-                .find(|iface| iface.index == index)
-                .map(|iface| iface.name)
+                .map(|iface| (iface.index, iface.name))
+                .collect()
         })
+        .unwrap_or_default()
 }
 
 #[cfg(test)]

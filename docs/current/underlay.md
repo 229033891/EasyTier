@@ -130,6 +130,16 @@ DNS TCP fallback 的套接字同样必须受 bypass 保护，不得让系统 DNS
 
 > 换网后依赖短 TTL 刷新物理 ifname——这是当前实现的已知取舍。
 
+> ⚠️ **已知问题（2026-11-03 定案；代码已落地，待 P3 现网验收）**：
+> 物理 ifname 查询在 Windows 上曾同步全量枚举网卡（尾延迟 ~914ms）且在循环内重复，
+> 从 async 直调占死 tokio worker → overlay 尖峰。详见
+> [`windows-dns-bind-blocking-jitter-audit-2026-11.md`](./windows-dns-bind-blocking-jitter-audit-2026-11.md)。
+>
+> ✅ **修复代码（第三轮收尾，P3 未过前勿当「尖刺已消失」依赖）**：
+> `find_physical_default` 全平台 `spawn_blocking` + 一次枚举快照；
+> `physical_dns_bind_device` 5s TTL + **stale-while-revalidate** 后台单飞刷新；
+> `resolver_config` / 系统 MagicDNS 转发 opts 预算对齐。P3 复测见审计 §7。
+
 ---
 
 ## 3. Underlay 网络变化（Android 连接保持）
