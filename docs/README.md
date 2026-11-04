@@ -75,6 +75,7 @@ crate 内设计稿（非本索引）：`easytier/docs/`（凭据计划已标 Arc
 | [traffic-camouflage.md](./roadmap/traffic-camouflage.md) | 传输伪装 / 抗识别（wss 范式与 TLS 外观，Draft） |
 | [traffic-camouflage-phase-a-todo.md](./roadmap/traffic-camouflage-phase-a-todo.md) | Phase A TODO：中继 + wss:443 Ops/状态（**暂不实现**） |
 | [connection-stability-todo.md](./roadmap/connection-stability-todo.md) | 连接稳定性优化 TODO（相对 OpenVPN/IPsec；**端点可自定义，不假设 443**） |
+| [lan-direct-underlay-guard.md](./roadmap/lan-direct-underlay-guard.md) | **同网段直连加固**（2026-11-04 事故：proxy CIDR 劫持直连；**已复核重排**：接收侧路由剪枝 L1 + 下垫面 `/32` 钉扎 L2 为主修，直连候选净化 L0、声明侧卫生 L4、出口绑定 L3 次之） |
 | [relay-forward-egress-queue.md](./roadmap/relay-forward-egress-queue.md) | 中继转发每目的 peer 有界出口队列（消共享 router HOL；代码已落地待现网） |
 | [stability-abc-plan.md](./roadmap/stability-abc-plan.md) | **稳定性 A/B/C 施工计划**（A=P1.5 拆连雪崩防护；B=配置引导；C=现网验收；不对标 DERP） |
 | [live-next-hop.md](./roadmap/live-next-hop.md) | **已建立线路才转发**（**方案重议**：首版改法不被接受，无方向性 ⇒ 环路；目标语义=已建立+在通往目的的路径上+无环；比较规则=字典序 `成本→跳数→稳定身份键`；Phase A/C/F/F2/B/D 已落地待现网，**B/D 限等代价旁路**） |
