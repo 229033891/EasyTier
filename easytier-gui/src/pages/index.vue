@@ -1075,7 +1075,8 @@ async function refreshTrayMenu(forceStatus?: ServiceStatus) {
     return
 
   const items = await buildTrayMenuItems({
-    showLabel: t('tray.show'),
+    openWindowLabel: t('tray.open_window'),
+    onOpenWindow: () => void showMainWindow(),
     exitLabel: t('tray.exit'),
     configMenu: {
       entries: model.entries,
@@ -1089,11 +1090,9 @@ async function refreshTrayMenu(forceStatus?: ServiceStatus) {
         empty: t('tray.configs_empty'),
         offline: t('tray.configs_offline'),
         more: t('tray.configs_more', { count: model.hidden }),
-        openWindow: t('tray.open_window'),
       },
       onStart: (instanceId, label) => void runTrayConfigAction(instanceId, label, 'start'),
       onStop: (instanceId, label) => void runTrayConfigAction(instanceId, label, 'stop'),
-      onOpenWindow: () => void showMainWindow(),
     },
     serviceMode,
     serviceStatus,

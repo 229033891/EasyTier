@@ -128,7 +128,7 @@ export interface TrayMenuActions {
 
 /** 「网络配置」子菜单的文案（全部由调用方格式化，含计数）。 */
 export interface TrayConfigMenuLabels {
-  /** 子菜单标题，例如「网络配置 (2/5 运行中)」。 */
+  /** 子菜单标题，例如「网络配置 (2/5)」。 */
   title: string
   /** 一条配置都没有时的占位行。 */
   empty: string
@@ -136,8 +136,6 @@ export interface TrayConfigMenuLabels {
   offline: string
   /** 被上限截断时的提示行，例如「还有 11 个未列出…」。 */
   more: string
-  /** 兜底入口：打开主窗口去管理。 */
-  openWindow: string
 }
 
 export interface TrayConfigMenuOptions {
@@ -150,11 +148,13 @@ export interface TrayConfigMenuOptions {
   ready: boolean
   onStart: (instanceId: string, label: string) => void | Promise<void>
   onStop: (instanceId: string, label: string) => void | Promise<void>
-  onOpenWindow: () => void | Promise<void>
 }
 
 export interface TrayMenuBuildOptions {
-  showLabel: string
+  /** 一级菜单「打开窗口」的文案。 */
+  openWindowLabel: string
+  /** 显示 + 置前；幂等（窗口已可见也只置前，不会隐藏）。 */
+  onOpenWindow: () => void | Promise<void>
   exitLabel: string
   serviceMode?: boolean
   serviceStatus?: ServiceStatus
@@ -225,15 +225,6 @@ async function buildTrayConfigSubmenu(opts: TrayConfigMenuOptions) {
     }
   }
 
-  children.push(await PredefinedMenuItem.new({ item: 'Separator' }))
-  children.push(await MenuItem.new({
-    id: 'config-open-window',
-    text: labels.openWindow,
-    action: async () => {
-      await opts.onOpenWindow()
-    },
-  }))
-
   return await Submenu.new({
     id: 'configs',
     text: labels.title,
@@ -242,8 +233,16 @@ async function buildTrayConfigSubmenu(opts: TrayConfigMenuOptions) {
 }
 
 export async function buildTrayMenuItems(opts: TrayMenuBuildOptions) {
+  // 一级菜单只有一个窗口入口：原来的「显示 / 隐藏」是开关，窗口可见时点它反而会
+  // 藏起来；合并为幂等的「打开窗口」，隐藏交给托盘图标左键（useTray 的 action）。
   const items: Array<MenuItem | PredefinedMenuItem | Submenu> = [
-    await MenuItemShow(opts.showLabel),
+    await MenuItem.new({
+      id: 'open-window',
+      text: opts.openWindowLabel,
+      action: async () => {
+        await opts.onOpenWindow()
+      },
+    }),
   ]
 
   if (opts.configMenu) {

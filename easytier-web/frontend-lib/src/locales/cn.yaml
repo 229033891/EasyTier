@@ -835,11 +835,11 @@ tray:
   state_instance_failed: "{count} 个网络启动失败"
   # 「网络配置」子菜单：● = 运行中（点一下停止），○ = 未运行（点一下启动）
   configs: 网络配置
-  configs_title: "网络配置（{running}/{total} 运行中）"
+  configs_title: "网络配置（{running}/{total}）"
   configs_empty: 暂无配置
   configs_offline: 内核未连接
   configs_more: 还有 {count} 个未列出…
-  open_window: 打开主窗口…
+  open_window: 打开窗口…
   config_untitled: 未命名配置
   config_start_failed: "启动 {name} 失败"
   config_stop_failed: "停止 {name} 失败"

@@ -840,11 +840,11 @@ tray:
   state_instance_failed: "{count} network(s) failed to start"
   # "Network configs" submenu: ● = running (click to stop), ○ = stopped (click to start).
   configs: Network configs
-  configs_title: "Network configs ({running}/{total} running)"
+  configs_title: "Network configs ({running}/{total})"
   configs_empty: No configs yet
   configs_offline: Core not connected
   configs_more: "{count} more not listed…"
-  open_window: Open main window…
+  open_window: Open window…
   config_untitled: Untitled config
   config_start_failed: "Failed to start {name}"
   config_stop_failed: "Failed to stop {name}"
