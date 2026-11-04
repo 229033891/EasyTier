@@ -91,6 +91,33 @@ script\easytier-windows-release.cmd    REM 正式：三端都 --release（更接
 
 桌面 GUI（Win / macOS / Linux）通过各平台 conf 的 Tauri `externalBin`（`tauri.windows.conf.json` / `tauri.macos.conf.json` / `tauri.linux.conf.json` → `binaries/ET-cli`）附带 CLI；**不要**写进共享 `tauri.conf.json`，以免 Android 构建也去找 sidecar。打包装前须先 `Stage-GuiEtCliSidecar` / CI「Stage ET-cli sidecar」。Windows NSIS 安装后一般为 `C:\Program Files\ET\ET-cli.exe`，安装器会把 **`$INSTDIR` 写入系统 PATH**（幂等；卸载时移除；**需新开终端**才生效）。连 GUI 实例常用 `-p 127.0.0.1:15999`。CI：`windows.yml` → `ET-windows-*-gui`（NSIS）；`linux.yml` → `ET-linux-*-gui`（`.deb`，glibc）。macOS 矩阵行仍预留在 `windows.yml`。
 
+**PATH 钩子（根因已复现，已修）**
+
+装完却 `where ET-cli` 找不到时，**不是**“没新开终端”，而是旧钩子根本没写成。
+
+已证实的两种静默失败（脚本：`easytier-gui/src-tauri/windows/prove-path-hook.ps1`）：
+
+| # | 机制 | 现象 |
+|---|------|------|
+| A | 依赖 `$env:ET_INSTDIR_FOR_PATH`；未继承则 `if (-not $d) { exit 0 }` | **exit 0**，Path 不变 |
+| C | `nsExec`/`cmd /c` 单行 `powershell -Command "$d=…"` 嵌套引号，在 `$d` 处截断 | Path 不变；安装器 `Pop $0` 忽略失败 |
+
+验证：
+
+```bat
+powershell -NoProfile -ExecutionPolicy Bypass -File easytier-gui\src-tauri\windows\prove-path-hook.ps1
+```
+
+期望：A `path_changed=False`；B/D `path_changed=True`；C `path_changed=False`。
+
+修复（`installer-hooks.nsh`）：写临时 `.ps1`，`powershell -File … -InstallDir "$INSTDIR"`（不靠 env、不用嵌套 `-Command`）；写完回读 Machine/User Path，缺则 exit 2 + **MessageBox**。已装机器手工补：
+
+```powershell
+[Environment]::SetEnvironmentVariable('Path', (([Environment]::GetEnvironmentVariable('Path','Machine')).TrimEnd(';') + ';C:\Program Files\ET'), 'Machine')
+```
+
+然后**新开**终端。
+
 ---
 
 ## 3. 脚本在做什么（对照 CI）

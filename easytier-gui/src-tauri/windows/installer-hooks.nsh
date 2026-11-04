@@ -389,20 +389,108 @@
 ; Prefer Machine (perMachine installer); fall back to User if HKLM is denied.
 ; Idempotent: skips when the directory is already present (case-insensitive).
 ; New shells pick this up; already-open terminals need a restart (documented).
+;
+; IMPORTANT: do NOT pass the script as powershell -Command "…". nsExec + nested
+; quotes regularly drop or mangle the payload, so PATH never changes while the
+; installer still reports success (seen on 2.7.10 GUI installs). Write a temp
+; .ps1 and invoke -File with -InstallDir instead.
+; Write add/remove PATH helper to $TEMP. MODE must be "add" or "remove".
+; UID is a short unique suffix for NSIS labels (paths cannot appear in labels).
+;
+; Root-cause notes (verified 2026-11-04; see prove-path-hook.ps1):
+; 1) Old hook used `$env:ET_INSTDIR_FOR_PATH`; if unset → `exit 0` with no PATH
+;    change (silent success).
+; 2) Old hook used nsExec + `powershell -Command "…$d=…"`. A single command-line
+;    with nested quotes is parsed like `cmd /c` and truncates at `$d`, so the
+;    update never runs (exit ≠ 0; installer ignored Pop $0).
+; Fix: `-File` + `-InstallDir` (no env, no nested -Command quotes), then the
+; add script re-reads Machine/User Path and exits 2 if $INSTDIR is still absent.
+!macro ET_WritePathHelperScript FILE MODE UID
+  FileOpen $R9 "${FILE}" w
+  FileWrite $R9 "param([Parameter(Mandatory=$$true)][string]$$InstallDir)`r`n"
+  FileWrite $R9 "$$ErrorActionPreference = 'Stop'`r`n"
+  FileWrite $R9 "$$d = $$InstallDir.TrimEnd([char]92)`r`n"
+  FileWrite $R9 "if (-not $$d) { Write-Output 'ET_PATH: empty InstallDir'; exit 1 }`r`n"
+  FileWrite $R9 "function Test-HasDir([string]$$path, [string]$$dir) {`r`n"
+  FileWrite $R9 "  @($$path -split [char]59) | Where-Object { $$_ -and ($$_.TrimEnd([char]92) -ieq $$dir) } | Select-Object -First 1`r`n"
+  FileWrite $R9 "}`r`n"
+  FileWrite $R9 "function Path-HasInstallDir {`r`n"
+  FileWrite $R9 "  foreach ($$scope in @('Machine','User')) {`r`n"
+  FileWrite $R9 "    $$p = [Environment]::GetEnvironmentVariable('Path', $$scope)`r`n"
+  FileWrite $R9 "    if ($$p -and (Test-HasDir $$p $$d)) { return $$true }`r`n"
+  FileWrite $R9 "  }`r`n"
+  FileWrite $R9 "  return $$false`r`n"
+  FileWrite $R9 "}`r`n"
+  StrCmp "${MODE}" "remove" et_path_script_rm_${UID}
+    FileWrite $R9 "function Update-Dir([string]$$scope) {`r`n"
+    FileWrite $R9 "  $$p = [Environment]::GetEnvironmentVariable('Path', $$scope)`r`n"
+    FileWrite $R9 "  if ($$null -eq $$p) { $$p = '' }`r`n"
+    FileWrite $R9 "  if (Test-HasDir $$p $$d) { return 0 }`r`n"
+    FileWrite $R9 "  $$parts = @(@($$p -split [char]59) | Where-Object { $$_ })`r`n"
+    FileWrite $R9 "  $$parts += $$d`r`n"
+    FileWrite $R9 "  [Environment]::SetEnvironmentVariable('Path', ($$parts -join [char]59), $$scope)`r`n"
+    FileWrite $R9 "  Write-Output ('ET_PATH: added to ' + $$scope)`r`n"
+    FileWrite $R9 "  return 1`r`n"
+    FileWrite $R9 "}`r`n"
+    FileWrite $R9 "try { [void](Update-Dir 'Machine') } catch {`r`n"
+    FileWrite $R9 "  Write-Output ('ET_PATH: Machine failed: ' + $$_.Exception.Message)`r`n"
+    FileWrite $R9 "  try { [void](Update-Dir 'User') } catch {`r`n"
+    FileWrite $R9 "    Write-Output ('ET_PATH: User failed: ' + $$_.Exception.Message)`r`n"
+    FileWrite $R9 "    exit 1`r`n"
+    FileWrite $R9 "  }`r`n"
+    FileWrite $R9 "}`r`n"
+    FileWrite $R9 "if (-not (Path-HasInstallDir)) {`r`n"
+    FileWrite $R9 "  Write-Output 'ET_PATH: verify failed — InstallDir not on Machine/User Path'`r`n"
+    FileWrite $R9 "  exit 2`r`n"
+    FileWrite $R9 "}`r`n"
+    FileWrite $R9 "Write-Output 'ET_PATH: verify ok'`r`n"
+    FileWrite $R9 "exit 0`r`n"
+    Goto et_path_script_done_${UID}
+  et_path_script_rm_${UID}:
+    FileWrite $R9 "function Update-Dir([string]$$scope) {`r`n"
+    FileWrite $R9 "  $$p = [Environment]::GetEnvironmentVariable('Path', $$scope)`r`n"
+    FileWrite $R9 "  if ($$null -eq $$p -or $$p -eq '') { return 0 }`r`n"
+    FileWrite $R9 "  $$parts = @(@($$p -split [char]59) | Where-Object { $$_ -and ($$_.TrimEnd([char]92) -ine $$d) })`r`n"
+    FileWrite $R9 "  $$new = $$parts -join [char]59`r`n"
+    FileWrite $R9 "  if ($$new -eq $$p) { return 0 }`r`n"
+    FileWrite $R9 "  [Environment]::SetEnvironmentVariable('Path', $$new, $$scope)`r`n"
+    FileWrite $R9 "  Write-Output ('ET_PATH: removed from ' + $$scope)`r`n"
+    FileWrite $R9 "  return 1`r`n"
+    FileWrite $R9 "}`r`n"
+    FileWrite $R9 "try { [void](Update-Dir 'Machine') } catch { Write-Output ('ET_PATH: Machine remove failed: ' + $$_.Exception.Message) }`r`n"
+    FileWrite $R9 "try { [void](Update-Dir 'User') } catch { Write-Output ('ET_PATH: User remove failed: ' + $$_.Exception.Message) }`r`n"
+    FileWrite $R9 "exit 0`r`n"
+  et_path_script_done_${UID}:
+  FileClose $R9
+!macroend
+
 !macro ET_AddInstallDirToPath
   DetailPrint "Adding $INSTDIR to PATH (ET-cli)..."
-  System::Call 'Kernel32::SetEnvironmentVariable(t "ET_INSTDIR_FOR_PATH", t "$INSTDIR")'
-  nsExec::ExecToLog '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "$$d = $$env:ET_INSTDIR_FOR_PATH; if (-not $$d) { exit 0 }; $$d = $$d.TrimEnd([char]92); function Test-HasDir([string]$$path, [string]$$dir) { @($$path -split [char]59) | Where-Object { $$_ -and ($$_.TrimEnd([char]92) -ieq $$dir) } | Select-Object -First 1 }; function Add-Dir([string]$$scope) { $$p = [Environment]::GetEnvironmentVariable(''Path'', $$scope); if ($$null -eq $$p) { $$p = '''' }; if (Test-HasDir $$p $$d) { return 0 }; $$parts = @(@($$p -split [char]59) | Where-Object { $$_ }); $$parts += $$d; [Environment]::SetEnvironmentVariable(''Path'', ($$parts -join [char]59), $$scope); return 1 }; try { [void](Add-Dir ''Machine'') } catch { try { [void](Add-Dir ''User'') } catch { exit 1 } }; exit 0"'
+  !insertmacro ET_WritePathHelperScript "$TEMP\et-add-path.ps1" "add" "add"
+  ; Use -File + -InstallDir: never -Command with nested quotes, never rely on env.
+  nsExec::ExecToLog '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$TEMP\et-add-path.ps1" -InstallDir "$INSTDIR"'
   Pop $0
+  DetailPrint "PATH add exit code: $0"
+  Delete "$TEMP\et-add-path.ps1"
+  ; Nudge explorers / new consoles that listen for env broadcasts.
+  System::Call 'user32::SendMessageTimeoutW(p -1, i 0x1A, p 0, w "Environment", i 0, i 3000, *i .r1)'
+  ; Do not fail the whole install, but never stay silent again.
+  StrCmp $0 "0" et_path_add_ok
+    DetailPrint "ERROR: failed to add $INSTDIR to PATH (exit $0)"
+    MessageBox MB_ICONEXCLAMATION|MB_OK "ET installed, but adding$\r$\n$INSTDIR$\r$\nto PATH failed (code $0).$\r$\n$\r$\nFix (admin PowerShell), then open a NEW terminal:$\r$\n[Environment]::SetEnvironmentVariable('Path', (([Environment]::GetEnvironmentVariable('Path','Machine')).TrimEnd(';') + ';$INSTDIR'), 'Machine')"
+  et_path_add_ok:
 !macroend
 
 ; POSTUNINSTALL runs after DeleteRegKey ${UNINSTKEY}, so use $INSTDIR only
 ; (still set for the whole uninstall section). Strip from Machine and User PATH.
 !macro ET_RemoveInstallDirFromPath
   DetailPrint "Removing $INSTDIR from PATH..."
-  System::Call 'Kernel32::SetEnvironmentVariable(t "ET_INSTDIR_FOR_PATH", t "$INSTDIR")'
-  nsExec::ExecToLog '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "$$d = $$env:ET_INSTDIR_FOR_PATH; if (-not $$d) { exit 0 }; $$d = $$d.TrimEnd([char]92); function Remove-Dir([string]$$scope) { $$p = [Environment]::GetEnvironmentVariable(''Path'', $$scope); if ($$null -eq $$p -or $$p -eq '''') { return 0 }; $$parts = @(@($$p -split [char]59) | Where-Object { $$_ -and ($$_.TrimEnd([char]92) -ine $$d) }); $$new = $$parts -join [char]59; if ($$new -eq $$p) { return 0 }; [Environment]::SetEnvironmentVariable(''Path'', $$new, $$scope); return 1 }; try { [void](Remove-Dir ''Machine'') } catch {}; try { [void](Remove-Dir ''User'') } catch {}; exit 0"'
+  !insertmacro ET_WritePathHelperScript "$TEMP\et-remove-path.ps1" "remove" "rm"
+  nsExec::ExecToLog '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$TEMP\et-remove-path.ps1" -InstallDir "$INSTDIR"'
   Pop $0
+  DetailPrint "PATH remove exit code: $0"
+  Delete "$TEMP\et-remove-path.ps1"
+  System::Call 'user32::SendMessageTimeoutW(p -1, i 0x1A, p 0, w "Environment", i 0, i 3000, *i .r1)'
 !macroend
 
 !macro NSIS_HOOK_POSTINSTALL
