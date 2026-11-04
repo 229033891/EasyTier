@@ -49,7 +49,9 @@ const configServerSecureMode = computed({
 })
 
 function normalizeRpcListenPort(port: unknown): number {
-  const defaultPort = 15999
+  // Align with headless ET-core / et-cli default (15888) so `et-cli peer`
+  // works without `-p` for the common single-GUI-install case.
+  const defaultPort = 15888
   const numericPort = typeof port === 'number' ? port : Number.parseInt(String(port ?? ''), 10)
   if (Number.isNaN(numericPort))
     return defaultPort
@@ -116,7 +118,7 @@ const rpcListenEnabled = computed<boolean>({
 })
 
 const rpcListenPort = computed<string>({
-  get: () => String(normalMode.value?.rpc_listen_port ?? 15999),
+  get: () => String(normalMode.value?.rpc_listen_port ?? 15888),
   set: (value) => {
     if (!normalMode.value)
       return
@@ -219,7 +221,7 @@ watch(() => model.value.mode, async (newMode, oldMode) => {
       ...oldModelValue,
       mode: 'service',
       config_dir: serviceMode.value?.config_dir || defaultConfigDir.value,
-      rpc_portal: serviceMode.value?.rpc_portal || '127.0.0.1:15999',
+      rpc_portal: serviceMode.value?.rpc_portal || '127.0.0.1:15888',
       // Log level is edited only in the Logging dialog; keep install args in sync.
       file_log_level: loadFileLogLevel(),
       file_log_dir: serviceMode.value?.file_log_dir || defaultLogDir.value,
@@ -233,7 +235,7 @@ watch(() => model.value.mode, async (newMode, oldMode) => {
     model.value = {
       ...oldModelValue,
       mode: 'remote',
-      remote_rpc_address: remoteMode.value?.remote_rpc_address || 'tcp://127.0.0.1:15999',
+      remote_rpc_address: remoteMode.value?.remote_rpc_address || 'tcp://127.0.0.1:15888',
     }
   }
 }, { immediate: true })

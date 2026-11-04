@@ -89,7 +89,7 @@ script\easytier-windows-release.cmd    REM 正式：三端都 --release（更接
 
 架构目录名随主机：`x86_64` / `arm64` / `i686`（来自 `easytier/third_party/<arch>`）。命名约定：`ET-{os}-{arch}`，产品后缀 `-web` / `-gui`（无头无后缀）。NSIS 安装器仍为 Tauri 默认 `ET_*_setup.exe`。
 
-桌面 GUI（Win / macOS / Linux）通过各平台 conf 的 Tauri `externalBin`（`tauri.windows.conf.json` / `tauri.macos.conf.json` / `tauri.linux.conf.json` → `binaries/ET-cli`）附带 CLI；**不要**写进共享 `tauri.conf.json`，以免 Android 构建也去找 sidecar。打包装前须先 `Stage-GuiEtCliSidecar` / CI「Stage ET-cli sidecar」。Windows NSIS 安装后一般为 `C:\Program Files\ET\ET-cli.exe`，安装器会把 **`$INSTDIR` 写入系统 PATH**（幂等；卸载时移除；**需新开终端**才生效）。连 GUI 实例常用 `-p 127.0.0.1:15999`。CI：`windows.yml` → `ET-windows-*-gui`（NSIS）；`linux.yml` → `ET-linux-*-gui`（`.deb`，glibc）。macOS 矩阵行仍预留在 `windows.yml`。
+桌面 GUI（Win / macOS / Linux）通过各平台 conf 的 Tauri `externalBin`（`tauri.windows.conf.json` / `tauri.macos.conf.json` / `tauri.linux.conf.json` → `binaries/ET-cli`）附带 CLI；**不要**写进共享 `tauri.conf.json`，以免 Android 构建也去找 sidecar。打包装前须先 `Stage-GuiEtCliSidecar` / CI「Stage ET-cli sidecar」。Windows NSIS 安装后一般为 `C:\Program Files\ET\ET-cli.exe`，安装器会把 **`$INSTDIR` 写入系统 PATH**（幂等；卸载时移除；**需新开终端**才生效）。GUI 默认 RPC portal 为 `127.0.0.1:15888`（与 `et-cli` / 无头 core 相同，一般**不必**再写 `-p`）。CI：`windows.yml` → `ET-windows-*-gui`（NSIS）；`linux.yml` → `ET-linux-*-gui`（`.deb`，glibc）。macOS 矩阵行仍预留在 `windows.yml`。
 
 **PATH 钩子（根因已复现，已修）**
 

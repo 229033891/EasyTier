@@ -3,7 +3,7 @@
 ## Status
 
 - Status: **Current**
-- 最近审阅：2026-10-29（产物前缀 `ET-{os}-{arch}…`；三独立 artifact；无头不含 embed）；2026-10-11（桌面 GUI 主程序改为 `ET`/`ET.exe`）
+- 最近审阅：2026-11-04（GUI 默认 RPC portal 与 CLI 对齐 15888）；2026-10-29（产物前缀 `ET-{os}-{arch}…`；三独立 artifact；无头不含 embed）；2026-10-11（桌面 GUI 主程序改为 `ET`/`ET.exe`）
 - 状态说明：帮助理解 monorepo 内各产品/组件职责与关系
 - 范围：仓库内主要 crate、前端包与贡献组件
 - 索引：[`../README.md`](../README.md)
@@ -38,7 +38,7 @@
 3. 下文若出现「控制台」，仅指 `easytier-web` 提供的 UI/管理体验，**不是**另一个叫 controller 的产品。
 4. 桌面 **Normal / Service** 双进程与 config-server 回写路径见 [`desktop-gui-and-config-server.md`](./desktop-gui-and-config-server.md)。
 5. **Windows 安装器只认 `ET.exe` + 服务名 `ET-Gui`**（2026-10-28）：**不再**迁移/保留 `easytier-gui.exe` 或旧服务名 `easytier-gui`（现网已无从此类旧包升级的路径）。应急清理仍可用 [`../../script/cleanup-legacy-gui.ps1`](../../script/cleanup-legacy-gui.ps1)。
-6. **桌面 GUI 默认附带 `ET-cli`**（Tauri `externalBin` → 与主程序同目录：`ET-cli.exe` / `ET-cli`；见 [`../ops/windows-build-pack.md`](../ops/windows-build-pack.md)）。无头 zip / OpenWrt 等仍单独提供。**Windows NSIS** 安装/升级时把 `$INSTDIR` **写入系统 PATH**（卸载时移除；已打开的终端需重开）。连本机 GUI 服务实例时 portal 常见为 `127.0.0.1:15999`（CLI 默认 `15888`）。macOS 上 sidecar 在 `.app/Contents/MacOS/`（不自动改 shell PATH）。
+6. **桌面 GUI 默认附带 `ET-cli`**（Tauri `externalBin` → 与主程序同目录：`ET-cli.exe` / `ET-cli`；见 [`../ops/windows-build-pack.md`](../ops/windows-build-pack.md)）。无头 zip / OpenWrt 等仍单独提供。**Windows NSIS** 安装/升级时把 `$INSTDIR` **写入系统 PATH**（卸载时移除；已打开的终端需重开）。桌面 GUI 默认 RPC portal 与 CLI / 无头 core 对齐为 `127.0.0.1:15888`（`et-cli` 无需再写 `-p`；同机另开无头实例时再改其一）。macOS 上 sidecar 在 `.app/Contents/MacOS/`（不自动改 shell PATH）。
 
 ### 1.1 用户视角三分法（推荐心智模型）
 
