@@ -1,5 +1,5 @@
 /**
- * Tray「网络配置」子菜单的内容模型。
+ * Tray「网络配置」一级菜单清单的内容模型。
  *
  * 纯函数、无 Tauri / i18n 依赖：托盘菜单的可测部分全在这里，`tray.ts` 只负责把
  * 结果翻译成 muda 菜单项。这样「排序 / 重名消歧 / 截断 / 运行中优先」都能直接
@@ -13,15 +13,21 @@
  */
 
 /**
- * 子菜单里最多列多少条。
+ * 一级菜单里最多列多少条配置。
  *
- * Windows 的托盘菜单是原生 Win32 弹出菜单，条目过多会超出屏幕高度，Windows 只能
- * 分列/滚动，几乎不可用；同时托盘刷新是 30s 级别的，长列表也不值得每次重建。
+ * 清单现在是托盘根菜单的前几行，后面还叠着「打开窗口」、service 模式的 5 行和
+ * 「退出」。Windows 的托盘菜单是原生 Win32 弹出菜单，行数过多会超出屏幕高度，
+ * Windows 只能分列/滚动，几乎不可用；同时托盘刷新是 30s 级别的，长列表也不值得
+ * 每次重建。被截掉的条数由 `hidden` + `configs_more` 提示，不会静默丢失。
  */
-export const TRAY_CONFIG_MENU_MAX = 12
+export const TRAY_CONFIG_MENU_MAX = 6
 
-/** 单条标签的最大字符数（超出截断 + `…`）。托盘菜单没有 tooltip，只能靠截断。 */
-export const TRAY_CONFIG_LABEL_MAX = 32
+/**
+ * 单条标签的最大字符数（超出截断 + `…`）。托盘菜单没有 tooltip，只能靠截断；清单
+ * 现在是根菜单的前几行，长标签会撑宽**整个**菜单（子菜单时代只撑宽二级面板），
+ * 所以上限比子菜单时代更保守。
+ */
+export const TRAY_CONFIG_LABEL_MAX = 28
 
 /** 一条待展示的配置。 */
 export interface TrayConfigMenuSource {
@@ -46,7 +52,7 @@ export interface TrayConfigMenuModel {
   total: number
   /** 被 `max` 截掉的条数；> 0 时渲染一行「还有 N 个未列出」。 */
   hidden: number
-  /** 运行中的数量（子菜单标题用）。 */
+  /** 运行中的数量（模型字段；扁平菜单不再显示计数标题）。 */
   runningCount: number
 }
 

@@ -838,9 +838,7 @@ tray:
   state_running: "Connected: {count} network(s) running"
   state_core_unreachable: Core unreachable — check the runtime mode / service
   state_instance_failed: "{count} network(s) failed to start"
-  # "Network configs" submenu: ● = running (click to stop), ○ = stopped (click to start).
-  configs: Network configs
-  configs_title: "Network configs ({running}/{total})"
+  # Flat "Network configs" list at the top of the root tray menu: ● = running (click to stop), ○ = stopped (click to start).
   configs_empty: No configs yet
   configs_offline: Core not connected
   configs_more: "{count} more not listed…"

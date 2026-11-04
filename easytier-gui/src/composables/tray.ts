@@ -1,6 +1,6 @@
 import type { TrayRunState } from './tray_run_state'
 import type { ServiceStatus } from '~/composables/backend'
-import { Menu, MenuItem, PredefinedMenuItem, Submenu } from '@tauri-apps/api/menu'
+import { Menu, MenuItem, PredefinedMenuItem } from '@tauri-apps/api/menu'
 import { resolveResource } from '@tauri-apps/api/path'
 import { TrayIcon } from '@tauri-apps/api/tray'
 import { getCurrentWindow } from '@tauri-apps/api/window'
@@ -126,10 +126,8 @@ export interface TrayMenuActions {
   onUninstallService?: () => void | Promise<void>
 }
 
-/** 「网络配置」子菜单的文案（全部由调用方格式化，含计数）。 */
+/** 「网络配置」清单的文案（全部由调用方格式化）。 */
 export interface TrayConfigMenuLabels {
-  /** 子菜单标题，例如「网络配置 (2/5)」。 */
-  title: string
   /** 一条配置都没有时的占位行。 */
   empty: string
   /** 内核不可达时的占位行（比空列表更能说明问题）。 */
@@ -159,7 +157,7 @@ export interface TrayMenuBuildOptions {
   serviceMode?: boolean
   serviceStatus?: ServiceStatus
   serviceLabels?: TrayServiceLabels
-  /** 「网络配置」子菜单；桌面端总会传，测试/兜底可省。 */
+  /** 置顶的一级菜单「网络配置」清单；桌面端总会传，测试/兜底可省。 */
   configMenu?: TrayConfigMenuOptions
   actions: TrayMenuActions
 }
@@ -174,81 +172,85 @@ export async function generateMenuItem(labels?: { show?: string, exit?: string }
 }
 
 /**
- * 「网络配置」子菜单：一处入口列出全部配置，● 运行中（点 = 停止）/ ○ 未运行（点 =
- * 启动）。
+ * 一级菜单顶部的「网络配置」清单：● 运行中（点 = 停止）/ ○ 未运行（点 = 启动）。
  *
- * 为什么是一个子菜单而不是「启动配置 / 停止配置」两个：两个子菜单要求用户先知道目标
- * 配置当前的运行态才选得对入口，而且条目会在两个子菜单之间来回跳；混排 + 状态前缀把
- * 「现在是什么、点一下会怎样」放在同一行里。误停的代价只是再点一下。
+ * 全扁平：没有子菜单，也没有分组标题 / 计数行（运行态改由托盘图标 / tooltip 表达，
+ * 仅 running 态显示数量），清单本身就是菜单最前面的几行，右键后第一眼看到的就是
+ * 要操作的网络。离线或空列表时
+ * 只留一行占位，避免两条灰行常驻一级菜单。
  *
- * 用文本前缀而不是 `CheckMenuItem`：muda 的勾选在 Linux AppIndicator 下渲染不稳，
- * 文本前缀在 Windows / macOS / Linux 都可控。
+ * 混排 + 状态前缀把「现在是什么、点一下会怎样」放在同一行里，用户不必先判断运行态
+ * 再选入口。用文本前缀而不是 `CheckMenuItem`：muda 的勾选在 Linux AppIndicator 下
+ * 渲染不稳，文本前缀在 Windows / macOS / Linux 都可控。
+ *
+ * 行是快照，启停前页面侧仍会复核实时状态（见 runTrayConfigAction）——「启动」对
+ * 已运行实例等于先停后起，会拆掉 WinTun 重建，不能当成点了也无害的按钮。
  */
-async function buildTrayConfigSubmenu(opts: TrayConfigMenuOptions) {
+async function buildTrayConfigItems(opts: TrayConfigMenuOptions) {
   const { labels } = opts
-  const children: Array<MenuItem | PredefinedMenuItem | Submenu> = []
+  const items: Array<MenuItem | PredefinedMenuItem> = []
 
   if (!opts.ready) {
-    children.push(await MenuItem.new({
+    items.push(await MenuItem.new({
       id: 'config-offline',
       text: labels.offline,
       enabled: false,
     }))
+    return items
   }
-  else if (!opts.entries.length) {
-    children.push(await MenuItem.new({
+
+  if (!opts.entries.length) {
+    items.push(await MenuItem.new({
       id: 'config-empty',
       text: labels.empty,
       enabled: false,
     }))
-  }
-  else {
-    for (const entry of opts.entries) {
-      children.push(await MenuItem.new({
-        id: `config:${entry.instanceId}`,
-        text: `${entry.running ? '●' : '○'} ${entry.label}`,
-        // 启动/停止在这里由快照决定；页面侧仍会复核实时状态（见 runTrayConfigAction）。
-        action: async () => {
-          if (entry.running)
-            await opts.onStop(entry.instanceId, entry.label)
-          else
-            await opts.onStart(entry.instanceId, entry.label)
-        },
-      }))
-    }
-    if (opts.hidden > 0) {
-      children.push(await MenuItem.new({
-        id: 'config-more',
-        text: labels.more,
-        enabled: false,
-      }))
-    }
+    return items
   }
 
-  return await Submenu.new({
-    id: 'configs',
-    text: labels.title,
-    items: children,
-  })
+  for (const entry of opts.entries) {
+    items.push(await MenuItem.new({
+      id: `config:${entry.instanceId}`,
+      text: `${entry.running ? '●' : '○'} ${entry.label}`,
+      // 启动/停止在这里由快照决定；页面侧仍会复核实时状态（见 runTrayConfigAction）。
+      action: async () => {
+        if (entry.running)
+          await opts.onStop(entry.instanceId, entry.label)
+        else
+          await opts.onStart(entry.instanceId, entry.label)
+      },
+    }))
+  }
+
+  if (opts.hidden > 0) {
+    items.push(await MenuItem.new({
+      id: 'config-more',
+      text: labels.more,
+      enabled: false,
+    }))
+  }
+
+  return items
 }
 
 export async function buildTrayMenuItems(opts: TrayMenuBuildOptions) {
-  // 一级菜单只有一个窗口入口：原来的「显示 / 隐藏」是开关，窗口可见时点它反而会
-  // 藏起来；合并为幂等的「打开窗口」，隐藏交给托盘图标左键（useTray 的 action）。
-  const items: Array<MenuItem | PredefinedMenuItem | Submenu> = [
-    await MenuItem.new({
-      id: 'open-window',
-      text: opts.openWindowLabel,
-      action: async () => {
-        await opts.onOpenWindow()
-      },
-    }),
-  ]
+  // 配置清单置顶：托盘最常见的动作是启停某个网络，放在最上方少一次鼠标移动。
+  // 「打开窗口」保持幂等（显示 + 置前，可见时不会隐藏）；隐藏交给托盘图标左键。
+  // 「退出」始终由本函数在末尾追加（e29206ae）。
+  const items: Array<MenuItem | PredefinedMenuItem> = []
 
   if (opts.configMenu) {
+    items.push(...await buildTrayConfigItems(opts.configMenu))
     items.push(await PredefinedMenuItem.new({ item: 'Separator' }))
-    items.push(await buildTrayConfigSubmenu(opts.configMenu))
   }
+
+  items.push(await MenuItem.new({
+    id: 'open-window',
+    text: opts.openWindowLabel,
+    action: async () => {
+      await opts.onOpenWindow()
+    },
+  }))
 
   if (opts.serviceMode && opts.serviceLabels && opts.serviceStatus) {
     const status = opts.serviceStatus
@@ -319,7 +321,7 @@ export async function MenuItemShow(text: string) {
   })
 }
 
-export async function setTrayMenu(items: (MenuItem | PredefinedMenuItem | Submenu)[] | undefined = undefined) {
+export async function setTrayMenu(items: (MenuItem | PredefinedMenuItem)[] | undefined = undefined) {
   const tray = await useTray()
   if (!tray)
     return

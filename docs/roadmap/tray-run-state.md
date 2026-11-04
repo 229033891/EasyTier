@@ -9,7 +9,7 @@
   在 `type() === 'android'` 时短路，不产生探针 RPC。
 - 关联：[`poll-to-push-roi.md`](./poll-to-push-roi.md)（本轮给 30s 轮询新增了探针成本）；
   「停服务 / 退出 / 关窗口分别停谁」见 [`../current/desktop-gui-and-config-server.md`](../current/desktop-gui-and-config-server.md) §1.1
-  （托盘配置子菜单在服务停掉后整段置灰，正是该节的直接推论）。
+  （托盘顶部的配置清单在服务停掉后降为一行置灰占位，正是该节的直接推论）。
 
 ## 问题
 

@@ -3,7 +3,7 @@
 ## Status
 
 - Status: **Current**
-- 最近审阅：2026-10-30（新增 §1.1 启停/退出语义：停服务=全停、关窗口≠退出、托盘退出在 service 模式会先停服务）；2026-10-22（§2.3.1：note 提前到 save/run 前；抑制预算 **2**（reconcile + AdoptRuntime）；另源下发仍提示；同步 tip 文案缩短）；2026-10-14（§2.5 存储优先 + 热更写回 + Service/Remote Web 运行态指纹采纳；徽章/RPC warn）
+- 最近审阅：2026-11-05（§1.1：托盘配置清单改为一级菜单并置顶、去掉分组标题与计数、上限降到 6）；2026-10-30（新增 §1.1 启停/退出语义：停服务=全停、关窗口≠退出、托盘退出在 service 模式会先停服务）；2026-10-22（§2.3.1：note 提前到 save/run 前；抑制预算 **2**（reconcile + AdoptRuntime）；另源下发仍提示；同步 tip 文案缩短）；2026-10-14（§2.5 存储优先 + 热更写回 + Service/Remote Web 运行态指纹采纳；徽章/RPC warn）
 - 上次审阅：2026-10-09（补 §2.5：读配置权威；GUI RPC 优先 vs Web 存储优先；补 §6：配置页 / 运行页职责）
 - 范围：Windows/Linux/macOS 桌面 `easytier-gui`、可选后台服务 `ET-Gui`、config-server 会话与 web-owned 配置回写
 - 索引：[`../README.md`](../README.md)
@@ -71,8 +71,17 @@
 
 - **停服务 = 全停**：`service.rs:78` `set_status(false)` → `service.stop()`（:85）→ SCM/launchd/systemd 终止 core 进程，
   进程消失即所有实例销毁。托盘项 `stop-service` 与设置页走同一命令。
-  GUI 侧因此看不到任何运行态 —— 托盘配置子菜单在 `clientRunning == false` 时整段置灰（`configs_offline`），
-  并清空 `lastTrayListing`，不留点了必然失败的条目。
+  GUI 侧因此看不到任何运行态 —— 托盘顶部的配置清单在 `clientRunning == false` 时整段降为一行置灰占位
+  （`configs_offline`），并清空 `lastTrayListing`，不留点了必然失败的条目。
+- **托盘菜单是全扁平的**：`composables/tray.ts::buildTrayMenuItems()` 把配置行直接放在根菜单最上方
+  （● 运行中 = 点一下停止 / ○ 未运行 = 点一下启动），后面依次是「打开窗口」、service 模式的 5 行、
+  「退出」（`exit` 恒在末尾）。没有二级菜单，也没有分组标题 / 计数行 —— 运行态改由托盘图标 /
+  tooltip 表达（仅 `running` 态显示运行数量，idle / error 态不显示数量）。
+  清单上限 `TRAY_CONFIG_MENU_MAX = 6`（`tray_config_menu.ts`），因为 Windows 原生弹出菜单行数过多会
+  分列 / 滚动；超出部分以 `configs_more` 提示，不静默丢弃。单条标签上限 `TRAY_CONFIG_LABEL_MAX = 28`：
+  扁平后长名字撑宽的是**整个根菜单**（子菜单时代只撑宽二级面板），所以比原来更保守。
+  代价是根菜单顺序随「运行中优先」排序变化，
+  且单击即触发启停（复核逻辑见下），所以 `setTrayMenu()` 仍靠 `trayConfigMenuKey` 避免无谓重建。
 - **退出 = 可能断网，且是设计行为**：`index.vue` `exitApp()` 在 service 模式下先
   `confirmExitServiceMode()`（窗口隐藏时必须先 `showMainWindow()`，否则对话框看不见）→
   `setServiceStatus(false)` → `waitForServiceStatus('Stopped', 40, 250)`（最长 10s）→

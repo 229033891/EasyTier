@@ -833,9 +833,7 @@ tray:
   state_running: "已联网：{count} 个网络在运行"
   state_core_unreachable: 无法连接内核，请检查运行模式 / 服务状态
   state_instance_failed: "{count} 个网络启动失败"
-  # 「网络配置」子菜单：● = 运行中（点一下停止），○ = 未运行（点一下启动）
-  configs: 网络配置
-  configs_title: "网络配置（{running}/{total}）"
+  # 一级菜单顶部的「网络配置」清单：● = 运行中（点一下停止），○ = 未运行（点一下启动）
   configs_empty: 暂无配置
   configs_offline: 内核未连接
   configs_more: 还有 {count} 个未列出…

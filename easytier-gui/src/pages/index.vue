@@ -216,7 +216,7 @@ function trayMenuConfigKeyNow(): string | undefined {
 }
 
 /**
- * Everything the「网络配置」submenu needs, from the cached listing + one batched
+ * Everything the flat「网络配置」list needs, from the cached listing + one batched
  * meta call (per-id fetches would put N RPCs behind every menu rebuild).
  */
 async function collectTrayConfigMenu(): Promise<{ model: TrayConfigMenuModel, ready: boolean }> {
@@ -469,8 +469,8 @@ function scheduleTrayRunStateRefresh() {
     trayRefreshTimer = undefined
     void (async () => {
       await refreshTrayRunState()
-      // Window-driven start/stop (GUIRemoteClient pushes here) must reach the submenu
-      // too; the fingerprint check keeps the 30s poll from rebuilding the menu.
+      // Window-driven start/stop (GUIRemoteClient pushes here) must reach the tray
+      // list too; the fingerprint check keeps the 30s poll from rebuilding the menu.
       await refreshTrayMenuIfChanged()
     })()
   }, TRAY_REFRESH_DEBOUNCE_MS)
@@ -1083,10 +1083,7 @@ async function refreshTrayMenu(forceStatus?: ServiceStatus) {
       hidden: model.hidden,
       ready,
       labels: {
-        // Counts only when there is something to count; "0/0 running" is noise.
-        title: model.total
-          ? t('tray.configs_title', { running: model.runningCount, total: model.total })
-          : t('tray.configs'),
+        // 扁平清单没有标题/计数行；运行态由托盘图标 / tooltip 表达。
         empty: t('tray.configs_empty'),
         offline: t('tray.configs_offline'),
         more: t('tray.configs_more', { count: model.hidden }),
