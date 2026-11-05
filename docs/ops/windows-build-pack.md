@@ -95,28 +95,32 @@ script\easytier-windows-release.cmd    REM 正式：三端都 --release（更接
 
 装完却 `where ET-cli` 找不到时，**不是**“没新开终端”，而是旧钩子根本没写成。
 
-已证实的两种静默失败（脚本：`easytier-gui/src-tauri/windows/prove-path-hook.ps1`）：
+已证实的三处失败（A/C 为静默失败；脚本：`easytier-gui/src-tauri/windows/prove-path-hook.ps1`）：
 
 | # | 机制 | 现象 |
 |---|------|------|
 | A | 依赖 `$env:ET_INSTDIR_FOR_PATH`；未继承则 `if (-not $d) { exit 0 }` | **exit 0**，Path 不变 |
 | C | `nsExec`/`cmd /c` 单行 `powershell -Command "$d=…"` 嵌套引号，在 `$d` 处截断 | Path 不变；安装器 `Pop $0` 忽略失败 |
+| E | `FileWrite` 里写了 PowerShell 的 `` `r`n ``，而不是 NSIS 的 `$\r$\n` | 临时 `.ps1` 变成**一整行**、夹着字面 `` `r`n ``；`powershell -File` 解析失败 **exit 1**，弹出「adding … to PATH failed (code 1)」 |
 
-验证：
+第三轮（2026-11-05，见 `ET_WritePathHelperScript` 注释）：改成 `-File` 之后引入的 E。NSIS 字符串换行的转义是 `$\r$\n`（MessageBox 用的就是这个），`` `r`n `` 只适用于真正的 `.ps1` 文本；写进 `FileWrite` 的字符串会原样落盘。用本机 `makensis` 编译同一段宏做对照：完整 add 助手在修复前 `exit 1`、修复后 `exit 0`，生成的 `.ps1` 从单行乱码恢复成正常多行脚本。**教训：只跑 `prove-path-hook.ps1`（纯 PowerShell 实验）不足以验收，必须编译一次 NSIS 并看 `nsExec` 的退出码。**
+
+验证（两个都要跑；后者是 E 的回归守卫，需要本机 Tauri 自带的 `makensis.exe`）：
 
 ```bat
 powershell -NoProfile -ExecutionPolicy Bypass -File easytier-gui\src-tauri\windows\prove-path-hook.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File easytier-gui\src-tauri\windows\verify-path-hook-nsis.ps1
 ```
 
-期望：A `path_changed=False`；B/D `path_changed=True`；C `path_changed=False`。
+前者期望：A `path_changed=False`；B/D `path_changed=True`；C `path_changed=False`。后者从 `installer-hooks.nsh` 抽出**真实宏**，用 `makensis` 编译静默探针并执行 add / remove 两个助手，期望 `PASS: … add=0 remove=0`；add 指向已在 Machine PATH 的目录、remove 指向不存在的目录，因此**不会改动 PATH**。
 
-修复（`installer-hooks.nsh`）：写临时 `.ps1`，`powershell -File … -InstallDir "$INSTDIR"`（不靠 env、不用嵌套 `-Command`）；写完回读 Machine/User Path，缺则 exit 2 + **MessageBox**。已装机器手工补：
+修复（`installer-hooks.nsh`）：写临时 `.ps1`，`powershell -File … -InstallDir "$INSTDIR"`（不靠 env、不用嵌套 `-Command`）；`FileWrite` 的换行统一用 NSIS 的 `$\r$\n`；写完回读 Machine/User Path，缺则 exit 2 + **MessageBox**。若弹了「code 1」但 `where ET-cli` 能找到，说明 PATH 本来就是对的（弹窗是误报），**不要**再执行下面这条命令，否则会追加重复项。确需手工补时（管理员 PowerShell，先确认 `-split ';'` 里没有该目录）：
 
 ```powershell
 [Environment]::SetEnvironmentVariable('Path', (([Environment]::GetEnvironmentVariable('Path','Machine')).TrimEnd(';') + ';C:\Program Files\ET'), 'Machine')
 ```
 
-然后**新开**终端。
+然后**新开**终端，用 `where ET-cli` 确认（应指向 `C:\Program Files\ET\ET-cli.exe`）。
 
 ---
 
