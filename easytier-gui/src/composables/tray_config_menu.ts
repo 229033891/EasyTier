@@ -27,7 +27,7 @@ export const TRAY_CONFIG_MENU_MAX = 6
  * 现在是根菜单的前几行，长标签会撑宽**整个**菜单（子菜单时代只撑宽二级面板），
  * 所以上限比子菜单时代更保守。
  */
-export const TRAY_CONFIG_LABEL_MAX = 28
+export const TRAY_CONFIG_LABEL_MAX = 24
 
 /** 一条待展示的配置。 */
 export interface TrayConfigMenuSource {

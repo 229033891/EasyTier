@@ -78,7 +78,7 @@
   「退出」（`exit` 恒在末尾）。没有二级菜单，也没有分组标题 / 计数行 —— 运行态改由托盘图标 /
   tooltip 表达（仅 `running` 态显示运行数量，idle / error 态不显示数量）。
   清单上限 `TRAY_CONFIG_MENU_MAX = 6`（`tray_config_menu.ts`），因为 Windows 原生弹出菜单行数过多会
-  分列 / 滚动；超出部分以 `configs_more` 提示，不静默丢弃。单条标签上限 `TRAY_CONFIG_LABEL_MAX = 28`：
+  分列 / 滚动；超出部分以 `configs_more` 提示，不静默丢弃。单条标签上限 `TRAY_CONFIG_LABEL_MAX = 24`：
   扁平后长名字撑宽的是**整个根菜单**（子菜单时代只撑宽二级面板），所以比原来更保守。
   代价是根菜单顺序随「运行中优先」排序变化，
   且单击即触发启停（复核逻辑见下），所以 `setTrayMenu()` 仍靠 `trayConfigMenuKey` 避免无谓重建。
