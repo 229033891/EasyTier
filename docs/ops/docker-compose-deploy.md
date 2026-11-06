@@ -148,13 +148,13 @@ cd /vol1/1000/docker/et && sudo docker compose --profile console down
 cd /vol1/1000/docker/et
 # 现网曾用南大 GHCR 镜像：ghcr.nju.edu.cn/229033891/et:vX.Y.Z
 grep -n image docker-compose.yml
-sudo sed -i 's|229033891/et:[^ "]*|229033891/et:v2.7.10|g' docker-compose.yml
+sudo sed -i 's|229033891/et:[^ "]*|229033891/et:v2.7.11|g' docker-compose.yml
 sudo docker compose pull
 sudo docker compose up -d
 sudo docker exec fnnas_et ET-core -V
 ```
 
-若还跑了 `console` profile，加上 `--profile console`。`config/` 与控制台数据卷不会被覆盖。南大镜像尚未同步新 tag 时，可临时改 `ghcr.io/229033891/et:v2.7.10` 再 pull。
+若还跑了 `console` profile，加上 `--profile console`。`config/` 与控制台数据卷不会被覆盖。南大镜像尚未同步新 tag 时，可临时改 `ghcr.io/229033891/et:v2.7.11` 再 pull。
 
 ---
 
@@ -168,7 +168,7 @@ sudo docker exec fnnas_et ET-core -V
 | Compose 目录 | **`/vol1/1000/docker/et`** |
 | Compose 文件 | `/vol1/1000/docker/et/docker-compose.yml` |
 | 容器名 | **`fnnas_et`**（飞牛 UI 生成，不是仓库示例的 `et-node`） |
-| 镜像（示例） | `ghcr.nju.edu.cn/229033891/et:v2.7.10`（南大镜像；官方为 `ghcr.io/229033891/et:…`） |
+| 镜像（示例） | `ghcr.nju.edu.cn/229033891/et:v2.7.11`（南大镜像；官方为 `ghcr.io/229033891/et:…`） |
 | 角色 | 仅节点（连远程控制台）；未在本机启 `console` |
 
 **不要**再找 `/vol1/1000/docker/easytier`：该路径可能从未创建，或已在回收站（`.@#local/trash/...`）。
