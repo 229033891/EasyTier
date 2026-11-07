@@ -3,6 +3,7 @@ pub(crate) mod cidr_table;
 pub mod icmp_host;
 #[cfg(feature = "proxy-packet")]
 pub(crate) mod proxy_acl;
+pub(crate) mod proxy_cidr_prune;
 #[cfg(feature = "proxy-packet")]
 pub(crate) mod service;
 #[cfg(feature = "proxy-packet")]

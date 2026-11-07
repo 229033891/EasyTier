@@ -1469,6 +1469,10 @@ pub struct PeerManagerCore {
     flow_table: Arc<FlowTable>,
     network_name: String,
     counters: PeerManagerTrafficCounters,
+    /// Physical (+ optionally injected) local IPv4 networks used to prune
+    /// overlapping proxy CIDRs before L2 install (LAN underlay guard L1).
+    /// Empty = no prune (backward compatible).
+    local_ipv4_networks: arc_swap::ArcSwap<Vec<cidr::Ipv4Cidr>>,
 }
 
 fn check_resolved_remote_addr_not_from_virtual_network(
@@ -1891,11 +1895,39 @@ impl PeerManagerCore {
             flow_table,
             network_name,
             counters: self_tx_counters,
+            local_ipv4_networks: arc_swap::ArcSwap::from_pointee(Vec::new()),
         }
     }
 
     pub fn my_peer_id(&self) -> PeerId {
         self.my_peer_id
+    }
+
+    /// Replace the local IPv4 networks used for proxy-CIDR prune (LAN L1).
+    pub fn set_local_ipv4_networks(&self, nets: Vec<cidr::Ipv4Cidr>) {
+        self.local_ipv4_networks.store(Arc::new(nets));
+    }
+
+    pub fn local_ipv4_networks(&self) -> Arc<Vec<cidr::Ipv4Cidr>> {
+        self.local_ipv4_networks.load_full()
+    }
+
+    /// Holes for L1 proxy-CIDR prune: injected physical nets + overlay VIP network.
+    pub fn proxy_cidr_prune_holes(&self) -> Vec<cidr::Ipv4Cidr> {
+        let mut holes = self.local_ipv4_networks().as_ref().clone();
+        if let Some(vip) = self.context.ipv4() {
+            let net = vip.network();
+            if !holes.iter().any(|h| h == &net) {
+                holes.push(net);
+            }
+        }
+        holes
+    }
+
+    /// True when `ip` is this node's virtual IPv4 or in the same overlay VIP network.
+    pub async fn is_easytier_managed_ipv4(&self, ip: &std::net::Ipv4Addr) -> bool {
+        self.context.is_ip_local_virtual_ip(&IpAddr::V4(*ip))
+            || self.context.is_ip_in_same_network(&IpAddr::V4(*ip))
     }
 
     /// Per-tunnel IP flow accounting table (disabled by default).

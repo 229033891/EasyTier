@@ -1267,7 +1267,7 @@ impl NicCtx {
             return;
         }
 
-        let will_have_tun_default = {
+        let next_desired = {
             let mut next = installed.clone();
             for cidr in &removed {
                 next.remove(cidr);
@@ -1275,13 +1275,13 @@ impl NicCtx {
             for cidr in &added {
                 next.insert(*cidr);
             }
-            next.iter().any(|cidr| cidr.network_length() == 0)
+            next
         };
-        // Unified gate: any effective TUN `/0` (exit, escape hatch, or manual).
-        let needs_excludes = will_have_tun_default;
+        // L2: TUN `/0` **or** desired covers an off-link peer underlay IP.
+        let exclude_desired = packet_plane.underlay_exclude_ips().await;
+        let needs_excludes = packet_plane.needs_underlay_excludes(&next_desired, &exclude_desired);
 
         if needs_excludes {
-            let exclude_desired = packet_plane.underlay_exclude_ips().await;
             Self::reconcile_underlay_exclude_routes(
                 ifcfg,
                 ifname,
@@ -1867,6 +1867,7 @@ impl NicCtx {
 
             let mut retry = tokio::time::interval(Duration::from_secs(1));
             retry.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+            let mut ticks_since_local_net_refresh: u32 = 0;
             retry.tick().await;
 
             loop {
@@ -1939,9 +1940,19 @@ impl NicCtx {
                         }
                     }
                     _ = retry.tick() => {
-                        // Skip expensive exclude collection when no TUN /0 is
-                        // desired/installed and excludes are already empty.
-                        let needs_excludes = desired.iter().any(|c| c.network_length() == 0)
+                        ticks_since_local_net_refresh = ticks_since_local_net_refresh.wrapping_add(1);
+                        if ticks_since_local_net_refresh % 5 == 1 {
+                            let nets = crate::common::network::collect_local_ipv4_networks(
+                                net_ns.clone(),
+                                Some(ifname.as_str()),
+                            )
+                            .await;
+                            packet_plane.set_local_ipv4_networks(nets);
+                        }
+                        // L2 gate: `/0` **or** desired covers off-link underlay peer.
+                        let underlay_for_gate = packet_plane.underlay_exclude_ips().await;
+                        let needs_excludes = packet_plane
+                            .needs_underlay_excludes(&desired, &underlay_for_gate)
                             || installed.iter().any(|c| c.network_length() == 0);
                         if !needs_excludes && exclude_installed.is_empty() {
                             let added =

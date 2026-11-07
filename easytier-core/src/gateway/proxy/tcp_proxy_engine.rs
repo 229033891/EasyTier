@@ -570,7 +570,11 @@ impl TcpProxyEngine {
                     return Some(real_ip);
                 }
                 let no_tun_local_virtual_ip = ctx.no_tun && Some(origin_ip) == ctx.virtual_ipv4;
-                (is_exit_node || no_tun_local_virtual_ip).then_some(origin_ip)
+                if no_tun_local_virtual_ip {
+                    return Some(origin_ip);
+                }
+                // B4: exit-flagged internet traffic requires enable_exit_node.
+                (is_exit_node && ctx.enable_exit_node).then_some(origin_ip)
             }
             TcpProxyMode::KcpSrc | TcpProxyMode::QuicSrc => Some(origin_ip),
         }

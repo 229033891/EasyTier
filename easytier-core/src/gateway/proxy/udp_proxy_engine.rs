@@ -223,7 +223,10 @@ impl UdpProxyEngine {
             ctx.no_tun && Some(origin_dst_ip) == ctx.virtual_ipv4.as_ref().copied();
         if let Some(mapped_real_ip) = self.cidr_table.lookup_v4(origin_dst_ip) {
             real_dst_ip = mapped_real_ip;
-        } else if !is_exit_node && !no_tun_local_virtual_ip {
+        } else if no_tun_local_virtual_ip {
+            // local no_tun path continues below
+        } else if !is_exit_node || !ctx.enable_exit_node {
+            // B4: exit-flagged traffic requires enable_exit_node; cidr hits already handled.
             return UdpProxyAction::Pass;
         }
 

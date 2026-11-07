@@ -132,6 +132,36 @@ impl CorePacketPlane {
         collect_underlay_exclude_ips(self.peer_manager.as_ref(), extra).await
     }
 
+    /// Inject physical local IPv4 networks for L1 proxy-CIDR prune / L2 on-link checks.
+    pub fn set_local_ipv4_networks(&self, nets: Vec<cidr::Ipv4Cidr>) {
+        self.peer_manager.set_local_ipv4_networks(nets);
+    }
+
+    pub fn local_ipv4_networks(&self) -> Arc<Vec<cidr::Ipv4Cidr>> {
+        self.peer_manager.local_ipv4_networks()
+    }
+
+    /// L2 underlay `/32` gate: TUN `/0` **or** a desired prefix covering an
+    /// off-link peer underlay address (see open-bugs-wave1-impl §2.2).
+    pub fn needs_underlay_excludes(
+        &self,
+        effective_desired: &BTreeSet<cidr::Ipv4Cidr>,
+        underlay_ips: &BTreeSet<IpAddr>,
+    ) -> bool {
+        if effective_desired.iter().any(|c| c.network_length() == 0) {
+            return true;
+        }
+        let local_nets = self.local_ipv4_networks();
+        underlay_ips.iter().any(|ip| {
+            let IpAddr::V4(v4) = ip else {
+                return false;
+            };
+            let covered = effective_desired.iter().any(|c| c.contains(v4));
+            let on_link = local_nets.iter().any(|n| n.contains(v4));
+            covered && !on_link
+        })
+    }
+
     pub async fn public_ipv6_routes(&self) -> BTreeSet<cidr::Ipv6Inet> {
         self.peer_manager.list_public_ipv6_routes().await
     }

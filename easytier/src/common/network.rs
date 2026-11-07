@@ -461,6 +461,60 @@ pub(crate) async fn collect_local_ip_addrs(net_ns: NetNS) -> GetIpListResponse {
     }
 }
 
+/// Collect local IPv4 networks (address + netmask → CIDR) for LAN L1 prune / L2 on-link.
+///
+/// `exclude_ifname` skips the EasyTier TUN interface (required on Windows where
+/// the interface filter does not exclude Wintun the way Linux excludes tun/tap).
+pub async fn collect_local_ipv4_networks(
+    net_ns: NetNS,
+    exclude_ifname: Option<&str>,
+) -> Vec<cidr::Ipv4Cidr> {
+    #[cfg(target_os = "linux")]
+    {
+        let exclude = exclude_ifname.map(str::to_owned);
+        return run_in_namespace(net_ns, move || async move {
+            collect_local_ipv4_networks_in_current_namespace(exclude.as_deref()).await
+        })
+        .await;
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _g = net_ns.guard();
+        collect_local_ipv4_networks_in_current_namespace(exclude_ifname).await
+    }
+}
+
+async fn collect_local_ipv4_networks_in_current_namespace(
+    exclude_ifname: Option<&str>,
+) -> Vec<cidr::Ipv4Cidr> {
+    use std::collections::BTreeSet;
+    let mut out = BTreeSet::new();
+    let ifaces = collect_interfaces_in_current_namespace(true).await;
+    for iface in ifaces {
+        if exclude_ifname.is_some_and(|name| iface.name.eq_ignore_ascii_case(name)) {
+            continue;
+        }
+        for addr in iface.addr {
+            let network_interface::Addr::V4(v4) = addr else {
+                continue;
+            };
+            if v4.ip.is_loopback() || v4.ip.is_unspecified() || v4.ip.is_multicast() {
+                continue;
+            }
+            let Some(netmask) = v4.netmask else {
+                continue;
+            };
+            let Ok(prefix) = ip_mask_to_prefix(IpAddr::V4(netmask)) else {
+                continue;
+            };
+            if let Ok(inet) = cidr::Ipv4Inet::new(v4.ip, prefix) {
+                out.insert(inet.network());
+            }
+        }
+    }
+    out.into_iter().collect()
+}
+
 async fn collect_local_ip_addrs_in_current_namespace() -> GetIpListResponse {
     let mut ret = GetIpListResponse::default();
 

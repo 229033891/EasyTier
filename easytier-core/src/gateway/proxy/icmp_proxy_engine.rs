@@ -92,8 +92,14 @@ impl IcmpProxyEngine {
         let mapped_destination = ipv4.dst_addr();
         let real_destination = self.cidr_table.lookup_v4(mapped_destination);
         let is_local_no_tun = context.no_tun && mapped_destination == virtual_ipv4;
-        if real_destination.is_none() && !header.is_exit_node() && !is_local_no_tun {
-            return IcmpProxyAction::Pass;
+        // Subnet-proxy hits (cidr lookup) do not need enable_exit_node; exit-flagged
+        // internet traffic does. Aligns with traffic-steering.md / B4.
+        if real_destination.is_none() {
+            if is_local_no_tun {
+                // fall through to local_reply below
+            } else if !header.is_exit_node() || !context.enable_exit_node {
+                return IcmpProxyAction::Pass;
+            }
         }
 
         let reassembled;
@@ -130,16 +136,37 @@ impl IcmpProxyEngine {
             identifier: request.echo_ident(),
             sequence: request.echo_seq_no(),
         };
-        self.nat_table.insert(
-            key,
-            IcmpNatEntry {
-                source_peer_id: header.from_peer_id.get(),
-                local_peer_id: header.to_peer_id.get(),
-                source_ip: ipv4.src_addr(),
-                mapped_destination,
-                started_at: Instant::now(),
-            },
-        );
+        let source_peer_id = header.from_peer_id.get();
+        let local_peer_id = header.to_peer_id.get();
+        let source_ip = ipv4.src_addr();
+        // B3 observability: key has no source; refuse silent overwrite by another peer.
+        // Same-source refresh is allowed. Full demux still needs ident rewrite / src NAT.
+        match self.nat_table.entry(key) {
+            dashmap::mapref::entry::Entry::Occupied(mut occupied) => {
+                if occupied.get().source_peer_id != source_peer_id {
+                    tracing::warn!(
+                        ?key,
+                        existing_peer = occupied.get().source_peer_id,
+                        new_peer = source_peer_id,
+                        "icmp nat key collision; keeping first entry"
+                    );
+                    return IcmpProxyAction::Pass;
+                }
+                occupied.get_mut().local_peer_id = local_peer_id;
+                occupied.get_mut().source_ip = source_ip;
+                occupied.get_mut().mapped_destination = mapped_destination;
+                occupied.get_mut().started_at = Instant::now();
+            }
+            dashmap::mapref::entry::Entry::Vacant(vacant) => {
+                vacant.insert(IcmpNatEntry {
+                    source_peer_id,
+                    local_peer_id,
+                    source_ip,
+                    mapped_destination,
+                    started_at: Instant::now(),
+                });
+            }
+        }
 
         IcmpProxyAction::SendToSocket {
             destination: real_destination,
@@ -317,6 +344,89 @@ mod tests {
             ),
             IcmpProxyAction::Pass
         ));
+    }
+
+    #[test]
+    fn exit_flagged_internet_requires_enable_exit_node() {
+        let engine = engine(Some(ProxyCidrRule {
+            cidr: "10.20.0.0/24".parse().unwrap(),
+            mapped_cidr: None,
+        }));
+        let mut packet = echo_request("10.0.0.2".parse().unwrap(), "8.8.8.8".parse().unwrap());
+        packet
+            .mut_peer_manager_header()
+            .unwrap()
+            .set_exit_node(true);
+
+        assert!(matches!(
+            engine.handle_peer_packet(
+                &packet,
+                IcmpProxyContext {
+                    virtual_ipv4: Some("10.0.0.1".parse().unwrap()),
+                    enable_exit_node: false,
+                    ..Default::default()
+                }
+            ),
+            IcmpProxyAction::Pass
+        ));
+
+        assert!(matches!(
+            engine.handle_peer_packet(
+                &packet,
+                IcmpProxyContext {
+                    virtual_ipv4: Some("10.0.0.1".parse().unwrap()),
+                    enable_exit_node: true,
+                    ..Default::default()
+                }
+            ),
+            IcmpProxyAction::SendToSocket { .. }
+        ));
+    }
+
+    #[test]
+    fn icmp_nat_rejects_cross_peer_key_collision() {
+        let engine = engine(Some(ProxyCidrRule {
+            cidr: "127.0.0.0/24".parse().unwrap(),
+            mapped_cidr: Some("10.10.10.0/24".parse().unwrap()),
+        }));
+        let first = echo_request("10.0.0.2".parse().unwrap(), "10.10.10.42".parse().unwrap());
+        assert!(matches!(
+            engine.handle_peer_packet(
+                &first,
+                IcmpProxyContext {
+                    virtual_ipv4: Some("10.0.0.1".parse().unwrap()),
+                    ..Default::default()
+                }
+            ),
+            IcmpProxyAction::SendToSocket { .. }
+        ));
+
+        let mut second = echo_request("10.0.0.3".parse().unwrap(), "10.10.10.42".parse().unwrap());
+        second
+            .mut_peer_manager_header()
+            .unwrap()
+            .from_peer_id
+            .set(303);
+        assert!(matches!(
+            engine.handle_peer_packet(
+                &second,
+                IcmpProxyContext {
+                    virtual_ipv4: Some("10.0.0.1".parse().unwrap()),
+                    ..Default::default()
+                }
+            ),
+            IcmpProxyAction::Pass
+        ));
+        let entry = engine
+            .nat_table
+            .get(&IcmpNatKey {
+                real_destination: "127.0.0.42".parse().unwrap(),
+                identifier: 7,
+                sequence: 11,
+            })
+            .unwrap();
+        assert_eq!(entry.source_peer_id, 101);
+        assert_eq!(entry.source_ip, "10.0.0.2".parse::<Ipv4Addr>().unwrap());
     }
 
     #[test]

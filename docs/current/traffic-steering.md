@@ -3,7 +3,7 @@
 ## Status
 
 - Status: **Current**（⚠️ **待验收**：下文 §2 / §5 中标注「待验收」的段落描述的是工作区未合入修复，合入并验收前勿当可依赖现状）
-- 最近审阅：2026-10-20（策略路由六项加固：§5 的 L1 确认护栏 / L2 代价来源 / L3 `never` 真钉死 / L5 无路由表拒绝；复核修补：R4 每规则代价归因 / R5 热补丁按实例自身路由算法校验；新增 **§5.0.1 热生效边界**、**§5.3 升级影响**；§2·§5 待验收标注）；2026-10-18（Android GUI / OHOS 与 JNI 对齐：新 core 吃 `desired_proxy_cidrs`，旧 core 回退本地拼装）；2026-10-16（修正 `manual_routes` 语义：仅覆盖**学习集合**，append 模式仍自动装 exit `/0`、policy 显式 `/0` 两种模式均生效；Android JNI 逃生阀改由 `NetworkInstanceRunningInfo` 下发；补对端 `/0` 兜底需 `enable_exit_node`）
+- 最近审阅：2026-11-07（§2.1 B4/E3 升级影响：`enable_exit_node` 许可门变严；§2 增补 B17 口径）；2026-10-20（策略路由六项加固：§5 的 L1 确认护栏 / L2 代价来源 / L3 `never` 真钉死 / L5 无路由表拒绝；复核修补：R4 每规则代价归因 / R5 热补丁按实例自身路由算法校验；新增 **§5.0.1 热生效边界**、**§5.3 升级影响**；§2·§5 待验收标注）；2026-10-18（Android GUI / OHOS 与 JNI 对齐：新 core 吃 `desired_proxy_cidrs`，旧 core 回退本地拼装）；2026-10-16（修正 `manual_routes` 语义：仅覆盖**学习集合**，append 模式仍自动装 exit `/0`、policy 显式 `/0` 两种模式均生效；Android JNI 逃生阀改由 `NetworkInstanceRunningInfo` 下发；补对端 `/0` 兜底需 `enable_exit_node`）
 - 范围：`exit_nodes` / `enable_exit_node` / `proxy_cidrs` / `manual_routes` / `manual_routes_append` / `[[policy_routes]]` / TUN 系统路由同步 / `allow_peer_default_without_exit`
 - 规划中的改动见：[`../roadmap/traffic-steering-vNext.md`](../roadmap/traffic-steering-vNext.md)、[`../roadmap/domain-proxy.md`](../roadmap/domain-proxy.md)；默认路由 Phase 2：[`../roadmap/default-route-and-underlay-excludes.md`](../roadmap/default-route-and-underlay-excludes.md)（论证全文 [`../archive/default-route-and-underlay-excludes-2026-10.md`](../archive/default-route-and-underlay-excludes-2026-10.md)）
 - DNS：[`magic-dns.md`](./magic-dns.md)
@@ -56,6 +56,14 @@ IPv6：VIP / 非 `/0` 的 proxy LPM → `exit_nodes`（同样要求下一跳）�
 
 - 带 `exit_node` 标志的包：需 `enable_exit_node`（或宿主强制）才由 TCP/UDP/ICMP 代理接  
 - 仅靠对方通告的非默认 CIDR 命中时：按子网代理 `lookup`，不依赖 `exit_node` 标志  
+
+**已知限制（B17）**：选哪个出口 / 网关只看配置列表顺序，或（`select_by = quality`）到该**网关 peer** 的 overlay 路径代价。协议**不传播**「出口节点 → 网格外真实目标」的最后一跳代价，因此系统**不会**按「谁离公网目标更近」选出口。`quality` 里的「链路质量」指到候选 peer 的整条 mesh 路径，不是到互联网目的地的端到端距离。
+
+### 2.1 升级影响（B4：`enable_exit_node` 许可门，2026-11）
+
+| 变更 | 升级后表现 | 需要做什么 |
+|---|---|---|
+| **E3** | 修复前：节点只要配了任意 `proxy_cidrs`（子网代理），即使 **未** 开 `enable_exit_node`，仍会承接带 `exit_node` 标志的**任意互联网目标**并 NAT 出网。修复后：TCP/UDP/ICMP 对「无 CIDR 命中 + `is_exit_node`」路径**一律要求**本机 `enable_exit_node`；子网代理 CIDR 命中路径不变 | 若该节点本意是出口：打开「允许此节点成为出口节点」/`enable_exit_node`。若本意只做子网代理：客户端不要再把它放进 `exit_nodes` / 策略路由网关；升级后未开开关的出口流量会 Pass/丢弃 |
 
 ---
 

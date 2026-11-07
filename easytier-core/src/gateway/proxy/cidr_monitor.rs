@@ -256,8 +256,33 @@ async fn collect_proxy_cidr_state(
     snapshot.has_exit_nodes = local_exit_default;
     // Same snapshot the L3 hot path reads → no L2-installed-but-L3-unknown window.
     snapshot.local_routes = peer_manager.local_route_table().l2_contributing_cidrs();
-    let current = resolve_proxy_cidrs(peer_routes, snapshot);
+    let raw = resolve_proxy_cidrs(peer_routes, snapshot);
+    // L1: prune overlapping local physical + virtual networks before L2 install.
+    // Single choke point shared by monitor events and packet_plane desired queries.
+    let current = prune_with_local_networks(peer_manager, raw);
     (current, local_exit_default)
+}
+
+fn prune_with_local_networks(
+    peer_manager: &PeerManagerCore,
+    raw: BTreeSet<Ipv4Cidr>,
+) -> BTreeSet<Ipv4Cidr> {
+    use super::proxy_cidr_prune::prune_proxy_cidrs;
+
+    let holes = peer_manager.proxy_cidr_prune_holes();
+    if holes.is_empty() {
+        return raw;
+    }
+    let pruned = prune_proxy_cidrs(raw.clone(), &holes);
+    if pruned != raw {
+        tracing::info!(
+            before = ?raw.iter().map(ToString::to_string).collect::<Vec<_>>(),
+            after = ?pruned.iter().map(ToString::to_string).collect::<Vec<_>>(),
+            holes = ?holes.iter().map(ToString::to_string).collect::<Vec<_>>(),
+            "proxy cidr pruned by local networks"
+        );
+    }
+    pruned
 }
 
 #[cfg(test)]

@@ -1149,11 +1149,15 @@ where
 
     let addrs = host.interface_addrs().await?;
     if remote_addr.is_ipv4() {
-        return Ok(addrs
-            .interface_ipv4s
-            .into_iter()
-            .map(|addr| SocketAddr::new(IpAddr::V4(addr), 0))
-            .collect());
+        let mut ret = Vec::new();
+        for addr in addrs.interface_ipv4s {
+            // L0: do not bind overlay / managed VIP as underlay source.
+            if peer_manager.is_easytier_managed_ipv4(&addr).await {
+                continue;
+            }
+            ret.push(SocketAddr::new(IpAddr::V4(addr), 0));
+        }
+        return Ok(ret);
     }
 
     let mut ipv6s = addrs.interface_ipv6s;

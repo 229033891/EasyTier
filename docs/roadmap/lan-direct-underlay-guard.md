@@ -2,10 +2,10 @@
 
 ## Status
 
-- Status: **Roadmap**（2026-11-04 现网事故诊断完成；2026-11-04 完成代码级复核，方案已从「声明侧修正」重排为「接收侧为主」）
-- 最近审阅：2026-11-04（复核修订，见 §4）
+- Status: **Roadmap**（L0/L1/L2 **代码已落地；现网 `/22` 冒烟未做** → 发版口径写「待现网确认」，**勿**宣称事故已永久关闭。L4/L3 未做。施工绑定 [`open-bugs-wave1-impl.md`](./open-bugs-wave1-impl.md) §7）
+- 最近审阅：2026-11-07（接入点勘误 + Wave1 落地 + 发版口径）
 - 背景：2026-11-04 现网事故——同局域网跨网段节点（192.168.11.124 ↔ 192.168.10.101）直连反复建拆，OSPF 稳定绕行中转节点。诊断结论见 §2。
-- 相关 Roadmap：[`default-route-and-underlay-excludes.md`](./default-route-and-underlay-excludes.md)（underlay 排除思想同源）、[`unified-routing-design.md`](./unified-routing-design.md)（路由所有权）、[`multi-link-bonding.md`](./multi-link-bonding.md)（Phase 3 `bind_device` 多样性）、[`connection-stability-todo.md`](./connection-stability-todo.md)、[`stability-abc-plan.md`](./stability-abc-plan.md)（liveness 稳定性总纲）、[`gui-connected-vs-reachable.md`](./gui-connected-vs-reachable.md)
+- 相关 Roadmap：[`open-bugs-wave1-impl.md`](./open-bugs-wave1-impl.md)（Wave 1 施工）、[`default-route-and-underlay-excludes.md`](./default-route-and-underlay-excludes.md)（underlay 排除思想同源）、[`unified-routing-design.md`](./unified-routing-design.md)（路由所有权）、[`multi-link-bonding.md`](./multi-link-bonding.md)（Phase 3 `bind_device` 多样性）、[`connection-stability-todo.md`](./connection-stability-todo.md)、[`stability-abc-plan.md`](./stability-abc-plan.md)（liveness 稳定性总纲）、[`gui-connected-vs-reachable.md`](./gui-connected-vs-reachable.md)
 - 相关 Current：[`../current/peer-connections.md`](../current/peer-connections.md)、[`../current/traffic-steering.md`](../current/traffic-steering.md)、[`../current/underlay.md`](../current/underlay.md)、[`../current/data-plane.md`](../current/data-plane.md)
 - 索引：[`../README.md`](../README.md)
 
@@ -48,7 +48,7 @@
 |---|---|---|
 | **A** 直连候选含虚拟 IPv4 | **成立** | `direct/mod.rs:539-557`：listener 0.0.0.0 时 IPv4 候选 = `interface_ipv4s.chain(public_ipv4)`，无托管地址过滤；IPv6 有 `is_easytier_managed_ipv6`（`peer_manager.rs:2265-2274`），IPv4 无对应函数。`collect_bind_addrs`（`manual/mod.rs:1137-1168`）更把全部 `interface_ipv4s` 当源地址返回 → `tunnel src 10.10.10.25` 的来源。`should_deny_target`（`direct/mod.rs:532-536`）只拒「目标 == 本地 IP 且端口相同」，拦不住。 |
 | **B.1** 拨号绑物理接口 | **方向对，机制描述有误** | 现有 `bind_device: true`（`direct/mod.rs:710-723`）只是把 `interface_ipv4s` 当源地址，**不是** `IP_UNICAST_IF` / `SO_BINDTODEVICE`。真正的出口钉扎在 `easytier/src/tunnel/common.rs:125-157` 与 `easytier/src/arch/windows.rs:108-172`（`set_ip_unicast_if`），需要「本地 IP → 接口名」的管道，而 `host.interface_addrs()` 只给 IP（`connector_host.rs:242-259`）。 |
-| **B.2** /32 排除路由 | **机制已存在，触发条件不符** | `collect_underlay_exclude_ips`（`easytier-core/src/gateway/proxy/underlay_exclude.rs:16-49`）已采集 peer tunnel underlay IP + STUN IP，`should_exclude_ip`（`:70-84`）明确放行 RFC1918；安装器 `reconcile_underlay_exclude_routes`（`virtual_nic.rs:1556-1660`）已实现物理默认网关解析、变更重装、失败重试。唯一问题是 `needs_excludes` 只判「desired 中存在 `network_length() == 0` 的前缀」（`virtual_nic.rs:1943`）——**只在 TUN /0 场景触发**，本次 /22 不触发。 |
+| **B.2** /32 排除路由 | **机制已存在，触发条件不符** | `collect_underlay_exclude_ips`（`easytier-core/src/gateway/proxy/underlay_exclude.rs:16-49`）已采集 peer tunnel underlay IP + STUN IP；`should_exclude_ip`（`:70-84`）**会纳入 RFC1918**（不是「放行跳过」——2026-11-07 勘误）。安装器 `reconcile_underlay_exclude_routes`（`virtual_nic.rs:1556-1660`）已实现物理默认网关解析、变更重装、失败重试。触发条件过窄：install 门闩 `sync_proxy_cidrs_with_underlay_excludes`（~1280）与 tick（~1944）都只认 TUN `/0`——**本次 /22 不触发**。 |
 | **C** liveness 闪断放大 | **已被现行代码覆盖，按原文施工 = 重复施工** | `peer_conn_ping.rs`：`FAST_PROBE_INTERVAL` 333ms（:95）、`FAST_PROBE_MISSES_TO_DEGRADE = 3`（:103）、`FAST_PROBE_RECOVER_ROUNDS = 3`（:119）、`FAST_PROBE_SUSTAINED_ROUNDS = 9`（:135）；恢复迟滞已实现（:147-155）；seq 隔离 `FAST_PROBE_SEQ_BIT`（:246）、Pong 按 seq 匹配（:526-527）；`:392-406` 注释逐字记录了「keepalive 直写 `store(false)` 绕过门控」的旧 bug 及修复。`ctrl_resp_sender` 是 `PeerConn` 字段（`peer_conn.rs:313`），每 conn 一个 broadcast，「跨 conn 串扰」不成立。 |
 | **D** NAT 语义解耦 | **层级错位** | `nat_type` 是 peer 级展示（`easytier/src/easytier-cli/main.rs:1549`、`:1628`、`:1654`），GUI 对端表没有 NAT 列，不存在「每条边一个 NAT 值」需要解耦。降级为 P3 文案项。 |
 
@@ -69,14 +69,15 @@
 3. 剪完为空 → 丢弃该前缀并 warn（带 peer_id）。
 4. 本机**虚拟网段**也进集合：对端宣告 `10.0.0.0/8` 会连 overlay 自己一起劫持，当前无任何防护。
 
-接入点（唯一出口，桌面与移动端同时受益）：
+接入点（**2026-11-07 修正**：唯一剪枝点必须在 monitor 收集路径，不能只挂 packet_plane 包装）：
 
-- `easytier-core/src/instance/packet_plane.rs:71-99`：`collect_proxy_cidr_diff` / `collect_proxy_cidrs` 先算原始集合 → 剪枝 → 再算 `added/removed`。**顺序不能倒**，否则 `diff.added` 里已含应丢弃的前缀。
-- 新增 `CorePacketPlane::set_local_ipv4_networks(Vec<cidr::Ipv4Cidr>)`（内部 `ArcSwap`）；未设置时为空集，行为与今天一致（向后兼容，移动端不传也不回归）。
-- 网段采集：`easytier/src/common/network.rs:464-508` 旁新增 `collect_local_ipv4_networks(exclude_ifname)`，用 `Addr::V4.netmask` + `ip_mask_to_prefix`（`network.rs:104-125`）。**Windows 必须显式排除 TUN**：`network.rs:292-310` 的过滤条件里没有 Linux 的 `!is_tun_tap_device()`（`network.rs:177-210`），Wintun 地址会混入——这正是缺陷 A 的成因之一。
-- 注入时机：`run_proxy_cidrs_route_updater`（`virtual_nic.rs:1825-1990`）的 1s tick 里每 5s 重采一次，或订阅既有网络变化事件。
+- **`easytier-core/src/gateway/proxy/cidr_monitor.rs` → `collect_proxy_cidr_state`**：`resolve_proxy_cidrs` 之后剪枝，再 diff / 发 `ProxyCidrsUpdated`。桌面 `virtual_nic` 主要吃事件里的 `added/removed`，**绕过** `packet_plane` 包装；只剪 packet_plane 会装回未剪枝前缀。
+- 新增 `CorePacketPlane::set_local_ipv4_networks(Vec<cidr::Ipv4Cidr>)`（内部 `ArcSwap`），供 `collect_proxy_cidr_state` 读取；未设置时为空集（向后兼容）。
+- 网段采集：`easytier/src/common/network.rs` 旁新增 `collect_local_ipv4_networks(exclude_ifname)`。**Windows 必须按 TUN ifname 排除**（枚举条件无 Linux 式 `!is_tun_tap_device()`）。
+- 注入时机：`run_proxy_cidrs_route_updater`（`easytier/src/instance/virtual_nic.rs`）tick 每 5s 重采，或网络变更时。
+- ⚠️ **L1 alone 不够**：剪掉本机 `/24` 后仍可能留下覆盖对端物理 IP 的子前缀 → **必须配 L2**。
 
-算法（新增 `easytier-core/src/instance/proxy_cidr_prune.rs`）：
+算法（新增 `easytier-core/src/gateway/proxy/proxy_cidr_prune.rs`）：
 
 ```rust
 pub fn subtract_ipv4(base: cidr::Ipv4Cidr, holes: &[cidr::Ipv4Cidr]) -> Vec<cidr::Ipv4Cidr>;
@@ -96,11 +97,14 @@ fn subtract_one(base: Ipv4Cidr, hole: Ipv4Cidr) -> Vec<Ipv4Cidr> {
 
 ### 5.2 L2 下垫面 /32 钉扎（P0，复用现成机制）
 
-判据从「有没有 TUN /0」改为「**有没有 peer 下垫面地址被某个 desired 前缀覆盖**」：
+判据从「有没有 TUN /0」改为「**有没有 peer 下垫面地址被某个（已剪枝）desired 前缀覆盖**」。
+
+**2026-11-07 修正**：必须改 **两处**（或抽成同一谓词），只改 tick 不够：
+
+1. **Install 门闩**（权威）：`sync_proxy_cidrs_with_underlay_excludes` 内原 `will_have_tun_default`（~1280）——真正决定是否 `reconcile_underlay_exclude_routes`。
+2. **Tick 门闩**（~1944）：避免无谓词时跳过 `underlay_exclude_ips()` 采集；可 OR「已安装集合含 `/0`」以免拆除窗口漏 exclude。
 
 ```rust
-// virtual_nic.rs:1943 附近
-let underlay_ips = packet_plane.underlay_exclude_ips().await;
 let needs_excludes = desired.iter().any(|c| c.network_length() == 0)
     || underlay_ips.iter().any(|ip| {
         desired.iter().any(|c| c.contains(ip)) && !local_nets.iter().any(|n| n.contains(ip))
@@ -109,7 +113,7 @@ let needs_excludes = desired.iter().any(|c| c.network_length() == 0)
 
 两个必须加的例外：
 
-- **on-link 例外**：下垫面地址落在本机 connected 网段内时不装 `/32`——同网段直连本就不被劫持，装了反而把包指向物理网关。
+- **on-link 例外**：下垫面地址落在本机物理 `local_nets` 内时不装 `/32`（`local_nets` 需 L1 新建；勿与 overlay `is_ip_in_same_network` 混淆）。
 - **本地虚拟 IP 例外**：`should_exclude_ip` 已用 `is_local_virtual_ip` 排除（`underlay_exclude.rs:75`），保持。
 
 拆除路径已存在：`enable_excludes == false` 分支会删掉已装 `/32`（`virtual_nic.rs:1567-1581`），条件变假即自动清理，幂等。

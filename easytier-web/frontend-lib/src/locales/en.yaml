@@ -571,6 +571,7 @@ exit_nodes: Exit Nodes
 exit_nodes_help: |-
   Exit node list: fill in the peer's virtual IPv4 address. This host installs a TUN default route and, once traffic enters the overlay, forwards internet traffic to the first reachable exit (with a next hop) in list order.
   The peer must have "Enable Exit Node" turned on, or L3 will not accept that traffic.
+  Selection is list order (or, with policy routes, path cost to the gateway peer) — not "which exit is closer to the internet destination". The protocol does not see the last hop from exit to the external target.
   Note: if installing/removing the system default or underlay excludes fails, the status page shows desired vs installed and the process retries periodically; internet access may be disrupted until routes land. A wrong or unreachable address cuts off all internet access — verify reachability first.
 
 policy_routes: Policy Routes
@@ -604,7 +605,7 @@ policy_routes_select_by_help: |-
   How to pick among multiple gateway peers: list order / best quality / spread by flow.
   "Spread by flow" distributes flows across the candidates by inner-flow 5-tuple hash, **evenly** — not weighted by link quality or capacity. One flow always keeps one gateway.
   When a default-route rule merges the exit-node list, that merged candidate pool is what "Spread by flow" hashes over — not only the peers column on this row. Check Status → Effective policy routes to see the live list.
-  "Best link quality" compares the cost of the **whole path** to a candidate (relay hops included), so a candidate reachable only through a relay is ranked correctly.
+  "Best link quality" compares the cost of the **whole mesh path** to that gateway peer (relay hops included) — not distance to the internet destination. The protocol does not compare the exit's last hop to the external target.
   With "never" fail over only the first candidate is kept, so it can only be paired with "In list order"; the other modes are rejected by config validation.
 policy_routes_effective: Effective policy routes
 policy_routes_effective_help: |-

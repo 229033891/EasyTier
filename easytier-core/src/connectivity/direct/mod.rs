@@ -542,7 +542,12 @@ where
                     .iter()
                     .chain(ip_list.public_ipv4.iter())
                 {
-                    let target = SocketAddr::new(IpAddr::V4(ip.addr.into()), socket_addr.port());
+                    let v4: std::net::Ipv4Addr = ip.addr.into();
+                    // L0: skip EasyTier-managed / overlay VIP addresses.
+                    if self.peer_manager.is_easytier_managed_ipv4(&v4).await {
+                        continue;
+                    }
+                    let target = SocketAddr::new(IpAddr::V4(v4), socket_addr.port());
                     if should_deny_target(&target) {
                         continue;
                     }
@@ -558,7 +563,11 @@ where
             }
             Some(SocketAddr::V4(socket_addr))
                 if (!socket_addr.ip().is_loopback() || self.options.testing)
-                    && !should_deny_target(&SocketAddr::V4(socket_addr)) =>
+                    && !should_deny_target(&SocketAddr::V4(socket_addr))
+                    && !self
+                        .peer_manager
+                        .is_easytier_managed_ipv4(socket_addr.ip())
+                        .await =>
             {
                 tasks.spawn(Self::try_connect_to_url(
                     self.clone(),
