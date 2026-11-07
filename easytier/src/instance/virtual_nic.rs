@@ -8,7 +8,7 @@ use std::{
         atomic::{AtomicU64, Ordering},
     },
     task::{Context, Poll},
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 use crate::common::{
@@ -1840,6 +1840,19 @@ impl NicCtx {
             let mut ipv4_physical_default: Option<PhysicalDefaultRoute> = None;
             let mut ipv6_physical_default: Option<PhysicalDefaultRoute> = None;
 
+            // Seed L1 prune holes before the first desired-set collect so
+            // overlapping proxy CIDRs are never installed unpruned at startup.
+            {
+                let nets = crate::common::network::collect_local_ipv4_networks(
+                    net_ns.clone(),
+                    Some(ifname.as_str()),
+                )
+                .await;
+                packet_plane.set_local_ipv4_networks(nets);
+            }
+            const LOCAL_NET_REFRESH: Duration = Duration::from_secs(5);
+            let mut next_local_net_refresh = Instant::now() + LOCAL_NET_REFRESH;
+
             let Some(diff) = packet_plane.proxy_cidr_diff(&installed).await else {
                 tracing::error!("proxy CIDR monitor host is unavailable");
                 return;
@@ -1867,7 +1880,6 @@ impl NicCtx {
 
             let mut retry = tokio::time::interval(Duration::from_secs(1));
             retry.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-            let mut ticks_since_local_net_refresh: u32 = 0;
             retry.tick().await;
 
             loop {
@@ -1940,19 +1952,20 @@ impl NicCtx {
                         }
                     }
                     _ = retry.tick() => {
-                        ticks_since_local_net_refresh = ticks_since_local_net_refresh.wrapping_add(1);
-                        if ticks_since_local_net_refresh % 5 == 1 {
+                        if Instant::now() >= next_local_net_refresh {
                             let nets = crate::common::network::collect_local_ipv4_networks(
                                 net_ns.clone(),
                                 Some(ifname.as_str()),
                             )
                             .await;
                             packet_plane.set_local_ipv4_networks(nets);
+                            next_local_net_refresh = Instant::now() + LOCAL_NET_REFRESH;
                         }
                         // L2 gate: `/0` **or** desired covers off-link underlay peer.
-                        let underlay_for_gate = packet_plane.underlay_exclude_ips().await;
+                        // One underlay snapshot per tick — gate and exclude share it.
+                        let underlay_ips = packet_plane.underlay_exclude_ips().await;
                         let needs_excludes = packet_plane
-                            .needs_underlay_excludes(&desired, &underlay_for_gate)
+                            .needs_underlay_excludes(&desired, &underlay_ips)
                             || installed.iter().any(|c| c.network_length() == 0);
                         if !needs_excludes && exclude_installed.is_empty() {
                             let added =
@@ -1987,7 +2000,7 @@ impl NicCtx {
                         }
 
                         let exclude_desired = if needs_excludes {
-                            packet_plane.underlay_exclude_ips().await
+                            underlay_ips
                         } else {
                             BTreeSet::new()
                         };

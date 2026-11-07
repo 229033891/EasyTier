@@ -132,34 +132,35 @@ impl CorePacketPlane {
         collect_underlay_exclude_ips(self.peer_manager.as_ref(), extra).await
     }
 
-    /// Inject physical local IPv4 networks for L1 proxy-CIDR prune / L2 on-link checks.
-    pub fn set_local_ipv4_networks(&self, nets: Vec<cidr::Ipv4Cidr>) {
+    /// Inject physical local IPv4 networks for L1 proxy-CIDR prune / L2 on-link.
+    ///
+    /// `None` = enumeration failed (keep previous); `Some` = known snapshot.
+    pub fn set_local_ipv4_networks(&self, nets: Option<Vec<cidr::Ipv4Cidr>>) {
         self.peer_manager.set_local_ipv4_networks(nets);
     }
 
-    pub fn local_ipv4_networks(&self) -> Arc<Vec<cidr::Ipv4Cidr>> {
+    /// `None` = host has not injected physical nets yet; `Some` = known set
+    /// (possibly empty).
+    pub fn local_ipv4_networks(&self) -> Arc<Option<Vec<cidr::Ipv4Cidr>>> {
         self.peer_manager.local_ipv4_networks()
     }
 
     /// L2 underlay `/32` gate: TUN `/0` **or** a desired prefix covering an
     /// off-link peer underlay address (see open-bugs-wave1-impl §2.2).
+    ///
+    /// Unknown physical nets (`None`) only trip the `/0` gate — treating
+    /// "unknown" as "empty" would mark every underlay IP off-link on hosts that
+    /// never inject nets (non-desktop) and install spurious `/32` excludes.
     pub fn needs_underlay_excludes(
         &self,
         effective_desired: &BTreeSet<cidr::Ipv4Cidr>,
         underlay_ips: &BTreeSet<IpAddr>,
     ) -> bool {
-        if effective_desired.iter().any(|c| c.network_length() == 0) {
-            return true;
-        }
-        let local_nets = self.local_ipv4_networks();
-        underlay_ips.iter().any(|ip| {
-            let IpAddr::V4(v4) = ip else {
-                return false;
-            };
-            let covered = effective_desired.iter().any(|c| c.contains(v4));
-            let on_link = local_nets.iter().any(|n| n.contains(v4));
-            covered && !on_link
-        })
+        needs_underlay_excludes(
+            effective_desired,
+            underlay_ips,
+            self.local_ipv4_networks().as_ref().as_deref(),
+        )
     }
 
     pub async fn public_ipv6_routes(&self) -> BTreeSet<cidr::Ipv6Inet> {
@@ -236,5 +237,91 @@ impl MagicDnsRouteSource for CorePacketPlane {
 
     async fn revision(&self) -> quanta::Instant {
         MagicDnsRouteSource::revision(self.peer_manager.as_ref()).await
+    }
+}
+
+/// Pure L2 exclude predicate (unit-tested).
+pub(crate) fn needs_underlay_excludes(
+    effective_desired: &BTreeSet<cidr::Ipv4Cidr>,
+    underlay_ips: &BTreeSet<IpAddr>,
+    local_nets: Option<&[cidr::Ipv4Cidr]>,
+) -> bool {
+    if effective_desired.iter().any(|c| c.network_length() == 0) {
+        return true;
+    }
+    let Some(local_nets) = local_nets else {
+        return false;
+    };
+    underlay_ips.iter().any(|ip| {
+        let IpAddr::V4(v4) = ip else {
+            return false;
+        };
+        let covered = effective_desired.iter().any(|c| c.contains(v4));
+        let on_link = local_nets.iter().any(|n| n.contains(v4));
+        covered && !on_link
+    })
+}
+
+#[cfg(test)]
+mod underlay_exclude_gate_tests {
+    use super::*;
+    use std::net::Ipv4Addr;
+
+    fn c(s: &str) -> cidr::Ipv4Cidr {
+        s.parse().unwrap()
+    }
+
+    #[test]
+    fn unknown_local_nets_only_trigger_on_default_route() {
+        let mut desired = BTreeSet::new();
+        desired.insert(c("192.168.8.0/22"));
+        let mut underlay = BTreeSet::new();
+        underlay.insert(IpAddr::V4(Ipv4Addr::new(192, 168, 10, 101)));
+        assert!(!needs_underlay_excludes(&desired, &underlay, None));
+
+        desired.insert(c("0.0.0.0/0"));
+        assert!(needs_underlay_excludes(&desired, &underlay, None));
+    }
+
+    #[test]
+    fn off_link_covered_underlay_needs_exclude() {
+        let mut desired = BTreeSet::new();
+        desired.insert(c("192.168.8.0/22"));
+        let mut underlay = BTreeSet::new();
+        underlay.insert(IpAddr::V4(Ipv4Addr::new(192, 168, 10, 101)));
+        let local = [c("192.168.11.0/24")];
+        assert!(needs_underlay_excludes(
+            &desired,
+            &underlay,
+            Some(local.as_slice())
+        ));
+    }
+
+    #[test]
+    fn on_link_underlay_skips_exclude() {
+        let mut desired = BTreeSet::new();
+        desired.insert(c("192.168.8.0/22"));
+        let mut underlay = BTreeSet::new();
+        underlay.insert(IpAddr::V4(Ipv4Addr::new(192, 168, 11, 50)));
+        let local = [c("192.168.11.0/24")];
+        assert!(!needs_underlay_excludes(
+            &desired,
+            &underlay,
+            Some(local.as_slice())
+        ));
+    }
+
+    #[test]
+    fn empty_known_local_nets_marks_all_covered_off_link() {
+        let mut desired = BTreeSet::new();
+        desired.insert(c("10.0.0.0/8"));
+        let mut underlay = BTreeSet::new();
+        underlay.insert(IpAddr::V4(Ipv4Addr::new(10, 1, 2, 3)));
+        let local: [cidr::Ipv4Cidr; 0] = [];
+        assert!(needs_underlay_excludes(
+            &desired,
+            &underlay,
+            Some(local.as_slice())
+        ));
     }
 }

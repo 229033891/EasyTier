@@ -72,9 +72,11 @@
 接入点（**2026-11-07 修正**：唯一剪枝点必须在 monitor 收集路径，不能只挂 packet_plane 包装）：
 
 - **`easytier-core/src/gateway/proxy/cidr_monitor.rs` → `collect_proxy_cidr_state`**：`resolve_proxy_cidrs` 之后剪枝，再 diff / 发 `ProxyCidrsUpdated`。桌面 `virtual_nic` 主要吃事件里的 `added/removed`，**绕过** `packet_plane` 包装；只剪 packet_plane 会装回未剪枝前缀。
-- 新增 `CorePacketPlane::set_local_ipv4_networks(Vec<cidr::Ipv4Cidr>)`（内部 `ArcSwap`），供 `collect_proxy_cidr_state` 读取；未设置时为空集（向后兼容）。
-- 网段采集：`easytier/src/common/network.rs` 旁新增 `collect_local_ipv4_networks(exclude_ifname)`。**Windows 必须按 TUN ifname 排除**（枚举条件无 Linux 式 `!is_tun_tap_device()`）。
-- 注入时机：`run_proxy_cidrs_route_updater`（`easytier/src/instance/virtual_nic.rs`）tick 每 5s 重采，或网络变更时。
+- 新增 `CorePacketPlane::set_local_ipv4_networks`（内部 `ArcSwap<Option<Vec>>`）：`None`=未注入，`Some`=已知集合。变化时 `proxy_cidr_wake.notify_one()`；monitor 快路径比对 Arc，避免「只写不动」导致 L1 永不重跑。
+- L1：holes 空（未注入且无 VIP）→ 不剪（兼容）；L2：`None` 仅触发 `/0` 门闩，**不**把未知当全 off-link。
+- **覆盖范围：仅桌面**。注入入口是 `run_proxy_cidrs_route_updater`（`virtual_nic.rs` 启动路径）；Android/mobile 等不跑该 updater → 永远 `None`，L2 退回「仅 `/0`」旧行为。
+- 网段采集：`collect_local_ipv4_networks` → `Option<Vec>`；枚举/`JoinError` 失败返回 `None`，`set_local_ipv4_networks(None)` **保持旧值**（避免 WMI 抖动写成 `Some([])` 触发 L2 路由抖）。Windows **必须按 TUN ifname 排除**；`prefix < 8` 跳过（60s 限频 warn）。线程跃迁在采集入口；底层同步 `show()`。
+- 注入时机：`run_proxy_cidrs_route_updater` **首次 `proxy_cidr_diff` 前先采**，之后每 5s（`Instant`）重采。
 - ⚠️ **L1 alone 不够**：剪掉本机 `/24` 后仍可能留下覆盖对端物理 IP 的子前缀 → **必须配 L2**。
 
 算法（新增 `easytier-core/src/gateway/proxy/proxy_cidr_prune.rs`）：

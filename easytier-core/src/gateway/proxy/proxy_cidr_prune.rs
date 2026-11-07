@@ -33,13 +33,10 @@ fn subtract_one(base: Ipv4Cidr, hole: Ipv4Cidr) -> Vec<Ipv4Cidr> {
     if hole_covers_base(base, hole) {
         return Vec::new();
     }
+    // A /32 that overlaps a hole is always fully covered above; keep the host
+    // if we somehow still reach here (cannot safely split past /32).
     if base.network_length() >= 32 {
-        // Single host fully covered by the overlap check above, or no hole.
-        return if hole_covers_base(base, hole) {
-            Vec::new()
-        } else {
-            vec![base]
-        };
+        return vec![base];
     }
     let (lo, hi) = split_prefix(base);
     let mut out = subtract_one(lo, hole);

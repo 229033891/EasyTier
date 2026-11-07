@@ -545,6 +545,7 @@ where
                     let v4: std::net::Ipv4Addr = ip.addr.into();
                     // L0: skip EasyTier-managed / overlay VIP addresses.
                     if self.peer_manager.is_easytier_managed_ipv4(&v4).await {
+                        tracing::debug!(?listener, %v4, "skip managed IPv4 direct target");
                         continue;
                     }
                     let target = SocketAddr::new(IpAddr::V4(v4), socket_addr.port());
@@ -562,12 +563,16 @@ where
                 }
             }
             Some(SocketAddr::V4(socket_addr))
+                if self
+                    .peer_manager
+                    .is_easytier_managed_ipv4(socket_addr.ip())
+                    .await =>
+            {
+                tracing::debug!(?listener, "skip managed IPv4 direct target");
+            }
+            Some(SocketAddr::V4(socket_addr))
                 if (!socket_addr.ip().is_loopback() || self.options.testing)
-                    && !should_deny_target(&SocketAddr::V4(socket_addr))
-                    && !self
-                        .peer_manager
-                        .is_easytier_managed_ipv4(socket_addr.ip())
-                        .await =>
+                    && !should_deny_target(&SocketAddr::V4(socket_addr)) =>
             {
                 tasks.spawn(Self::try_connect_to_url(
                     self.clone(),

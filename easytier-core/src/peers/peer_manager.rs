@@ -1469,10 +1469,9 @@ pub struct PeerManagerCore {
     flow_table: Arc<FlowTable>,
     network_name: String,
     counters: PeerManagerTrafficCounters,
-    /// Physical (+ optionally injected) local IPv4 networks used to prune
-    /// overlapping proxy CIDRs before L2 install (LAN underlay guard L1).
-    /// Empty = no prune (backward compatible).
-    local_ipv4_networks: arc_swap::ArcSwap<Vec<cidr::Ipv4Cidr>>,
+    /// Physical local IPv4 networks for L1 prune / L2 on-link checks.
+    /// `None` = not yet collected (unknown); `Some(v)` = known (possibly empty).
+    local_ipv4_networks: arc_swap::ArcSwap<Option<Vec<cidr::Ipv4Cidr>>>,
 }
 
 fn check_resolved_remote_addr_not_from_virtual_network(
@@ -1895,7 +1894,7 @@ impl PeerManagerCore {
             flow_table,
             network_name,
             counters: self_tx_counters,
-            local_ipv4_networks: arc_swap::ArcSwap::from_pointee(Vec::new()),
+            local_ipv4_networks: arc_swap::ArcSwap::from_pointee(None),
         }
     }
 
@@ -1904,17 +1903,39 @@ impl PeerManagerCore {
     }
 
     /// Replace the local IPv4 networks used for proxy-CIDR prune (LAN L1).
-    pub fn set_local_ipv4_networks(&self, nets: Vec<cidr::Ipv4Cidr>) {
-        self.local_ipv4_networks.store(Arc::new(nets));
+    ///
+    /// `None` means enumeration failed — keep the previous snapshot so a
+    /// transient WMI/driver glitch cannot flip L2 into "all underlay off-link".
+    /// `Some(nets)` stores + wakes the monitor when the set actually changes.
+    pub fn set_local_ipv4_networks(&self, nets: Option<Vec<cidr::Ipv4Cidr>>) {
+        let Some(nets) = nets else {
+            return;
+        };
+        let previous = self.local_ipv4_networks.load_full();
+        if previous.as_ref().as_ref() == Some(&nets) {
+            return;
+        }
+        self.local_ipv4_networks.store(Arc::new(Some(nets)));
+        if let Some(wake) = self.proxy_cidr_wake() {
+            wake.notify_one();
+        }
     }
 
-    pub fn local_ipv4_networks(&self) -> Arc<Vec<cidr::Ipv4Cidr>> {
+    /// `None` = host has not injected physical nets yet; `Some` = known set.
+    pub fn local_ipv4_networks(&self) -> Arc<Option<Vec<cidr::Ipv4Cidr>>> {
         self.local_ipv4_networks.load_full()
     }
 
-    /// Holes for L1 proxy-CIDR prune: injected physical nets + overlay VIP network.
+    /// Holes for L1 proxy-CIDR prune: known physical nets + overlay VIP network.
+    ///
+    /// When physical nets are still unknown (`None`), only the VIP network is
+    /// used as a hole — we must not invent an empty physical set that would
+    /// skip prune entirely while still looking "ready".
     pub fn proxy_cidr_prune_holes(&self) -> Vec<cidr::Ipv4Cidr> {
-        let mut holes = self.local_ipv4_networks().as_ref().clone();
+        let mut holes = match self.local_ipv4_networks().as_ref() {
+            Some(nets) => nets.clone(),
+            None => Vec::new(),
+        };
         if let Some(vip) = self.context.ipv4() {
             let net = vip.network();
             if !holes.iter().any(|h| h == &net) {

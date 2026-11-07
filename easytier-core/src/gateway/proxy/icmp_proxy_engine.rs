@@ -1,4 +1,11 @@
-use std::{net::Ipv4Addr, sync::Arc, time::Duration};
+use std::{
+    net::Ipv4Addr,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
+    time::Duration,
+};
 
 use dashmap::DashMap;
 use quanta::Instant;
@@ -51,6 +58,10 @@ pub struct IcmpProxyEngine {
     cidr_table: Arc<ProxyCidrTable>,
     nat_table: DashMap<IcmpNatKey, IcmpNatEntry>,
     reassembler: IpReassembler,
+    /// Cross-peer NAT key collisions (B3). `warn!` at most once per 60s;
+    /// intervening hits stay at `debug!` to avoid log DoS under dual-peer echo.
+    nat_collision_count: AtomicU64,
+    nat_collision_last_warn_ms: AtomicU64,
 }
 
 impl IcmpProxyEngine {
@@ -59,6 +70,25 @@ impl IcmpProxyEngine {
             cidr_table,
             nat_table: DashMap::new(),
             reassembler: IpReassembler::new(fragment_timeout),
+            nat_collision_count: AtomicU64::new(0),
+            nat_collision_last_warn_ms: AtomicU64::new(0),
+        }
+    }
+
+    fn should_warn_nat_collision(&self) -> bool {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        const INTERVAL_MS: u64 = 60_000;
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0);
+        let prev = self.nat_collision_last_warn_ms.load(Ordering::Relaxed);
+        if now.saturating_sub(prev) >= INTERVAL_MS {
+            self.nat_collision_last_warn_ms
+                .store(now, Ordering::Relaxed);
+            true
+        } else {
+            false
         }
     }
 
@@ -144,12 +174,24 @@ impl IcmpProxyEngine {
         match self.nat_table.entry(key) {
             dashmap::mapref::entry::Entry::Occupied(mut occupied) => {
                 if occupied.get().source_peer_id != source_peer_id {
-                    tracing::warn!(
-                        ?key,
-                        existing_peer = occupied.get().source_peer_id,
-                        new_peer = source_peer_id,
-                        "icmp nat key collision; keeping first entry"
-                    );
+                    let n = self.nat_collision_count.fetch_add(1, Ordering::Relaxed) + 1;
+                    if self.should_warn_nat_collision() {
+                        tracing::warn!(
+                            ?key,
+                            existing_peer = occupied.get().source_peer_id,
+                            new_peer = source_peer_id,
+                            collision_count = n,
+                            "icmp nat key collision; keeping first entry"
+                        );
+                    } else {
+                        tracing::debug!(
+                            ?key,
+                            existing_peer = occupied.get().source_peer_id,
+                            new_peer = source_peer_id,
+                            collision_count = n,
+                            "icmp nat key collision; keeping first entry"
+                        );
+                    }
                     return IcmpProxyAction::Pass;
                 }
                 occupied.get_mut().local_peer_id = local_peer_id;

@@ -345,12 +345,15 @@ pub(crate) async fn collect_interfaces(net_ns: NetNS, filter: bool) -> Vec<Netwo
             collect_interfaces_in_current_namespace(filter).await
         })
         .await
+        .unwrap_or_default()
     }
 
     #[cfg(not(target_os = "linux"))]
     {
         let _g = net_ns.guard();
-        collect_interfaces_in_current_namespace(filter).await
+        collect_interfaces_in_current_namespace(filter)
+            .await
+            .unwrap_or_default()
     }
 }
 
@@ -387,7 +390,12 @@ fn convert_pnet_interface(iface: pnet_datalink::NetworkInterface) -> NetworkInte
     }
 }
 
-async fn collect_interfaces_in_current_namespace(filter: bool) -> Vec<NetworkInterface> {
+/// `None` = enumeration failed (do not treat as an empty adapter list).
+/// `Some` = successful snapshot (may be empty after filtering).
+async fn collect_interfaces_in_current_namespace(filter: bool) -> Option<Vec<NetworkInterface>> {
+    // Keep `show()` synchronous and on the calling thread: netns (`setns`) is
+    // thread-bound. Callers that must leave the async runtime do so *above*
+    // this helper (see `collect_local_ipv4_networks` / `run_in_namespace`).
     let ifaces = match NetworkInterface::show() {
         Ok(ifaces) => ifaces,
         Err(error) => {
@@ -400,12 +408,12 @@ async fn collect_interfaces_in_current_namespace(filter: bool) -> Vec<NetworkInt
                         tracing::error!(
                             "failed to enumerate network interfaces via network-interface and pnet"
                         );
-                        return Vec::new();
+                        return None;
                     }
                 }
             }
             #[cfg(not(feature = "faketcp"))]
-            return Vec::new();
+            return None;
         }
     };
     let states = collect_interface_states();
@@ -423,7 +431,44 @@ async fn collect_interfaces_in_current_namespace(filter: bool) -> Vec<NetworkInt
         ret.push(iface);
     }
 
-    ret
+    Some(ret)
+}
+
+/// Run `operation` on a blocking thread after switching to `net_ns`.
+///
+/// `None` = the namespace-local runtime could not be built, or the blocking
+/// task panicked. Discovery must degrade, never kill its caller: the proxy-CIDR
+/// route updater would otherwise stop both installing *and* tearing down routes
+/// until the instance restarts.
+async fn run_in_namespace_opt<T, F, Fut>(net_ns: NetNS, operation: F) -> Option<T>
+where
+    T: Send + 'static,
+    F: FnOnce() -> Fut + Send + 'static,
+    Fut: std::future::Future<Output = T> + 'static,
+{
+    match tokio::task::spawn_blocking(move || {
+        let runtime = match tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+        {
+            Ok(runtime) => runtime,
+            Err(error) => {
+                tracing::error!(?error, "failed to build namespace-local runtime");
+                return None;
+            }
+        };
+        // `NetNS::run` switches ns on *this* thread, and the current-thread
+        // runtime below polls the future on the same thread.
+        Some(net_ns.run(|| runtime.block_on(operation())))
+    })
+    .await
+    {
+        Ok(result) => result,
+        Err(join_err) => {
+            tracing::error!(?join_err, "namespace-local network operation panicked");
+            None
+        }
+    }
 }
 
 #[cfg(target_os = "linux")]
@@ -433,15 +478,9 @@ where
     F: FnOnce() -> Fut + Send + 'static,
     Fut: std::future::Future<Output = T> + 'static,
 {
-    tokio::task::spawn_blocking(move || {
-        let runtime = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .expect("build namespace-local runtime");
-        net_ns.run(|| runtime.block_on(operation()))
-    })
-    .await
-    .expect("namespace-local network operation panicked")
+    run_in_namespace_opt(net_ns, operation)
+        .await
+        .expect("namespace-local network operation failed")
 }
 
 #[tracing::instrument(skip(net_ns))]
@@ -463,33 +502,55 @@ pub(crate) async fn collect_local_ip_addrs(net_ns: NetNS) -> GetIpListResponse {
 
 /// Collect local IPv4 networks (address + netmask → CIDR) for LAN L1 prune / L2 on-link.
 ///
+/// Returns `None` when interface enumeration fails — callers must **not** treat
+/// that as an empty LAN (which would flip L2 to "all underlay off-link").
+///
 /// `exclude_ifname` skips the EasyTier TUN interface (required on Windows where
 /// the interface filter does not exclude Wintun the way Linux excludes tun/tap).
 pub async fn collect_local_ipv4_networks(
     net_ns: NetNS,
     exclude_ifname: Option<&str>,
-) -> Vec<cidr::Ipv4Cidr> {
-    #[cfg(target_os = "linux")]
-    {
-        let exclude = exclude_ifname.map(str::to_owned);
-        return run_in_namespace(net_ns, move || async move {
-            collect_local_ipv4_networks_in_current_namespace(exclude.as_deref()).await
-        })
-        .await;
-    }
-    #[cfg(not(target_os = "linux"))]
-    {
-        let _g = net_ns.guard();
-        collect_local_ipv4_networks_in_current_namespace(exclude_ifname).await
+) -> Option<Vec<cidr::Ipv4Cidr>> {
+    let exclude = exclude_ifname.map(str::to_owned);
+    // `NetworkInterface::show()` is a sync full-adapter walk (tens–hundreds of ms
+    // on Windows), so this always leaves the async runtime; `run_in_namespace_opt`
+    // then switches ns on that same blocking thread, which keeps netns affinity
+    // independent of tokio blocking-pool reuse.
+    run_in_namespace_opt(net_ns, move || async move {
+        collect_local_ipv4_networks_in_current_namespace(exclude.as_deref()).await
+    })
+    .await
+    .flatten()
+}
+
+fn warn_rate_limited(last_warn_ms: &std::sync::atomic::AtomicU64, interval_ms: u64) -> bool {
+    use std::sync::atomic::Ordering;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+    let prev = last_warn_ms.load(Ordering::Relaxed);
+    if now.saturating_sub(prev) >= interval_ms {
+        last_warn_ms.store(now, Ordering::Relaxed);
+        true
+    } else {
+        false
     }
 }
 
 async fn collect_local_ipv4_networks_in_current_namespace(
     exclude_ifname: Option<&str>,
-) -> Vec<cidr::Ipv4Cidr> {
+) -> Option<Vec<cidr::Ipv4Cidr>> {
     use std::collections::BTreeSet;
+    use std::sync::atomic::AtomicU64;
+
+    static WIDE_MASK_LAST_WARN_MS: AtomicU64 = AtomicU64::new(0);
+    const WIDE_MASK_WARN_INTERVAL_MS: u64 = 60_000;
+
+    let ifaces = collect_interfaces_in_current_namespace(true).await?;
     let mut out = BTreeSet::new();
-    let ifaces = collect_interfaces_in_current_namespace(true).await;
     for iface in ifaces {
         if exclude_ifname.is_some_and(|name| iface.name.eq_ignore_ascii_case(name)) {
             continue;
@@ -507,18 +568,43 @@ async fn collect_local_ipv4_networks_in_current_namespace(
             let Ok(prefix) = ip_mask_to_prefix(IpAddr::V4(netmask)) else {
                 continue;
             };
+            // 0.0.0.0 mask → /0 would hole-cover every proxy CIDR and silently
+            // disable subnet proxy (PPP/DHCP/virtual NIC glitches). Skip /0 and
+            // other absurdly wide masks (< /8) rather than treating them as LAN.
+            if prefix < 8 {
+                if warn_rate_limited(&WIDE_MASK_LAST_WARN_MS, WIDE_MASK_WARN_INTERVAL_MS) {
+                    tracing::warn!(
+                        iface = %iface.name,
+                        ip = %v4.ip,
+                        %netmask,
+                        prefix,
+                        "skipping local IPv4 network with too-wide netmask for LAN prune"
+                    );
+                } else {
+                    tracing::debug!(
+                        iface = %iface.name,
+                        ip = %v4.ip,
+                        %netmask,
+                        prefix,
+                        "skipping local IPv4 network with too-wide netmask for LAN prune"
+                    );
+                }
+                continue;
+            }
             if let Ok(inet) = cidr::Ipv4Inet::new(v4.ip, prefix) {
                 out.insert(inet.network());
             }
         }
     }
-    out.into_iter().collect()
+    Some(out.into_iter().collect())
 }
 
 async fn collect_local_ip_addrs_in_current_namespace() -> GetIpListResponse {
     let mut ret = GetIpListResponse::default();
 
-    let ifaces = collect_interfaces_in_current_namespace(true).await;
+    let ifaces = collect_interfaces_in_current_namespace(true)
+        .await
+        .unwrap_or_default();
     for iface in ifaces {
         for ip in iface.addr {
             let ip: std::net::IpAddr = ip.ip();
@@ -531,7 +617,9 @@ async fn collect_local_ip_addrs_in_current_namespace() -> GetIpListResponse {
         }
     }
 
-    let ifaces = collect_interfaces_in_current_namespace(false).await;
+    let ifaces = collect_interfaces_in_current_namespace(false)
+        .await
+        .unwrap_or_default();
     for iface in ifaces {
         for ip in iface.addr {
             let ip: std::net::IpAddr = ip.ip();
@@ -592,5 +680,18 @@ mod tests {
         .await;
 
         assert_eq!(before, after);
+    }
+
+    /// A panicking discovery operation must surface as `None`, not kill the
+    /// caller (the route updater would stop installing/tearing down routes).
+    /// The panic backtrace printed by the test harness is expected.
+    #[tokio::test]
+    async fn namespace_operation_panic_degrades_to_none() {
+        let result: Option<()> = run_in_namespace_opt(NetNS::new(None), || async {
+            panic!("simulated namespace operation failure");
+        })
+        .await;
+
+        assert!(result.is_none());
     }
 }

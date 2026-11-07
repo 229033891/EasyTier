@@ -259,13 +259,15 @@ async fn collect_proxy_cidr_state(
     let raw = resolve_proxy_cidrs(peer_routes, snapshot);
     // L1: prune overlapping local physical + virtual networks before L2 install.
     // Single choke point shared by monitor events and packet_plane desired queries.
-    let current = prune_with_local_networks(peer_manager, raw);
+    let current =
+        prune_with_local_networks(peer_manager, raw, config.services.manual_routes.as_ref());
     (current, local_exit_default)
 }
 
 fn prune_with_local_networks(
     peer_manager: &PeerManagerCore,
     raw: BTreeSet<Ipv4Cidr>,
+    manual_routes: Option<&BTreeSet<Ipv4Cidr>>,
 ) -> BTreeSet<Ipv4Cidr> {
     use super::proxy_cidr_prune::prune_proxy_cidrs;
 
@@ -275,12 +277,57 @@ fn prune_with_local_networks(
     }
     let pruned = prune_proxy_cidrs(raw.clone(), &holes);
     if pruned != raw {
-        tracing::info!(
-            before = ?raw.iter().map(ToString::to_string).collect::<Vec<_>>(),
-            after = ?pruned.iter().map(ToString::to_string).collect::<Vec<_>>(),
-            holes = ?holes.iter().map(ToString::to_string).collect::<Vec<_>>(),
-            "proxy cidr pruned by local networks"
-        );
+        // A manual prefix may be carved into residuals still covered by it —
+        // that is partial prune, not a full drop. Only warn "fully removed"
+        // when no residual remains inside the original manual CIDR.
+        let residual_of = |c: &Ipv4Cidr| {
+            pruned.iter().any(|p| {
+                c.network_length() <= p.network_length()
+                    && c.contains(&p.first_address())
+                    && c.contains(&p.last_address())
+            })
+        };
+        let mut fully_dropped_manual = Vec::new();
+        let mut partially_pruned_manual = Vec::new();
+        for c in manual_routes.into_iter().flatten() {
+            if !raw.contains(c) || pruned.contains(c) {
+                continue;
+            }
+            if residual_of(c) {
+                partially_pruned_manual.push(c.to_string());
+            } else {
+                fully_dropped_manual.push(c.to_string());
+            }
+        }
+        let before: Vec<_> = raw.iter().map(ToString::to_string).collect();
+        let after: Vec<_> = pruned.iter().map(ToString::to_string).collect();
+        let holes_s: Vec<_> = holes.iter().map(ToString::to_string).collect();
+        if !fully_dropped_manual.is_empty() {
+            tracing::warn!(
+                ?fully_dropped_manual,
+                before = ?before,
+                after = ?after,
+                holes = ?holes_s,
+                "explicit manual_routes were fully removed by LAN prune; \
+                 use non-overlapping prefixes if the overlap was intentional"
+            );
+        } else if !partially_pruned_manual.is_empty() {
+            tracing::warn!(
+                ?partially_pruned_manual,
+                before = ?before,
+                after = ?after,
+                holes = ?holes_s,
+                "explicit manual_routes were partially carved by LAN prune; \
+                 residuals remain — use non-overlapping prefixes if unintended"
+            );
+        } else {
+            tracing::info!(
+                before = ?before,
+                after = ?after,
+                holes = ?holes_s,
+                "proxy cidr pruned by local networks"
+            );
+        }
     }
     pruned
 }
@@ -369,6 +416,9 @@ impl ProxyCidrMonitor {
             // bumping peer-info time. Track LocalRouteTable.revision so L2 install
             // still runs within the ~1s reconcile window (§7.1 / §9.8.4).
             let mut last_local_route_revision = None;
+            // Track injected physical LAN nets so a set_* + notify_one wake
+            // re-runs collect (stable peer-info alone must not skip L1 prune).
+            let mut last_local_ipv4_networks: Arc<Option<Vec<Ipv4Cidr>>> = Arc::new(None);
 
             loop {
                 // Grab the wake handle without holding the peer manager across
@@ -395,6 +445,9 @@ impl ProxyCidrMonitor {
                     .unwrap_or(true);
                 let local_route_revision = peer_manager.local_route_table().revision();
                 let local_routes_changed = last_local_route_revision != Some(local_route_revision);
+                let local_ipv4_networks = peer_manager.local_ipv4_networks();
+                let local_nets_changed =
+                    !Arc::ptr_eq(&local_ipv4_networks, &last_local_ipv4_networks);
 
                 // Check exit-node reachability only when exit nodes are configured,
                 // and only skip the stable-state fast-path when reachability changes.
@@ -414,6 +467,7 @@ impl ProxyCidrMonitor {
                     && !runtime_config_changed
                     && !exit_reachability_changed
                     && !local_routes_changed
+                    && !local_nets_changed
                 {
                     continue;
                 }
@@ -431,6 +485,7 @@ impl ProxyCidrMonitor {
                 last_runtime_config = Some(runtime_config.clone());
                 last_local_exit_default = diff.local_exit_default;
                 last_local_route_revision = Some(local_route_revision);
+                last_local_ipv4_networks = local_ipv4_networks;
                 current = diff.current;
                 if cidrs_changed || local_exit_changed {
                     self.events.emit(CoreEvent::ProxyCidrsUpdated {
