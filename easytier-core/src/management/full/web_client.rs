@@ -1321,13 +1321,29 @@ impl WebClientSession {
                             break;
                         }
                         consecutive_failures = failed_attempts;
-                        tracing::warn!(
-                            ?error,
-                            failed_attempts,
-                            max_attempts = MAX_CONSECUTIVE_HEARTBEAT_FAILURES,
-                            retry_gap_ms = HEARTBEAT_RETRY_GAP.as_millis(),
-                            "config-server heartbeat failed; retrying before ending session"
-                        );
+                        // A single transient timeout that the next 3s probe
+                        // recovers from is routine on a lossy WAN — logging it
+                        // at warn turned "the path blipped" into an alarm on
+                        // every occurrence. Keep the escalation path audible,
+                        // but only from the second consecutive failure, i.e.
+                        // once the session is genuinely at risk.
+                        if failed_attempts == 1 {
+                            tracing::debug!(
+                                ?error,
+                                failed_attempts,
+                                max_attempts = MAX_CONSECUTIVE_HEARTBEAT_FAILURES,
+                                retry_gap_ms = HEARTBEAT_RETRY_GAP.as_millis(),
+                                "config-server heartbeat failed; retrying before ending session"
+                            );
+                        } else {
+                            tracing::warn!(
+                                ?error,
+                                failed_attempts,
+                                max_attempts = MAX_CONSECUTIVE_HEARTBEAT_FAILURES,
+                                retry_gap_ms = HEARTBEAT_RETRY_GAP.as_millis(),
+                                "config-server heartbeat failed; retrying before ending session"
+                            );
+                        }
                         time::sleep(HEARTBEAT_RETRY_GAP).await;
                     }
                 }

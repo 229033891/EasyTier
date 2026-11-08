@@ -2,7 +2,7 @@
 
 本目录按用途分层。**改代码时以 Current 为准；拍板未实现能力时改 Roadmap。**
 
-其他 agent / 复查：**先读** [`current/system-overview.md`](./current/system-overview.md)，再按任务下钻专题。
+其他 agent / 复查：仓库根 [`AGENTS.md`](../AGENTS.md)（入口地图）→ **先读** [`current/system-overview.md`](./current/system-overview.md)，再按任务下钻专题。
 
 | 分区 | 含义 | 何时更新 |
 |------|------|----------|

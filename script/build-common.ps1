@@ -183,11 +183,105 @@ function Set-EasytierWritableTemp {
     Write-Log "TEMP/TMP/TMPDIR=$etTemp" -Level Info
 }
 
+function Find-EasytierVcVars64Bat {
+    <#
+      Locate vcvars64.bat via vswhere, then common VS 2022/2019 install layouts.
+    #>
+    $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
+    if (Test-Path -LiteralPath $vswhere) {
+        try {
+            $installPath = & $vswhere -latest -products * `
+                -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 `
+                -property installationPath 2>$null |
+                Select-Object -First 1
+            if ($installPath) {
+                $bat = Join-Path $installPath.Trim() 'VC\Auxiliary\Build\vcvars64.bat'
+                if (Test-Path -LiteralPath $bat) { return $bat }
+            }
+        }
+        catch {
+            # fall through to hardcoded candidates
+        }
+    }
+
+    $years = @('2022', '2019')
+    $editions = @('BuildTools', 'Community', 'Professional', 'Enterprise')
+    foreach ($year in $years) {
+        foreach ($edition in $editions) {
+            foreach ($root in @(${env:ProgramFiles(x86)}, $env:ProgramFiles)) {
+                if (-not $root) { continue }
+                $bat = Join-Path $root "Microsoft Visual Studio\$year\$edition\VC\Auxiliary\Build\vcvars64.bat"
+                if (Test-Path -LiteralPath $bat) { return $bat }
+            }
+        }
+    }
+    return $null
+}
+
+function Import-EasytierMsvcEnvironment {
+    <#
+      Import vcvars64 into *this* PowerShell process so cargo/clippy/ring see
+      cl.exe + INCLUDE/LIB without a Developer Command Prompt.
+
+      Prefer this over permanently stuffing MSVC bins into user PATH (incomplete
+      without INCLUDE/LIB; brittle across toolset upgrades).
+
+      Returns $true when cl.exe is available afterwards.
+    #>
+    if (Get-Command cl -ErrorAction SilentlyContinue) {
+        Write-Log "MSVC cl OK: $((Get-Command cl).Source)" -Level Ok
+        return $true
+    }
+
+    $vcvars = Find-EasytierVcVars64Bat
+    if (-not $vcvars) {
+        Write-Log 'MSVC vcvars64.bat not found. Install VS Build Tools (C++ desktop) — docs/ops/windows-msvc-local-build.md' -Level Warn
+        return $false
+    }
+
+    Write-Log "Loading MSVC environment: $vcvars" -Level Info
+    $tempFile = [System.IO.Path]::GetTempFileName()
+    try {
+        # vcvars mutates cmd's environment; dump and re-apply into this process.
+        # Use `call` + quoted path — spaces in "Program Files (x86)" break bare `"$vcvars"`.
+        $cmdLine = "call `"$vcvars`" >nul && set > `"$tempFile`""
+        $p = Start-Process -FilePath $env:ComSpec -ArgumentList @('/c', $cmdLine) `
+            -Wait -PassThru -NoNewWindow
+        if ($p.ExitCode -ne 0) {
+            Write-Log "vcvars64 failed (exit $($p.ExitCode))" -Level Warn
+            return $false
+        }
+        Get-Content -LiteralPath $tempFile -ErrorAction Stop | ForEach-Object {
+            if ($_ -match '^(.*?)=(.*)$') {
+                $name = $Matches[1]
+                if ($name -in @('PROMPT')) { return }
+                Set-Item -Path "Env:$name" -Value $Matches[2]
+            }
+        }
+    }
+    catch {
+        Write-Log "Failed to import vcvars environment: $($_.Exception.Message)" -Level Warn
+        return $false
+    }
+    finally {
+        Remove-Item -LiteralPath $tempFile -Force -ErrorAction SilentlyContinue
+    }
+
+    $cl = Get-Command cl -ErrorAction SilentlyContinue
+    if ($cl) {
+        Write-Log "MSVC cl OK (via vcvars): $($cl.Source)" -Level Ok
+        return $true
+    }
+    Write-Log 'vcvars ran but cl.exe still missing from PATH' -Level Warn
+    return $false
+}
+
 function Initialize-EasytierWindowsCargoEnv {
     <#
       Align local cargo with CI test.yml (check-hack) and avoid common Windows failures:
         - MSVC D8050 from -Z7 + long paths (CARGO_PROFILE_DEV_DEBUG=0, short target dir)
         - openssl-sys vendored build needs perl (Git for Windows usr\bin)
+        - auto-load vcvars when cl.exe is missing
     #>
     $env:CARGO_PROFILE_DEV_DEBUG = '0'
     $env:CARGO_INCREMENTAL = '0'
@@ -222,15 +316,17 @@ function Initialize-EasytierWindowsCargoEnv {
         Write-Log 'perl not on PATH — only needed for --features full / openssl-crypto (optional on Windows; ET Test script skips that combo).' -Level Warn
     }
 
-    if (-not (Get-Command cl -ErrorAction SilentlyContinue)) {
-        Write-Log 'cl.exe not on PATH — load vcvars64 / Developer shell before clippy or nextest. See docs/ops/windows-msvc-local-build.md' -Level Warn
-    }
+    [void](Import-EasytierMsvcEnvironment)
 }
 
 function Ensure-WindowsBuildPrereqs {
     <#
-      thunk-rs needs `7z` on PATH. Cached VC-LTL / YY-Thunks / protoc avoid re-download.
+      MSVC via vcvars (if needed), then thunk-rs deps: 7z + cached VC-LTL / YY-Thunks / protoc.
     #>
+    if (-not (Import-EasytierMsvcEnvironment)) {
+        Write-Log 'Native C builds (ring, etc.) will fail without MSVC. Open a Developer shell or install Build Tools.' -Level Warn
+    }
+
     $sevenZipDirs = @(
         (Join-Path ${env:ProgramFiles} '7-Zip'),
         (Join-Path ${env:ProgramFiles(x86)} '7-Zip')

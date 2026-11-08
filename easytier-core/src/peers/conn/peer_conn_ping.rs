@@ -99,7 +99,9 @@ const FAST_PROBE_INTERVAL: Duration = Duration::from_millis(333);
 /// "Intervening" includes the keepalive: a pong (or liveness echo) that lands in
 /// the same round ends the miss run — see [`fast_probe_apply_round_evidence`] —
 /// because it proves the path is carrying packets right now even though this
-/// probe got no answer within its own budget.
+/// probe got no answer within its own budget. Inbound bytes end it too, but only
+/// while the probe budget is still short enough for a queue to explain the
+/// timeout; see [`DeliveryEvidence::excuses_a_timeout`].
 const FAST_PROBE_MISSES_TO_DEGRADE: u32 = 3;
 /// Consecutive **rounds of proof** needed to clear a published degradation.
 ///
@@ -112,10 +114,16 @@ const FAST_PROBE_MISSES_TO_DEGRADE: u32 = 3;
 /// route churn on top of the packet loss. Three clean rounds ≈ 1s of proof
 /// before traffic is moved back onto the link.
 ///
-/// A round of proof is one probe round in which the path was shown to carry a
-/// packet: the probe's own round trip **or** a keepalive round trip that landed
-/// during that round. When both happen they still count once — this constant is
-/// about rounds, not samples.
+/// A round of proof is one probe round in which a **round trip** completed: the
+/// probe's own pong, a keepalive pong, or a liveness echo that landed during it.
+/// When several happen they still count once — this constant is about rounds,
+/// not samples.
+///
+/// Inbound bytes are deliberately **not** a round of proof. They show the peer
+/// can still reach us, which is enough to stop accusing the path of being gone,
+/// but not enough to call it healthy: a one-way outage keeps bytes arriving
+/// while carrying nothing we send. Letting that clear a degradation is how a
+/// half-dead link would keep its place in the SPF forever.
 const FAST_PROBE_RECOVER_ROUNDS: u32 = 3;
 /// Consecutive missed probe rounds before the degradation is allowed to drive the
 /// **local** routing view (see `PeerConn::is_fast_probe_sustainedly_degraded`).
@@ -153,76 +161,181 @@ fn fast_probe_publish_degraded(
         || (was_degraded && consecutive_hits < FAST_PROBE_RECOVER_ROUNDS)
 }
 
-/// Folds one fast-probe round — the probe's own outcome plus any keepalive proof
-/// that landed during it — into the miss/hit window.
+/// What one fast-probe round established, once every piece of evidence the conn
+/// produced while the probe was in flight has been folded in.
+///
+/// The verdict is deliberately not a boolean: "the path is gone", "this probe's
+/// budget was too small for the queue in front of it", and "the ping never left
+/// the box" are three different facts, and collapsing them is what published
+/// 100% loss on a conn that had just served 103 of 103 requests.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RoundOutcome {
+    /// Nothing answered and nothing arrived.
+    Miss,
+    /// The probe never left the box (local congestion). It says nothing about the
+    /// path, so it moves neither counter — not even the miss run.
+    Inconclusive,
+    /// The probe timed out, but the conn was still delivering bytes against a
+    /// budget short enough for a queue to explain the timeout. The path is alive
+    /// but unproven: the miss run ends, no hit is earned.
+    DeliveryOnly,
+    /// A full round trip completed this round — probe pong, keepalive pong, or
+    /// liveness echo. The only evidence that covers **both** directions.
+    Proven,
+}
+
+/// What the conn's own byte counters say about the round that just finished.
+#[derive(Debug, Clone, Copy)]
+struct DeliveryEvidence {
+    /// Bytes that arrived on this conn while the probe was in flight.
+    rx_delta: u64,
+    /// Bytes this conn handed to the tunnel during the same window.
+    ///
+    /// Diagnostic only — deliberately **not** an excuse for a timeout. A dead
+    /// peer absorbs sends into the local socket buffer just as readily as a live
+    /// one, so `tx > 0` with `rx == 0` is the signature of a black hole, not of
+    /// a busy link. Judging liveness by it would keep a dead path in the route
+    /// table forever, which is strictly worse than re-pricing a busy one.
+    tx_delta: u64,
+    /// Egress packets this conn refused over the same window.
+    ///
+    /// Separates the two ways a round can produce no evidence: a local egress
+    /// that is saturated (`egress_drops > 0`, our fault) versus a path that
+    /// swallowed the probe (`egress_drops == 0`, the remote's).
+    egress_drops: u64,
+    /// The wait budget this round actually used.
+    budget: Duration,
+}
+
+impl DeliveryEvidence {
+    /// Did anything arrive from the peer this round?
+    fn carried_data(&self) -> bool {
+        self.rx_delta > 0
+    }
+
+    /// Whether inbound delivery excuses a timeout this round.
+    ///
+    /// Inbound bytes prove the peer can still reach us — enough to stop accusing
+    /// the path of being gone, not enough to call it healthy, because a one-way
+    /// outage keeps bytes arriving while carrying nothing we send.
+    ///
+    /// The excuse is therefore rationed by [`FAST_PROBE_EXCUSE_MAX_BUDGET`]: it
+    /// buys one doubling of the probe budget (see `fast_probe`), and once the
+    /// budget has climbed past that ceiling a conn that still only *receives* is
+    /// treated as the one-way outage it is. Without the ceiling the exemption is
+    /// self-renewing — our peer's own probe pings keep the inbound counter
+    /// moving every round, so "did any byte arrive" is nearly always true and
+    /// the probe could never accuse a half-dead link of anything.
+    fn excuses_a_timeout(&self) -> bool {
+        self.carried_data() && self.budget < FAST_PROBE_EXCUSE_MAX_BUDGET
+    }
+}
+
+/// Folds one fast-probe round — the probe's own outcome, any proven round trip
+/// that landed during it, and what the byte counters saw — into the miss/hit
+/// window, and reports what the round established.
 ///
 /// This is the only place either counter moves, and the only way keepalive
 /// evidence may affect the published flag: writing `false` into
 /// `fast_probe_degraded` directly is what used to bypass
 /// [`FAST_PROBE_RECOVER_ROUNDS`] and make the edge cost flip on every keepalive.
 ///
-/// * The probe's outcome moves the counters the obvious way: a round trip is a
-///   hit, a timeout (or a failed send) is a miss, local congestion is neither —
-///   the ping never left the box, so it is evidence of nothing.
-/// * A keepalive round trip that happened during this round outranks a probe
-///   miss: the probe only proved "no answer within 3×RTT" while the pong proved
-///   the path carries packets *now*, so the miss run ends here instead of
-///   counting toward [`FAST_PROBE_MISSES_TO_DEGRADE`]. A real black hole
-///   produces no pong either, so the probe still reaches three misses on its own.
-/// * That keepalive hit is **not** wiped by the same round's probe miss, and it
-///   is **not** added on top of the probe's own hit. The first matters because
-///   the probe budget is `3 × EWMA RTT`: on a link whose jitter keeps putting
-///   the real RTT above that (while the keepalive's fixed 2s budget still
-///   answers every second) the probe can miss every single round, and if each
-///   miss zeroed `consecutive_hits` the count could never climb past 1 — a link
-///   proven alive every second would stay published as 100% loss forever. The
-///   second matters because [`FAST_PROBE_RECOVER_ROUNDS`] counts *rounds*: two
-///   hits per round would shorten recovery to two rounds and quietly weaken the
-///   anti-flap gate this whole mechanism exists for.
+/// * [`RoundOutcome::Proven`] — a pong or echo. Clears the miss run **and** earns
+///   one hit, because a round trip is the only evidence covering both directions.
+/// * [`RoundOutcome::DeliveryOnly`] — the probe timed out while bytes were still
+///   arriving. Clears the miss run so a busy-but-alive conn is not accused of
+///   being gone, but earns **no** hit: recovery must be driven by a proven round
+///   trip, otherwise a link that only ever receives clears its own degradation
+///   forever. It also widens the next round's budget — see
+///   [`fast_probe_next_budget_floor`].
+/// * [`RoundOutcome::Inconclusive`] — the ping never left the box. Moves neither
+///   counter: local congestion accuses nothing and credits nothing.
+/// * [`RoundOutcome::Miss`] — nothing answered and nothing arrived.
+///
+/// One round is one unit of evidence. A probe that pongs *and* a keepalive that
+/// lands in the same round still count once — [`FAST_PROBE_RECOVER_ROUNDS`] is
+/// about rounds, not samples. A keepalive hit is also **not** wiped by the same
+/// round's probe miss: on a link whose jitter keeps the real RTT above `3 × EWMA`
+/// the probe can miss every single round while the keepalive answers every
+/// second, and if each miss zeroed `consecutive_hits` that link would stay
+/// published as 100% loss forever.
 fn fast_probe_apply_round_evidence(
     probe: &Result<PingResponse, Error>,
     roundtrip_epoch: u32,
     seen_epoch: &mut u32,
+    delivery: DeliveryEvidence,
     consecutive_misses: &mut u32,
     consecutive_hits: &mut u32,
-) {
+) -> RoundOutcome {
     // The epoch is bumped on the keepalive path for every proven round trip. An
     // unchanged value means nothing was proven since the previous round (or the
     // epoch wrapped all the way back, in which case treating it as "nothing new"
     // only delays recovery by one round).
-    let roundtrip_proven = *seen_epoch != roundtrip_epoch;
-    if roundtrip_proven {
+    let epoch_advanced = *seen_epoch != roundtrip_epoch;
+    if epoch_advanced {
         *seen_epoch = roundtrip_epoch;
     }
 
-    let probe_round_tripped = matches!(probe, Ok(PingResponse::Pong(_)));
-    match probe {
-        Ok(PingResponse::LocalCongestion) => {}
-        Ok(_) => {
+    let outcome = match probe {
+        // The ping never left the box: it says nothing about the path, but a
+        // keepalive pong in the same round still proves the round trip.
+        Ok(PingResponse::LocalCongestion) => {
+            if epoch_advanced {
+                RoundOutcome::Proven
+            } else {
+                RoundOutcome::Inconclusive
+            }
+        }
+        // Pong and liveness echo alike: a full round trip completed.
+        Ok(_) => RoundOutcome::Proven,
+        Err(_) => {
+            if epoch_advanced {
+                RoundOutcome::Proven
+            } else if delivery.excuses_a_timeout() {
+                RoundOutcome::DeliveryOnly
+            } else {
+                RoundOutcome::Miss
+            }
+        }
+    };
+
+    match outcome {
+        RoundOutcome::Proven => {
             *consecutive_misses = 0;
             *consecutive_hits = consecutive_hits.saturating_add(1);
         }
-        Err(_) => {
+        RoundOutcome::DeliveryOnly => {
+            // Break the run of failures — the conn was demonstrably carrying
+            // bytes — but do not let that count as proof on the way back.
+            *consecutive_misses = 0;
+            *consecutive_hits = 0;
+        }
+        // A probe that never left the box is evidence of nothing, in either
+        // direction: it must not accuse the path *or* credit it.
+        RoundOutcome::Inconclusive => {}
+        RoundOutcome::Miss => {
             *consecutive_misses = consecutive_misses.saturating_add(1);
-            if !roundtrip_proven {
-                *consecutive_hits = 0;
-            }
+            *consecutive_hits = 0;
         }
     }
 
-    if roundtrip_proven {
-        *consecutive_misses = 0;
-        // One round is one unit of evidence, whichever side reported it.
-        if !probe_round_tripped {
-            *consecutive_hits = consecutive_hits.saturating_add(1);
-        }
-    }
+    outcome
 }
 
 /// Per-probe wait budget derived from the measured RTT, clamped to this range.
 const FAST_PROBE_TIMEOUT_MIN: Duration = Duration::from_millis(300);
 const FAST_PROBE_TIMEOUT_MAX: Duration = Duration::from_secs(2);
 const FAST_PROBE_TIMEOUT_RTT_MULT: u32 = 3;
+
+/// Probe budget above which inbound delivery no longer excuses a timeout.
+///
+/// [`FAST_PROBE_TIMEOUT_MIN`] is 300ms, so a congested conn doubles its way to
+/// 600ms and 1.2s within two rounds — still inside the three-miss window, which
+/// is why a queue that merely outruns the floor never publishes a loss. Past this
+/// ceiling the excuse is spent: a conn that keeps timing out against ≥1.2s of
+/// budget while only *receiving* is one-way dead, and holding its edge open just
+/// strands every packet we send into the same hole.
+const FAST_PROBE_EXCUSE_MAX_BUDGET: Duration = Duration::from_millis(1200);
 
 /// Wait budget for a conn that has **never** produced an RTT sample.
 ///
@@ -269,6 +382,36 @@ fn fast_probe_timeout(rtt_us: Option<u32>) -> Duration {
     };
     let scaled = Duration::from_micros(u64::from(rtt_us) * u64::from(FAST_PROBE_TIMEOUT_RTT_MULT));
     scaled.clamp(FAST_PROBE_TIMEOUT_MIN, FAST_PROBE_TIMEOUT_MAX)
+}
+
+/// Budget floor for the next round, given what this round established.
+///
+/// This is the fix for the root cause the three-state verdict only papers over: a
+/// timeout yields **no** RTT sample, so the `3 × EWMA RTT` the budget is derived
+/// from never learns about a queue that formed after the last sample, and the
+/// budget stays pinned at its 300ms floor for the whole incident.
+///
+/// The floor doubles every round in which a timeout is excused by inbound
+/// delivery, so the probe is retried against a budget that can actually fit the
+/// queue instead of one that never can: measured on this tree, a 4-way download
+/// over a 6ms LAN conn queued ICMP to a 663ms p99 — two doublings (600ms, then
+/// 1.2s) reach it before the third miss, which is why the degradation is never
+/// published at all rather than published and excused.
+///
+/// Every proven round halves it back, so a conn that recovers does not keep a 2s
+/// detection floor for the rest of its life. Both directions are bounded by
+/// [`FAST_PROBE_TIMEOUT_MAX`] / [`FAST_PROBE_TIMEOUT_MIN`], the same range
+/// `fast_probe_timeout` clamps to, so the two can never disagree on the maximum
+/// wait.
+fn fast_probe_next_budget_floor(current: Duration, outcome: RoundOutcome) -> Duration {
+    match outcome {
+        // Excused timeout: the queue outran the budget, so widen it instead of
+        // retrying against a budget that cannot fit.
+        RoundOutcome::DeliveryOnly => (current * 2).min(FAST_PROBE_TIMEOUT_MAX),
+        // A proven round says the current budget was enough; give the room back.
+        RoundOutcome::Proven => (current / 2).max(FAST_PROBE_TIMEOUT_MIN),
+        _ => current,
+    }
 }
 
 #[derive(Debug)]
@@ -816,6 +959,11 @@ impl PeerConnPinger {
         let mut was_degraded = false;
         let mut was_sustained = false;
         let mut seen_roundtrip_epoch = self.roundtrip_epoch.load(Ordering::Relaxed);
+        // Adaptive probe budget floor. The `3 × EWMA RTT` budget is derived from
+        // samples, and a timeout produces none, so on its own it stays pinned at
+        // [`FAST_PROBE_TIMEOUT_MIN`] for the whole incident. This is what widens
+        // it — see [`fast_probe_next_budget_floor`].
+        let mut budget_floor = FAST_PROBE_TIMEOUT_MIN;
         loop {
             sleep(FAST_PROBE_INTERVAL).await;
 
@@ -833,6 +981,9 @@ impl PeerConnPinger {
                 // probing: only round trips that land during a probe round count.
                 seen_roundtrip_epoch = self.roundtrip_epoch.load(Ordering::Relaxed);
                 was_degraded = false;
+                // Nothing was measured while the probe was parked, so it must
+                // come back at the floor rather than resuming a widened budget.
+                budget_floor = FAST_PROBE_TIMEOUT_MIN;
                 continue;
             }
 
@@ -843,54 +994,92 @@ impl PeerConnPinger {
                 .then(|| self.latency_stats.get_latency_us::<u32>());
             // No liveness token: the echo slot is single-slot and shared with the
             // keepalive, and a plain Ping/Pong answers the same question.
+            //
+            // Sampled per round, before the probe: the byte counters only mean
+            // something for the window the probe occupied.
+            let rx_bytes_before = self.throughput_stats.rx_bytes();
+            let tx_bytes_before = self.throughput_stats.tx_bytes();
+            let egress_drops_before = self.throughput_stats.egress_drops();
+            // `3 × EWMA RTT` cannot learn about a queue it never sampled, so the
+            // adaptive floor is what actually widens this when a timeout keeps
+            // being excused by delivery.
+            let budget = fast_probe_timeout(rtt_us).max(budget_floor);
             let probe = self
-                .do_pingpong_once(
-                    &mut receiver,
-                    fast_probe_seq(seq),
-                    None,
-                    fast_probe_timeout(rtt_us),
-                )
+                .do_pingpong_once(&mut receiver, fast_probe_seq(seq), None, budget)
                 .await;
+            let delivery = DeliveryEvidence {
+                rx_delta: self
+                    .throughput_stats
+                    .rx_bytes()
+                    .saturating_sub(rx_bytes_before),
+                tx_delta: self
+                    .throughput_stats
+                    .tx_bytes()
+                    .saturating_sub(tx_bytes_before),
+                egress_drops: self
+                    .throughput_stats
+                    .egress_drops()
+                    .saturating_sub(egress_drops_before),
+                budget,
+            };
             seq = seq.wrapping_add(1);
 
-            // One round of evidence: the probe's own outcome plus any keepalive
-            // proof that landed while it was in flight. Folded through the same
-            // gate rather than written straight into the flag — without this, one
-            // pong cleared a published degradation outright and the probe
-            // re-published it three rounds later, the flip-flop that kept
-            // re-pricing the edge. See `fast_probe_apply_round_evidence` for why
-            // a pong outranks this round's probe miss and why both together still
-            // count as a single hit.
-            fast_probe_apply_round_evidence(
+            // One round of evidence, folded through a single gate rather than
+            // written straight into the flag — without this, one pong cleared a
+            // published degradation outright and the probe re-published it three
+            // rounds later, the flip-flop that kept re-pricing the edge. See
+            // `fast_probe_apply_round_evidence` for why a proven round outranks
+            // this round's probe miss.
+            let outcome = fast_probe_apply_round_evidence(
                 &probe,
                 self.roundtrip_epoch.load(Ordering::Relaxed),
                 &mut seen_roundtrip_epoch,
+                delivery,
                 &mut misses,
                 &mut hits,
             );
+            budget_floor = fast_probe_next_budget_floor(budget_floor, outcome);
 
             let degraded = fast_probe_publish_degraded(misses, hits, was_degraded);
             self.fast_probe_degraded.store(degraded, Ordering::Relaxed);
-            // `misses` already restarts at 0 on any success, so the sustained
-            // flag can only be reached by one unbroken run of misses, and is
-            // dropped by the same evidence that drops `degraded`.
+            // `misses` restarts at 0 on every `Proven` or `DeliveryOnly` round, so
+            // the sustained flag can only be reached by one unbroken run of
+            // misses, and is dropped by the same evidence that drops `degraded`.
+            // An `Inconclusive` round (local congestion) neither adds to the run
+            // nor breaks it.
             let sustained = fast_probe_is_sustained(misses);
             self.fast_probe_sustained
                 .store(sustained, Ordering::Relaxed);
 
             // Log the transitions only: at ~3 probes/s a per-probe log would
             // flood exactly during the incident it is meant to explain.
+            //
+            // The four counters below are what separates the remaining causes
+            // at a glance:
+            //   rx=0, tx=0, drops=0   → nothing moved: a black hole.
+            //   rx=0, tx>0, drops=0   → we are feeding a peer that never
+            //                           answers; its socket buffer is absorbing
+            //                           our sends. Still a black hole.
+            //   rx>0, budget at floor → the queue outran the budget.
+            //   drops>0               → local egress is saturated, so the probe
+            //                           starved here rather than on the wire.
             if degraded && !was_degraded {
                 tracing::warn!(
                     peer_id = self.peer_id,
                     misses,
                     ?rtt_us,
+                    budget_ms = budget.as_millis() as u64,
+                    budget_floor_ms = budget_floor.as_millis() as u64,
+                    rx_delta = delivery.rx_delta,
+                    tx_delta = delivery.tx_delta,
+                    egress_drops = delivery.egress_drops,
                     "fast liveness probe: link not round-tripping, publishing degraded loss"
                 );
             } else if !degraded && was_degraded {
                 tracing::info!(
                     peer_id = self.peer_id,
                     ?rtt_us,
+                    budget_ms = budget.as_millis() as u64,
                     "fast liveness probe: link round-trips again"
                 );
             }
@@ -903,6 +1092,11 @@ impl PeerConnPinger {
                         peer_id = self.peer_id,
                         misses,
                         ?rtt_us,
+                        budget_ms = budget.as_millis() as u64,
+                        budget_floor_ms = budget_floor.as_millis() as u64,
+                        rx_delta = delivery.rx_delta,
+                        tx_delta = delivery.tx_delta,
+                        egress_drops = delivery.egress_drops,
                         "fast liveness probe: degradation sustained, local edge cost will be overridden"
                     );
                 } else {
@@ -933,6 +1127,17 @@ mod tests {
             Tunnel, filter::TunnelWithFilter, mpsc::MpscTunnel, ring::create_ring_tunnel_pair,
         },
     };
+
+    /// A round's delivery evidence at an explicit budget, so each test states the
+    /// one thing the verdict actually turns on.
+    fn delivery(carried_data: bool, budget_ms: u64) -> DeliveryEvidence {
+        DeliveryEvidence {
+            rx_delta: if carried_data { 1 } else { 0 },
+            tx_delta: 0,
+            egress_drops: 0,
+            budget: Duration::from_millis(budget_ms),
+        }
+    }
 
     #[tokio::test]
     async fn full_egress_queue_is_local_congestion_not_a_path_miss() {
@@ -1330,6 +1535,7 @@ mod tests {
                 &timeout,
                 epoch,
                 &mut seen_epoch,
+                delivery(false, 300),
                 &mut misses,
                 &mut hits,
             );
@@ -1366,7 +1572,14 @@ mod tests {
 
         for round in 1..=FAST_PROBE_RECOVER_ROUNDS {
             let epoch = seen_epoch + 1;
-            fast_probe_apply_round_evidence(&pong, epoch, &mut seen_epoch, &mut misses, &mut hits);
+            fast_probe_apply_round_evidence(
+                &pong,
+                epoch,
+                &mut seen_epoch,
+                delivery(false, 300),
+                &mut misses,
+                &mut hits,
+            );
             assert_eq!(hits, round, "one round must be worth one hit, not two");
             assert_eq!(misses, 0);
             assert!(fast_probe_publish_degraded(misses, hits, true) == (round < 3));
@@ -1390,6 +1603,7 @@ mod tests {
                 &timeout,
                 seen_epoch,
                 &mut seen_epoch,
+                delivery(false, 300),
                 &mut misses,
                 &mut hits,
             );
@@ -1408,6 +1622,242 @@ mod tests {
         assert!(!fast_probe_is_sustained(misses));
     }
 
+    /// A conn that is *delivering* bytes has not gone dark, even when every probe
+    /// times out.
+    ///
+    /// Regression for the 2026-11-08 load test: a saturated uplink pushed delivery
+    /// delay past the probe's `3 × EWMA RTT` budget, and because a timeout yields
+    /// no RTT sample the EWMA never learned about the queue — the budget stayed
+    /// pinned at its 300ms floor while the real delay was 663ms. Three misses
+    /// published 100% loss, `loss_rate()` reported 1.0, and the edge was priced
+    /// out of the local SPF for 4s… while **103 of 103** application requests on
+    /// that same conn succeeded.
+    ///
+    /// The keepalive cannot supply the missing evidence either: its interval backs
+    /// off to 32s when idle, so in the ~2s the probe needs to decide it is often
+    /// the probe's own word alone. The byte counter is what is left.
+    #[test]
+    fn a_conn_delivering_bytes_is_never_published_as_lost() {
+        let timeout: Result<PingResponse, Error> = Err(Error::WaitRespError(
+            "wait ping response timeout".to_owned(),
+        ));
+        let mut misses = 0;
+        let mut hits = 0;
+        let mut seen_epoch = 3;
+
+        for round in 1..=30 {
+            // Unchanged epoch: no keepalive pong landed in this round.
+            let outcome = fast_probe_apply_round_evidence(
+                &timeout,
+                seen_epoch,
+                &mut seen_epoch,
+                delivery(true, 300),
+                &mut misses,
+                &mut hits,
+            );
+            assert_eq!(outcome, RoundOutcome::DeliveryOnly);
+            assert_eq!(
+                misses, 0,
+                "round {round}: a byte arriving ends the miss run"
+            );
+            assert!(
+                !fast_probe_publish_degraded(misses, hits, false),
+                "round {round}: a delivering conn must never be published as 100% loss"
+            );
+        }
+
+        // The moment the bytes stop, the very same probe outcome is a real miss
+        // again — the exemption is per round, not a latch.
+        fast_probe_apply_round_evidence(
+            &timeout,
+            seen_epoch,
+            &mut seen_epoch,
+            delivery(false, 300),
+            &mut misses,
+            &mut hits,
+        );
+        assert_eq!(misses, 1, "a silent conn must still be able to miss");
+    }
+
+    /// A delivering round is not proof: on its own it must never clear a
+    /// published degradation.
+    ///
+    /// This is the counterpart to
+    /// `a_conn_delivering_bytes_is_never_published_as_lost`. Inbound bytes are
+    /// enough to stop the probe *accusing* the path, but they only ever prove the
+    /// peer→us direction. Letting them clear the flag is how a one-way outage —
+    /// the far side still sending, nothing we send getting through — keeps its
+    /// edge priced as healthy forever while every packet we originate is lost.
+    #[test]
+    fn delivery_alone_never_clears_a_published_degradation() {
+        let timeout: Result<PingResponse, Error> = Err(Error::WaitRespError(
+            "wait ping response timeout".to_owned(),
+        ));
+        let mut misses = FAST_PROBE_MISSES_TO_DEGRADE;
+        let mut hits = 0;
+        let mut seen_epoch = 0;
+        let mut published = true;
+
+        for round in 1..=FAST_PROBE_RECOVER_ROUNDS * 2 {
+            let outcome = fast_probe_apply_round_evidence(
+                &timeout,
+                seen_epoch,
+                &mut seen_epoch,
+                delivery(true, 300),
+                &mut misses,
+                &mut hits,
+            );
+            assert_eq!(outcome, RoundOutcome::DeliveryOnly);
+            assert_eq!(misses, 0, "round {round}: delivery still ends the miss run");
+            assert_eq!(hits, 0, "round {round}: delivery is not proof");
+            published = fast_probe_publish_degraded(misses, hits, published);
+            assert!(
+                published,
+                "round {round}: only a round trip may clear the degradation"
+            );
+        }
+
+        // A proven round trip is what actually turns it around.
+        let pong: Result<PingResponse, Error> = Ok(PingResponse::Pong(1_000));
+        for round in 1..=FAST_PROBE_RECOVER_ROUNDS {
+            let epoch = seen_epoch + 1;
+            fast_probe_apply_round_evidence(
+                &pong,
+                epoch,
+                &mut seen_epoch,
+                delivery(false, 300),
+                &mut misses,
+                &mut hits,
+            );
+            published = fast_probe_publish_degraded(misses, hits, published);
+            if round < FAST_PROBE_RECOVER_ROUNDS {
+                assert!(published, "round {round}: still not cleared yet");
+            }
+        }
+        assert!(!published, "three proven rounds must clear it");
+    }
+
+    /// The delivery excuse is rationed by the probe budget.
+    ///
+    /// A short budget may be outrun by a queue, so a timeout there is ambiguous.
+    /// A budget already at [`FAST_PROBE_EXCUSE_MAX_BUDGET`] or wider cannot be:
+    /// if the peer still cannot answer one round trip in that window while only
+    /// pushing bytes at us, the path is one-way dead and the edge must stop
+    /// carrying our traffic. Without this ceiling the exemption renews itself
+    /// every round — the peer's own probe pings keep the inbound counter moving.
+    #[test]
+    fn inbound_delivery_stops_excusing_a_timeout_once_the_budget_is_wide() {
+        let timeout: Result<PingResponse, Error> = Err(Error::WaitRespError(
+            "wait ping response timeout".to_owned(),
+        ));
+
+        let mut misses = 0;
+        let mut hits = 0;
+        let mut seen_epoch = 0;
+        let outcome = fast_probe_apply_round_evidence(
+            &timeout,
+            seen_epoch,
+            &mut seen_epoch,
+            delivery(true, FAST_PROBE_TIMEOUT_MIN.as_millis() as u64),
+            &mut misses,
+            &mut hits,
+        );
+        assert_eq!(
+            outcome,
+            RoundOutcome::DeliveryOnly,
+            "a queue can outrun the 300ms floor, so this timeout is ambiguous"
+        );
+        assert_eq!(misses, 0);
+
+        // Same evidence, budget at the excuse ceiling: no longer ambiguous.
+        let mut misses = 0;
+        let mut hits = FAST_PROBE_RECOVER_ROUNDS;
+        let outcome = fast_probe_apply_round_evidence(
+            &timeout,
+            seen_epoch,
+            &mut seen_epoch,
+            delivery(true, FAST_PROBE_EXCUSE_MAX_BUDGET.as_millis() as u64),
+            &mut misses,
+            &mut hits,
+        );
+        assert_eq!(
+            outcome,
+            RoundOutcome::Miss,
+            "one-way dead: receiving, but never answering a 1.2s round trip"
+        );
+        assert_eq!(misses, 1);
+        assert_eq!(hits, 0);
+    }
+
+    /// The budget floor has to actually move, or `3 × EWMA RTT` stays pinned at
+    /// 300ms for the whole incident and the excuse above is all that is left.
+    #[test]
+    fn budget_floor_climbs_on_excused_timeouts_and_falls_on_proof() {
+        let floor = FAST_PROBE_TIMEOUT_MIN;
+        let excused = RoundOutcome::DeliveryOnly;
+        let proven = RoundOutcome::Proven;
+
+        let one = fast_probe_next_budget_floor(floor, excused);
+        let two = fast_probe_next_budget_floor(one, excused);
+        assert_eq!(one, floor * 2);
+        assert_eq!(two, floor * 4);
+        // 300ms -> 600ms is already inside the three-miss window, which is why a
+        // merely congested conn never publishes at all.
+        assert!(one < FAST_PROBE_EXCUSE_MAX_BUDGET);
+
+        // Capped, never unbounded.
+        let mut cur = floor;
+        for _ in 0..8 {
+            cur = fast_probe_next_budget_floor(cur, excused);
+        }
+        assert_eq!(cur, FAST_PROBE_TIMEOUT_MAX);
+
+        // And it comes back down, so a recovered conn is not stuck at the ceiling.
+        let back = fast_probe_next_budget_floor(cur, proven);
+        assert_eq!(back, FAST_PROBE_TIMEOUT_MAX / 2);
+        let mut cur = back;
+        for _ in 0..8 {
+            cur = fast_probe_next_budget_floor(cur, proven);
+        }
+        assert_eq!(cur, floor, "never below the floor");
+
+        // Neither a miss nor an inconclusive round moves it: only evidence does.
+        assert_eq!(fast_probe_next_budget_floor(two, RoundOutcome::Miss), two);
+        assert_eq!(
+            fast_probe_next_budget_floor(two, RoundOutcome::Inconclusive),
+            two
+        );
+    }
+
+    /// A liveness echo proves a round trip just like a pong, and must still be
+    /// worth exactly one hit.
+    ///
+    /// Both used to be counted twice — once by the `Ok(_)` arm and again by the
+    /// proven-round arm, which treated the echo as "not a pong" — so recovery
+    /// from a degraded state could finish in two rounds instead of
+    /// [`FAST_PROBE_RECOVER_ROUNDS`] and quietly weaken the anti-flap gate.
+    #[test]
+    fn a_liveness_echo_is_one_hit_not_two() {
+        let echo: Result<PingResponse, Error> = Ok(PingResponse::LivenessEcho);
+        let mut misses = 0;
+        let mut hits = 0;
+        let mut seen_epoch = 12;
+
+        for round in 1..=FAST_PROBE_RECOVER_ROUNDS {
+            let epoch = seen_epoch + 1;
+            fast_probe_apply_round_evidence(
+                &echo,
+                epoch,
+                &mut seen_epoch,
+                delivery(false, 300),
+                &mut misses,
+                &mut hits,
+            );
+            assert_eq!(hits, round, "one proven round is worth one hit");
+            assert_eq!(misses, 0);
+        }
+    }
+
     /// Local congestion is evidence of nothing: it must not count as a miss, and
     /// a keepalive round proven in the same round still earns its hit.
     #[test]
@@ -1417,14 +1867,28 @@ mod tests {
         let mut hits = 0;
         let mut seen_epoch = 7;
 
-        fast_probe_apply_round_evidence(&congested, 7, &mut seen_epoch, &mut misses, &mut hits);
+        fast_probe_apply_round_evidence(
+            &congested,
+            7,
+            &mut seen_epoch,
+            delivery(false, 300),
+            &mut misses,
+            &mut hits,
+        );
         assert_eq!(
             misses, 2,
             "a ping that never left the box is not a path miss"
         );
         assert_eq!(hits, 0);
 
-        fast_probe_apply_round_evidence(&congested, 8, &mut seen_epoch, &mut misses, &mut hits);
+        fast_probe_apply_round_evidence(
+            &congested,
+            8,
+            &mut seen_epoch,
+            delivery(false, 300),
+            &mut misses,
+            &mut hits,
+        );
         assert_eq!(misses, 0, "the proven round ends the miss run");
         assert_eq!(hits, 1, "the proven round earns its hit");
     }

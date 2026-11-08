@@ -3866,6 +3866,18 @@ pub(crate) async fn try_compress_and_encrypt(
     msg: &mut ZCPacket,
     secure_mode_enabled: bool,
 ) -> Result<(), Error> {
+    // A packet that already carries the ENCRYPTED flag is re-entering the send
+    // pipeline (self-delivery loop / forward path calling the same helper a
+    // second time). Compressing ciphertext can only waste CPU — the compressor's
+    // own "did it get smaller" guard almost always rejects it — and sealing
+    // again is a no-op that keeps the old tag. Bail out before doing either.
+    if msg
+        .peer_manager_header()
+        .map(|h| h.is_encrypted())
+        .unwrap_or(false)
+    {
+        return Ok(());
+    }
     let compressor = DefaultCompressor {};
     compressor
         .compress(msg, compress_algo)

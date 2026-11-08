@@ -51,7 +51,12 @@ where
         match start_udp_port_mapping(platform, events, local_listener).await {
             Ok(lease) => lease,
             Err(error) => {
-                tracing::warn!(
+                // UPnP/NAT-PMP is best-effort: most access networks either
+                // disable it or block it. The documented fallback (STUN-only
+                // public address resolution) is the normal path there, so this
+                // is an informational condition, not a fault worth a warn on
+                // every listener restart.
+                tracing::info!(
                     ?error,
                     %local_listener,
                     "failed to establish udp port mapping, fallback to stun-only public addr resolution"

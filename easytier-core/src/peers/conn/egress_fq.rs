@@ -22,7 +22,8 @@ use std::{
 use tokio::sync::mpsc;
 
 use crate::{
-    packet::ZCPacket, peers::conn::conn_bond::flow_key_from_payload, tunnel::mpsc::MpscTunnelSender,
+    packet::ZCPacket, peers::conn::conn_bond::flow_key_from_payload,
+    tunnel::mpsc::MpscTunnelSender, tunnel::stats::Throughput,
 };
 
 /// Control packets (everything not matched by `packet::is_data_packet`) go
@@ -128,6 +129,10 @@ pub(crate) struct EgressFairQueue {
     /// Packets rejected after the bounded wait. Observability only: a non-zero
     /// value means this conn's egress is saturated (tunnel slower than load).
     buffer_full_drops: std::sync::atomic::AtomicU64,
+    /// Optional shared counter so the liveness probe can tell "my egress is
+    /// saturated" apart from "the peer stopped answering". Injected by the conn;
+    /// tests leave it `None`.
+    throughput: Option<std::sync::Arc<Throughput>>,
     work_arrived: tokio::sync::Notify,
 }
 
@@ -139,8 +144,15 @@ impl EgressFairQueue {
             rr_cursor: Mutex::new((rand::random::<u64>() as usize) % EGRESS_FLOW_LANES),
             closed: std::sync::atomic::AtomicBool::new(false),
             buffer_full_drops: std::sync::atomic::AtomicU64::new(0),
+            throughput: None,
             work_arrived: tokio::sync::Notify::new(),
         }
+    }
+
+    /// Attach the conn's counters so a drop here is visible to the probe.
+    pub(crate) fn with_throughput(mut self, throughput: std::sync::Arc<Throughput>) -> Self {
+        self.throughput = Some(throughput);
+        self
     }
 
     /// Enqueue a packet, waiting up to `wait` for space (same bounded-wait
@@ -197,6 +209,9 @@ impl EgressFairQueue {
             .buffer_full_drops
             .fetch_add(1, Ordering::Relaxed)
             .saturating_add(1);
+        if let Some(throughput) = &self.throughput {
+            throughput.record_egress_drop();
+        }
         if total == 1 || total.is_power_of_two() || total.is_multiple_of(1000) {
             tracing::debug!(
                 buffer_full_drops = total,

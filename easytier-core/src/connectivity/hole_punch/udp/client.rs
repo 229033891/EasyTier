@@ -128,7 +128,7 @@ where
             )
             .await
         {
-            tracing::error!(?e, "failed to call remote send punch packet");
+            tracing::debug!(?e, "failed to call remote send punch packet");
         }
     }));
 
@@ -145,10 +145,16 @@ where
                             tracing::info!(?socket, "hole punched");
                             return Ok(Some(socket));
                         }
-                        Err(e) => {
-                            tracing::error!(?e, "failed to connect with socket");
-                            break;
-                        }
+                    Err(e) => {
+                        // Per-attempt outcome inside a retry loop (2 rounds,
+                        // 200ms apart) on a path that is *expected* to fail
+                        // until the NAT bindings line up. The aggregate result
+                        // is already reported once by the connector, so keep
+                        // this at debug — as an ERROR it made every failed
+                        // attempt look like a fault.
+                        tracing::debug!(?e, "hole punch connect attempt failed");
+                        break;
+                    }
                     }
                 }
                 _ = crate::foundation::time::sleep(std::time::Duration::from_millis(200)) => {
@@ -292,7 +298,10 @@ where
         tracing::debug!(?req, "send punch packet for hard sym start");
         match signaling.send_punch_packet_hard_sym(dst_peer_id, req).await {
             Err(e) => {
-                tracing::error!(?e, "failed to send punch packet for hard sym");
+                // Signaling errors here are retried by the caller across
+                // rounds/port indices; the round-level outcome is reported by
+                // the connector, so this attempt detail stays at debug.
+                tracing::debug!(?e, "failed to send punch packet for hard sym");
                 None
             }
             Ok(resp) => Some(resp.next_port_index),
@@ -333,7 +342,7 @@ where
                     break;
                 }
                 Err(e) => {
-                    tracing::error!(?e, "failed to connect with socket");
+                    tracing::debug!(?e, "hole punch connect attempt failed");
                     udp_array.add_new_socket(socket.socket).await?;
                     continue;
                 }
@@ -580,7 +589,7 @@ where
                         return Ok(Some(socket));
                     }
                     Err(e) => {
-                        tracing::error!(?e, "failed to connect with socket");
+                        tracing::debug!(?e, "hole punch connect attempt failed");
                         continue;
                     }
                 }

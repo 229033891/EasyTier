@@ -125,6 +125,14 @@ pub struct Throughput {
     rx_bytes: AtomicU64,
     tx_packets: AtomicU64,
     rx_packets: AtomicU64,
+    /// Packets this conn's egress refused after its bounded wait.
+    ///
+    /// Lives here rather than only inside the fair queue so that the code that
+    /// *judges* the link can see it: a probe that times out while this counter
+    /// is climbing is reporting local saturation, not a remote failure. Inbound
+    /// and outbound byte counters cannot separate those two — `tx_bytes` keeps
+    /// rising whether the peer is reading or not.
+    egress_drops: AtomicU64,
 }
 
 impl Clone for Throughput {
@@ -134,6 +142,7 @@ impl Clone for Throughput {
             rx_bytes: AtomicU64::new(self.rx_bytes.load(Ordering::Relaxed)),
             tx_packets: AtomicU64::new(self.tx_packets.load(Ordering::Relaxed)),
             rx_packets: AtomicU64::new(self.rx_packets.load(Ordering::Relaxed)),
+            egress_drops: AtomicU64::new(self.egress_drops.load(Ordering::Relaxed)),
         }
     }
 }
@@ -148,6 +157,7 @@ impl Default for Throughput {
             rx_bytes: AtomicU64::new(0),
             tx_packets: AtomicU64::new(0),
             rx_packets: AtomicU64::new(0),
+            egress_drops: AtomicU64::new(0),
         }
     }
 }
@@ -171,6 +181,15 @@ impl Throughput {
 
     pub fn rx_packets(&self) -> u64 {
         self.rx_packets.load(Ordering::Relaxed)
+    }
+
+    /// Egress packets refused after the bounded wait — local saturation.
+    pub fn egress_drops(&self) -> u64 {
+        self.egress_drops.load(Ordering::Relaxed)
+    }
+
+    pub fn record_egress_drop(&self) {
+        self.egress_drops.fetch_add(1, Ordering::Relaxed);
     }
 
     pub fn record_tx_bytes(&self, bytes: u64) {

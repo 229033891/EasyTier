@@ -52,6 +52,18 @@ Get-ChildItem "${env:ProgramFiles(x86)}\Microsoft Visual Studio\2022\BuildTools\
 
 ## 正确用法：先 vcvars，再 cargo
 
+### 仓库脚本（推荐）
+
+`script/build-common.ps1` 的 `Import-EasytierMsvcEnvironment` 会在下列入口**自动**加载 `vcvars64.bat`（注入 PATH + INCLUDE + LIB），无需把 Build Tools 永久写入系统 PATH：
+
+- `script\easytier-windows-*.cmd` / `build-easytier-windows.ps1`
+- `script\easytier-web-*.cmd` / `build-easytier-web.ps1`
+- `script\easytier-test*.cmd` / `test-easytier.ps1`
+
+成功标志：日志出现 `MSVC cl OK (via vcvars): ...\cl.exe`。
+
+### 手工 / 非脚本终端
+
 在**同一** cmd / 已继承环境的会话里：
 
 ```bat
@@ -71,6 +83,8 @@ cmd /c 'call "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\
 `...\BuildTools\Common7\Tools\Launch-VsDevShell.ps1` / `LaunchDevCmd.bat`
 
 成功标志：`where cl` 指向 `...\MSVC\...\bin\Hostx64\x64\cl.exe`，且 `cl` 能打印编译器横幅。
+
+**不要**只把 `Hostx64\x64` 永久加进用户 PATH——缺 `INCLUDE`/`LIB`，升级工具集后路径还会漂移。
 
 ### `ring` 仍失败：MSVC `D8050`（环境块过大）
 

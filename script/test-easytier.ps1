@@ -211,13 +211,18 @@ function Get-EasytierClippyArgs {
 }
 
 function Get-EasytierHackExcludeFeatures {
-    # openssl-crypto needs vendored OpenSSL + full Perl on Windows (Git perl is not enough).
-    if ($isWindows) { return 'macos-ne,openssl-crypto' }
+    # Windows local ET Test intentionally skips features that need a Unix-ish
+    # toolchain or extra native deps CI covers on ubuntu-latest:
+    #   macos-ne       — macOS Network Extension only
+    #   openssl-crypto — vendored OpenSSL + full Perl (Strawberry often still fails)
+    #   jemalloc*      — tikv-jemalloc-sys runs `sh ./configure` (untested on
+    #                    windows-msvc; jemallocator itself is cfg(not(windows)))
+    if ($isWindows) { return 'macos-ne,openssl-crypto,jemalloc,jemalloc-prof' }
     return 'macos-ne'
 }
 
 function Write-EasytierWindowsNativeBuildHint {
-    Write-Log 'Native build failed (not a Rust lint): use Developer shell (cl.exe); D8050 -> CARGO_TARGET_DIR already shortened. For --features full / openssl-crypto locally install Strawberry Perl — or rely on CI Linux. See docs/ops/windows-msvc-local-build.md' -Level Warn
+    Write-Log 'Native build failed (not a Rust lint): check MSVC vcvars auto-load log above; D8050 -> short CARGO_TARGET_DIR; jemalloc/openssl-crypto are excluded on Windows — rely on CI Linux for those. See docs/ops/windows-msvc-local-build.md' -Level Warn
 }
 
 # --- fmt -------------------------------------------------------------------

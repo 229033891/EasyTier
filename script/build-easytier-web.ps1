@@ -150,8 +150,9 @@ function Start-EasytierWebDev {
     #>
     Assert-Command cargo
     Assert-Command pnpm
-    Ensure-WindowsBuildPrereqs
+    Initialize-EasytierWindowsCargoEnv
     Set-EasytierWritableTemp
+    Ensure-WindowsBuildPrereqs
 
     $frontendDir = Join-Path $RepoRoot 'easytier-web\frontend'
     $dbPath = Join-Path $RepoRoot 'et.db'
@@ -253,6 +254,9 @@ elseif (-not $NoEmbed) {
 
 # --- Rust --------------------------------------------------------------------
 Assert-Command cargo
+# Short target dir + auto vcvars (same as Windows package scripts).
+Initialize-EasytierWindowsCargoEnv
+Set-EasytierWritableTemp
 Ensure-WindowsBuildPrereqs
 
 $cargoArgs = @('build', '--package', 'easytier-web')

@@ -56,19 +56,31 @@
 
 - **Fast** 时 GUI/NSIS 仍走 cargo `--release`（Tauri 装包目录固定为 `release/`）；`release-fast` 只加速无头 `ET-*`。
 - 打 GUI NSIS 前会检查 `%LOCALAPPDATA%\tauri\MicrosoftEdgeWebview2Setup.exe`（可用 Downloads 预置，脚本会自动拷贝）。
-- MSVC 未进 PATH 时，先按 [`docs/ops/windows-msvc-local-build.md`](../docs/ops/windows-msvc-local-build.md) 加载 vcvars。
+- MSVC：`build-common.ps1` 会在打包 / ET Test 入口**自动** `call vcvars64`（无需永久改系统 PATH）。若仍失败，见 [`docs/ops/windows-msvc-local-build.md`](../docs/ops/windows-msvc-local-build.md)。
 - 依赖备齐说明见 [`docs/ops/windows-build-pack.md`](../docs/ops/windows-build-pack.md)。
 
 ### 3. 本地 ET Test（push 前自检）
 
-对齐 CI [`.github/workflows/test.yml`](../.github/workflows/test.yml)。日志同样写入 `artifacts\logs\`。
+对齐 CI [`.github/workflows/test.yml`](../.github/workflows/test.yml)（Actions 名 **ET Test**）。日志写入 `artifacts\logs\`。
 
 **提交 / push 前**：对照 [`docs/ops/ci-failure-log.md`](../docs/ops/ci-failure-log.md)（已知失败原因 + 自检清单）；新失败追加进该文档。Cursor 规则：`.cursor/rules/ci-failure-log-presubmit.mdc`。
 
+**推荐入口**（菜单 / 一键）：
+
+```bat
+script\easytier-test.cmd          REM 交互：Fast / Full / Info
+script\easytier-test.cmd fast
+script\easytier-test.cmd full
+script\easytier-test.cmd info     REM 只打印 CI vs 本地覆盖范围
+```
+
 | 脚本 | 作用 | 覆盖 |
 |------|------|------|
+| `easytier-test.cmd` | 统一入口 | 同上三模式 |
 | `easytier-test-fast.cmd` | 日常 push 前 | `fmt` + `Cargo.lock` + `clippy -D warnings` + `cargo hack` features |
 | `easytier-test-full.cmd` | 更完整 | Fast + WASI（若已 `rustup target add wasm32-wasip1`）+ `nextest`（**不含** three_node） |
+
+CI 还多跑：`hot_path_alloc` + `routing_lookup` bench 阈值门禁、以及 Linux 上的 `three_node` / `subnet_proxy`（需 tun/bridge/sudo）。本机 Windows Full **故意跳过** three_node；完整矩阵请 WSL/`test-easytier.sh --full --three-node` 或等 CI。
 
 等价 PowerShell：
 
@@ -91,9 +103,9 @@ Linux / WSL（含可选 three_node）：
 - **Fast** 能拦住本次 `releases/v2.7.5` 上失败的 fmt / clippy / features。
 - **three_node**（含 FakeTCP）需要 Linux 的 tun/bridge/`sudo`；Windows 上 Full 会跳过，请用 WSL 或等 CI。
 - 缺 `cargo-hack` / `cargo-nextest` 时加 `-InstallTools` / `--install-tools`。
-- Windows 与 CI 的差异（有意为之）：**不用 `--features full`**（会编 `openssl-crypto`）；clippy **不含 `--all-targets`/`--tests`**；`--no-default-features` 用 **`cargo check`**（与 CI cargo-hack 一致，避免 Windows 平台模块 dead_code 误报）。完整矩阵仍靠 Linux CI。
+- Windows 与 CI 的差异（有意为之）：**不用 `--features full`**（会编 `openssl-crypto`）；`cargo hack --each-feature` 额外排除 `openssl-crypto,jemalloc,jemalloc-prof`（Windows 编 jemalloc 会跑 `sh ./configure`）；clippy **不含 `--all-targets`/`--tests`**；`--no-default-features` 用 **`cargo check`**（与 CI cargo-hack 一致，避免 Windows 平台模块 dead_code 误报）。完整矩阵仍靠 Linux CI。
 - 脚本会自动设 `CARGO_PROFILE_DEV_DEBUG=0`、短 `CARGO_TARGET_DIR`（默认仓库 `.cache\cargo-target`；TEMP 用 `.cache\tmp`）。
-- 若 clippy/hack 仍失败：用「x64 本机工具」终端（需 `cl.exe`），见 [`docs/ops/windows-msvc-local-build.md`](../docs/ops/windows-msvc-local-build.md)。
+- 脚本已自动加载 vcvars；若 clippy/hack 仍失败（缺组件 / D8050），见 [`docs/ops/windows-msvc-local-build.md`](../docs/ops/windows-msvc-local-build.md)。
 
 ---
 

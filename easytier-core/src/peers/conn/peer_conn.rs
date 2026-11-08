@@ -416,7 +416,9 @@ impl PeerConn {
                 lanes = EGRESS_FLOW_LANES,
                 "egress fair queue enabled for new peer conn"
             );
-            Some(std::sync::Arc::new(EgressFairQueue::new()))
+            Some(std::sync::Arc::new(
+                EgressFairQueue::new().with_throughput(throughput.clone()),
+            ))
         } else {
             None
         };

@@ -120,7 +120,16 @@ impl Encryptor for RingCipher {
     fn encrypt_with_nonce(&self, packet: &mut ZCPacket, nonce: Option<&[u8]>) -> Result<(), Error> {
         let header = packet.peer_manager_header().unwrap();
         if header.is_encrypted() {
-            tracing::warn!(?packet, "packet is already encrypted");
+            // Benign re-entry: the packet already carries the ENCRYPTED flag
+            // (self-delivery loop / forward path reusing the encrypt helper).
+            // Re-sealing would overwrite a tag the receiver still needs, so the
+            // only correct move is to leave it alone. Log at debug and never
+            // dump the packet — the old `warn!(?packet)` printed the whole
+            // ciphertext on every occurrence.
+            tracing::debug!(
+                payload_len = packet.payload().len(),
+                "packet already encrypted; skipping"
+            );
             return Ok(());
         }
 
