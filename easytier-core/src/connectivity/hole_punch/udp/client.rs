@@ -145,16 +145,16 @@ where
                             tracing::info!(?socket, "hole punched");
                             return Ok(Some(socket));
                         }
-                    Err(e) => {
-                        // Per-attempt outcome inside a retry loop (2 rounds,
-                        // 200ms apart) on a path that is *expected* to fail
-                        // until the NAT bindings line up. The aggregate result
-                        // is already reported once by the connector, so keep
-                        // this at debug — as an ERROR it made every failed
-                        // attempt look like a fault.
-                        tracing::debug!(?e, "hole punch connect attempt failed");
-                        break;
-                    }
+                        Err(e) => {
+                            // Per-attempt outcome inside a retry loop (2 rounds,
+                            // 200ms apart) on a path that is *expected* to fail
+                            // until the NAT bindings line up. The aggregate
+                            // result is already reported once by the connector,
+                            // so keep this at debug — as an ERROR it made every
+                            // failed attempt look like a fault.
+                            tracing::debug!(?e, "hole punch connect attempt failed");
+                            break;
+                        }
                     }
                 }
                 _ = crate::foundation::time::sleep(std::time::Duration::from_millis(200)) => {

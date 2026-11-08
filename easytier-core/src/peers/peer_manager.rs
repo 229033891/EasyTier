@@ -2636,6 +2636,13 @@ impl PeerManagerCore {
     ///
     /// Skips the NIC filter pipeline; see
     /// [`PeerOutboundPacketRouter::inject_self_delivered_nic_packet`].
+    ///
+    /// Gated on `proxy-packet` because the only caller is the MagicDNS packet
+    /// filter ([`crate::gateway::magic_dns`]), which is itself behind that
+    /// feature. Without the gate a default-feature build (the Windows local ET
+    /// Test gate, `cargo clippy -p easytier-core -- -D warnings`) fails on
+    /// `dead_code` for a method that is genuinely unreachable there.
+    #[cfg(feature = "proxy-packet")]
     pub(crate) async fn inject_self_delivered_nic_packet(
         &self,
         msg: ZCPacket,
@@ -4683,6 +4690,10 @@ impl PeerOutboundPacketRouter {
     ///
     /// Skips the NIC filter pipeline so the same filter cannot re-absorb the
     /// response. Destination IP is taken from the rewritten inner header.
+    ///
+    /// Gated on `proxy-packet`: its only caller is the MagicDNS packet filter,
+    /// so a default-feature build has no way to reach it.
+    #[cfg(feature = "proxy-packet")]
     pub(crate) async fn inject_self_delivered_nic_packet(
         &self,
         msg: ZCPacket,

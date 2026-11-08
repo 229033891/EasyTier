@@ -132,6 +132,10 @@ pub struct Throughput {
     /// is climbing is reporting local saturation, not a remote failure. Inbound
     /// and outbound byte counters cannot separate those two — `tx_bytes` keeps
     /// rising whether the peer is reading or not.
+    ///
+    /// Recorded on **both** egress paths — the fair queue's refused push and the
+    /// direct sink's `EGRESS_WAIT` timeout — so the counter means the same thing
+    /// whether or not `enable_egress_fair_queue` is on.
     egress_drops: AtomicU64,
 }
 

@@ -303,9 +303,11 @@ key = (cost, hops, tie_key(first_hop))
 | 项 | 取值 | 位置 |
 |---|---|---|
 | 探测间隔 | 333ms | `FAST_PROBE_INTERVAL` |
-| 判死 | 连续 3 轮未往返，且该轮内无字节交付 | `FAST_PROBE_MISSES_TO_DEGRADE` |
-| 单次等待 | `clamp(3 × 实测 RTT, 300ms, 2s)` | `fast_probe_timeout` |
-| 最坏检测 | ≈ 3 × (333ms + 300ms) ≈ **1.9s** | 由 `fast_probe_timeout_scales_with_rtt_and_is_clamped` 断言 |
+| 判死 | 连续 3 轮未往返，且该轮内无字节交付（或预算已抬到豁免上限、或本轮豁免已花掉） | `FAST_PROBE_MISSES_TO_DEGRADE` |
+| 单次等待 | `max(clamp(3 × 实测 RTT, 300ms, 2s), budget_floor)` | `fast_probe_timeout` / `fast_probe_next_budget_floor` |
+| 最坏检测（全黑洞，冷启动） | ≈ 3 × (333ms + 300ms) ≈ **1.9s**；`budget_floor` 未被抬升时才有这个数 | 由 `a_black_hole_is_published_at_the_cold_start_speed` 断言 |
+| 最坏检测（全黑洞，紧跟拥塞） | ≈ 3.1s（首轮仍带 1.2s 宽预算，此后 `Miss` 逐轮减半） | 同上 |
+| 最坏检测（单向故障） | ≈ **4.7s**（2 轮豁免抬预算 + 3 轮 `Miss`，`Miss` 逐轮把预算减半），见下文推导 | 由 `a_one_way_outage_is_published_even_though_the_floor_falls_back` 断言 |
 
 - 探测只写 `PeerConn::fast_probe_degraded`（`AtomicBool`）；`loss_rate()` 在它置位时返回 **1.0**，于是 `score_conn` 判定 fused → `ospf_edge_cost_from_score` +`OSPF_FUSE_COST_BONUS` → 边权重新上报 → 下一次 SPF 改路。
 - **绝不拆连**：不碰 `loss_counter`、不碰 `ping_fail_close_count`，所以「拆完要重建 ~30s」那套容错时间常数完全不变（§8 边界）。
@@ -317,7 +319,7 @@ key = (cost, hops, tie_key(first_hop))
 
 `ctrl_resp_sender` 是 **broadcast**，`Pong` 只按 seq 相等匹配。保活与快速探测若共用 0 起的 seq 空间，A 的 Pong 会被 B 收下当作自己的应答——**假成功，正好掩盖这个探测要报告的失败**。所以把 u32 拆开：保活占低 31 位，快速探测占最高位（`FAST_PROBE_SEQ_BIT` / `keepalive_seq` / `fast_probe_seq`），并用 `keepalive_and_fast_probe_sequences_never_collide` 守住。
 
-#### 2026-11-08 实测修正：超时 ≠ 丢失（`path_carried_data`）
+#### 2026-11-08 实测修正：超时 ≠ 丢失（`RoundOutcome` + `budget_floor`）
 
 现网压测暴露了上面这套参数的一个语义错误：**探测把"预算内没回答"直接当成了"链路丢包"**。
 
@@ -334,13 +336,13 @@ key = (cost, hops, tie_key(first_hop))
 
 而同一窗口内业务侧**103 次请求全部成功**，速率稳定 6~7 次/秒，该 conn 的 `rx_bytes` 全程在涨。链路是通的，只是**排队**了（ICMP p99 663ms）。
 
-**根因是自指的死锁**：预算 = `clamp(3 × EWMA RTT, 300ms, 2s)`，而**超时不会产生 RTT 样本**——EWMA 永远学不到"预算形成之后才出现的队列"，预算就一直钉在 300ms 下界，下一轮仍按 300ms 判，于是每一轮都超时。`path_carried_data` 缺失时，这套逻辑对"满而通"和"坏了"给出同一个结论。
+**根因是自指的死锁**：预算 = `clamp(3 × EWMA RTT, 300ms, 2s)`，而**超时不会产生 RTT 样本**——EWMA 永远学不到"预算形成之后才出现的队列"，预算就一直钉在 300ms 下界，下一轮仍按 300ms 判，于是每一轮都超时。没有投递证据时，这套逻辑对"满而通"和"坏了"给出同一个结论。
 
 **保活也补不上这个缺口**：`PingIntervalController` 空闲时按 `1 << backoff_idx` 退避，`max_backoff_idx = 5` ⇒ 最长 **32s** 才发一次。探测做决策只用了约 2s，这段时间里 `roundtrip_epoch` 常常纹丝不动，所以 `fast_probe_apply_round_evidence` 拿不到任何 keepalive 证据。
 
 **修法分两层，缺一不可。**
 
-**第一层：判定改成三值，而不是把两个证据 OR 成一个布尔。**
+**第一层：判定改成四值，而不是把两个证据 OR 成一个布尔。**
 
 每轮探测前后各采一次 `PeerConn::throughput_stats.rx_bytes()`，连同本轮**实际使用的预算**一起折成 `RoundOutcome`：
 
@@ -355,21 +357,33 @@ key = (cost, hops, tie_key(first_hop))
 
 关键在 `DeliveryOnly` **不计 hit**。入向字节只证明"对端 → 我"这一个方向；拿它当往返证明，一条只收不发的链路就永远清不掉自己的降级，而它的边还一直按健康计价。
 
-**为什么不能写成 `roundtrip_proven = epoch_advanced || path_carried_data`**：本机每 333ms 会收到**对端 pinger 发来的探测 ping**，那个包本身就计入 `rx_bytes`。于是"本轮有字节到达"在对端探测循环活着时几乎恒真——它衡量的不是"我发得出去"，而是"对端还在给我发东西"。单向故障（上行限速、非对称丢包、单向 NAT）下，本机会判活、对端会判本机死，两边结论相反，流量持续打进死路且不触发重路由。
+**为什么不能写成 `roundtrip_proven = epoch_advanced || carried_data`**（`carried_data` = `DeliveryEvidence::rx_delta > 0`，是上一版补丁的写法）：本机每 333ms 会收到**对端 pinger 发来的探测 ping**，那个包本身就计入 `rx_bytes`。于是"本轮有字节到达"在对端探测循环活着时几乎恒真——它衡量的不是"我发得出去"，而是"对端还在给我发东西"。单向故障（上行限速、非对称丢包、单向 NAT）下，本机会判活、对端会判本机死，两边结论相反，流量持续打进死路且不触发重路由。
 
 **第二层：预算自适应下界（治本）。**
 
-判定层只是让拥塞不再被误判，`3 × EWMA RTT` 本身依旧学不到队列——超时不产生 RTT 样本，这是前面那条自指死锁的来源。所以 `fast_probe` 自己维护 `budget_floor`：每次 `DeliveryOnly` **翻倍**（上限 `FAST_PROBE_TIMEOUT_MAX` 2s），每次 `Proven` **减半**（下限 `FAST_PROBE_TIMEOUT_MIN` 300ms）。
+判定层只是让拥塞不再被误判，`3 × EWMA RTT` 本身依旧学不到队列——超时不产生 RTT 样本，这是前面那条自指死锁的来源。所以 `fast_probe` 自己维护 `budget_floor`：每次 `DeliveryOnly` **翻倍**（上限 `FAST_PROBE_TIMEOUT_MAX` 2s），每次 `Proven` **减半**（下限 `FAST_PROBE_TIMEOUT_MIN` 300ms），每次 `Miss` **也减半**——加宽是「投递」买来的，第一个什么都没投递的轮次（真实故障的第一轮）就得开始还账，否则曾经拥塞过的 conn 会把 1.2s 的宽预算带进后面的黑洞。`Inconclusive`（ping 没出本机）两个方向都不动。
 
 663ms 的排队会在第三轮之前被两次翻倍（300→600→1200ms）覆盖，于是**降级从未被发布**，而不是"发布了再豁免"。回落保证恢复后的 conn 不会永久带着 2s 的检测下界。
 
 **给单向故障留的出口**：`FAST_PROBE_EXCUSE_MAX_BUDGET = 1200ms`。预算爬到该值后，入向投递**不再**豁免超时——此时一个仍答不出往返的 conn 就是单向死的，继续保留它的边等于把所有本机发起的流量送进同一个洞。
 
-- 真黑洞（两个方向都不通）时 `rx_bytes` 同时停止增长，走的仍是纯 `Miss`，所以 3 轮判死 / 9 轮剔边的时间**完全不变**（有测试守住）。
-- 单向故障的检测时间变成：预算爬升 2 轮 + 3 轮 `Miss` ≈ 3.2s，比全黑洞慢约 1.3s。这是"不误伤拥塞"必须付的代价，且**有界**。
-- 阈值、间隔、sustained 门槛、预算的 clamp 区间都没动，只增加了驱动下界的输入，所以「最坏检测 ≈1.9s」对全黑洞仍成立。
+- 真黑洞（两个方向都不通）时 `rx_bytes` 同时停止增长，走的仍是纯 `Miss`，`budget_floor` 从 300ms 起步且一直是 300ms，所以冷启动的 3 轮判死 / 9 轮剔边时间**完全不变**（`a_black_hole_is_published_at_the_cold_start_speed` 守住）；若黑洞紧跟在一段拥塞之后，首轮仍带 1.2s 预算，判死约 **3.1s**。
+- **单向故障的检测时间 ≈ 4.7s**，比全黑洞慢约 2.8s。逐轮推导（每轮耗时 = 333ms 间隔 + 本轮实际预算）：
 
-**顺带修正**：`LivenessEcho` 过去在 `Ok(_)` 分支和"已证明往返"分支各加一次 hit，一轮算两轮，会让恢复从 3 轮缩到 2 轮、悄悄削弱防抖闸门。改成三值判定后天然只算一次，并补了测试。
+  | 轮次 | 预算 | 结果 | misses | `budget_floor`（→ 下一轮） | 该轮豁免 |
+  |---|---|---|---|---|---|
+  | 1 | 300ms | `DeliveryOnly`（豁免） | 0 | → 600ms | 未花 |
+  | 2 | 600ms | `DeliveryOnly`（豁免） | 0 | → 1200ms | 未花 |
+  | 3 | 1200ms | **`Miss`**（预算到豁免上限） | 1 | → 600ms | **本轮花掉** |
+  | 4 | 600ms | `Miss`（豁免已花，便宜的预算也换不回来） | 2 | → 300ms | 已花 |
+  | 5 | 300ms | `Miss` | 3 | → 300ms | 已花 |
+
+  ⇒ 0.63 + 0.93 + 1.53 + 0.93 + 0.63 ≈ **4.7s**。这是"不误伤拥塞"必须付的代价，且**有界**（预算封顶 1200ms 后不再豁免，且豁免只花一次、要 `Proven` 才能重置）。
+- 阈值、间隔、sustained 门槛、预算的 clamp 区间都没动，只增加了驱动下界的输入，所以「最坏检测 ≈1.9s」对冷启动的全黑洞仍成立。
+
+**为什么豁免需要一个"棘轮"（`DeliveryExcuse`）**：`budget_floor` 不是单调的——`Miss` 会把它减半。如果只用「预算是否 < 1200ms」判断，闭环就变成 `DeliveryOnly`(300) → `DeliveryOnly`(600) → `Miss`(1200，budget_floor 回 600) → `DeliveryOnly`(600) → `Miss`(1200) → …：**每个 miss 后面都跟着一个被豁免的轮次，把 miss 计数清零**，`misses` 永远到不了 3，单向死的链路永远不被发布。所以豁免用一次就 `spent` 掉，只有 `Proven`（唯一证明双向的证据）能重置；`Inconclusive` 既不花也不还——本机出口堵了，说明不了路径的任何事。
+
+**顺带修正**：`LivenessEcho` 过去在 `Ok(_)` 分支和"已证明往返"分支各加一次 hit，一轮算两轮，会让恢复从 3 轮缩到 2 轮、悄悄削弱防抖闸门。改成四值判定后天然只算一次，并补了 `a_liveness_echo_is_one_hit_not_two` 守住。
 
 **注意这里修的是什么**：修的是"把拥塞误报成 100% 丢包、进而剔边造成的路由抖动"。压测中 `.20` 出现 22.6%、`.10` 出现 9.8% 的 **ICMP 真实丢包是各自上行链路饱和的 tail drop**，属外部瓶颈，EasyTier 侧不负责修（`tunnel_buffer_full=0`、网卡 discard 全 0、`data_plane_no_dst_peer_drops` 未增长，丢包发生在离开本机之后）。
 
@@ -378,11 +392,14 @@ key = (cost, hops, tie_key(first_hop))
 - 50 conn × 333ms × ~30B ≈ **4.5 KB/s**，全部在控制面，**每包零开销**。
 - **高 RTT 限制**：单次等待被 2s 上限截断，所以 RTT 秒级的链路上检测会慢于 1.9s。这是探测的固有限制（不可能比 RTT 更快得出结论），不是可调参数问题。
 - 目前**没有配置开关**：门禁就是 `liveness-echo-v1` 协商。若现网反馈控制面开销偏大，再补一个 flag（属独立小改动）。
+- **三个诊断计数只用于区分成因，不参与判定**：`rx_delta` / `tx_delta` / `egress_drops` 随两条 warn 一起输出。`tx_delta` 明确**不**作为豁免依据——黑洞也会照样吃掉 tx（写本地 socket buffer 成功直到满），用 tx 判活等于永不判死。`egress_drops` 在**两条出向路径**上都计数（公平队列拒收 / `enable_egress_fair_queue=false` 时直连 sink 的 `EGRESS_WAIT` 超时），所以"`drops>0` ⇒ 本机出口饱和"这个推论与配置无关。
 - **本证据模型只作用于探测，不作用于断连**。`pingpong` 主循环仍按 `PING_WAIT_TIMEOUT = 2s` + `fail_close_count` 判定，不采信 `rx_bytes`。这是刻意的：它决定的是**关连接**（重建约 30s），代价远高于改一次边权，需要独立且更严的证据链；而 2s 预算本身已经能在 663ms 排队的场景下正常工作。只有排队超过 2s 才会走到那条路，属独立议题。
 
 **验证状态（2026-11-08 复核，务必如实对待）**
 
-- **单元层面已验证**：本轮改动涉及的决定逻辑被逐字抽到独立 crate 编译并跑通 **12 个用例**（含"663ms 排队 × 300ms 预算，六轮内既不发布降级、预算最终覆盖队列"的端到端场景）。判断依据是逻辑与真实文件逐行一致，抽取件不含 tokio/网络依赖。
+- **仓内单元层面已验证**（不再依赖外挂抽取件）：`cargo test -p easytier-core --lib peer_conn_ping` → **25 passed**，含 `a_conn_delivering_bytes_is_never_published_as_lost`、`delivery_alone_never_clears_a_published_degradation`、`inbound_delivery_stops_excusing_a_timeout_once_the_budget_is_wide`、`budget_floor_climbs_on_excused_timeouts_and_falls_on_proof`、`a_liveness_echo_is_one_hit_not_two`，以及三个**组合**用例（单测都对但闭环振荡最容易翻车的地方）：663ms 排队 30 轮零误报、单向故障仍能发布、冷启动黑洞仍 1.9s。
+- **`cargo fmt --all -- --check` / `cargo clippy -p easytier-core -- -D warnings` 均通过**（2026-11-08 复核后补齐：fmt 当时有 6 处未格式化、clippy 因两处 `inject_self_delivered_nic_packet` 在默认 feature 下 dead_code 而失败，后者已用 `#[cfg(feature = "proxy-packet")]` 收口）。
+- **仍未跑**：`cargo clippy -p easytier -p easytier-core -p easytier-web -p easytier-proto -- -D warnings`（ET Test Fast 的完整 clippy 步骤）。本机在 `easytier` 的 `aws-lc-sys` 原生构建上失败（`stdalign_check.c` 在 MSVC `-WX` 下报错），属环境问题而非 lint，push 前应走 `script\easytier-test.cmd fast` 或交给 CI 的 Linux 门禁。
 - **真实链路层面尚未验证**：`10.10.10.201`（局域网 udp 直连 0.3ms）压到 **105.8 MB/s**，ping 1590 样本 **0 丢包**、SMB 约 7 万块 **0 错误**、压测窗口 **0 条** `publishing degraded loss`——但那条链路太干净，探测**根本没有超时**，本改动未被触达。它的价值是证明了"`.10`/`.20` 的现象来自各自限速"（写 256MB 实测 `.10` 1.45 MB/s、`.20` 4.01 MB/s、`.201` 24.9 MB/s），不能当作本修复生效的证据。
 - **下一步该做的验证**：在 `.201` 上用 `tc netem delay` 或打满上行，造出"预算内不回答、但业务仍在交付"的场景，确认降级不被发布且 `budget_ms` 按预期爬升。这是目前唯一能证伪该设计的实验。
 

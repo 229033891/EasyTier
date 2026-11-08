@@ -1327,20 +1327,22 @@ impl WebClientSession {
                         // every occurrence. Keep the escalation path audible,
                         // but only from the second consecutive failure, i.e.
                         // once the session is genuinely at risk.
+                        let max_attempts = MAX_CONSECUTIVE_HEARTBEAT_FAILURES;
+                        let retry_gap_ms = HEARTBEAT_RETRY_GAP.as_millis();
                         if failed_attempts == 1 {
                             tracing::debug!(
                                 ?error,
                                 failed_attempts,
-                                max_attempts = MAX_CONSECUTIVE_HEARTBEAT_FAILURES,
-                                retry_gap_ms = HEARTBEAT_RETRY_GAP.as_millis(),
+                                max_attempts,
+                                retry_gap_ms,
                                 "config-server heartbeat failed; retrying before ending session"
                             );
                         } else {
                             tracing::warn!(
                                 ?error,
                                 failed_attempts,
-                                max_attempts = MAX_CONSECUTIVE_HEARTBEAT_FAILURES,
-                                retry_gap_ms = HEARTBEAT_RETRY_GAP.as_millis(),
+                                max_attempts,
+                                retry_gap_ms,
                                 "config-server heartbeat failed; retrying before ending session"
                             );
                         }

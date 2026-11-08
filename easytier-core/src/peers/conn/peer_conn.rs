@@ -1609,7 +1609,16 @@ impl PeerConn {
                     self.close_event_notifier.notify_close();
                     Err(error.into())
                 }
-                Err(_) => Err(TunnelError::BufferFull.into()),
+                Err(_) => {
+                    // Same accounting the fair queue does for its own refused
+                    // push, so `Throughput::egress_drops` means the same thing
+                    // in both configurations. Without this the fast probe's
+                    // "drops > 0 ⇒ our egress is saturated, not the path"
+                    // inference silently never fires on deployments that turned
+                    // `enable_egress_fair_queue` off.
+                    self.throughput.record_egress_drop();
+                    Err(TunnelError::BufferFull.into())
+                }
             };
         };
         match fq.push(msg, EGRESS_WAIT).await {

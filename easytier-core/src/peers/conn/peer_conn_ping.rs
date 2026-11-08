@@ -177,7 +177,7 @@ enum RoundOutcome {
     Inconclusive,
     /// The probe timed out, but the conn was still delivering bytes against a
     /// budget short enough for a queue to explain the timeout. The path is alive
-    /// but unproven: the miss run ends, no hit is earned.
+    /// but unproven: the miss run ends, and so does the run of proof.
     DeliveryOnly,
     /// A full round trip completed this round — probe pong, keepalive pong, or
     /// liveness echo. The only evidence that covers **both** directions.
@@ -219,16 +219,47 @@ impl DeliveryEvidence {
     /// the path of being gone, not enough to call it healthy, because a one-way
     /// outage keeps bytes arriving while carrying nothing we send.
     ///
-    /// The excuse is therefore rationed by [`FAST_PROBE_EXCUSE_MAX_BUDGET`]: it
-    /// buys one doubling of the probe budget (see `fast_probe`), and once the
-    /// budget has climbed past that ceiling a conn that still only *receives* is
-    /// treated as the one-way outage it is. Without the ceiling the exemption is
-    /// self-renewing — our peer's own probe pings keep the inbound counter
-    /// moving every round, so "did any byte arrive" is nearly always true and
-    /// the probe could never accuse a half-dead link of anything.
-    fn excuses_a_timeout(&self) -> bool {
-        self.carried_data() && self.budget < FAST_PROBE_EXCUSE_MAX_BUDGET
+    /// The excuse is rationed by [`FAST_PROBE_EXCUSE_MAX_BUDGET`] *and* by
+    /// [`DeliveryExcuse`]: the widening is worth one episode, and a round that
+    /// has already spent it cannot buy another by getting cheaper. The budget
+    /// test alone stopped being sufficient once the floor started falling again
+    /// on a miss — a budget that drops back under the ceiling re-arms the
+    /// excuse, and a one-way outage then alternates `DeliveryOnly` / `Miss`
+    /// forever (see [`DeliveryExcuse`]).
+    fn excuses_a_timeout(&self, excuse: DeliveryExcuse) -> bool {
+        // All three clauses, and the third one is the whole point of
+        // [`DeliveryExcuse`]: without it the ratchet is inert and a one-way
+        // outage alternates `DeliveryOnly` / `Miss` forever, because the miss
+        // halves the floor back under the budget test.
+        self.carried_data() && !excuse.spent && self.budget < FAST_PROBE_EXCUSE_MAX_BUDGET
     }
+}
+
+/// Per-episode ratchet on the delivery excuse.
+///
+/// The budget floor is not monotonic: it doubles on an excused timeout and
+/// halves on a miss or a proven round. So "is the budget still under
+/// [`FAST_PROBE_EXCUSE_MAX_BUDGET`]" cannot decide on its own whether the excuse
+/// is still available, and reading it that way makes the exemption
+/// self-renewing in exactly the case it exists to catch. A one-way outage pushes
+/// bytes at us every round, so its round is excused and the floor doubles to the
+/// ceiling; the next round is a miss and halves the floor back under the
+/// ceiling; the round after that is excused again. `DeliveryOnly` clears the
+/// miss run, so the run never reaches [`FAST_PROBE_MISSES_TO_DEGRADE`] and the
+/// half-dead link keeps its edge forever, carrying every packet we originate
+/// into the hole.
+///
+/// `spent` is therefore latched when a round's budget reaches the ceiling and
+/// cleared only by a proven round trip — the one piece of evidence that the path
+/// carries traffic in **both** directions. It lives in the round fold's state
+/// rather than being derived per round, so `fast_probe_apply_round_evidence`
+/// stays the single place the decision moves. An `Inconclusive` round — the ping
+/// never left the box — neither spends it nor gives it back, because local
+/// congestion says nothing about the path.
+#[derive(Debug, Clone, Copy, Default)]
+struct DeliveryExcuse {
+    /// A round in this episode already used the whole widening.
+    spent: bool,
 }
 
 /// Folds one fast-probe round — the probe's own outcome, any proven round trip
@@ -244,10 +275,11 @@ impl DeliveryEvidence {
 ///   one hit, because a round trip is the only evidence covering both directions.
 /// * [`RoundOutcome::DeliveryOnly`] — the probe timed out while bytes were still
 ///   arriving. Clears the miss run so a busy-but-alive conn is not accused of
-///   being gone, but earns **no** hit: recovery must be driven by a proven round
-///   trip, otherwise a link that only ever receives clears its own degradation
-///   forever. It also widens the next round's budget — see
-///   [`fast_probe_next_budget_floor`].
+///   being gone, and restarts the run of proof: recovery must be driven by
+///   consecutive *proven* rounds, otherwise a link that only ever receives
+///   clears its own degradation forever. It also widens the next round's budget
+///   — see [`fast_probe_next_budget_floor`] — and spends the episode's excuse
+///   once that widening runs out of room — see [`DeliveryExcuse`].
 /// * [`RoundOutcome::Inconclusive`] — the ping never left the box. Moves neither
 ///   counter: local congestion accuses nothing and credits nothing.
 /// * [`RoundOutcome::Miss`] — nothing answered and nothing arrived.
@@ -264,6 +296,7 @@ fn fast_probe_apply_round_evidence(
     roundtrip_epoch: u32,
     seen_epoch: &mut u32,
     delivery: DeliveryEvidence,
+    excuse: &mut DeliveryExcuse,
     consecutive_misses: &mut u32,
     consecutive_hits: &mut u32,
 ) -> RoundOutcome {
@@ -291,13 +324,33 @@ fn fast_probe_apply_round_evidence(
         Err(_) => {
             if epoch_advanced {
                 RoundOutcome::Proven
-            } else if delivery.excuses_a_timeout() {
+            } else if delivery.excuses_a_timeout(*excuse) {
                 RoundOutcome::DeliveryOnly
             } else {
                 RoundOutcome::Miss
             }
         }
     };
+
+    // The widening has run out of room: this episode's excuse is spent, whatever
+    // the floor does next. Latched here rather than re-derived from the budget,
+    // because the floor falls again after a miss and a budget test would hand
+    // the excuse straight back (see [`DeliveryExcuse`]). Only a proven round trip
+    // ends the episode.
+    //
+    // `Inconclusive` is excluded on purpose. The ping never left the box, so the
+    // round says nothing about the path — the same reason it moves neither
+    // counter and neither widens nor retracts the floor. Letting it spend the
+    // excuse would make a local egress stall revoke a widening that the *path*
+    // earned, and the next three timeouts would accuse the peer for our own
+    // queue: exactly the class of false positive this whole change removes.
+    match outcome {
+        RoundOutcome::Proven => excuse.spent = false,
+        RoundOutcome::DeliveryOnly | RoundOutcome::Miss => {
+            excuse.spent |= delivery.budget >= FAST_PROBE_EXCUSE_MAX_BUDGET;
+        }
+        RoundOutcome::Inconclusive => {}
+    }
 
     match outcome {
         RoundOutcome::Proven => {
@@ -403,14 +456,31 @@ fn fast_probe_timeout(rtt_us: Option<u32>) -> Duration {
 /// [`FAST_PROBE_TIMEOUT_MAX`] / [`FAST_PROBE_TIMEOUT_MIN`], the same range
 /// `fast_probe_timeout` clamps to, so the two can never disagree on the maximum
 /// wait.
+///
+/// A [`RoundOutcome::Miss`] halves it too, and that half matters as much as the
+/// first: the widening is bought by *delivery*, so the first round that delivers
+/// nothing — the first round of a real outage — has to start paying it back.
+/// Without the decay a conn that was merely congested a moment ago would carry
+/// its widened budget into the black hole that follows: 3 misses would take
+/// `3 × (333ms + 1.2s) ≈ 4.6s` instead of 1.9s, and the sustained gate
+/// `9 × 1.53s ≈ 13.8s` instead of 5.7s, in exactly the situation the probe
+/// exists for. With it the widened budget costs at most one extra round
+/// (`≈3.1s` to publish) and the floor is back at the minimum by the third miss.
+///
+/// An [`RoundOutcome::Inconclusive`] round moves nothing: local congestion says
+/// nothing about the queue on the path, so it may neither justify the widening
+/// nor revoke it.
 fn fast_probe_next_budget_floor(current: Duration, outcome: RoundOutcome) -> Duration {
     match outcome {
         // Excused timeout: the queue outran the budget, so widen it instead of
         // retrying against a budget that cannot fit.
         RoundOutcome::DeliveryOnly => (current * 2).min(FAST_PROBE_TIMEOUT_MAX),
         // A proven round says the current budget was enough; give the room back.
-        RoundOutcome::Proven => (current / 2).max(FAST_PROBE_TIMEOUT_MIN),
-        _ => current,
+        // A miss says the opposite of what the widening was bought for — nothing
+        // arrived at all — so give it back as well rather than keep paying a
+        // wide budget for a path that may be gone.
+        RoundOutcome::Proven | RoundOutcome::Miss => (current / 2).max(FAST_PROBE_TIMEOUT_MIN),
+        RoundOutcome::Inconclusive => current,
     }
 }
 
@@ -964,6 +1034,10 @@ impl PeerConnPinger {
         // [`FAST_PROBE_TIMEOUT_MIN`] for the whole incident. This is what widens
         // it — see [`fast_probe_next_budget_floor`].
         let mut budget_floor = FAST_PROBE_TIMEOUT_MIN;
+        // Per-episode ratchet on the delivery excuse. It cannot be derived from
+        // the budget because the floor falls again on a miss; see
+        // [`DeliveryExcuse`].
+        let mut excuse = DeliveryExcuse::default();
         loop {
             sleep(FAST_PROBE_INTERVAL).await;
 
@@ -982,8 +1056,11 @@ impl PeerConnPinger {
                 seen_roundtrip_epoch = self.roundtrip_epoch.load(Ordering::Relaxed);
                 was_degraded = false;
                 // Nothing was measured while the probe was parked, so it must
-                // come back at the floor rather than resuming a widened budget.
+                // come back at the floor rather than resuming a widened budget —
+                // and with a fresh excuse, because an episode that ended while we
+                // were not looking must not carry its spent ratchet into the next.
                 budget_floor = FAST_PROBE_TIMEOUT_MIN;
+                excuse = DeliveryExcuse::default();
                 continue;
             }
 
@@ -1035,6 +1112,7 @@ impl PeerConnPinger {
                 self.roundtrip_epoch.load(Ordering::Relaxed),
                 &mut seen_roundtrip_epoch,
                 delivery,
+                &mut excuse,
                 &mut misses,
                 &mut hits,
             );
@@ -1063,13 +1141,20 @@ impl PeerConnPinger {
             //   rx>0, budget at floor → the queue outran the budget.
             //   drops>0               → local egress is saturated, so the probe
             //                           starved here rather than on the wire.
+            //
+            // `budget_ms` is the budget **this** round waited with, i.e. the one
+            // that just timed out; `next_budget_floor_ms` is the floor the *next*
+            // round will start from, already updated above. They are adjacent on
+            // purpose — the gap between them is the widening (or the decay) the
+            // verdict just bought — but they are not the same number, and naming
+            // both `budget*` invited exactly that misreading.
             if degraded && !was_degraded {
                 tracing::warn!(
                     peer_id = self.peer_id,
                     misses,
                     ?rtt_us,
                     budget_ms = budget.as_millis() as u64,
-                    budget_floor_ms = budget_floor.as_millis() as u64,
+                    next_budget_floor_ms = budget_floor.as_millis() as u64,
                     rx_delta = delivery.rx_delta,
                     tx_delta = delivery.tx_delta,
                     egress_drops = delivery.egress_drops,
@@ -1093,7 +1178,7 @@ impl PeerConnPinger {
                         misses,
                         ?rtt_us,
                         budget_ms = budget.as_millis() as u64,
-                        budget_floor_ms = budget_floor.as_millis() as u64,
+                        next_budget_floor_ms = budget_floor.as_millis() as u64,
                         rx_delta = delivery.rx_delta,
                         tx_delta = delivery.tx_delta,
                         egress_drops = delivery.egress_drops,
@@ -1136,6 +1221,87 @@ mod tests {
             tx_delta: 0,
             egress_drops: 0,
             budget: Duration::from_millis(budget_ms),
+        }
+    }
+
+    /// Drives the `fast_probe` loop body round by round — budget from the floor,
+    /// fold, move the floor, decide what to publish — with the caller describing
+    /// what the path does.
+    ///
+    /// The unit tests above pin each rule; this pins their **composition**, which
+    /// is where the interesting failures live. Every rule can be individually
+    /// correct while the loop oscillates: an excused round clears the miss run,
+    /// so any rule that lets the excuse come back after the floor has fallen
+    /// re-opens the run forever and the degradation is never published at all.
+    ///
+    /// `rtt_budget` stands in for `fast_probe_timeout(rtt_us)`; `pong_at` is the
+    /// delay the path actually imposes (`None` = it never answers).
+    struct ProbeSim {
+        rtt_budget: Duration,
+        floor: Duration,
+        excuse: DeliveryExcuse,
+        misses: u32,
+        hits: u32,
+        seen_epoch: u32,
+        degraded: bool,
+        elapsed: Duration,
+        /// Widest budget any round has actually waited with — the property that
+        /// matters ("did the probe ever get a window wide enough for the queue"),
+        /// as opposed to `floor`, which oscillates and would make an assertion on
+        /// it depend on how many rounds the test happens to run.
+        max_budget: Duration,
+    }
+
+    impl ProbeSim {
+        /// Cold start: floor at the minimum, nothing proven yet.
+        fn cold() -> Self {
+            Self::at_floor(FAST_PROBE_TIMEOUT_MIN)
+        }
+
+        fn at_floor(floor: Duration) -> Self {
+            Self {
+                // The incident conn measured `rtt_us = 6008`, so `3 × RTT` was
+                // clamped to the floor and the floor was the whole budget.
+                rtt_budget: FAST_PROBE_TIMEOUT_MIN,
+                floor,
+                excuse: DeliveryExcuse::default(),
+                misses: 0,
+                hits: 0,
+                seen_epoch: 0,
+                degraded: false,
+                elapsed: Duration::ZERO,
+                max_budget: Duration::ZERO,
+            }
+        }
+
+        fn round(&mut self, carried_data: bool, pong_at: Option<Duration>) -> RoundOutcome {
+            let budget = self.rtt_budget.max(self.floor);
+            self.max_budget = self.max_budget.max(budget);
+            // Wall clock is the interval plus the wait this round actually spent.
+            self.elapsed += FAST_PROBE_INTERVAL + budget;
+
+            let probe: Result<PingResponse, Error> = match pong_at {
+                Some(delay) if budget >= delay => {
+                    self.seen_epoch += 1;
+                    Ok(PingResponse::Pong(1_000))
+                }
+                _ => Err(Error::WaitRespError(
+                    "wait ping response timeout".to_owned(),
+                )),
+            };
+            let epoch = self.seen_epoch;
+            let outcome = fast_probe_apply_round_evidence(
+                &probe,
+                epoch,
+                &mut self.seen_epoch,
+                delivery(carried_data, budget.as_millis() as u64),
+                &mut self.excuse,
+                &mut self.misses,
+                &mut self.hits,
+            );
+            self.floor = fast_probe_next_budget_floor(self.floor, outcome);
+            self.degraded = fast_probe_publish_degraded(self.misses, self.hits, self.degraded);
+            outcome
         }
     }
 
@@ -1536,6 +1702,7 @@ mod tests {
                 epoch,
                 &mut seen_epoch,
                 delivery(false, 300),
+                &mut DeliveryExcuse::default(),
                 &mut misses,
                 &mut hits,
             );
@@ -1577,6 +1744,7 @@ mod tests {
                 epoch,
                 &mut seen_epoch,
                 delivery(false, 300),
+                &mut DeliveryExcuse::default(),
                 &mut misses,
                 &mut hits,
             );
@@ -1604,6 +1772,7 @@ mod tests {
                 seen_epoch,
                 &mut seen_epoch,
                 delivery(false, 300),
+                &mut DeliveryExcuse::default(),
                 &mut misses,
                 &mut hits,
             );
@@ -1652,6 +1821,7 @@ mod tests {
                 seen_epoch,
                 &mut seen_epoch,
                 delivery(true, 300),
+                &mut DeliveryExcuse::default(),
                 &mut misses,
                 &mut hits,
             );
@@ -1673,6 +1843,7 @@ mod tests {
             seen_epoch,
             &mut seen_epoch,
             delivery(false, 300),
+            &mut DeliveryExcuse::default(),
             &mut misses,
             &mut hits,
         );
@@ -1704,6 +1875,7 @@ mod tests {
                 seen_epoch,
                 &mut seen_epoch,
                 delivery(true, 300),
+                &mut DeliveryExcuse::default(),
                 &mut misses,
                 &mut hits,
             );
@@ -1726,6 +1898,7 @@ mod tests {
                 epoch,
                 &mut seen_epoch,
                 delivery(false, 300),
+                &mut DeliveryExcuse::default(),
                 &mut misses,
                 &mut hits,
             );
@@ -1743,8 +1916,14 @@ mod tests {
     /// A budget already at [`FAST_PROBE_EXCUSE_MAX_BUDGET`] or wider cannot be:
     /// if the peer still cannot answer one round trip in that window while only
     /// pushing bytes at us, the path is one-way dead and the edge must stop
-    /// carrying our traffic. Without this ceiling the exemption renews itself
-    /// every round — the peer's own probe pings keep the inbound counter moving.
+    /// carrying our traffic.
+    ///
+    /// The second half is the part that is easy to get wrong: the excuse is
+    /// spent by *reaching* the ceiling, not by staying above it. The floor falls
+    /// by half after a miss, so a budget-only test would hand the excuse back on
+    /// the very next round — see
+    /// `a_one_way_outage_is_published_even_though_the_floor_falls_back`, which
+    /// exercises that composition.
     #[test]
     fn inbound_delivery_stops_excusing_a_timeout_once_the_budget_is_wide() {
         let timeout: Result<PingResponse, Error> = Err(Error::WaitRespError(
@@ -1754,11 +1933,13 @@ mod tests {
         let mut misses = 0;
         let mut hits = 0;
         let mut seen_epoch = 0;
+        let mut excuse = DeliveryExcuse::default();
         let outcome = fast_probe_apply_round_evidence(
             &timeout,
             seen_epoch,
             &mut seen_epoch,
             delivery(true, FAST_PROBE_TIMEOUT_MIN.as_millis() as u64),
+            &mut excuse,
             &mut misses,
             &mut hits,
         );
@@ -1768,6 +1949,10 @@ mod tests {
             "a queue can outrun the 300ms floor, so this timeout is ambiguous"
         );
         assert_eq!(misses, 0);
+        assert!(
+            !excuse.spent,
+            "a short budget must not spend the episode's excuse"
+        );
 
         // Same evidence, budget at the excuse ceiling: no longer ambiguous.
         let mut misses = 0;
@@ -1777,6 +1962,7 @@ mod tests {
             seen_epoch,
             &mut seen_epoch,
             delivery(true, FAST_PROBE_EXCUSE_MAX_BUDGET.as_millis() as u64),
+            &mut excuse,
             &mut misses,
             &mut hits,
         );
@@ -1787,6 +1973,209 @@ mod tests {
         );
         assert_eq!(misses, 1);
         assert_eq!(hits, 0);
+        assert!(excuse.spent, "reaching the ceiling spends the excuse");
+
+        // And it stays spent at a budget that would have been excused before the
+        // floor fell back: otherwise the round after every miss is excused
+        // again, which clears the miss run and hides the outage.
+        let outcome = fast_probe_apply_round_evidence(
+            &timeout,
+            seen_epoch,
+            &mut seen_epoch,
+            delivery(true, FAST_PROBE_TIMEOUT_MIN.as_millis() as u64),
+            &mut excuse,
+            &mut misses,
+            &mut hits,
+        );
+        assert_eq!(
+            outcome,
+            RoundOutcome::Miss,
+            "a spent excuse cannot be bought back by a cheaper budget"
+        );
+        assert_eq!(misses, 2);
+    }
+
+    /// The incident, end to end: a busily queued conn must never publish a loss.
+    ///
+    /// 4-way download over a 6ms LAN conn queued ICMP to a 663ms p99 while the
+    /// EWMA RTT was 6ms, so `3 × RTT` clamped to the 300ms floor and every
+    /// probe timed out — yet 103 of 103 application requests succeeded. The
+    /// floor has to widen enough to cover the queue *before* the third miss.
+    #[test]
+    fn a_queued_but_delivering_conn_never_publishes_a_loss() {
+        let queue = Duration::from_millis(663);
+        let mut sim = ProbeSim::cold();
+
+        let mut proved_at = None;
+        for round in 1..=30 {
+            // Bytes keep arriving: the peer's own probe pings come in every
+            // round, and the application traffic is flowing.
+            let outcome = sim.round(true, Some(queue));
+            if outcome == RoundOutcome::Proven && proved_at.is_none() {
+                proved_at = Some(round);
+            }
+            assert!(
+                !sim.degraded,
+                "round {round}: a conn delivering bytes must never be published as 100% loss"
+            );
+            assert!(
+                !fast_probe_is_sustained(sim.misses),
+                "round {round}: and must never reach the sustained gate either"
+            );
+        }
+
+        // The widening is what does it — being excused forever would leave the
+        // next real outage invisible, so the probe has to start *answering*
+        // again. It must do so inside the miss window: a queue of 663ms is
+        // covered by the second doubling, so round 3 at the latest.
+        assert_eq!(
+            proved_at,
+            Some(FAST_PROBE_MISSES_TO_DEGRADE),
+            "the widening must let the probe cover a 663ms queue by round 3"
+        );
+        assert!(
+            sim.max_budget >= queue,
+            "some round must actually have waited long enough for the queue, widest was {:?}",
+            sim.max_budget
+        );
+    }
+
+    /// A round whose ping never left the box must not spend the episode's
+    /// delivery excuse.
+    ///
+    /// `Inconclusive` is the verdict for local congestion: our own egress ring
+    /// was full, so the round says nothing about the path. Letting it spend the
+    /// widening — which the *path* may well have earned — would make the next
+    /// three timeouts accuse the peer for our own queue, i.e. publish 100% loss
+    /// on a link that is only busy on this side.
+    #[test]
+    fn inconclusive_rounds_neither_spend_nor_re_arm_the_excuse() {
+        let congestion: Result<PingResponse, Error> = Ok(PingResponse::LocalCongestion);
+        let mut misses = 0;
+        let mut hits = 0;
+        let mut seen_epoch = 0;
+        let mut excuse = DeliveryExcuse::default();
+
+        // Wide budget, but the probe never left: still nothing spent.
+        let outcome = fast_probe_apply_round_evidence(
+            &congestion,
+            seen_epoch,
+            &mut seen_epoch,
+            delivery(false, FAST_PROBE_EXCUSE_MAX_BUDGET.as_millis() as u64),
+            &mut excuse,
+            &mut misses,
+            &mut hits,
+        );
+        assert_eq!(outcome, RoundOutcome::Inconclusive);
+        assert!(!excuse.spent, "local congestion must not spend the excuse");
+
+        // A spent excuse is not refunded by local congestion either: the ping
+        // still never left the box, so it is not a round trip.
+        excuse.spent = true;
+        let outcome = fast_probe_apply_round_evidence(
+            &congestion,
+            seen_epoch,
+            &mut seen_epoch,
+            delivery(false, FAST_PROBE_TIMEOUT_MIN.as_millis() as u64),
+            &mut excuse,
+            &mut misses,
+            &mut hits,
+        );
+        assert_eq!(outcome, RoundOutcome::Inconclusive);
+        assert!(excuse.spent, "and must not refund one either");
+        assert_eq!((misses, hits), (0, 0), "it still moves no counter");
+    }
+
+    /// A one-way outage must still be published — *after* the floor has fallen
+    /// back, which is when the excuse has to stay spent.
+    ///
+    /// This is the regression the decay introduces. `DeliveryOnly` clears the
+    /// miss run (it must: that is what keeps
+    /// `a_conn_delivering_bytes_is_never_published_as_lost` true), and a miss
+    /// halves the floor. Compare the budget against the ceiling per round and the
+    /// sequence becomes `DeliveryOnly` (300ms) → `DeliveryOnly` (600ms) → `Miss`
+    /// (1200ms) → `DeliveryOnly` (600ms) → `Miss` (1200ms) → …: every miss is
+    /// followed by an excused round that zeroes the run, so `misses` never
+    /// reaches three, nothing is ever published, and a conn that can only
+    /// receive keeps its edge while every packet we originate is dropped.
+    #[test]
+    fn a_one_way_outage_is_published_even_though_the_floor_falls_back() {
+        let mut sim = ProbeSim::cold();
+
+        let mut published_at = None;
+        for round in 1..=6 {
+            // The far side keeps sending; our probe never gets an answer.
+            let outcome = sim.round(true, None);
+            if sim.degraded && published_at.is_none() {
+                published_at = Some((round, outcome, sim.elapsed));
+            }
+        }
+
+        let (round, outcome, took) = published_at.expect(
+            "a one-way outage must be published within the documented window, \
+             not excused forever",
+        );
+        assert_eq!(
+            outcome,
+            RoundOutcome::Miss,
+            "the publishing round is the one that stopped excusing"
+        );
+        assert!(round <= 5, "expected publication by round 5, took {round}");
+
+        // And it stays published while the far side keeps sending.
+        for round in 7..=12 {
+            sim.round(true, None);
+            assert!(
+                sim.degraded,
+                "round {round}: the outage must not clear itself"
+            );
+        }
+
+        // The cost of the widening is bounded: two excused rounds plus the
+        // ceiling round, then the floor is back at the minimum.
+        assert_eq!(
+            sim.floor, FAST_PROBE_TIMEOUT_MIN,
+            "the floor must be back at the minimum once the misses have been counted"
+        );
+        assert!(
+            took <= Duration::from_millis(6_000),
+            "the one-way path must not be able to stall detection, took {took:?}"
+        );
+    }
+
+    /// The other half of the same coin: a black hole still starts at the floor
+    /// and is published at the documented ~1.9s.
+    ///
+    /// Kept next to the one-way test because they differ only in whether bytes
+    /// arrive, and the whole design turns on that distinction.
+    #[test]
+    fn a_black_hole_is_published_at_the_cold_start_speed() {
+        let mut sim = ProbeSim::cold();
+        let mut published_at = None;
+
+        for round in 1..=3 {
+            let outcome = sim.round(false, None);
+            assert_eq!(outcome, RoundOutcome::Miss);
+            if sim.degraded && published_at.is_none() {
+                published_at = Some(round);
+            }
+        }
+
+        assert_eq!(
+            published_at,
+            Some(FAST_PROBE_MISSES_TO_DEGRADE),
+            "a silent conn is published on the third miss"
+        );
+        assert_eq!(
+            sim.floor, FAST_PROBE_TIMEOUT_MIN,
+            "a miss must not widen the floor"
+        );
+        // 3 × (333ms interval + 300ms budget) ≈ 1.9s.
+        assert!(
+            sim.elapsed <= Duration::from_millis(1_900),
+            "black-hole detection must stay at the documented ~1.9s, took {:?}",
+            sim.elapsed
+        );
     }
 
     /// The budget floor has to actually move, or `3 × EWMA RTT` stays pinned at
@@ -1821,8 +2210,17 @@ mod tests {
         }
         assert_eq!(cur, floor, "never below the floor");
 
-        // Neither a miss nor an inconclusive round moves it: only evidence does.
-        assert_eq!(fast_probe_next_budget_floor(two, RoundOutcome::Miss), two);
+        // A miss retracts the widening one step, for the same reason a proven
+        // round does: the queue it was bought for is not there. It must **not**
+        // go back under `FAST_PROBE_EXCUSE_MAX_BUDGET` and re-arm the excuse,
+        // which is what `DeliveryExcuse` exists to prevent — see
+        // `a_one_way_outage_is_published_even_though_the_floor_falls_back`.
+        assert_eq!(
+            fast_probe_next_budget_floor(two, RoundOutcome::Miss),
+            floor * 2
+        );
+        // Inconclusive is evidence of nothing, so it may neither widen nor
+        // retract: local congestion is not the path's fault.
         assert_eq!(
             fast_probe_next_budget_floor(two, RoundOutcome::Inconclusive),
             two
@@ -1850,6 +2248,7 @@ mod tests {
                 epoch,
                 &mut seen_epoch,
                 delivery(false, 300),
+                &mut DeliveryExcuse::default(),
                 &mut misses,
                 &mut hits,
             );
@@ -1872,6 +2271,7 @@ mod tests {
             7,
             &mut seen_epoch,
             delivery(false, 300),
+            &mut DeliveryExcuse::default(),
             &mut misses,
             &mut hits,
         );
@@ -1886,6 +2286,7 @@ mod tests {
             8,
             &mut seen_epoch,
             delivery(false, 300),
+            &mut DeliveryExcuse::default(),
             &mut misses,
             &mut hits,
         );
