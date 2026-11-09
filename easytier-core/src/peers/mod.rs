@@ -129,11 +129,31 @@ pub(crate) async fn send_peer_packet_to_chan(
     let envelope = PeerPacketEnvelope::from_peer(packet, ingress);
     match sender.0.try_send(envelope) {
         Ok(()) => Ok(()),
-        Err(TrySendError::Full(envelope)) => sender
-            .0
-            .send(envelope)
-            .await
-            .map_err(|error| SendError(error.0.packet)),
+        Err(TrySendError::Full(envelope)) => {
+            // ---- STALL PROBE (temporary instrumentation) ----------------
+            // This `await` is the only unbounded one on the recv path: once the
+            // queue is full the whole `start_recv_loop` parks here, so the
+            // socket stops being read and Pong replies stop going out. Timing
+            // it turns "we believe the queue self-locks" into a measurement,
+            // and yields the park-duration distribution that any capacity
+            // change (peers/mod.rs:120) has to be sized from.
+            //
+            // Behaviour is unchanged: same await, same result.
+            let park_start = std::time::Instant::now();
+            let result = sender
+                .0
+                .send(envelope)
+                .await
+                .map_err(|error| SendError(error.0.packet));
+            let parked = park_start.elapsed();
+            if parked >= std::time::Duration::from_millis(20) {
+                tracing::warn!(
+                    parked_ms = parked.as_millis() as u64,
+                    "STALL PROBE: ingress channel full, recv loop parked"
+                );
+            }
+            result
+        }
         Err(TrySendError::Closed(envelope)) => Err(SendError(envelope.packet)),
     }
 }

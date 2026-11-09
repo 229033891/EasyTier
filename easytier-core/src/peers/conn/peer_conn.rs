@@ -1436,11 +1436,111 @@ impl PeerConn {
             .context
             .recv_limiter(&conn_info_for_instrument.network_name, is_foreign_network);
 
+        // ---- STALL PROBE (temporary instrumentation) --------------------
+        // Closes the one gap the 15~26 s tunnel-stall analysis could not close:
+        //
+        //     "our recv loop is parked"   vs   "the peer stopped sending"
+        //
+        // Both look identical from the outside (`rx_delta = 0`, tunnel ICMP all
+        // black, physical ICMP fine). One of them is our bug, the other is not —
+        // and the fix is completely different, so this must be measured, not
+        // assumed. See docs/current/high-concurrency-tunnel-stall-2026-11.md §5.5.
+        //
+        // Cost: two relaxed atomics per packet, one 1 Hz timer. No await is
+        // added to the hot path, so behaviour is unchanged.
+        let loop_iters = Arc::new(std::sync::atomic::AtomicU64::new(0));
+        let loop_alive = Arc::new(AtomicBool::new(true));
+
+        {
+            let iters = loop_iters.clone();
+            let alive = loop_alive.clone();
+            self.tasks.spawn(async move {
+                // Only report a stall when the stream was *bulk-busy* right
+                // before it went silent. Two reasons:
+                //  - an idle conn legitimately sits in `stream.next()` for a
+                //    long time (keepalive backs off to 32 s), and
+                //  - light traffic must never trip this, or the one message
+                //    that matters gets ignored.
+                // 1000 pkt/s ≈ 1.2 MB/s at MTU 1280: only sustained bulk load
+                // qualifies, which is exactly the reproducing condition.
+                const BUSY_PPS: u64 = 1000;
+                let mut last_iters = 0u64;
+                let mut last_busy_pps = 0u64;
+                let mut stalled_s = 0u64;
+                loop {
+                    tokio::time::sleep(Duration::from_secs(1)).await;
+                    if !alive.load(Ordering::Relaxed) {
+                        if stalled_s >= 2 {
+                            tracing::warn!(stalled_s, "STALL PROBE: recv loop ended while parked");
+                        }
+                        return Ok(());
+                    }
+                    let now = iters.load(Ordering::Relaxed);
+                    let pps = now.saturating_sub(last_iters);
+                    if pps == 0 {
+                        if last_busy_pps >= BUSY_PPS {
+                            stalled_s += 1;
+                            if stalled_s == 2 {
+                                tracing::warn!(
+                                    stalled_s,
+                                    iters = now,
+                                    last_busy_pps,
+                                    "STALL PROBE: busy recv loop stopped iterating (parked?)"
+                                );
+                            } else if stalled_s <= 60 && stalled_s.is_multiple_of(5) {
+                                tracing::warn!(
+                                    stalled_s,
+                                    iters = now,
+                                    "STALL PROBE: recv loop still parked"
+                                );
+                            }
+                        }
+                    } else {
+                        if stalled_s >= 2 {
+                            tracing::warn!(
+                                stalled_s,
+                                iters = now,
+                                "STALL PROBE: recv loop resumed"
+                            );
+                        }
+                        stalled_s = 0;
+                        last_busy_pps = pps;
+                    }
+                    last_iters = now;
+                }
+            });
+        }
+
         self.tasks.spawn(
             async move {
-                tracing::info!("start recving peer conn packet");
+                // `stall_probe` marks builds that carry the 2026-11 stall
+                // instrumentation, so a capture can prove which binary ran
+                // without checking file timestamps.
+                tracing::info!(stall_probe = true, "start recving peer conn packet");
                 let mut task_ret = Ok(());
-                while let Some(ret) = stream.next().await {
+                // STALL PROBE: `stream.next()` is the *only* await that
+                // actually parks under load. In the 2026-11-09 captures the
+                // loop stayed frozen for 25 s while neither the Pong sink nor
+                // the packet publish ever exceeded 20 ms — and one 7 s stretch
+                // had 46–55 MB/s arriving at the NIC with zero kernel drops
+                // while `iters` did not move. Timing this await separates
+                // "nothing arrived" from "arrived and was swallowed inside the
+                // filter/decrypt path without ever being returned".
+                const LONG_IDLE: Duration = Duration::from_millis(1000);
+                while let Some(ret) = {
+                    let next_started = std::time::Instant::now();
+                    let next_item = stream.next().await;
+                    let next_idle = next_started.elapsed();
+                    if next_idle >= LONG_IDLE {
+                        tracing::warn!(
+                            idle_ms = next_idle.as_millis() as u64,
+                            iters = loop_iters.load(Ordering::Relaxed),
+                            "STALL PROBE: stream.next() returned after a long idle gap"
+                        );
+                    }
+                    next_item
+                } {
+                    loop_iters.fetch_add(1, Ordering::Relaxed);
                     if ret.is_err() {
                         tracing::error!(error = ?ret, "peer conn recv error");
                         task_ret = Err(ret.err().unwrap());
@@ -1466,7 +1566,19 @@ impl PeerConn {
                     if peer_mgr_hdr.packet_type == PacketType::Ping as u8 {
                         context.record_control_rx(&control_network_name, buf_len);
                         peer_mgr_hdr.packet_type = PacketType::Pong as u8;
-                        if let Err(e) = sink.send(zc_packet).await {
+                        // STALL PROBE: this is the second unbounded `await` on the
+                        // recv path (the first is the data publish below). Timing
+                        // it tells us which of the two parked the loop.
+                        let send_start = std::time::Instant::now();
+                        let sent = sink.send(zc_packet).await;
+                        let blocked = send_start.elapsed();
+                        if blocked >= std::time::Duration::from_millis(20) {
+                            tracing::warn!(
+                                blocked_ms = blocked.as_millis() as u64,
+                                "STALL PROBE: pong reply blocked on a full tunnel sink"
+                            );
+                        }
+                        if let Err(e) = sent {
                             tracing::error!(?e, "peer conn send req error");
                         } else {
                             context.record_control_tx(&control_network_name, buf_len);
@@ -1506,6 +1618,7 @@ impl PeerConn {
                 }
 
                 tracing::info!("end recving peer conn packet");
+                loop_alive.store(false, Ordering::Relaxed);
 
                 drop(sink);
                 close_event_notifier.notify_close();

@@ -10,7 +10,8 @@ use crate::{
     packet::ZCPacket,
     proto::common::TunnelInfo,
     tunnel::{
-        SinkError, SinkItem, StreamItem, Tunnel, ZCPacketSink, ZCPacketStream, stats::Throughput,
+        SinkError, SinkItem, StreamItem, Tunnel, ZCPacketSink, ZCPacketStream,
+        egress_probe::ingress, stats::Throughput,
     },
 };
 
@@ -177,9 +178,18 @@ where
                 loop {
                     match self_mut.stream.poll_next_unpin(cx) {
                         Poll::Ready(Some(ret)) => {
+                            // STALL PROBE: `after_received` returning `None`
+                            // makes this loop spin without ever yielding, so a
+                            // filter that rejects everything parks the recv
+                            // loop while frames keep being consumed. Counting
+                            // both sides is the only way to tell that apart
+                            // from "nothing arrived".
+                            ingress::note_inner_ready();
                             let Some(ret) = self_mut.filter.after_received(ret) else {
+                                ingress::note_swallowed();
                                 continue;
                             };
+                            ingress::note_passed();
                             return Poll::Ready(Some(ret));
                         }
                         Poll::Ready(None) => {
