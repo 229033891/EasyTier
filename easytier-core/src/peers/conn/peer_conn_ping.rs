@@ -84,6 +84,12 @@ const LAST_PATH_HOLD_MAX: Duration = Duration::from_secs(5);
 /// forever — `has_live_conns()` stays true, the direct connector refuses to
 /// re-dial, and the only escape left is the 30s per-write budget inside
 /// `MpscTunnel`. This is that escape, expressed where liveness is decided.
+///
+/// Note what "full" means here after 2026-11-09: the ping first retries a
+/// `BufferFull` for up to 50 ms, so a ring that is merely saturated (slots
+/// free every few microseconds at line rate) never reaches this clock. Only a
+/// ring that cannot yield a slot within 50 ms — a genuinely stuck sink —
+/// accumulates towards this deadline.
 const LOCAL_CONGESTION_CLOSE_AFTER: Duration = Duration::from_secs(30);
 
 /// Fast liveness probe (roadmap `live-next-hop.md` Phase F — "BFD-style").
@@ -699,11 +705,34 @@ impl PeerConnPinger {
         // should add seq here. so latency can be calculated more accurately
         let req = Self::new_ping_packet(self.my_peer_id, self.peer_id, seq);
         let req_len = req.buf_len() as u64;
-        // try_send so a full data ring does not stall keepalive behind HOL, and
-        // so local congestion is not scored as a path miss.
+        // A full data ring must not be scored as a *path* miss, but it must not
+        // be reported as local congestion on the first `BufferFull` either.
+        //
+        // Measured 2026-11-09 (`.16`, line rate 113 MB/s): the 32-slot egress
+        // queue is full *continuously* for as long as the link stays saturated
+        // — data keeps getting in through `send().await` (max wait 5 ms) while
+        // the keepalive's `try_send` failed on essentially every round
+        // (`enq_full` +3/s, `enq_blocked_max_ms=5`). Declaring congestion
+        // immediately therefore turns a healthy saturated link into 30-40 s of
+        // `egress full for too long` and then a teardown, on both ends.
+        //
+        // Slots free every few microseconds at line rate, so a short bounded
+        // wait gets the keepalive through without letting the data plane hold
+        // it hostage. Only a wait that actually times out is congestion. The
+        // packet has to be rebuilt because `try_send` consumes it on failure.
         match self.sink.try_send(req) {
             Ok(()) => {}
-            Err(TunnelError::BufferFull) => return Ok(PingResponse::LocalCongestion),
+            Err(TunnelError::BufferFull) => {
+                const CONTROL_EGRESS_WAIT: Duration = Duration::from_millis(50);
+                let req = Self::new_ping_packet(self.my_peer_id, self.peer_id, seq);
+                match tokio::time::timeout(CONTROL_EGRESS_WAIT, self.sink.send(req)).await {
+                    // Delivered. The time spent queued is part of the RTT sample
+                    // by design, same as the `try_send` fast path.
+                    Ok(Ok(())) => {}
+                    Ok(Err(e)) => return Err(e.into()),
+                    Err(_) => return Ok(PingResponse::LocalCongestion),
+                }
+            }
             Err(e) => return Err(e.into()),
         }
         // RTT starts after enqueue (queue drain until wire write remains in the
