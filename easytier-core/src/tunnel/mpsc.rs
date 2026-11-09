@@ -39,6 +39,24 @@ impl MpscTunnelSender {
     }
 
     pub async fn send(&self, item: ZCPacket) -> Result<(), TunnelError> {
+        self.send_inner(item, true).await
+    }
+
+    /// Same delivery path as [`Self::send`], but the wait is kept out of
+    /// `enq_blocked`.
+    ///
+    /// The keepalive sizes its control-egress budget from how long the **data
+    /// plane** waits on a full queue (see `control_egress_wait_for` in
+    /// `peer_conn_ping`). Recording the control path there too would close a
+    /// feedback loop: a 50 ms budget lets the ping wait 50 ms, that raises the
+    /// observed peak to 50 ms, which triples the budget to 150 ms, and so on
+    /// until the ceiling — a budget that ratchets itself to the cap on a link
+    /// where the only thing ever blocked was the ping.
+    pub(crate) async fn send_control(&self, item: ZCPacket) -> Result<(), TunnelError> {
+        self.send_inner(item, false).await
+    }
+
+    async fn send_inner(&self, item: ZCPacket, record_wait: bool) -> Result<(), TunnelError> {
         match self.tx.try_send(item) {
             Ok(()) => {
                 self.probe.note_enqueue();
@@ -52,14 +70,16 @@ impl MpscTunnelSender {
                 let started = Instant::now();
                 let ret = self.tx.send(item).await.map_err(|_| TunnelError::Shutdown);
                 let waited = started.elapsed();
-                self.probe.note_enq_blocked(waited);
-                if waited >= Duration::from_millis(20) {
-                    tracing::warn!(
-                        tunnel = %self.probe.name(),
-                        waited_ms = waited.as_millis() as u64,
-                        enq_full = self.probe.enq_full(),
-                        "EGRESS PROBE: send blocked on a full egress queue"
-                    );
+                if record_wait {
+                    self.probe.note_enq_blocked(waited);
+                    if waited >= Duration::from_millis(20) {
+                        tracing::warn!(
+                            tunnel = %self.probe.name(),
+                            waited_ms = waited.as_millis() as u64,
+                            enq_full = self.probe.enq_full(),
+                            "EGRESS PROBE: send blocked on a full egress queue"
+                        );
+                    }
                 }
                 if ret.is_ok() {
                     self.probe.note_enqueue();
@@ -68,6 +88,12 @@ impl MpscTunnelSender {
             }
             Err(TrySendError::Closed(_)) => Err(TunnelError::Shutdown),
         }
+    }
+
+    /// Longest the data plane has waited on this tunnel's full egress queue
+    /// since the conn was created. Zero when it never had to wait.
+    pub(crate) fn enqueue_blocked_peak(&self) -> Duration {
+        self.probe.enq_blocked_peak()
     }
 
     pub fn try_send(&self, item: ZCPacket) -> Result<(), TunnelError> {

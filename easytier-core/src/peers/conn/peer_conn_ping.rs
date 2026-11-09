@@ -92,6 +92,28 @@ const LAST_PATH_HOLD_MAX: Duration = Duration::from_secs(5);
 /// accumulates towards this deadline.
 const LOCAL_CONGESTION_CLOSE_AFTER: Duration = Duration::from_secs(30);
 
+/// Floor for the keepalive's bounded wait on a full egress queue.
+///
+/// Sized for the ordinary saturated case: at line rate a 32-slot queue frees a
+/// slot every few microseconds, so 50 ms is already ~4 orders of magnitude more
+/// than needed. It exists to absorb scheduling jitter, not queue depth.
+const CONTROL_EGRESS_WAIT_FLOOR: Duration = Duration::from_millis(50);
+
+/// Ceiling for the same wait. Beyond this the keepalive is no longer "briefly
+/// waiting for a slot" but running into a sink that is genuinely stuck, and the
+/// `LOCAL_CONGESTION_CLOSE_AFTER` clock should be the thing that acts.
+const CONTROL_EGRESS_WAIT_CEIL: Duration = Duration::from_millis(1000);
+
+/// How many times the observed data-plane enqueue wait the budget is sized to.
+///
+/// Measured 2026-11-09 (`.16` at 94-101 MB/s): the data plane waited 20-29 ms to
+/// enqueue for 78% of samples, with a 112 ms tail. A fixed 50 ms budget cleared
+/// every one of those, but with only ~2.2x headroom over the worst case — one
+/// load step up and the ping would start timing out again, which is exactly the
+/// failure this whole path exists to prevent. Deriving the budget from the
+/// measured wait keeps that headroom constant instead of accidental.
+const CONTROL_EGRESS_WAIT_OBSERVED_MULT: u32 = 3;
+
 /// Fast liveness probe (roadmap `live-next-hop.md` Phase F — "BFD-style").
 ///
 /// This is an *extra* short round trip whose only job is to publish the loss
@@ -443,6 +465,28 @@ fn fast_probe_timeout(rtt_us: Option<u32>) -> Duration {
     scaled.clamp(FAST_PROBE_TIMEOUT_MIN, FAST_PROBE_TIMEOUT_MAX)
 }
 
+/// How long the keepalive may wait for a slot on a full egress queue.
+///
+/// Derived from what the **data plane** has actually been waiting, so the
+/// headroom stays constant as load grows. A fixed budget has to be sized for the
+/// worst case anyone has seen yet, which means it is either too small when the
+/// load steps up — the ping times out, the `LOCAL_CONGESTION_CLOSE_AFTER` clock
+/// starts, and a healthy saturated link gets torn down, which is the 2026-11-09
+/// stall — or needlessly large when it does not.
+///
+/// Measured on `.16` at 94-101 MB/s: the data-plane wait was 20-29 ms for 78% of
+/// samples with a 112 ms tail, so `3 x observed` gives 60-90 ms in the common
+/// saturated case and 336 ms at the tail, always above what the queue is doing.
+///
+/// The floor applies whenever the data plane has not had to wait at all, which is
+/// the unsaturated case and the overwhelmingly common one. The ceiling keeps a
+/// stuck sink from stalling the keepalive for a whole round.
+fn control_egress_wait_for(observed_enq_blocked_peak: Duration) -> Duration {
+    observed_enq_blocked_peak
+        .saturating_mul(CONTROL_EGRESS_WAIT_OBSERVED_MULT)
+        .clamp(CONTROL_EGRESS_WAIT_FLOOR, CONTROL_EGRESS_WAIT_CEIL)
+}
+
 /// Budget floor for the next round, given what this round established.
 ///
 /// This is the fix for the root cause the three-state verdict only papers over: a
@@ -695,6 +739,12 @@ impl PeerConnPinger {
         packet
     }
 
+    /// Bounded wait for the keepalive to obtain an egress slot when the queue is
+    /// full, sized from the data-plane wait actually seen on this tunnel.
+    fn control_egress_wait(&self) -> Duration {
+        control_egress_wait_for(self.sink.enqueue_blocked_peak())
+    }
+
     async fn do_pingpong_once(
         &self,
         receiver: &mut broadcast::Receiver<ZCPacket>,
@@ -723,9 +773,11 @@ impl PeerConnPinger {
         match self.sink.try_send(req) {
             Ok(()) => {}
             Err(TunnelError::BufferFull) => {
-                const CONTROL_EGRESS_WAIT: Duration = Duration::from_millis(50);
                 let req = Self::new_ping_packet(self.my_peer_id, self.peer_id, seq);
-                match tokio::time::timeout(CONTROL_EGRESS_WAIT, self.sink.send(req)).await {
+                let budget = self.control_egress_wait();
+                // `send_control`, not `send`: the wait is deliberately kept out of
+                // the data-plane peak this budget is derived from.
+                match tokio::time::timeout(budget, self.sink.send_control(req)).await {
                     // Delivered. The time spent queued is part of the RTT sample
                     // by design, same as the `try_send` fast path.
                     Ok(Ok(())) => {}
@@ -1634,6 +1686,48 @@ mod tests {
         assert!(
             may_tear_down_for_ping_failure([&unverified_punch, &healthy], cfg),
             "one good alternative among junk is enough"
+        );
+    }
+
+    #[test]
+    fn control_egress_wait_tracks_the_observed_data_plane_wait() {
+        // Data plane never blocked (unsaturated link): the floor, which is what
+        // the 2026-11-09 fix first shipped as a constant.
+        assert_eq!(
+            control_egress_wait_for(Duration::ZERO),
+            CONTROL_EGRESS_WAIT_FLOOR
+        );
+        // Below ~17ms the 3x scaling is still under the floor, so the floor wins.
+        assert_eq!(
+            control_egress_wait_for(Duration::from_millis(10)),
+            CONTROL_EGRESS_WAIT_FLOOR
+        );
+        // The measured saturated case on `.16` (20-29ms for 78% of samples):
+        // 3x lands at 60-90ms, i.e. the budget grows with the queue instead of
+        // staying pinned at 50ms.
+        assert_eq!(
+            control_egress_wait_for(Duration::from_millis(20)),
+            Duration::from_millis(60)
+        );
+        assert_eq!(
+            control_egress_wait_for(Duration::from_millis(29)),
+            Duration::from_millis(87)
+        );
+        // The 112ms tail that the fixed 50ms budget cleared with only 2.2x of
+        // headroom: 3x gives 336ms of headroom instead.
+        assert_eq!(
+            control_egress_wait_for(Duration::from_millis(112)),
+            Duration::from_millis(336)
+        );
+        // A stuck sink cannot stall the keepalive for a whole round.
+        assert_eq!(
+            control_egress_wait_for(Duration::from_secs(10)),
+            CONTROL_EGRESS_WAIT_CEIL
+        );
+        // Multiplication must not wrap on an absurd observation.
+        assert_eq!(
+            control_egress_wait_for(Duration::MAX),
+            CONTROL_EGRESS_WAIT_CEIL
         );
     }
 

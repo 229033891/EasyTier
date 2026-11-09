@@ -155,6 +155,16 @@ impl EgressProbe {
             .fetch_max(waited.as_millis() as u64, Ordering::Relaxed);
     }
 
+    /// Longest the data plane has waited to enqueue on this full queue since the
+    /// conn was created; zero if it never had to wait.
+    ///
+    /// This is what the keepalive's control-egress budget is derived from — the
+    /// control path deliberately does not report here, see
+    /// `MpscTunnelSender::send_control`.
+    pub fn enq_blocked_peak(&self) -> Duration {
+        Duration::from_millis(self.enq_blocked_max_ms.load(Ordering::Relaxed))
+    }
+
     pub fn note_poll(&self) {
         self.last_poll_ms.store(now_ms(), Ordering::Relaxed);
     }
