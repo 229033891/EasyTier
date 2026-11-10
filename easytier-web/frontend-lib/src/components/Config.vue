@@ -726,7 +726,7 @@ const flowStatsAllowExactIp = computed({
                       v-tooltip.top="{ value: t('mtu_help'), escape: false }" role="img"></i>
                   </div>
                   <InputNumber id="mtu" v-model="curNetwork.mtu" aria-describedby="mtu-help" :format="false"
-                    :placeholder="t('mtu_placeholder')" :min="1300" :max="1500" fluid
+                    :placeholder="t('mtu_placeholder')" :min="1300" :max="1452" fluid
                     :disabled="tunControlsDisabled" />
                 </div>
 

@@ -717,8 +717,9 @@ edit_port_forward: "Edit Port Forward"
 
 mtu: MTU
 mtu_help: |-
-  Configures flags.mtu (allowed range 1300–1500). With encryption on, actual TUN MTU = value − 20; with encryption off, TUN = value.
-  Factory default 1380 → TUN 1360 when encrypted; 1380 when unencrypted. Framing adds 48 bytes on the wire (IP 20 + UDP 8 + encryption 20), so max on-wire packet = TUN + 48.
+  Configures flags.mtu (allowed range 1300–1452). With encryption on, actual TUN MTU = value − 20; with encryption off, TUN = value.
+  Factory default 1380 → TUN 1360 when encrypted; 1380 when unencrypted. Framing adds 48 bytes on the wire (IP 20 + UDP 8 + encryption 20), so max on-wire packet = TUN + 48, i.e. configured MTU + 28.
+  The 1452 ceiling leaves 20 bytes of headroom on a standard 1500-byte Ethernet path (1452 + 28 = 1480); the hard limit there is 1472, which leaves none.
   Lower it (down to 1300) on poor/fragmenting links; raising helps bulk throughput but too large causes loss or black holes.
   Keep the MTU consistent across the whole network, sized to the smallest node: a relay node's MTU caps every node behind it.
 mtu_placeholder: Leave blank for default 1380
