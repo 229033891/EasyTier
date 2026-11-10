@@ -103,6 +103,14 @@ jobs:
       TARGET: ${{ matrix.TARGET }}
       OS: ${{ matrix.OS }}
       OSS_BUCKET: ${{ secrets.ALIYUN_OSS_BUCKET }}
+      # Cargo.toml's [profile.release] uses fat LTO + codegen-units=1, by far
+      # the slowest way to compile this graph (~3-4x a thin-LTO build). It also
+      # defeats sccache: the heavy work happens in the final link step, which is
+      # not cacheable. Manual runs only need a working artifact, so override to
+      # thin LTO / 16 CGUs there; pushes to releases/** keep the Cargo.toml
+      # values for the shipped binaries.
+      CARGO_PROFILE_RELEASE_LTO: ${{ github.event_name == 'workflow_dispatch' && 'thin' || 'fat' }}
+      CARGO_PROFILE_RELEASE_CODEGEN_UNITS: ${{ github.event_name == 'workflow_dispatch' && '16' || '1' }}
     needs: pre_job
     if: needs.pre_job.outputs.should_skip != 'true'
     steps:
@@ -195,6 +203,9 @@ jobs:
     env:
       TARGET: ${{ matrix.TARGET }}
       OS: ${{ matrix.OS }}
+      # See the note on the `build` job: manual runs use thin LTO for speed.
+      CARGO_PROFILE_RELEASE_LTO: ${{ github.event_name == 'workflow_dispatch' && 'thin' || 'fat' }}
+      CARGO_PROFILE_RELEASE_CODEGEN_UNITS: ${{ github.event_name == 'workflow_dispatch' && '16' || '1' }}
     needs:
       - pre_job
       - build_web
@@ -280,6 +291,9 @@ jobs:
     env:
       TARGET: ${{ matrix.TARGET }}
       GUI_TARGET: ${{ matrix.TARGET }}
+      # See the note on the `build` job: manual runs use thin LTO for speed.
+      CARGO_PROFILE_RELEASE_LTO: ${{ github.event_name == 'workflow_dispatch' && 'thin' || 'fat' }}
+      CARGO_PROFILE_RELEASE_CODEGEN_UNITS: ${{ github.event_name == 'workflow_dispatch' && '16' || '1' }}
     needs: pre_job
     if: needs.pre_job.outputs.should_skip != 'true'
     steps:
