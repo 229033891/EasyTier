@@ -101,6 +101,8 @@ Agent / 人工均适用：**未完成 §1 不要提交**。
 
 - [ ] **往 `container:` 路径上放 composite action 前，先搜 `hashFiles` 和 `git `**：容器 job 里 `hashFiles()` 在 post 阶段按宿主机路径解析工作区会直接失败，且失败发生在清理阶段——构建成功、artifact 已上传，job 照样变红，极易误判成编译问题；容器内 git 也可能因 `dubious ownership` 返回 128（`safe.directory` 只写进临时 HOME）。两者都在普通 runner 上正常，只在容器里爆。详见 §5 的 2026-11-10 条目。
 
+- [ ] **跨 job 传产物时，别让接收方依赖绝对路径**：容器里 `cargo nextest archive` 会写入容器工作区路径（`/__w/...`），下游若跑在普通 runner（`/home/runner/work/...`）就会找不到 `Cargo.toml`。约定加 `--workspace-remap "$GITHUB_WORKSPACE"`，两种模式下都成立。
+
 ---
 
 ## 4. 条目模板
@@ -193,6 +195,28 @@ Agent / 人工均适用：**未完成 §1 不要提交**。
    runner 只把 `safe.directory` 写进临时 HOME（`/__w/_temp/<uuid>`），后续步骤用 `/github/home`，看不到该配置。所以「算指纹」这类工作**不能用 `git ls-files`**，要用 `find` + `sha256sum` 纯文件哈希。
 
 结论：往容器化路径上放 composite action 时，先搜一遍 `hashFiles` 和 `git ` 调用。
+
+*第三个坑——跨 job 传产物的路径耦合*（`ET Test`，run 42823522907）：
+
+`pre-test` 进镜像后，`cargo nextest archive` 把**容器内的绝对工作区路径**写进了 `tests.tar.zst`；而 `test_matrix` / `test` 必须留在普通 runner（需要 `modprobe tun`、`/dev/net/tun`、`sysctl`、`NET_ADMIN`、BPF 特权，容器 job 拿不到宿主机内核模块，`container` 也不支持 privileged——那是 `services.options`）。两边路径不同，直接失败：
+
+```
+error: workspace root manifest at /__w/EasyTier/EasyTier/Cargo.toml does not exist
+(hint: ensure that project source is available for reused build, using --workspace-remap if necessary)
+```
+
+修法就是提示里说的 `--workspace-remap "$GITHUB_WORKSPACE"`；非容器模式下两边路径相同，参数是空操作，所以一个命令覆盖两种模式。
+
+**容器化的取舍**（ET Test 10 个 job）：
+
+| 进镜像 | 理由 |
+|---|---|
+| `check-clippy` / `check-hack` / `check-wasi` / `pre-test` | 成本几乎全在 `prepare-build` 的 apt 与工具链安装 |
+| *不进*：`test_matrix` / `test` | 内核模块、TUN、NET_ADMIN、BPF 特权 |
+| *不进*：`check-fmt` | 不跑 prepare-build，全部成本就是装工具链，与容器初始化 30–40s 相当 |
+| *不进*：`bench-routing` | criterion 阈值门禁，对运行环境敏感，避免引入无法归因的变量 |
+
+首次容器化冷跑时长（缓存未热）：clippy 8m38s、pre-test 9m20s、check-hack 22m42s；`check-fmt` 33s。
 
 **排查方法**：先看**步骤级** `started_at → completed_at`，不要只看 job 总时长——`Prepare build environment` 里串了 apt / protoc / rust / pnpm 四件事，极易被误判成「编译慢」。同一次运行内做对照最有效（#169 里 `build` 跑同一步骤只用 10.5s）。
 
