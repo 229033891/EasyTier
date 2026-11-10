@@ -66,11 +66,33 @@ runs:
       run: |
         echo "STORE_PATH=$(pnpm store path --silent)" >> $GITHUB_ENV
 
+    # 这里刻意不用 hashFiles()：composite action 的 post 阶段会重新求值每个 step 的
+    # inputs，而在 container job 里 hashFiles() 会按**宿主机**路径去解析工作区，报
+    #   The template is not valid. ... hashFiles('**/pnpm-lock.yaml') failed.
+    #   Fail to hash files under directory '/home/runner/work/<repo>/<repo>'
+    # 结果所有构建步骤都成功、artifact 也上传了，job 却因为一个清理步骤变红。
+    # ET Linux 42806337581 的 build-web-embed 就是这样失败的（同一 commit 在普通
+    # runner 上通过）。改为在 shell 里算出指纹写进 $GITHUB_ENV，post 阶段只读 env。
+    - name: Compute pnpm lock fingerprint
+      shell: bash
+      run: |
+        set -euo pipefail
+        # 仓库里有三个 pnpm-lock.yaml（根、easytier-js、tauri-plugin-vpnservice），
+        # 用 git 记录的 blob 哈希而不是文件内容，避免 Windows 的 CRLF 转换影响结果。
+        fp=$(git ls-files -s -- '*pnpm-lock.yaml' | LC_ALL=C sort | sha256sum | cut -d' ' -f1)
+        if [ -z "$fp" ] || [ "$fp" = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" ]; then
+          # git 不可用或没有 lock 文件（sha256 of empty input）时退回内容哈希
+          fp=$(find . -name pnpm-lock.yaml -not -path '*/node_modules/*' -exec sha256sum {} + 2>/dev/null \
+               | LC_ALL=C sort -k2 | sha256sum | cut -d' ' -f1)
+        fi
+        echo "PNPM_LOCK_FP=${fp:-nolock}" >> "$GITHUB_ENV"
+        echo "pnpm lock fingerprint: ${fp:-nolock}"
+
     - name: Setup pnpm cache
       uses: actions/cache@v5
       with:
         path: ${{ env.STORE_PATH }}
-        key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
+        key: ${{ runner.os }}-pnpm-store-${{ env.PNPM_LOCK_FP }}
         restore-keys: |
           ${{ runner.os }}-pnpm-store-
 
