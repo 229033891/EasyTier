@@ -152,8 +152,10 @@ pub fn gen_default_flags() -> Flags {
         enable_ipv6: true,
         // Default 1380, which puts the TUN device at 1360: with encryption on,
         // virtual_nic subtracts ENCRYPTION_MTU_OVERHEAD (20, see virtual_nic.rs).
-        // 1380 + 20 (tunnel framing) + 28 (outer IP/UDP) = 1428 fits any
-        // 1500-byte path with 72 bytes to spare.
+        // A full-size inner packet is 1360 + 20 (tunnel framing) + 28 (outer
+        // IP/UDP) = 1408 on the wire, leaving 92 bytes of headroom on a
+        // 1500-byte path. Note the on-wire size is TUN MTU + 48, not configured
+        // MTU + 48: the 20-byte encryption overhead is already excluded above.
         // Deployments carried over a lower-MTU underlay (e.g. Tailscale's 1280)
         // must lower this explicitly; the floor is MIN_TUNNEL_MTU (1300 -> TUN 1280).
         // Note: MTU only changes per-packet cost (throughput). It does not improve
