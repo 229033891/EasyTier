@@ -78,7 +78,9 @@ jobs:
     # 先编译 x86_64 musl 静态二进制, 供 easytier apk 打包用.
     # 产出 ET-core + ET-cli (+ ET-web-embed, LuCI 自建控制台用); 与 Release/Docker 同名.
     runs-on: ubuntu-24.04
-    # 与 linux.yml 的 build 同量级（同一套 musl 全量编译），超时上限只兜僵死。
+    # 实测全 job 27m48s（Prepare 3m57s + Build 22m54s）。Build 走 Cargo.toml 的
+    # fat LTO + codegen-units=1（路由器上二进制约 20MB 压到 5MB 级，体积优先，
+    # 不套用 linux.yml 手动跑时的 thin/16 覆盖）。超时上限只兜僵死。
     timeout-minutes: 45
     needs: pre_job
     if: needs.pre_job.outputs.should_skip != 'true'
@@ -165,7 +167,8 @@ jobs:
           - pkgtype: apk
             sdk: "25.12.5"
     runs-on: ubuntu-latest
-    # SDK 打包实测 5~10min；超时上限只兜僵死（SDK 容器内 make 出错不会自己退出时）。
+    # 实测全 job 15m56s（含 sdk 镜像构建 + feed 编译 + 收集 3 个 apk）。
+    # 超时上限只兜僵死（SDK 容器内 make 出错却不退出时）。
     timeout-minutes: 30
     needs: [pre_job, build-bins]
     if: needs.pre_job.outputs.should_skip != 'true'
