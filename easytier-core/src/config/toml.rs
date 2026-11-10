@@ -150,10 +150,15 @@ pub fn gen_default_flags() -> Flags {
         dev_name: "".to_string(),
         enable_encryption: true,
         enable_ipv6: true,
-        // Align TUN MTU with Tailscale's conservative 1280: with encryption on,
-        // virtual_nic subtracts 20 → TUN 1280 (see virtual_nic.rs). Do not set
-        // 1280 here or TUN becomes 1260.
-        mtu: 1300,
+        // Default 1380, which puts the TUN device at 1360: with encryption on,
+        // virtual_nic subtracts ENCRYPTION_MTU_OVERHEAD (20, see virtual_nic.rs).
+        // 1380 + 20 (tunnel framing) + 28 (outer IP/UDP) = 1428 fits any
+        // 1500-byte path with 72 bytes to spare.
+        // Deployments carried over a lower-MTU underlay (e.g. Tailscale's 1280)
+        // must lower this explicitly; the floor is MIN_TUNNEL_MTU (1300 -> TUN 1280).
+        // Note: MTU only changes per-packet cost (throughput). It does not improve
+        // latency or jitter, and larger packets slightly raise per-packet serialisation.
+        mtu: 1380,
         // Quality-first routing: pick the globally cheapest path (latency +
         // loss + jitter, via `conn_select_*` edge cost) instead of minimising
         // hop count first. This lets a relay leg win over a degraded direct

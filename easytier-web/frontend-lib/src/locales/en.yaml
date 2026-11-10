@@ -717,11 +717,11 @@ edit_port_forward: "Edit Port Forward"
 
 mtu: MTU
 mtu_help: |-
-  Configures flags.mtu (allowed range 400–1380). With encryption on, actual TUN MTU = value − 20; with encryption off, TUN = value.
-  Factory default 1300 → TUN 1280 when encrypted (same as Tailscale's default); 1300 when unencrypted.
-  Lower further (e.g. 1200) on poor/fragmenting links; raising helps bulk throughput but too large causes loss or black holes.
-  Leave blank for the factory default; keep both ends consistent.
-mtu_placeholder: Leave blank for default 1300
+  Configures flags.mtu (allowed range 1300–1500). With encryption on, actual TUN MTU = value − 20; with encryption off, TUN = value.
+  Factory default 1380 → TUN 1360 when encrypted; 1380 when unencrypted. Framing adds 48 bytes on the wire (IP 20 + UDP 8 + encryption 20), so max on-wire packet = TUN + 48.
+  Lower it (down to 1300) on poor/fragmenting links; raising helps bulk throughput but too large causes loss or black holes.
+  Keep the MTU consistent across the whole network, sized to the smallest node: a relay node's MTU caps every node behind it.
+mtu_placeholder: Leave blank for default 1380
 
 instance_recv_bps_limit: Instance Receive Limit
 instance_recv_bps_limit_help: |-

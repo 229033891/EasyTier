@@ -38,7 +38,7 @@
 
 | 参数 | 默认值 | 位置 | 稳定性含义 |
 |------|--------|------|-----------|
-| `mtu` | **1300** | `toml.rs` `gen_default_flags` | TUN 实际取 `1300 - 20 = 1280`（对齐 Tailscale；见 §3.3） |
+| `mtu` | **1380** | `toml.rs` `gen_default_flags` | TUN 实际取 `1380 - 20 = 1360`；外层另加 48 字节，线上最大包 1408（见 §3.3） |
 | `enable_encryption` | **true** | `toml.rs:116` | 默认加密；MTU 因此被扣 20 |
 | `encryption_algorithm` | `EncryptionAlgorithm::default()` | `toml.rs:147` | — |
 | `data_compress_algo` | **None** | `toml.rs:133` | ✅ 默认不压缩，无额外延迟 |
