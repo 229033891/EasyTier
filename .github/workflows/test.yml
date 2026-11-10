@@ -332,8 +332,15 @@ jobs:
       - name: Run tests
         run: |
           sudo prlimit --pid $$ --nofile=1048576:1048576
+          # --workspace-remap：archive 是 pre-test 建的，容器模式下那里的工作区是
+          # /__w/<repo>/<repo>，而这个 job 跑在普通 runner 的
+          # /home/runner/work/<repo>/<repo>。nextest 会把绝对路径写进 archive，
+          # 不重映射就直接失败：
+          #   error: workspace root manifest at /__w/.../Cargo.toml does not exist
+          # 非容器模式（未设 ET_CI_IMAGE）下两边路径相同，这一步是空操作。
           sudo -E env "PATH=$PATH" EASYTIER_LINUX_BPF_INTEGRATION=required \
-            cargo nextest run --archive-file tests.tar.zst ${{ matrix.opts }}
+            cargo nextest run --archive-file tests.tar.zst \
+              --workspace-remap "$GITHUB_WORKSPACE" ${{ matrix.opts }}
 
   test:
     runs-on: ubuntu-latest
