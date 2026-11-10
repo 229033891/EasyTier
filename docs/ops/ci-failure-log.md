@@ -99,6 +99,8 @@ Agent / 人工均适用：**未完成 §1 不要提交**。
 
 - [ ] **改 workflow / composite action 时：网络类步骤必须有硬超时**：`apt-get update` 撞上半开连接会无限等（ET Linux #169 白烧 4h41m）。要点：`Acquire::http::Timeout` 默认 120s 且是**空闲超时**，连接 trickle 就永不触发，必须压到 20s 左右；job 级一律写 `timeout-minutes`；**composite action 的 step 不支持 `timeout-minutes`**，必须用 `sudo timeout --kill-after=30 300 apt-get …` 命令级兜底（`--kill-after` 防 SIGTERM 被忽略）。详见 §5 的 2026-11-10 条目。
 
+- [ ] **往 `container:` 路径上放 composite action 前，先搜 `hashFiles` 和 `git `**：容器 job 里 `hashFiles()` 在 post 阶段按宿主机路径解析工作区会直接失败，且失败发生在清理阶段——构建成功、artifact 已上传，job 照样变红，极易误判成编译问题；容器内 git 也可能因 `dubious ownership` 返回 128（`safe.directory` 只写进临时 HOME）。两者都在普通 runner 上正常，只在容器里爆。详见 §5 的 2026-11-10 条目。
+
 ---
 
 ## 4. 条目模板
@@ -164,6 +166,33 @@ Agent / 人工均适用：**未完成 §1 不要提交**。
 - 启用方式：仓库变量 `ET_CI_IMAGE=ghcr.io/<owner>/easytier-ci:latest`。**未设变量时表达式解析成 `{"image":null}`，等价于直接在 runner 上跑**——即一键回退通道，删掉变量即可。
 - 镜像内写 `/etc/easytier-ci-image` 作为哨兵，`prepare-build` 命中后跳过全部 apt 步骤并校验关键工具；工具缺失会明确报错而不是等到链接阶段。
 - 预期：环境准备从 3–5min 降到 10–20s，且彻底免疫 apt 索引僵死。
+
+*容器化实测数据*（2026-11-10，同一 commit 对比）：
+
+| 运行 | 方式 | 总时长 |
+|---|---|---|
+| #169 42762937112 | 修复前 | 4h42m（手动 cancel） |
+| 42802980322 | 修复后 / 普通 runner | 24m03s |
+| 42812330906 | 修复后 / CI 镜像 | **16m35s** |
+
+`Prepare build environment` 变化：`build` 10.5s → 75s（新增 install 探测）→ **4s**（镜像）；`build-gui` 4h41m → 5m44s → 4m34s（余下是 pnpm 前端构建的真实工作量）。容器初始化约 31–40s。
+
+*容器 job 独有的两个坑*（都只在 `container:` 模式下出现，普通 runner 上一切正常）：
+
+1. **`hashFiles()` 在 composite action 的 post 阶段必失败**：
+   ```
+   The template is not valid. ...prepare-pnpm/action.yml (Line: 73, Col: 14):
+   hashFiles('**/pnpm-lock.yaml') failed. Fail to hash files under directory
+   '/home/runner/work/<repo>/<repo>'
+   ```
+   post 阶段 runner 会重新求值每个 step 的 inputs，此时 glob 按**宿主机**路径解析。后果极具迷惑性：所有构建步骤成功、artifact 也上传了，job 却因为一个清理步骤变红。解法是把哈希算进 `$GITHUB_ENV`，让 post 阶段只读 env（`env.STORE_PATH` 在 post 阶段可用，说明这条路可行）。
+2. **容器内任何 git 命令都可能返回 128**：
+   ```
+   fatal: detected dubious ownership in repository at '/__w/<repo>/<repo>'
+   ```
+   runner 只把 `safe.directory` 写进临时 HOME（`/__w/_temp/<uuid>`），后续步骤用 `/github/home`，看不到该配置。所以「算指纹」这类工作**不能用 `git ls-files`**，要用 `find` + `sha256sum` 纯文件哈希。
+
+结论：往容器化路径上放 composite action 时，先搜一遍 `hashFiles` 和 `git ` 调用。
 
 **排查方法**：先看**步骤级** `started_at → completed_at`，不要只看 job 总时长——`Prepare build environment` 里串了 apt / protoc / rust / pnpm 四件事，极易被误判成「编译慢」。同一次运行内做对照最有效（#169 里 `build` 跑同一步骤只用 10.5s）。
 
