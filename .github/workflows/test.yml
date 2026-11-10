@@ -63,6 +63,8 @@ jobs:
   check-fmt:
     name: Check fmt & lockfile
     runs-on: ubuntu-latest
+    # 不进镜像：这一步不跑 prepare-build，全部成本就是装 Rust 工具链，与容器
+    # 初始化（30–40s）大致相当，容器化换不来收益。
     needs: pre_job
     if: needs.pre_job.outputs.should_skip != 'true'
     steps:
@@ -88,6 +90,11 @@ jobs:
   check-clippy:
     name: Check clippy
     runs-on: ubuntu-latest
+    # ET_CI_IMAGE 为空时表达式退化成 {"image":null}，等价于原来的普通 runner。
+    # 刻意不容器化 test_matrix / test：它们要 modprobe / /dev/net/tun / NET_ADMIN /
+    # BPF 特权，容器 job 拿不到宿主机内核模块，privileged 也不是 container 支持的选项。
+    container: >-
+      ${{ (vars.ET_CI_IMAGE != '' && fromJSON(format('{{"image":"{0}","credentials":{{"username":"{1}","password":"{2}"}}}}', vars.ET_CI_IMAGE, github.actor, github.token))) || fromJSON('{"image":null}') }}
     needs: pre_job
     if: needs.pre_job.outputs.should_skip != 'true'
     steps:
@@ -108,6 +115,9 @@ jobs:
   check-hack:
     name: Check features
     runs-on: ubuntu-latest
+    # 同 check-clippy：镜像可选，未设 ET_CI_IMAGE 时退回普通 runner
+    container: >-
+      ${{ (vars.ET_CI_IMAGE != '' && fromJSON(format('{{"image":"{0}","credentials":{{"username":"{1}","password":"{2}"}}}}', vars.ET_CI_IMAGE, github.actor, github.token))) || fromJSON('{"image":null}') }}
     needs: pre_job
     if: needs.pre_job.outputs.should_skip != 'true'
     steps:
@@ -131,6 +141,9 @@ jobs:
   check-wasi:
     name: Check WASI
     runs-on: ubuntu-latest
+    # 同 check-clippy；wasm32-wasip1 target 已预装进镜像
+    container: >-
+      ${{ (vars.ET_CI_IMAGE != '' && fromJSON(format('{{"image":"{0}","credentials":{{"username":"{1}","password":"{2}"}}}}', vars.ET_CI_IMAGE, github.actor, github.token))) || fromJSON('{"image":null}') }}
     needs: pre_job
     if: needs.pre_job.outputs.should_skip != 'true'
     steps:
@@ -152,6 +165,8 @@ jobs:
   bench-routing:
     name: Hot-path gates (alloc + bench)
     runs-on: ubuntu-latest
+    # 不进镜像：这是 criterion 阈值门禁，跑分对运行环境敏感。保持测点与历史
+    # 数据一致，避免容器引入一个无法归因的变量。
     needs: pre_job
     if: needs.pre_job.outputs.should_skip != 'true'
     steps:
@@ -223,6 +238,10 @@ jobs:
   pre-test:
     name: Build test
     runs-on: ubuntu-latest
+    # 只有「编译」这一段进镜像；跑测试的 test_matrix / test 必须留在普通 runner
+    # （modprobe tun、/dev/net/tun、sysctl、NET_ADMIN、BPF 特权）。
+    container: >-
+      ${{ (vars.ET_CI_IMAGE != '' && fromJSON(format('{{"image":"{0}","credentials":{{"username":"{1}","password":"{2}"}}}}', vars.ET_CI_IMAGE, github.actor, github.token))) || fromJSON('{"image":null}') }}
     needs: pre_job
     if: needs.pre_job.outputs.should_skip != 'true'
     steps:

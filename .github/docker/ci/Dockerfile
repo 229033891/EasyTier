@@ -58,7 +58,10 @@ RUN apt-get update ${APT_OPTS} \
  && rm -rf /var/lib/apt/lists/*
 
 # Rust：与 rust-toolchain.toml 对齐（channel = 1.95）。
-# target 覆盖 linux.yml 需要的 musl（无头节点 / web-embed）和 prepare-pnpm 需要的 wasm。
+# target 覆盖 linux.yml 需要的 musl（无头节点 / web-embed）、prepare-pnpm 需要的
+# wasm32-unknown-unknown，以及 test.yml 的 check-wasi（wasm32-wasip1）。
+# components 是 `--profile minimal` 不自带的：check-fmt 要 rustfmt，check-clippy
+# 要 clippy。装进镜像后 setup-rust-toolchain 变成空操作，不用再连 static.rust-lang.org。
 RUN set -eux; \
     curl -fsSL --retry 3 https://sh.rustup.rs -o /tmp/rustup-init.sh; \
     sh /tmp/rustup-init.sh -y --no-modify-path --profile minimal \
@@ -67,8 +70,10 @@ RUN set -eux; \
     rustup target add --toolchain "${RUST_VERSION}" \
         x86_64-unknown-linux-musl \
         aarch64-unknown-linux-musl \
-        wasm32-unknown-unknown; \
-    rustc -V; cargo -V
+        wasm32-unknown-unknown \
+        wasm32-wasip1; \
+    rustup component add --toolchain "${RUST_VERSION}" rustfmt clippy; \
+    rustc -V; cargo -V; cargo fmt --version; cargo clippy --version
 
 # protoc：版本与 prepare-build / prepare-pnpm 的 PROTOC_VERSION 保持一致，
 # 安装到 /usr/local/bin，使 script/install-protoc.sh 的「PATH 命中即复用」分支生效。
