@@ -59,29 +59,6 @@ jobs:
           filters: |
             relevant: ${{ env.RELEVANT_PATHS }}
 
-  # Web frontend for ET-web-embed (ubuntu; parallel with GUI). Same pattern as ET Linux.
-  build_web:
-    runs-on: ubuntu-latest
-    # ubuntu runner; bounds a stall (apt/npm) instead of letting it burn the job budget
-    timeout-minutes: 30
-    needs: pre_job
-    if: needs.pre_job.outputs.should_skip != 'true'
-    steps:
-      - uses: actions/checkout@v5
-
-      - name: Setup Frontend Environment
-        uses: ./.github/actions/prepare-pnpm
-        with:
-          token: ${{ github.token }}
-          build-filter: './easytier-web/*'
-
-      - name: Archive web dashboard dist
-        uses: actions/upload-artifact@v7
-        with:
-          name: ET-web-dashboard-windows
-          path: |
-            easytier-web/frontend/dist/*
-
   # Desktop product: NSIS (ET.exe embeds core + ET-cli sidecar). No headless here.
   build-gui:
     strategy:
@@ -104,6 +81,11 @@ jobs:
       OS: ${{ matrix.OS }}
       GUI_TARGET: ${{ matrix.GUI_TARGET }}
       OSS_BUCKET: ${{ secrets.ALIYUN_OSS_BUCKET }}
+      # 与 ET Linux 保持一致：Cargo.toml 的 [profile.release] 是 fat LTO + CGU=1，
+      # 手动触发只需要一个能用的产物，走 thin/16；releases/** 仍用 fat LTO，
+      # 但 CGU 由 1 调到 4（LTO 合并阶段本就单线程，CGU 只影响 codegen 并行度）。
+      CARGO_PROFILE_RELEASE_LTO: ${{ github.event_name == 'workflow_dispatch' && 'thin' || 'fat' }}
+      CARGO_PROFILE_RELEASE_CODEGEN_UNITS: ${{ github.event_name == 'workflow_dispatch' && '16' || '4' }}
     needs: pre_job
     if: needs.pre_job.outputs.should_skip != 'true'
     steps:
@@ -120,7 +102,7 @@ jobs:
           gui: true
           pnpm: true
           # GUI + workspace deps (frontend-lib, tauri-plugin-vpnservice-api).
-          # Web frontend / wasm for embed runs on build_web + build-web-embed.
+          # Web frontend / wasm for embed is built inside build-web-embed.
           # Matching Android: plain "easytier-gui" skips vpnservice dist-js.
           pnpm-build-filter: 'easytier-gui...'
           pnpm-setup-wasm: 'false'
@@ -332,6 +314,9 @@ jobs:
       TARGET: ${{ matrix.TARGET }}
       OS: ${{ matrix.OS }}
       OSS_BUCKET: ${{ secrets.ALIYUN_OSS_BUCKET }}
+      # 同 build-gui：手动触发走 thin/16，发版保留 fat LTO 但 CGU 1 → 4
+      CARGO_PROFILE_RELEASE_LTO: ${{ github.event_name == 'workflow_dispatch' && 'thin' || 'fat' }}
+      CARGO_PROFILE_RELEASE_CODEGEN_UNITS: ${{ github.event_name == 'workflow_dispatch' && '16' || '4' }}
     needs: pre_job
     if: needs.pre_job.outputs.should_skip != 'true'
     steps:
@@ -404,18 +389,14 @@ jobs:
     env:
       TARGET: ${{ matrix.TARGET }}
       OS: ${{ matrix.OS }}
+      # 同 build-gui：手动触发走 thin/16，发版保留 fat LTO 但 CGU 1 → 4
+      CARGO_PROFILE_RELEASE_LTO: ${{ github.event_name == 'workflow_dispatch' && 'thin' || 'fat' }}
+      CARGO_PROFILE_RELEASE_CODEGEN_UNITS: ${{ github.event_name == 'workflow_dispatch' && '16' || '4' }}
     needs:
       - pre_job
-      - build_web
     if: needs.pre_job.outputs.should_skip != 'true'
     steps:
       - uses: actions/checkout@v5
-
-      - name: Download web dashboard dist
-        uses: actions/download-artifact@v8
-        with:
-          name: ET-web-dashboard-windows
-          path: easytier-web/frontend/dist/
 
       - name: Prepare build environment
         uses: ./.github/actions/prepare-build
@@ -430,6 +411,19 @@ jobs:
           prefix-key: ""
           shared-key: "web-embed-windows-registry"
           cache-targets: "false"
+
+      # 原来是独立的 build_web job。`setup-protoc: 'false'` 是因为上面的
+      # prepare-build 已经装好了 protoc；wasm 工具链仍从这里来
+      # （easytier-web 的 config-generator 需要）。
+      - name: Setup Frontend Environment
+        uses: ./.github/actions/prepare-pnpm
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          build-filter: './easytier-web/*'
+          setup-protoc: 'false'
+
+      - name: Test frontend-lib
+        run: pnpm --filter easytier-frontend-lib test:config-ui
 
       - name: Verify web embed frontend dist
         run: |
@@ -463,7 +457,7 @@ jobs:
   windows-result:
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    needs: [ pre_job, build_web, build-gui, build-headless, build-web-embed ]
+    needs: [ pre_job, build-gui, build-headless, build-web-embed ]
     if: needs.pre_job.result == 'success' && needs.pre_job.outputs.should_skip != 'true' && !cancelled()
     steps:
       - name: Mark result as failed
