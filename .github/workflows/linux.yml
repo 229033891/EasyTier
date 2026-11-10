@@ -64,30 +64,7 @@ jobs:
         with:
           filters: |
             relevant: ${{ env.RELEVANT_PATHS }}
-  build_web:
-    # 前端 dist → 单独的 ET-web-embed 包（build-web-embed），不进无头节点包
-    runs-on: ubuntu-latest
-    needs: pre_job
-    if: needs.pre_job.outputs.should_skip != 'true'
-    steps:
-      - uses: actions/checkout@v5
-
-      - name: Setup Frontend Environment
-        uses: ./.github/actions/prepare-pnpm
-        with:
-          token: ${{ github.token }}
-          build-filter: './easytier-web/*'
-
-      - name: Test frontend-lib
-        run: pnpm --filter easytier-frontend-lib test:config-ui
-
-      - name: Archive artifact
-        uses: actions/upload-artifact@v7
-        with:
-          name: ET-web-dashboard
-          path: |
-            easytier-web/frontend/dist/*
-  # Headless node: ET-core + ET-cli only (no web console). Parallel with build_web / build-web-embed.
+  # Headless node: ET-core + ET-cli only (no web console). Parallel with build-web-embed / build-gui.
   build:
     strategy:
       fail-fast: true
@@ -98,6 +75,16 @@ jobs:
             ARTIFACT_NAME: linux-x86_64
 
     runs-on: ${{ matrix.OS }}
+    # 构建环境镜像（可选加速，三个构建 job 同款）。
+    # 仓库变量 ET_CI_IMAGE 设为 ghcr.io/<owner>/easytier-ci:latest 时，job 在
+    # 预装镜像里跑：mold / musl-tools / webkit 全家桶 / Rust 1.95 / protoc 35.1
+    # 全部就绪，环境准备从 3–5min 降到秒级，构建期零 apt 索引请求。
+    # 变量为空 → 表达式解析成 {"image":null} → 等价于直接在 runner 上跑，
+    # 也就是这条通道随时可以「删掉变量」一键回退。
+    container: >-
+      ${{ (vars.ET_CI_IMAGE != '' && fromJSON(format('{{"image":"{0}","credentials":{{"username":"{1}","password":"{2}"}}}}', vars.ET_CI_IMAGE, github.actor, github.token))) || fromJSON('{"image":null}') }}
+    # 实测编译 9m28s / 全 job 10m32s；超时上限只用来兜住僵死
+    timeout-minutes: 45
     env:
       NAME: easytier
       TARGET: ${{ matrix.TARGET }}
@@ -107,10 +94,15 @@ jobs:
       # the slowest way to compile this graph (~3-4x a thin-LTO build). It also
       # defeats sccache: the heavy work happens in the final link step, which is
       # not cacheable. Manual runs only need a working artifact, so override to
-      # thin LTO / 16 CGUs there; pushes to releases/** keep the Cargo.toml
-      # values for the shipped binaries.
+      # thin LTO / 16 CGUs there.
+      #
+      # Pushes to releases/** keep fat LTO for the shipped binaries, but bump
+      # codegen-units 1 -> 4: LTO's merge stage stays single-threaded either
+      # way, CGUs only widen per-module codegen parallelism. Measured effect on
+      # comparable Rust trees is ~20-30% wall-clock off the release build for
+      # <2% binary size. Revert to 1 only if a size regression actually matters.
       CARGO_PROFILE_RELEASE_LTO: ${{ github.event_name == 'workflow_dispatch' && 'thin' || 'fat' }}
-      CARGO_PROFILE_RELEASE_CODEGEN_UNITS: ${{ github.event_name == 'workflow_dispatch' && '16' || '1' }}
+      CARGO_PROFILE_RELEASE_CODEGEN_UNITS: ${{ github.event_name == 'workflow_dispatch' && '16' || '4' }}
     needs: pre_job
     if: needs.pre_job.outputs.should_skip != 'true'
     steps:
@@ -189,7 +181,12 @@ jobs:
           path: |
             ./artifacts/*
 
-  # Web console product: ET-web-embed only
+  # Web console product: ET-web-embed only.
+  # The frontend dist is built in-job (it used to be a separate build_web job whose
+  # ET-web-dashboard artifact this job downloaded back). That cost 4m33s of serial
+  # wait plus an artifact round-trip for an intermediate nobody ships — release.yml
+  # only ever deletes it. Keep prepare-build's `pnpm: false` and run prepare-pnpm
+  # here explicitly so protoc is installed once, not twice.
   build-web-embed:
     strategy:
       fail-fast: true
@@ -200,24 +197,22 @@ jobs:
             ARTIFACT_NAME: linux-x86_64
 
     runs-on: ${{ matrix.OS }}
+    # 同 `build` job：ET_CI_IMAGE 为空时退回普通 runner
+    container: >-
+      ${{ (vars.ET_CI_IMAGE != '' && fromJSON(format('{{"image":"{0}","credentials":{{"username":"{1}","password":"{2}"}}}}', vars.ET_CI_IMAGE, github.actor, github.token))) || fromJSON('{"image":null}') }}
+    # musl 冷编译 + web-embed 特性 + 前端 dist；超时上限兜住僵死
+    timeout-minutes: 45
     env:
       TARGET: ${{ matrix.TARGET }}
       OS: ${{ matrix.OS }}
       # See the note on the `build` job: manual runs use thin LTO for speed.
       CARGO_PROFILE_RELEASE_LTO: ${{ github.event_name == 'workflow_dispatch' && 'thin' || 'fat' }}
-      CARGO_PROFILE_RELEASE_CODEGEN_UNITS: ${{ github.event_name == 'workflow_dispatch' && '16' || '1' }}
+      CARGO_PROFILE_RELEASE_CODEGEN_UNITS: ${{ github.event_name == 'workflow_dispatch' && '16' || '4' }}
     needs:
       - pre_job
-      - build_web
     if: needs.pre_job.outputs.should_skip != 'true'
     steps:
       - uses: actions/checkout@v5
-
-      - name: Download web dashboard dist
-        uses: actions/download-artifact@v8
-        with:
-          name: ET-web-dashboard
-          path: easytier-web/frontend/dist/
 
       - name: Prepare build environment
         uses: ./.github/actions/prepare-build
@@ -232,6 +227,19 @@ jobs:
           prefix-key: ""
           shared-key: "web-embed-linux-registry"
           cache-targets: "false"
+
+      # Was the separate build_web job. `setup-protoc: 'false'` because
+      # prepare-build already installed it above; wasm toolchain still comes
+      # from here (easytier-web's config-generator needs it).
+      - name: Setup Frontend Environment
+        uses: ./.github/actions/prepare-pnpm
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          build-filter: './easytier-web/*'
+          setup-protoc: 'false'
+
+      - name: Test frontend-lib
+        run: pnpm --filter easytier-frontend-lib test:config-ui
 
       - name: Verify web embed frontend dist
         run: |
@@ -288,12 +296,17 @@ jobs:
             ARTIFACT_NAME: linux-x86_64
 
     runs-on: ${{ matrix.OS }}
+    # 同 `build` job：ET_CI_IMAGE 为空时退回普通 runner
+    container: >-
+      ${{ (vars.ET_CI_IMAGE != '' && fromJSON(format('{{"image":"{0}","credentials":{{"username":"{1}","password":"{2}"}}}}', vars.ET_CI_IMAGE, github.actor, github.token))) || fromJSON('{"image":null}') }}
+    # GUI 是最慢的一条（tauri + webkit，fat LTO 发版路径更久），余量给到 90min
+    timeout-minutes: 90
     env:
       TARGET: ${{ matrix.TARGET }}
       GUI_TARGET: ${{ matrix.TARGET }}
       # See the note on the `build` job: manual runs use thin LTO for speed.
       CARGO_PROFILE_RELEASE_LTO: ${{ github.event_name == 'workflow_dispatch' && 'thin' || 'fat' }}
-      CARGO_PROFILE_RELEASE_CODEGEN_UNITS: ${{ github.event_name == 'workflow_dispatch' && '16' || '1' }}
+      CARGO_PROFILE_RELEASE_CODEGEN_UNITS: ${{ github.event_name == 'workflow_dispatch' && '16' || '4' }}
     needs: pre_job
     if: needs.pre_job.outputs.should_skip != 'true'
     steps:
@@ -366,7 +379,8 @@ jobs:
 
   core-result:
     runs-on: ubuntu-latest
-    needs: [ pre_job, build_web, build, build-web-embed, build-gui ]
+    timeout-minutes: 10
+    needs: [ pre_job, build, build-web-embed, build-gui ]
     if: needs.pre_job.result == 'success' && needs.pre_job.outputs.should_skip != 'true' && !cancelled()
     steps:
       - name: Mark result as failed

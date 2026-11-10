@@ -97,6 +97,8 @@ Agent / 人工均适用：**未完成 §1 不要提交**。
 - [ ] **OpenWrt LuCI `.htm` 必须 LF**：LuCI 把模板正文塞进 `write("…")` 时只转义 `\n`，不转义 `\r`。Windows 上打出的 CRLF apk 会让状态页报 `unfinished string near '"'`。打包前 `sed -i 's/\r$//'`；`luci-app-easytier` 有 `Build/Prepare` 钩子与 `.gitattributes` `eol=lf`。
 - [ ] **数据面 next_hop 要对齐 `latency_first`**：默认 `latency_first=true` 时发包走 LeastCost（`next_hop_peer_id_latency_first`），不是 LeastHop（`next_hop_peer_id`）。拓扑类测试若只等 LeastHop，新建边在 peer-center 仍为默认 500 时 LeastCost 会继续走已测速的 admin 路径，`assert_ping_forwarded_by` 会误报 forbidden forwarder。`wait_route_next_hop` 必须按实例 flag 选表；纯拓扑用例可 `disable_latency_first`。生效值要跟 `PeerPacketPolicy::from_flags` 一致：`flags.latency_first && !flags.p2p_only`（`p2p_only` 会强制关掉时延优先）。
 
+- [ ] **改 workflow / composite action 时：网络类步骤必须有硬超时**：`apt-get update` 撞上半开连接会无限等（ET Linux #169 白烧 4h41m）。要点：`Acquire::http::Timeout` 默认 120s 且是**空闲超时**，连接 trickle 就永不触发，必须压到 20s 左右；job 级一律写 `timeout-minutes`；**composite action 的 step 不支持 `timeout-minutes`**，必须用 `sudo timeout --kill-after=30 300 apt-get …` 命令级兜底（`--kill-after` 防 SIGTERM 被忽略）。详见 §5 的 2026-11-10 条目。
+
 ---
 
 ## 4. 条目模板
@@ -122,6 +124,57 @@ Agent / 人工均适用：**未完成 §1 不要提交**。
 ---
 
 ## 5. 失败记录（新 → 旧）
+
+### 2026-11-10 — ET Linux：apt 镜像不可达把 build-gui / build-web-embed 挂死 4h41m
+
+| 项 | 内容 |
+|----|------|
+| 仓库/分支 | `229033891/EasyTier` `dev` |
+| Run | https://github.com/229033891/EasyTier/actions/runs/42762937112（`ET Linux #169`，workflow_dispatch，最终 cancelled） |
+| 失败 job | build-gui、build-web-embed |
+| 根因一类 | env / apt 镜像不可达（**不是编译慢**） |
+| 状态 | 已修复 |
+
+**摘要**：整条运行记 4h42m42s，其中约 4h41m 是纯等待，没有任何编译发生。
+
+- `build-gui` 的 `Prepare build environment` 步骤 `duration_ms=16943373`（4h42m23s）；`build-web-embed` 同步骤 4h38m。两者都停在 `Install dependencies` 的 `apt-get update`。
+- 日志特征：`Ign:2/3/4/5 http://azure.archive.ubuntu.com/ubuntu …` 连续重试 → 回退 `https://archive.ubuntu.com` 后最后一行是 `Get:5 … noble-security InRelease [126 kB]`，之后**零输出**直到 cancel。
+- 对照：同一次运行的 `build`（无头 musl）跑**同一个步骤**只用 `duration_ms=10564`（10.5s），编译 9m28s、全 job 10m32s。可见代码与配置并未变慢，是 runner 到 Azure apt 镜像的半开连接 + apt 没有总超时。
+
+**根因（为什么它会「卡死」而不是报错）**：
+
+1. `apt-mirrors.txt` 是**优先级列表，Azure 排第一**。Azure 镜像不可达时 apt 逐条 `Ign:`，然后 failover 到公网 `archive.ubuntu.com`——而公网 archive 并没有为该 fleet 做 provision，传输经常停在某个索引文件中途（本仓库与多个上游项目都停在同一个 `noble-security InRelease [126 kB]`）。
+2. **决定性因素**：`Acquire::http::Timeout` 默认为 120s，且它是**空闲超时（idle timeout）**。连接只要还开着、偶尔滴几个字节，就永远不触发——apt 会一直等下去。所以「半开连接 + trickle」的组合下，apt 既不报错也不退出。
+3. 附带因素：runner 有 AAAA 记录但 IPv6 路由不可用，`connect()` 会先卡 IPv6 再回落 IPv4，进一步放大等待。
+4. 缺兜底：`apt-get update` 是裸命令，composite action 的 step 又不支持 `timeout-minutes`，于是没有任何东西能终止它。
+
+**防再犯（分两层：根治 + 兜底）**：
+
+*根治——让正常路径不碰 apt 索引*：卡死只发生在 `apt-get update`（要拉 20+ 个索引文件，每个都是一次可能 stall 的连接），而 `apt-get install` 只下载 2–3 个 `.deb`。runner 镜像自带 `/var/lib/apt/lists`，所以先直接 `install`，成功就零索引请求；只有包名解析不到（本地索引不足）时才回退到有界 `update`。实测 runner 预装清单里 `gcc/g++/make` 已有，缺的只有 `mold` / `musl-tools` / webkit 系列。
+
+*兜底——即使必须联网也快速失败*：
+- 把 `Acquire::ForceIPv4` / `Retries=3` / `http(s)::Timeout=20` 写进 `/etc/apt/apt.conf.d/99-et-ci-failfast`，而不是只作命令行参数——这样第三方 action 内部自己跑的 apt 也自动受保护。
+- `apt-mirrors.txt` + `sources.list` + `sources.list.d/*` 一并换回官方 HTTPS 源（含 `ports.ubuntu.com`）。
+- `timeout --kill-after=30`：`--kill-after` 兜住 SIGTERM 被忽略的情况（实测忽略 TERM 的进程 1s 后被 SIGKILL、退出码 137）。composite action 的 step 不支持 `timeout-minutes`，只能用命令级。
+- `linux.yml` / `windows.yml` 全部 job 加 `timeout-minutes`。
+
+*第二层根治——预构建 CI 镜像（已落地）*：`.github/docker/ci/Dockerfile` 把 `build-essential` / `mold` / `musl-tools` / webkit 全家桶 / Rust 1.95（含 musl、wasm target）/ protoc 35.1 全部烘进 `ghcr.io/<owner>/easytier-ci`，构建 job 用 `container:` 直接起镜像，**构建期一次 apt 都不执行**。镜像构建期间同样带 apt 四项防护，损坏的是镜像构建而不是业务 CI。
+
+- 构建/推送：`.github/workflows/ci-image.yml`（Dockerfile 变更、每周一 03:00 UTC、手动触发）。
+- 启用方式：仓库变量 `ET_CI_IMAGE=ghcr.io/<owner>/easytier-ci:latest`。**未设变量时表达式解析成 `{"image":null}`，等价于直接在 runner 上跑**——即一键回退通道，删掉变量即可。
+- 镜像内写 `/etc/easytier-ci-image` 作为哨兵，`prepare-build` 命中后跳过全部 apt 步骤并校验关键工具；工具缺失会明确报错而不是等到链接阶段。
+- 预期：环境准备从 3–5min 降到 10–20s，且彻底免疫 apt 索引僵死。
+
+**排查方法**：先看**步骤级** `started_at → completed_at`，不要只看 job 总时长——`Prepare build environment` 里串了 apt / protoc / rust / pnpm 四件事，极易被误判成「编译慢」。同一次运行内做对照最有效（#169 里 `build` 跑同一步骤只用 10.5s）。
+
+**修复说明**：`.github/actions/prepare-build/action.yml`、`.github/workflows/linux.yml`、`.github/workflows/windows.yml`。
+
+**同批一并处理**：
+- `build-web-embed` 合并原 `build_web`（前端 dist 就地构建），去掉 `needs` 串行等待与 `ET-web-dashboard` artifact 往返（`release.yml` 对该 artifact 只有 `rm -rf` / `continue`，不存在也安全）。
+- `releases/**` 的 `codegen-units` 由 `1` 调到 `4`（fat LTO 保留）：LTO 合并阶段本就单线程，CGU 只影响 codegen 并行度。
+- `windows.yml` 全部 job 补 `timeout-minutes`（build_web 30 / build-gui 150 / build-headless 120 / build-web-embed 120 / result 10）。
+
+**关于 sccache 的更正**：`build` job 报 `Rust cache_hits=0` / `misses=462`，一度被当作「sccache 失效」。但本 fork 上 ET Linux 此前**只跑过 #169 这一次**，首次冷启动必然 0 命中，不能据此下结论。`cache_writes=780` 说明缓存已写入，需第二次运行看命中率再决定是否改配置。`cache_write_errors=20` 与 GHA cache 的 10GB 上限是后续要盯的点。
 
 ### 2026-10-28 — ET Test clippy：`binaries/ET-cli-<linux-host>` 缺失
 

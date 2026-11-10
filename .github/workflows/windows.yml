@@ -62,6 +62,8 @@ jobs:
   # Web frontend for ET-web-embed (ubuntu; parallel with GUI). Same pattern as ET Linux.
   build_web:
     runs-on: ubuntu-latest
+    # ubuntu runner; bounds a stall (apt/npm) instead of letting it burn the job budget
+    timeout-minutes: 30
     needs: pre_job
     if: needs.pre_job.outputs.should_skip != 'true'
     steps:
@@ -93,6 +95,9 @@ jobs:
             ARTIFACT_NAME: windows-x86_64
 
     runs-on: ${{ matrix.OS }}
+    # Windows GUI is the slowest leg (MSVC + webkit + NSIS); generous cap purely
+    # as a hang backstop — no measured baseline on this fork yet.
+    timeout-minutes: 150
     env:
       NAME: easytier
       TARGET: ${{ matrix.TARGET }}
@@ -320,6 +325,8 @@ jobs:
             ARTIFACT_NAME: windows-x86_64
 
     runs-on: ${{ matrix.OS }}
+    # Headless MSVC build; hang backstop only (no measured baseline yet)
+    timeout-minutes: 120
     env:
       NAME: easytier
       TARGET: ${{ matrix.TARGET }}
@@ -392,6 +399,8 @@ jobs:
             ARTIFACT_NAME: windows-x86_64
 
     runs-on: ${{ matrix.OS }}
+    # Web-embed MSVC build; hang backstop only (no measured baseline yet)
+    timeout-minutes: 120
     env:
       TARGET: ${{ matrix.TARGET }}
       OS: ${{ matrix.OS }}
@@ -453,6 +462,7 @@ jobs:
 
   windows-result:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     needs: [ pre_job, build_web, build-gui, build-headless, build-web-embed ]
     if: needs.pre_job.result == 'success' && needs.pre_job.outputs.should_skip != 'true' && !cancelled()
     steps:

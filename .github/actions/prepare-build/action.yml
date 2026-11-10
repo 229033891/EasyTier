@@ -38,11 +38,88 @@ runs:
     - run: mkdir -p easytier-gui/dist
       shell: bash
 
+    # ---- 预装镜像检测 ----
+    # `.github/docker/ci/Dockerfile` 把 mold / musl-tools / webkit 全家桶 /
+    # Rust / protoc 全部烘进镜像，并写下 /etc/easytier-ci-image 作为哨兵。
+    # 命中时后面所有 apt 步骤整体跳过：构建期一次索引请求都不发，环境准备
+    # 从分钟级降到秒级 —— 这是对 ET Linux #169（apt 僵死 4h41m）的根治。
+    # 未命中（普通 runner / 未启用镜像）时行为与改动前完全一致。
+    - name: Detect prebaked CI image
+      if: ${{ runner.os == 'Linux' }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        if [[ ! -f /etc/easytier-ci-image ]]; then
+          echo "no prebaked image, using apt path"
+          exit 0
+        fi
+        echo "prebaked CI image: $(cat /etc/easytier-ci-image)"
+        # 镜像过期（改了 Dockerfile 但没重建）时立刻报清楚，而不是等到链接阶段
+        missing=""
+        for b in gcc g++ make cmake mold musl-gcc pkg-config protoc git; do
+          command -v "$b" >/dev/null 2>&1 || missing="${missing} ${b}"
+        done
+        if [[ -n "${missing}" ]]; then
+          echo "::error::prebaked image is missing:${missing} — rerun the 'ET CI Image' workflow to rebuild it"
+          exit 1
+        fi
+        # 即便预装，也把 apt 防护写上：万一有第三方 action 内部调 apt，仍然有界。
+        sudo tee /etc/apt/apt.conf.d/99-et-ci-failfast >/dev/null <<'APTEOF'
+        Acquire::ForceIPv4 "true";
+        Acquire::Retries "3";
+        Acquire::http::Timeout "20";
+        Acquire::https::Timeout "20";
+        APTEOF
+        # 仅作标记便于排查（后面的 apt 步骤用「文件存在」自查，不依赖这个变量）
+        echo "ET_PREBAKED=1" >> "$GITHUB_ENV"
+
+    # ---- 根治：让正常路径根本不碰 apt 索引 ----
+    # 卡死只发生在 `apt-get update`：它要拉 20+ 个索引文件（各架构的 InRelease /
+    # Packages），每个都是一次可能 stall 的连接。而 `apt-get install` 只下载 2-3 个
+    # .deb，连接数少一个数量级。runner 镜像自带 /var/lib/apt/lists 索引，所以
+    # **先直接 install，成功了就一个字都不用从网络上取**；只有当本地索引不足
+    # （包名解析不到）时才回退到带完整防护的 update。
+    #
+    # 再把防护写进 /etc/apt/apt.conf.d/ 而不是只当命令行参数：这样任何 apt 调用
+    # （包括第三方 action 内部自己跑的 apt、playwright install --with-deps）都自动
+    # 带 ForceIPv4 + 20s idle 超时，不再只保护我们自己显式写的那两条命令。
+    #
+    # 为什么 idle 超时是关键：Acquire::http::Timeout 默认 120s 且是**空闲**超时，
+    # 连接开着、偶尔滴几个字节就永不触发 —— ET Linux #169 就是这样空转 4h41m
+    # （build-gui / build-web-embed），日志停在 `noble-security InRelease [126 kB]`
+    # 之后零输出，直到手动 cancel。
     - name: Install dependencies
       if: ${{ runner.os == 'Linux' }}
       run: |
-        sudo apt-get update
-        sudo apt-get install -qqy build-essential mold musl-tools
+        set -euo pipefail
+        # 预装镜像命中就整体跳过。这里故意用「文件存在」而不是表达式条件：
+        # composite action 的 step 里 if 的上下文支持最容易出意外，文件检查最稳。
+        if [[ -f /etc/easytier-ci-image ]]; then
+          echo "prebaked image, skipping apt: $(cat /etc/easytier-ci-image)"
+          exit 0
+        fi
+        sudo tee /etc/apt/apt.conf.d/99-et-ci-failfast >/dev/null <<'APTEOF'
+        Acquire::ForceIPv4 "true";
+        Acquire::Retries "3";
+        Acquire::http::Timeout "20";
+        Acquire::https::Timeout "20";
+        APTEOF
+        # 多文件 sed：sources.list / sources.list.d/* 在 24.04 上可能不存在，
+        # 报错由 2>/dev/null + || true 吞掉；apt-mirrors.txt 排第一，必被处理。
+        sudo sed -i -e 's|http://azure\.archive\.ubuntu\.com/ubuntu|https://archive.ubuntu.com/ubuntu|g' \
+          -e 's|http://azure\.ports\.ubuntu\.com/ubuntu-ports|https://ports.ubuntu.com/ubuntu-ports|g' \
+          /etc/apt/apt-mirrors.txt /etc/apt/sources.list /etc/apt/sources.list.d/* 2>/dev/null || true
+        PKGS=(build-essential mold musl-tools)
+        # 快路径：完全不联网索引。包已装/已缓存时 apt 直接返回 0。
+        if sudo timeout --kill-after=30 240 apt-get install -qqy "${PKGS[@]}"; then
+          echo "apt: 本地索引满足，未调用 apt-get update"
+        else
+          echo "::warning::本地 apt 索引不足，回退到有界 apt-get update（最多 300s）"
+          sudo timeout --kill-after=30 300 apt-get update \
+            || { echo "::error::apt-get update failed or timed out (300s, kill-after 30s)"; exit 1; }
+          sudo timeout --kill-after=30 240 apt-get install -qqy "${PKGS[@]}" \
+            || { echo "::error::apt-get install failed or timed out (240s, kill-after 30s)"; exit 1; }
+        fi
       shell: bash
 
     - name: Cache protoc
@@ -71,12 +148,25 @@ runs:
     - name: Install GUI dependencies (Linux)
       if: ${{ inputs.gui == 'true' && runner.os == 'Linux' }}
       run: |
-        sudo apt-get install -qq xdg-utils \
-        libappindicator3-dev \
-        libgtk-3-dev \
-        librsvg2-dev \
-        libwebkit2gtk-4.1-dev \
-        libxdo-dev
+        set -euo pipefail
+        if [[ -f /etc/easytier-ci-image ]]; then
+          echo "prebaked image, GUI deps already present"
+          exit 0
+        fi
+        # apt.conf.d/99-et-ci-failfast 已在 Install dependencies 写好，这里自动继承
+        # ForceIPv4 / 20s idle 超时 / Retries=3，无需再重复 -o 参数。
+        # 同样先走「不 update」的快路径，只在索引不足时才回退。
+        GUI_PKGS=(xdg-utils libappindicator3-dev libgtk-3-dev librsvg2-dev
+                  libwebkit2gtk-4.1-dev libxdo-dev)
+        if sudo timeout --kill-after=30 600 apt-get install -qqy "${GUI_PKGS[@]}"; then
+          echo "apt: GUI 依赖本地满足，未调用 apt-get update"
+        else
+          echo "::warning::GUI 依赖索引不足，回退到有界 apt-get update"
+          sudo timeout --kill-after=30 300 apt-get update \
+            || { echo "::error::apt-get update failed or timed out (300s)"; exit 1; }
+          sudo timeout --kill-after=30 600 apt-get install -qqy "${GUI_PKGS[@]}" \
+            || { echo "::error::apt-get install (GUI deps) failed or timed out (600s)"; exit 1; }
+        fi
       shell: bash
 
     - uses: actions-rust-lang/setup-rust-toolchain@v1
