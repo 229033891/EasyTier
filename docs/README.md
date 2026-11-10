@@ -78,6 +78,7 @@ crate 内设计稿（非本索引）：`easytier/docs/`（凭据计划已标 Arc
 | [lan-direct-underlay-guard.md](./roadmap/lan-direct-underlay-guard.md) | **同网段直连加固**（2026-11-04 事故：proxy CIDR 劫持直连；**已复核重排**：接收侧路由剪枝 L1 + 下垫面 `/32` 钉扎 L2 为主修，直连候选净化 L0、声明侧卫生 L4、出口绑定 L3 次之；2026-11-07 修正 L1/L2 接入点） |
 | [open-bugs-wave1-impl.md](./roadmap/open-bugs-wave1-impl.md) | **Wave 1 开放缺陷施工**（复核结论 + Track A：B17/B3 warn/B4；Track B：LAN L0–L2；绑定上文与 routing-bug-audit） |
 | [relay-forward-egress-queue.md](./roadmap/relay-forward-egress-queue.md) | 中继转发每目的 peer 有界出口队列（消共享 router HOL；代码已落地待现网） |
+| [tun-data-plane-throughput-2026-11.md](./roadmap/tun-data-plane-throughput-2026-11.md) | **TUN 数据面吞吐瓶颈（单流 ~50 MB/s）**：实测 58.7 CPU秒/GB + 单线程满核；根因 = `BiLock` 读写互斥 / 单队列（crate 硬限制）/ 2500 字节读缓冲 / 无 vnet_hdr 致 TSO 被拒；A/B/C 改造候选与工时风险，**均未开工**；含「SMB Multichannel 绕过隧道」「换 Linux 不会自动变快」等已证伪假设 |
 | [stability-abc-plan.md](./roadmap/stability-abc-plan.md) | **稳定性 A/B/C 施工计划**（A=P1.5 拆连雪崩防护；B=配置引导；C=现网验收；不对标 DERP） |
 | [live-next-hop.md](./roadmap/live-next-hop.md) | **已建立线路才转发**（**方案重议**：首版改法不被接受，无方向性 ⇒ 环路；目标语义=已建立+在通往目的的路径上+无环；比较规则=字典序 `成本→跳数→稳定身份键`；Phase A/C/F/F2/B/D 已落地待现网，**B/D 限等代价旁路**） |
 | [code-review-fixes-2026-10.md](./roadmap/code-review-fixes-2026-10.md) | **全仓代码审查修复清单**（15 条 CR-01…CR-15 + 10 条附带发现；`panic=abort` 放大前提；分 Phase A–D） |
@@ -110,6 +111,7 @@ crate 内设计稿（非本索引）：`easytier/docs/`（凭据计划已标 Arc
 | [release-version-bump.md](./ops/release-version-bump.md) | **版本号 bump 必改清单**（10 文件 / 17 处）+ 发布分支惯例 |
 | [android-startup-auto-stop.md](./ops/android-startup-auto-stop.md) | 安卓启动后马上自动停：现象 / 日志定性 / §6 同 netId 去重+宽限期（待新包验收）/ 清数据与重装 |
 | [ci-failure-log.md](./ops/ci-failure-log.md) | **CI/ET Test 失败追加日志** + 提交前自检（clippy / trait 导入等） |
+| [et-kernel-forward-check.md](./ops/et-kernel-forward-check.md) | **隧道节点巡检手册**：内核转发 vs relay 中转 vs 本机访问的三分口径；一键脚本（转发计数 / rp_filter / 设备与队列健康 / offload / 数据面线程）；`IpForwDatagrams` 与 `InReceives` 自洽校验；netns 加压法；改名后防火墙残留与 MTU 一致性；**SMB Multichannel 绕过隧道**与 robocopy 预分配两个测量陷阱 |
 | [doc-update-after-task.md](./ops/doc-update-after-task.md) | **任务收尾文档决策表**（Current 严门槛 + 按类型最少更新集） |
 
 ## Archive — 历史记录
