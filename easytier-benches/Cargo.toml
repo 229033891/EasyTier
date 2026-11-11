@@ -1,6 +1,6 @@
 [package]
 name = "easytier-benches"
-version = "2.7.11"
+version = "2.7.12"
 edition.workspace = true
 rust-version.workspace = true
 description = "Criterion benchmarks for EasyTier hot paths"

@@ -153,7 +153,7 @@ save: 保存
 config_saved: 配置已保存
 
 use_latency_first: 质量优先选路
-my_node_info: 当前节点信息
+my_node_info: 节点信息
 node_info_group_peer_id: Peer ID
 node_info_group_tun_device: TUN 设备
 node_info_group_proxy_cidr_route_sync: 代理 CIDR 路由同步
@@ -600,10 +600,10 @@ policy_routes_select_by: 选路方式
 policy_routes_select_by_help: |-
   多个网关候选时如何挑选：按列表顺序 / 按链路质量 / 按流分摊。
   「按流分摊」按内层流 5-tuple 哈希在候选间**等概率**分配，不按链路质量或带宽能力加权；同一条流恒定走同一个网关。
-  若默认路由规则合并了出口节点列表，分摊用的是**合并后的生效候选**（不只是本行 peers 列）。可在状态页「生效策略路由」核对。
+  若默认路由规则合并了出口节点列表，分摊用的是**合并后的生效候选**（不只是本行 peers 列）。可在状态页「策略路由」核对。
   「按链路质量」比较到该候选网关 peer 的**整条 mesh 路径**代价（中转段计入），不是到公网目标的距离；协议不比较出口到互联网目的地的最后一跳。
   「从不切换」时候选只剩列表第一个，此时只能配「按列表顺序」，其它方式会被配置校验拒绝。
-policy_routes_effective: 生效策略路由
+policy_routes_effective: 策略路由
 policy_routes_effective_help: |-
   运行时视图：默认路由规则已与出口节点列表合并。仅看配置层 peers 看不到 sugar /0 与真正的分摊池。未配置出口节点时不显示空的 sugar /0。
 policy_routes_effective_cidr: 匹配
