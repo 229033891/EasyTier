@@ -36,7 +36,6 @@ const CONFIG_FLAG_FIELDS = [
   'relay_all_peer_rpc',
   'need_p2p',
   'multi_thread',
-  'proxy_forward_by_system',
   'disable_tcp_hole_punching',
   'disable_udp_hole_punching',
   'enable_udp_broadcast_relay',
@@ -822,6 +821,45 @@ describe('Config.vue network config projection', () => {
 
     // 未勾选 + p2p_only：禁止重新勾选
     expect(input(wrapper, '#allow_relay').disabled).toBe(true)
+  })
+
+  it('drives the gateway forwarding-mode select with no_tun and no-gateway locks', async () => {
+    const config = makeConfig()
+    config.no_tun = false
+    config.enable_exit_node = false
+    config.proxy_cidrs = []
+    const { curNetwork, wrapper } = mountConfig(config)
+    await nextTick()
+
+    // 无网关角色：转发方式是死配置 → 置灰 + 明示原因。
+    expect((wrapper.find('#forward_mode').element as HTMLSelectElement).disabled).toBe(true)
+    expect(wrapper.text()).toContain('forward_mode_no_gateway_hint')
+
+    // 开启出口节点 → 解锁；默认内置转发 → smoltcp 开关可见。
+    curNetwork.enable_exit_node = true
+    await nextTick()
+    expect((wrapper.find('#forward_mode').element as HTMLSelectElement).disabled).toBe(false)
+    expect(wrapper.find('#use_smoltcp').exists()).toBe(true)
+    expect(input(wrapper, '#use_smoltcp').disabled).toBe(false)
+
+    // 选「系统内核转发」→ smoltcp 开关隐藏（两种用户态语义互斥）。
+    await wrapper.find('#forward_mode').setValue('system')
+    await nextTick()
+    expect(curNetwork.proxy_forward_by_system).toBe(true)
+    expect(wrapper.find('#use_smoltcp').exists()).toBe(false)
+
+    await wrapper.find('#forward_mode').setValue('builtin')
+    await nextTick()
+    expect(curNetwork.proxy_forward_by_system).toBe(false)
+    expect(wrapper.find('#use_smoltcp').exists()).toBe(true)
+
+    // no_tun：系统转发不可用、smoltcp 强制开启，整体置灰并显示状态条。
+    curNetwork.no_tun = true
+    await nextTick()
+    expect((wrapper.find('#forward_mode').element as HTMLSelectElement).disabled).toBe(true)
+    expect(wrapper.text()).toContain('forward_mode_no_tun_hint')
+    expect(wrapper.text()).toContain('no_tun_traffic_routing_banner')
+    expect(input(wrapper, '#use_smoltcp').disabled).toBe(true)
   })
 
   it('binds inverted switches positively (checked = enabled)', async () => {

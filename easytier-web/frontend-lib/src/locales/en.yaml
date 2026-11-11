@@ -253,9 +253,21 @@ latency_first_help: |-
 
 use_smoltcp: Use User-Space Protocol Stack
 use_smoltcp_help: |-
-  Handle subnet-proxy and KCP-proxy traffic with the user-space smoltcp stack, bypassing the OS firewall and routing table.
+  Terminate TCP traffic of subnet proxy / exit node and KCP / QUIC proxy with the user-space smoltcp stack, bypassing the OS firewall and routing table.
   Useful when subnet proxy does not work, or the host has strict firewall rules.
-  Note: user-space throughput is lower than kernel forwarding, so only enable it when you actually hit a problem.
+  Note: user-space throughput is lower than kernel forwarding, so only enable it when you actually hit a problem; it is forced on in No-TUN mode.
+
+forward_mode: Forwarding Mode
+forward_mode_help: |-
+  Choose who forwards gateway traffic (exit node / subnet proxy):
+  "System kernel forwarding" hands packets to the OS kernel (system routes/firewall rules) — useful for kernel-level policy routing, but the kernel must be able to forward (on Linux, enable ip_forward and add matching allow rules), otherwise subnet proxy fails outright;
+  "ET built-in forwarding" performs the NAT inside EasyTier with no host configuration — the default and the most compatible option.
+forward_mode_system: System Kernel Forwarding
+forward_mode_builtin: ET Built-in Forwarding
+forward_mode_no_tun_hint: System kernel forwarding is unavailable in No-TUN mode; ET built-in forwarding is used instead.
+forward_mode_no_gateway_hint: Enable "Allow this node to act as an exit node" or configure subnet proxy CIDRs first, otherwise this setting has no effect.
+forward_mode_smoltcp_forced_hint: Forced on in No-TUN mode.
+no_tun_traffic_routing_banner: "No-TUN mode is active: routes are not installed into the system routing table; system kernel forwarding is unavailable; local outbound traffic needs the SOCKS5 proxy."
 
 disable_ipv6: Disable IPv6
 disable_ipv6_help: |-
@@ -387,12 +399,6 @@ multi_thread_help: |-
   Use the multi-threaded Tokio runtime (single-threaded by default).
   Useful for relays/servers with many peers and heavy forwarding, where extra cores can be put to work.
   Note: the thread count comes from multi-thread-count on the easytier-core side (default 2). With few nodes the gain is marginal and scheduling overhead grows.
-
-proxy_forward_by_system: System Forward
-proxy_forward_by_system_help: |-
-  Hand subnet-proxy packets to the OS kernel for forwarding (system routes/firewall rules) instead of EasyTier's built-in user-space NAT.
-  Useful when you need kernel-level policy routing, or the built-in NAT conflicts with an existing firewall.
-  Note: the kernel must be able to forward (on Linux, enable ip_forward and add the matching allow rules). Misconfiguration makes subnet proxy fail outright.
 
 disable_encryption: Disable Encryption
 disable_encryption_help: |-

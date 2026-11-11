@@ -251,9 +251,21 @@ latency_first_help: |-
 
 use_smoltcp: 使用用户态协议栈
 use_smoltcp_help: |-
-  用用户态 smoltcp 协议栈处理「子网代理」和「KCP 代理」的流量，绕开系统防火墙/路由表对这类流量的干扰。
+  用用户态 smoltcp 协议栈终结「子网代理 / 出口节点」以及「KCP / QUIC 代理」的 TCP 流量，绕开系统防火墙/路由表对这类流量的干扰。
   适合子网代理不通、或系统防火墙策略较严的场景。
-  注意：用户态协议栈的吞吐低于内核转发，只在遇到问题时才建议开启。
+  注意：用户态协议栈的吞吐低于内核转发，只在遇到问题时才建议开启；「无 TUN 模式」下会被强制开启。
+
+forward_mode: 数据转发方式
+forward_mode_help: |-
+  选择网关流量（出口节点 / 子网代理）由谁转发：
+  「系统内核转发」把数据包交给系统内核（走系统路由/防火墙规则），适合需要在内核层做策略路由的场景，要求本机内核具备转发能力（Linux 需开启 ip_forward 并放行），配置不当会直接导致子网代理不通；
+  「ET 内置转发」由 EasyTier 自己完成 NAT，无需系统配置，是默认且兼容性最好的方式。
+forward_mode_system: 系统内核转发
+forward_mode_builtin: ET 内置转发
+forward_mode_no_tun_hint: 无 TUN 模式下系统内核转发不可用，实际按「ET 内置转发」运行。
+forward_mode_no_gateway_hint: 先启用「允许此节点成为出口节点」或配置「子网代理」，否则此项无效果。
+forward_mode_smoltcp_forced_hint: 无 TUN 模式下已强制开启。
+no_tun_traffic_routing_banner: 无 TUN 模式生效：路由不会写入系统路由表；系统内核转发不可用；本机出网需借助 SOCKS5 代理。
 
 disable_ipv6: 禁用IPv6
 disable_ipv6_help: |-
@@ -385,12 +397,6 @@ multi_thread_help: |-
   使用多线程 Tokio 运行时（默认单线程）。
   适合节点数多、转发流量大的中继/服务器节点，能更好地利用多核。
   注意：线程数由 easytier-core 侧的 multi-thread-count 决定（默认 2）；节点少时开启收益不明显，反而增加调度开销。
-
-proxy_forward_by_system: 系统转发
-proxy_forward_by_system_help: |-
-  子网代理的数据包交给系统内核转发（走系统路由/防火墙规则），不再使用 EasyTier 内置的用户态 NAT。
-  适合需要在内核层做策略路由，或内置 NAT 与现有防火墙冲突的场景。
-  注意：要求本机内核具备转发能力（Linux 需开启 ip_forward 并配置放行规则），配置不当会直接导致子网代理不通。
 
 disable_encryption: 禁用加密
 disable_encryption_help: |-

@@ -295,14 +295,14 @@ const bool_flags: BoolFlag[] = [
   { field: 'disable_upnp', help: 'disable_upnp_help', group: 'transport',
     inverted: { inputId: 'allow_upnp', label: 'allow_upnp', help: 'allow_upnp_help' } },
   { field: 'enable_udp_broadcast_relay', help: 'enable_udp_broadcast_relay_help', group: 'transport' },
-  { field: 'use_smoltcp', help: 'use_smoltcp_help', group: 'transport' },
+  // use_smoltcp →「智能路由」网关区（随「数据转发方式」联动显示）
   { field: 'disable_ipv6', help: 'disable_ipv6_help', group: 'system',
     inverted: { inputId: 'allow_ipv6', label: 'allow_ipv6', help: 'allow_ipv6_help' } },
   { field: 'ipv6_public_addr_auto', help: 'ipv6_public_addr_auto_help', group: 'system' },
   { field: 'bind_device', help: 'bind_device_help', group: 'system' },
   { field: 'no_tun', help: 'no_tun_help', group: 'system' },
   { field: 'multi_thread', help: 'multi_thread_help', group: 'system' },
-  // proxy_forward_by_system →「智能路由」网关区（贴着子网代理）
+  // proxy_forward_by_system / use_smoltcp →「智能路由」网关区（数据转发方式下拉框 + 条件显示）
   { field: 'enable_private_mode', help: 'enable_private_mode_help', group: 'security' },
   { field: 'disable_encryption', help: 'disable_encryption_help', group: 'security',
     inverted: { inputId: 'allow_encryption', label: 'allow_encryption', help: 'allow_encryption_help' } },
@@ -352,6 +352,27 @@ const conflictWarnings = computed(() => collectConfigConflictWarnings(curNetwork
 
 const relayControlsDisabled = computed(() => !!curNetwork.value.p2p_only)
 const tunControlsDisabled = computed(() => !!curNetwork.value.no_tun)
+
+/** 网关是否有"活"：出口节点或子网代理至少一项，否则数据转发方式是死配置。 */
+const gatewayHasWork = computed(
+  () => curNetwork.value.enable_exit_node || (curNetwork.value.proxy_cidrs?.length ?? 0) > 0,
+)
+
+/** 数据转发方式：系统内核转发（内核路由/NAT） vs EasyTier 内置转发（用户态管线）。 */
+const forwardMode = computed({
+  get: () => (curNetwork.value.proxy_forward_by_system ? 'system' : 'builtin'),
+  set: (mode: unknown) => {
+    curNetwork.value.proxy_forward_by_system = mode === 'system'
+  },
+})
+const forwardModeOptions = computed(() => [
+  { label: t('forward_mode_system'), value: 'system' },
+  { label: t('forward_mode_builtin'), value: 'builtin' },
+])
+// no_tun：内核没有 TUN 设备可转发 → 系统内核转发不可用；无网关角色 → 两种方式都无效果。
+const forwardModeDisabled = computed(() => tunControlsDisabled.value || !gatewayHasWork.value)
+// no_tun 强制 smoltcp（core: force_smoltcp = … || no_tun …），开关只读；无网关角色同样无效果。
+const useSmoltcpDisabled = computed(() => tunControlsDisabled.value || !gatewayHasWork.value)
 
 /** DNS 策略编辑器：关闭魔法 DNS 时仍可保存配置，但应灰化并明示不接线（C1）。 */
 const dnsPolicyEditorsDisabled = computed(
@@ -954,6 +975,15 @@ const flowStatsAllowExactIp = computed({
               </div>
             </template>
             <div class="flex flex-col gap-y-4">
+              <div
+                v-if="tunControlsDisabled"
+                class="config-conflict-banners flex flex-col gap-2"
+                role="status"
+              >
+                <p class="config-conflict-banner m-0 config-conflict-banner--info">
+                  {{ t('no_tun_traffic_routing_banner') }}
+                </p>
+              </div>
               <!-- 网关在上（本机提供能力）；出网在下（本机选用对端）。选路内：策略路由优先于出口列表。 -->
               <div class="config-section">
                 <div class="config-section__title">
@@ -978,14 +1008,33 @@ const flowStatsAllowExactIp = computed({
                         :placeholder="t('chips_placeholder_typeahead', ['10.0.0.0/24'])" multiple fluid
                         :suggestions="inetSuggestions" @complete="searchInetSuggestions"
                         @keydown.capture="onChipsKeydown($event, curNetwork, 'proxy_cidrs', { typeahead: true })" />
-                      <div class="config-nested-option flex items-center gap-2 flex-wrap">
-                        <Checkbox v-model="curNetwork.proxy_forward_by_system"
-                          input-id="proxy_forward_by_system" :binary="true" />
-                        <label for="proxy_forward_by_system">{{ t('proxy_forward_by_system') }}</label>
+                    </div>
+                  </div>
+
+                  <div class="config-compact-field config-compact-field--inline config-compact-field--top">
+                    <div class="config-compact-label flex items-center gap-1">
+                      <label for="forward_mode">{{ t('forward_mode') }}</label>
+                      <i class="pi pi-question-circle config-help-tip" tabindex="0"
+                        v-tooltip.top="{ value: t('forward_mode_help'), escape: false }" role="img"></i>
+                    </div>
+                    <div class="config-compact-control flex flex-col gap-y-2">
+                      <Select input-id="forward_mode" v-model="forwardMode" :options="forwardModeOptions"
+                        option-label="label" option-value="value" :disabled="forwardModeDisabled" fluid />
+                      <!-- 仅「内置转发」需要选择引擎；系统内核转发与 smoltcp 互斥。 -->
+                      <div v-if="!curNetwork.proxy_forward_by_system"
+                        class="config-nested-option flex items-center gap-2 flex-wrap">
+                        <Checkbox v-model="curNetwork.use_smoltcp" input-id="use_smoltcp" :binary="true"
+                          :disabled="useSmoltcpDisabled" />
+                        <label for="use_smoltcp">{{ t('use_smoltcp') }}</label>
                         <i class="pi pi-question-circle config-help-tip" tabindex="0"
-                          v-tooltip.top="{ value: t('proxy_forward_by_system_help'), escape: false }"
-                          :aria-label="t('proxy_forward_by_system_help')" role="img"></i>
+                          v-tooltip.top="{ value: t('use_smoltcp_help'), escape: false }" role="img"></i>
+                        <span v-if="tunControlsDisabled" class="config-field-hint">
+                          {{ t('forward_mode_smoltcp_forced_hint') }}
+                        </span>
                       </div>
+                      <p v-if="forwardModeDisabled" class="config-field-hint m-0">
+                        {{ tunControlsDisabled ? t('forward_mode_no_tun_hint') : t('forward_mode_no_gateway_hint') }}
+                      </p>
                     </div>
                   </div>
                 </div>
@@ -1030,7 +1079,8 @@ const flowStatsAllowExactIp = computed({
                           </div>
                           <div class="config-exit-nodes-row__option config-nested-option flex items-center gap-2 flex-wrap">
                             <Checkbox v-model="curNetwork.allow_peer_default_without_exit"
-                              input-id="allow_peer_default_without_exit" :binary="true" />
+                              input-id="allow_peer_default_without_exit" :binary="true"
+                              :disabled="tunControlsDisabled" />
                             <label for="allow_peer_default_without_exit">{{ t('allow_peer_default_without_exit') }}</label>
                             <i class="pi pi-question-circle config-help-tip" tabindex="0"
                               v-tooltip.top="{ value: t('allow_peer_default_without_exit_help'), escape: false }"
@@ -1053,15 +1103,18 @@ const flowStatsAllowExactIp = computed({
                           v-tooltip.top="{ value: t('manual_routes_help'), escape: false }"
                           :aria-label="t('manual_routes_help')" role="img"></i>
                         <ToggleSwitch v-model="curNetwork.enable_manual_routes" input-id="enable_manual_routes"
+                          :disabled="tunControlsDisabled"
                           :aria-label="t('manual_routes')" />
                       </div>
                       <template v-if="curNetwork.enable_manual_routes">
                         <AutoComplete id="routes" v-model="curNetwork.routes"
                           :placeholder="t('chips_placeholder_typeahead', ['192.168.0.0/16'])" multiple fluid
+                          :disabled="tunControlsDisabled"
                           :suggestions="inetSuggestions" @complete="searchInetSuggestions"
                           @keydown.capture="onChipsKeydown($event, curNetwork, 'routes', { typeahead: true })" />
                         <div class="config-nested-option flex items-center gap-2 flex-wrap">
                           <ToggleSwitch v-model="curNetwork.manual_routes_append" input-id="manual_routes_append"
+                            :disabled="tunControlsDisabled"
                             :aria-label="t('manual_routes_append')" />
                           <label for="manual_routes_append">{{ t('manual_routes_append') }}</label>
                           <i class="pi pi-question-circle config-help-tip" tabindex="0"
