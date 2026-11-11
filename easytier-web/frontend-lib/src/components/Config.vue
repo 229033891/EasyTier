@@ -374,6 +374,18 @@ const forwardModeDisabled = computed(() => tunControlsDisabled.value || !gateway
 // no_tun 强制 smoltcp（core: force_smoltcp = … || no_tun …），开关只读；无网关角色同样无效果。
 const useSmoltcpDisabled = computed(() => tunControlsDisabled.value || !gatewayHasWork.value)
 
+// 打开 socks5 服务器时补默认端口：历史配置经 proto3 落盘后，缺省的 socks5_port 会变 0，
+// 而端口 0 对 SOCKS5 没有意义。仅在「开启」这一刻补 1080，不改加载回显
+// （加载时改值会把刚拉下来的远程配置直接变成脏草稿）。
+watch(
+  () => curNetwork.value.enable_socks5,
+  (enabled) => {
+    if (enabled && !curNetwork.value.socks5_port) {
+      curNetwork.value.socks5_port = 1080
+    }
+  },
+)
+
 /** DNS 策略编辑器：关闭魔法 DNS 时仍可保存配置，但应灰化并明示不接线（C1）。 */
 const dnsPolicyEditorsDisabled = computed(
   () => !curNetwork.value.enable_magic_dns || tunControlsDisabled.value,

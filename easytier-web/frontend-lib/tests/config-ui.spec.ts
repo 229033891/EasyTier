@@ -862,6 +862,30 @@ describe('Config.vue network config projection', () => {
     expect(input(wrapper, '#use_smoltcp').disabled).toBe(true)
   })
 
+  it('seeds socks5 port to 1080 when enabling with an empty/0 port, keeps explicit ports', async () => {
+    const config = makeConfig()
+    config.enable_socks5 = false
+    config.socks5_port = 0
+    const { curNetwork, wrapper } = mountConfig(config)
+    await nextTick()
+    expect(wrapper.find('#socks5_port').exists()).toBe(false)
+
+    // 开关打开的瞬间补默认端口（历史配置经 proto3 落盘后缺省端口是 0）。
+    await wrapper.find('#enable_socks5').trigger('click')
+    await nextTick()
+    expect(curNetwork.enable_socks5).toBe(true)
+    expect(curNetwork.socks5_port).toBe(1080)
+    expect(input(wrapper, '#socks5_port').value).toBe('1080')
+
+    // 用户已有明确端口时不改写。
+    curNetwork.enable_socks5 = false
+    await nextTick()
+    curNetwork.socks5_port = 9999
+    curNetwork.enable_socks5 = true
+    await nextTick()
+    expect(curNetwork.socks5_port).toBe(9999)
+  })
+
   it('binds inverted switches positively (checked = enabled)', async () => {
     const config = makeConfig()
     config.disable_ipv6 = true
