@@ -19,6 +19,7 @@ import {
 } from '../modules/config-residual';
 import * as Utils from '../modules/utils';
 import { collectNetworkInfoSingleFlight } from '../modules/collectNetworkInfoSingleFlight';
+import { collectConfigConflictWarnings } from '../modules/configConflicts';
 import { vipReachabilityScore } from '../modules/statusDisplay';
 import * as NetworkTypes from '../types/network';
 import LoggingSettingsDialog from './LoggingSettingsDialog.vue';
@@ -1262,11 +1263,30 @@ const confirmDeleteNetwork = () => {
     });
 };
 
+/**
+ * Save-time warning for combinations known to break traffic (UI-only, never
+ * blocks the save and never rewrites values — same policy as the inline
+ * `Config.vue` conflict banners). Kept here so Web-managed Save/Run, which
+ * hides Config.vue's own run button, still surfaces the warning.
+ */
+const warnTrafficBreakingConflicts = (cfg: NetworkTypes.NetworkConfig) => {
+    if (!collectConfigConflictWarnings(cfg).some((w) => w.code === 'quic_proxy_domain_egress')) {
+        return;
+    }
+    toast.add({
+        severity: 'warn',
+        summary: t('web.common.warning'),
+        detail: t('quic_proxy_domain_egress_conflict_help'),
+        life: TOAST_LIFE.warn,
+    });
+};
+
 const saveAndRunNewNetwork = async (config?: NetworkTypes.NetworkConfig) => {
     const cfg = config ?? currentNetworkConfig.value;
     if (!cfg) {
         return;
     }
+    warnTrafficBreakingConflicts(cfg);
 
     const targetInstanceId = instanceId.value ?? cfg.instance_id;
     if (targetInstanceId && cfg.instance_id !== targetInstanceId) {
@@ -1476,6 +1496,7 @@ const doSaveNetworkConfig = async () => {
     if (!currentNetworkConfig.value || savingConfig.value || !canSaveConfig.value) {
         return;
     }
+    warnTrafficBreakingConflicts(currentNetworkConfig.value);
     savingConfig.value = true;
     const savedId = currentNetworkConfig.value.instance_id;
     const wasRunning = !!savedId && isRunning(savedId);

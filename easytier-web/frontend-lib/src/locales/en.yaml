@@ -309,6 +309,7 @@ enable_quic_proxy_help: |-
   Carry TCP traffic to peers over QUIC (UDP-based) instead of raw TCP.
   Same purpose as the KCP proxy — lower latency and higher throughput on lossy links; QUIC has more mature congestion control and multiplexing.
   Note: both ends must support QUIC; if the peer has "Allow QUIC Input" turned off, it falls back to raw TCP.
+  Note: this only covers peers inside the virtual network. Do not combine it with domain-egress rules ([[policy_routes]] domains) — connections to public targets will be reset.
 
 disable_quic_input: Disable QUIC Input
 disable_quic_input_help: |-
@@ -501,6 +502,8 @@ kcp_proxy_no_input_conflict_help: |-
   KCP proxy is on while KCP input is disabled (send-only). Valid but usually a misconfiguration; peers fall back to plain TCP toward this node.
 dual_proxy_conflict_help: |-
   Enabling both KCP and QUIC proxy increases overhead; usually keep only one.
+quic_proxy_domain_egress_conflict_help: |-
+  "QUIC Proxy" is on while a domain-egress rule exists ([[policy_routes]] with domains and gateway peers). The QUIC proxy resolves destinations only through the virtual-network route table and cannot hand a public domain IP to the gateway peer selected by the domain rule, so the TCP proxy resets the connection (ERR_CONNECTION_RESET). Turn off "Enable QUIC Proxy" or remove the domain-egress rule. Values are not rewritten.
 disable_ipv6_conflict_help: |-
   IPv6 is disabled but public-IPv6 options are still on. Those options have no effect while IPv6 is off; values are not rewritten.
 no_tun_dev_mtu_conflict_help: |-

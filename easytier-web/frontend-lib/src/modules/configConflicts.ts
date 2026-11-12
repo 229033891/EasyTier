@@ -74,6 +74,26 @@ export function collectConfigConflictWarnings(config: NetworkConfig): ConfigConf
     })
   }
 
+  // QUIC source connector resolves the destination only through the peer route
+  // table (VIP or a peer-advertised /0). A domain-egress [[policy_routes]] rule
+  // instead installs learned /32s into the OS routing table and keeps its
+  // effective gateway peer in the L3 policy snapshot — neither is visible to the
+  // QUIC connector. connect() therefore fails immediately and the TCP proxy
+  // replies with RST (ERR_CONNECTION_RESET), rather than falling back to TCP.
+  if (
+    config.enable_quic_proxy &&
+    (config.policy_routes ?? []).some(
+      (route) => (route.domains?.length ?? 0) > 0 && (route.peers?.length ?? 0) > 0,
+    )
+  ) {
+    warnings.push({
+      code: 'quic_proxy_domain_egress',
+      severity: 'warn',
+      i18nKey: 'quic_proxy_domain_egress_conflict_help',
+      fields: ['enable_quic_proxy', 'policy_routes'],
+    })
+  }
+
   if (
     config.disable_ipv6 &&
     (config.ipv6_public_addr_auto || config.ipv6_public_addr_provider)

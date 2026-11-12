@@ -342,6 +342,38 @@ describe('RemoteManagement config vs run pages', () => {
     }
   })
 
+  it('warns on save when QUIC proxy is combined with a domain-egress policy route', async () => {
+    const config = makeFlagConfig()
+    config.enable_quic_proxy = true
+    config.policy_routes = [{ domains: ['opencode.ai'], peers: ['10.10.10.50'] }]
+    const api = makeApi({ config, disabled: true })
+    const wrapper = await mountRemote(api)
+
+    try {
+      toastAdd.mockClear()
+      await enterCombinedConfig(wrapper)
+      // Make the form dirty so the Save button appears.
+      networkConfigRef(wrapper).network_name = 'changed-name'
+      await nextTick()
+      await flushPromises()
+
+      const saveButton = wrapper.find('button[data-label="web.device_management.save_config"]')
+      expect(saveButton.exists()).toBe(true)
+      await saveButton.trigger('click')
+      await flushPromises()
+
+      expect(api.save_config).toHaveBeenCalledOnce()
+      expect(toastAdd).toHaveBeenCalledWith(
+        expect.objectContaining({
+          severity: 'warn',
+          detail: 'quic_proxy_domain_egress_conflict_help',
+        }),
+      )
+    } finally {
+      wrapper.unmount()
+    }
+  })
+
   it('marks dirty on edit, clears after discard reload', async () => {
     const config = makeFlagConfig()
     const api = makeApi({ config })

@@ -307,6 +307,7 @@ enable_quic_proxy_help: |-
   把发往对端的 TCP 流量改用 QUIC（基于 UDP）代理转发。
   用途与 KCP 代理类似，在丢包链路上降低延迟、提高吞吐；QUIC 的拥塞控制与多路复用更成熟。
   注意：需要两端都支持 QUIC；若对端关掉了「允许 QUIC 输入」，会自动回退为原始 TCP。
+  注意：只适用于访问虚拟网内的对端；不要与域名出口规则（[[policy_routes]] 的 domains）同时使用，否则公网目标连接会被重置。
 
 disable_quic_input: 禁用 QUIC 输入
 disable_quic_input_help: |-
@@ -497,6 +498,8 @@ kcp_proxy_no_input_conflict_help: |-
   本机开启了 KCP 代理却禁用了 KCP 输入：只发不收。合法但多为误配；对端访问本机时会回退为原始 TCP。
 dual_proxy_conflict_help: |-
   KCP 代理与 QUIC 代理同时开启会增加开销；通常只保留其一即可。
+quic_proxy_domain_egress_conflict_help: |-
+  已启用「QUIC 代理」，同时配置了域名出口规则（[[policy_routes]] 带 domains 和出口节点）。QUIC 代理只按虚拟网内路由表查找目标，无法把公网域名 IP 交给域名规则选出的出口节点，连接会在 TCP 代理处被重置（ERR_CONNECTION_RESET）。请关闭「启用 QUIC 代理」，或删除域名出口规则。配置不会被自动改写。
 disable_ipv6_conflict_help: |-
   已禁用 IPv6，但公网 IPv6 相关选项仍为开启。禁用 IPv6 时这些选项无效；配置不会被自动改写。
 no_tun_dev_mtu_conflict_help: |-

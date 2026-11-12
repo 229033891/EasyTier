@@ -94,4 +94,53 @@ describe('configConflicts', () => {
     expect(isAdvancedFlagHidden(config, 'ipv6_public_addr_auto')).toBe(true)
     expect(isAdvancedFlagHidden(config, 'ipv6_public_addr_provider')).toBe(true)
   })
+
+  describe('QUIC proxy + domain-egress policy routes', () => {
+    const domainEgress = {
+      domains: ['opencode.ai', '*.github.com'],
+      peers: ['10.10.10.50'],
+    }
+
+    it('warns when QUIC proxy is combined with a domain-egress rule', () => {
+      const config = {
+        ...DEFAULT_NETWORK_CONFIG(),
+        enable_quic_proxy: true,
+        policy_routes: [domainEgress],
+      }
+      const warning = collectConfigConflictWarnings(config).find(
+        (w) => w.code === 'quic_proxy_domain_egress',
+      )
+      expect(warning?.severity).toBe('warn')
+      expect(warning?.fields).toContain('enable_quic_proxy')
+      expect(warning?.fields).toContain('policy_routes')
+      // UI-only warning: never rewrites the config.
+      expect(config.enable_quic_proxy).toBe(true)
+      expect(config.policy_routes).toHaveLength(1)
+    })
+
+    it('does not warn when QUIC proxy is off', () => {
+      const config = {
+        ...DEFAULT_NETWORK_CONFIG(),
+        enable_quic_proxy: false,
+        policy_routes: [domainEgress],
+      }
+      expect(collectConfigConflictWarnings(config).some((w) => w.code === 'quic_proxy_domain_egress')).toBe(false)
+    })
+
+    it('does not warn for CIDR-only rules or rules without gateway peers', () => {
+      const cidrOnly = {
+        ...DEFAULT_NETWORK_CONFIG(),
+        enable_quic_proxy: true,
+        policy_routes: [{ cidr: '10.0.0.0/24', domains: [], peers: ['10.10.10.50'] }],
+      }
+      expect(collectConfigConflictWarnings(cidrOnly).some((w) => w.code === 'quic_proxy_domain_egress')).toBe(false)
+
+      const noPeers = {
+        ...DEFAULT_NETWORK_CONFIG(),
+        enable_quic_proxy: true,
+        policy_routes: [{ domains: ['opencode.ai'], peers: [] }],
+      }
+      expect(collectConfigConflictWarnings(noPeers).some((w) => w.code === 'quic_proxy_domain_egress')).toBe(false)
+    })
+  })
 })

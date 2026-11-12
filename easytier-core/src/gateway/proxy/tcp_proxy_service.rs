@@ -418,11 +418,14 @@ impl<R: TcpProxyRuntime + 'static, F: VirtualTcpListenerFactory, C: TcpProxyDest
         };
         service.runtime.record_tcp_proxy_connect(ctx, socket_dst);
 
-        let Ok(dst_stream) = service.connector.connect(ctx.src, socket_dst).await else {
-            tracing::error!("connect to dst failed: {:?}", entry);
-            entry.set_state(TcpNatEntryState::Closed);
-            service.engine.remove_entry(entry.id());
-            return;
+        let dst_stream = match service.connector.connect(ctx.src, socket_dst).await {
+            Ok(stream) => stream,
+            Err(err) => {
+                tracing::error!(?entry, %err, "connect to dst failed");
+                entry.set_state(TcpNatEntryState::Closed);
+                service.engine.remove_entry(entry.id());
+                return;
+            }
         };
         let mut dst_stream: Box<dyn TcpProxyStream> = Box::new(dst_stream);
 
