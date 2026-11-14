@@ -76,6 +76,7 @@ crate 内设计稿（非本索引）：`easytier/docs/`（凭据计划已标 Arc
 | [traffic-camouflage-phase-a-todo.md](./roadmap/traffic-camouflage-phase-a-todo.md) | Phase A TODO：中继 + wss:443 Ops/状态（**暂不实现**） |
 | [connection-stability-todo.md](./roadmap/connection-stability-todo.md) | 连接稳定性优化 TODO（相对 OpenVPN/IPsec；**端点可自定义，不假设 443**） |
 | [lan-direct-underlay-guard.md](./roadmap/lan-direct-underlay-guard.md) | **同网段直连加固**（2026-11-04 事故：proxy CIDR 劫持直连；**已复核重排**：接收侧路由剪枝 L1 + 下垫面 `/32` 钉扎 L2 为主修，直连候选净化 L0、声明侧卫生 L4、出口绑定 L3 次之；2026-11-07 修正 L1/L2 接入点） |
+| [underlay-exclude-onlink-filter.md](./roadmap/underlay-exclude-onlink-filter.md) | **underlay 排除路由的两个缺口**（2026-11-14 现网**两台**机器复现：同网段对端被钉 `via 网关`；停止/卸载后残留）：G1 门闩是集合级布尔、安装是条目级且不判 on-link；G2 清理按「当前采集」而非「已安装」推导。含代码锚点、F1/F2/F3 修复设计、§2.2 第二现场（飞牛 NAS Docker 卸载后 8 条残留）、**§8 风险定级（中高 P1）与工期**；**F1+F2 代码已落地，待自测/现网验收（未过验收不进 Current）** |
 | [open-bugs-wave1-impl.md](./roadmap/open-bugs-wave1-impl.md) | **Wave 1 开放缺陷施工**（复核结论 + Track A：B17/B3 warn/B4；Track B：LAN L0–L2；绑定上文与 routing-bug-audit） |
 | [relay-forward-egress-queue.md](./roadmap/relay-forward-egress-queue.md) | 中继转发每目的 peer 有界出口队列（消共享 router HOL；代码已落地待现网） |
 | [tun-data-plane-throughput-2026-11.md](./roadmap/tun-data-plane-throughput-2026-11.md) | **TUN 数据面吞吐瓶颈（单流 ~50 MB/s）**：实测 58.7 CPU秒/GB + 单线程满核；根因 = `BiLock` 读写互斥 / 单队列（crate 硬限制）/ 2500 字节读缓冲 / 无 vnet_hdr 致 TSO 被拒；A/B/C 改造候选与工时风险，**均未开工**；含「SMB Multichannel 绕过隧道」「换 Linux 不会自动变快」等已证伪假设 |
@@ -90,6 +91,7 @@ crate 内设计稿（非本索引）：`easytier/docs/`（凭据计划已标 Arc
 | [tray-run-state.md](./roadmap/tray-run-state.md) | **托盘运行态语义**：判据从「客户端已连接」改为按实例聚合（灰=无网在跑 / 黄=启动中 / 绿=在网 / 红=需介入）；代码已落地，**待真机验收** |
 | [gui-connected-vs-reachable.md](./roadmap/gui-connected-vs-reachable.md) | **已连接 vs VIP 可达**：**按链路**数据面 ICMP 探测（每条 PeerConn 各测），行级 Tag 按链路、`[M/N]` 按节点；代码已落地，**待现网验收**（GUI/`frontend-lib` 一期；LuCI 二期） |
 | [config-delete-authority.md](./roadmap/config-delete-authority.md) | 配置删除权：bound+Web 仅控制台；客户端删门与停用保留 |
+| [config-edit-authority.md](./roadmap/config-edit-authority.md) | **配置编辑锁**：机器级 `devices.local_edit_locked`，锁开时 Web 源客户端只读；双闸（客户端 fail-open / 控制台权威 fail-closed）；代码已落地，**待联调验收** |
 | [local-config-residue.md](./roadmap/local-config-residue.md) | 控制台删除后本地/GUI 残留：分层收敛（P0–P2 代码已落地；待人工回归） |
 | [config-sync-per-end.md](./roadmap/config-sync-per-end.md) | 配置同步**各端一致性核验**：删除权 / W 权威 / 残留 UI 覆盖矩阵（有意不统一；gui 含 Android 已闭环） |
 | [console-save-and-push-semantics.md](./roadmap/console-save-and-push-semantics.md) | 控制台 Save→Push：落库 / 启停 / reconcile 语义 |
@@ -106,12 +108,13 @@ crate 内设计稿（非本索引）：`easytier/docs/`（凭据计划已标 Arc
 | [windows-msvc-local-build.md](./ops/windows-msvc-local-build.md) | Windows 本机 MSVC：已装 Build Tools 仍编不过时，先 vcvars 再 cargo |
 | [web-upgrade.md](./ops/web-upgrade.md) | Web 现网升级与保库 |
 | [deploy-install.md](./ops/deploy-install.md) | 安装脚本用法 |
-| [docker-compose-deploy.md](./ops/docker-compose-deploy.md) | Docker Compose：节点 / 控制台 / 同时启动（SSH 命令） |
+| [docker-compose-deploy.md](./ops/docker-compose-deploy.md) | Docker Compose：节点 / 控制台 / 同时启动 / **卸载与残留路由清理**（SSH 命令） |
 | [ohos-downstream-builds.md](./ops/ohos-downstream-builds.md) | OHOS 下游构建 |
 | [release-version-bump.md](./ops/release-version-bump.md) | **版本号 bump 必改清单**（10 文件 / 17 处）+ 发布分支惯例 |
 | [android-startup-auto-stop.md](./ops/android-startup-auto-stop.md) | 安卓启动后马上自动停：现象 / 日志定性 / §6 同 netId 去重+宽限期（待新包验收）/ 清数据与重装 |
 | [ci-failure-log.md](./ops/ci-failure-log.md) | **CI/ET Test 失败追加日志** + 提交前自检（clippy / trait 导入等） |
 | [et-kernel-forward-check.md](./ops/et-kernel-forward-check.md) | **隧道节点巡检手册**：内核转发 vs relay 中转 vs 本机访问的三分口径；一键脚本（转发计数 / rp_filter / 设备与队列健康 / offload / 数据面线程）；`IpForwDatagrams` 与 `InReceives` 自洽校验；netns 加压法；改名后防火墙残留与 MTU 一致性；**SMB Multichannel 绕过隧道**与 robocopy 预分配两个测量陷阱 |
+| [openwrt-node-runbook.md](./ops/openwrt-node-runbook.md) | **OpenWrt/ImmortalWrt 节点上线必检**：流量卸载（`flow_offloading`）必须关闭，否则子网代理丢 chunked 响应尾包（页面卡 10~15s，A/B 实测）；同网段对端被钉 `via 网关` 主机路由的已知遗留与规避 |
 | [doc-update-after-task.md](./ops/doc-update-after-task.md) | **任务收尾文档决策表**（Current 严门槛 + 按类型最少更新集） |
 
 ## Archive — 历史记录

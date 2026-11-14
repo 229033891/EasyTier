@@ -259,6 +259,8 @@ export interface ConfigServerStatus {
   webOwnedInstanceIdsValid?: boolean
   /** Console SQLite Web-source ids (enabled+disabled). Meaningful only when valid. */
   webOwnedInstanceIds?: string[]
+  /** Machine-level client-edit lock; authoritative only while connected. */
+  localEditLocked?: boolean
 }
 
 export async function getConfigServerStatus() {

@@ -65,6 +65,14 @@ const props = defineProps<{
      */
     deleteAuthority?: 'local' | 'console';
     /**
+     * Edit authority for Web-source rows (machine-level `local_edit_locked`,
+     * see config-edit-authority.md). `console` = the host learned the lock from
+     * the config-server status; the local editor renders read-only and save is
+     * rejected (backend `save_network_config` is the hard gate). User-source
+     * rows stay editable.
+     */
+    editAuthority?: 'local' | 'console';
+    /**
      * Which product surface mounts this component. Independent of deleteAuthority.
      * - `web-console`: DeviceManagement —User-source delete shows §5 confirm.
      * - `gui-client`: desktop GUI —never use deleteAuthority alone to mean console.
@@ -635,6 +643,19 @@ const isConsoleManagedDelete = computed(() => {
     return Api.normalizeConfigSource(currentNetworkMeta.value?.source) === Api.ConfigSource.Web;
 });
 
+/**
+ * Machine-level client-edit lock: host passes `editAuthority: 'console'` when
+ * the console switched `local_edit_locked` on for this device. Web-source rows
+ * become read-only locally; User-source rows stay editable (fail-open while
+ * meta is missing —the backend `save_network_config` gate is authoritative).
+ */
+const isConsoleManagedEdit = computed(() => {
+    if (props.editAuthority !== 'console') {
+        return false;
+    }
+    return Api.normalizeConfigSource(currentNetworkMeta.value?.source) === Api.ConfigSource.Web;
+});
+
 const canDeleteNetworkLocally = computed(
     () => currentNetworkControl.deletable.value && !isConsoleManagedDelete.value,
 );
@@ -653,7 +674,7 @@ const canSaveConfig = computed(() => {
     if (!currentNetworkMeta.value || networkMetaLoadFailed.value[currentNetworkConfig.value.instance_id]) {
         return false;
     }
-    return currentNetworkControl.editable.value;
+    return currentNetworkControl.editable.value && !isConsoleManagedEdit.value;
 });
 
 const saveConfigDisabledReason = computed(() => {
@@ -665,6 +686,9 @@ const saveConfigDisabledReason = computed(() => {
     }
     if (!currentNetworkMeta.value || networkMetaLoadFailed.value[currentNetworkConfig.value.instance_id]) {
         return t('web.device_management.save_config_disabled_meta');
+    }
+    if (isConsoleManagedEdit.value) {
+        return t('web.device_management.save_config_disabled_edit_locked');
     }
     return t('web.device_management.save_config_disabled_readonly');
 });
@@ -2203,17 +2227,17 @@ onUnmounted(() => {
 
             <template v-else-if="showConfigPanel && currentNetworkConfig">
                 <Config :cur-network="currentNetworkConfig" :config-invalid="false"
-                    :hide-run-button="true" @run-network="confirmRunNetwork">
+                    :hide-run-button="true" :read-only="isConsoleManagedEdit" @run-network="confirmRunNetwork">
                     <template #config-toolbar>
                         <div class="config-toolbar">
                             <div class="toolbar-zone">
                                 <span class="toolbar-zone-label">{{ t('web.device_management.toolbar_config_files') }}</span>
                                 <div class="toolbar-zone-actions">
-                                    <Button class="config-toolbar-btn" @click="showConfigEditDialog = true" icon="pi pi-file-edit"
+                                    <Button v-if="!isConsoleManagedEdit" class="config-toolbar-btn" @click="showConfigEditDialog = true" icon="pi pi-file-edit"
                                         :label="t('web.device_management.edit_as_file')" iconPos="left" severity="secondary"
                                         outlined
                                         v-tooltip.bottom="t('web.device_management.edit_as_file_tip')" />
-                                    <Button class="config-toolbar-btn" @click="importConfig" icon="pi pi-upload"
+                                    <Button v-if="!isConsoleManagedEdit" class="config-toolbar-btn" @click="importConfig" icon="pi pi-upload"
                                         :label="t('web.device_management.import_config')" iconPos="left" severity="secondary"
                                         outlined
                                         v-tooltip.bottom="t('web.device_management.import_config_tip')" />

@@ -118,7 +118,7 @@ pub use config::CoreInstanceHostConfig;
 use management_state::ManagementState;
 pub use packet_io::PacketEgressHost;
 use packet_io::PacketSinkEgress;
-pub use packet_plane::CorePacketPlane;
+pub use packet_plane::{CorePacketPlane, UnderlayExcludeState, UnderlayExcludeViaMirror};
 
 /// Complete Host capability set required by one portable core instance.
 pub trait CoreInstanceHost: DirectConnectorHost + TcpHolePunchHost {}

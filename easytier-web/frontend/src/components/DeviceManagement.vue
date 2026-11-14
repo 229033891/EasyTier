@@ -2,7 +2,7 @@
 import { NetworkTypes, Utils, Api, RemoteManagement, TOAST_LIFE, addThrottledToast, createToastRepeatGate } from 'easytier-frontend-lib';
 import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import { ProgressSpinner, useToast } from 'primevue';
+import { ProgressSpinner, ToggleSwitch, useConfirm, useToast } from 'primevue';
 import { useI18n } from 'vue-i18n';
 import ApiClient from '../modules/api';
 import { loadMergedDevices } from '../modules/deviceArchive';
@@ -15,6 +15,50 @@ const { t } = useI18n();
 const route = useRoute();
 const router = useRouter();
 const toast = useToast();
+const confirm = useConfirm();
+
+/** 机器级客户端编辑锁（devices.local_edit_locked），由 5s 设备轮询带回。 */
+const editLockBusy = ref(false);
+
+/** 开启前确认：锁生效后，客户端对控制台配置只读（下一心跳周期收敛）。 */
+const toggleEditLock = (locked: boolean) => {
+    const apply = async () => {
+        if (editLockBusy.value) {
+            return;
+        }
+        editLockBusy.value = true;
+        try {
+            await props.api.set_device_local_edit_lock(deviceId.value, locked);
+            await loadDevices();
+            toast.add({
+                severity: 'success',
+                summary: t(locked ? 'web.device.local_edit_lock_on' : 'web.device.local_edit_lock_off'),
+                life: TOAST_LIFE.success,
+            });
+        } catch (e) {
+            addThrottledToast(toast, errorToastGate, 'device-edit-lock-error', {
+                severity: 'error',
+                summary: t('web.device.local_edit_lock_failed'),
+                detail: Utils.formatApiErrorDetail(e, t),
+                life: TOAST_LIFE.error,
+            });
+        } finally {
+            editLockBusy.value = false;
+        }
+    };
+    if (!locked) {
+        void apply();
+        return;
+    }
+    confirm.require({
+        header: t('web.device.local_edit_lock_confirm_title'),
+        message: t('web.device.local_edit_lock_confirm_message'),
+        icon: 'pi pi-lock',
+        acceptProps: { severity: 'warn', label: t('web.common.confirm') },
+        rejectProps: { label: t('web.common.cancel') },
+        accept: () => { void apply(); },
+    });
+};
 
 const deviceList = ref<Array<Utils.DeviceInfo> | undefined>(undefined);
 
@@ -159,5 +203,17 @@ onUnmounted(() => {
         leave-button-icon="pi pi-arrow-left"
         :mode="managementMode"
         @switch-mode="switchManagementMode"
-    />
+    >
+        <template #footer-extra>
+            <!-- 仅在已知设备上渲染：直达 URL 且设备不存在时不留一个可点的空开关。 -->
+            <div v-if="deviceInfo" class="flex items-center gap-2" v-tooltip.top="t('web.device.local_edit_lock_tip')">
+                <ToggleSwitch
+                    :model-value="!!deviceInfo?.local_edit_locked"
+                    :disabled="editLockBusy"
+                    @update:model-value="toggleEditLock"
+                />
+                <span class="text-sm whitespace-nowrap">{{ t('web.device.local_edit_lock') }}</span>
+            </div>
+        </template>
+    </RemoteManagement>
 </template>

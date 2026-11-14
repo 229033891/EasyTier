@@ -14,6 +14,7 @@ mod m20261002_000011_device_display_name;
 mod m20261009_000012_peer_conn_history_jitter;
 mod m20261022_000013_flow_history;
 mod m20261023_000014_flow_history_conn_id_text;
+mod m20261030_000015_device_local_edit_locked;
 
 pub struct Migrator;
 
@@ -35,6 +36,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20261009_000012_peer_conn_history_jitter::Migration),
             Box::new(m20261022_000013_flow_history::Migration),
             Box::new(m20261023_000014_flow_history_conn_id_text::Migration),
+            Box::new(m20261030_000015_device_local_edit_locked::Migration),
         ]
     }
 }

@@ -1067,6 +1067,13 @@ web:
     click_to_sort: 点击按此列排序
     belonging_device: 所属设备
     load_list_failed: 加载设备列表失败
+    local_edit_lock: 客户端编辑锁定
+    local_edit_lock_tip: 开启后，控制台下发的配置在此设备的客户端只读，请在 Web 控制台修改；本地自建配置不受影响。下一心跳周期生效。
+    local_edit_lock_confirm_title: 开启客户端编辑锁定？
+    local_edit_lock_confirm_message: 控制台下发的配置将在此设备的客户端变为只读，只能通过 Web 控制台修改；客户端本地自建的配置不受影响。
+    local_edit_lock_on: 已开启客户端编辑锁定
+    local_edit_lock_off: 已关闭客户端编辑锁定
+    local_edit_lock_failed: 更新客户端编辑锁定失败
     load_list_retry: 重试
     management: 设备管理
     add: 添加设备
@@ -1148,6 +1155,7 @@ web:
     delete_network: 删除网络
     delete_network_tip: 从设备上永久删除当前网络配置
     delete_managed_by_console: 该网络由控制台管理，请在控制台删除
+    edit_managed_by_console: 该网络由控制台管理，请在 Web 控制台修改
     confirm_delete_user_source: 该网络当前为设备本地（User）配置。删除后设备上的本地副本也会被清除。确定继续？
     residual_device_only: 仅设备残留
     residual_db_disabled_running: 库已停用仍在跑
@@ -1186,6 +1194,7 @@ web:
     save_config_disabled_no_config: 当前没有可保存的配置
     save_config_disabled_meta: 正在加载权限信息，请稍候再保存
     save_config_disabled_readonly: 当前配置为只读，无法保存
+    save_config_disabled_edit_locked: 控制台已对本设备开启编辑锁定，无法在客户端修改
     confirm_save_takeover_user_source: 该网络当前为设备本地（User）配置。保存后将由控制台接管（改为 Web 源），之后设备本地改动可能被控制台覆盖。确定继续？
     # 控制台下发/热更写回本机后的提示（与「本地保存」是两次动作，可同屏）
     managed_config_synced_overwrite: 控制台配置已同步到本机

@@ -156,6 +156,19 @@ function allFieldFixture() {
     relay_network_whitelist: ['10.0.0.0/8', 'fd00::/8'],
     enable_manual_routes: true,
     routes: ['10.20.0.0/16', 'fd00:20::/64'],
+    policy_routes: [
+      {
+        cidr: '10.30.0.0/16',
+        domains: ['corp.internal.'],
+        peers: ['10.9.8.7'],
+        select_by: 'priority',
+        failover_when: 'unreachable',
+      },
+    ],
+    // `has_policy_routes` (presence bit) is NOT listed here: it comes from
+    // `DEFAULT_NETWORK_CONFIG()` (always true) and `toBackendNetworkConfig`
+    // forces it, so re-adding it would be dead weight — the coverage assert
+    // only checks that every generated field is reachable after the round trip.
     exit_nodes: ['10.9.8.1', 'fd00::1'],
     proxy_forward_by_system: true,
     disable_encryption: true,
@@ -265,6 +278,19 @@ function allFieldFixture() {
     conn_select_switch_margin_pct: 20,
     conn_select_switch_abs_margin_milli: 15,
     conn_select_switch_windows: 8,
+    // 以下为 HEAD 上先行提交（flow_stats / egress fair queue / relay_hop_penalty /
+    // manual_routes_append）引入的 NetworkConfig 字段，夹具当时未跟上；
+    // 往 api_manage.proto 的 NetworkConfig 加字段时记得同步补到这里。
+    manual_routes_append: false,
+    flow_stats_enabled: true,
+    flow_stats_sample_rate: 64,
+    flow_stats_max_per_conn: 8,
+    flow_stats_max_total: 4096,
+    flow_mask_prefix_len_v4: 24,
+    flow_mask_prefix_len_v6: 48,
+    flow_stats_allow_exact_ip: false,
+    relay_hop_penalty: 5,
+    enable_egress_fair_queue: true,
     // 这两个字段在 DEFAULT_NETWORK_CONFIG() 里是 null，会被后端 JSON 省略
     // （空 = 用后端默认值），所以要显式给值才能过 round-trip 的「字段必须在场」检查。
     peer_link_bond_count: 3,

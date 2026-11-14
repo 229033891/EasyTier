@@ -151,6 +151,7 @@ export type ApiErrorKind =
     | 'revision_conflict'
     | 'ownership_conflict'
     | 'delete_managed_by_console'
+    | 'edit_locked_by_console'
     | 'validation'
     | 'unauthorized'
     | 'db_error'
@@ -188,6 +189,10 @@ export function extractApiErrorPayload(error: unknown): ApiErrorPayload {
         asRecord(error)?.data,
         error,
     ]
+    // A payload may carry a stable `code` with no human copy (the console does
+    // exactly that for `edit_locked`). Remember it so classification still works
+    // when the final fallback produces a placeholder message.
+    let codeWithoutMessage: string | undefined
 
     for (const candidate of candidates) {
         if (typeof candidate === 'string') {
@@ -210,11 +215,12 @@ export function extractApiErrorPayload(error: unknown): ApiErrorPayload {
                             ),
                         }
                     }
+                    codeWithoutMessage ??= readStringField(record, 'code')
                 } catch {
                     // keep raw string
                 }
             }
-            return { message: trimmed }
+            return { message: trimmed, code: codeWithoutMessage }
         }
 
         const record = asRecord(candidate)
@@ -229,13 +235,14 @@ export function extractApiErrorPayload(error: unknown): ApiErrorPayload {
                 ),
             }
         }
+        codeWithoutMessage ??= readStringField(record, 'code')
     }
 
     if (error instanceof Error && error.message.trim()) {
-        return { message: error.message }
+        return { message: error.message, code: codeWithoutMessage }
     }
 
-    return { message: String(error ?? '') }
+    return { message: String(error ?? ''), code: codeWithoutMessage }
 }
 
 export function classifyApiError(payload: ApiErrorPayload): ApiErrorKind {
@@ -261,6 +268,11 @@ export function classifyApiError(payload: ApiErrorPayload): ApiErrorKind {
             return 'ownership_conflict'
         case 'delete_managed_by_console':
             return 'delete_managed_by_console'
+        // GUI `save_network_config` gate and the console `ReportNetworkConfig`
+        // authority use two codes for the same machine-level lock.
+        case 'edit_locked':
+        case 'edit_locked_by_console':
+            return 'edit_locked_by_console'
         case 'managed_config_invalid':
             return 'validation'
         // `restful/auth.rs` emits this exact code; without it the message
@@ -306,6 +318,14 @@ export function classifyApiError(payload: ApiErrorPayload): ApiErrorKind {
     if (/^delete_managed_by_console(?:\b|:)/i.test(message.trim())) {
         return 'delete_managed_by_console'
     }
+    // Same shape for the GUI-side edit gate (`save_network_config` returns the
+    // bare code; the console-side authority returns `edit_locked` over RPC).
+    if (/^edit_locked_by_console(?:\b|:)/i.test(message.trim())) {
+        return 'edit_locked_by_console'
+    }
+    if (/^edit_locked(?:\b|:)/i.test(message.trim())) {
+        return 'edit_locked_by_console'
+    }
     return 'unknown'
 }
 
@@ -316,6 +336,9 @@ const API_ERROR_I18N_KEYS: Record<Exclude<ApiErrorKind, 'unknown' | 'validation'
     revision_conflict: 'web.device_management.error_revision_conflict',
     ownership_conflict: 'web.device_management.error_ownership_conflict',
     delete_managed_by_console: 'web.device_management.delete_managed_by_console',
+    // Code is `edit_locked_by_console`; key stays `edit_managed_by_console`
+    // (console-owned wording, shared with the read-only editor tooltip).
+    edit_locked_by_console: 'web.device_management.edit_managed_by_console',
     unauthorized: 'web.device_management.error_unauthorized',
     db_error: 'web.device_management.error_db',
     internal_error: 'web.device_management.error_internal',
@@ -406,6 +429,8 @@ export interface DeviceInfo {
     os_type?: string;
     /** Heartbeat B6 phase-2 OS wiring signal; unset on older clients. */
     magic_dns_os_wired?: boolean | null;
+    /** Machine-level client-edit lock (devices.local_edit_locked). */
+    local_edit_locked?: boolean;
 }
 
 /** Archive row from `/api/v1/devices` (offline devices + display aliases). */
@@ -413,6 +438,8 @@ export interface DeviceArchiveRow {
     device_id: string;
     hostname: string;
     display_name?: string;
+    /** Machine-level client-edit lock (devices.local_edit_locked). */
+    local_edit_locked?: boolean;
     last_easytier_version?: string;
     last_client_url?: string;
     last_seen_at?: number;
@@ -493,6 +520,7 @@ export function mergeDevicesWithArchive(
             reported_hostname: reported,
             display_name: alias || undefined,
             hostname: alias || reported,
+            local_edit_locked: archiveById.get(machineId)?.local_edit_locked ?? false,
             online: true,
         });
     }
@@ -512,6 +540,7 @@ export function mergeDevicesWithArchive(
             hostname: alias || reported,
             reported_hostname: reported,
             display_name: alias || undefined,
+            local_edit_locked: row.local_edit_locked ?? false,
             public_ip: addr.public_ip,
             client_url: addr.client_url,
             running_network_count: 0,

@@ -595,6 +595,66 @@ describe('RemoteManagement config load failure reporting', () => {
   })
 })
 
+describe('RemoteManagement edit authority (machine-level local_edit_locked)', () => {
+  it('renders Web source read-only and hides mutating toolbar when editAuthority is console', async () => {
+    const config = makeFlagConfig()
+    const api = makeApi({ config, source: 2 })
+    const wrapper = await mountRemote(api, { editAuthority: 'console' })
+    try {
+      await enterCombinedConfig(wrapper)
+      const configStub = wrapper.find('[data-stub="config"]')
+      expect(configStub.exists()).toBe(true)
+      expect(configStub.attributes('data-readonly')).toBe('true')
+      // Mutating toolbar actions are hidden for a console-locked Web row.
+      expect(
+        wrapper.find('button[data-label="web.device_management.edit_as_file"]').exists(),
+      ).toBe(false)
+      expect(
+        wrapper.find('button[data-label="web.device_management.import_config"]').exists(),
+      ).toBe(false)
+      // Export stays available (read-only, harmless).
+      expect(
+        wrapper.find('button[data-label="web.device_management.export_config"]').exists(),
+      ).toBe(true)
+    } finally {
+      wrapper.unmount()
+    }
+  })
+
+  it('keeps User source editable when editAuthority is console', async () => {
+    const config = makeFlagConfig()
+    const api = makeApi({ config, source: 1 })
+    const wrapper = await mountRemote(api, { editAuthority: 'console' })
+    try {
+      await enterCombinedConfig(wrapper)
+      const configStub = wrapper.find('[data-stub="config"]')
+      expect(configStub.exists()).toBe(true)
+      expect(configStub.attributes('data-readonly')).toBe('false')
+      expect(
+        wrapper.find('button[data-label="web.device_management.edit_as_file"]').exists(),
+      ).toBe(true)
+    } finally {
+      wrapper.unmount()
+    }
+  })
+
+  it('keeps Web source editable when editAuthority is local (lock off)', async () => {
+    const config = makeFlagConfig()
+    const api = makeApi({ config, source: 2 })
+    const wrapper = await mountRemote(api, { editAuthority: 'local' })
+    try {
+      await enterCombinedConfig(wrapper)
+      const configStub = wrapper.find('[data-stub="config"]')
+      expect(configStub.attributes('data-readonly')).toBe('false')
+      expect(
+        wrapper.find('button[data-label="web.device_management.edit_as_file"]').exists(),
+      ).toBe(true)
+    } finally {
+      wrapper.unmount()
+    }
+  })
+})
+
 describe('RemoteManagement delete authority', () => {
   it('grays out delete for Web source when deleteAuthority is console', async () => {
     const config = makeFlagConfig()

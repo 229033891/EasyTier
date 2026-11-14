@@ -782,6 +782,25 @@ impl SessionRpcService {
                 });
         }
 
+        // Machine-level client-edit lock (devices.local_edit_locked). Unknown /
+        // read failure = unlocked (fail-open): old semantics were editable and
+        // the console `ReportNetworkConfig` gate remains the authority.
+        match storage
+            .db()
+            .get_device_local_edit_locked(user_id, machine_id)
+            .await
+        {
+            Ok(locked) => response.local_edit_locked = locked.unwrap_or(false),
+            Err(error) => {
+                tracing::warn!(
+                    user_id,
+                    %machine_id,
+                    ?error,
+                    "failed to load local_edit_locked for heartbeat"
+                );
+            }
+        }
+
         response
     }
 
@@ -841,6 +860,36 @@ impl SessionRpcService {
         }
         if req.user_token.trim() != session_token.trim() {
             return invalid("user_token mismatch");
+        }
+
+        // Authoritative client-edit gate: when the machine-level lock is on,
+        // the console is the single writer of web-owned configs and client
+        // pushes are rejected regardless of client capability (mixed-version
+        // backstop for clients that did not surface the heartbeat flag).
+        match storage
+            .db()
+            .get_device_local_edit_locked(user_id, machine_id)
+            .await
+        {
+            Ok(Some(true)) => {
+                tracing::info!(
+                    user_id,
+                    %machine_id,
+                    "client edit rejected: local_edit_locked"
+                );
+                return conflict("edit_locked", None);
+            }
+            // Fail-open on unknown/read error, mirroring the heartbeat flag:
+            // old semantics were editable and the DB read is best-effort here.
+            Ok(_) => {}
+            Err(error) => {
+                tracing::warn!(
+                    user_id,
+                    %machine_id,
+                    ?error,
+                    "failed to load local_edit_locked for ReportNetworkConfig"
+                );
+            }
         }
         let Some(config) = req.config else {
             return invalid("config missing");
@@ -1963,6 +2012,83 @@ mod tests {
                         + webhook_validation::VALIDATION_RETRY_MS
                 )
         );
+    }
+
+    /// The console-side gate is the *authoritative* enforcement of
+    /// `devices.local_edit_locked`; the heartbeat flag is only advisory, so an
+    /// old build (or a client that raced the flag) must still be rejected here.
+    #[tokio::test]
+    async fn report_network_config_rejects_when_local_edit_locked() {
+        use easytier::common::config::NetworkConfig;
+
+        let storage = Storage::new(crate::db::Db::memory_db().await);
+        let token = "edit-lock-report";
+        let user_id = storage.db().auto_create_user(token).await.unwrap().id;
+        let machine_id = uuid::Uuid::new_v4();
+        let instance_id = uuid::Uuid::new_v4();
+        let client_url: url::Url = "udp://127.0.0.1:22020".parse().unwrap();
+
+        let mut data = SessionData::new(
+            storage.weak_ref(),
+            client_url.clone(),
+            None,
+            Arc::new(FeatureFlags::default()),
+            Arc::new(crate::webhook::WebhookConfig::new(
+                None, None, None, None, None,
+            )),
+            Arc::new(MachineSessionIndex::new()),
+        );
+        data.storage_token = Some(StorageToken {
+            token: token.to_string(),
+            client_url,
+            machine_id,
+            user_id,
+        });
+        data.auth_state = SessionAuthState::Authorized;
+        let service = SessionRpcService {
+            data: Arc::new(RwLock::new(data)),
+            heartbeat_policy: HeartbeatPolicy::default(),
+        };
+
+        let report = || ReportNetworkConfigRequest {
+            machine_id: Some(machine_id.into()),
+            user_token: token.to_string(),
+            config: Some(NetworkConfig {
+                instance_id: Some(instance_id.to_string()),
+                network_name: Some("edit-lock".to_string()),
+                ..Default::default()
+            }),
+            expected_config_revision: String::new(),
+            config_revision: "rev-local-1".to_string(),
+        };
+
+        // Lock off (the default, i.e. pre-upgrade semantics): the report gets
+        // past the gate and fails (if at all) on its own CAS/validation rules.
+        let unlocked = service.handle_report_network_config(report()).await;
+        assert_ne!(
+            unlocked.error_code, "edit_locked",
+            "an unlocked machine must not be gated"
+        );
+
+        // Lock on: rejected before the config is even looked at.
+        storage
+            .db()
+            .set_device_local_edit_locked(user_id, machine_id, true)
+            .await
+            .unwrap();
+        let locked = service.handle_report_network_config(report()).await;
+        assert!(!locked.ok);
+        assert_eq!(locked.error_code, "edit_locked");
+        assert_eq!(locked.current_config_revision, "");
+
+        // Clearing the lock re-opens the gate: no sticky state server-side.
+        storage
+            .db()
+            .set_device_local_edit_locked(user_id, machine_id, false)
+            .await
+            .unwrap();
+        let reopened = service.handle_report_network_config(report()).await;
+        assert_ne!(reopened.error_code, "edit_locked");
     }
 
     fn heartbeat_request(token: &str, machine_id: uuid::Uuid) -> HeartbeatRequest {

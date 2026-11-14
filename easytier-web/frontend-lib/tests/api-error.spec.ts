@@ -200,4 +200,36 @@ describe('API error formatting', () => {
       classifyApiError({ message: 'failed to delete_managed_by_console row' }),
     ).toBe('unknown')
   })
+
+  it('maps edit_locked_by_console to localized copy', () => {
+    const t = (key: string) => `i18n:${key}`
+    // GUI `save_network_config` returns the bare code (Tauri error string).
+    expect(classifyApiError({ message: 'edit_locked_by_console' })).toBe(
+      'edit_locked_by_console',
+    )
+    expect(
+      formatApiErrorDetail({ message: 'edit_locked_by_console' }, t),
+    ).toBe('i18n:web.device_management.edit_managed_by_console')
+    // Same code surfaced as a structured REST/RPC payload.
+    expect(
+      formatApiErrorDetail(
+        { response: { data: { message: 'x', code: 'edit_locked_by_console' } } },
+        t,
+      ),
+    ).toBe('i18n:web.device_management.edit_managed_by_console')
+    // Console-side authority sends `edit_locked`; both must localize the same.
+    expect(classifyApiError({ message: 'edit_locked' })).toBe(
+      'edit_locked_by_console',
+    )
+    expect(
+      formatApiErrorDetail(
+        { response: { data: { message: '', code: 'edit_locked' } } },
+        t,
+      ),
+    ).toBe('i18n:web.device_management.edit_managed_by_console')
+    // Mid-sentence mention must not classify as the stable code.
+    expect(
+      classifyApiError({ message: 'failed to apply edit_locked row' }),
+    ).toBe('unknown')
+  })
 })

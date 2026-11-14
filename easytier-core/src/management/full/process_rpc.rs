@@ -1103,6 +1103,13 @@ where
         } else {
             None
         };
+        // Same liveness rule as W: the lock is advisory client-side, and stale
+        // lock state from a dead session must not grey out the editor.
+        let local_edit_locked = connected
+            && report
+                .as_ref()
+                .map(|client| client.local_edit_locked())
+                .unwrap_or(false);
         Ok(GetConfigServerStatusResponse {
             enabled: report.is_some() || status.enabled,
             connected,
@@ -1110,6 +1117,7 @@ where
             connecting_detail,
             web_owned_instance_ids_valid: web_owned.is_some(),
             web_owned_instance_ids: web_owned.unwrap_or_default(),
+            local_edit_locked,
         })
     }
 

@@ -46,6 +46,11 @@ message HeartbeatResponse {
   bool web_owned_instance_ids_valid = 4;
   // All console SQLite rows with source=Web for this machine (enabled+disabled).
   repeated common.UUID web_owned_instance_ids = 5;
+  // Machine-level admin switch (devices.local_edit_locked). When true the
+  // console rejects client-side edits/pushes of web-owned configs for this
+  // machine; clients should treat web-owned configs as read-only. Older
+  // servers leave this false = no lock (old semantics).
+  bool local_edit_locked = 6;
 }
 
 message GetFeatureRequest {}

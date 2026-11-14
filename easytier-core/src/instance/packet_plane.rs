@@ -32,6 +32,40 @@ pub struct CorePacketPlane {
     runtime_config: CoreRuntimeConfigStore,
     proxy_cidr_monitor_available: bool,
     proxy_cidr_route_sync: ArcSwap<ProxyCidrRouteSyncStatus>,
+    underlay_exclude_state: ArcSwap<UnderlayExcludeState>,
+}
+
+/// Mirror of the installer's physical default route snapshot (the host
+/// crate's `PhysicalDefaultRoute`, mirrored as plain data so `easytier-core`
+/// never depends back on the host crate). Cleanup must delete with the
+/// **same** via the installer used: stop-time re-resolution fails once the
+/// network is down, and Windows identifies the route by `ifindex + gateway`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct UnderlayExcludeViaMirror {
+    pub ifindex: u32,
+    pub ifname: String,
+    pub gateway: Option<IpAddr>,
+}
+
+/// What the desktop underlay-exclude installer currently believes is pinned
+/// on the physical interface: the installed host routes plus the via used
+/// for each family. Published incrementally after every successful route
+/// add/remove, so a stop-time cleanup can uninstall even when the desired
+/// set has already drained (peers gone).
+///
+/// Abort window (default scheme, roadmap §4): during a single
+/// `add_*_host_route().await` the published `installed` is a **subset** of
+/// the kernel — an abort landing exactly there loses that one entry's
+/// accounting. Incremental publishing keeps the window at one entry instead
+/// of the whole reconcile batch; the "publish intent first" alternative in
+/// roadmap §4 closes it entirely. Remove tolerates NotFound, so transient
+/// over-reporting is harmless — do not claim stronger guarantees than the
+/// implemented scheme in code or docs.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct UnderlayExcludeState {
+    pub installed: BTreeSet<IpAddr>,
+    pub ipv4_via: Option<UnderlayExcludeViaMirror>,
+    pub ipv6_via: Option<UnderlayExcludeViaMirror>,
 }
 
 impl CorePacketPlane {
@@ -45,6 +79,7 @@ impl CorePacketPlane {
             runtime_config,
             proxy_cidr_monitor_available,
             proxy_cidr_route_sync: ArcSwap::from_pointee(ProxyCidrRouteSyncStatus::default()),
+            underlay_exclude_state: ArcSwap::from_pointee(UnderlayExcludeState::default()),
         }
     }
 
@@ -100,6 +135,23 @@ impl CorePacketPlane {
 
     pub fn proxy_cidr_route_sync_status(&self) -> ProxyCidrRouteSyncStatus {
         self.proxy_cidr_route_sync.load_full().as_ref().clone()
+    }
+
+    /// Publish the underlay-exclude installer's current view. Called after
+    /// every successful route add/remove (and after via switches), not once
+    /// per reconcile batch: the updater task is aborted on stop, and an abort
+    /// between "route installed" and "state published" must not widen the
+    /// loss window beyond a single entry.
+    pub fn report_underlay_exclude_state(&self, state: UnderlayExcludeState) {
+        self.underlay_exclude_state.store(Arc::new(state));
+    }
+
+    /// Installed underlay-exclude host routes + via snapshots, for the
+    /// stop-time cleanup. Defaults to empty: hosts that never ran the
+    /// installer (mobile / no-TUN runtimes) get a no-op cleanup instead of
+    /// the old "re-collect desired and hope" behavior.
+    pub fn underlay_exclude_state(&self) -> UnderlayExcludeState {
+        self.underlay_exclude_state.load_full().as_ref().clone()
     }
 
     pub fn report_proxy_cidr_route_sync(
@@ -260,6 +312,19 @@ pub(crate) fn needs_underlay_excludes(
         let on_link = local_nets.iter().any(|n| n.contains(v4));
         covered && !on_link
     })
+}
+
+#[cfg(test)]
+mod underlay_exclude_state_tests {
+    use super::*;
+
+    #[test]
+    fn default_state_installs_nothing() {
+        let state = UnderlayExcludeState::default();
+        assert!(state.installed.is_empty());
+        assert!(state.ipv4_via.is_none());
+        assert!(state.ipv6_via.is_none());
+    }
 }
 
 #[cfg(test)]

@@ -513,6 +513,7 @@ impl WebClientService for NearbyWebClientService {
             connecting_detail: String::new(),
             web_owned_instance_ids_valid: false,
             web_owned_instance_ids: Vec::new(),
+            local_edit_locked: false,
         })
     }
 

@@ -1555,6 +1555,61 @@ impl Db {
         Ok(())
     }
 
+    /// Set or clear the machine-level client-edit lock for a device archive row.
+    ///
+    /// When locked, the console rejects client-side edits/pushes of web-owned
+    /// configs for this device (heartbeat flag + `ReportNetworkConfig` gate).
+    /// Creates a stub archive row when the device has not been upserted yet,
+    /// mirroring `set_device_display_name`; never touches `display_name`.
+    /// The REST layer rejects unknown device ids before calling this, so a stub
+    /// only happens for a live device whose first heartbeat has not archived yet.
+    pub async fn set_device_local_edit_locked(
+        &self,
+        user_id: UserIdInDb,
+        device_id: Uuid,
+        locked: bool,
+    ) -> Result<(), DbErr> {
+        let now = chrono::Local::now().fixed_offset();
+        sqlx::query(
+            r#"
+            INSERT INTO devices (
+                user_id, device_id, hostname, display_name, local_edit_locked,
+                last_easytier_version, last_client_url, last_seen_at, create_time, update_time
+            ) VALUES (?, ?, '', '', ?, '', '', 0, ?, ?)
+            ON CONFLICT(user_id, device_id) DO UPDATE SET
+                local_edit_locked = excluded.local_edit_locked,
+                update_time = excluded.update_time
+            "#,
+        )
+        .bind(user_id)
+        .bind(device_id.to_string())
+        .bind(locked)
+        .bind(now)
+        .bind(now)
+        .execute(&self.db)
+        .await
+        .map_err(sqlx_db_error)?;
+        Ok(())
+    }
+
+    /// Current client-edit lock for a device. `None` when the device has no
+    /// archive row yet (treated as unlocked by callers).
+    pub async fn get_device_local_edit_locked(
+        &self,
+        user_id: UserIdInDb,
+        device_id: Uuid,
+    ) -> Result<Option<bool>, DbErr> {
+        let row: Option<(i64,)> = sqlx::query_as(
+            "SELECT local_edit_locked FROM devices WHERE user_id = ? AND device_id = ?",
+        )
+        .bind(user_id)
+        .bind(device_id.to_string())
+        .fetch_optional(&self.db)
+        .await
+        .map_err(sqlx_db_error)?;
+        Ok(row.map(|(flag,)| flag != 0))
+    }
+
     /// Upsert a user-scoped network credential (by network_name).
     pub async fn upsert_network_credential(
         &self,
@@ -2633,6 +2688,74 @@ mod tests {
             .expect("stub archive row");
         assert_eq!(stub.display_name, "stub-alias");
         assert_eq!(stub.hostname, "");
+    }
+
+    #[tokio::test]
+    async fn device_local_edit_lock_roundtrip_and_upsert_neutral() {
+        let db = Db::memory_db().await;
+        let user_id = db
+            .auto_create_user("device-edit-lock-user")
+            .await
+            .unwrap()
+            .id;
+        let device_id = uuid::Uuid::new_v4();
+
+        // No archive row yet → unknown = unlocked (heartbeat fail-open).
+        assert_eq!(
+            db.get_device_local_edit_locked(user_id, device_id)
+                .await
+                .unwrap(),
+            None
+        );
+
+        // Setting the lock creates a stub archive row, like the display alias.
+        db.set_device_local_edit_locked(user_id, device_id, true)
+            .await
+            .unwrap();
+        assert_eq!(
+            db.get_device_local_edit_locked(user_id, device_id)
+                .await
+                .unwrap(),
+            Some(true)
+        );
+        // Lock upsert must not clobber the display alias (and vice versa).
+        db.set_device_display_name(user_id, device_id, "EDGE-1")
+            .await
+            .unwrap();
+
+        // Heartbeat archive upsert is lock-neutral (ON CONFLICT does not touch it).
+        db.upsert_device(
+            user_id,
+            device_id,
+            "host-b",
+            "2.7.0",
+            "udp://127.0.0.1:22022",
+            1_700_000_200,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            db.get_device_local_edit_locked(user_id, device_id)
+                .await
+                .unwrap(),
+            Some(true)
+        );
+
+        // Unlock round trip; alias survives both directions.
+        db.set_device_local_edit_locked(user_id, device_id, false)
+            .await
+            .unwrap();
+        assert_eq!(
+            db.get_device_local_edit_locked(user_id, device_id)
+                .await
+                .unwrap(),
+            Some(false)
+        );
+        let devices = db.list_user_devices(user_id).await.unwrap();
+        assert_eq!(devices.len(), 1);
+        assert_eq!(devices[0].display_name, "EDGE-1");
+        assert!(!devices[0].local_edit_locked);
+        assert_eq!(devices[0].hostname, "host-b");
     }
 
     #[tokio::test]

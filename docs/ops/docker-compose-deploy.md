@@ -3,7 +3,7 @@
 ## Status
 
 - Status: **Ops**
-- 最近审阅：2026-10-29（飞牛 FNNAS 现网路径：`/vol1/1000/docker/et`，容器 `fnnas_et`）
+- 最近审阅：2026-11-14（新增 §2.7 卸载与残留路由清理；飞牛现网路径：`/vol1/1000/docker/et`，容器 `fnnas_et`）
 - 索引：[`../README.md`](../README.md)
 - 配套：仓库根目录 [`docker-compose.yml`](../../docker-compose.yml)
 
@@ -156,6 +156,76 @@ sudo docker exec fnnas_et ET-core -V
 
 若还跑了 `console` profile，加上 `--profile console`。`config/` 与控制台数据卷不会被覆盖。南大镜像尚未同步新 tag 时，可临时改 `ghcr.io/229033891/et:v2.7.12` 再 pull。
 
+### 2.7 卸载（含残留路由清理）
+
+> **Docker 卸载 ≠ 卸干净。** `host` 网络 + `privileged` 的节点会往**宿主机**主路由表写 `/32` 排除路由，实例停止时清理路径可能漏删（缺陷与现场见 [`../roadmap/underlay-exclude-onlink-filter.md`](../roadmap/underlay-exclude-onlink-filter.md) §2.2）。卸完**必须**跑第 3 步。
+
+**1) 备份配置（含节点身份，删了就换 peer id）**
+
+```bash
+cd /vol1/1000/docker/et
+sudo tar czf /vol1/1000/docker/et-config-backup-$(date +%F).tgz -C /vol1/1000/docker/et config
+sudo ls -lh /vol1/1000/docker/et-config-backup-*.tgz        # 必须非空；0 字节说明没打进去
+sudo tar tzf /vol1/1000/docker/et-config-backup-*.tgz | head  # 应列出 config/ 与 *.toml
+```
+
+**2) 停容器 + 删项目（不动镜像以外的宿主机资源）**
+
+```bash
+cd /vol1/1000/docker/et && sudo docker compose --profile console down
+sudo docker ps -a                                   # 应无 fnnas_et / et-node
+sudo docker image ls | grep '229033891/et'           # 要彻底清：sudo docker image rm <ID>
+```
+
+`down` 回 `WARN[...] No resource found to remove for project "et"` **属正常** —— 说明容器早已不存在，不用处理。
+
+**3) 清残留路由（关键，`down` 之后马上做）**
+
+```bash
+# ① 先看有没有：形如 x.x.x.x/32 via <物理网关> dev <物理网卡> proto static metric 1
+#    （只查 host route：/0 默认路由同样是「via 网关 + metric 1」，不加 /32|/128 过滤会误报）
+ip route show | grep -E '/(32|128) via '
+
+# ② 留档，便于回滚
+ip route show | grep -E '/(32|128) via ' | sudo tee /vol1/1000/docker/et-routes-before-cleanup.txt
+
+# ③ 删除（示例：网关 192.168.10.1 / 网卡 ens256，按 ① 的实测结果替换）
+for h in 192.168.10.96 192.168.10.101 192.168.10.201 192.168.10.254 ; do
+  sudo ip route del $h/32 via 192.168.10.1 dev ens256 metric 1
+done
+# 公网条目同样是 ET 残留（含 config-server），一并清：
+for h in 43.154.13.211 101.43.96.62 124.222.29.94 172.25.0.1 ; do
+  sudo ip route del $h/32 via 192.168.10.1 dev ens256 metric 1
+done
+
+# ④ 校验：同网段应回到直连（不再 via 网关）
+ip route get 192.168.10.101
+ip route show | grep -E '/(32|128) via '    # ET 残留应为 0；/0 默认路由等非 host route 不算
+```
+
+**判定为 ET 残留的依据（三条同时成立才动手）：**
+
+| 判据 | 说明 |
+|---|---|
+| 形如 `/32 via <物理默认网关> dev <物理网卡> proto static metric 1` | 与 `add_ipv4_host_route(ip, via, Some(1))` 的 netlink 参数逐字段一致（`easytier/src/common/ifcfg/netlink.rs:578-596`） |
+| `/etc`、`/etc/network`、`/etc/netplan`、`/etc/systemd/network` 里 `grep` 不到这些 IP | 无持久化配置来源 ⇒ 纯运行时残留 |
+| 集合里含 ET 控制台 / peer 的公网 IP | ET 特有特征，NAS 网络配置不会给公网 IP 单独钉 `/32` |
+
+**⚠️ 不要动的：** `ip rule` 的 `from <IP> lookup <10/11>` 与 `table 10/11` 里的 `192.168.10.0/24 dev ens192|ens256 proto static scope link` —— ET 只写 `RT_TABLE_MAIN`，**从不建 `ip rule` / 自定义表**，那些是飞牛自身的（同网段）双网卡策略路由。
+
+**4) 重启自证（可选但推荐）**
+
+残留无持久化来源 ⇒ 重启后应全部消失。重启再查 3-① 若仍有 `/32 via <网关>`，说明来源不是 ET（那时别删，回查 NAS 网络配置）。
+
+**5) 删部署目录 + 控制台收尾**
+
+```bash
+sudo rm -rf /vol1/1000/docker/et            # 备份 tgz 已在 /vol1/1000/docker/ 保留
+```
+
+- 到控制台设备列表删掉这台机的**孤儿设备记录**（旧 peer id 随容器消失，否则长期离线挂着）；
+- 备份里的 `*.toml` 含网络名 / 密钥类内容，别放共享目录；确认不再重装后可按留存期删除。
+
 ---
 
 ## 3. 飞牛 NAS（FNNAS 现网实装）
@@ -188,6 +258,7 @@ sudo find /vol1 -maxdepth 5 -path '*/docker/*/docker-compose.yml' 2>/dev/null
 4. **还要控制台**：若 UI 支持 profile，勾选 `console`；否则 SSH 执行 §2.3  
 5. 节点连**远程**控制台时，无需在 NAS 上起 `console`  
 6. 核对版本：`sudo docker exec fnnas_et ET-core -V`（或 `ET-core --version`）
+7. **卸载**（含必须做的残留路由清理）：见 §2.7 —— 只 `docker compose down` 会留下 `/32 via <网关> metric 1`
 
 ---
 
@@ -202,6 +273,9 @@ sudo find /vol1 -maxdepth 5 -path '*/docker/*/docker-compose.yml' 2>/dev/null
 | `curl: (18) HTTP/2 stream ...` / 脚本未下完 | GitHub raw 不稳定 | `--http1.1`，或 `ghfast.top` 镜像；或跳过脚本直接 §2.6 |
 | `curl \| bash` 长时间无输出 | `-s` 静默 + 网络慢 | 去掉 `-s`，或先下到 `/tmp` 再 `bash` |
 | 误建 `udp`、`"22020` 等目录 | 旧版 `docker-up.sh` 把 ports 当成 volumes | 删掉误建目录；用已修复脚本（仅解析 `volumes:`） |
+| 卸载时 `down` 报 `No resource found to remove for project "et"` | 容器/网络已不存在 | 正常，无需处理；继续走 §2.7 第 3 步清残留路由 |
+| **卸载后 `ip route` 仍有 `/32 via <网关> proto static metric 1`** | ET 排除路由清理路径漏删（`host` 网络写到宿主机主表） | 按 §2.7 第 3 步判定并删除；不动 `ip rule` / `table 10\|11` |
+| 卸载后重装，控制台多出一台离线设备 | `config/` 被删 ⇒ 换了节点身份 | 旧记录在控制台手动删除；要保身份就别删 `config/` |
 
 ---
 

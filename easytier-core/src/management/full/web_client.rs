@@ -489,6 +489,9 @@ struct WebClientController {
     /// Set after the first successful heartbeat RPC (revision may still be None).
     first_heartbeat_seen: AtomicBool,
     first_heartbeat_notify: Notify,
+    /// Machine-level client-edit lock from the last heartbeat (advisory gate;
+    /// the console `ReportNetworkConfig` gate is authoritative).
+    local_edit_locked: AtomicBool,
 }
 
 /// A `config_revision` minted for a local report that has no definitive answer yet.
@@ -649,6 +652,29 @@ impl WebClientController {
             .map(|ids| ids.iter().map(ToString::to_string).collect())
     }
 
+    /// Cache the machine-level client-edit lock from a heartbeat.
+    ///
+    /// Heartbeats repeat the same value every round; only wake the UI on an
+    /// actual transition so a locked/unlocked editor does not re-render on
+    /// every beat.
+    fn store_heartbeat_local_edit_locked(&self, locked: bool) {
+        if self.local_edit_locked.swap(locked, Ordering::AcqRel) != locked {
+            config_server_status::notify_ui();
+        }
+    }
+
+    /// Reset the lock when the session ends: `false` also covers "unknown",
+    /// and the console gate stays authoritative for pushes.
+    fn clear_local_edit_locked(&self) {
+        if self.local_edit_locked.swap(false, Ordering::AcqRel) {
+            config_server_status::notify_ui();
+        }
+    }
+
+    fn cached_local_edit_locked(&self) -> bool {
+        self.local_edit_locked.load(Ordering::Acquire)
+    }
+
     fn persist_cached_revision(&self) {
         let revision = self.cached_revision();
         self.persist_revision_unlocked(revision.as_deref());
@@ -757,6 +783,7 @@ impl<F> WebClient<F> {
             pending_report: StdMutex::new(std::collections::HashMap::new()),
             first_heartbeat_seen: AtomicBool::new(false),
             first_heartbeat_notify: Notify::new(),
+            local_edit_locked: AtomicBool::new(false),
         });
         let connected = Arc::new(AtomicBool::new(false));
         // Install the report client before advertising enabled status so
@@ -855,12 +882,21 @@ impl config_server_client::ConfigServerReportClient for WebClientReportFacade {
         self.controller.cached_web_owned_instance_ids()
     }
 
+    fn local_edit_locked(&self) -> bool {
+        self.controller.cached_local_edit_locked()
+    }
+
     async fn report_network_config(
         &self,
         config: NetworkConfig,
     ) -> Result<(), ReportNetworkConfigError> {
         if !self.is_connected() {
             return Err(ReportNetworkConfigError::NotConnected);
+        }
+        // Advisory gate from the last heartbeat; the console `ReportNetworkConfig`
+        // handler rejects authoritatively even if this client missed the flag.
+        if self.controller.cached_local_edit_locked() {
+            return Err(ReportNetworkConfigError::EditLocked);
         }
         let rpc = lock_mutex(&self.controller.active_rpc)
             .clone()
@@ -897,32 +933,38 @@ impl config_server_client::ConfigServerReportClient for WebClientReportFacade {
         }
         let current = (!response.current_config_revision.is_empty())
             .then(|| response.current_config_revision.clone());
-        match response.error_code.as_str() {
-            // The console owns the revision; refresh our cache so the caller can
-            // re-read the current config and retry against it.
-            "managed_config_revision_conflict" => {
-                self.controller.clear_pending_report(&instance_id);
-                self.controller.store_local_revision(current.clone());
-                Err(ReportNetworkConfigError::RevisionConflict { current })
-            }
-            "managed_config_ownership_conflict" => {
-                self.controller.clear_pending_report(&instance_id);
-                self.controller.store_local_revision(current);
-                Err(ReportNetworkConfigError::OwnershipConflict)
-            }
-            "not_authorized" => {
-                self.controller.clear_pending_report(&instance_id);
-                Err(ReportNetworkConfigError::NotAuthorized)
-            }
-            other => {
-                self.controller.clear_pending_report(&instance_id);
-                Err(ReportNetworkConfigError::Invalid(if other.is_empty() {
-                    "unknown report failure".to_owned()
-                } else {
-                    other.to_owned()
-                }))
-            }
+        // Both conflict codes make the console the source of truth for the
+        // revision; refresh our cache so the caller can re-read and retry
+        // against it. Every other failure only drops the pending marker.
+        self.controller.clear_pending_report(&instance_id);
+        if matches!(
+            response.error_code.as_str(),
+            "managed_config_revision_conflict" | "managed_config_ownership_conflict"
+        ) {
+            self.controller.store_local_revision(current.clone());
         }
+        Err(report_error_from_code(&response.error_code, current))
+    }
+}
+
+/// Map a failed `ReportNetworkConfigResponse.error_code` to the typed error.
+///
+/// Split out from the RPC path so the wire contract stays unit-testable: the
+/// console sends an empty `message`, so a missing arm silently degrades to
+/// `Invalid("<code>")` and leaks a bare code into GUI copy.
+fn report_error_from_code(code: &str, current: Option<String>) -> ReportNetworkConfigError {
+    match code {
+        // The console owns the revision; the caller can reload and retry.
+        "managed_config_revision_conflict" => {
+            ReportNetworkConfigError::RevisionConflict { current }
+        }
+        "managed_config_ownership_conflict" => ReportNetworkConfigError::OwnershipConflict,
+        "not_authorized" => ReportNetworkConfigError::NotAuthorized,
+        // Authoritative rejection from `handle_report_network_config` when the
+        // console switched `local_edit_locked` on for this machine.
+        config_server_client::error_code::EDIT_LOCKED => ReportNetworkConfigError::EditLocked,
+        "" => ReportNetworkConfigError::Invalid("unknown report failure".to_owned()),
+        other => ReportNetworkConfigError::Invalid(other.to_owned()),
     }
 }
 
@@ -1045,6 +1087,7 @@ async fn web_client_routine(
             // Invalidate prior-session W before advertising connected — otherwise
             // GetConfigServerStatus can prune GUI cache from a stale keep-set.
             controller.clear_web_owned_instance_ids();
+            controller.clear_local_edit_locked();
             connected.store(true, Ordering::Release);
             config_server_status::mark_connected();
             tracing::info!("connected to config server (secure tunnel)");
@@ -1053,6 +1096,7 @@ async fn web_client_routine(
             session.wait().await;
             connected.store(false, Ordering::Release);
             controller.clear_web_owned_instance_ids();
+            controller.clear_local_edit_locked();
             config_server_status::mark_disconnected();
             // Successful session ended (server close / network drop). Back off
             // with mild escalation + jitter before hot-reconnecting.
@@ -1095,6 +1139,7 @@ async fn web_client_routine(
         // Invalidate prior-session W before advertising connected — otherwise
         // GetConfigServerStatus can prune GUI cache from a stale keep-set.
         controller.clear_web_owned_instance_ids();
+        controller.clear_local_edit_locked();
         connected.store(true, Ordering::Release);
         config_server_status::mark_connected();
         // Session is up: this is the point where dial-failure exponential backoff resets.
@@ -1105,6 +1150,7 @@ async fn web_client_routine(
         session.wait().await;
         connected.store(false, Ordering::Release);
         controller.clear_web_owned_instance_ids();
+        controller.clear_local_edit_locked();
         config_server_status::mark_disconnected();
         let delay = note_session_end(&mut session_end_streak, session_started.elapsed());
         tracing::info!(
@@ -1288,6 +1334,7 @@ impl WebClientSession {
                                 .copied()
                                 .map(uuid::Uuid::from),
                         );
+                        controller.store_heartbeat_local_edit_locked(response.local_edit_locked);
                         controller.mark_first_heartbeat_seen();
                         let (next_policy, adjusted) = HeartbeatPolicy::from_response(&response);
                         if adjusted {
@@ -1803,6 +1850,7 @@ mod tests {
             pending_report: StdMutex::new(std::collections::HashMap::new()),
             first_heartbeat_seen: AtomicBool::new(false),
             first_heartbeat_notify: Notify::new(),
+            local_edit_locked: AtomicBool::new(false),
         }
     }
 
@@ -1811,6 +1859,62 @@ mod tests {
         // Fail-safe default: claiming support with an always-empty disabled list
         // would let the console auto-run intentionally stopped instances.
         assert!(!ImmediateStateChangeBackend.support_user_disabled_instances());
+    }
+
+    #[test]
+    fn local_edit_lock_follows_heartbeat_and_session_boundary() {
+        let controller = test_controller();
+        // Unlocked until a heartbeat says otherwise (fail-open, old semantics).
+        assert!(!controller.cached_local_edit_locked());
+        controller.store_heartbeat_local_edit_locked(true);
+        assert!(controller.cached_local_edit_locked());
+        // Heartbeats carry the authoritative value each round.
+        controller.store_heartbeat_local_edit_locked(false);
+        assert!(!controller.cached_local_edit_locked());
+        controller.store_heartbeat_local_edit_locked(true);
+        // Session teardown resets so a reconnect re-learns fresh state.
+        controller.clear_local_edit_locked();
+        assert!(!controller.cached_local_edit_locked());
+    }
+
+    #[test]
+    fn report_error_codes_map_to_typed_variants() {
+        // Wire codes the console actually emits; a missing arm degrades to
+        // `Invalid("<code>")` and leaks a bare code into GUI copy.
+        assert!(matches!(
+            super::report_error_from_code("edit_locked", None),
+            ReportNetworkConfigError::EditLocked
+        ));
+        assert!(matches!(
+            super::report_error_from_code("managed_config_revision_conflict", Some("r1".into())),
+            ReportNetworkConfigError::RevisionConflict { current: Some(current) } if current == "r1"
+        ));
+        assert!(matches!(
+            super::report_error_from_code("managed_config_ownership_conflict", None),
+            ReportNetworkConfigError::OwnershipConflict
+        ));
+        assert!(matches!(
+            super::report_error_from_code("not_authorized", None),
+            ReportNetworkConfigError::NotAuthorized
+        ));
+        // Unknown / empty stay `Invalid` so the raw code is still visible.
+        match super::report_error_from_code("", None) {
+            ReportNetworkConfigError::Invalid(message) => {
+                assert_eq!(message, "unknown report failure")
+            }
+            other => panic!("unexpected {other:?}"),
+        }
+        match super::report_error_from_code("weird_code", None) {
+            ReportNetworkConfigError::Invalid(message) => assert_eq!(message, "weird_code"),
+            other => panic!("unexpected {other:?}"),
+        }
+        // `EditLocked` copy must point at the console, never at a retry.
+        assert!(
+            ReportNetworkConfigError::EditLocked
+                .gui_sync_message()
+                .to_lowercase()
+                .contains("console")
+        );
     }
 
     #[test]

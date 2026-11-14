@@ -405,13 +405,16 @@ message GetConfigServerStatusResponse {
   bool web_owned_instance_ids_valid = 5;
   // Console SQLite Web-source instance ids for this machine (enabled+disabled).
   repeated string web_owned_instance_ids = 6;
+  // Authoritative only while `connected`. Mirrors the heartbeat
+  // `local_edit_locked` flag: web-owned configs are read-only on this client.
+  bool local_edit_locked = 7;
 }
 
 // Push a web-owned NetworkConfig from a GUI/RPC peer to the process that owns
 // the config-server client (normal mode: self; service mode: ET-Gui service).
 // error_code values (stable wire contract):
 //   not_enabled | not_connected | not_authorized | revision_conflict |
-//   ownership_conflict | invalid
+//   ownership_conflict | edit_locked | invalid
 message ReportManagedNetworkConfigRequest { NetworkConfig config = 1; }
 
 message ReportManagedNetworkConfigResponse {

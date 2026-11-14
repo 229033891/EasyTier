@@ -27,6 +27,7 @@ pub mod error_code {
     pub const NOT_AUTHORIZED: &str = "not_authorized";
     pub const REVISION_CONFLICT: &str = "revision_conflict";
     pub const OWNERSHIP_CONFLICT: &str = "ownership_conflict";
+    pub const EDIT_LOCKED: &str = "edit_locked";
     pub const INVALID: &str = "invalid";
 }
 
@@ -45,6 +46,8 @@ pub enum ReportNetworkConfigError {
     Invalid(String),
     #[error("config-server client is not enabled in this process")]
     NotEnabled,
+    #[error("console has locked client-side edits for this machine (local_edit_locked)")]
+    EditLocked,
     #[error(transparent)]
     Rpc(#[from] easytier_proto::rpc_types::error::Error),
 }
@@ -58,6 +61,7 @@ impl ReportNetworkConfigError {
             Self::NotAuthorized => error_code::NOT_AUTHORIZED,
             Self::RevisionConflict { .. } => error_code::REVISION_CONFLICT,
             Self::OwnershipConflict => error_code::OWNERSHIP_CONFLICT,
+            Self::EditLocked => error_code::EDIT_LOCKED,
             Self::Invalid(_) | Self::Rpc(_) => error_code::INVALID,
         }
     }
@@ -70,6 +74,10 @@ impl ReportNetworkConfigError {
             Self::NotAuthorized => "config server rejected the session".to_owned(),
             Self::RevisionConflict { .. } => "managed config revision conflict".to_owned(),
             Self::OwnershipConflict => "managed config ownership conflict".to_owned(),
+            Self::EditLocked => {
+                "editing was disabled by the console for this machine; change it in the web console"
+                    .to_owned()
+            }
             Self::Invalid(message) => message.clone(),
             Self::Rpc(error) => error.to_string(),
         }
@@ -113,6 +121,10 @@ impl ReportNetworkConfigError {
                 "web-owned config saved locally but ownership conflicted on the console; reload from the console"
                     .to_owned()
             }
+            Self::EditLocked => {
+                "this console has locked client-side edits for this device; edit the config in the web console instead"
+                    .to_owned()
+            }
             Self::Invalid(message) if !message.is_empty() => message.clone(),
             other => format!(
                 "web-owned config saved locally but sync failed ({})",
@@ -134,6 +146,7 @@ pub fn gui_sync_message_for_error_code(error_code: &str, message: &str) -> Strin
         error_code::OWNERSHIP_CONFLICT => {
             ReportNetworkConfigError::OwnershipConflict.gui_sync_message()
         }
+        error_code::EDIT_LOCKED => ReportNetworkConfigError::EditLocked.gui_sync_message(),
         _ if !message.is_empty() => message.to_owned(),
         other => format!("web-owned config saved locally but sync failed ({other})"),
     }
@@ -171,6 +184,13 @@ pub trait ConfigServerReportClient: Send + Sync {
     /// rows — safe to prune all GUI `web` cache entries.
     fn web_owned_instance_ids(&self) -> Option<Vec<String>> {
         None
+    }
+
+    /// Machine-level client-edit lock from the last heartbeat of the *current*
+    /// session. Advisory only: `false` also covers "not yet known"; the console
+    /// `ReportNetworkConfig` gate remains the authoritative enforcement.
+    fn local_edit_locked(&self) -> bool {
+        false
     }
 }
 
@@ -274,6 +294,22 @@ mod tests {
         assert_eq!(
             gui_sync_message_for_error_code(error_code::NOT_ENABLED, ""),
             ReportNetworkConfigError::NotEnabled.gui_sync_message()
+        );
+    }
+
+    #[test]
+    fn edit_locked_error_mapping_is_stable() {
+        let locked = ReportNetworkConfigError::EditLocked;
+        let response = locked.into_managed_response();
+        assert!(!response.ok);
+        assert_eq!(response.error_code, error_code::EDIT_LOCKED);
+        assert_eq!(response.current_config_revision, "");
+        // The copy must point the operator at the console, not at a retry.
+        let message = ReportNetworkConfigError::EditLocked.gui_sync_message();
+        assert!(message.to_lowercase().contains("console"));
+        assert_eq!(
+            gui_sync_message_for_error_code(error_code::EDIT_LOCKED, ""),
+            ReportNetworkConfigError::EditLocked.gui_sync_message()
         );
     }
 

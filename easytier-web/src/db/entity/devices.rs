@@ -16,6 +16,9 @@ pub struct Model {
     /// Web-console display alias; empty means fall back to `hostname`.
     #[sea_orm(column_type = "Text")]
     pub display_name: String,
+    /// Machine-level admin switch: when true, the console rejects client-side
+    /// edits/pushes of web-owned configs for this device. SQLite stores 0/1.
+    pub local_edit_locked: bool,
     #[sea_orm(column_type = "Text")]
     pub last_easytier_version: String,
     #[sea_orm(column_type = "Text")]

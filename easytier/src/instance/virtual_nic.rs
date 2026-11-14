@@ -22,7 +22,7 @@ use crate::common::{
 
 use easytier_core::{
     host::packet::{HostPacket, HostPacketReceiver},
-    instance::CorePacketPlane,
+    instance::{CorePacketPlane, UnderlayExcludeState, UnderlayExcludeViaMirror},
     packet::{TAIL_RESERVED_SIZE, ZCPacket, ZCPacketType},
     peers::{FlowHashDispatcher, egress_flow_key_for_payload},
     tunnel::{
@@ -1286,6 +1286,7 @@ impl NicCtx {
                 ifcfg,
                 ifname,
                 net_ns,
+                packet_plane,
                 true,
                 &exclude_desired,
                 exclude_installed,
@@ -1324,6 +1325,7 @@ impl NicCtx {
                 ifcfg,
                 ifname,
                 net_ns,
+                packet_plane,
                 false,
                 &BTreeSet::new(),
                 exclude_installed,
@@ -1346,10 +1348,46 @@ impl NicCtx {
         );
     }
 
+    /// Host-crate mirror of the installer's via: core stores plain data
+    /// (`UnderlayExcludeViaMirror`) so `easytier-core` never depends back on
+    /// this crate's `PhysicalDefaultRoute`.
+    fn mirror_physical_default_route(
+        via: Option<&PhysicalDefaultRoute>,
+    ) -> Option<UnderlayExcludeViaMirror> {
+        via.map(|v| UnderlayExcludeViaMirror {
+            ifindex: v.ifindex,
+            ifname: v.ifname.clone(),
+            gateway: v.gateway,
+        })
+    }
+
+    /// Publish the installer's current view after every route mutation
+    /// (docs/roadmap/underlay-exclude-onlink-filter.md §4 F2, default
+    /// scheme). Window: during each single `add_*_host_route().await` the
+    /// published `installed` is a **subset** of the kernel — an abort landing
+    /// exactly there leaves that one route unaccounted; publishing only at
+    /// the end of a reconcile would widen this to the whole batch. The
+    /// "publish intent first" alternative in §4 closes the window; remove
+    /// tolerates NotFound either way, so transient over-reporting (e.g. a
+    /// remove that later failed) is harmless.
+    fn publish_underlay_exclude_state(
+        packet_plane: &CorePacketPlane,
+        installed: &BTreeSet<IpAddr>,
+        ipv4_via: &Option<PhysicalDefaultRoute>,
+        ipv6_via: &Option<PhysicalDefaultRoute>,
+    ) {
+        packet_plane.report_underlay_exclude_state(UnderlayExcludeState {
+            installed: installed.clone(),
+            ipv4_via: Self::mirror_physical_default_route(ipv4_via.as_ref()),
+            ipv6_via: Self::mirror_physical_default_route(ipv6_via.as_ref()),
+        });
+    }
+
     async fn clear_underlay_exclude_routes(
         ifcfg: &impl IfConfiguerTrait,
         ifname: &str,
         net_ns: &crate::common::netns::NetNS,
+        packet_plane: &CorePacketPlane,
         exclude_installed: &mut BTreeSet<IpAddr>,
         ipv4_physical_default: &mut Option<PhysicalDefaultRoute>,
         ipv6_physical_default: &mut Option<PhysicalDefaultRoute>,
@@ -1358,6 +1396,7 @@ impl NicCtx {
             ifcfg,
             ifname,
             net_ns,
+            packet_plane,
             false,
             &BTreeSet::new(),
             exclude_installed,
@@ -1559,6 +1598,7 @@ impl NicCtx {
         ifcfg: &impl IfConfiguerTrait,
         tun_ifname: &str,
         net_ns: &crate::common::netns::NetNS,
+        packet_plane: &CorePacketPlane,
         enable_excludes: bool,
         desired: &BTreeSet<IpAddr>,
         installed: &mut BTreeSet<IpAddr>,
@@ -1578,6 +1618,7 @@ impl NicCtx {
                 *ipv4_via = None;
                 *ipv6_via = None;
             }
+            Self::publish_underlay_exclude_state(packet_plane, installed, ipv4_via, ipv6_via);
             return;
         }
 
@@ -1661,6 +1702,9 @@ impl NicCtx {
             if v6_changed && !installed.iter().any(|ip| matches!(ip, IpAddr::V6(_))) {
                 *ipv6_via = fresh_v6;
             }
+            // Via switched: republish so the snapshot matches the via that
+            // will be used for the next round of adds/removes.
+            Self::publish_underlay_exclude_state(packet_plane, installed, ipv4_via, ipv6_via);
         }
 
         let to_remove: Vec<_> = installed.difference(desired).copied().collect();
@@ -1686,9 +1730,21 @@ impl NicCtx {
             match result {
                 Ok(()) => {
                     installed.remove(&ip);
+                    Self::publish_underlay_exclude_state(
+                        packet_plane,
+                        installed,
+                        ipv4_via,
+                        ipv6_via,
+                    );
                 }
                 Err(err) if route_remove_already_satisfied(&err) => {
                     installed.remove(&ip);
+                    Self::publish_underlay_exclude_state(
+                        packet_plane,
+                        installed,
+                        ipv4_via,
+                        ipv6_via,
+                    );
                 }
                 Err(err) => tracing::warn!(
                     ?ip,
@@ -1723,9 +1779,21 @@ impl NicCtx {
             match result {
                 Ok(()) => {
                     installed.insert(ip);
+                    Self::publish_underlay_exclude_state(
+                        packet_plane,
+                        installed,
+                        ipv4_via,
+                        ipv6_via,
+                    );
                 }
                 Err(err) if route_add_already_satisfied(&err) => {
                     installed.insert(ip);
+                    Self::publish_underlay_exclude_state(
+                        packet_plane,
+                        installed,
+                        ipv4_via,
+                        ipv6_via,
+                    );
                 }
                 Err(err) => tracing::warn!(
                     ?ip,
@@ -1903,6 +1971,7 @@ impl NicCtx {
                                         &ifcfg,
                                         &ifname,
                                         &net_ns,
+                                        &packet_plane,
                                         &mut exclude_installed,
                                         &mut ipv4_physical_default,
                                         &mut ipv6_physical_default,
@@ -2043,6 +2112,7 @@ impl NicCtx {
                 &ifcfg,
                 &ifname,
                 &net_ns,
+                &packet_plane,
                 &mut exclude_installed,
                 &mut ipv4_physical_default,
                 &mut ipv6_physical_default,

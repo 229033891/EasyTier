@@ -327,6 +327,46 @@ async fn list_network_instance_ids(
 /// Stable error code for i18n (`web.device_management.delete_managed_by_console`).
 const DELETE_MANAGED_BY_CONSOLE: &str = "delete_managed_by_console";
 
+/// Stable error code for i18n (`web.device_management.edit_managed_by_console`).
+const EDIT_LOCKED_BY_CONSOLE: &str = "edit_locked_by_console";
+
+/// Local edit is blocked when the machine-level client-edit lock is on
+/// (`devices.local_edit_locked`, delivered via heartbeat) and the row is
+/// Web-owned. The frontend greys out the editor; this is the hard gate.
+fn local_edit_blocked_by_console(bound: bool, locked: bool, source: Option<ConfigSource>) -> bool {
+    bound && locked && matches!(source, Some(ConfigSource::Web))
+}
+
+/// Probe error meaning "no owner process answers" (service stopped / wrong mode).
+/// The only probe failure that leaves the machine unbound.
+const RPC_CLIENT_UNAVAILABLE: &str = "rpc_client_unavailable";
+
+/// Map a config-server status probe result to `(bound, local_edit_locked)`.
+///
+/// Split out from [`resolve_local_edit_lock`] so the fail direction stays unit
+/// tested: any probe error other than "no owner process" must keep the edit
+/// gate **closed**, mirroring the delete gate. Otherwise a cached-Web row
+/// becomes silently editable during RPC jitter while `save_network_config`
+/// would still reject it.
+fn local_edit_lock_from_status(status: Result<&ConfigServerStatusDto, &str>) -> (bool, bool) {
+    match status {
+        Ok(status) => (status.enabled, status.local_edit_locked),
+        Err(RPC_CLIENT_UNAVAILABLE) => (false, false),
+        Err(_) => (true, true),
+    }
+}
+
+/// Resolve `(bound, local_edit_locked)` for the edit gate.
+///
+/// Bound on `enabled` (not online). RPC jitter other than "no owner process"
+/// fails closed (bound & locked) — mirror the delete gate: a cached-Web row
+/// must not become silently editable mid-jitter, while `rpc_client_unavailable`
+/// (truly no owner) means unbound and unlocked.
+async fn resolve_local_edit_lock(app: &AppHandle) -> (bool, bool) {
+    let status = get_config_server_status(app.clone()).await;
+    local_edit_lock_from_status(status.as_ref().map_err(|error| error.as_str()))
+}
+
 /// Local delete is blocked when config-server is bound and the row is Web-owned.
 ///
 /// `None` source fails open (allow): missing meta must not lock leftover local
@@ -498,6 +538,17 @@ async fn save_network_config(app: AppHandle, cfg: NetworkConfig) -> Result<(), S
         .map_err(|e: uuid::Error| e.to_string())?;
     cfg.validate_for_persist().map_err(|e| e.to_string())?;
     let client_manager = get_client_manager!()?;
+
+    // Console client-edit lock: reject saving a Web-owned config before any
+    // local persist, so the editor stays truthfully read-only.
+    let (bound, locked) = resolve_local_edit_lock(&app).await;
+    if bound && locked {
+        let source = resolve_delete_authority_source(&client_manager, &app, instance_id).await;
+        if local_edit_blocked_by_console(bound, locked, source) {
+            return Err(EDIT_LOCKED_BY_CONSOLE.into());
+        }
+    }
+
     client_manager
         .handle_save_network_config(app.clone(), instance_id, cfg.clone())
         .await
@@ -735,6 +786,109 @@ mod delete_authority_tests {
         assert!(local_delete_blocked_by_console(
             true,
             Some(ConfigSource::Web)
+        ));
+    }
+}
+
+#[cfg(test)]
+mod edit_authority_tests {
+    use super::{
+        ConfigServerStatusDto, RPC_CLIENT_UNAVAILABLE, local_edit_blocked_by_console,
+        local_edit_lock_from_status,
+    };
+    use easytier::common::config::ConfigSource;
+
+    #[test]
+    fn locked_web_blocks_local_edit() {
+        assert!(local_edit_blocked_by_console(
+            true,
+            true,
+            Some(ConfigSource::Web)
+        ));
+    }
+
+    #[test]
+    fn locked_user_stays_editable() {
+        // The machine-level lock only covers console-distributed (Web) configs.
+        assert!(!local_edit_blocked_by_console(
+            true,
+            true,
+            Some(ConfigSource::User)
+        ));
+    }
+
+    #[test]
+    fn lock_requires_bound() {
+        assert!(!local_edit_blocked_by_console(
+            false,
+            true,
+            Some(ConfigSource::Web)
+        ));
+    }
+
+    #[test]
+    fn lock_requires_switch_on() {
+        // Switch off = pre-lock behaviour (client may edit web-owned rows).
+        assert!(!local_edit_blocked_by_console(
+            true,
+            false,
+            Some(ConfigSource::Web)
+        ));
+    }
+
+    #[test]
+    fn unknown_source_fails_open() {
+        // Missing meta must not lock leftover local copies; sticky local `Web`
+        // after a failed owner query still blocks via `Some(Web)`.
+        assert!(!local_edit_blocked_by_console(true, true, None));
+    }
+
+    /// H1 fail-closed: RPC jitter must not make a cached-Web row editable while
+    /// `save_network_config` would still reject the save.
+    #[test]
+    fn probe_failure_keeps_edit_gate_closed() {
+        fn status(enabled: bool, locked: bool) -> ConfigServerStatusDto {
+            ConfigServerStatusDto {
+                enabled,
+                connected: enabled,
+                last_error: String::new(),
+                connecting_detail: String::new(),
+                web_owned_instance_ids_valid: true,
+                web_owned_instance_ids: Vec::new(),
+                local_edit_locked: locked,
+            }
+        }
+
+        // Healthy probe: trust the reported pair as-is.
+        let bound_and_locked = status(true, true);
+        assert_eq!(
+            local_edit_lock_from_status(Ok(&bound_and_locked)),
+            (true, true)
+        );
+        let bound_and_unlocked = status(true, false);
+        assert_eq!(
+            local_edit_lock_from_status(Ok(&bound_and_unlocked)),
+            (true, false)
+        );
+        let unbound = status(false, false);
+        assert_eq!(local_edit_lock_from_status(Ok(&unbound)), (false, false));
+
+        // No owner process at all → unbound and unlocked (local edit allowed).
+        assert_eq!(
+            local_edit_lock_from_status(Err(RPC_CLIENT_UNAVAILABLE)),
+            (false, false)
+        );
+        // Any other probe failure → assume bound + locked (fail closed).
+        assert_eq!(
+            local_edit_lock_from_status(Err("rpc_timeout")),
+            (true, true)
+        );
+        assert_eq!(local_edit_lock_from_status(Err("")), (true, true));
+        // ...and that pair really does block a Web row through the hard gate.
+        assert!(local_edit_blocked_by_console(
+            local_edit_lock_from_status(Err("rpc_timeout")).0,
+            local_edit_lock_from_status(Err("rpc_timeout")).1,
+            Some(ConfigSource::Web),
         ));
     }
 }
@@ -1138,6 +1292,8 @@ struct ConfigServerStatusDto {
     /// Console SQLite Web-source instance ids (enabled+disabled). Empty when
     /// valid and the console has no web rows.
     web_owned_instance_ids: Vec<String>,
+    /// Machine-level client-edit lock (authoritative only while connected).
+    local_edit_locked: bool,
 }
 
 #[tauri::command]
@@ -1164,6 +1320,7 @@ async fn get_config_server_status(app: AppHandle) -> Result<ConfigServerStatusDt
         } else {
             None
         };
+        let local_edit_locked = connected && client.local_edit_locked();
         return Ok(ConfigServerStatusDto {
             enabled: true,
             connected,
@@ -1171,6 +1328,7 @@ async fn get_config_server_status(app: AppHandle) -> Result<ConfigServerStatusDt
             connecting_detail,
             web_owned_instance_ids_valid: web_owned.is_some(),
             web_owned_instance_ids: web_owned.unwrap_or_default(),
+            local_edit_locked,
         });
     }
 
@@ -1205,6 +1363,8 @@ async fn get_config_server_status(app: AppHandle) -> Result<ConfigServerStatusDt
     } else {
         (false, Vec::new())
     };
+    // Same liveness rule as W for the edit lock.
+    let local_edit_locked = response.connected && response.local_edit_locked;
     Ok(ConfigServerStatusDto {
         enabled: response.enabled,
         connected: response.connected,
@@ -1212,6 +1372,7 @@ async fn get_config_server_status(app: AppHandle) -> Result<ConfigServerStatusDt
         connecting_detail,
         web_owned_instance_ids_valid: web_valid,
         web_owned_instance_ids: web_ids,
+        local_edit_locked,
     })
 }
 

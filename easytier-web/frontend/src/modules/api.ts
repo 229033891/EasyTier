@@ -342,6 +342,7 @@ export class ApiClient {
         device_id: string;
         hostname: string;
         display_name?: string;
+        local_edit_locked?: boolean;
         last_easytier_version: string;
         last_client_url: string;
         last_seen_at: number;
@@ -353,6 +354,13 @@ export class ApiClient {
     public async update_device_display_name(deviceId: string, displayName: string): Promise<void> {
         await this.client.put(`/devices/${deviceId}`, {
             display_name: displayName,
+        });
+    }
+
+    /** Toggle the machine-level client-edit lock (devices.local_edit_locked). */
+    public async set_device_local_edit_lock(deviceId: string, locked: boolean): Promise<void> {
+        await this.client.put(`/devices/${deviceId}/local-edit-lock`, {
+            local_edit_locked: locked,
         });
     }
 

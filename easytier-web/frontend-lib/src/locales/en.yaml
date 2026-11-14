@@ -1072,6 +1072,13 @@ web:
     click_to_sort: Click to sort by this column
     belonging_device: Device
     load_list_failed: Failed to load device list
+    local_edit_lock: Client edit lock
+    local_edit_lock_tip: When on, web-console configs are read-only on this device's client; edit them in the web console instead. Applies after the next heartbeat.
+    local_edit_lock_confirm_title: Enable client edit lock?
+    local_edit_lock_confirm_message: Configs distributed by the web console become read-only on this device's client. Locally created configs are not affected.
+    local_edit_lock_on: Client edit lock enabled
+    local_edit_lock_off: Client edit lock disabled
+    local_edit_lock_failed: Failed to update client edit lock
     load_list_retry: Retry
     management: Device Management
     add: Add Device
@@ -1153,6 +1160,7 @@ web:
     delete_network: Delete Network
     delete_network_tip: Permanently delete this network config from the device
     delete_managed_by_console: Managed by the console — delete it there
+    edit_managed_by_console: Managed by the console — edit it in the web console
     confirm_delete_user_source: This network is a device-local (User) config. Deleting it also removes the local copy on the device. Continue?
     residual_device_only: Device-only residual
     residual_db_disabled_running: DB disabled, still running
@@ -1191,6 +1199,7 @@ web:
     save_config_disabled_no_config: No config available to save
     save_config_disabled_meta: Loading permissions — try again in a moment
     save_config_disabled_readonly: This config is read-only and cannot be saved
+    save_config_disabled_edit_locked: Editing was disabled by the console for this device
     confirm_save_takeover_user_source: This network is currently a device-local (User) config. Saving will let the console take ownership (Web source); later local edits may be overwritten by the console. Continue?
     # Tip after console push / hot-patch writes back to the device (separate from local save).
     managed_config_synced_overwrite: Console config synced to this device

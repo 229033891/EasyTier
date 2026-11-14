@@ -70,6 +70,8 @@ struct DeviceArchiveItem {
     hostname: String,
     #[serde(default)]
     display_name: String,
+    #[serde(default)]
+    local_edit_locked: bool,
     last_easytier_version: String,
     last_client_url: String,
     last_seen_at: i64,
@@ -83,6 +85,11 @@ struct ListDevicesJsonResp {
 #[derive(Debug, serde::Deserialize, serde::Serialize)]
 struct UpdateDeviceDisplayNameJsonReq {
     display_name: String,
+}
+
+#[derive(Debug, serde::Deserialize, serde::Serialize)]
+struct UpdateDeviceLocalEditLockJsonReq {
+    local_edit_locked: bool,
 }
 
 #[derive(Debug, serde::Deserialize, serde::Serialize)]
@@ -258,6 +265,7 @@ impl RestfulServer {
                     device_id: d.device_id,
                     hostname: d.hostname,
                     display_name: d.display_name,
+                    local_edit_locked: d.local_edit_locked,
                     last_easytier_version: d.last_easytier_version,
                     last_client_url: d.last_client_url,
                     last_seen_at: d.last_seen_at,
@@ -278,6 +286,46 @@ impl RestfulServer {
 
         let display_name = normalize_device_display_name(&payload.display_name);
         db.set_device_display_name(user.id(), device_id, &display_name)
+            .await
+            .map_err(convert_db_error)?;
+        Ok(())
+    }
+
+    /// Toggle the machine-level client-edit lock. When locked, the console
+    /// rejects client-side edits/pushes of web-owned configs for this device.
+    async fn handle_update_device_local_edit_lock(
+        auth_session: AuthSession,
+        State(client_mgr): AppState,
+        Extension(db): Extension<Db>,
+        Path(device_id): Path<uuid::Uuid>,
+        Json(payload): Json<UpdateDeviceLocalEditLockJsonReq>,
+    ) -> Result<(), HttpHandleError> {
+        let Some(user) = auth_session.user else {
+            return Err((StatusCode::UNAUTHORIZED, other_error("No such user").into()));
+        };
+
+        // `set_device_local_edit_locked` creates a stub archive row when the
+        // device was never upserted (rename uses the same pattern). A stub is
+        // correct for a device that is *online* but has not archived its first
+        // heartbeat yet — the next heartbeat fills hostname/version. For an
+        // unknown id it would instead surface as a hostname-less ghost device
+        // in the offline list, so only accept those two cases.
+        let known_row = db
+            .get_device_local_edit_locked(user.id(), device_id)
+            .await
+            .map_err(convert_db_error)?
+            .is_some();
+        let live_session = client_mgr
+            .get_session_by_machine_id(user.id(), &device_id)
+            .is_some();
+        if !known_row && !live_session {
+            return Err((
+                StatusCode::NOT_FOUND,
+                other_error_with_code("Device not found", "not_found").into(),
+            ));
+        }
+
+        db.set_device_local_edit_locked(user.id(), device_id, payload.local_edit_locked)
             .await
             .map_err(convert_db_error)?;
         Ok(())
@@ -486,6 +534,10 @@ impl RestfulServer {
             .route(
                 "/api/v1/devices/{device-id}",
                 put(Self::handle_update_device_display_name).delete(Self::handle_delete_device),
+            )
+            .route(
+                "/api/v1/devices/{device-id}/local-edit-lock",
+                put(Self::handle_update_device_local_edit_lock),
             )
             .merge(NetworkApi::build_route())
             .merge(peer_history::PeerHistoryApi::build_route())

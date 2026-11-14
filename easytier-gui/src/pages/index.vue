@@ -83,6 +83,8 @@ const aboutVisible = ref(false)
 const modeDialogVisible = ref(false)
 const configServerConnected = ref(false)
 const configServerEnabled = ref(false)
+/** Machine-level client-edit lock (authoritative only while connected). */
+const configServerEditLocked = ref(false)
 const configServerLastError = ref('')
 /** Non-fatal connecting progress (`phase:*`); separate from lastError failures. */
 const configServerConnectingDetail = ref('')
@@ -757,6 +759,7 @@ async function refreshConfigServerConnectionInner() {
       configServerIdleProbeTick = 0
       configServerConnected.value = false
       configServerEnabled.value = false
+      configServerEditLocked.value = false
       configServerLastError.value = ''
       configServerConnectingDetail.value = ''
       configServerProbeError.value = ''
@@ -774,6 +777,8 @@ async function refreshConfigServerConnectionInner() {
     configServerOwnerDown.value = false
     configServerEnabled.value = !!status.enabled
     configServerConnected.value = !!status.connected
+    // Same liveness rule as the backend gate: only trust the lock while connected.
+    configServerEditLocked.value = !!status.connected && !!status.localEditLocked
     if (status.connected) {
       configServerLastError.value = ''
       configServerConnectingDetail.value = ''
@@ -793,10 +798,18 @@ async function refreshConfigServerConnectionInner() {
     // Probe/RPC failure is not the config-server dial error.
     // Keep last known `configServerEnabled` across transient RPC blips so the
     // delete button does not unlock/lock every 1s poll (§1 binding, not online).
+    //
+    // `configServerEditLocked` is deliberately left untouched here too: the
+    // backend `save_network_config` gate is fail-closed on probe errors
+    // (`resolve_local_edit_lock` → bound+locked), so keeping the editor
+    // read-only matches what Save would actually do. Only the two branches
+    // below reset it, and both are cases where the backend fails *open*
+    // (`rpc_client_unavailable` = no owner process at all).
     if (currentMode.value.mode === 'service') {
       const svc = await getServiceStatus().catch(() => null)
       if (svc === 'Stopped' || svc === 'NotInstalled') {
         configServerEnabled.value = false
+        configServerEditLocked.value = false
         configServerOwnerDown.value = true
         configServerProbeError.value = ''
         return
@@ -805,6 +818,7 @@ async function refreshConfigServerConnectionInner() {
     const detail = formatConfigServerProbeError(e)
     if (detail === 'rpc_client_unavailable' || String(e).includes('rpc_client_unavailable')) {
       configServerEnabled.value = false
+      configServerEditLocked.value = false
     }
     configServerOwnerDown.value = false
     configServerProbeError.value = detail
@@ -1597,6 +1611,7 @@ async function initWithMode(mode: Mode) {
     catch (e: any) {
       configServerConnected.value = false
       configServerEnabled.value = false
+      configServerEditLocked.value = false
       configServerProbeError.value = ''
       configServerOwnerDown.value = false
       configServerLastError.value = Utils.formatApiErrorDetail(e, t)
@@ -1611,6 +1626,7 @@ async function initWithMode(mode: Mode) {
   else {
     configServerConnected.value = false
     configServerEnabled.value = false
+    configServerEditLocked.value = false
     configServerLastError.value = ''
     configServerProbeError.value = ''
     configServerOwnerDown.value = false
@@ -2009,6 +2025,7 @@ async function connectRpcClient(isNormalMode: boolean, url?: string) {
       :api="remoteClient" :pause-auto-refresh="isModeSaving"
       host-surface="gui-client"
       :delete-authority="configServerEnabled ? 'console' : 'local'"
+      :edit-authority="configServerEditLocked ? 'console' : 'local'"
     >
       <!-- 与共享底部栏同一行：样式与禁用网络完全一致 -->
       <template #footer-extra>
