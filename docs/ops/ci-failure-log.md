@@ -98,6 +98,7 @@ Agent / 人工均适用：**未完成 §1 不要提交**。
 - [ ] **数据面 next_hop 要对齐 `latency_first`**：默认 `latency_first=true` 时发包走 LeastCost（`next_hop_peer_id_latency_first`），不是 LeastHop（`next_hop_peer_id`）。拓扑类测试若只等 LeastHop，新建边在 peer-center 仍为默认 500 时 LeastCost 会继续走已测速的 admin 路径，`assert_ping_forwarded_by` 会误报 forbidden forwarder。`wait_route_next_hop` 必须按实例 flag 选表；纯拓扑用例可 `disable_latency_first`。生效值要跟 `PeerPacketPolicy::from_flags` 一致：`flags.latency_first && !flags.p2p_only`（`p2p_only` 会强制关掉时延优先）。
 
 - [ ] **改 workflow / composite action 时：网络类步骤必须有硬超时**：`apt-get update` 撞上半开连接会无限等（ET Linux #169 白烧 4h41m）。要点：`Acquire::http::Timeout` 默认 120s 且是**空闲超时**，连接 trickle 就永不触发，必须压到 20s 左右；job 级一律写 `timeout-minutes`；**composite action 的 step 不支持 `timeout-minutes`**，必须用 `sudo timeout --kill-after=30 300 apt-get …` 命令级兜底（`--kill-after` 防 SIGTERM 被忽略）。详见 §5 的 2026-11-10 条目。
+- [ ] **本地 Windows 自检不要裸跑 `cargo clippy/check`**：thunk-rs build script 在 `YY_THUNKS`/`VC_LTL` 未设时会 curl 下载 GitHub release，网络半开即无限挂起并占住 `.cache/cargo-target` 锁。走 `script\easytier-test.cmd fast` / `full`（其内部 `Ensure-WindowsBuildPrereqs` 会用本地缓存），或手动设好这两个环境变量；「长时间无输出」先查进程树而不是等。详见 §5 的 2026-11-14 条目。
 
 - [ ] **往 `container:` 路径上放 composite action 前，先搜 `hashFiles` 和 `git `**：容器 job 里 `hashFiles()` 在 post 阶段按宿主机路径解析工作区会直接失败，且失败发生在清理阶段——构建成功、artifact 已上传，job 照样变红，极易误判成编译问题；容器内 git 也可能因 `dubious ownership` 返回 128（`safe.directory` 只写进临时 HOME）。两者都在普通 runner 上正常，只在容器里爆。详见 §5 的 2026-11-10 条目。
 
@@ -128,6 +129,35 @@ Agent / 人工均适用：**未完成 §1 不要提交**。
 ---
 
 ## 5. 失败记录（新 → 旧）
+
+### 2026-11-14 — 本地 Windows：裸跑 cargo 触发 thunk-rs 下载 YY-Thunks 无限挂起，堵死提交前自检
+
+| 项 | 内容 |
+|----|------|
+| 仓库/分支 | `229033891/EasyTier` `dev`（本地工作区） |
+| Run | 无 Actions run；证据为 `.cache/validate-local.log`（22:23）与 22:23:27 起的进程树 |
+| 失败 job | 本地提交前自检：`cargo clippy -p easytier -p easytier-core --all-targets -- -D warnings`、`cargo check -p easytier -p easytier-core --all-targets` |
+| 根因一类 | env（**不是编译慢**） |
+| 状态 | 已定位，规避方案仓库内已有；按决定跳过本地构建，门禁交 CI |
+
+**摘要**：22:23:27 启动的两条 cargo 命令，45 分钟后仍在「运行中」但 CPU 分别为 0.02s / 0s / 1.8s，且 `.cache/cargo-target/debug` 无任何新产物。进程树显示卡在 `easytier` 的 `build-script-main.exe`（PID 15024，父 6348）→ 子进程 `curl -LOkf https://github.com/Chuyu-Team/YY-Thunks/releases/download/v1.1.7/YY-Thunks-Objs.zip`（PID 12704）：GitHub 不可达 + curl 无总超时，连接半开就永不退出。期间它占住 `.cache/cargo-target` 的构建锁，后续所有 cargo 命令只会排队，表现为「clippy / 单测一直没结果」。23:22 的 `.cache/validate-local.log` 二次复现同一根因：这次 curl 下载 24 分钟后以 `curl: (18) transfer closed with 8705589 bytes remaining to read` 失败，`step=clippy exit=101`（前 5 步 check / 4 组单测均 `exit=0`）—— 无论「无限挂起」还是「下载失败退出」，绕过加载器都会让自检挂掉。
+
+**根因（为什么只有裸跑会挂）**：
+
+1. thunk-rs 的 build script 在 `YY_THUNKS` / `VC_LTL` 未设时走联网下载分支；设了就用本地缓存。
+2. `script/build-common.ps1:322` 的 `Ensure-WindowsBuildPrereqs` 会把 `VC_LTL`、`YY_THUNKS`、`PROTOC` 指向缓存（`.cache/thunk/VC-LTL-5.2.2`、`.cache/thunk/YY-Thunks-1.1.7`，本机均已存在）；`script/test-easytier.ps1:188` 会调用它，因此 **`script\easytier-test.cmd fast` / `full` 不会下载**。
+3. 而 `.cache/validate-local.ps1`、`.cache/test-local.ps1` 这类临时辅助脚本只调用 `Initialize-EasytierWindowsCargoEnv`（`build-common.ps1:279`，其内部 :319 仅导入 vcvars）与 `Import-EasytierMsvcEnvironment`，**不调用 `Ensure-WindowsBuildPrereqs`**；直接手动敲 `cargo clippy/check` 同样绕过它 → build script 必然尝试 curl。
+
+**防再犯**：
+
+- 本地自检一律走 `script\easytier-test.cmd fast`（或 `full`），不要裸跑 `cargo clippy/check`；临时脚本若必须裸跑，dot-source `build-common.ps1` 后补一次 `Ensure-WindowsBuildPrereqs`，或显式设 `$env:YY_THUNKS = "$RepoRoot\.cache\thunk\YY-Thunks-1.1.7"`、`$env:VC_LTL = "$RepoRoot\.cache\thunk\VC-LTL-5.2.2"`。
+- 与 2026-11-10 apt 条目同理：任何联网下载步骤都要有**命令级硬超时**（curl `--max-time 60 --retry 2`），不能依赖空闲超时；GitHub release 下载尤其容易半开。
+- 判断「编译慢」还是「挂死」：先查进程树（`Get-CimInstance Win32_Process` 看 `build-script-main.exe` 的子进程）+ 进程 CPU 累计值 + target 目录写入时间。**0 CPU + curl 子进程 = 网络挂起**，直接结束该进程树再按官方入口重跑；不要另起并行 cargo 排队等锁。
+- 僵死 cargo 会一直占 `.cache/cargo-target` 的锁，结束进程后锁才释放；此期间不要在同一 target 目录开第二个 cargo。
+
+**修复说明**：本条为本地构建环境问题，不改产品代码、不影响 CI。缓存已齐全（`~/.cache/thunk-deps/{VC-LTL-5.2.2,YY-Thunks-1.1.7}`、7z、protoc 均已确认存在），按上述入口即可正常构建；按 2026-11-14 决定**本地不再执行构建/单测**，`cargo test -p easytier-web --lib webhook_heartbeat_keeps_lock_state_across_throttled_rounds`、`script\easytier-test.cmd fast`、clippy `-D warnings` 一并交由 CI 验证。
+
+---
 
 ### 2026-11-10 — ET Linux：apt 镜像不可达把 build-gui / build-web-embed 挂死 4h41m
 

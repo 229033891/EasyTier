@@ -28,21 +28,32 @@ const toggleEditLock = (locked: boolean) => {
         }
         editLockBusy.value = true;
         try {
-            await props.api.set_device_local_edit_lock(deviceId.value, locked);
-            await loadDevices();
+            try {
+                await props.api.set_device_local_edit_lock(deviceId.value, locked);
+            } catch (e) {
+                addThrottledToast(toast, errorToastGate, 'device-edit-lock-error', {
+                    severity: 'error',
+                    summary: t('web.device.local_edit_lock_failed'),
+                    detail: Utils.formatApiErrorDetail(e, t),
+                    life: TOAST_LIFE.error,
+                });
+                return;
+            }
+            // 锁已写入成功：刷新与提示必须与写入解耦 —— 刷新失败只是列表显示问题
+            //（5s 轮询会自愈），不能把已成功的写锁报成「更新失败」导致开关回弹、
+            // 诱导用户重复点击。
+            try {
+                await loadDevices();
+            } catch (e) {
+                console.warn('device list refresh after edit-lock change failed', e);
+            }
             toast.add({
                 severity: 'success',
                 summary: t(locked ? 'web.device.local_edit_lock_on' : 'web.device.local_edit_lock_off'),
                 life: TOAST_LIFE.success,
             });
-        } catch (e) {
-            addThrottledToast(toast, errorToastGate, 'device-edit-lock-error', {
-                severity: 'error',
-                summary: t('web.device.local_edit_lock_failed'),
-                detail: Utils.formatApiErrorDetail(e, t),
-                life: TOAST_LIFE.error,
-            });
         } finally {
+            // 覆盖「写入 + 刷新」全过程：刷新期间开关仍为 busy，避免重复点击。
             editLockBusy.value = false;
         }
     };

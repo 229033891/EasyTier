@@ -625,6 +625,13 @@ impl WebClientController {
         }
     }
 
+    /// W is built from a `HashSet` on the server, so its wire order is not
+    /// stable across heartbeats. Compare as a set: an unchanged W must not
+    /// bump the UI version on every beat.
+    fn same_web_owned_instance_ids(cached: &[uuid::Uuid], incoming: &[uuid::Uuid]) -> bool {
+        cached.len() == incoming.len() && incoming.iter().all(|id| cached.contains(id))
+    }
+
     /// Cache console Web-owned ids when the server marks the list valid.
     fn store_heartbeat_web_owned_instance_ids(
         &self,
@@ -634,9 +641,18 @@ impl WebClientController {
         if !valid {
             return;
         }
-        *lock_mutex(&self.web_owned_instance_ids) = Some(ids.into_iter().collect());
-        // W is UI-visible (prune) even when connected stays true.
-        config_server_status::notify_ui();
+        let ids: Vec<uuid::Uuid> = ids.into_iter().collect();
+        let mut guard = lock_mutex(&self.web_owned_instance_ids);
+        let unchanged = guard
+            .as_ref()
+            .is_some_and(|cached| Self::same_web_owned_instance_ids(cached, &ids));
+        *guard = Some(ids);
+        drop(guard);
+        // W is UI-visible (prune) even when connected stays true, but a
+        // heartbeat repeating the same list must not re-render the UI.
+        if !unchanged {
+            config_server_status::notify_ui();
+        }
     }
 
     /// Drop cached W so reconnect cannot prune from a prior session's list
@@ -1914,6 +1930,40 @@ mod tests {
                 .gui_sync_message()
                 .to_lowercase()
                 .contains("console")
+        );
+    }
+
+    #[test]
+    fn web_owned_ids_compare_ignores_server_hashset_order() {
+        let a = uuid::Uuid::new_v4();
+        let b = uuid::Uuid::new_v4();
+        // The server collects W into a HashSet, so the same set arrives in a
+        // different order on the next beat; that is still "unchanged".
+        assert!(WebClientController::same_web_owned_instance_ids(
+            &[a, b],
+            &[b, a]
+        ));
+        assert!(WebClientController::same_web_owned_instance_ids(&[], &[]));
+        assert!(!WebClientController::same_web_owned_instance_ids(
+            &[a],
+            &[a, b]
+        ));
+        assert!(!WebClientController::same_web_owned_instance_ids(
+            &[a, b],
+            &[a]
+        ));
+    }
+
+    #[test]
+    fn web_owned_ids_cache_only_accepts_valid_heartbeats() {
+        let controller = test_controller();
+        controller.store_heartbeat_web_owned_instance_ids(false, [uuid::Uuid::new_v4()]);
+        assert!(controller.cached_web_owned_instance_ids().is_none());
+        let id = uuid::Uuid::new_v4();
+        controller.store_heartbeat_web_owned_instance_ids(true, [id]);
+        assert_eq!(
+            controller.cached_web_owned_instance_ids(),
+            Some(vec![id.to_string()])
         );
     }
 

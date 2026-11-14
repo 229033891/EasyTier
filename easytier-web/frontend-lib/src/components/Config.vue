@@ -43,6 +43,8 @@ const props = defineProps<{
   hideRunButton?: boolean
   /** 只读预览：不可编辑（运行页已停止态等） */
   readOnly?: boolean
+  /** 只读态仍渲染工具栏插槽（父级自行决定只读下可见的按钮，如「导出配置」） */
+  showToolbarInReadOnly?: boolean
 }>()
 
 defineEmits(['runNetwork'])
@@ -604,7 +606,8 @@ const flowStatsAllowExactIp = computed({
     :aria-readonly="readOnly || undefined"
   >
       <div class="config-panels w-full self-center">
-          <Panel v-if="$slots['config-toolbar'] && !readOnly" v-model:collapsed="panelCollapsed.toolbar"
+          <Panel v-if="$slots['config-toolbar'] && (!readOnly || showToolbarInReadOnly)"
+            v-model:collapsed="panelCollapsed.toolbar"
             :header="t('config_toolbar')" toggleable :pt="panelHeaderPt('toolbar')">
             <slot name="config-toolbar" />
           </Panel>

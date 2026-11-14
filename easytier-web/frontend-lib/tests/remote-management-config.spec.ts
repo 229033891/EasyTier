@@ -244,7 +244,12 @@ async function mountRemote(api: ReturnType<typeof makeApi>, props: Record<string
       stubs: {
         Config: {
           template:
-            '<div data-stub="config" :data-readonly="String(!!$attrs.readOnly || !!$attrs[\'read-only\'])"><div data-slot="config-toolbar" v-if="$slots[\'config-toolbar\']"><slot name="config-toolbar" /></div></div>',
+            // Mirror the real Config.vue toolbar condition
+            // (`$slots['config-toolbar'] && (!readOnly || showToolbarInReadOnly)`)
+            // so assertions run against actual hide behavior, not a stub that
+            // always renders the slot.
+            '<div data-stub="config" :data-readonly="String(!!$attrs.readOnly || !!$attrs[\'read-only\'])">'
+            + '<div data-slot="config-toolbar" v-if="$slots[\'config-toolbar\'] && (!(!!$attrs.readOnly || !!$attrs[\'read-only\']) || !!$attrs[\'show-toolbar-in-readonly\'] || !!$attrs[\'showToolbarInReadOnly\'])"><slot name="config-toolbar" /></div></div>',
         },
         ConfigEditDialog: true,
         Status: true,
@@ -612,10 +617,18 @@ describe('RemoteManagement edit authority (machine-level local_edit_locked)', ()
       expect(
         wrapper.find('button[data-label="web.device_management.import_config"]').exists(),
       ).toBe(false)
-      // Export stays available (read-only, harmless).
+      // Export stays available (read-only, harmless); the toolbar itself is
+      // kept rendered in read-only mode via `showToolbarInReadOnly`.
       expect(
         wrapper.find('button[data-label="web.device_management.export_config"]').exists(),
       ).toBe(true)
+      // Creating / deleting networks remains mutating: hidden while locked.
+      expect(
+        wrapper.find('button[data-label="web.device_management.add_network"]').exists(),
+      ).toBe(false)
+      expect(
+        wrapper.find('button[data-label="web.device_management.delete_network"]').exists(),
+      ).toBe(false)
     } finally {
       wrapper.unmount()
     }

@@ -222,9 +222,13 @@ async fn cleanup_underlay_exclude_routes(
         return;
     }
     let remaining = remove_installed_underlay_excludes(ifcfg, state).await;
-    // Publish the remainder verbatim: an all-success run yields the default
-    // (empty) state; a partial failure keeps the failed entries accounted so
-    // a later stop / restart path retries them instead of losing track.
+    // Publish the remainder verbatim: an all-success run clears `installed`
+    // (the via snapshots may remain, which is harmless); a partial failure
+    // keeps the failed entries accounted.
+    // Note: the accounting only gets retried by a later cleanup **within the
+    // same process run** (repeated stop / mobile restart reusing the plane).
+    // Once the process is gone nothing retries it — the shipped one-time
+    // cleanup (docker-compose-deploy.md §2.7 / roadmap §4.4) is the backstop.
     packet_plane.report_underlay_exclude_state(remaining);
 }
 

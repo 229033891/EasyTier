@@ -2227,7 +2227,8 @@ onUnmounted(() => {
 
             <template v-else-if="showConfigPanel && currentNetworkConfig">
                 <Config :cur-network="currentNetworkConfig" :config-invalid="false"
-                    :hide-run-button="true" :read-only="isConsoleManagedEdit" @run-network="confirmRunNetwork">
+                    :hide-run-button="true" :read-only="isConsoleManagedEdit"
+                    :show-toolbar-in-readonly="true" @run-network="confirmRunNetwork">
                     <template #config-toolbar>
                         <div class="config-toolbar">
                             <div class="toolbar-zone">
@@ -2247,7 +2248,7 @@ onUnmounted(() => {
                                         v-tooltip.bottom="t('web.device_management.export_config_tip')" />
                                 </div>
                             </div>
-                            <div class="toolbar-zone toolbar-zone--network">
+                            <div v-if="!isConsoleManagedEdit" class="toolbar-zone toolbar-zone--network">
                                 <span class="toolbar-zone-label">{{ t('web.device_management.toolbar_network') }}</span>
                                 <div class="toolbar-zone-actions">
                                     <Button class="config-toolbar-btn" @click="newNetwork" icon="pi pi-plus"

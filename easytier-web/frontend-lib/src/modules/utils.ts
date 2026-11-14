@@ -193,6 +193,11 @@ export function extractApiErrorPayload(error: unknown): ApiErrorPayload {
     // exactly that for `edit_locked`). Remember it so classification still works
     // when the final fallback produces a placeholder message.
     let codeWithoutMessage: string | undefined
+    // Axios attaches its own transport codes (`ERR_BAD_REQUEST`, …) to the
+    // error object; those must not mask a server-provided code remembered
+    // from an earlier body-only candidate.
+    const pickCode = (own: string | undefined): string | undefined =>
+        own && !own.startsWith('ERR_') ? own : codeWithoutMessage
 
     for (const candidate of candidates) {
         if (typeof candidate === 'string') {
@@ -208,7 +213,7 @@ export function extractApiErrorPayload(error: unknown): ApiErrorPayload {
                     if (message) {
                         return {
                             message,
-                            code: readStringField(record, 'code'),
+                            code: pickCode(readStringField(record, 'code')),
                             current_config_revision: readStringField(
                                 record,
                                 'current_config_revision',
@@ -228,7 +233,7 @@ export function extractApiErrorPayload(error: unknown): ApiErrorPayload {
         if (message) {
             return {
                 message,
-                code: readStringField(record, 'code'),
+                code: pickCode(readStringField(record, 'code')),
                 current_config_revision: readStringField(
                     record,
                     'current_config_revision',

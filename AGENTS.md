@@ -34,10 +34,12 @@ Import-EasytierMsvcEnvironment | Out-Null
 | GUI NSIS + 无头 zip 完整包 | `script\easytier-windows-fast.cmd` |
 | 单包快速编译检查（agent 用） | 见下「Agent 后台编译检查」 |
 
-脚本内部自动做三件事（等价手动流程）：
-1. `Import-EasytierMsvcEnvironment`：vswhere 定位 `vcvars64.bat` 并把环境导入当前进程；
-2. `Initialize-EasytierWindowsCargoEnv`：`CARGO_PROFILE_DEV_DEBUG=0`（避免 D8050）+ 短 `CARGO_TARGET_DIR`（默认 `.cache\cargo-target`）+ TEMP 重定向；
+脚本内部自动做三件事（与上面手动示例同一顺序）：
+1. `Initialize-EasytierWindowsCargoEnv`：`CARGO_PROFILE_DEV_DEBUG=0`（避免 D8050）+ 短 `CARGO_TARGET_DIR`（默认 `.cache\cargo-target`）+ TEMP 重定向；**并在函数末尾自动调用** `Import-EasytierMsvcEnvironment`（`script/build-common.ps1:319`）；
+2. `Import-EasytierMsvcEnvironment`：vswhere 定位 `vcvars64.bat` 并把环境导入当前进程（手动示例里显式再调一次是幂等的，可省略）；
 3. 缺 perl/cargo-hack 等工具时的兜底路径。
+
+也就是说：`Initialize` → `Import`（自动），不要按相反顺序理解；`Ensure-WindowsBuildPrereqs`（`build-common.ps1:326`）是另一条入口，仅供 thunk-rs 打包链使用。
 
 ### 两个实测踩过的坑（2026-11）
 

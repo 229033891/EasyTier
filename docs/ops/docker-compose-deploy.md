@@ -181,6 +181,8 @@ sudo docker image ls | grep '229033891/et'           # 要彻底清：sudo docke
 
 **3) 清残留路由（关键，`down` 之后马上做）**
 
+> **⚠️ 下方 IP / 网关 / 网卡全部是 `shdx`、`FNNAS` 现网示例，切勿原样执行。** 必须先按 ① 的实测输出逐条替换，且满足本节末尾「判定为 ET 残留的依据」三条才动手；删错会切断真实业务路由。
+
 ```bash
 # ① 先看有没有：形如 x.x.x.x/32 via <物理网关> dev <物理网卡> proto static metric 1
 #    （只查 host route：/0 默认路由同样是「via 网关 + metric 1」，不加 /32|/128 过滤会误报）
@@ -193,7 +195,8 @@ ip route show | grep -E '/(32|128) via ' | sudo tee /vol1/1000/docker/et-routes-
 for h in 192.168.10.96 192.168.10.101 192.168.10.201 192.168.10.254 ; do
   sudo ip route del $h/32 via 192.168.10.1 dev ens256 metric 1
 done
-# 公网条目同样是 ET 残留（含 config-server），一并清：
+# 非 on-link 条目同样是 ET 残留（含 config-server、Docker 网桥地址），一并清：
+# 注意 172.25.0.1 属于 Docker 私有网段，不是公网 IP。
 for h in 43.154.13.211 101.43.96.62 124.222.29.94 172.25.0.1 ; do
   sudo ip route del $h/32 via 192.168.10.1 dev ens256 metric 1
 done

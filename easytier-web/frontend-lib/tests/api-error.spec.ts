@@ -232,4 +232,23 @@ describe('API error formatting', () => {
       classifyApiError({ message: 'failed to apply edit_locked row' }),
     ).toBe('unknown')
   })
+
+  it('keeps a body-only code over axios transport codes', () => {
+    // The console answers `{code: "edit_locked"}` with no message; the
+    // AxiosError itself then contributes `message` + `code: ERR_BAD_REQUEST`.
+    // The remembered server code must win over the transport code so i18n
+    // mapping still classifies the error.
+    const error = Object.assign(new Error('Request failed with status code 409'), {
+      code: 'ERR_BAD_REQUEST',
+      response: { data: { code: 'edit_locked' } },
+    })
+    expect(extractApiErrorPayload(error)).toEqual({
+      message: 'Request failed with status code 409',
+      code: 'edit_locked',
+      current_config_revision: undefined,
+    })
+    expect(
+      classifyApiError(extractApiErrorPayload(error)),
+    ).toBe('edit_locked_by_console')
+  })
 })

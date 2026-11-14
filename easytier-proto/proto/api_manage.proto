@@ -415,6 +415,8 @@ message GetConfigServerStatusResponse {
 // error_code values (stable wire contract):
 //   not_enabled | not_connected | not_authorized | revision_conflict |
 //   ownership_conflict | edit_locked | invalid
+// The REST-side `not_authorized` is documented on
+// `web.proto:ReportNetworkConfigResponse.error_code` instead.
 message ReportManagedNetworkConfigRequest { NetworkConfig config = 1; }
 
 message ReportManagedNetworkConfigResponse {

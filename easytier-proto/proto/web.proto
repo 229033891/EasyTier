@@ -75,7 +75,8 @@ message ReportNetworkConfigResponse {
   string applied_config_revision = 2;
   // On conflict, the server's current revision so the client can refresh.
   string current_config_revision = 3;
-  // empty | managed_config_revision_conflict | managed_config_ownership_conflict | invalid_request
+  // empty | managed_config_revision_conflict | managed_config_ownership_conflict |
+  // edit_locked | not_authorized | invalid_request
   string error_code = 4;
 }
 

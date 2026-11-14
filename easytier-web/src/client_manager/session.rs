@@ -1267,7 +1267,7 @@ impl SessionRpcService {
         req: HeartbeatRequest,
         machine_id: uuid::Uuid,
     ) -> rpc_types::error::Result<HeartbeatResponse> {
-        let (notify, runtime_notify, device_upsert) = {
+        let (notify, runtime_notify, device_upsert, heartbeat_identity) = {
             let mut data = self.data.write().await;
             Self::ensure_session_identity_locked(&mut data, &req, machine_id)
                 .map_err(rpc_types::error::Error::from)?;
@@ -1316,12 +1316,28 @@ impl SessionRpcService {
             }
             let runtime_notify =
                 (authorized && data.storage_token.is_some()).then(|| data.notifier.clone());
-            (notify, runtime_notify, device_upsert)
+            // Identity for DB-backed responses on rounds that skip the
+            // throttled device-archive write (see revision_identity below).
+            let heartbeat_identity = authorized.then(|| data.storage_token.clone()).flatten();
+            (notify, runtime_notify, device_upsert, heartbeat_identity)
         };
 
-        let revision_identity = device_upsert
-            .as_ref()
-            .map(|(token, _, _)| (token.user_id, token.machine_id));
+        let revision_identity = match device_upsert.as_ref() {
+            Some((token, _, _)) => Some((token.user_id, token.machine_id)),
+            // Device-archive writes are throttled (~45s) while heartbeats
+            // arrive every few seconds. Without a DB-backed response in
+            // between, the client overwrites its `local_edit_locked` cache
+            // with the policy default (`false`) on every skipped round and
+            // the GUI edit gate unlocks until the next write — so ask the
+            // DB on every heartbeat, same as the main heartbeat path.
+            // Keeping the full response on skipped rounds also preserves the
+            // cached `managed_config_revision` used as the client's CAS
+            // expected revision; a default response would send an empty one
+            // and produce spurious `managed_config_revision_conflict`.
+            None => heartbeat_identity
+                .as_ref()
+                .map(|token| (token.user_id, token.machine_id)),
+        };
         if let Some((storage_token, snapshot, report_time)) = device_upsert {
             match storage
                 .db()
@@ -2089,6 +2105,72 @@ mod tests {
             .unwrap();
         let reopened = service.handle_report_network_config(report()).await;
         assert_ne!(reopened.error_code, "edit_locked");
+    }
+
+    /// Regression (config-edit-authority): webhook heartbeats arrive every
+    /// few seconds, but the device-archive write behind them is throttled
+    /// (~45s). Rounds that skip the write must still answer from the DB —
+    /// otherwise the client overwrites its `local_edit_locked` cache with
+    /// the policy default (`false`) on every skipped round and the GUI edit
+    /// gate unlocks until the next archive write.
+    #[tokio::test]
+    async fn webhook_heartbeat_keeps_lock_state_across_throttled_rounds() {
+        let storage = Storage::new(crate::db::Db::memory_db().await);
+        let token = "edit-lock-heartbeat";
+        let user_id = storage.db().auto_create_user(token).await.unwrap().id;
+        let machine_id = uuid::Uuid::new_v4();
+        let client_url: url::Url = "udp://127.0.0.1:22020".parse().unwrap();
+
+        let mut data = SessionData::new(
+            storage.weak_ref(),
+            client_url.clone(),
+            None,
+            Arc::new(FeatureFlags::default()),
+            Arc::new(crate::webhook::WebhookConfig::new(
+                None, None, None, None, None,
+            )),
+            Arc::new(MachineSessionIndex::new()),
+        );
+        data.storage_token = Some(StorageToken {
+            token: token.to_string(),
+            client_url,
+            machine_id,
+            user_id,
+        });
+        data.auth_state = SessionAuthState::Authorized;
+        let service = SessionRpcService {
+            data: Arc::new(RwLock::new(data)),
+            heartbeat_policy: HeartbeatPolicy::default(),
+        };
+
+        storage
+            .db()
+            .set_device_local_edit_locked(user_id, machine_id, true)
+            .await
+            .unwrap();
+
+        // First round: writes the device archive (no throttle record yet),
+        // answers from the DB.
+        let first = service
+            .handle_webhook_heartbeat(&storage, heartbeat_request(token, machine_id), machine_id)
+            .await
+            .unwrap();
+        assert!(
+            first.local_edit_locked,
+            "archive-write round must see the lock"
+        );
+
+        // Second round immediately after: the archive write is throttled
+        // away; the lock must still come back authoritative (`true`), not
+        // the policy default `false`.
+        let second = service
+            .handle_webhook_heartbeat(&storage, heartbeat_request(token, machine_id), machine_id)
+            .await
+            .unwrap();
+        assert!(
+            second.local_edit_locked,
+            "throttled round must keep the lock state (client caches it verbatim)"
+        );
     }
 
     fn heartbeat_request(token: &str, machine_id: uuid::Uuid) -> HeartbeatRequest {
