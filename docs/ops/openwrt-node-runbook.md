@@ -132,6 +132,8 @@ ip route del 192.168.10.101/32
 2. **验收断言口径**：§1 第 ② 项（已收紧为 `/32|/128 via <物理网关>`）—— 不要用 `grep 'metric 1'`（exit-node `/0` 默认路由同为「via 网关 + metric 1」，会误报）；
 3. **验收环境**：`shdx` 上做 stop 断言需要维护窗口（会中断现网代理），提前排期。
 
+> **验收实证（2026-11-15，Windows 桌面端 2.7.13）**：见 [`../roadmap/underlay-exclude-onlink-filter.md`](../roadmap/underlay-exclude-onlink-filter.md) §8.6。单机实测确认 F1（重启后同网段 `/32` 不再被钉）与 F2（退出时公网/异地 `installed` 条目干净卸载）在 Windows 生效，并实证「升级不会自愈」——4 条同网段存量残留须按 §2.7 一次性清理。**新实例运行期出现的 `/32 via <物理网关> metric 1` 是正常活动排除路由，不是残留**；清理只针对「升级前遗留、且退出 ET 后仍存在」的条目，按精确 `DestinationPrefix + NextHop + ifIndex` 逐条删，勿按 `metric 1` 批量删。Linux / OpenWrt 平台验收仍待做。
+
 ---
 
 ## 5. 排查顺序建议（同类问题复用）
