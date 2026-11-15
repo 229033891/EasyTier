@@ -106,7 +106,12 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v4
         with:
-          cmdline-tools-version: 12.0
+          # Do NOT pin cmdline-tools-version: the action turns it into
+          # commandlinetools-linux-<version>_latest.zip, and the old `12`
+          # package is gone (HTTP 404, ET Android #471). Runner images also
+          # ship newer cmdline-tools (20.0 as of 2026-11), so a pinned old
+          # version forces a download on every run. Use the action default
+          # (v4: revision 15859902, still served) instead.
           packages: 'build-tools;34.0.0 ndk;26.0.10792818 platform-tools platforms;android-34 '
 
       - name: Setup Android Environment

@@ -103,6 +103,8 @@ Agent / 人工均适用：**未完成 §1 不要提交**。
 - [ ] **往 `container:` 路径上放 composite action 前，先搜 `hashFiles` 和 `git `**：容器 job 里 `hashFiles()` 在 post 阶段按宿主机路径解析工作区会直接失败，且失败发生在清理阶段——构建成功、artifact 已上传，job 照样变红，极易误判成编译问题；容器内 git 也可能因 `dubious ownership` 返回 128（`safe.directory` 只写进临时 HOME）。两者都在普通 runner 上正常，只在容器里爆。详见 §5 的 2026-11-10 条目。
 
 - [ ] **跨 job 传产物时，别让接收方依赖绝对路径**：容器里 `cargo nextest archive` 会写入容器工作区路径（`/__w/...`），下游若跑在普通 runner（`/home/runner/work/...`）就会找不到 `Cargo.toml`。约定加 `--workspace-remap "$GITHUB_WORKSPACE"`，两种模式下都成立。
+- [ ] **不要给 `setup-android` 硬编码 `cmdline-tools-version`**：该值被拼进 Google 下载 URL，旧 major 会被下架；runner 镜像升级后也必然与预装版本不匹配 → 404（ET Android #471）。用 action 默认，或固定前先验证 URL 返回 200。详见 §5 的 2026-11-15 条目。
+- [ ] **`ubuntu-latest` 切大版本会同时改变预装工具链与 benchmark 时序**：同一代码忽绿忽红先对比 run 的 `Image:` / `Version:`；时序敏感的 job 固定 `runs-on: ubuntu-24.04`，不要直接调阈值。详见 §5 的 2026-11-15 条目。
 
 ---
 
@@ -129,6 +131,31 @@ Agent / 人工均适用：**未完成 §1 不要提交**。
 ---
 
 ## 5. 失败记录（新 → 旧）
+
+### 2026-11-15 — `ubuntu-latest` 漂到 26.04：ET Android 旧 SDK 包 404、ET Test bench 阈值误报
+
+| 项 | 内容 |
+|----|------|
+| 仓库/分支 | `229033891/EasyTier` `dev` @ `d59456b3` |
+| Run | ET Android `43657224217`（#471）、ET Test `43657207081`（#452），均 `workflow_dispatch`，2026-11-15 08:14 CST |
+| 失败 job | `build-mobile (aarch64-linux-android, aarch64)` 的 Setup Android SDK（20s 挂）；`Hot-path gates (alloc + bench)` 的 Enforce hot-path thresholds |
+| 根因一类 | env（**runner 镜像升级**），与代码无关 |
+| 状态 | Android 已修复（去硬编码版本，待重跑）；bench 判定为 flaky，重跑 |
+
+**摘要**：11-14 成功 run 用 `ubuntu-24.04 / 20261111.127.1`，11-15 变成 `ubuntu-26.04 / 20261111.196.1`（hot-path job 甚至是 `20261111.82.6`，runner 池版本混杂）。两个连锁反应：
+
+1. **ET Android（确定性失败，重跑无用）**：runner 预装 `cmdline-tools;12.0` 变成 `20.0`。`android.yml` 硬编码 `cmdline-tools-version: 12.0`，`setup-android@v4` 判定 `Wrong version in preinstalled sdkmanager` 后下载 `commandlinetools-linux-12_latest.zip`，Google 已下架 → `HTTPError: Unexpected HTTP response: 404`，job 20s 挂掉，Build / APK 全部 skipped。11-14 成功时是 `Preinstalled sdkmanager has the correct version`，压根没下载。
+2. **ET Test（噪声）**：`policy_route_hit 10000/1000 ratio` 从 11-14 的 **1.27x** 变成 **1.59x**（limit 1.50x），而 `miss` 1.29x → 1.31x、`empty/miss` 18.67ns 两次完全相同。同一份 `f36c6367` 在 11-14 全绿，`d59456b3` 未碰路由热路径；命中路径单点被新镜像干扰。`test.yml` 注释本就写明 criterion 在共享 runner 上噪声大。其余 job（fmt / lockfile / clippy / WASI / features / Build test / 三组单测）**全部 success**。
+
+**防再犯**：
+
+- 不要给 `android-actions/setup-android` 硬编码 `cmdline-tools-version`：该值被拼成 Google 下载 URL，旧 major 会被下架（`12` → 404），且 runner 镜像升级后必然与预装版本不匹配。用 action 默认（v4 为 revision `15859902`，2026-11-15 实测 `commandlinetools-linux-15859902_latest.zip` 返回 **200**）；若必须固定，先验证 URL 仍返回 200。
+- `ubuntu-latest` 切大版本会同时改变预装工具链与 benchmark 时序。对时序敏感的 job 应固定 `runs-on: ubuntu-24.04`；出现「同一代码忽绿忽红」先看 `Set up job` 里的 `Image:` / `Version:`，不要先怀疑代码。
+- `script/check_routing_bench.py` 的 1.50x 是按 1.25–1.35x 基线留的头寸，线性扫描回归约 10×；**不要因为一次 1.59x 就收紧或大幅放宽阈值**，先重跑确认是否稳定复现。
+
+**修复说明**：`android.yml` 删除 `cmdline-tools-version: 12.0` 并注明原因。ET Test 不改代码：优先手动重跑；若 26.04 上 `hit ratio` 持续 >1.50x，再把 `test.yml` 的 bench job 固定到 `ubuntu-24.04` 恢复基线，或与维护者确认后把 `SCALE_DEGRADATION_LIMIT` 从 1.50 调到 1.75（仍远低于 10× 线性扫描）。两类失败均非 `d59456b3` 引入。
+
+---
 
 ### 2026-11-14 — 本地 Windows：裸跑 cargo 触发 thunk-rs 下载 YY-Thunks 无限挂起，堵死提交前自检
 
