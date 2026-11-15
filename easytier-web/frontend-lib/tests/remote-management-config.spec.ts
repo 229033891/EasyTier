@@ -84,7 +84,11 @@ vi.mock('primevue', async () => {
       return () => h('button', {
         type: 'button',
         disabled: props.disabled,
-        'data-label': props.label ?? props.icon,
+        // 底栏按钮用 footer_* 短文案 key；测试按语义定位按钮，归一化回原 key
+        'data-label': (props.label ?? props.icon)?.replace(
+          'web.device_management.footer_',
+          'web.device_management.',
+        ),
         onClick: (event: MouseEvent) => emit('click', event),
       }, slots.default?.() ?? props.label ?? props.icon)
     },

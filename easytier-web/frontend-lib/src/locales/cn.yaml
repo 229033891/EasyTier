@@ -1074,6 +1074,11 @@ web:
     local_edit_lock_on: 已开启客户端编辑锁定
     local_edit_lock_off: 已关闭客户端编辑锁定
     local_edit_lock_failed: 更新客户端编辑锁定失败
+    local_edit_lock_badge: 编辑锁定
+    local_edit_lock_badge_tip: 控制台已开启本设备的客户端编辑锁定：控制台下发的配置在客户端只读，本地自建配置不受影响。此为控制台设定值，下一心跳周期生效；离线或旧版客户端可能尚未生效。
+    local_edit_lock_btn_off: 锁定
+    local_edit_lock_btn_on: 解锁
+    local_edit_lock_btn_tip: 点击切换本设备的客户端编辑锁定。开启后，控制台下发的配置在客户端只读，本地自建配置不受影响，下一心跳周期生效。
     load_list_retry: 重试
     management: 设备管理
     add: 添加设备
@@ -1143,9 +1148,9 @@ web:
     merge_failed: 合并设备失败
     merge_no_targets: 没有可合并的其他设备
     merge_online_denied: 在线设备不能作为合并源，请从离线（旧）设备合并到新设备
-    back_to_list: 返回设备列表
+    back_to_list: 返回
     back_to_list_tip: 返回设备列表，不保存未提交的修改
-    back_to_network_list: 返回网络列表
+    back_to_network_list: 返回
     back_to_network_list_tip: 返回网络列表，不保存未提交的修改
 
   device_management:
@@ -1173,6 +1178,13 @@ web:
     network: 网络
     select_network: 选择网络
     create_network: 创建网络
+    # 底部工具栏短文案：仅底栏按钮使用；顶栏、确认弹窗与 GUI 菜单仍用完整文案
+    footer_switch_to_config: 配置
+    footer_switch_to_status: 运行
+    footer_discard_changes: 取消
+    footer_save_config: 保存
+    footer_start_network: 启动
+    footer_disable_network: 禁用
     discard_changes: 取消编辑
     discard_changes_tip: 取消当前编辑，恢复为上次已保存的配置
     confirm_discard_changes: 放弃当前未保存的修改？未保存的内容会被上次已保存的配置覆盖，无法撤销。

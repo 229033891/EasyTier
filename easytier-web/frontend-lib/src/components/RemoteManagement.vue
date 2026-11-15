@@ -2313,44 +2313,45 @@ onUnmounted(() => {
             <Button v-if="showLeaveInFooter" @click="requestLeave" :label="leaveLabel" severity="secondary"
                 :icon="leaveIcon" iconPos="left" class="network-footer-btn network-footer-btn--muted"
                 v-tooltip.top="leaveTooltip" />
-            <!-- 左区：节点配置入口 / 前往状态 / 取消编辑 / 保存；右区：主操作 -->
+            <!-- 底栏按钮统一用两字短文案（footer_* 专用 key）；tooltip 仍用完整文案，
+                 顶栏、确认弹窗与 GUI 菜单不受影响。左区：配置 / 运行 / 取消 / 保存；右区：主操作 -->
             <div v-if="showCombinedNavZone || isConfigMode || isStatusMode" class="footer-zone">
                 <Button v-if="showCombinedEditEntry" severity="secondary"
-                    :label="t('web.device_management.switch_to_config')"
+                    :label="t('web.device_management.footer_switch_to_config')"
                     class="network-footer-btn network-footer-btn--muted" @click="editNetwork"
                     v-tooltip.top="t('web.device_management.switch_to_config_tip')" />
                 <Button v-if="showExitEdit" severity="secondary"
-                    :label="t('web.device_management.switch_to_status')"
+                    :label="t('web.device_management.footer_switch_to_status')"
                     class="network-footer-btn network-footer-btn--muted" @click="exitEditNetwork"
                     v-tooltip.top="t('web.device_management.switch_to_status_tip')" />
                 <Button v-if="showDiscardChanges" severity="secondary"
-                    :label="t('web.device_management.discard_changes')"
+                    :label="t('web.device_management.footer_discard_changes')"
                     class="network-footer-btn network-footer-btn--muted" @click="confirmDiscardConfigChanges"
                     v-tooltip.top="t('web.device_management.discard_changes_tip')" />
                 <Button v-if="showSaveInFooter" severity="success"
-                    :label="t('web.device_management.save_config')"
+                    :label="t('web.device_management.footer_save_config')"
                     class="network-footer-btn"
                     :disabled="!canSaveConfig || savingConfig"
                     @click="saveNetworkConfig"
                     v-tooltip.top="saveConfigTooltip" />
                 <Button v-if="isConfigMode" severity="secondary"
-                    :label="t('web.device_management.switch_to_status')"
+                    :label="t('web.device_management.footer_switch_to_status')"
                     class="network-footer-btn network-footer-btn--accent" @click="requestSwitchMode('status')"
                     v-tooltip.top="t('web.device_management.switch_to_status_tip')" />
                 <Button v-else-if="isStatusMode" severity="secondary"
-                    :label="t('web.device_management.switch_to_config')"
+                    :label="t('web.device_management.footer_switch_to_config')"
                     class="network-footer-btn network-footer-btn--accent" @click="requestSwitchMode('config')"
                     v-tooltip.top="t('web.device_management.switch_to_config_tip')" />
             </div>
             <div class="footer-zone footer-zone--primary">
                 <Button v-if="stickyFooterPrimary === 'start'" @click="startNetwork()"
                     :disabled="!currentNetworkControl.deletable.value"
-                    :label="t('web.device_management.start_network')"
+                    :label="t('web.device_management.footer_start_network')"
                     severity="success" class="network-footer-btn"
                     v-tooltip.top="t('web.device_management.start_network_tip')" />
                 <Button v-else-if="stickyFooterPrimary === 'stop'" @click="stopNetwork()"
                     :disabled="!currentNetworkControl.deletable.value"
-                    :label="t('web.device_management.disable_network')" severity="danger"
+                    :label="t('web.device_management.footer_disable_network')" severity="danger"
                     class="network-footer-btn network-footer-btn--danger"
                     v-tooltip.top="t('web.device_management.disable_network_tip')" />
             </div>
@@ -2528,6 +2529,14 @@ onUnmounted(() => {
     justify-content: flex-end;
     margin-left: auto;
     flex: 1 1 0;
+}
+
+/* Web 控制台管理全页：展开两个子区，让底栏所有按钮成为同一个 flex 容器的直接子项，
+   各自 flex: 1 1 0 占一份；宽屏统一撞 max-width 10rem 上限。
+   仅限管理全页，GUI 客户端保留原有分区等分，避免 shared lib 改动外溢。 */
+.device-management--page .footer-zone,
+.device-management--page .footer-zone--primary {
+    display: contents;
 }
 
 /* footer-extra 插槽按钮（系统设置等）同样参与平分 */
@@ -2989,6 +2998,11 @@ onUnmounted(() => {
     :deep(.network-footer-btn.p-button),
     :deep(.config-toolbar-btn.p-button) {
         min-width: 8.5rem;
+    }
+
+    /* 管理全页已整行均分，8.5rem 下限会顶掉该区间的平分，单独覆盖 */
+    .device-management--page :deep(.network-footer-btn.p-button) {
+        min-width: 0;
     }
 }
 </style>

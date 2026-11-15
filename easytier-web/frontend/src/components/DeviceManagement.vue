@@ -1,11 +1,13 @@
 <script setup lang="ts">
-import { NetworkTypes, Utils, Api, RemoteManagement, TOAST_LIFE, addThrottledToast, createToastRepeatGate } from 'easytier-frontend-lib';
+import { NetworkTypes, Utils, Api, RemoteManagement, TOAST_LIFE, addThrottledToast, createToastRepeatGate, tooltipDirective } from 'easytier-frontend-lib';
 import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import { ProgressSpinner, ToggleSwitch, useConfirm, useToast } from 'primevue';
+import { Button, ProgressSpinner, useConfirm, useToast } from 'primevue';
 import { useI18n } from 'vue-i18n';
 import ApiClient from '../modules/api';
 import { loadMergedDevices } from '../modules/deviceArchive';
+
+const vTooltip = tooltipDirective;
 
 const props = defineProps<{
     api: ApiClient;
@@ -215,16 +217,24 @@ onUnmounted(() => {
         :mode="managementMode"
         @switch-mode="switchManagementMode"
     >
+        <!-- 保留返回按钮：requestLeave 会先走 confirmDiscardIfDirty；侧栏直接 router.push 没有这层保护。
+             标签缩为「返回」以免挤占底栏，从哪来回哪去的来源由 tooltip 说明。 -->
         <template #footer-extra>
-            <!-- 仅在已知设备上渲染：直达 URL 且设备不存在时不留一个可点的空开关。 -->
-            <div v-if="deviceInfo" class="flex items-center gap-2" v-tooltip.top="t('web.device.local_edit_lock_tip')">
-                <ToggleSwitch
-                    :model-value="!!deviceInfo?.local_edit_locked"
-                    :disabled="editLockBusy"
-                    @update:model-value="toggleEditLock"
-                />
-                <span class="text-sm whitespace-nowrap">{{ t('web.device.local_edit_lock') }}</span>
-            </div>
+            <!-- 与底部共享工具栏同款按钮：原裸 ToggleSwitch + 长文案不参与 flex 平分、撑宽且外观不统一。
+                 状态改由图标 / 短文案 / 强调色表达，点击仍走 toggleEditLock（开启带确认）。 -->
+            <Button
+                v-if="deviceInfo"
+                class="network-footer-btn"
+                :class="deviceInfo?.local_edit_locked ? 'network-footer-btn--accent' : 'network-footer-btn--muted'"
+                :icon="deviceInfo?.local_edit_locked ? 'pi pi-lock' : 'pi pi-lock-open'"
+                :label="t(deviceInfo?.local_edit_locked
+                    ? 'web.device.local_edit_lock_btn_on'
+                    : 'web.device.local_edit_lock_btn_off')"
+                :disabled="editLockBusy"
+                :aria-pressed="!!deviceInfo?.local_edit_locked"
+                v-tooltip.top="t('web.device.local_edit_lock_btn_tip')"
+                @click="toggleEditLock(!deviceInfo?.local_edit_locked)"
+            />
         </template>
     </RemoteManagement>
 </template>

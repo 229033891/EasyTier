@@ -604,6 +604,28 @@ const sortedDeviceList = computed(() => {
     background: var(--surface-100, #f1f5f9);
 }
 
+/* 顶部状态标签行的编辑锁定只读标记：与在线/版本徽章同高，不是按钮，也不提供切换入口 */
+.device-edit-lock-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.2rem;
+    flex: 0 0 auto;
+    padding: 0.1rem 0.4rem;
+    border: 1px solid color-mix(in srgb, #f59e0b 32%, transparent);
+    border-radius: 999px;
+    background: color-mix(in srgb, #f59e0b 14%, transparent);
+    color: #92400e;
+    font-size: var(--et-fs-meta, 0.75rem);
+    font-weight: 600;
+    line-height: 1.2;
+    white-space: nowrap;
+    cursor: default;
+}
+
+.device-edit-lock-badge .pi-lock {
+    font-size: 0.7rem;
+}
+
 .sort-dropdown {
     min-width: 6rem;
     max-width: 9rem;
@@ -650,6 +672,11 @@ const sortedDeviceList = computed(() => {
     .device-status-tag--offline {
         color: var(--text-color-secondary, #94a3b8);
         background: var(--surface-100, #334155);
+    }
+
+    .device-edit-lock-badge {
+        color: #fcd34d;
+        background: color-mix(in srgb, #f59e0b 20%, transparent);
     }
 
     .card-details {
@@ -730,6 +757,15 @@ const sortedDeviceList = computed(() => {
 
     .device-card-actions {
         margin-left: auto;
+    }
+
+    /* 窄屏收成纯锁图标，避免顶部状态行挤压设备名 */
+    .device-edit-lock-badge {
+        padding: 0.1rem 0.3rem;
+    }
+
+    .device-edit-lock-badge-text {
+        display: none;
     }
 }
 
@@ -1021,6 +1057,16 @@ const sortedDeviceList = computed(() => {
                                     :class="isDeviceOnline(device) ? 'device-status-tag--online' : 'device-status-tag--offline'"
                                 >
                                     {{ isDeviceOnline(device) ? t('web.device.online') : t('web.device.offline') }}
+                                </span>
+                                <!-- 只读状态标记：devices.local_edit_locked（控制台设定值，非客户端实时确认）。
+                                     纯展示且不可点；开关仍在设备管理页的 footer-extra。 -->
+                                <span
+                                    v-if="device.local_edit_locked"
+                                    class="device-edit-lock-badge"
+                                    v-tooltip.top="t('web.device.local_edit_lock_badge_tip')"
+                                    :aria-label="t('web.device.local_edit_lock_badge')">
+                                    <i class="pi pi-lock" aria-hidden="true"></i>
+                                    <span class="device-edit-lock-badge-text">{{ t('web.device.local_edit_lock_badge') }}</span>
                                 </span>
                                 <div class="text-xs version-badge" v-tooltip.top="`EasyTier ${device.easytier_version || '—'}`">
                                     v{{ (device.easytier_version || '').split('-')[0] || '—' }}

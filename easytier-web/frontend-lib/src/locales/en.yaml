@@ -1079,6 +1079,11 @@ web:
     local_edit_lock_on: Client edit lock enabled
     local_edit_lock_off: Client edit lock disabled
     local_edit_lock_failed: Failed to update client edit lock
+    local_edit_lock_badge: Edit locked
+    local_edit_lock_badge_tip: Client edit lock is on for this device in the console. Web-console configs are read-only in the client; locally created configs are not affected. This is the console-side setting. It takes effect after the next heartbeat and may not be active yet on offline or older clients.
+    local_edit_lock_btn_off: Lock
+    local_edit_lock_btn_on: Unlock
+    local_edit_lock_btn_tip: Toggle the client edit lock for this device. When on, web-console configs are read-only in the client; locally created configs are not affected. Applies after the next heartbeat.
     load_list_retry: Retry
     management: Device Management
     add: Add Device
@@ -1148,9 +1153,9 @@ web:
     merge_failed: Failed to merge devices
     merge_no_targets: No other devices available to merge into
     merge_online_denied: Online devices cannot be merged away. Merge from the offline (old) device into the new one.
-    back_to_list: Back to Device List
+    back_to_list: Back
     back_to_list_tip: Return to the device list without saving unsaved changes
-    back_to_network_list: Back to Network List
+    back_to_network_list: Back
     back_to_network_list_tip: Return to the network list without saving unsaved changes
 
   device_management:
@@ -1178,6 +1183,14 @@ web:
     network: Network
     select_network: Select Network
     create_network: Create Network
+    # Short labels used only by sticky-footer buttons; header, confirm dialogs
+    # and the GUI menu keep the full labels above.
+    footer_switch_to_config: Config
+    footer_switch_to_status: Run
+    footer_discard_changes: Cancel
+    footer_save_config: Save
+    footer_start_network: Start
+    footer_disable_network: Disable
     discard_changes: Cancel Edit
     discard_changes_tip: Cancel editing and reload the last saved config
     confirm_discard_changes: Discard the unsaved changes? They will be overwritten by the last saved config and cannot be restored.
