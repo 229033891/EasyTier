@@ -76,6 +76,10 @@ _check_*.log
 .workbuddy-ai/
 .deps-cache/
 
+# WorkBuddy workspace memory: per-session notes, not project source.
+# Local-only; never commit.
+/.workbuddy/memory/
+
 # local CI log / artifact downloads
 .tmp/
 .tmp-build/
