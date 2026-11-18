@@ -63,6 +63,21 @@
 
 !macro ET_StopGuiService
   DetailPrint "Stopping ET Gui Windows service if present..."
+  ; Probe BEFORE touching the service, and probe silently.
+  ;
+  ; On a machine that never enabled ET's service mode every call below fails
+  ; with
+  ;   [SC] OpenService failed 1060: The specified service does not exist.
+  ; and because they all ran through ExecToLog that produced 4 red-looking
+  ; lines in the log of a perfectly healthy fresh install (reported 2.7.12).
+  ; nsExec::Exec (not ExecToLog) drops the child's output entirely and only
+  ; hands back the exit code, so "no service" becomes one calm DetailPrint.
+  ; 1060 = ERROR_SERVICE_DOES_NOT_EXIST.
+  !define ET_SVCPROBE_ID ${__LINE__}
+  nsExec::Exec 'sc.exe query ET-Gui'
+  Pop $0
+  StrCmp $0 0 0 et_svc_absent_${ET_SVCPROBE_ID}
+
   !insertmacro ET_ClearGuiServiceRecovery
   ; Prevent SCM from restarting the GUI while we replace the binary.
   ; Service name (sc): ET-Gui  | display name: ET Gui Service
@@ -71,27 +86,80 @@
   nsExec::ExecToLog 'sc.exe stop ET-Gui'
   Pop $0
   ; Wait until service leaves RUNNING (sc query; ignore missing service).
+  ; NOTE: cmd swallows the inner quote pair here, so findstr really receives
+  ; `/I RUNNING`. That still matches because the pattern has no spaces - do NOT
+  ; "fix" it into a multi-word argument (that is exactly how the tasklist
+  ; filter broke, see ET_KillUntilGone).
   nsExec::ExecToLog 'cmd /c "for /L %i in (1,1,20) do @(sc query ET-Gui 2>nul | findstr /I \"RUNNING\" >nul && (ping -n 2 127.0.0.1 >nul) || exit /b 0)"'
   Pop $0
   Sleep 500
+  Goto et_svc_probe_done_${ET_SVCPROBE_ID}
+
+  et_svc_absent_${ET_SVCPROBE_ID}:
+  DetailPrint "ET-Gui service is not installed; nothing to stop."
+
+  et_svc_probe_done_${ET_SVCPROBE_ID}:
+  !undef ET_SVCPROBE_ID
 !macroend
 
 !macro ET_KillGuiProcesses
   DetailPrint "Stopping running ET GUI processes..."
-  nsExec::ExecToLog 'taskkill /F /T /IM ET.exe'
+  ; Silent (nsExec::Exec, not ExecToLog): taskkill answers
+  ;   ERROR: The process "ET.exe" not found.
+  ; for the NORMAL case (fresh install, app already closed) and that is pure
+  ; noise. Report only when something was actually terminated.
+  !define ET_KILL_ID ${__LINE__}
+  nsExec::Exec 'taskkill /F /T /IM ET.exe'
   Pop $0
+  StrCmp $0 0 0 et_kill_exe_none_${ET_KILL_ID}
+    DetailPrint "Terminated running ET.exe."
+  et_kill_exe_none_${ET_KILL_ID}:
   ; Bundled CLI (externalBin); may lock ET-cli.exe during upgrade.
-  nsExec::ExecToLog 'taskkill /F /T /IM ET-cli.exe'
+  nsExec::Exec 'taskkill /F /T /IM ET-cli.exe'
   Pop $0
+  StrCmp $0 0 0 et_kill_cli_none_${ET_KILL_ID}
+    DetailPrint "Terminated running ET-cli.exe."
+  et_kill_cli_none_${ET_KILL_ID}:
   Sleep 400
+  !undef ET_KILL_ID
+!macroend
+
+!macro ET_KillUntilGone IMAGE
+  ; Wait until IMAGE is really gone (identical to what the old loop did:
+  ; kill, give the kernel a moment, re-check), without any quoted filter.
+  ;
+  ; HISTORY (reported on 2.7.12): the previous implementation was
+  ;   cmd /c "for /L %i in (1,1,25) do @(tasklist /FI \"IMAGENAME eq ET.exe\" ...)"
+  ; NSIS turns \" into a real quote, and cmd then strips BOTH pairs, so
+  ; tasklist received `/FI IMAGENAME eq ET.exe` as three separate arguments and
+  ; answered "Invalid argument/option - 'eq'." The loop therefore never waited
+  ; for anything - the install log showed the error and moved on, losing the
+  ; only guard that keeps a running ET.exe from locking $INSTDIR on upgrade.
+  ;
+  ; taskkill needs no filter at all; its exit code tells us what happened:
+  ;   0   - a process was killed, so re-check
+  ;   128 - nothing matched (verified on Win10) -> files are released
+  ;   other - e.g. access denied; retry a bounded number of times
+  !define ET_WAIT_ID ${__LINE__}
+  StrCpy $R8 0
+  et_wait_again_${ET_WAIT_ID}:
+    nsExec::Exec 'taskkill /F /T /IM ${IMAGE}'
+    Pop $0
+    StrCmp $0 "128" et_wait_done_${ET_WAIT_ID}
+    IntOp $R8 $R8 + 1
+    IntCmp $R8 25 et_wait_timeout_${ET_WAIT_ID} 0 et_wait_timeout_${ET_WAIT_ID}
+    Sleep 400
+    Goto et_wait_again_${ET_WAIT_ID}
+  et_wait_timeout_${ET_WAIT_ID}:
+    DetailPrint "Warning: ${IMAGE} still present after $R8 attempts; continuing anyway."
+  et_wait_done_${ET_WAIT_ID}:
+  !undef ET_WAIT_ID
 !macroend
 
 !macro ET_WaitUntilGuiGone
   DetailPrint "Waiting for ET.exe / ET-cli.exe to release install files..."
-  nsExec::ExecToLog 'cmd /c "for /L %i in (1,1,25) do @(tasklist /FI \"IMAGENAME eq ET.exe\" | find /I \"ET.exe\" >nul && (taskkill /F /T /IM ET.exe >nul 2>&1 & ping -n 2 127.0.0.1 >nul) || exit /b 0)"'
-  Pop $0
-  nsExec::ExecToLog 'cmd /c "for /L %i in (1,1,25) do @(tasklist /FI \"IMAGENAME eq ET-cli.exe\" | find /I \"ET-cli.exe\" >nul && (taskkill /F /T /IM ET-cli.exe >nul 2>&1 & ping -n 2 127.0.0.1 >nul) || exit /b 0)"'
-  Pop $0
+  !insertmacro ET_KillUntilGone "ET.exe"
+  !insertmacro ET_KillUntilGone "ET-cli.exe"
   Sleep 800
 !macroend
 
@@ -252,7 +320,9 @@
   ;
   ; Labels are suffixed per service because this macro is inserted twice;
   ; reusing the same SUFFIX would collide.
-  nsExec::ExecToLog '"$SYSDIR\sc.exe" query "${SVC}"'
+  ; Silent probes: ExecToLog would print "[SC] OpenService failed 1060" for the
+  ; common "never enabled service mode" case. The exit code says it all.
+  nsExec::Exec '"$SYSDIR\sc.exe" query "${SVC}"'
   Pop $0
   StrCmp $0 0 0 et_svc_done_${SUFFIX}   ; 1060 = no such service, nothing to do
 
@@ -263,7 +333,7 @@
   DetailPrint "Deleting service ${SVC} needs elevation; retrying with a UAC prompt..."
   ExecShellWait "runas" "$SYSDIR\cmd.exe" '/c sc failure "${SVC}" reset= 0 actions= // & sc stop "${SVC}" & ping -n 3 127.0.0.1 >nul & sc delete "${SVC}"' SW_HIDE
   Sleep 1500
-  nsExec::ExecToLog '"$SYSDIR\sc.exe" query "${SVC}"'
+  nsExec::Exec '"$SYSDIR\sc.exe" query "${SVC}"'
   Pop $0
   StrCmp $0 0 0 et_svc_done_${SUFFIX}
   MessageBox MB_ICONEXCLAMATION|MB_OK "The Windows service '${SVC}' could not be removed.$\r$\n$\r$\nIt may be missing admin rights, or still be marked for deletion until the next reboot.$\r$\n$\r$\nTo remove it manually, run as administrator:$\r$\n$\r$\n    sc delete ${SVC}"
@@ -501,10 +571,22 @@
 
 !macro NSIS_HOOK_POSTINSTALL
   ; We set start= demand while replacing binaries; restore auto-start if the
-  ; service still exists (GUI service mode). Ignore missing service.
+  ; service still exists (GUI service mode).
+  ;
+  ; Probe first, silently: without service mode the plain `sc config` printed
+  ; "[SC] OpenService failed 1060: The specified service does not exist." in
+  ; the middle of an otherwise successful install.
+  ; Labels are safe here: NSIS_HOOK_POSTINSTALL expands exactly once.
   DetailPrint "Restoring ET-Gui service start type if present..."
-  nsExec::ExecToLog 'sc.exe config ET-Gui start= auto'
+  nsExec::Exec 'sc.exe query ET-Gui'
   Pop $0
+  StrCmp $0 0 0 et_post_svc_absent
+    nsExec::ExecToLog 'sc.exe config ET-Gui start= auto'
+    Pop $0
+    Goto et_post_svc_done
+  et_post_svc_absent:
+  DetailPrint "ET-Gui service is not installed; skipping start-type restore."
+  et_post_svc_done:
   ; Ship ET-cli on PATH (new shells; reopen terminal after install/upgrade).
   !insertmacro ET_AddInstallDirToPath
 !macroend
