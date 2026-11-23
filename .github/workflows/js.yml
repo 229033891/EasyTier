@@ -50,7 +50,7 @@ jobs:
 
       - uses: pnpm/action-setup@v5
         with:
-          version: 10
+          # 无 version 输入时从仓库根 package.json 的 packageManager 字段读取。
           run_install: false
 
       - name: Install dependencies

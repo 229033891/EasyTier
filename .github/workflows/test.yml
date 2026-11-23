@@ -32,7 +32,7 @@ jobs:
         "easytier-core/**", "easytier-proto/**", "easytier-rpc-build/**",
         "easytier-benches/**",
         "easytier-web/**", "easytier-gui/src-tauri/**",
-        "tauri-plugin-vpnservice/**", "easytier-contrib/**",
+        "tauri-plugin-vpnservice/**",
         ".github/workflows/test.yml", ".github/actions/**"]
     outputs:
       should_skip: >-

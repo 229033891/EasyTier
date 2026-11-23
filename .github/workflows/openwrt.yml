@@ -11,7 +11,6 @@ name: ET OpenWrt
 # LuCI 界面源码来自 https://github.com/229033891/luci-app-easytier（官方 fork）,
 # easytier 主包里的二进制是本仓库现编译的 (core + cli + web-embed), 不是从旧 Release 下载的.
 # 打包前会去掉 feed 里模板/脚本的 CR。LuCI 编译 .htm 时不转义 \r，CRLF 会让状态页报 unfinished string。
-# 打包前会去掉 feed 里模板/脚本的 CR。LuCI 编译 .htm 时不转义 \r，CRLF 会让状态页报 unfinished string。
 
 on:
   workflow_dispatch:
@@ -86,10 +85,6 @@ jobs:
     if: needs.pre_job.outputs.should_skip != 'true'
     steps:
       - uses: actions/checkout@v5
-
-      - name: Set current ref as env variable
-        run: |
-          echo "GIT_DESC=$(git log -1 --format=%cd.%h --date=format:%Y-%m-%d_%H:%M:%S)" >> $GITHUB_ENV
 
       - name: Prepare build environment
         uses: ./.github/actions/prepare-build

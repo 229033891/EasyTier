@@ -76,15 +76,10 @@ jobs:
       NAME: easytier
       TARGET: ${{ matrix.TARGET }}
       ARCH: ${{ matrix.ARCH }}
-      OSS_BUCKET: ${{ secrets.ALIYUN_OSS_BUCKET }}
     needs: pre_job
     if: needs.pre_job.outputs.should_skip != 'true'    
     steps:
       - uses: actions/checkout@v5
-
-      - name: Set current ref as env variable
-        run: |
-          echo "GIT_DESC=$(git log -1 --format=%cd.%h --date=format:%Y-%m-%d_%H:%M:%S)" >> $GITHUB_ENV
 
       - uses: actions/setup-java@v5
         with:

@@ -80,7 +80,6 @@ jobs:
       TARGET: ${{ matrix.TARGET }}
       OS: ${{ matrix.OS }}
       GUI_TARGET: ${{ matrix.GUI_TARGET }}
-      OSS_BUCKET: ${{ secrets.ALIYUN_OSS_BUCKET }}
       # 与 ET Linux 保持一致：Cargo.toml 的 [profile.release] 是 fat LTO + CGU=1，
       # 手动触发只需要一个能用的产物，走 thin/16；releases/** 仍用 fat LTO，
       # 但 CGU 由 1 调到 4（LTO 合并阶段本就单线程，CGU 只影响 codegen 并行度）。
@@ -90,10 +89,6 @@ jobs:
     if: needs.pre_job.outputs.should_skip != 'true'
     steps:
       - uses: actions/checkout@v5
-
-      - name: Set current ref as env variable
-        run: |
-          echo "GIT_DESC=$(git log -1 --format=%cd.%h --date=format:%Y-%m-%d_%H:%M:%S)" >> $GITHUB_ENV
 
       - name: Prepare build environment
         uses: ./.github/actions/prepare-build
@@ -313,7 +308,6 @@ jobs:
       NAME: easytier
       TARGET: ${{ matrix.TARGET }}
       OS: ${{ matrix.OS }}
-      OSS_BUCKET: ${{ secrets.ALIYUN_OSS_BUCKET }}
       # 同 build-gui：手动触发走 thin/16，发版保留 fat LTO 但 CGU 1 → 4
       CARGO_PROFILE_RELEASE_LTO: ${{ github.event_name == 'workflow_dispatch' && 'thin' || 'fat' }}
       CARGO_PROFILE_RELEASE_CODEGEN_UNITS: ${{ github.event_name == 'workflow_dispatch' && '16' || '4' }}
@@ -321,10 +315,6 @@ jobs:
     if: needs.pre_job.outputs.should_skip != 'true'
     steps:
       - uses: actions/checkout@v5
-
-      - name: Set current ref as env variable
-        run: |
-          echo "GIT_DESC=$(git log -1 --format=%cd.%h --date=format:%Y-%m-%d_%H:%M:%S)" >> $GITHUB_ENV
 
       - name: Prepare build environment
         uses: ./.github/actions/prepare-build

@@ -31,7 +31,7 @@ jobs:
         ["Cargo.toml", "Cargo.lock", "rust-toolchain.toml", ".cargo/**",
         "pnpm-lock.yaml", "pnpm-workspace.yaml", "package.json", "easytier/**",
         "easytier-core/**", "easytier-proto/**", "easytier-rpc-build/**",
-        "easytier-web/**", "easytier-gui/**", "easytier-frontend-lib/**",
+        "easytier-web/**", "easytier-gui/**",
         "tauri-plugin-vpnservice/**", ".github/workflows/linux.yml",
         ".github/actions/**"]
     outputs:
@@ -89,7 +89,6 @@ jobs:
       NAME: easytier
       TARGET: ${{ matrix.TARGET }}
       OS: ${{ matrix.OS }}
-      OSS_BUCKET: ${{ secrets.ALIYUN_OSS_BUCKET }}
       # Cargo.toml's [profile.release] uses fat LTO + codegen-units=1, by far
       # the slowest way to compile this graph (~3-4x a thin-LTO build). It also
       # defeats sccache: the heavy work happens in the final link step, which is
@@ -107,10 +106,6 @@ jobs:
     if: needs.pre_job.outputs.should_skip != 'true'
     steps:
       - uses: actions/checkout@v5
-
-      - name: Set current ref as env variable
-        run: |
-          echo "GIT_DESC=$(git log -1 --format=%cd.%h --date=format:%Y-%m-%d_%H:%M:%S)" >> $GITHUB_ENV
 
       - name: Prepare build environment
         uses: ./.github/actions/prepare-build
