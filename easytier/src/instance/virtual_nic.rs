@@ -902,7 +902,7 @@ pub struct NicCtx {
     nic: Arc<Mutex<VirtualNic>>,
     tasks: JoinSet<()>,
 
-    #[cfg(target_os = "windows")]
+    #[cfg(all(target_os = "windows", feature = "proxy-packet"))]
     windows_udp_broadcast_relay: Option<AbortOnDropHandle<()>>,
 }
 
@@ -923,7 +923,7 @@ impl NicCtx {
             nic: Arc::new(Mutex::new(VirtualNic::new(global_ctx))),
             tasks: JoinSet::new(),
 
-            #[cfg(target_os = "windows")]
+            #[cfg(all(target_os = "windows", feature = "proxy-packet"))]
             windows_udp_broadcast_relay: None,
         }
     }
@@ -1072,7 +1072,7 @@ impl NicCtx {
         while self.tasks.join_next().await.is_some() {}
     }
 
-    #[cfg(target_os = "windows")]
+    #[cfg(all(target_os = "windows", feature = "proxy-packet"))]
     fn start_windows_udp_broadcast_relay(&mut self, virtual_ipv4: Ipv4Inet) {
         if !self.global_ctx.get_flags().enable_udp_broadcast_relay {
             return;
@@ -2311,7 +2311,7 @@ impl NicCtx {
         // Assign IPv4 address if provided
         if let Some(ipv4_addr) = ipv4_addr {
             self.assign_ipv4_to_tun_device(ipv4_addr).await?;
-            #[cfg(target_os = "windows")]
+            #[cfg(all(target_os = "windows", feature = "proxy-packet"))]
             self.start_windows_udp_broadcast_relay(ipv4_addr);
         }
 

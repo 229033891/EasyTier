@@ -21,5 +21,8 @@ pub(crate) mod public_ipv6_provider;
 #[cfg(feature = "tun")]
 pub mod virtual_nic;
 
-#[cfg(any(all(windows, feature = "tun"), test))]
+#[cfg(any(
+    all(windows, feature = "tun", feature = "proxy-packet"),
+    all(test, feature = "proxy-packet")
+))]
 pub(crate) mod windows_udp_broadcast;

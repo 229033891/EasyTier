@@ -365,8 +365,12 @@ full = [
 ]
 cli = ["management", "dep:tabled", "dep:humansize", "dep:terminal_size", "dep:unicode-width"]
 wireguard = ["vpn-portal", "dep:boringtun", "dep:hkdf", "dep:sha2", "ring-crypto", "easytier-proto/wireguard"]
-quic = ["wrapped-transport", "easytier-core/proxy-packet", "dep:quinn", "dep:quinn-proto", "dep:seahash", "dep:rustls", "easytier-proto/quic"]
-kcp = ["wrapped-transport", "easytier-core/proxy-packet", "dep:kcp-sys"]
+quic = ["wrapped-transport", "proxy-packet", "dep:quinn", "dep:quinn-proto", "dep:seahash", "dep:rustls", "easytier-proto/quic"]
+kcp = ["wrapped-transport", "proxy-packet", "dep:kcp-sys"]
+# Pass-through so `cfg(feature = "proxy-packet")` inside this crate tracks the
+# core feature. windows_udp_broadcast (windows + tun) needs core's
+# gateway::udp_broadcast, which only exists under easytier-core/proxy-packet.
+proxy-packet = ["easytier-core/proxy-packet"]
 mimalloc = ["dep:mimalloc"]
 aes-gcm = ["easytier-core/aes-gcm"]
 openssl-crypto = ["easytier-core/openssl-crypto"]
@@ -384,7 +388,7 @@ websocket = [
     "easytier-proto/websocket",
 ]
 smoltcp = ["easytier-core/proxy-smoltcp-stack"]
-icmp-proxy = ["easytier-core/proxy-packet"]
+icmp-proxy = ["proxy-packet"]
 socks5 = ["smoltcp"]
 ffi-dataplane = ["socks5"]
 jemalloc = ["dep:jemallocator"]
@@ -405,7 +409,7 @@ magic-dns = [
     "dns-resolver",
     "dep:hickory-client",
     "dep:hickory-server",
-    "easytier-core/proxy-packet",
+    "proxy-packet",
     "easytier-proto/magic-dns",
 ]
 faketcp = [
