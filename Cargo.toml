@@ -8,6 +8,7 @@ members = [
     "easytier-web",
     "easytier-web/config-generator/easytier-config-wasm",
     "easytier-gui/src-tauri",
+    "tauri-plugin-vpnservice",
     "easytier-contrib/easytier-mini",
     "easytier-contrib/easytier-ffi",
     "easytier-contrib/easytier-uptime",
@@ -95,10 +96,6 @@ windows = "0.62"
 x25519-dalek = "3"
 zerocopy = "0.8"
 
-[profile.dev]
-panic = "unwind"
-debug = 2
-
 [profile.release]
 panic = "abort"
 lto = true
@@ -117,7 +114,7 @@ strip = true
 # easytier-core 的第二个 test-utils 变体（rlib+cdylib 未 hash 产物覆盖，
 # rust-lang/cargo#6313）。CI 命令：cargo bench -p easytier-benches。
 
-# 本地迭代用：链接更快，体�?极致优化略弱�?release；正式发版仍�?--release
+# 本地迭代用：链接更快，体积更大，极致优化略弱于 release；正式发版仍用 --release
 [profile.release-fast]
 inherits = "release"
 lto = "thin"

@@ -1,8 +1,7 @@
 {
   "name": "tauri-plugin-vpnservice-api",
-  "version": "0.0.0",
-  "author": "You",
-  "description": "",
+  "version": "2.7.13",
+  "description": "Tauri plugin exposing the Android VPN service dialog to the EasyTier GUI",
   "type": "module",
   "types": "./dist-js/index.d.ts",
   "main": "./dist-js/index.cjs",
@@ -18,11 +17,11 @@
   ],
   "scripts": {
     "build": "rollup -c",
-    "prepublishOnly": "yarn build",
-    "pretest": "yarn build"
+    "prepublishOnly": "pnpm build",
+    "pretest": "pnpm build"
   },
   "dependencies": {
-    "@tauri-apps/api": "2.0.0-rc.0"
+    "@tauri-apps/api": "^2.7.0"
   },
   "devDependencies": {
     "@rollup/plugin-typescript": "^11.1.6",

@@ -9873,7 +9873,7 @@ dependencies = [
 
 [[package]]
 name = "tauri-plugin-vpnservice"
-version = "0.0.0"
+version = "2.7.13"
 dependencies = [
  "serde",
  "tauri",

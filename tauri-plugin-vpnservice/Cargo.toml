@@ -1,8 +1,7 @@
 [package]
 name = "tauri-plugin-vpnservice"
-version = "0.0.0"
-authors = ["You"]
-description = ""
+version = "2.7.13"
+description = "Tauri plugin exposing the Android VPN service dialog to the EasyTier GUI"
 edition.workspace = true
 rust-version.workspace = true
 exclude = ["/examples", "/webview-dist", "/webview-src", "/node_modules"]
