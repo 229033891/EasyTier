@@ -206,12 +206,12 @@ service-manager = { git = "https://github.com/229033891/service-manager-rs.git",
 kcp-sys = { git = "https://github.com/229033891/kcp-sys", rev = "268533568d734ae89dc89603078da3ca522effe1", optional = true }
 
 # for dns connector
-hickory-resolver = { version = "0.25.2", optional = true }
-hickory-proto = { version = "0.25.2", optional = true }
+hickory-resolver = { version = "0.26.3", optional = true }
+hickory-proto = { version = "0.26.3", optional = true }
 
-# for magic dns
-hickory-client = { version = "0.25.2", optional = true }
-hickory-server = { version = "0.25.2", features = [
+# for magic dns (0.26 起 hickory-client 并入 hickory-net 的 client 模块)
+hickory-net = { version = "0.26.3", optional = true }
+hickory-server = { version = "0.26.3", features = [
     "resolver",
 ], optional = true }
 
@@ -402,12 +402,12 @@ jemalloc-prof = [
 tracing = ["tokio/tracing", "dep:console-subscriber", "dep:tracing-subscriber"]
 tracing-log = ["tracing/log", "easytier-core/tracing-log"]
 logging = []
-dns-resolver = ["dep:hickory-proto", "dep:hickory-resolver"]
+dns-resolver = ["dep:hickory-proto", "dep:hickory-resolver", "dep:hickory-net"]
 magic-dns = [
     "dep:derive_builder",
     "dep:humantime-serde",
     "dns-resolver",
-    "dep:hickory-client",
+    "dep:hickory-net",
     "dep:hickory-server",
     "proxy-packet",
     "easytier-proto/magic-dns",

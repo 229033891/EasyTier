@@ -9,10 +9,12 @@ use easytier_core::{
     host::packet::{HostPacket, HostPacketChannelSink, HostPacketReceiver},
     process_runtime::CoreProcessRuntime,
 };
-use hickory_client::client::{Client, ClientHandle as _};
+use hickory_net::runtime::TokioRuntimeProvider;
+use hickory_net::udp::UdpClientStream;
+use hickory_net::xfer::{DnsRequestSender as _, FirstAnswer as _};
+use hickory_proto::op::{DnsRequest, DnsRequestOptions, Message, Query};
 use hickory_proto::rr;
-use hickory_proto::runtime::TokioRuntimeProvider;
-use hickory_proto::udp::UdpClientStream;
+use hickory_proto::rr::RData;
 use tokio::sync::Notify;
 use tokio_util::sync::CancellationToken;
 
@@ -81,32 +83,31 @@ pub async fn prepare_env_with_tld_dns_zone(
 }
 
 pub async fn check_dns_record(fake_ip: &Ipv4Addr, domain: &str, expected_ip: &str) {
-    let stream = UdpClientStream::builder(
+    let mut stream = UdpClientStream::builder(
         SocketAddr::new((*fake_ip).into(), 53),
         TokioRuntimeProvider::default(),
     )
     .build();
-    let (mut client, background) = Client::connect(stream).await.unwrap();
-    let background_task = tokio::spawn(background);
-    let response = client
-        .query(
-            rr::Name::from_str(domain).unwrap(),
-            rr::DNSClass::IN,
-            rr::RecordType::A,
-        )
+
+    let mut message = Message::query();
+    message.add_query(Query::query(
+        rr::Name::from_str(domain).unwrap(),
+        rr::RecordType::A,
+    ));
+    let response = stream
+        .send_message(DnsRequest::new(message, DnsRequestOptions::default()))
+        .first_answer()
         .await
         .unwrap_or_else(|e| panic!("DNS query failed unexpectedly for domain '{domain}': {e}"));
-    background_task.abort();
-    let _ = background_task.await;
 
     println!("Response: {:?}", response);
 
-    assert_eq!(response.answers().len(), 1, "{:?}", response.answers());
-    let resp = response.answers().first().unwrap();
-    assert_eq!(
-        resp.clone().into_parts().rdata.into_a().unwrap().0,
-        expected_ip.parse::<Ipv4Addr>().unwrap()
-    );
+    assert_eq!(response.answers.len(), 1, "{:?}", response.answers);
+    let resp = response.answers.first().unwrap();
+    let RData::A(a) = &resp.data else {
+        panic!("expected A record for domain '{domain}': {resp:?}")
+    };
+    assert_eq!(a.0, expected_ip.parse::<Ipv4Addr>().unwrap());
 }
 
 #[tokio::test]
@@ -446,27 +447,25 @@ async fn test_static_hosts_wildcard_skipped_for_route_tld() {
 
     // The skipped wildcard must not answer anything: an installed `*.et.net.`
     // would synthesize an A record for any unregistered label under the TLD.
-    let stream = UdpClientStream::builder(
+    let mut stream = UdpClientStream::builder(
         SocketAddr::new(fake_ip.into(), 53),
         TokioRuntimeProvider::default(),
     )
     .build();
-    let (mut client, background) = Client::connect(stream).await.unwrap();
-    let background_task = tokio::spawn(background);
-    let response = client
-        .query(
-            rr::Name::from_str("random.et.net").unwrap(),
-            rr::DNSClass::IN,
-            rr::RecordType::A,
-        )
+    let mut message = Message::query();
+    message.add_query(Query::query(
+        rr::Name::from_str("random.et.net").unwrap(),
+        rr::RecordType::A,
+    ));
+    let response = stream
+        .send_message(DnsRequest::new(message, DnsRequestOptions::default()))
+        .first_answer()
         .await
         .unwrap();
-    background_task.abort();
-    let _ = background_task.await;
     assert!(
-        response.answers().is_empty(),
+        response.answers.is_empty(),
         "skipped wildcard must not synthesize answers: {:?}",
-        response.answers()
+        response.answers
     );
 
     // …and it must not be advertised through the status RPC either.

@@ -1,16 +1,18 @@
 use anyhow::{Context, Result};
+use hickory_net::runtime::Time;
+use hickory_net::udp::MAX_RECEIVE_BUFFER_SIZE;
+use hickory_net::xfer::Protocol;
 use hickory_proto::rr;
 use hickory_proto::rr::LowerName;
-use hickory_proto::xfer::Protocol;
 use hickory_resolver::config::{
-    NameServerConfig, NameServerConfigGroup, ResolverOpts, ServerOrderingStrategy,
+    ConnectionConfig, NameServerConfig, ProtocolConfig, ResolverOpts, ServerOrderingStrategy,
 };
 use hickory_resolver::system_conf::read_system_conf;
-use hickory_server::ServerFuture;
-use hickory_server::authority::{AuthorityObject, Catalog, ZoneType};
+use hickory_server::server::Server as HickoryDnsServer;
 use hickory_server::server::{Request, RequestHandler, ResponseHandler, ResponseInfo};
-use hickory_server::store::forwarder::ForwardConfig;
-use hickory_server::store::{forwarder::ForwardAuthority, in_memory::InMemoryAuthority};
+use hickory_server::store::forwarder::{ForwardConfig, ForwardZoneHandler};
+use hickory_server::store::in_memory::InMemoryZoneHandler;
+use hickory_server::zone_handler::{AxfrPolicy, Catalog, ZoneHandler, ZoneType};
 use std::collections::BTreeSet;
 use std::net::{IpAddr, SocketAddr};
 use std::str::FromStr;
@@ -26,7 +28,7 @@ use crate::common::dns::{get_default_resolver_config, magic_dns_forward_connecto
 use super::config::{GeneralConfig, Record, RunConfig, SplitForwarderConfig};
 
 pub struct Server {
-    server: ServerFuture<CatalogRequestHandler>,
+    server: HickoryDnsServer<CatalogRequestHandler>,
     catalog: Arc<RwLock<Catalog>>,
     general_config: GeneralConfig,
     udp_local_addr: Option<SocketAddr>,
@@ -46,7 +48,7 @@ impl CatalogRequestHandler {
 
 #[async_trait::async_trait]
 impl RequestHandler for CatalogRequestHandler {
-    async fn handle_request<R: ResponseHandler>(
+    async fn handle_request<R: ResponseHandler, T: Time>(
         &self,
         request: &Request,
         response_handle: R,
@@ -54,14 +56,14 @@ impl RequestHandler for CatalogRequestHandler {
         self.catalog
             .read()
             .await
-            .handle_request(request, response_handle)
+            .handle_request::<R, T>(request, response_handle)
             .await
     }
 }
 
-pub fn build_authority(domain: &str, records: &[Record]) -> Result<InMemoryAuthority> {
+pub fn build_authority(domain: &str, records: &[Record]) -> Result<InMemoryZoneHandler> {
     let zone = rr::Name::from_str(domain)?;
-    let mut authority = InMemoryAuthority::empty(zone, ZoneType::Primary, false);
+    let mut authority = InMemoryZoneHandler::empty(zone, ZoneType::Primary, AxfrPolicy::Deny);
     for record in records.iter() {
         let r = record.try_into()?;
         authority.upsert_mut(r, 0);
@@ -117,22 +119,21 @@ pub fn parse_upstream_nameserver(raw: &str) -> Result<Vec<NameServerConfig>> {
     let ip: IpAddr = host
         .parse()
         .with_context(|| format!("invalid upstream DNS address `{raw}`"))?;
-    let addr = SocketAddr::new(ip, port);
 
-    let protocols = match proto_hint {
-        Some(Protocol::Udp) => vec![Protocol::Udp],
-        Some(Protocol::Tcp) => vec![Protocol::Tcp],
-        Some(_) => vec![Protocol::Udp],
-        None => vec![Protocol::Udp, Protocol::Tcp],
+    let protocols: Vec<ProtocolConfig> = match proto_hint {
+        Some(Protocol::Udp) => vec![ProtocolConfig::Udp],
+        Some(Protocol::Tcp) => vec![ProtocolConfig::Tcp],
+        Some(_) => vec![ProtocolConfig::Udp],
+        None => vec![ProtocolConfig::Udp, ProtocolConfig::Tcp],
     };
 
     Ok(protocols
         .into_iter()
         .map(|protocol| {
-            let mut cfg = NameServerConfig::new(addr, protocol);
+            let mut conn = ConnectionConfig::new(protocol);
+            conn.port = port;
             // NXDOMAIN from an authoritative upstream must stick (dns-policy §6).
-            cfg.trust_negative_responses = true;
-            cfg
+            NameServerConfig::new(ip, true, vec![conn])
         })
         .collect())
 }
@@ -152,7 +153,7 @@ fn build_forward_config_from_servers(
 ) -> Result<ForwardConfig> {
     // One bad entry must not abort MagicDNS / hot-reload (dns-policy-audit BUG-2).
     // Warn + skip invalid lines; only fail when nothing usable remains.
-    let mut group = NameServerConfigGroup::new();
+    let mut group: Vec<NameServerConfig> = Vec::new();
     for entry in servers {
         let parsed = match parse_upstream_nameserver(entry) {
             Ok(nss) => nss,
@@ -166,9 +167,9 @@ fn build_forward_config_from_servers(
             }
         };
         for ns in parsed {
-            if excluded.contains(&ns.socket_addr.ip()) {
+            if excluded.contains(&ns.ip) {
                 tracing::warn!(
-                    upstream = %ns.socket_addr,
+                    upstream = %ns.ip,
                     "skipping upstream DNS that matches excluded/fake MagicDNS address"
                 );
                 continue;
@@ -195,14 +196,14 @@ fn build_system_forward_config(excluded: &[IpAddr]) -> Result<ForwardConfig> {
         .0
         .name_servers()
         .iter()
-        .filter(|&x| !excluded.contains(&x.socket_addr.ip()))
+        .filter(|&x| !excluded.contains(&x.ip))
         .cloned()
         .collect();
     if servers.is_empty() {
         anyhow::bail!("no usable system upstream DNS after exclusions (or system DNS unavailable)");
     }
     Ok(ForwardConfig {
-        name_servers: servers.into(),
+        name_servers: servers,
         options: Some(ordered_failover_opts()),
     })
 }
@@ -285,7 +286,7 @@ impl Server {
                         continue;
                     }
                 };
-                let auth = match ForwardAuthority::builder_with_config(
+                let auth = match ForwardZoneHandler::builder_with_config(
                     forward_config.clone(),
                     magic_dns_forward_connector(),
                 )
@@ -296,7 +297,7 @@ impl Server {
                         tracing::warn!(
                             zone = %zone,
                             error = %e,
-                            "skipping split forwarder zone (ForwardAuthority build failed)"
+                            "skipping split forwarder zone (ForwardZoneHandler build failed)"
                         );
                         continue;
                     }
@@ -317,15 +318,15 @@ impl Server {
 
         let forward_config = build_forward_config(&config)?;
         let auth =
-            ForwardAuthority::builder_with_config(forward_config, magic_dns_forward_connector())
+            ForwardZoneHandler::builder_with_config(forward_config, magic_dns_forward_connector())
                 .build()
-                .map_err(|e| anyhow::anyhow!("root ForwardAuthority build failed: {e}"))?;
+                .map_err(|e| anyhow::anyhow!("root ForwardZoneHandler build failed: {e}"))?;
 
         catalog.upsert(rr::Name::from_str(".")?.into(), vec![Arc::new(auth)]);
 
         let catalog = Arc::new(RwLock::new(catalog));
         let handler = CatalogRequestHandler::new(catalog.clone());
-        let server = ServerFuture::new(handler);
+        let server = HickoryDnsServer::new(handler);
 
         Ok(Self {
             server,
@@ -390,8 +391,11 @@ impl Server {
             let tcp_listener = TcpListener::bind(address.clone())
                 .await
                 .with_context(|| format!("DNS Server failed to bind TCP address {}", address))?;
-            self.server
-                .register_listener(tcp_listener, Duration::from_secs(5));
+            self.server.register_listener(
+                tcp_listener,
+                Duration::from_secs(5),
+                MAX_RECEIVE_BUFFER_SIZE,
+            );
         }
 
         if let Some(address) = self.general_config.listen_udp() {
@@ -408,7 +412,7 @@ impl Server {
         Ok(())
     }
 
-    pub async fn upsert(&self, name: LowerName, authority: Arc<dyn AuthorityObject>) {
+    pub async fn upsert(&self, name: LowerName, authority: Arc<dyn ZoneHandler>) {
         self.catalog.write().await.upsert(name, vec![authority]);
     }
 
@@ -500,7 +504,7 @@ impl Server {
         }
 
         for (zone, forward_config) in pending {
-            let auth = match ForwardAuthority::builder_with_config(
+            let auth = match ForwardZoneHandler::builder_with_config(
                 forward_config,
                 magic_dns_forward_connector(),
             )
@@ -511,7 +515,7 @@ impl Server {
                     tracing::warn!(
                         zone = %zone,
                         error = %e,
-                        "skipping split forwarder zone reload (ForwardAuthority build failed)"
+                        "skipping split forwarder zone reload (ForwardZoneHandler build failed)"
                     );
                     next_zones.remove(&zone);
                     continue;
@@ -553,9 +557,9 @@ impl Server {
             }
         };
         let auth =
-            ForwardAuthority::builder_with_config(forward_config, magic_dns_forward_connector())
+            ForwardZoneHandler::builder_with_config(forward_config, magic_dns_forward_connector())
                 .build()
-                .map_err(|e| anyhow::anyhow!("root ForwardAuthority rebuild failed: {e}"))?;
+                .map_err(|e| anyhow::anyhow!("root ForwardZoneHandler rebuild failed: {e}"))?;
         self.upsert(rr::Name::from_str(".")?.into(), Arc::new(auth))
             .await;
         tracing::info!(
@@ -586,8 +590,8 @@ impl Server {
     /// and keeps the same authority instance alive for the lookup.
     ///
     /// The snapshot re-registers under the **Catalog map key** that answered
-    /// `name` (see [`catalog_zone_key`]), not [`AuthorityObject::origin`].
-    /// `ForwardAuthority` always reports origin `.`, while split forwarders are
+    /// `name` (see [`catalog_zone_key`]), not [`ZoneHandler::origin`].
+    /// `ForwardZoneHandler` always reports origin `.`, while split forwarders are
     /// installed under their zone name — using origin as the key would diverge
     /// from the shared catalog's longest-match layout.
     pub async fn snapshot_catalog_for(&self, name: &LowerName) -> Option<Catalog> {
@@ -606,8 +610,8 @@ impl Server {
 /// Catalog map key that answers `name` (longest registered ancestor).
 ///
 /// `Catalog::find` walks `base_name` and returns authorities only — not the
-/// key they were upserted under. `AuthorityObject::origin` is also wrong for
-/// split forwarders (`ForwardAuthority` origin is always root). Walk from
+/// key they were upserted under. `ZoneHandler::origin` is also wrong for
+/// split forwarders (`ForwardZoneHandler` origin is always root). Walk from
 /// `name` toward root and stop at the first label whose parent resolves to a
 /// different authority set (or to nothing).
 fn catalog_zone_key(catalog: &Catalog, name: &LowerName) -> Option<LowerName> {
@@ -635,11 +639,13 @@ mod tests {
         GeneralConfigBuilder, RecordBuilder, RecordType, RunConfigBuilder, SplitForwarderConfig,
     };
     use anyhow::Result;
-    use hickory_client::client::{Client, ClientHandle};
+    use hickory_net::runtime::TokioRuntimeProvider;
+    use hickory_net::udp::UdpClientStream;
+    use hickory_net::xfer::{DnsRequestSender as _, FirstAnswer as _};
+    use hickory_proto::op::{DnsRequest, DnsRequestOptions, Message, Query};
     use hickory_proto::rr;
-    use hickory_proto::runtime::TokioRuntimeProvider;
-    use hickory_proto::udp::UdpClientStream;
-    use hickory_proto::xfer::Protocol;
+    use hickory_proto::rr::RData;
+
     use hickory_resolver::config::ServerOrderingStrategy;
     use maplit::hashmap;
     use std::time::Duration;
@@ -694,23 +700,24 @@ mod tests {
         server.run().await?;
 
         let local_addr = server.udp_local_addr().unwrap();
-        let stream = UdpClientStream::builder(local_addr, TokioRuntimeProvider::default()).build();
-        let (mut client, background) = Client::connect(stream).await?;
-        let background_task = tokio::spawn(background);
-        let response = client
-            .query(
-                rr::Name::from_str("www.et.internal")?,
-                rr::DNSClass::IN,
-                rr::RecordType::A,
-            )
+        let mut stream =
+            UdpClientStream::builder(local_addr, TokioRuntimeProvider::default()).build();
+
+        let mut message = Message::query();
+        message.add_query(Query::query(
+            rr::Name::from_str("www.et.internal")?,
+            rr::RecordType::A,
+        ));
+        let response = stream
+            .send_message(DnsRequest::new(message, DnsRequestOptions::default()))
+            .first_answer()
             .await?;
-        drop(background_task);
 
         println!("Response: {:?}", response);
 
-        assert_eq!(response.answers().len(), 1);
+        assert_eq!(response.answers.len(), 1);
         let expected_record: rr::Record = configured_record.try_into()?;
-        assert_eq!(response.answers().first().unwrap(), &expected_record);
+        assert_eq!(response.answers.first().unwrap(), &expected_record);
 
         server.shutdown().await?;
         Ok(())
@@ -755,84 +762,63 @@ mod tests {
         server.run().await?;
 
         let local_addr = server.udp_local_addr().unwrap();
-        let stream = UdpClientStream::builder(local_addr, TokioRuntimeProvider::default()).build();
-        let (mut client, background) = Client::connect(stream).await?;
-        let background_task = tokio::spawn(background);
+        let mut stream =
+            UdpClientStream::builder(local_addr, TokioRuntimeProvider::default()).build();
 
-        let apex_resp = client
-            .query(
-                rr::Name::from_str("corp.example")?,
-                rr::DNSClass::IN,
-                rr::RecordType::A,
-            )
+        let mut apex_query = Message::query();
+        apex_query.add_query(Query::query(
+            rr::Name::from_str("corp.example")?,
+            rr::RecordType::A,
+        ));
+        let apex_resp = stream
+            .send_message(DnsRequest::new(apex_query, DnsRequestOptions::default()))
+            .first_answer()
             .await?;
-        assert_eq!(apex_resp.answers().len(), 1);
-        assert_eq!(
-            apex_resp
-                .answers()
-                .first()
-                .unwrap()
-                .clone()
-                .into_parts()
-                .rdata
-                .into_a()
-                .unwrap()
-                .0,
-            "10.9.9.1".parse::<std::net::Ipv4Addr>()?
-        );
+        assert_eq!(apex_resp.answers.len(), 1);
+        let apex_record = apex_resp.answers.first().unwrap();
+        let RData::A(a) = &apex_record.data else {
+            panic!("expected A record: {apex_record:?}")
+        };
+        assert_eq!(a.0, "10.9.9.1".parse::<std::net::Ipv4Addr>()?);
 
-        let wild_resp = client
-            .query(
-                rr::Name::from_str("foo.corp.example")?,
-                rr::DNSClass::IN,
-                rr::RecordType::A,
-            )
+        let mut wild_query = Message::query();
+        wild_query.add_query(Query::query(
+            rr::Name::from_str("foo.corp.example")?,
+            rr::RecordType::A,
+        ));
+        let wild_resp = stream
+            .send_message(DnsRequest::new(wild_query, DnsRequestOptions::default()))
+            .first_answer()
             .await?;
-        assert_eq!(wild_resp.answers().len(), 1);
-        assert_eq!(
-            wild_resp
-                .answers()
-                .first()
-                .unwrap()
-                .clone()
-                .into_parts()
-                .rdata
-                .into_a()
-                .unwrap()
-                .0,
-            "10.9.9.9".parse::<std::net::Ipv4Addr>()?
-        );
+        assert_eq!(wild_resp.answers.len(), 1);
+        let wild_record = wild_resp.answers.first().unwrap();
+        let RData::A(a) = &wild_record.data else {
+            panic!("expected A record: {wild_record:?}")
+        };
+        assert_eq!(a.0, "10.9.9.9".parse::<std::net::Ipv4Addr>()?);
 
         // RFC 4592 / hickory inner_lookup_wildcard: multi-label under the parent
         // also synthesizes from `*.corp.example.` (peels labels until match).
-        let deep_resp = client
-            .query(
-                rr::Name::from_str("a.b.corp.example")?,
-                rr::DNSClass::IN,
-                rr::RecordType::A,
-            )
+        let mut deep_query = Message::query();
+        deep_query.add_query(Query::query(
+            rr::Name::from_str("a.b.corp.example")?,
+            rr::RecordType::A,
+        ));
+        let deep_resp = stream
+            .send_message(DnsRequest::new(deep_query, DnsRequestOptions::default()))
+            .first_answer()
             .await?;
         assert_eq!(
-            deep_resp.answers().len(),
+            deep_resp.answers.len(),
             1,
             "multi-label query should match *.corp.example: {deep_resp:?}"
         );
-        assert_eq!(
-            deep_resp
-                .answers()
-                .first()
-                .unwrap()
-                .clone()
-                .into_parts()
-                .rdata
-                .into_a()
-                .unwrap()
-                .0,
-            "10.9.9.9".parse::<std::net::Ipv4Addr>()?
-        );
+        let deep_record = deep_resp.answers.first().unwrap();
+        let RData::A(a) = &deep_record.data else {
+            panic!("expected A record: {deep_record:?}")
+        };
+        assert_eq!(a.0, "10.9.9.9".parse::<std::net::Ipv4Addr>()?);
 
-        background_task.abort();
-        let _ = background_task.await;
         server.shutdown().await?;
         Ok(())
     }
@@ -841,34 +827,34 @@ mod tests {
     fn parse_upstream_accepts_ip_port_and_url_forms() -> Result<()> {
         let plain = parse_upstream_nameserver("1.1.1.1")?;
         assert_eq!(plain.len(), 2);
-        assert_eq!(plain[0].socket_addr, "1.1.1.1:53".parse()?);
-        assert_eq!(plain[0].protocol, Protocol::Udp);
-        assert_eq!(plain[1].protocol, Protocol::Tcp);
+        assert_eq!(plain[0].ip, "1.1.1.1".parse::<std::net::IpAddr>()?);
+        assert_eq!(plain[0].connections[0].port, 53);
+        assert_eq!(plain[0].connections[0].protocol, ProtocolConfig::Udp);
+        assert_eq!(plain[1].connections[0].protocol, ProtocolConfig::Tcp);
 
         let with_port = parse_upstream_nameserver("8.8.8.8:5353")?;
-        assert_eq!(with_port[0].socket_addr, "8.8.8.8:5353".parse()?);
+        assert_eq!(with_port[0].ip, "8.8.8.8".parse::<std::net::IpAddr>()?);
+        assert_eq!(with_port[0].connections[0].port, 5353);
 
         let udp_only = parse_upstream_nameserver("udp://9.9.9.9:53")?;
         assert_eq!(udp_only.len(), 1);
-        assert_eq!(udp_only[0].protocol, Protocol::Udp);
+        assert_eq!(udp_only[0].connections[0].protocol, ProtocolConfig::Udp);
 
         let tcp_only = parse_upstream_nameserver("tcp://9.9.9.9")?;
         assert_eq!(tcp_only.len(), 1);
-        assert_eq!(tcp_only[0].protocol, Protocol::Tcp);
-        assert_eq!(tcp_only[0].socket_addr.port(), 53);
+        assert_eq!(tcp_only[0].connections[0].protocol, ProtocolConfig::Tcp);
+        assert_eq!(tcp_only[0].connections[0].port, 53);
 
         assert!(parse_upstream_nameserver("https://1.1.1.1/dns-query").is_err());
 
         // Bare IPv6 must not be split on the last `:`.
         let v6 = parse_upstream_nameserver("fd00::1")?;
         assert_eq!(v6.len(), 2);
-        assert_eq!(v6[0].socket_addr, "[fd00::1]:53".parse()?);
+        assert_eq!(v6[0].ip, "fd00::1".parse::<std::net::IpAddr>()?);
+        assert_eq!(v6[0].connections[0].port, 53);
         let v6_bracket = parse_upstream_nameserver("[fd00::1]:5353")?;
-        assert_eq!(v6_bracket[0].socket_addr.port(), 5353);
-        assert_eq!(
-            v6_bracket[0].socket_addr.ip(),
-            "fd00::1".parse::<std::net::IpAddr>()?
-        );
+        assert_eq!(v6_bracket[0].connections[0].port, 5353);
+        assert_eq!(v6_bracket[0].ip, "fd00::1".parse::<std::net::IpAddr>()?);
         Ok(())
     }
 
@@ -889,12 +875,7 @@ mod tests {
         assert_eq!(opts.timeout, Duration::from_secs(2));
         assert_eq!(opts.attempts, 2);
         let expected_ip: std::net::IpAddr = "1.1.1.1".parse()?;
-        assert!(
-            forward
-                .name_servers
-                .iter()
-                .any(|ns| ns.socket_addr.ip() == expected_ip)
-        );
+        assert!(forward.name_servers.iter().any(|ns| ns.ip == expected_ip));
         Ok(())
     }
 
@@ -909,11 +890,7 @@ mod tests {
             ],
             &excluded,
         )?;
-        let ips: Vec<_> = forward
-            .name_servers
-            .iter()
-            .map(|ns| ns.socket_addr.ip())
-            .collect();
+        let ips: Vec<_> = forward.name_servers.iter().map(|ns| ns.ip).collect();
         assert!(ips.contains(&"1.1.1.1".parse()?));
         assert!(!ips.is_empty());
         Ok(())
@@ -1037,12 +1014,12 @@ mod tests {
             key,
             LowerName::from(rr::Name::from_str("hostname.example.")?)
         );
-        // ForwardAuthority.origin() is root — must not be used as the Catalog key.
+        // ForwardZoneHandler.origin() is root — must not be used as the Catalog key.
         let authorities = catalog.find(&query).expect("authorities");
         assert_ne!(
             key,
             authorities[0].origin().clone(),
-            "zone key must be the registration name, not ForwardAuthority origin"
+            "zone key must be the registration name, not ForwardZoneHandler origin"
         );
         Ok(())
     }

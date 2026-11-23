@@ -49,10 +49,12 @@ use easytier_core::gateway::magic_dns::{
     MagicDnsRoute, clear_magic_dns_os_wired,
 };
 use easytier_core::instance::CorePacketPlane;
+use hickory_net::NetError;
+use hickory_net::runtime::TokioTime;
 use hickory_proto::rr::LowerName;
-use hickory_proto::serialize::binary::{BinDecodable, BinEncoder};
-use hickory_server::authority::{MessageRequest, MessageResponse};
+use hickory_proto::serialize::binary::BinEncoder;
 use hickory_server::server::{Request, RequestHandler, ResponseHandler, ResponseInfo};
+use hickory_server::zone_handler::MessageResponse;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Mutex;
 use std::{io, net::Ipv4Addr, str::FromStr, sync::Arc, time::Duration};
@@ -720,35 +722,36 @@ impl ResponseHandler for ResponseWrapper {
             impl RecordIter<'a>,
             impl RecordIter<'a>,
         >,
-    ) -> io::Result<ResponseInfo> {
+    ) -> Result<ResponseInfo, NetError> {
         let mut buffer = self
             .response
             .lock()
-            .map_err(|_| io::Error::other("lock poisoned"))?;
+            .map_err(|_| NetError::from(io::Error::other("lock poisoned")))?;
 
         let mut encoder = BinEncoder::new(&mut buffer);
 
         // `max_size` should be u16::MAX for protocol other than UDP.
-        let max_size = if let Some(edns) = response.get_edns() {
+        let max_size = if let Some(edns) = response.edns() {
             edns.max_payload()
         } else {
-            hickory_proto::udp::MAX_RECEIVE_BUFFER_SIZE as u16
+            hickory_net::udp::MAX_RECEIVE_BUFFER_SIZE as u16
         };
 
         encoder.set_max_size(max_size);
         response
             .destructive_emit(&mut encoder)
-            .map_err(io::Error::other)
+            .map_err(NetError::from)
     }
 }
 
 impl MagicDnsServerInstanceData {
     async fn resolve_query_inner(&self, query: MagicDnsQuery) -> Option<Vec<u8>> {
-        let request = Request::new(
-            MessageRequest::from_bytes(&query.payload).ok()?,
+        let request = Request::from_bytes(
+            query.payload,
             query.source,
-            hickory_proto::xfer::Protocol::Udp,
-        );
+            hickory_net::xfer::Protocol::Udp,
+        )
+        .ok()?;
         let response = Arc::new(Mutex::new(Vec::with_capacity(512)));
 
         // Resolve against a **snapshot** of the catalog so the shared read lock
@@ -761,7 +764,7 @@ impl MagicDnsServerInstanceData {
         // Bound the wait: this resolver runs on the **data plane** path (the
         // MagicDNS NIC filter awaits it for every query towards the fake IP),
         // so an unbounded upstream stall would also stall overlay traffic.
-        let resolve = snapshot.handle_request(
+        let resolve = snapshot.handle_request::<_, TokioTime>(
             &request,
             ResponseWrapper {
                 response: response.clone(),
