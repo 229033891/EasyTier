@@ -156,7 +156,7 @@ for u in "${UNIT_FILES[@]+"${UNIT_FILES[@]}"}" "${GREPPED[@]+"${GREPPED[@]}"}"; 
       mkdir -p "$drop_dir"
       # Extract original ExecStart and rewrite
       old_exec="$(grep -E '^ExecStart=' "$unit_path" | head -n1 | sed 's/^ExecStart=//')"
-      new_exec="$(printf '%s\n' "$old_exec" | sed -E 's/(^|[[:space:]/])easytier-gui([.exe]*)(\s|$)/\1ET\3/g')"
+      new_exec="$(printf '%s\n' "$old_exec" | sed -E 's/(^|[[:space:]/])easytier-gui(\.exe)?(\s|$)/\1ET\2\3/g')"
       cat >"$drop_dir/legacy-bin-rename.conf" <<EOF
 [Service]
 ExecStart=
@@ -229,7 +229,7 @@ for desk in "${DESKTOPS[@]+"${DESKTOPS[@]}"}"; do
     if [[ "$APPLY" -eq 1 ]]; then
       if grep -Eq 'Name=.*ET|easytier-gui' "$desk"; then
         # Prefer rewrite Exec to ET when Name looks like our app
-        sed -i -E 's#(^Exec=.*[[:space:]/])easytier-gui([.exe]*)#\1ET#g' "$desk" || true
+        sed -i -E 's#(^Exec=.*[[:space:]/])easytier-gui(\.exe)?#\1ET\2#g' "$desk" || true
         if grep -Eq 'Exec=.*easytier-gui' "$desk"; then
           rm -f "$desk"
         fi

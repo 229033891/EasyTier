@@ -103,9 +103,6 @@ easytier-gui/tauri.ci.conf.json
 .direnv
 .flake-profile
 
-# contrib
-go.sum
-
 # tooling scratch (tgrep index / logs)
 .tgrep/
 
