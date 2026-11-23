@@ -47,6 +47,7 @@ crate 内设计稿（非本索引）：`easytier/docs/`（凭据计划已标 Arc
 | [egress-fair-queue.md](./current/egress-fair-queue.md) | **隧道出口公平队列**：PeerConn 出口 per-flow 分桶（优先桶 32 + 8×32 流桶 = 每 conn 288 槽，drain 任务挂 `PeerConn::tasks`）+ TUN/smoltcp 桥按流分片并行（`FlowHashDispatcher`）；flag `enable_egress_fair_queue` **默认 true**（仅回退 PeerConn 侧）；平面级 HOL 只缓解非消除（§2.3 边界）；与 `relay_hop_penalty` 同版放开的升级说明见 [`relay-hop-penalty.md` §7](./current/relay-hop-penalty.md) |
 | [tailscale-gap-and-conflict-audit.md](./current/tailscale-gap-and-conflict-audit.md) | **vs Tailscale 代码层审查**（Bug/冲突 C1–C6 vs 设计 S1–S5；UI 已连≠VIP；P-AUDIT 修复清单未落地） |
 | [packet-loss-investigation-2026-10.md](./current/packet-loss-investigation-2026-10.md) | **现网偶发丢包实测记录**（三轮 ping 原始数据；证伪「ET 控制面」「bond 切路」两个假设；证实代理 TUN 与 ET 隧道**双向互抢路由**；尖峰落点待双侧取证） |
+| [high-concurrency-tunnel-stall-2026-11.md](./current/high-concurrency-tunnel-stall-2026-11.md) | **高并发下隧道停摆与丢包完整分析**（代码评审 + 多轮现网实测；固化评审结论 / 测量方法与方法论陷阱 / 已证伪假设；唯一未修架构级缺陷的根因与候选修复方案均为**待决策项**，见 §8） |
 | [console-and-client-interaction-performance.md](./current/console-and-client-interaction-performance.md) | **控制台与客户端交互性能审查**（Web 控制台 / 安卓 GUI 交互慢的根因；OpenWrt LuCI 见外部仓文档） |
 | [tunnels-and-transport.md](./current/tunnels-and-transport.md) | 隧道 scheme、打洞/中继与伪装差距 |
 | [magic-dns.md](./current/magic-dns.md) | MagicDNS / DnsConfig / OS 接线与覆盖信号（现状 SoT） |

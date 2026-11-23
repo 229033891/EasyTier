@@ -104,6 +104,7 @@ Get-Content "$RepoRoot\.cache\check-local.log" -Tail 40
 
 ## 参考
 
+- 概念/术语总览（operation broker、credential grant、模块分层）：[`CONTEXT.md`](CONTEXT.md)
 - MSVC 本机构建细节：[`docs/ops/windows-msvc-local-build.md`](docs/ops/windows-msvc-local-build.md)
 - 打包依赖备齐：[`docs/ops/windows-build-pack.md`](docs/ops/windows-build-pack.md)
 - 脚本索引：[`script/README.md`](script/README.md)

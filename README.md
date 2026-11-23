@@ -8,7 +8,7 @@
 [![GitHub Windows Actions](https://github.com/229033891/EasyTier/actions/workflows/windows.yml/badge.svg)](https://github.com/229033891/EasyTier/actions/workflows/windows.yml)
 [![GitHub Test Actions](https://github.com/229033891/EasyTier/actions/workflows/test.yml/badge.svg)](https://github.com/229033891/EasyTier/actions/workflows/test.yml)
 
-[简体中文](/README_CN.md) | [English](/README.md)
+[简体中文](./README_CN.md) | [English](./README.md)
 
 > ✨ A simple, secure, decentralized virtual private network solution powered by Rust and Tokio
 

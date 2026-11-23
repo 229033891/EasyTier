@@ -8,7 +8,7 @@
 [![GitHub Windows Actions](https://github.com/229033891/EasyTier/actions/workflows/windows.yml/badge.svg)](https://github.com/229033891/EasyTier/actions/workflows/windows.yml)
 [![GitHub Test Actions](https://github.com/229033891/EasyTier/actions/workflows/test.yml/badge.svg)](https://github.com/229033891/EasyTier/actions/workflows/test.yml)
 
-[简体中文](/README_CN.md) | [English](/README.md)
+[简体中文](./README_CN.md) | [English](./README.md)
 
 > ✨ 一个由 Rust 和 Tokio 驱动的简单、安全、去中心化的异地组网方案
 

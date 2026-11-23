@@ -164,7 +164,7 @@ curl -fsSL "https://github.com/229033891/EasyTier/raw/main/script/update.sh" | s
 
 ---
 
-## 四、怎么选
+## 五、怎么选
 
 ```text
 只要改 Web 控制台、打 embed exe     →  easytier-web-*.cmd
