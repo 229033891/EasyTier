@@ -134,19 +134,22 @@ function Invoke-NativeLogged {
     $prevEap = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
     try {
-        $lines = & $FilePath @ArgumentList 2>&1
+        # Stream line-by-line. Collecting native 2>&1 output into an Object[]
+        # first deadlocks on long cargo runs: the stderr pipe fills before
+        # PowerShell drains it, and the whole cargo/build-script/cl tree sits
+        # idle forever (observed with clippy: 30+ min, all children 0 CPU).
+        & $FilePath @ArgumentList 2>&1 | ForEach-Object {
+            if ($_ -is [System.Management.Automation.ErrorRecord]) {
+                Write-Host $_.ToString()
+            }
+            else {
+                Write-Host "$_"
+            }
+        }
         $code = $LASTEXITCODE
     }
     finally {
         $ErrorActionPreference = $prevEap
-    }
-    foreach ($line in @($lines)) {
-        if ($line -is [System.Management.Automation.ErrorRecord]) {
-            Write-Host $line.ToString()
-        }
-        else {
-            Write-Host "$line"
-        }
     }
     return $code
 }
@@ -239,8 +242,24 @@ function Import-EasytierMsvcEnvironment {
         return $false
     }
 
+    # Sandbox hosts may inject the same variable twice with different casing
+    # (HTTPS_PROXY + https_proxy). .NET Framework's Start-Process / Env: drive
+    # build case-insensitive dictionaries and throw "An item with the same key
+    # has already been added" on those, killing the vcvars import. Normalize:
+    # read (case-insensitive), delete every case variant, re-set one entry.
+    foreach ($proxyVar in @('HTTPS_PROXY', 'HTTP_PROXY')) {
+        $val = [System.Environment]::GetEnvironmentVariable($proxyVar)
+        foreach ($variant in @($proxyVar, $proxyVar.ToLowerInvariant())) {
+            [System.Environment]::SetEnvironmentVariable($variant, $null)
+        }
+        if ($val) {
+            [System.Environment]::SetEnvironmentVariable($proxyVar, $val)
+        }
+    }
+
     Write-Log "Loading MSVC environment: $vcvars" -Level Info
     $tempFile = [System.IO.Path]::GetTempFileName()
+    $msvcEnvSeen = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
     try {
         # vcvars mutates cmd's environment; dump and re-apply into this process.
         # Use `call` + quoted path — spaces in "Program Files (x86)" break bare `"$vcvars"`.
@@ -255,7 +274,12 @@ function Import-EasytierMsvcEnvironment {
             if ($_ -match '^(.*?)=(.*)$') {
                 $name = $Matches[1]
                 if ($name -in @('PROMPT')) { return }
-                Set-Item -Path "Env:$name" -Value $Matches[2]
+                # Env block may contain case-variant duplicates of the same var
+                # (e.g. HTTPS_PROXY + https_proxy injected by sandbox hosts).
+                # The Env: provider throws "same key" on those — dedupe ourselves
+                # and write via .NET (Win32) instead, which merges case-insensitively.
+                if (-not $msvcEnvSeen.Add($name)) { return }
+                [System.Environment]::SetEnvironmentVariable($name, $Matches[2])
             }
         }
     }
@@ -265,6 +289,40 @@ function Import-EasytierMsvcEnvironment {
     }
     finally {
         Remove-Item -LiteralPath $tempFile -Force -ErrorAction SilentlyContinue
+    }
+
+    # vcvars64 queries the registry via reg.exe; agent sandboxes / security
+    # tools may block that, leaving INCLUDE/LIB without the Windows SDK part
+    # (cl then fails C1083 on stddef.h / windows.h). Rebuild the SDK section
+    # from the filesystem — the Kits layout is versioned directories, no
+    # registry needed.
+    $kitsRoots = @(
+        "${env:ProgramFiles(x86)}\Windows Kits\10",
+        "$env:ProgramFiles\Windows Kits\10"
+    ) | Where-Object { $_ -and (Test-Path $_) } | Select-Object -First 1
+    if ($kitsRoots) {
+        $incVer = Get-ChildItem (Join-Path $kitsRoots 'Include') -Directory -ErrorAction SilentlyContinue |
+            Sort-Object Name -Descending | Select-Object -First 1
+        $libVer = Get-ChildItem (Join-Path $kitsRoots 'Lib') -Directory -ErrorAction SilentlyContinue |
+            Sort-Object Name -Descending | Select-Object -First 1
+        if ($incVer -and $env:INCLUDE -and $env:INCLUDE -notmatch [regex]::Escape($incVer.FullName)) {
+            $sdkInc = @('ucrt', 'shared', 'um', 'winrt', 'cppwinrt') |
+                ForEach-Object { Join-Path $incVer.FullName $_ } |
+                Where-Object { Test-Path $_ }
+            if ($sdkInc) {
+                $env:INCLUDE = (@($env:INCLUDE) + $sdkInc) -join ';'
+                Write-Log "Appended Windows SDK include from filesystem: $($incVer.Name)" -Level Ok
+            }
+        }
+        if ($libVer -and $env:LIB -and $env:LIB -notmatch [regex]::Escape($libVer.FullName)) {
+            $sdkLib = @('ucrt\x64', 'um\x64') |
+                ForEach-Object { Join-Path $libVer.FullName $_ } |
+                Where-Object { Test-Path $_ }
+            if ($sdkLib) {
+                $env:LIB = (@($env:LIB) + $sdkLib) -join ';'
+                Write-Log "Appended Windows SDK lib from filesystem: $($libVer.Name)" -Level Ok
+            }
+        }
     }
 
     $cl = Get-Command cl -ErrorAction SilentlyContinue
