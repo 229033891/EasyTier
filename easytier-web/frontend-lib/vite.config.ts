@@ -15,6 +15,10 @@ export default defineConfig({
       name: 'easytier-frontend-lib',
       fileName: 'easytier-frontend-lib',
       formats: ["es", "umd", "cjs"],
+      // Vite 6 names lib CSS after the package (`easytier-frontend-lib.css`);
+      // all consumers import `easytier-frontend-lib/style.css` (the Vite 5
+      // default), so pin the name to keep those subpath imports valid.
+      cssFileName: 'style',
     },
     rollupOptions: {
       // make sure to externalize deps that shouldn't be bundled

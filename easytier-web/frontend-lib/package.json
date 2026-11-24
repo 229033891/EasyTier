@@ -42,7 +42,7 @@
     "@protobuf-ts/plugin": "2.11.1",
     "@protobuf-ts/protoc": "2.11.1",
     "@types/node": "^22.8.6",
-    "@vitejs/plugin-vue": "^5.1.4",
+    "@vitejs/plugin-vue": "^5.2.4",
     "@vue/test-utils": "^2.4.11",
     "autoprefixer": "^10.4.20",
     "happy-dom": "^20.14.6",
@@ -51,7 +51,7 @@
     "postcss-nested": "^7.0.2",
     "tailwindcss": "=3.4.17",
     "typescript": "~5.6.3",
-    "vite": "^5.4.21",
+    "vite": "^6.3.5",
     "vite-plugin-dts": "^4.3.0",
     "vitest": "^3.2.6",
     "vue-tsc": "^2.1.10"
